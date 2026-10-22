@@ -46,6 +46,7 @@ from gobby.cli.installers.container_restart import FALKORDB_CONTAINER
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
+from gobby.storage.config_repository import UnknownKeyPolicy, UnknownStoredConfigKeyError
 
 pytestmark = pytest.mark.unit
 
@@ -474,6 +475,29 @@ def _run_ok(runtime: CliRuntime, backup_root: Path, *extra: str) -> Result:
     result = _invoke(runtime, "--output", str(backup_root), *extra)
     assert result.exit_code == 0, result.output
     return result
+
+
+def test_backup_reads_config_before_retired_key_migration(
+    harness: _Harness,
+    runtime: CliRuntime,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    require_config = CliRuntime.require_config
+    reads: list[tuple[bool, UnknownKeyPolicy]] = []
+
+    def pending_migration_config(
+        self: CliRuntime, *, apply_migrations: bool = True, unknown_keys: UnknownKeyPolicy = "raise"
+    ) -> DaemonConfig:
+        reads.append((apply_migrations, unknown_keys))
+        assert apply_migrations is False, "backup must preserve the source schema"
+        if unknown_keys == "raise":
+            raise UnknownStoredConfigKeyError("gobby-tasks.validation.criteria_system_prompt")
+        return require_config(self, apply_migrations=apply_migrations, unknown_keys=unknown_keys)
+
+    monkeypatch.setattr(CliRuntime, "require_config", pending_migration_config)
+    _run_ok(runtime, tmp_path / "backup-before-migration")
+    assert reads == [(False, "skip"), (False, "skip")]
 
 
 class TestRegistration:

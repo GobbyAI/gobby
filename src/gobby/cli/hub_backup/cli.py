@@ -746,12 +746,12 @@ def _start_daemon() -> None:
 
 
 def _qdrant_settings(ctx: click.Context) -> tuple[str | None, str | None]:
-    qdrant = get_cli_runtime(ctx).require_config(apply_migrations=True).databases.qdrant
+    qdrant = get_cli_runtime(ctx).read_only_operational_config().databases.qdrant
     return qdrant.url, qdrant.api_key
 
 
 def _backup_logs_dir(ctx: click.Context) -> Path:
-    return resolved_logs_dir(get_cli_runtime(ctx).require_config().logging)
+    return resolved_logs_dir(get_cli_runtime(ctx).read_only_operational_config().logging)
 
 
 def _emit_result(

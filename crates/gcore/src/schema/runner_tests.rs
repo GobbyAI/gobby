@@ -1194,6 +1194,76 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
 }
 
 #[test]
+fn retired_task_validation_config_is_removed_on_upgrade() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 473)
+        .expect("retired task validation config migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    for key in [
+        "gobby-tasks.validation.close_review_max_concurrency_per_project",
+        "gobby-tasks.validation.close_review_min_severity",
+        "gobby-tasks.validation.close_review_prompt_max_chars",
+        "gobby-tasks.validation.close_review_validator_timeout_seconds",
+        "gobby-tasks.validation.criteria_system_prompt",
+    ] {
+        client.execute(
+            "INSERT INTO config_store(key, value) VALUES ($1, 'null')",
+            &[&key],
+        )?;
+    }
+    for key in [
+        "gobby-tasks.validation.candidates",
+        "session_feedback.review.candidates",
+    ] {
+        client.execute(
+            "INSERT INTO config_store(key, value) VALUES ($1, '[\"claude/sonnet\"]')",
+            &[&key],
+        )?;
+    }
+    let before: i64 = client
+        .query_one("SELECT revision FROM config_state WHERE id = true", &[])?
+        .get(0);
+
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        1
+    );
+    let remaining: Vec<String> = client
+        .query("SELECT key FROM config_store ORDER BY key", &[])?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        remaining,
+        [
+            "gobby-tasks.validation.candidates",
+            "session_feedback.review.candidates"
+        ]
+    );
+    let after: i64 = client
+        .query_one("SELECT revision FROM config_state WHERE id = true", &[])?
+        .get(0);
+    assert_eq!(after, before + 1);
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn build_and_stage_retirement_rebuckets_tasks_and_drops_tables() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
