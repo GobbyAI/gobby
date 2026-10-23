@@ -7,12 +7,13 @@ import base64
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
+from typing import Any, NoReturn, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.hooks import checkout_reads
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.checkout_reads import (
     CheckoutReadUnavailable,
@@ -23,7 +24,10 @@ from gobby.hooks.checkout_reads import (
     run_git,
     run_git_async,
 )
-from gobby.hooks.events import HookResponse
+from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.checkout_read_fakes import HUB_MACHINE, NODE_MACHINE, FakeNode
 
 pytestmark = pytest.mark.unit
@@ -255,21 +259,42 @@ async def test_run_git_routes_by_origin(node: FakeNode, tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_node_content_stays_in_delivery_memo(
-    node: FakeNode, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    node: FakeNode,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cwd = str(tmp_path)
     secret_path = f"{cwd}/secret.txt"
     node.add_file(NODE_MACHINE, secret_path, b"SECRET-FILE-BODY")
     node.set_git(NODE_MACHINE, stdout=b"SECRET-GIT-OUTPUT\n")
     seen: list[tuple[bytes | None, bytes]] = []
+    set_variable = MagicMock()
+    merge_variables = MagicMock()
+    monkeypatch.setattr(SessionVariableManager, "set_variable", set_variable)
+    monkeypatch.setattr(SessionVariableManager, "merge_variables", merge_variables)
+    broadcasted = asyncio.Event()
+
+    async def broadcast(event: HookEvent, response: HookResponse) -> None:
+        broadcasted.set()
+
+    broadcaster = MagicMock()
+    broadcaster.broadcast_event = AsyncMock(side_effect=broadcast)
 
     def read_inside_delivery(event: object) -> HookResponse:
         facts = path_facts([secret_path], read_limit=64)
         git = run_git(["log"], cwd=cwd, timeout=_TIMEOUT)
         seen.append((facts.files[0].data, git.stdout))
-        return HookResponse(decision="allow")
+        return HookManager._complete_response(
+            cast(HookManager, hook_manager),
+            cast(HookEvent, event),
+            HookResponse(decision="allow"),
+            None,
+        )
 
     hook_manager = MagicMock()
+    hook_manager.broadcaster = broadcaster
+    hook_manager._loop = asyncio.get_running_loop()
     hook_manager.handle.side_effect = read_inside_delivery
     caplog.set_level(logging.DEBUG)
     result = await run_adapter_hook(
@@ -280,8 +305,20 @@ async def test_node_content_stays_in_delivery_memo(
     )
 
     # Positive control: the handler read the content, so the sink checks are not vacuous.
+    await asyncio.wait_for(broadcasted.wait(), timeout=_TIMEOUT)
     assert seen == [(b"SECRET-FILE-BODY", b"SECRET-GIT-OUTPUT\n")]
-    sinks = repr(hook_manager.mock_calls) + repr(result) + caplog.text
+    set_variable.assert_not_called()
+    merge_variables.assert_not_called()
+    assert STAGED_EFFECTS_FIELD not in result
+    broadcaster.broadcast_event.assert_awaited_once()
+    sinks = (
+        repr(hook_manager.mock_calls)
+        + repr(result)
+        + caplog.text
+        + repr(set_variable.mock_calls)
+        + repr(merge_variables.mock_calls)
+        + repr(broadcaster.broadcast_event.await_args)
+    )
     for secret in (b"SECRET-FILE-BODY", b"SECRET-GIT-OUTPUT"):
         assert secret.decode("ascii") not in sinks
         assert base64.b64encode(secret).decode("ascii") not in sinks
@@ -325,3 +362,131 @@ def test_local_run_git_ignores_inherited_git_env(
 
     assert local.returncode == 0
     assert Path(local.stdout.decode("utf-8").strip()).resolve() == (repo / ".git").resolve()
+
+
+async def _hold_unanswered() -> NoReturn:
+    """Stand in for a node that never replies. Only the seam or the caller may end the wait."""
+    try:
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=_TIMEOUT)
+    except TimeoutError as exc:
+        raise AssertionError("the seam did not cut off an unanswered send") from exc
+    raise AssertionError("an unanswered send cannot return")
+
+
+@pytest.mark.asyncio
+async def test_send_cancellation_is_mapped(
+    node: FakeNode, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = str(tmp_path)
+    node.add_file(NODE_MACHINE, f"{cwd}/cancelled.txt", b"cancelled")
+    loop = asyncio.get_running_loop()
+
+    async def cancelled_send(
+        machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
+    ) -> dict[str, Any]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(node, "send", cancelled_send)
+
+    # Worker thread: the bridge future reports the cancelled send as a concurrent CancelledError.
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as worker:
+            await asyncio.to_thread(run_git, ["status"], cwd=cwd, timeout=_TIMEOUT)
+    assert (worker.value.code, worker.value.machine_id) == ("node_reply_lost", NODE_MACHINE)
+
+    # Same loop: the send is awaited directly, so asyncio.CancelledError surfaces in the caller.
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as same_loop:
+            await run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT)
+    assert same_loop.value.code == "node_reply_lost"
+
+    # Foreign loop: the bridge future is wrapped, so the caller's loop sees asyncio.CancelledError.
+    def foreign_loop_read() -> CheckoutReadUnavailable:
+        with pytest.raises(CheckoutReadUnavailable) as foreign:
+            asyncio.run(run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT))
+        return foreign.value
+
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        foreign_error = await asyncio.to_thread(foreign_loop_read)
+    assert (foreign_error.code, foreign_error.machine_id) == ("node_reply_lost", NODE_MACHINE)
+
+    # The caller's own cancellation is not mapped: it still reaches the caller as CancelledError.
+    entered = asyncio.Event()
+
+    async def held_send(
+        machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
+    ) -> dict[str, Any]:
+        entered.set()
+        await _hold_unanswered()
+
+    monkeypatch.setattr(node, "send", held_send)
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        reader = asyncio.create_task(run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT))
+        await asyncio.wait_for(entered.wait(), timeout=_TIMEOUT)
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
+
+
+@pytest.mark.asyncio
+async def test_path_facts_empty_paths_skips_node_query(node: FakeNode, tmp_path: Path) -> None:
+    cwd = str(tmp_path)
+    other_cwd = f"{tmp_path}/other"
+    node.add_file(NODE_MACHINE, f"{cwd}/alpha.txt", b"alpha")
+    node.set_checkout(NODE_MACHINE, cwd, root=cwd, project_id="project-a")
+    node.set_checkout(NODE_MACHINE, other_cwd, root=other_cwd, project_id="project-other")
+    loop = asyncio.get_running_loop()
+
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        # No cached header yet: one header-only request supplies the checkout facts.
+        first = await asyncio.to_thread(path_facts, ())
+        assert (first.root, first.project_id) == (cwd, "project-a")
+        assert first.files == ()
+        assert node.requests == [
+            (
+                NODE_MACHINE,
+                "checkout.read",
+                {"cwd": cwd, "query": {"kind": "files", "paths": [], "read_limit": None}},
+                5000,
+            )
+        ]
+
+        # The memo holds the header, so repeat calls make no request, whatever the read_limit.
+        repeat = await asyncio.to_thread(path_facts, (), read_limit=64)
+        assert (repeat.root, repeat.project_id) == (cwd, "project-a")
+        assert repeat.files == ()
+        assert len(node.requests) == 1
+
+        # Headers are kept per checkout: another cwd gets its own request and its own facts.
+        elsewhere = await asyncio.to_thread(path_facts, (), cwd=other_cwd)
+        assert (elsewhere.root, elsewhere.project_id) == (other_cwd, "project-other")
+        assert len(node.requests) == 2
+        assert node.requests[-1][2]["cwd"] == other_cwd
+        back = await asyncio.to_thread(path_facts, (), cwd=cwd)
+        assert (back.root, back.project_id) == (cwd, "project-a")
+        assert len(node.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_send_timeout_returns_mapped_error(
+    node: FakeNode, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = str(tmp_path)
+    loop = asyncio.get_running_loop()
+
+    async def slow_send(
+        machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
+    ) -> dict[str, Any]:
+        await _hold_unanswered()
+
+    monkeypatch.setattr(node, "send", slow_send)
+    monkeypatch.setattr(checkout_reads, "_BRIDGE_MARGIN_S", 0.0)
+
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as worker:
+            await asyncio.to_thread(run_git, ["status"], cwd=cwd, timeout=0.05)
+        assert (worker.value.code, worker.value.machine_id) == ("node_timeout", NODE_MACHINE)
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as same_loop:
+            await run_git_async(["status"], cwd=cwd, timeout=0.05)
+        assert same_loop.value.code == "node_timeout"
