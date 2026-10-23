@@ -30,6 +30,12 @@ The parser and the fixtures under `tests/ai/fixtures/` use the field names below
 - Limits: 2 to 255 Choice options; 1 to 64 questions; question keys match
   `^[A-Za-z0-9_.-]{1,100}$`. Documented whole-request limit 64k tokens; 32k for state
   plus the longest question (`https://docs.typesafe.ai/models`, per Decision 8).
+- Noul (`type: "noul"`, a yes/no proposition): the question is exactly
+  `{"type": "noul", "instructions": <non-empty string>}`, with no other keys. The answer
+  carries `type: "noul"` and the probability in its `noul` field, finite and in [0,1]. A Noul
+  answer carries no separate `confidence` (`docs/research/jev.md` lines 35-36). Recorded from
+  plan Decision 1 (`.gobby/plans/decision-classifier-path.md` lines 1421, 1829-1830 and
+  2100-2102). Not re-fetched this seat.
 - Source: `https://docs.typesafe.ai/api.md` and `https://docs.typesafe.ai/models.md`,
   retrieved 2026-09-29 per Decision 1. Not re-fetched this seat.
 
@@ -120,6 +126,11 @@ per Decision 15. Not re-read this seat.
   sends text state only. Keep it bound to `127.0.0.1`.
 - `clef_mlx.py` runs one request at a time under a lock.
 - Operator sets `backend_max_state_tokens: 16384`.
+- Cloudflare's release (`https://huggingface.co/Cloudflare/clef` and `Cloudflare/clef-flash`)
+  ships BF16 weights and `joint_schema_model.py`. Its `systemone` is a Python function with no
+  HTTP server. It defaults to CUDA and was tested on one H200. The mlx-community conversions
+  above ship the HTTP server this section covers. Recorded from plan lines 490-494 and
+  1292-1293. Not re-read this seat.
 
 ## 5. LM Studio `/v1/systemone`
 

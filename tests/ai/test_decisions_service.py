@@ -643,6 +643,35 @@ async def test_cooldown_fails_fast_then_recovers(
     assert len(wire.requests) == dialed + 1
 
 
+@pytest.mark.asyncio
+async def test_concurrent_failures_open_cooldown_with_one_warning(
+    wire: FakeWire, caplog: pytest.LogCaptureFixture
+) -> None:
+    both_in_flight = asyncio.Event()
+    waiting = 0
+
+    async def fail_together(_request: httpx.Request) -> httpx.Response:
+        nonlocal waiting
+        waiting += 1
+        if waiting == 2:
+            both_in_flight.set()
+        await both_in_flight.wait()
+        return httpx.Response(500)
+
+    wire.handler = fail_together
+    service = DecisionService(_config(failure_cooldown_seconds=60))
+
+    results = await asyncio.gather(
+        service.choose("test", STATE, QUESTIONS),
+        service.choose("test", STATE, QUESTIONS),
+        return_exceptions=True,
+    )
+
+    assert all(isinstance(result, DecisionsUnavailable) for result in results)
+    warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+    assert len(warnings) == 1
+
+
 LOCAL_OUTCOMES = [
     pytest.param(
         {"api_base": None},
@@ -805,6 +834,7 @@ async def test_workers_ai_wire_posts_and_parses(wire: FakeWire) -> None:
 
     request = wire.requests[0]
     assert str(request.url) == f"{base}/ai/run/@cf/cloudflare/clef"
+    assert request.headers["authorization"] == "Bearer cf-token"
     assert set(json.loads(request.content)) == {"model", "state", "questions"}
     assert result.answers["triage"].choice == "keep"
     assert result.response_model == "clef"

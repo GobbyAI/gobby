@@ -217,12 +217,15 @@ class DecisionService:
             failure = _as_unavailable(error, budget)
             if failure.reason == "truncated" or (local and failure.reason == "timeout"):
                 raise failure from None
-            self._cooldown_until = _now() + config.failure_cooldown_seconds
-            logger.warning(
-                "decisions cooldown opened after %s; calls fail fast for %ss",
-                failure.reason,
-                config.failure_cooldown_seconds,
-            )
+            # A failure inside an open window neither extends it nor logs again.
+            now = _now()
+            if now >= self._cooldown_until:
+                self._cooldown_until = now + config.failure_cooldown_seconds
+                logger.warning(
+                    "decisions cooldown opened after %s; calls fail fast for %ss",
+                    failure.reason,
+                    config.failure_cooldown_seconds,
+                )
             raise failure from None
         finally:
             if card is not None:
