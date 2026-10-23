@@ -39,6 +39,15 @@ logger = logging.getLogger(__name__)
 EDIT_TOOLS = CANONICAL_WRITE_TOOL_NAMES
 
 
+def _seat_path(value: str) -> Path:
+    """Resolve a seat's cwd or workspace on the hub, but keep a node's as sent.
+
+    The hub's symlinks must not rewrite a node's paths before the node-backed
+    checkout primitives see them.
+    """
+    return Path(value) if node_origin() else Path(value).resolve()
+
+
 class SkillResolutionError(RuntimeError):
     """Expected failure while resolving a Skill tool name."""
 
@@ -130,10 +139,10 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if isinstance(sequencer_paths, list):
             # Sequencer recovery has repository scope but does not author a file.
             # Permit that exemption only within this seat's own checkout.
-            cwd = Path(event.cwd).resolve() if event.cwd else current_tool_cwd(data)
+            cwd = _seat_path(event.cwd) if event.cwd else current_tool_cwd(data)
             session = self._session_manager.get(session_id) if self._session_manager else None
             workspace = session.workspace_path if session is not None else None
-            own_cwd = Path(workspace).resolve() if isinstance(workspace, str) and workspace else cwd
+            own_cwd = _seat_path(workspace) if isinstance(workspace, str) and workspace else cwd
             own_root = (checkout_root(own_cwd) or own_cwd) if own_cwd is not None else None
             for path in sequencer_paths:
                 if isinstance(edit_paths, list) and path in edit_paths:

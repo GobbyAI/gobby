@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 import psycopg
 
+from gobby.hooks.checkout_reads import event_machine_id, node_origin
 from gobby.hooks.events import HookEvent
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.session_models import Session
 
 
@@ -159,6 +162,9 @@ def resolve_hook_project_context(
         apply_project_id_to_event(event, GLOBAL_PROJECT_ID)
         return HookProjectResolution(GLOBAL_PROJECT_ID, source="contract-probe")
 
+    if node_origin():
+        return _resolve_node_cwd_project(event, session_manager, cwd)
+
     if is_unusable_hook_cwd(cwd):
         project_id = _project_id_from_current_context()
         if project_id:
@@ -173,6 +179,43 @@ def resolve_hook_project_context(
     project_id = resolve_project_id(None, cwd)
     apply_project_id_to_event(event, project_id)
     return HookProjectResolution(project_id, source="cwd")
+
+
+def _resolve_node_cwd_project(
+    event: HookEvent, session_manager: HookSessionManager | None, cwd: str | None
+) -> HookProjectResolution:
+    """Map a node event's cwd to the node's checkout row that encloses it.
+
+    The hub's disk markers are never read for a node. An unusable cwd is skipped
+    without the daemon's current-context project; any other cwd with no enclosing
+    row of the node's machine fails closed.
+    """
+    if is_unusable_hook_cwd(cwd):
+        return HookProjectResolution(None, skipped=True, reason=f"unusable hook cwd: {cwd}")
+    machine = event_machine_id() or ""
+    rows = (
+        []
+        if session_manager is None
+        else LocalProjectCheckoutManager(session_manager.db).list_for_machine(machine)
+    )
+    target = _path_parts(cwd) if cwd else ()
+    enclosing = [row for row in rows if _encloses(row.root_path, target)]
+    if not enclosing:
+        raise ValueError(f"checkout_read_unavailable: no_checkout_row (machine {machine})")
+    # The longest enclosing root is the innermost checkout, such as a nested repo.
+    row = max(enclosing, key=lambda candidate: len(_path_parts(candidate.root_path)))
+    apply_project_id_to_event(event, row.project_id)
+    return HookProjectResolution(row.project_id, source="cwd")
+
+
+def _path_parts(path: str) -> tuple[str, ...]:
+    return PurePath(os.path.normpath(path)).parts
+
+
+def _encloses(root: str, target: tuple[str, ...]) -> bool:
+    """True when `root` is `target` or one of its ancestors, compared component by component."""
+    parts = _path_parts(root)
+    return bool(parts) and target[: len(parts)] == parts
 
 
 def _candidate_session_ids(event: HookEvent) -> list[tuple[str, str]]:
