@@ -6,7 +6,9 @@ binding, and ``team_id`` is that execution's id. Admission runs under
 records the team before it creates the tree, so a re-run of a step that died mid-launch
 adopts its own tree. A retry of the admitting execution returns the same team; a
 replacement execution names the team it joins with ``team_id`` and must match its task.
-Seat spawns from a team runbook join the admitted tree and cannot create a branch,
+A fresh-reviewer execution joins the same way after the second review rejection; the team's
+``admit`` output keeps its id under ``fresh_reviewers`` per review epoch, so that epoch admits
+no other. Seat spawns from a team runbook join the admitted tree and cannot create a branch,
 worktree or clone or carry another task.
 """
 
@@ -26,10 +28,13 @@ from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
+from gobby.storage.session_resolution import resolve_session_reference
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
+from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.definitions import PipelineDefinition
@@ -96,9 +101,15 @@ async def admit_team(
     fresh_reviewer: bool = False,
     exclude_reviewers: Sequence[str] = (),
 ) -> TeamBinding:
-    """Admit the caller execution's team for ``task``, or join team ``team_id`` as a replacement."""
-    if fresh_reviewer:
-        raise TeamAdmissionRefused("not_implemented", "fresh-reviewer admission is a stub")
+    """Admit the caller execution's team for ``task``, or join team ``team_id``.
+
+    A replacement execution joins with ``team_id``. A ``fresh_reviewer`` execution joins only
+    after the second rejection handed the claim to a reviewer, as the epoch's one fresh reviewer.
+    """
+    if fresh_reviewer and team_id is None:
+        raise TeamAdmissionRefused(
+            "fresh_reviewer_team_required", "a fresh reviewer joins an admitted team: pass team_id"
+        )
     if team_id is not None:
         team_uuid = parse_uuid_reference(team_id)
         if team_uuid is None:
@@ -110,11 +121,15 @@ async def admit_team(
         own = await asyncio.to_thread(_own_record, caller)
         if own is not None:
             return await _readmit(db, caller, own, target, team_id)
-        if team_id is not None:
-            return await _join(db, caller, target, team_id)
-        # Only a team with no record is new; recorded and joined teams keep working.
-        await _admissions_open(db, caller.project_id)
-        return await _create(db, caller, target)
+        if team_id is None:
+            # Only a team with no record is new; recorded and joined teams keep working.
+            await _admissions_open(db, caller.project_id)
+            return await _create(db, caller, target)
+        if fresh_reviewer:
+            await asyncio.to_thread(
+                _reserve_fresh_reviewer, db, caller, target, team_id, exclude_reviewers
+            )
+        return await _join(db, caller, target, team_id)
 
 
 def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> None:
@@ -200,13 +215,23 @@ def _admission_step(
     return next((step for step in steps if step.step_id == ADMISSION_STEP), None)
 
 
-def _recorded(step: StepExecution | None) -> dict[str, Any] | None:
-    """The team record in an admission step's output, complete or not."""
+def _output(step: StepExecution | None) -> dict[str, Any]:
     try:
         output = json.loads(step.output_json or "null") if step is not None else None
     except json.JSONDecodeError:
-        return None
-    record = output.get("team") if isinstance(output, dict) else None
+        return {}
+    return output if isinstance(output, dict) else {}
+
+
+def _merge(executions: LocalPipelineExecutionManager, step: StepExecution, **keys: Any) -> None:
+    """Set ``keys`` in an admission step's output and keep its other keys."""
+    output = {**_output(step), **keys}
+    executions.update_step_execution(step.id, output_json=json.dumps(output))
+
+
+def _recorded(step: StepExecution | None) -> dict[str, Any] | None:
+    """The team record in an admission step's output, complete or not."""
+    record = _output(step).get("team")
     return record if isinstance(record, dict) else None
 
 
@@ -227,9 +252,8 @@ def _own_record(caller: _Caller) -> dict[str, Any] | None:
 
 
 def _record(caller: _Caller, record: dict[str, Any]) -> None:
-    caller.executions.update_step_execution(
-        caller.step.id, output_json=json.dumps({"team": record})
-    )
+    step = _admission_step(caller.executions, caller.execution_id) or caller.step
+    _merge(caller.executions, step, team=record)
 
 
 async def _readmit(
@@ -266,20 +290,75 @@ async def _readmit(
     return binding
 
 
-async def _join(db: HubDatabase, caller: _Caller, task: Task, team_id: str) -> TeamBinding:
-    """A replacement execution joins the team ``team_id`` admitted for the same task."""
-    team = await asyncio.to_thread(caller.executions.get_execution, team_id)
-    step = await asyncio.to_thread(_admission_step, caller.executions, team_id) if team else None
+def _team(caller: _Caller, task: Task, team_id: str) -> tuple[StepExecution, TeamBinding]:
+    """Team ``team_id``'s admission step and its complete binding for ``task``."""
+    team = caller.executions.get_execution(team_id)
+    step = _admission_step(caller.executions, team_id) if team else None
     binding = _binding(_recorded(step))
-    if binding is None or binding.project_id != caller.project_id:
+    if step is None or binding is None or binding.project_id != caller.project_id:
         raise TeamAdmissionRefused("team_missing", f"team {team_id} has no complete admission")
     if binding.task_id != task.id:
         raise TeamAdmissionRefused(
             "team_task_mismatch", f"team {team_id} is bound to task {binding.task_id}"
         )
+    return step, binding
+
+
+async def _join(db: HubDatabase, caller: _Caller, task: Task, team_id: str) -> TeamBinding:
+    """A replacement or fresh-reviewer execution joins team ``team_id`` for the same task."""
+    _step, binding = await asyncio.to_thread(_team, caller, task, team_id)
     await _verify_tree(db, binding)
     await asyncio.to_thread(_record, caller, asdict(binding))
     return binding
+
+
+def _reserve_fresh_reviewer(
+    db: HubDatabase, caller: _Caller, task: Task, team_id: str, exclude_reviewers: Sequence[str]
+) -> None:
+    """Record the caller as the epoch's fresh reviewer once rejection two moved the claim."""
+    step, _binding = _team(caller, task, team_id)
+    current = LocalTaskManager(db).get_task(task.id, caller.project_id)
+    epoch = current.review_epoch
+    reviews = [
+        record
+        for record in list_task_step_records(db, task.id)
+        if record.step == "review" and record.epoch == epoch
+    ]
+    rejected = {record.round_number for record in reviews if record.status == "rejected"}
+    if len(rejected) != REVIEW_REJECTION_LIMIT - 1:
+        raise TeamAdmissionRefused(
+            "fresh_reviewer_round",
+            f"task {task.id} has {len(rejected)} rejected review rounds in epoch {epoch}; "
+            f"a fresh reviewer starts at {REVIEW_REJECTION_LIMIT - 1}",
+        )
+    reviewers = {record.session_id for record in reviews}
+    try:
+        excluded = {
+            resolve_session_reference(db, ref, caller.project_id) for ref in exclude_reviewers
+        }
+    except ValueError as exc:
+        raise TeamAdmissionRefused("fresh_reviewer_exclusions", str(exc)) from exc
+    if missing := reviewers - excluded:
+        raise TeamAdmissionRefused(
+            "fresh_reviewer_exclusions",
+            f"exclude_reviewers omits epoch {epoch} reviewers {', '.join(sorted(missing))}",
+        )
+    if current.claimed_by_session_id not in reviewers:
+        raise TeamAdmissionRefused(
+            "fresh_reviewer_claim", f"task {task.id}'s claim has not passed to a reviewer"
+        )
+    reserved = _output(step).get("fresh_reviewers")
+    reserved = reserved if isinstance(reserved, dict) else {}
+    if reserved.get(str(epoch)) not in (None, caller.execution_id):
+        raise TeamAdmissionRefused(
+            "fresh_reviewer_exists",
+            f"execution {reserved[str(epoch)]} is team {team_id}'s epoch {epoch} fresh reviewer",
+        )
+    _merge(
+        caller.executions,
+        step,
+        fresh_reviewers={**reserved, str(epoch): caller.execution_id},
+    )
 
 
 async def _create(db: HubDatabase, caller: _Caller, task: Task) -> TeamBinding:

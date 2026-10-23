@@ -259,8 +259,28 @@ def task_step_requirements(db: HubDatabase, task: Task) -> StepRequirements:
     return StepRequirements(required, missing)
 
 
+def _rejected_reviews(records: list[TaskStepRecord], epoch: int) -> list[TaskStepRecord]:
+    return [
+        record
+        for record in records
+        if record.step == "review" and record.epoch == epoch and record.status == "rejected"
+    ]
+
+
+def _review_fixer(
+    task: Task, session_id: str, step: TaskStep, records: list[TaskStepRecord]
+) -> bool:
+    """The claimant that rejected a review this epoch fixes the work after the second rejection."""
+    if step != "implementation" or task.claimed_by_session_id != session_id:
+        return False
+    rejected = _rejected_reviews(records, task.review_epoch)
+    return len({record.round_number for record in rejected}) == REVIEW_REJECTION_LIMIT - 1 and any(
+        record.session_id == session_id for record in rejected
+    )
+
+
 def _writer(
-    db: HubDatabase, task: Task, session_id: str, step: TaskStep
+    db: HubDatabase, task: Task, session_id: str, step: TaskStep, records: list[TaskStepRecord]
 ) -> tuple[AgentDefinitionBody, str]:
     sessions = SessionManager(db)
     session = sessions.get(session_id)
@@ -282,7 +302,7 @@ def _writer(
     if definition is None:
         raise StepRecordError("step writer requires an enabled installed agent definition")
     body, digest = definition
-    if step not in body.task_step_writes:
+    if step not in body.task_step_writes and not _review_fixer(task, session_id, step, records):
         raise StepRecordError(f"agent definition {body.name} cannot write the {step} step")
     return body, digest
 
@@ -295,14 +315,14 @@ def _require_independent_reviewer(
     records: list[TaskStepRecord],
 ) -> None:
     if task.claimed_by_session_id == session_id or session_id in claimant_sessions(conn, task.id):
-        raise StepRecordError("a current or former claimant cannot approve its own task")
+        raise StepRecordError("a current or former claimant cannot review its own task")
     if any(
         record.step == "implementation" and record.session_id == session_id for record in records
     ):
-        raise StepRecordError("an implementer cannot approve its own task")
+        raise StepRecordError("an implementer cannot review its own task")
     variables = SessionVariableManager(db).get_variables(session_id)
     if task_edited_file_set(variables, task.id):
-        raise StepRecordError("a session with task-attributed edits cannot approve its own task")
+        raise StepRecordError("a session with task-attributed edits cannot review its own task")
 
 
 def record_task_step(
@@ -317,7 +337,8 @@ def record_task_step(
 
     The transport verifies commit existence. This boundary independently verifies
     its link to the locked task and the installed writer grant. Exact replays
-    return the stored record even after escalation or closure.
+    return the stored record first, even after escalation, closure or the end of
+    a fixer's claim.
     """
     if step not in TASK_STEPS:
         raise StepRecordError("unknown task step")
@@ -326,7 +347,6 @@ def record_task_step(
         if row is None:
             raise StepRecordError(f"task {task_id} not found")
         task = Task.from_row(row)
-        body, digest = _writer(db, task, session_id, step)
         records = _records(conn, task_id)
         matching = [
             record
@@ -351,14 +371,12 @@ def record_task_step(
                 raise StepRecordError("a terminal step result cannot be contradicted")
             if previous.status == "in_progress" and submission.status == "pending":
                 raise StepRecordError("step progress cannot move backwards")
+        # Replays return before this check: the fixer's grant ends with its claim.
+        body, digest = _writer(db, task, session_id, step, records)
         if task.closed_at is not None:
             raise StepRecordError("closed tasks cannot receive new step records")
         rejections = {
-            record.round_number
-            for record in records
-            if record.step == "review"
-            and record.epoch == task.review_epoch
-            and record.status == "rejected"
+            record.round_number for record in _rejected_reviews(records, task.review_epoch)
         }
         if len(rejections) >= REVIEW_REJECTION_LIMIT:
             raise StepRecordError("exhausted review rounds require an audited reset")
@@ -387,8 +405,7 @@ def record_task_step(
                 raise StepRecordError(
                     "review round must follow the current epoch's rejection count"
                 )
-            if submission.status == "approved":
-                _require_independent_reviewer(db, conn, task, session_id, records)
+            _require_independent_reviewer(db, conn, task, session_id, records)
         now = utc_now()
         record = TaskStepRecord(
             **submission.model_dump(),

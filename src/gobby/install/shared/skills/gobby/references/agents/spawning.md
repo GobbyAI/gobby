@@ -56,6 +56,13 @@ the same task. It refuses `team_exists` while the task has a live team tree. The
 runbook's seat spawns join that tree by worktree id or `project_path`, carry
 only the team's task, and request no new checkout, branch, base or clone.
 
+A fresh-reviewer execution passes `team_id`, `fresh_reviewer=true` and
+`exclude_reviewers`, the comma-separated refs of every session that reviewed in
+the current epoch. It joins only when the epoch has exactly two rejected review
+rounds and the claim has passed to one of those reviewers. The team's `admit`
+output then records it under `fresh_reviewers` for that epoch, and any other
+execution's request for the same epoch is refused `fresh_reviewer_exists`.
+
 Runtime isolation accepts `none`, `worktree`, or `clone`; `inherit` belongs to
 agent definitions. Existing isolation IDs request reuse. Boot-failure cleanup is
 opt-in for freshly created isolation; preserve work when inspecting a failed run.
@@ -70,4 +77,4 @@ unmanaged replacement for a denied managed spawn.
 
 Guide: [Runtime tools](../../../../../../../../docs/guides/agents.md#runtime-tools).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-23_

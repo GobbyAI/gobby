@@ -596,6 +596,7 @@ class TestSyncBundledPipelines:
         rows = pipeline_manager.list_all()
         names = [row.name for row in rows]
         assert set(names) == {
+            "devteam",
             "expand-task",
             "gobby-merge",
             "planning",

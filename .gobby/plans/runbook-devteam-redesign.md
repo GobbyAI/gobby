@@ -436,6 +436,8 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/agents/spawning.md::*` — scope-reason: document the fresh-reviewer admission
 - `tests/agents/test_team_review_loop.py::*` — scope-reason: new file holding the claim hand-off, review sequence and recovery acceptance tests
 - `tests/fixtures/team_case.py::*` — scope-reason: `TeamWorld.child` launches a given runbook definition so tests can admit `devteam` executions
+- `tests/workflows/test_workflows_sync.py::*` — scope-reason: the bundled pipeline set gains `devteam`
+- `src/gobby/install/shared/skills/gobby/references/plan/review.md::*` — scope-reason: found work; the planning runbook's review dialogue waits for each reply with event-driven waits, as `test_removed_wait_tool_guidance` requires
 
 **Research context:** Storage supports expected-owner handoff but the MCP layer currently conflicts unless forced/delegated, and release authority is lane-based. Use the bound Dev Manager and expected owner to transfer the single task claim atomically; never use a global force bypass. Sequence exactly: Test Writer → Developer → Sol review; rejection one → original Developer → same Sol review; rejection two → Sol reviewer becomes claimant/fixer → fresh Opus review; rejection three → Triage. Each seat writes its own step through the dedicated tool; the second rejection changes the Sol seat's authority to implementation before it edits. A seat that edits is recorded as an editor even if its role label still says reviewer. Resuming a team resumes this state, never recounts transcript messages.
 
@@ -572,6 +574,7 @@ Targets:
 - `tests/framing_corpus.py::*` — scope-reason: classify the new gate and the live rules the corpus missed
 - `src/gobby/install/shared/workflows/agents/orchestrator.yaml::*` — scope-reason: require the gclient operations reference
 - `src/gobby/install/shared/workflows/agents/assistant.yaml::*` — scope-reason: require the gclient operations reference
+- `tests/agents/test_coordination_seat_definitions.py::*` — scope-reason: the Orchestrator and Assistant definitions list the gclient reference
 - `src/gobby/terminals/workspace_agent_panes.py::*` — scope-reason: split placement may name its tab by title
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: document the tab-title placement form
 - `tests/workflows/test_seat_definitions.py::*` — scope-reason: required-reference gate and grants

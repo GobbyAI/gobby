@@ -151,11 +151,12 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
     include = body.workflows.rule_selectors.include
     assert "tag:default" in include
     assert "tag:review-learning" not in include
-    assert body.workflows.variables == (
-        {"_seat_procedure": f"gobby:references/agents/procedures/{name}.md"}
-        if name in ("lane-manager", "orchestrator")
-        else {}
-    )
+    procedure = {"_seat_procedure": f"gobby:references/agents/procedures/{name}.md"}
+    references = {"_seat_references": ["gobby:references/agents/gclient.md"]}
+    assert body.workflows.variables == {
+        **(procedure if name in ("lane-manager", "orchestrator") else {}),
+        **(references if name in ("assistant", "orchestrator") else {}),
+    }
     assert body.step_workflow is None
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
     assert set(body.send_message_targets) == SEND_MESSAGE_TARGETS[name]
