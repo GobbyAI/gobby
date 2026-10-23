@@ -405,13 +405,14 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
                 + "; commit or stash them, or pass --allow-dirty"
             )
         expected_identity = _read_workspace_pin(root)
+        runtime = get_cli_runtime(ctx)
         client_failure = run_cutover(
             root,
             bin_dir,
             stop_daemon=stop_daemon,
             start_daemon=start_daemon,
             start_refusal=lambda candidate: (
-                restart_start_refusal(ctx, candidate, expected_identity=expected_identity)
+                restart_start_refusal(runtime, candidate, expected_identity=expected_identity)
                 or _stop_admission_refusal(
                     ctx, wait=wait, logged_stale_markers=logged_stale_markers
                 )

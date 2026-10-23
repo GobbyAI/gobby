@@ -12,8 +12,7 @@ from __future__ import annotations
 import contextlib
 import logging
 from pathlib import Path
-
-import click
+from typing import TYPE_CHECKING
 
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_set_coherence import BinarySetCoherenceError, probe_set_member_identity
@@ -28,16 +27,24 @@ from gobby.storage.schema_contract import (
 from gobby.sync.integrity import dirty_bundled_content_refusal
 from gobby.utils.dev import worktree_daemon_refusal
 
+if TYPE_CHECKING:
+    from gobby.cli.runtime import CliRuntime
+
 logger = logging.getLogger(__name__)
 
 
 def restart_start_refusal(
-    ctx: click.Context,
+    runtime: CliRuntime,
     gdaemon: Path | None = None,
     *,
     expected_identity: dict[str, int | str] | None = None,
 ) -> str | None:
     """Name the reason the start half would fail, or None.
+
+    ``runtime`` is the invocation's CLI runtime, passed explicitly so ``pack`` and
+    ``unpack``, which stop the daemon outside a restart, can prove the same start
+    half. Its config and hub are read only after the node and worktree refusals, so a
+    node never opens the hub to prove a start.
 
     ``gdaemon=None`` proves the installed set, which is what ``restart`` will start.
     A candidate path proves an unpromoted build, which is what ``cutover`` is about to
@@ -59,7 +66,7 @@ def restart_start_refusal(
     if gdaemon is None:
         if refusal := binary_set_apply_refusal():
             return refusal
-        database = _open_hub(ctx)
+        database = open_preflight_hub(runtime)
         refusal = (
             schema_apply_refusal(database)
             if expected_identity is None
@@ -73,9 +80,7 @@ def restart_start_refusal(
     if refusal := dirty_bundled_content_refusal(get_install_dir(), database=database):
         return refusal
 
-    from gobby.cli.runtime import get_cli_runtime
-
-    config = get_cli_runtime(ctx).read_only_operational_config()
+    config = runtime.read_only_operational_config()
     if config.agent_sandbox.enabled or config.web_chat_sandbox.enabled:
         from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
         from gobby.cli.install_setup_srt import restage_srt_runner
@@ -129,11 +134,10 @@ def _render_identity(identity: dict[str, int | str]) -> str:
     return f"v{identity['latest_version']} ({str(identity['latest_checksum'])[:12]})"
 
 
-def _open_hub(ctx: click.Context) -> HubDatabase | None:
-    from gobby.cli.runtime import require_cli_database
-
+def open_preflight_hub(runtime: CliRuntime) -> HubDatabase | None:
+    """Open the hub for the start proof without applying migrations, or None."""
     try:
-        return require_cli_database(ctx, apply_migrations=False)
+        return runtime.require_database(apply_migrations=False)
     except Exception:
         logger.debug("Restart preflight could not open the hub", exc_info=True)
         return None

@@ -19,6 +19,7 @@ from typing import Self
 
 import click
 
+from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.hub_backup import bootstrap_restore
 from gobby.cli.hub_backup.files_home import (
     PACK_FILES_PREFIX,
@@ -41,6 +42,7 @@ from gobby.cli.postgres_backup import (
     postgres_backup_configured,
     restore_postgres_backup,
 )
+from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils import get_gobby_home, stop_daemon
 from gobby.paths import (
     FilesHomeError,
@@ -361,6 +363,14 @@ def _plan_unpack(
     return plan
 
 
+def _refuse_before_stopping_daemon(action: str) -> None:
+    """Refuse the daemon stop when its start half would fail, leaving the daemon up."""
+    if refusal := restart_start_refusal(get_cli_runtime()):
+        raise click.ClickException(
+            f"Refusing to {action}: {refusal} The running daemon was left alone."
+        )
+
+
 class _StoppedServices:
     """The services unpack stopped, so a failure never leaves them silently down.
 
@@ -413,6 +423,10 @@ class _StoppedServices:
 
     def stop(self) -> None:
         if _daemon_is_running():
+            # Residual: this proof runs before the archived bootstrap.yaml is restored, so it
+            # checks the bootstrap and schema as they were before the restore. Escape:
+            # `gobby stop`, then unpack.
+            _refuse_before_stopping_daemon("unpack")
             click.echo("  Stopping daemon...")
             if not stop_daemon(quiet=True):
                 raise click.ClickException("Could not stop the Gobby daemon; nothing was unpacked")
@@ -534,6 +548,7 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
     # Stop daemon for consistent DB snapshot
     daemon_was_running = _daemon_is_running()
     if daemon_was_running:
+        _refuse_before_stopping_daemon("pack")
         click.echo("  Stopping daemon for consistent snapshot...")
         stop_daemon(quiet=True)
 

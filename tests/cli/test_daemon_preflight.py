@@ -12,12 +12,14 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli, daemon_preflight, install_setup_srt
-from gobby.cli.runtime import CliRuntime
+from gobby.cli.runtime import CliRuntime, get_cli_runtime
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
 from gobby.install.bin_set_coherence import BinarySetCoherenceError
 from gobby.storage import schema_divergence
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
+from gobby.sync import integrity as bundled_integrity
+from gobby.sync.integrity import IntegrityResult
 
 pytestmark = pytest.mark.unit
 
@@ -72,6 +74,18 @@ def ctx() -> click.Context:
     return click.Context(click.Command("restart"), obj=CliRuntime(config_file=None))
 
 
+def _start_refusal(
+    ctx: click.Context,
+    gdaemon: Path | None = None,
+    *,
+    expected_identity: dict[str, int | str] | None = None,
+) -> str | None:
+    """Run the preflight the way restart and cutover call it, from the Click runtime."""
+    return daemon_preflight.restart_start_refusal(
+        get_cli_runtime(ctx), gdaemon, expected_identity=expected_identity
+    )
+
+
 @pytest.fixture
 def plan_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path | None]]:
     """Record every schema plan the preflight runs."""
@@ -94,7 +108,7 @@ def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
-    monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
+    monkeypatch.setattr(daemon_preflight, "open_preflight_hub", lambda _runtime: None)
     monkeypatch.setattr(daemon_preflight, "verify_catalog_test_cluster", lambda _url: None)
     monkeypatch.setattr(install_setup_srt, "restage_srt_runner", lambda: None)
     config = DaemonConfig()
@@ -130,12 +144,63 @@ def test_runner_checksum_mismatch_refuses_before_schema_plan(
 
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", checksum_mismatch)
 
-    refusal = daemon_preflight.restart_start_refusal(ctx, candidate)
+    refusal = _start_refusal(ctx, candidate)
 
     assert refusal == (
         "Managed SRT sandbox preflight failed: "
         "SRT runner checksum does not match the pinned release"
     )
+    assert plan_calls == []
+
+
+_DIRTY_BUNDLED_PATH = "src/gobby/install/shared/skills/gobby/references/code-index/overview.md"
+
+
+def _dirty_bundled_integrity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the real dirty-content check against a git result with one changed template."""
+    monkeypatch.delenv("GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT", raising=False)
+    monkeypatch.setattr(
+        daemon_preflight,
+        "dirty_bundled_content_refusal",
+        bundled_integrity.dirty_bundled_content_refusal,
+    )
+    monkeypatch.setattr(
+        bundled_integrity,
+        "verify_bundled_integrity",
+        lambda _install_dir: IntegrityResult(
+            checked=True, source="git", dirty_files=[_DIRTY_BUNDLED_PATH]
+        ),
+    )
+
+
+def test_restart_refuses_dirty_bundled_content_before_stopping(
+    plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stopped: list[str] = []
+    monkeypatch.setattr(daemon_module, "_do_stop", lambda *_a, **_k: stopped.append("stop"))
+    _dirty_bundled_integrity(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert _DIRTY_BUNDLED_PATH in result.output
+    assert "GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT=1" in result.output
+    assert "The running daemon was left alone." in result.output
+    assert stopped == []
+    assert plan_calls == []
+
+
+def test_cutover_candidate_refuses_dirty_bundled_content_before_the_plan(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(daemon_preflight, "_candidate_identity_refusal", lambda *_a, **_k: None)
+    _dirty_bundled_integrity(monkeypatch)
+
+    refusal = _start_refusal(ctx, _CANDIDATE)
+
+    assert refusal is not None
+    assert _DIRTY_BUNDLED_PATH in refusal
+    assert "GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT=1" in refusal
     assert plan_calls == []
 
 
@@ -168,7 +233,7 @@ def test_restart_restages_runner_before_verification(
     monkeypatch.setattr(install_setup_srt, "restage_srt_runner", restage)
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", verify)
 
-    assert daemon_preflight.restart_start_refusal(ctx, candidate) is None
+    assert _start_refusal(ctx, candidate) is None
     assert events == ["restage", "verify"]
     assert plan_calls == [(_BOOTSTRAP_URL, candidate)]
 
@@ -193,7 +258,7 @@ def test_failed_runner_restage_refuses_before_schema_plan(
     monkeypatch.setattr(install_setup_srt, "restage_srt_runner", restage)
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", verify)
 
-    assert daemon_preflight.restart_start_refusal(ctx) == (
+    assert _start_refusal(ctx) == (
         "Managed SRT sandbox preflight failed: bundled SRT runner checksum mismatch"
     )
     assert plan_calls == []
@@ -212,7 +277,7 @@ def test_disabled_sandboxes_skip_srt_verification(
     monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verification)
     monkeypatch.setattr(install_setup_srt, "restage_srt_runner", unexpected_verification)
 
-    assert daemon_preflight.restart_start_refusal(ctx) is None
+    assert _start_refusal(ctx) is None
     assert plan_calls == [(_BOOTSTRAP_URL, None)]
 
 
@@ -229,7 +294,7 @@ def test_worktree_refusal_is_patchable_at_module_level(
     """The retargeted patch sites resolve only if the name is a module attribute."""
     monkeypatch.setattr(daemon_preflight, "worktree_daemon_refusal", lambda: "no daemon from /wt")
 
-    assert daemon_preflight.restart_start_refusal(ctx) == "no daemon from /wt"
+    assert _start_refusal(ctx) == "no daemon from /wt"
     assert plan_calls == []
 
 
@@ -240,7 +305,7 @@ def test_installed_set_refusal_short_circuits_before_the_plan(
         schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: "mixed installed set"
     )
 
-    assert daemon_preflight.restart_start_refusal(ctx) == "mixed installed set"
+    assert _start_refusal(ctx) == "mixed installed set"
     assert plan_calls == []
 
 
@@ -251,7 +316,7 @@ def test_schema_divergence_refusal_short_circuits_before_the_plan(
         schema_divergence, "schema_apply_refusal", lambda _database: "live hub schema v9 is newer"
     )
 
-    assert daemon_preflight.restart_start_refusal(ctx) == "live hub schema v9 is newer"
+    assert _start_refusal(ctx) == "live hub schema v9 is newer"
     assert plan_calls == []
 
 
@@ -268,7 +333,7 @@ def test_dirty_bundled_content_refusal_short_circuits_before_the_plan(
     monkeypatch.setattr(daemon_preflight, "get_install_dir", lambda: install_dir)
     monkeypatch.setattr(daemon_preflight, "dirty_bundled_content_refusal", dirty_refusal)
 
-    assert daemon_preflight.restart_start_refusal(ctx) == "dirty bundled content"
+    assert _start_refusal(ctx) == "dirty bundled content"
     assert checked == [(install_dir, None)]
     assert plan_calls == []
 
@@ -276,7 +341,7 @@ def test_dirty_bundled_content_refusal_short_circuits_before_the_plan(
 def test_clean_bundled_content_preserves_existing_preflight(
     ctx: click.Context, plan_calls: list[tuple[str, Path | None]]
 ) -> None:
-    assert daemon_preflight.restart_start_refusal(ctx) is None
+    assert _start_refusal(ctx) is None
     assert plan_calls == [(_BOOTSTRAP_URL, None)]
 
 
@@ -293,7 +358,7 @@ def test_plan_failure_becomes_a_refusal_carrying_gdaemon_stderr(
         ),
     )
 
-    refusal = daemon_preflight.restart_start_refusal(ctx)
+    refusal = _start_refusal(ctx)
 
     assert refusal is not None
     assert "unrecognized schema lineage" in refusal
@@ -311,7 +376,7 @@ def test_plan_timeout_and_launch_failures_become_refusals(
 ) -> None:
     monkeypatch.setattr(daemon_preflight, "plan_schema", _raising_plan(detail))
 
-    assert daemon_preflight.restart_start_refusal(ctx) == detail
+    assert _start_refusal(ctx) == detail
 
 
 def test_no_readable_hub_url_skips_the_plan(
@@ -324,7 +389,7 @@ def test_no_readable_hub_url_skips_the_plan(
         lambda: SimpleNamespace(datastore_mode="local", database_url=None),
     )
 
-    assert daemon_preflight.restart_start_refusal(ctx) is None
+    assert _start_refusal(ctx) is None
     assert plan_calls == []
 
 
@@ -333,11 +398,11 @@ def test_installed_mode_plans_with_the_open_hub_conninfo(
 ) -> None:
     monkeypatch.setattr(
         daemon_preflight,
-        "_open_hub",
-        lambda _ctx: SimpleNamespace(conninfo="postgresql://opened.example/gobby"),
+        "open_preflight_hub",
+        lambda _runtime: SimpleNamespace(conninfo="postgresql://opened.example/gobby"),
     )
 
-    assert daemon_preflight.restart_start_refusal(ctx) is None
+    assert _start_refusal(ctx) is None
     assert plan_calls == [("postgresql://opened.example/gobby", None)]
 
 
@@ -346,7 +411,9 @@ def test_candidate_mode_plans_with_bootstrap_url(
 ) -> None:
     """Candidate mode never opens the hub and never probes the installed set."""
     opened: list[object] = []
-    monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: opened.append(_ctx))
+    monkeypatch.setattr(
+        daemon_preflight, "open_preflight_hub", lambda _runtime: opened.append(_runtime)
+    )
     monkeypatch.setattr(
         schema_divergence,
         "binary_set_apply_refusal",
@@ -358,7 +425,7 @@ def test_candidate_mode_plans_with_bootstrap_url(
         lambda _binary, _member: dict(expected_schema_identity()),
     )
 
-    assert daemon_preflight.restart_start_refusal(ctx, _CANDIDATE) is None
+    assert _start_refusal(ctx, _CANDIDATE) is None
     assert plan_calls == [(_BOOTSTRAP_URL, _CANDIDATE)]
     assert opened == []
 
@@ -378,7 +445,7 @@ def test_candidate_test_cluster_failure_refuses_cutover(
         raise SchemaContractError("isolated test hub unavailable")
 
     monkeypatch.setattr(daemon_preflight, "verify_catalog_test_cluster", verify_cluster)
-    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    refusal = _start_refusal(ctx, _CANDIDATE)
     assert refusal == "isolated test hub unavailable"
     assert calls == [_BOOTSTRAP_URL]
     assert plan_calls == [(_BOOTSTRAP_URL, _CANDIDATE)]
@@ -393,7 +460,7 @@ def test_candidate_without_hub_url_refuses_cutover(
         lambda _binary, _member: dict(expected_schema_identity()),
     )
     monkeypatch.setattr(daemon_preflight, "_hub_url", lambda _database: None)
-    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    refusal = _start_refusal(ctx, _CANDIDATE)
     assert refusal is not None
     assert "requires a readable hub URL" in refusal
     assert plan_calls == []
@@ -412,7 +479,7 @@ def test_candidate_identity_mismatch_is_a_refusal(
         daemon_preflight, "probe_set_member_identity", lambda _binary, _member: stale
     )
 
-    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    refusal = _start_refusal(ctx, _CANDIDATE)
 
     assert refusal is not None
     assert f"v{stale['latest_version']}" in refusal
@@ -428,7 +495,7 @@ def test_unreadable_candidate_binary_is_a_refusal(
 
     monkeypatch.setattr(daemon_preflight, "probe_set_member_identity", probe)
 
-    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    refusal = _start_refusal(ctx, _CANDIDATE)
 
     assert refusal is not None
     assert "candidate gdaemon cannot be verified" in refusal
@@ -449,7 +516,7 @@ def test_unreadable_checkout_pin_is_a_refusal(
 
     monkeypatch.setattr(daemon_preflight, "expected_schema_identity", unreadable_pin)
 
-    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+    refusal = _start_refusal(ctx, _CANDIDATE)
 
     assert refusal is not None
     assert "candidate gdaemon cannot be verified" in refusal

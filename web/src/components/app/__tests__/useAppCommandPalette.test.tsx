@@ -90,6 +90,41 @@ describe("useAppCommandPalette", () => {
     );
   });
 
+  it("surfaces a start-proof refusal from the restart_daemon palette command", async () => {
+    const refusal =
+      "Refusing to publish dirty bundled content (modified: shared/skills/demo/SKILL.md).";
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ status: "start_refused", message: refusal }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          ),
+        ),
+    );
+    const addSystemMessage = vi.fn();
+    const { result } = renderHook(() =>
+      useAppCommandPalette(makeHookArgs(addSystemMessage)),
+    );
+
+    act(() => {
+      result.current.handlePaletteSelect({
+        kind: "command",
+        name: "restart",
+        description: "Restart the daemon",
+        action: "restart_daemon",
+      });
+    });
+
+    await waitFor(() => {
+      expect(addSystemMessage).toHaveBeenCalledWith(
+        `Failed to restart daemon: ${refusal}`,
+      );
+    });
+  });
+
   it("surfaces protected work and offers a force restart", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const fetchMock = vi

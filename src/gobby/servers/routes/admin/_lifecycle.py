@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 _restart_lock: asyncio.Lock | None = None
 
+# Bounds the start proof the restart route runs before any stop. The CLI and web clients
+# wait longer than this, so a slow proof returns its own refusal instead of a client timeout.
+RESTART_START_PROOF_TIMEOUT_SECONDS = 60.0
+
 
 def _get_restart_lock() -> asyncio.Lock:
     global _restart_lock
@@ -72,6 +76,23 @@ async def _prepare_handoff_shutdown(server: "HTTPServer", machine_id: str) -> No
         else:
             cancel_handoff_shutdown(machine_id)
         raise
+
+
+def _restart_start_refusal() -> str | None:
+    """Name why the start half would fail, or None, before the daemon stops.
+
+    The HTTP restart stops the daemon as the CLI restart does, so it proves the same
+    start half with its own runtime. It runs in a worker thread: the proof does git
+    and DB I/O.
+    """
+    from gobby.cli.daemon_preflight import restart_start_refusal
+    from gobby.cli.runtime import CliRuntime
+
+    runtime = CliRuntime(config_file=None)
+    try:
+        return restart_start_refusal(runtime)
+    finally:
+        runtime.close()
 
 
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
@@ -179,8 +200,11 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         Graceful daemon restart endpoint.
 
-        Requests backend shutdown with restart intent. The native supervisor
-        reaps and replaces this backend. Returns immediately.
+        Proves the start half first. It refuses with 409 before any stop when that
+        proof fails or does not finish within RESTART_START_PROOF_TIMEOUT_SECONDS.
+        Otherwise it requests backend shutdown with restart intent, and the native
+        supervisor reaps and replaces this backend. Returns once the stop request is
+        issued, and on Windows once the restart helper is spawned.
         ``terminals=true`` also restarts the gterm host (#22002).
         """
         start_time = time.perf_counter()
@@ -208,6 +232,24 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                             "message": "Restart blocked by active protected cron runs",
                             "protected_runs": protected_runs,
                         }
+
+            # Refuse before any stop. force skips the cron check, never this proof.
+            try:
+                refusal = await asyncio.wait_for(
+                    asyncio.to_thread(_restart_start_refusal),
+                    timeout=RESTART_START_PROOF_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.warning(
+                    "Restart start proof timed out after %.0fs; refused before stop",
+                    RESTART_START_PROOF_TIMEOUT_SECONDS,
+                )
+                refusal = (
+                    f"start proof did not finish within {RESTART_START_PROOF_TIMEOUT_SECONDS:.0f}s"
+                )
+            if refusal:
+                response.status_code = 409
+                return {"status": "start_refused", "message": refusal}
 
             if not force:
                 await _prepare_handoff_shutdown(server, machine_id)

@@ -98,6 +98,8 @@ def dirty_bundled_content_refusal(
     The override intentionally applies only when its value is exactly ``"1"``.
     Ownership attribution is best effort: the integrity result remains a refusal
     even when the hub cannot identify an active session for a changed path.
+    An integrity check that cannot finish, such as a git timeout or an unreadable
+    manifest, is a refusal too, so the check fails closed.
     """
     env = os.environ if environ is None else environ
     if env.get(DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV) == "1":
@@ -105,7 +107,7 @@ def dirty_bundled_content_refusal(
 
     result = verify_bundled_integrity(install_dir)
     paths = sorted(set(result.dirty_files) | set(result.untracked_files))
-    if not paths:
+    if not paths and not result.errors:
         return None
 
     owner_sessions = _active_bundled_content_owner_sessions(database, set(paths))
@@ -122,14 +124,16 @@ def dirty_bundled_content_refusal(
         return ", ".join(rendered)
 
     changes: list[str] = []
+    if result.errors:
+        changes.append(f"integrity check did not finish: {'; '.join(result.errors)}")
     if result.dirty_files:
         changes.append(f"modified: {render(result.dirty_files)}")
     if result.untracked_files:
         changes.append(f"untracked: {render(result.untracked_files)}")
     return (
         "Refusing to publish dirty bundled content ("
-        f"{'; '.join(changes)}). Commit, restore, or remove the listed files, or set "
-        f"{DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1 to override deliberately."
+        f"{'; '.join(changes)}). Fix the integrity check, commit, restore, or remove the "
+        f"listed files, or set {DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1 to override deliberately."
     )
 
 
@@ -206,9 +210,15 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
     # Find the repo root so we can scope git commands
     repo_root = run_git_command(["git", "rev-parse", "--show-toplevel"], cwd=shared_dir)
     if repo_root is None:
-        # Not a git repo — installed package context
+        # Not a git repo (installed package), or git failed or timed out. The manifest is
+        # the only check; when it cannot run, name the git failure as well.
         result.git_available = False
-        return _verify_manifest_integrity(install_dir, result)
+        _verify_manifest_integrity(install_dir, result)
+        if not result.checked:
+            result.errors.append(
+                f"git rev-parse --show-toplevel failed or timed out in {shared_dir}"
+            )
+        return result
 
     repo_root_path = Path(repo_root)
 

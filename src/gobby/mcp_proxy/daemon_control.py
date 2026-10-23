@@ -3,10 +3,9 @@
 import asyncio
 import logging
 import os
-import signal
 import sys
 import tempfile
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 import psutil
@@ -15,9 +14,6 @@ from gobby.paths import get_gobby_home
 from gobby.utils.env import is_test_protect_enabled
 
 logger = logging.getLogger("gobby.daemon.control")
-
-DaemonShutdownIntent = Literal["stop", "restart"]
-DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
 
 # Above `gobby start`'s own health (300 s) and readiness (300 s) waits, leaving
 # room for managed services and the schema apply.
@@ -55,8 +51,7 @@ def get_daemon_pid() -> int | None:
     Under GOBBY_TEST_PROTECT, only return a PID whose cmdline references
     the current GOBBY_HOME / GOBBY_CONFIG_FILE — without this fence, this
     helper does a system-wide psutil scan and would return the user's
-    production daemon PID, which any caller (e.g. stop_daemon_process)
-    would then SIGTERM.
+    production daemon PID to the caller.
     """
     current_pid = os.getpid()
     test_protect = is_test_protect_enabled()
@@ -163,99 +158,3 @@ async def start_daemon_process() -> dict[str, Any]:
         "message": f"gobby start {outcome}",
         "error": f"gobby start {outcome}: {tail}",
     }
-
-
-async def stop_daemon_process(
-    pid: int | None = None,
-    *,
-    shutdown_intent: DaemonShutdownIntent = "stop",
-    shutdown_source: DaemonShutdownSource = "mcp_stop",
-) -> dict[str, Any]:
-    """Stop running daemon."""
-    # SAFETY: never SIGTERM the production daemon during tests. Mirrors the
-    # guard in gobby.cli.utils.stop_daemon. Without it, this code path can
-    # reach the user's real daemon when a test (or test-spawned subprocess)
-    # invokes mcp_proxy.daemon_control without going through the CLI.
-    if is_test_protect_enabled():
-        logger.warning("stop_daemon_process called during test - skipping")
-        return {"success": True, "skipped": "test_protect"}
-
-    if pid is None:
-        pid = get_daemon_pid()
-
-    if not pid:
-        return {"success": False, "not_running": True, "message": "Daemon not running"}
-
-    timeout = 5.0
-    deadline = asyncio.get_running_loop().time() + timeout
-
-    try:
-        from gobby.runner_maintenance import write_shutdown_source
-
-        try:
-            write_shutdown_source(shutdown_source, intent=shutdown_intent)
-        except Exception as e:
-            logger.warning("Failed to write shutdown source: %s", e)
-        os.kill(pid, signal.SIGTERM)
-
-        # Poll for termination
-        while True:
-            try:
-                os.kill(pid, 0)
-                if asyncio.get_running_loop().time() > deadline:
-                    return {
-                        "success": False,
-                        "error": "Process did not exit after SIGTERM",
-                        "message": "Stop timed out",
-                    }
-                await asyncio.sleep(0.1)
-            except ProcessLookupError:
-                # Process is gone
-                return {"success": True, "output": "Daemon stopped"}
-
-    except ProcessLookupError:
-        return {"success": False, "error": "Process not found", "not_running": True}
-    except PermissionError:
-        return {"success": False, "error": "Permission denied"}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
-async def restart_daemon_process(
-    current_pid: int | None, port: int, websocket_port: int
-) -> dict[str, Any]:
-    """Restart daemon."""
-    stop_result = await stop_daemon_process(
-        current_pid,
-        shutdown_intent="restart",
-        shutdown_source="mcp_restart",
-    )
-    if not stop_result.get("success") and not stop_result.get("not_running"):
-        return stop_result
-
-    # Wait for ports to be free with actual port checking
-    import socket
-
-    def is_port_free(p: int) -> bool:
-        """Check if a port is available by attempting to bind to it."""
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind(("127.0.0.1", p))
-                return True
-        except OSError:
-            return False
-
-    for _ in range(10):
-        if await asyncio.to_thread(is_port_free, port) and await asyncio.to_thread(
-            is_port_free, websocket_port
-        ):
-            break
-        await asyncio.sleep(0.5)
-    else:
-        return {
-            "success": False,
-            "error": f"Ports {port} and/or {websocket_port} not free after 10 retries",
-        }
-
-    return await start_daemon_process()

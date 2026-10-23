@@ -4,13 +4,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import click
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
 
@@ -56,13 +56,11 @@ def test_restart_start_proof_refuses_node_bootstrap(
 ) -> None:
     _write_remote_bootstrap(tmp_path)
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    ctx = click.Context(click.Command("restart"))
-
     with patch(
-        "gobby.cli.daemon_preflight._open_hub",
+        "gobby.cli.daemon_preflight.open_preflight_hub",
         side_effect=AssertionError("a node must not open the hub to prove a start"),
     ):
-        assert restart_start_refusal(ctx) == NODE_REFUSAL
+        assert restart_start_refusal(CliRuntime(config_file=None)) == NODE_REFUSAL
 
 
 def test_compose_runtime_rejects_remote_mode(tmp_path: Path) -> None:

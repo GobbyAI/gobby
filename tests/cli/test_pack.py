@@ -16,9 +16,12 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
+from gobby.cli import daemon_preflight
 from gobby.cli.hub_backup.files_home import FilesHomeArchiveError
 from gobby.cli.pack import _human_size, _import_docker_volume, pack, unpack
 from gobby.config.bootstrap_io import update_bootstrap_yaml, write_bootstrap_yaml
+from gobby.storage import schema_divergence
+from gobby.sync.integrity import DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV, IntegrityResult
 from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
@@ -26,10 +29,38 @@ pytestmark = pytest.mark.unit
 # `gobby.cli` re-exports the `pack` command under the module's own name.
 pack_module = importlib.import_module("gobby.cli.pack")
 
+_DIRTY_TEMPLATE = "src/gobby/install/shared/skills/demo/SKILL.md"
+
 
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def clean_start_proof(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every start-half gate passes unless a test seeds the one it exercises.
+
+    The gates read the checkout, the installed binaries, and the hub, so each one is
+    stubbed. Bundled content verifies clean unless a test seeds a dirty template.
+    """
+    monkeypatch.setattr(
+        "gobby.sync.integrity.verify_bundled_integrity",
+        lambda _install_dir: IntegrityResult(checked=True, source="git"),
+    )
+    config = MagicMock()
+    config.agent_sandbox.enabled = False
+    config.web_chat_sandbox.enabled = False
+    runtime = MagicMock()
+    runtime.read_only_operational_config.return_value = config
+    monkeypatch.setattr(pack_module, "get_cli_runtime", lambda *_args: runtime)
+    monkeypatch.setattr(daemon_preflight, "open_preflight_hub", lambda _runtime: None)
+    # No bootstrap database_url, so the schema plan is skipped as it is for an unreadable hub.
+    monkeypatch.setattr(daemon_preflight, "load_bootstrap", lambda: MagicMock(database_url=None))
+    monkeypatch.setattr(daemon_preflight, "node_daemon_refusal", lambda _bootstrap: None)
+    monkeypatch.setattr(daemon_preflight, "worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda: None)
+    monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda *_args, **_kwargs: None)
 
 
 class TestPackHelpers:
@@ -823,6 +854,89 @@ def services(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ServiceCalls:
     monkeypatch.setattr(pack_module, "_start_docker_services", calls.start_docker)
     monkeypatch.setattr(pack_module, "_start_daemon", calls.start_daemon)
     return calls
+
+
+class TestDirtyBundledContentBeforeStopping:
+    """Pack and unpack prove the start half before they stop the daemon."""
+
+    @staticmethod
+    def _seed_dirty_template(monkeypatch: pytest.MonkeyPatch) -> None:
+        dirty = IntegrityResult(dirty_files=[_DIRTY_TEMPLATE], checked=True, source="git")
+        monkeypatch.setattr(
+            "gobby.sync.integrity.verify_bundled_integrity", lambda _install_dir: dirty
+        )
+
+    def test_pack_refuses_dirty_bundled_content_before_stopping_the_daemon(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._seed_dirty_template(monkeypatch)
+        monkeypatch.delenv(DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV, raising=False)
+
+        result = runner.invoke(pack, [str(tmp_path / "out.tar.gz")])
+
+        assert result.exit_code != 0
+        services.stop_daemon.assert_not_called()
+        services.start_daemon.assert_not_called()
+        assert _DIRTY_TEMPLATE in result.output
+        assert DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV in result.output
+
+    def test_pack_override_proceeds_past_dirty_bundled_content(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._seed_dirty_template(monkeypatch)
+        monkeypatch.setenv(DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV, "1")
+        monkeypatch.setattr(pack_module, "_do_pack", MagicMock())
+
+        result = runner.invoke(pack, [str(tmp_path / "out.tar.gz")])
+
+        assert result.exit_code == 0, result.output
+        services.stop_daemon.assert_called_once()
+        services.start_daemon.assert_called_once()
+
+    def test_unpack_refuses_dirty_bundled_content_before_stopping_the_daemon(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._seed_dirty_template(monkeypatch)
+        monkeypatch.delenv(DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV, raising=False)
+        archive = _unpack_archive(tmp_path, {"gobby/notes.txt": b"note"})
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        services.stop_daemon.assert_not_called()
+        services.start_daemon.assert_not_called()
+        assert _DIRTY_TEMPLATE in result.output
+        assert DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV in result.output
+
+    def test_unpack_clean_tree_restarts_the_daemon_it_stopped(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        archive = _unpack_archive(tmp_path, {"gobby/notes.txt": b"note"})
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code == 0, result.output
+        services.stop_daemon.assert_called_once()
+        services.start_daemon.assert_called_once()
 
 
 def _unpack_archive(tmp_path: Path, members: dict[str, bytes]) -> Path:
