@@ -22,6 +22,7 @@ import pytest
 
 from gobby.clones.git import CloneGitManager
 from gobby.clones.git import CloneStatus as GitCloneStatus
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.storage.clones import Clone, CloneStatus
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.git import get_checkout_mutation_lock
@@ -121,6 +122,10 @@ def registry(
         "gobby.mcp_proxy.tools._clones_creation.select_worktree_base",
         AsyncMock(return_value=("main", "abc123")),
     )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools._clones_creation.ensure_project_json_for_isolation", AsyncMock()
+    )
+    monkeypatch.setattr(GcodeGateway, "pin_project", AsyncMock())
     return create_clones_registry(
         clone_storage=mock_clone_storage,
         git_manager=mock_git_manager,

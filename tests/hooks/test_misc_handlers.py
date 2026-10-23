@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.code_index.gcode_gateway import GcodeGatewayError
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.sessions.compact_continuation import COMPACT_HANDOFF_MARKER_VARIABLE
@@ -76,7 +78,7 @@ class TestPostCompactHandler:
     @pytest.mark.parametrize("source", ["claude", "codex", "droid", "grok", "agy"])
     def test_resets_context_pressure_for_compacting_cli(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         source: str,
     ) -> None:
         session_manager = mock_dependencies["session_manager"]
@@ -111,7 +113,7 @@ class TestPostCompactHandler:
 
     def test_reset_pressure_is_absent_from_next_turn_guidance(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
     ) -> None:
         session_manager = mock_dependencies["session_manager"]
         session = SimpleNamespace(
@@ -145,7 +147,7 @@ class TestPostCompactHandler:
 
     def test_missing_session_is_logged_and_allowed(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         caplog.set_level(logging.WARNING, logger="test")
@@ -163,7 +165,7 @@ class TestPostCompactHandler:
 
     def test_missing_platform_session_id_is_logged_and_allowed(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         caplog.set_level(logging.WARNING, logger="test")
@@ -177,7 +179,7 @@ class TestPostCompactHandler:
 
     def test_persistence_failure_is_logged_and_allowed(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         caplog.set_level(logging.WARNING, logger="test")
@@ -320,7 +322,7 @@ class TestAcpOnlyHandlers:
 class TestPreCompactHandlerEdgeCases:
     """Test PRE_COMPACT handler edge cases."""
 
-    def test_pre_compact_updates_session_status(self, mock_dependencies: dict) -> None:
+    def test_pre_compact_updates_session_status(self, mock_dependencies: dict[str, Any]) -> None:
         """Test PRE_COMPACT updates session status to awaiting_handoff."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -337,7 +339,7 @@ class TestPreCompactHandlerEdgeCases:
         assert mock_dependencies["session_manager"].update_session_status.call_count == 1
         assert mock_dependencies["session_manager"].update_session_status.call_args is not None
 
-    def test_pre_compact_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_pre_compact_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test PRE_COMPACT handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -355,7 +357,7 @@ class TestPreCompactHandlerEdgeCases:
 class TestSubagentHandlerEdgeCases:
     """Test SUBAGENT_START and SUBAGENT_STOP edge cases."""
 
-    def test_subagent_start_with_agent_id(self, mock_dependencies: dict) -> None:
+    def test_subagent_start_with_agent_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test SUBAGENT_START logs agent_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -368,7 +370,7 @@ class TestSubagentHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_subagent_start_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_subagent_start_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test SUBAGENT_START handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -381,7 +383,7 @@ class TestSubagentHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_subagent_stop_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_subagent_stop_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test SUBAGENT_STOP handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -397,7 +399,9 @@ class TestSubagentHandlerEdgeCases:
 class TestNotificationHandlerEdgeCases:
     """Test NOTIFICATION handler edge cases."""
 
-    def test_untyped_notification_keeps_session_status(self, mock_dependencies: dict) -> None:
+    def test_untyped_notification_keeps_session_status(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         """An unrelated notification cannot create a terminal transition."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -411,7 +415,7 @@ class TestNotificationHandlerEdgeCases:
         assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
-    def test_notification_status_update_error(self, mock_dependencies: dict) -> None:
+    def test_notification_status_update_error(self, mock_dependencies: dict[str, Any]) -> None:
         """Test error updating session status is handled."""
         mock_dependencies["session_manager"].update_session_status.side_effect = Exception(
             "Update error"
@@ -441,9 +445,9 @@ class TestNotificationHandlerEdgeCases:
     )
     def test_notification_type_variants(
         self,
-        mock_dependencies: dict,
+        mock_dependencies: dict[str, Any],
         caplog: pytest.LogCaptureFixture,
-        data: dict,
+        data: dict[str, Any],
         expected_type: str,
     ) -> None:
         """Test NOTIFICATION handles different type field names."""
@@ -460,7 +464,7 @@ class TestNotificationHandlerEdgeCases:
         assert response.decision == "allow"
         assert f"NOTIFICATION ({expected_type})" in caplog.text
 
-    def test_notification_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_notification_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test NOTIFICATION handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -477,6 +481,13 @@ class TestNotificationHandlerEdgeCases:
 
 class TestWorktreeHandlers:
     """Tests for worktree creation and removal hooks."""
+
+    @pytest.fixture(autouse=True)
+    def pin_gateway(self) -> Iterator[MagicMock]:
+        """Keep worktree-create tests from running the real gcode pin."""
+        with patch("gobby.hooks.event_handlers._misc.GcodeGateway") as gateway:
+            gateway.return_value.pin_project = AsyncMock()
+            yield gateway
 
     async def test_worktree_reentry_preserves_mismatched_head(
         self, mock_dependencies: dict[str, Any], tmp_path: Path
@@ -540,7 +551,7 @@ class TestWorktreeHandlers:
         storage.create.assert_not_called()
 
     async def test_worktree_create_uses_exact_local_head(
-        self, mock_dependencies: dict, tmp_path: Path
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         from gobby.worktrees.git import WorktreeGitManager
 
@@ -717,7 +728,9 @@ class TestWorktreeHandlers:
         assert str(other) in remaining
         assert unlanded in remaining
 
-    async def test_worktree_create_returns_created_path(self, mock_dependencies: dict) -> None:
+    async def test_worktree_create_returns_created_path(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         mock_dependencies["worktree_manager"].get_by_branch.return_value = None
 
         handlers = EventHandlers(**mock_dependencies)
@@ -769,8 +782,104 @@ class TestWorktreeHandlers:
         assert mock_dependencies["worktree_manager"].create.call_count == 1
         assert mock_dependencies["worktree_manager"].create.call_args is not None
 
+    async def test_worktree_create_pins_after_marker_before_return(
+        self, mock_dependencies: dict[str, Any], pin_gateway: MagicMock
+    ) -> None:
+        mock_dependencies["worktree_manager"].get_by_branch.return_value = None
+        calls: list[tuple[str, str]] = []
+
+        async def write_marker(repo_path: str, worktree_path: str) -> None:
+            calls.append(("marker", worktree_path))
+
+        async def pin(project_root: Path) -> None:
+            calls.append(("pin", str(project_root)))
+
+        pin_gateway.return_value.pin_project.side_effect = pin
+        git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.repo_path = "/repo"
+        git_manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        )
+        git_manager.create_worktree = AsyncMock(return_value=MagicMock(success=True, message="ok"))
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "feature-auth"}, source="claude"
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.generate_worktree_path",
+                return_value="/tmp/worktrees/feature-auth",
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.copy_project_json_to_worktree", new=write_marker
+            ),
+            patch("gobby.hooks.event_handlers._misc.install_provider_hooks"),
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        assert response.decision == "allow"
+        assert response.worktree_path == "/tmp/worktrees/feature-auth"
+        assert calls == [
+            ("marker", "/tmp/worktrees/feature-auth"),
+            ("pin", "/tmp/worktrees/feature-auth"),
+        ]
+
+    async def test_worktree_create_pin_failure_rolls_back_worktree(
+        self, mock_dependencies: dict[str, Any], pin_gateway: MagicMock
+    ) -> None:
+        mock_dependencies["worktree_manager"].get_by_branch.return_value = None
+        mock_dependencies["worktree_manager"].create.return_value = MagicMock(id="wt-new")
+        pin_gateway.return_value.pin_project.side_effect = GcodeGatewayError("index unavailable")
+        git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        git_manager.get_local_commit = AsyncMock(return_value="base-sha")
+        git_manager.repo_path = "/repo"
+        git_manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        )
+        git_manager.create_worktree = AsyncMock(return_value=MagicMock(success=True, message="ok"))
+        git_manager.delete_worktree = AsyncMock()
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "feature-auth"}, source="claude"
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.generate_worktree_path",
+                return_value="/tmp/worktrees/feature-auth",
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.copy_project_json_to_worktree", new=AsyncMock()
+            ),
+            patch("gobby.hooks.event_handlers._misc.install_provider_hooks"),
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        assert response.decision == "block"
+        assert response.reason == "Cannot pin code index for 'feature-auth': index unavailable"
+        git_manager.delete_worktree.assert_awaited_once_with(
+            "/tmp/worktrees/feature-auth",
+            force=True,
+            delete_branch=True,
+            force_delete_branch=True,
+            branch_name="feature-auth",
+        )
+        mock_dependencies["worktree_manager"].delete.assert_called_once_with("wt-new")
+
     async def test_worktree_create_retains_stale_record_when_target_cleanup_fails(
-        self, mock_dependencies: dict, tmp_path: Path
+        self, mock_dependencies: dict[str, Any], tmp_path: Path
     ) -> None:
         worktree_manager = mock_dependencies["worktree_manager"]
         worktree_manager.get_by_branch.return_value = MagicMock(
@@ -892,7 +1001,7 @@ class TestWorktreeHandlers:
         mock_dependencies["worktree_manager"].create.assert_not_called()
 
     async def test_worktree_create_fails_closed_when_selected_commit_is_unavailable(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         mock_dependencies["worktree_manager"].get_by_branch.return_value = None
         handlers = EventHandlers(**mock_dependencies)
@@ -918,7 +1027,7 @@ class TestWorktreeHandlers:
         mock_dependencies["worktree_manager"].create.assert_not_called()
 
     async def test_worktree_remove_deletes_git_worktree_and_record(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         mock_dependencies["worktree_manager"].has_path_on_other_machine.return_value = False
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(
@@ -1024,7 +1133,7 @@ class TestWorktreeHandlers:
         worktree_manager.delete.assert_not_called()
 
     async def test_worktree_remove_retries_target_without_repeating_git_delete(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         worktree_manager = mock_dependencies["worktree_manager"]
         worktree_manager.has_path_on_other_machine.return_value = False
@@ -1087,7 +1196,9 @@ class TestWorktreeHandlers:
         assert worktree_manager.get_by_path.call_count == 2
         worktree_manager.delete.assert_called_once_with("wt-123")
 
-    async def test_worktree_remove_ignores_remote_record(self, mock_dependencies: dict) -> None:
+    async def test_worktree_remove_ignores_remote_record(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
         worktree_manager = mock_dependencies["worktree_manager"]
         worktree_manager.has_path_on_other_machine.return_value = True
         handlers = EventHandlers(**mock_dependencies)
@@ -1112,7 +1223,7 @@ class TestWorktreeHandlers:
 class TestPermissionRequestEdgeCases:
     """Test PERMISSION_REQUEST handler edge cases."""
 
-    def test_permission_request_with_session_id(self, mock_dependencies: dict) -> None:
+    def test_permission_request_with_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test PERMISSION_REQUEST with session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1125,7 +1236,7 @@ class TestPermissionRequestEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_permission_request_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_permission_request_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test PERMISSION_REQUEST handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1142,7 +1253,7 @@ class TestPermissionRequestEdgeCases:
 class TestAcpHandlerEdgeCases:
     """Test ACP-style handler edge cases."""
 
-    def test_before_tool_selection_with_session_id(self, mock_dependencies: dict) -> None:
+    def test_before_tool_selection_with_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test BEFORE_TOOL_SELECTION with session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1155,7 +1266,7 @@ class TestAcpHandlerEdgeCases:
 
         assert response.decision == "allow"
 
-    def test_before_tool_selection_no_session_id(self, mock_dependencies: dict) -> None:
+    def test_before_tool_selection_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test BEFORE_TOOL_SELECTION handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(

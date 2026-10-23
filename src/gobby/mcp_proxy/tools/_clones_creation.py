@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.frozen_workspace import frozen_workspace_refusal
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.git import run_to_completion
+from gobby.utils.project_context import ensure_project_json_for_isolation
 from gobby.worktrees.base_branch import WorktreeBaseError, select_worktree_base
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -143,6 +145,14 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                     "success": False,
                     "error": f"Clone failed: {result.error or result.message}",
                 }
+
+            if index_source == "local":
+                # The marker and pin land before the record, so a pin failure rolls back
+                # the clone directory through the cleanup path.
+                await ensure_project_json_for_isolation(
+                    git_manager.repo_path, clone_path, base_commit=base_commit_sha
+                )
+                await GcodeGateway().pin_project(Path(clone_path))
 
             # Store clone record
             clone = ctx.clone_storage.create(
