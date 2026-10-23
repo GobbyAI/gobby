@@ -90,13 +90,26 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         sandbox_policy_hash: str | None = None,
         title_source: str | None | UnsetType = UNSET,
         workspace_path: str | None = None,
+        routed_machine_id: str | None = None,
     ) -> Session:
-        """Register a session or return the existing (external_id, source, project) row."""
-        machine_id = require_local_machine_id(
-            machine_id,
-            resource_kind="session",
-            resource_id=external_id,
-        )
+        """Register a session or return the existing (external_id, source, project) row.
+
+        A session on another machine is registered only when the caller names that machine
+        as ``routed_machine_id``; without it the session must belong to this machine.
+        """
+        if routed_machine_id is None:
+            machine_id = require_local_machine_id(
+                machine_id,
+                resource_kind="session",
+                resource_id=external_id,
+            )
+        elif machine_id != routed_machine_id:
+            raise MachineOwnershipMismatchError(
+                resource_kind="session",
+                resource_id=external_id,
+                owner_machine_id=routed_machine_id,
+                current_machine_id=str(machine_id),
+            )
         now = utc_now()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID

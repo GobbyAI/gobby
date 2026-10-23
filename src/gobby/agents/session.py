@@ -63,6 +63,9 @@ class ChildSessionConfig:
     workspace_path: str | None = None
     """Canonical spawn-time workspace path persisted on the child session."""
 
+    routed_machine_id: str | None = None
+    """Target machine a remote spawn routes this child session to; None for local spawns."""
+
 
 class ChildSessionManager:
     """
@@ -192,6 +195,7 @@ class ChildSessionManager:
             is_local=config.is_local,
             sandbox_enabled=config.sandbox_enabled,
             workspace_path=config.workspace_path,
+            routed_machine_id=config.routed_machine_id,
         )
 
         child_id = child.id

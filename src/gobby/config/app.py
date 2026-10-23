@@ -462,6 +462,7 @@ class DaemonConfig(BaseModel):
     max_active_agents: int = Field(
         default=20,
         ge=1,
+        le=1000,
         description="Maximum active agents per project.",
     )
     clones_dir: str = Field(

@@ -236,6 +236,7 @@ class SessionManager(
         agent_depth: int = 0,
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
+        routed_machine_id: str | None = None,
     ) -> str:
         """
         Register new session with local storage.
@@ -244,11 +245,12 @@ class SessionManager(
         If no persisted session can be recovered, returns an empty string so
         callers do not inject an ephemeral wrapper ID into later hooks.
         """
-        machine_id = require_local_machine_id(
-            machine_id,
-            resource_kind="session",
-            resource_id=external_id,
-        )
+        if routed_machine_id is None:
+            machine_id = require_local_machine_id(
+                machine_id,
+                resource_kind="session",
+                resource_id=external_id,
+            )
         try:
             session = self.register(
                 external_id=external_id,
@@ -265,6 +267,7 @@ class SessionManager(
                 is_local=is_local,
                 sandbox_enabled=sandbox_enabled,
                 workspace_path=project_path,
+                routed_machine_id=routed_machine_id,
             )
 
             session_id = session.id
