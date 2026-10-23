@@ -103,15 +103,19 @@ async def kill_terminal(
             raise TerminalKillUnprovenError(
                 f"Terminal {current.id} is still present after terminate"
             )
-        if current.state == "pending":
-            # No owner holds it (checked above), so the proven kill settles this attempt.
-            return await asyncio.to_thread(
-                terminals.fail_pending_attempt,
-                current.id,
-                attempt_generation=current.attempt_generation,
-                attempt_started_at=current.attempt_started_at,
-            )
-        return await asyncio.to_thread(terminals.mark_exited, current.id)
+        return await settle_proven_exit(terminals, current)
+
+
+async def settle_proven_exit(terminals: TerminalStore, current: Terminal) -> Terminal | None:
+    """Settle a row whose process is proven gone; the caller holds its settle_lock."""
+    if current.state == "pending":
+        return await asyncio.to_thread(
+            terminals.fail_pending_attempt,
+            current.id,
+            attempt_generation=current.attempt_generation,
+            attempt_started_at=current.attempt_started_at,
+        )
+    return await asyncio.to_thread(terminals.mark_exited, current.id)
 
 
 async def terminate_terminal(
