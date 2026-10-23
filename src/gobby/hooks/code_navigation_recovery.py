@@ -286,6 +286,10 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
     segments = metadata.get("canonical_code_navigation_segments")
     if not isinstance(segments, list):
         segments = [dict(metadata)] if metadata.get("canonical_code_navigation_action") else []
+    if not segments:
+        # Non-navigation events read no root, cwd, or checkout.
+        metadata["canonical_code_navigation_segments"] = segments
+        return
     root, cwd = current_project_root(data), current_tool_cwd(data)
     # Tool workdir overrides resolve targets, but do not change the session's
     # admitted gcode overlay. Managed principals retain the primary checkout,

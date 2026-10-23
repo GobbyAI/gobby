@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from gobby.hooks.checkout_reads import node_origin, path_facts
 from gobby.paths import get_gobby_home
 from gobby.providers import provider_metadata
 from gobby.utils.project_context import find_project_root
@@ -43,6 +44,12 @@ def apply_path_scope_metadata(
     paths: Sequence[str],
 ) -> None:
     """Annotate canonical metadata with current-project path scope."""
+    if metadata.get("canonical_tool_kind") != "write" and not metadata.get(
+        "canonical_code_navigation_action"
+    ):
+        # Only writes and code navigation read the project root or cwd; other
+        # events must not touch a node checkout they never need.
+        return
     project_root = current_project_root(event_data)
     cwd = current_tool_cwd(event_data)
 
@@ -119,6 +126,8 @@ def current_project_root(event_data: Mapping[str, Any]) -> Path | None:
     cwd = current_tool_cwd(event_data)
     if cwd is None:
         return None
+    if node_origin():
+        return Path(path_facts((), cwd=str(cwd)).root)
     try:
         return find_project_root(cwd)
     except (OSError, RuntimeError):
@@ -172,6 +181,8 @@ def code_navigation_may_touch_project(
 
 def _is_project_managed_path(path: Path, project_root: Path | None) -> bool:
     """Classify one canonical path against the active project and its worktrees."""
+    if node_origin():
+        return path_facts([str(path)]).files[0].kind != "outside"
     if project_root is not None and _is_relative_to(path, project_root):
         return True
     if _is_temp_agent_scratchpad_path(path):
@@ -192,6 +203,9 @@ def _shares_git_repository(path: Path, project_root: Path) -> bool:
 
 def _git_common_dir(path: Path) -> Path | None:
     """Resolve a checkout's Git common dir without spawning a subprocess."""
+    if node_origin():
+        git_common_dir = path_facts([str(path)]).files[0].git_common_dir
+        return None if git_common_dir is None else Path(git_common_dir)
     start = path if path.is_dir() else path.parent
     for directory in (start, *start.parents):
         marker = directory / ".git"
@@ -218,6 +232,9 @@ def _git_common_dir(path: Path) -> Path | None:
 
 def checkout_root(path: Path) -> Path | None:
     """Return the nearest enclosing checkout: a directory holding a `.git` dir or file."""
+    if node_origin():
+        root = path_facts([str(path)]).files[0].checkout_root
+        return None if root is None else Path(root)
     start = path if path.is_dir() else path.parent
     return next((d for d in (start, *start.parents) if (d / ".git").exists()), None)
 
@@ -242,6 +259,12 @@ def _linked_git_dir(marker: Path) -> Path | None:
 def resolve_tool_path(path: Any, cwd: Path | None) -> Path | None:
     if not isinstance(path, str) or not path.strip():
         return None
+    if node_origin():
+        # The node expands `~` and resolves links on its own disk; the hub never rewrites the path.
+        if cwd is None and not path.startswith(("/", "~")):
+            return None
+        fact = path_facts([path], cwd=None if cwd is None else str(cwd)).files[0]
+        return Path(fact.resolved)
     try:
         candidate = Path(path).expanduser()
     except RuntimeError:
@@ -256,6 +279,9 @@ def resolve_tool_path(path: Any, cwd: Path | None) -> Path | None:
 def _resolve_base_dir(path: Any) -> Path | None:
     if not isinstance(path, str) or not path.strip():
         return None
+    if node_origin():
+        # The node's cwd and project path stay as sent; a hub symlink must not rewrite them.
+        return Path(path)
     try:
         return Path(path).expanduser().resolve(strict=False)
     except RuntimeError:

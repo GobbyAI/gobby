@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 from gobby.providers.registry import provider_metadata
@@ -53,6 +54,38 @@ def _provider_user_directory(provider: str | None) -> str | None:
     )
 
 
+def _provider_user_directories() -> tuple[str, ...]:
+    return tuple(dict.fromkeys(metadata.user_directory for metadata in provider_metadata()))
+
+
+def _local_provider_roots(home: Path) -> dict[str, Path] | None:
+    roots: dict[str, Path] = {}
+    for user_directory in _provider_user_directories():
+        root = _resolve_path(home / user_directory)
+        if root is None:
+            return None
+        roots[user_directory] = root
+    return roots
+
+
+def _given_provider_roots(
+    provider_roots: Mapping[str, str | Path] | None,
+) -> dict[str, Path] | None:
+    if provider_roots is None:
+        return None
+    roots: dict[str, Path] = {}
+    for user_directory in _provider_user_directories():
+        value = provider_roots.get(user_directory)
+        if value is None or not Path(value).is_absolute():
+            return None
+        roots[user_directory] = Path(value)
+    return roots
+
+
+def _as_resolved(path: Path) -> Path | None:
+    return path
+
+
 def is_plan_scratch_path(
     path: str,
     provider: str | None,
@@ -60,6 +93,8 @@ def is_plan_scratch_path(
     home_root: str | Path | None = None,
     temp_root: str | Path | None = None,
     posix_tmp_root: str | Path | None = _DEFAULT_POSIX_TMP_ROOT,
+    provider_roots: Mapping[str, str | Path] | None = None,
+    resolved: bool = False,
 ) -> bool:
     """Return whether *path* is an approved plan-mode scratch location.
 
@@ -67,41 +102,55 @@ def is_plan_scratch_path(
     the OS temporary directory, and resolved ``/tmp`` on POSIX. Relative
     project paths and paths that escape an approved root through symlinks or
     traversal fail closed.
+
+    With ``resolved``, *path*, every root, and every provider root were already
+    resolved on one filesystem, the node's. They are compared as given and no
+    local path is read, so a local symlink cannot change the answer.
+    ``home_root``, ``temp_root``, and a ``provider_roots`` mapping covering every
+    provider user directory are then required.
     """
     user_directory = _provider_user_directory(provider)
     if not isinstance(path, str) or user_directory is None:
         return False
+    if resolved and (home_root is None or temp_root is None):
+        return False
 
-    resolved_home = _resolve_path(Path.home() if home_root is None else Path(home_root))
+    resolve_path = _as_resolved if resolved else _resolve_path
+    resolved_home = resolve_path(Path.home() if home_root is None else Path(home_root))
     if resolved_home is None:
         return False
-    candidate = _resolve_candidate(path, resolved_home)
+    if resolved:
+        candidate = Path(path) if Path(path).is_absolute() else None
+    else:
+        candidate = _resolve_candidate(path, resolved_home)
     if candidate is None:
         return False
 
-    provider_root = _resolve_path(resolved_home / user_directory)
+    known_roots = (
+        _given_provider_roots(provider_roots) if resolved else _local_provider_roots(resolved_home)
+    )
+    if known_roots is None:
+        return False
+    provider_root = known_roots.get(user_directory)
     if provider_root is None or not provider_root.is_relative_to(resolved_home):
         return False
 
-    # Provider directories take precedence over the general temp allowance.
-    # This matters when an isolated test HOME itself lives under the OS temp
-    # directory: another provider's home must not become writable merely
-    # because it is also beneath that broader root.
-    for metadata in provider_metadata():
-        known_root = _resolve_path(resolved_home / metadata.user_directory)
-        if known_root is None or not known_root.is_relative_to(resolved_home):
-            continue
+    # Provider directories take precedence over the general temp allowance, inside
+    # HOME or not. An isolated test HOME may itself live under the OS temp directory,
+    # and an inactive provider directory may be a symlink into temp; neither may
+    # become writable merely because it is also beneath that broader root.
+    for known_root in known_roots.values():
         if candidate == known_root or candidate.is_relative_to(known_root):
             return known_root == provider_root
 
     roots: list[Path] = []
     configured_temp = Path(tempfile.gettempdir()) if temp_root is None else Path(temp_root)
-    resolved_temp = _resolve_path(configured_temp)
+    resolved_temp = resolve_path(configured_temp)
     if resolved_temp is not None:
         roots.append(resolved_temp)
 
     if posix_tmp_root is not None:
-        resolved_posix_tmp = _resolve_path(Path(posix_tmp_root))
+        resolved_posix_tmp = resolve_path(Path(posix_tmp_root))
         if resolved_posix_tmp is not None:
             roots.append(resolved_posix_tmp)
 

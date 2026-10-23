@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import PurePosixPath
 from typing import Any
 
+from gobby.hooks.checkout_reads import CheckoutReadUnavailable, node_origin, path_facts
 from gobby.providers import provider_metadata
 from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
 
@@ -555,6 +557,73 @@ def get_write_file_paths(
     return []
 
 
+def _is_node_project_plan_artifact(resolved: str, project: str | None) -> bool:
+    """Match `.gobby/plans/*.md` by components under the node's resolved project."""
+    if project is None:
+        return False
+    try:
+        relative = PurePosixPath(resolved).relative_to(project)
+    except ValueError:
+        return False
+    return (
+        len(relative.parts) >= 3
+        and relative.parts[:2] == (".gobby", "plans")
+        and relative.suffix == ".md"
+    )
+
+
+def _node_plan_write_paths_allowed(
+    paths: list[str],
+    provider: str | None,
+    artifact_path: str | None,
+    require_current_artifact: bool,
+    project_path: str | None,
+) -> bool:
+    """Plan-mode check over the node's resolved paths; the hub filesystem is never read."""
+    project = (
+        path_facts([project_path], cwd=project_path).files[0].resolved if project_path else None
+    )
+    facts = path_facts(paths, cwd=project_path)
+    # Roots and provider roots resolve on the node too; a hub link at one must not widen it.
+    provider_dirs = tuple(
+        dict.fromkeys(metadata.user_directory for metadata in provider_metadata())
+    )
+    home, temp, posix_tmp, *provider_resolved = (
+        fact.resolved
+        for fact in path_facts(
+            [
+                facts.home,
+                facts.temp_dir,
+                "/tmp",
+                *(str(PurePosixPath(facts.home) / directory) for directory in provider_dirs),
+            ],
+            cwd=project_path,
+        ).files
+    )
+    provider_roots = dict(zip(provider_dirs, provider_resolved, strict=True))
+    for fact in facts.files:
+        resolved = fact.resolved
+        if require_current_artifact:
+            if is_current_plan_artifact(resolved, artifact_path, project_path=project):
+                continue
+        elif _is_node_project_plan_artifact(resolved, project):
+            continue
+        if project is not None and PurePosixPath(resolved).is_relative_to(project):
+            return False
+        if is_plan_scratch_path(
+            resolved,
+            provider,
+            home_root=home,
+            temp_root=temp,
+            posix_tmp_root=posix_tmp,
+            provider_roots=provider_roots,
+            resolved=True,
+        ):
+            continue
+        return False
+    return True
+
+
 def plan_write_paths_allowed(
     tool_input: Any,
     provider: str | None,
@@ -568,6 +637,13 @@ def plan_write_paths_allowed(
     paths = get_write_file_paths(tool_input, event_data)
     if not paths:
         return False
+    if node_origin():
+        try:
+            return _node_plan_write_paths_allowed(
+                paths, provider, artifact_path, require_current_artifact, project_path
+            )
+        except CheckoutReadUnavailable:
+            return False
 
     for path in paths:
         if require_current_artifact:

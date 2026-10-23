@@ -334,6 +334,11 @@ def _git_option_flags(
     return flags, proven_options
 
 
+def _checkout_probe(git_cwd: str) -> Path:
+    """Node cwds stay unresolved: the node resolves its own checkout root."""
+    return Path(git_cwd) if checkout_reads.node_origin() else Path(git_cwd).resolve()
+
+
 def classify_git_mutation(
     parts: list[str], cwd: str | None, base_cwd: Path | None
 ) -> _ShellSegmentMetadata | None:
@@ -400,7 +405,7 @@ def classify_git_mutation(
             flags & {"-f", "--force", "--discard-changes", "-m", "--merge"}
         )
         head_checkout = operation == "checkout" and arguments == ["HEAD"]
-        root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
+        root = checkout_root(_checkout_probe(git_cwd)) if git_cwd and not unknown else None
         if root is None:
             if (operation == "switch" or head_checkout) and not forced and not unknown:
                 return _ShellSegmentMetadata("execute")
@@ -480,7 +485,7 @@ def classify_git_mutation(
         else (set(), True)
     )
     if operation == "restore" and not proven_restore_options:
-        root = checkout_root(Path(git_cwd).resolve()) if git_cwd and not unknown else None
+        root = checkout_root(_checkout_probe(git_cwd)) if git_cwd and not unknown else None
         return _ShellSegmentMetadata(
             "write", paths=(str(root),) if root else (), repo_mutation=True
         )
@@ -498,7 +503,7 @@ def classify_git_mutation(
         if unknown:
             return _ShellSegmentMetadata("write", repo_mutation=True)
         if operation == "restore" and "--pathspec-from-file" in restore_flags:
-            root = checkout_root(Path(git_cwd).resolve()) if git_cwd else None
+            root = checkout_root(_checkout_probe(git_cwd)) if git_cwd else None
             return _ShellSegmentMetadata(
                 "write", paths=(str(root),) if root else (), repo_mutation=True
             )
