@@ -12,8 +12,7 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, fit_additional_context
-from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
-from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.templates import TemplateEngine
 
@@ -111,35 +110,6 @@ def test_missing_or_cleared_policy_keeps_the_reporter_role_and_reports_the_gap()
     assert cleared_prompt == default_prompt
     assert "You own the scheduled status" in cleared_prompt
     assert "mark missing policy as a source gap" in cleared_prompt
-
-
-def test_team_lane_passes_assignment_inputs_to_each_spawn() -> None:
-    path = get_bundled_agents_path().parent / "pipelines" / "team-lane.yaml"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(lane="03", lane_epic="project#42", first_job="Audit routing")
-    context = {
-        "inputs": inputs,
-        "steps": {"guard": {"output": {"worktree": "resolved-worktree"}}},
-        "invocation_id": "assignment-run",
-        "_string_inputs": frozenset(
-            name for name, spec in definition.inputs.items() if spec.get("type") == "string"
-        ),
-    }
-    renderer = StepRenderer(TemplateEngine())
-    spawns = [step.mcp for step in definition.steps if step.mcp and step.mcp.tool == "spawn_agent"]
-    assert len(spawns) == 5
-    for spawn in spawns:
-        assert spawn is not None and spawn.arguments is not None
-        rendered = renderer.render_mcp_arguments(
-            {"seat_context": spawn.arguments["seat_context"]}, context, drop_none=True
-        )
-        assert rendered["seat_context"] == {
-            "lane": "03",
-            "lane_epic": "project#42",
-            "worktree": "resolved-worktree",
-            "first_job": "Audit routing",
-        }
 
 
 def test_project_policy_lane_inventory_and_role_guidance_stay_queryable() -> None:

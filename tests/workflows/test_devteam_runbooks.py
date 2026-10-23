@@ -152,6 +152,10 @@ def test_runbook_seat_catalogues() -> None:
         assert arguments["project_path"] == "${{ inputs.project_path }}"
         assert "task_id" not in arguments
         assert "Support" in str(arguments["placement"]), seat
+        # An idle-step seat goes idle instead of re-arming an expiring wait (#24405).
+        idle = seat == "consolidator"
+        assert ("go idle as your consolidate step directs" in arguments["prompt"]) == idle, seat
+        assert ("wait_for_coordination" in arguments["prompt"]) != idle, seat
     for seat, condition in _conditions(support).items():
         assert f"'{seat}' in steps.guard.output.launch" in (condition or ""), seat
     for name in runbooks:

@@ -220,7 +220,7 @@ catalogue is pinned by
 | `reporter` | Short-lived spawned run that drafts the 30-minute operator status and ends |
 | `archivist` | Maintains the operational digest |
 | `log-monitor` | Monitors health and admits heavy work and close reviews |
-| `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to the Orchestrator and Log Monitor. `team-coordination` accepts the live Log Monitor ref through `metrics_monitor_log_monitor` |
+| `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to the Orchestrator and Log Monitor |
 | `inbox-manager` | Consolidates lane reports for the Orchestrator |
 | `consolidator` | Proposes task bundles, stale-item retirement and lane moves to the Orchestrator; inspects tasks read-only and excludes protected triage and plan-expanded subtrees |
 

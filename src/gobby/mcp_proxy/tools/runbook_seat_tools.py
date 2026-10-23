@@ -6,7 +6,6 @@ from dataclasses import asdict
 from typing import Any
 
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
-from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -38,32 +37,20 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "{name, title, agent}. Refuses when the same runbook is still launching for the "
             "same project in the same workspace on the same machine, or when a seat's agent "
             "definition is missing or disabled. If supplied, report_to must be a nonempty "
-            "session ref; require_report_to rejects omission without lane inference. "
+            "session ref; require_report_to rejects omission. "
             "launch names the seats to start; skip_live_seats leaves out each seat whose "
             "agent already runs on this machine with a live session in this project and "
             "maps it to that session under live. tab_title sets tab_exists for that tab of "
-            "the workspace. "
-            "For team-lane, lane resolves omitted report_to from the one running "
-            "lane-manager whose run recorded that lane, and omitted workspace, lane_pane and "
-            "worktree from live state, and omitted lane_columns and "
-            "lane_rows from the gclient window showing the workspace; explicit values, "
-            "names and UUIDs override. Launches without a developer seat require worktree=. "
-            "Ambiguous state refuses with candidates. On success it returns the checked "
-            "seats and resolved launch inputs."
+            "the workspace. On success it returns the checked seats."
         ),
         read_only=True,
     )
     def check_runbook_seats_tool(
         requested: str,
         catalogue: list[dict[str, Any]],
-        workspace: str | None = None,
+        workspace: str,
         report_to: str | None = None,
         require_report_to: bool = False,
-        lane: str | int | None = None,
-        worktree: str | None = None,
-        lane_pane: str | None = None,
-        lane_columns: int | None = None,
-        lane_rows: int | None = None,
         skip_live_seats: bool = False,
         tab_title: str | None = None,
     ) -> dict[str, Any]:
@@ -75,33 +62,6 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             }
         try:
             caller_session_id = ctx.resolve_session_id(caller_ref)
-            resolved: dict[str, Any] = {}
-            if lane is not None:
-                if worktree is None and "developer" not in {
-                    seat.strip() for seat in requested.split(",")
-                }:
-                    raise RunbookSeatRefusal(
-                        "team-lane launches without a developer seat require worktree="
-                    )
-                leases = ctx.lease_registry_resolver() if ctx.lease_registry_resolver else None
-                resolved = asdict(
-                    resolve_team_launch_inputs(
-                        ctx.db,
-                        caller_session_id=caller_session_id,
-                        lane=lane,
-                        workspace=workspace,
-                        report_to=report_to,
-                        worktree=worktree,
-                        lane_pane=lane_pane,
-                        lane_columns=lane_columns,
-                        lane_rows=lane_rows,
-                        viewports=None if leases is None else leases.viewports,
-                    )
-                )
-                workspace = resolved["workspace"]
-                report_to = resolved["report_to"]
-            if workspace is None:
-                raise RunbookSeatRefusal("workspace is required without a lane")
             admitted = check_runbook_seats(
                 runbook_seat_stores(ctx.db),
                 caller_session_id=caller_session_id,
@@ -118,7 +78,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         # No "error" key on success: execute_mcp_step fails any result that carries one.
-        return {"success": True, **asdict(admitted), **resolved}
+        return {"success": True, **asdict(admitted)}
 
     @registry.tool(
         name="admit_team",

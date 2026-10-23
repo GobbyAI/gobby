@@ -333,10 +333,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # (test_cli_only_git_boundaries_are_reached_only_from_cli below).
     ("src/gobby/releases/batch.py", "_git"),
     ("src/gobby/releases/window.py", "sync_git_common_dir"),
-    # check_runbook_seats is a sync tool, so InternalToolRegistry.call runs it
-    # through asyncio.to_thread (tests/agents/test_team_launch_inputs.py
-    # test_check_runbook_seats_git_runs_off_the_event_loop).
-    ("src/gobby/agents/team_launch_inputs.py", "resolve_team_launch_inputs"),
     # Canonical shell normalization runs off the loop: HookManager and the rule
     # engine offload it, chat _fire_lifecycle and Codex approvals use
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py

@@ -601,8 +601,7 @@ class TestSyncBundledPipelines:
             "gobby-merge",
             "planning",
             "review",
-            "team-coordination",
-            "team-lane",
+            "support",
             "team-planning",
         }
 

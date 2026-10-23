@@ -22,9 +22,7 @@ from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
-REFUSAL = (
-    "worktree must resolve to exactly one candidate; candidates: lane-3-runbooks, lane-3-runbooks-2"
-)
+REFUSAL = "workspace must resolve to exactly one candidate; candidates: runbooks, runbooks-2"
 
 
 class GuardProxy:
@@ -67,7 +65,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
     proxy = GuardProxy(registry)
     guard = PipelineDefinition(
         name="guard-pipeline",
-        inputs={"lane": {"type": "string", "default": "3"}},
+        inputs={"workspace": {"type": "string", "default": "3"}},
         steps=[
             PipelineStep(
                 id="guard",
@@ -77,7 +75,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
                     arguments={
                         "requested": "developer",
                         "catalogue": [],
-                        "lane": "${{ inputs.lane }}",
+                        "workspace": "${{ inputs.workspace }}",
                     },
                 ),
             )
@@ -86,7 +84,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
     if not refused:
         assert guard.steps[0].mcp is not None
         assert guard.steps[0].mcp.arguments is not None
-        guard.steps[0].mcp.arguments["lane"] = 3
+        guard.steps[0].mcp.arguments["workspace"] = 3
     pipeline = guard
     loader = AsyncMock()
     if mode == "nested":
@@ -128,7 +126,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
         with (
             caplog.at_level(logging.WARNING, logger="gobby"),
             patch(
-                "gobby.mcp_proxy.tools.runbook_seat_tools.resolve_team_launch_inputs",
+                "gobby.mcp_proxy.tools.runbook_seat_tools.check_runbook_seats",
                 side_effect=RunbookSeatRefusal(reason),
             ),
         ):
@@ -164,7 +162,7 @@ async def test_guard_logging_preserves_refusal_and_real_failure(
         assert primary.startswith("WARNING ") and REFUSAL in primary
     else:
         assert any(r.levelno == logging.ERROR and r.exc_info for r in records)
-        assert "Invalid type for parameter 'lane'" in errors_path.read_text()
+        assert "Invalid type for parameter 'workspace'" in errors_path.read_text()
         assert "Traceback" in errors_path.read_text()
     assert any(
         call.kwargs.get("status") == ExecutionStatus.FAILED

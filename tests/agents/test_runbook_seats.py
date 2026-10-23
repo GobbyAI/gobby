@@ -669,15 +669,14 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
 
 
 @pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
-def test_team_lane_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
-    """Outside lane inference, report targets still require explicit valid input."""
-    path = get_bundled_pipelines_path() / "team-lane.yaml"
+def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
+    """The DevTeam guard requires an explicit, valid report target."""
+    path = get_bundled_pipelines_path() / "devteam.yaml"
     definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
-        lane="3",
         workspace=env.workspace_id,
         seats="developer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,
@@ -685,8 +684,6 @@ def test_team_lane_guard_validates_rendered_report_target(env: _Env, report_to: 
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
         guard.arguments, {"inputs": inputs, "steps": {}}, drop_none=True
     )
-    # The lane resolver has its own integration tests; isolate explicit report validation.
-    arguments.pop("lane")
     _install_agent(env.db, "developer", env.project_id)
     caller = _pipeline_child(env)
     registry = create_agents_registry(
