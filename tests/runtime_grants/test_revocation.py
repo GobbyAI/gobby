@@ -166,7 +166,7 @@ def test_credential_revoke_is_the_production_revocation_path(tmp_path: Path) -> 
         runtime_root=tmp_path,
     )
     manager.bind_grant_revocations(store)
-    outcome = manager.revoke(execution_id, generation=3, reason="operator-forced")
+    outcome = manager.revoke(execution_id, reason="operator-forced")
     assert outcome.completed is True
     assert outcome.revoked_count == 1
 
@@ -177,7 +177,6 @@ def test_credential_revoke_is_the_production_revocation_path(tmp_path: Path) -> 
     interactive = manager.revoke_interactive(
         deployment_token=DEPLOYMENT_TOKEN,
         project_id=project_id,
-        generation=3,
         reason="operator-forced",
     )
     assert interactive.completed is True
