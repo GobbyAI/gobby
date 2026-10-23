@@ -23,7 +23,7 @@ pub(crate) use lifecycle::refresh_communities;
 pub(crate) use local_imports::{
     LocalImportRepair, resolve_project_local_import_calls, resolve_project_local_import_inheritance,
 };
-pub use pipeline::index_files;
+pub use pipeline::{index_files, index_files_for_freshness};
 pub(crate) use timing::IndexTimings;
 pub use types::{
     CommunityRefreshReport, IndexDegradation, IndexDurations, IndexOptions, IndexOutcome,

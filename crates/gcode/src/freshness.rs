@@ -101,7 +101,7 @@ fn degraded_detail(error: &anyhow::Error) -> String {
 }
 
 fn refresh_files(ctx: &Context, explicit_files: Vec<PathBuf>) -> anyhow::Result<()> {
-    api::index_files(
+    api::index_files_for_freshness(
         api::IndexRequest {
             project_root: ctx.project_root.clone(),
             path_filter: None,
@@ -253,6 +253,10 @@ impl Drop for FreshnessGuard {
         unsafe { std::env::remove_var(INFLIGHT_ENV) };
     }
 }
+
+#[cfg(test)]
+#[path = "freshness/bounded_refresh_tests.rs"]
+mod bounded_refresh_tests;
 
 #[cfg(test)]
 mod tests {

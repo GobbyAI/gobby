@@ -29,6 +29,18 @@ use super::util::{
     unsupported_file_types,
 };
 
+/// `index_files` for the freshness refresh: the same pipeline on a connection
+/// bounded by `db::connect_freshness_readwrite`, so a row held by another
+/// session fails the refresh instead of blocking it indefinitely.
+pub fn index_files_for_freshness(
+    request: IndexRequest,
+    ctx: &Context,
+    options: IndexOptions<'_>,
+) -> anyhow::Result<IndexOutcome> {
+    let mut conn = db::connect_freshness_readwrite(&ctx.database_url)?;
+    index_files_with_connection(&mut conn, request, ctx, options)
+}
+
 pub fn index_files(
     request: IndexRequest,
     ctx: &Context,
