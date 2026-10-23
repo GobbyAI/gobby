@@ -133,7 +133,7 @@ async fn exchange(frame_socket: &Path, request: impl FnOnce(&str) -> Value) -> i
     let token = std::fs::read_to_string(&token_path)?.trim().to_string();
     let id = uuid::Uuid::new_v4().to_string();
     let round_trip = async {
-        let mut stream = BufReader::new(UnixStream::connect(&socket).await?);
+        let mut stream = BufReader::new(crate::frame_source::connect_host_control(&socket).await?);
         let hello = json!({
             "control_token": token,
             "id": format!("hello-{id}"),
