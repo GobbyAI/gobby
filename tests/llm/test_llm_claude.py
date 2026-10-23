@@ -326,6 +326,42 @@ class TestRetryAsync:
         assert retry_calls[0][0] == 0
         assert retry_calls[1][0] == 1
 
+    @pytest.mark.asyncio
+    async def test_retry_if_replaces_default_classifier(self) -> None:
+        """A caller predicate decides retry, replacing the default transient check."""
+        from gobby.llm.claude_runtime import retry_async
+
+        call_count = 0
+
+        async def rejected() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("401 unauthorized")
+
+        with patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(RuntimeError, match="401 unauthorized"):
+                await retry_async(rejected, max_retries=3, retry_if=lambda _error: True)
+
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_retry_if_can_refuse_transient_error(self) -> None:
+        """A caller predicate that refuses a retry stops after one attempt."""
+        from gobby.llm.claude_runtime import retry_async
+
+        call_count = 0
+
+        async def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("timeout")
+
+        with patch("gobby.llm.claude_runtime.asyncio.sleep", new_callable=AsyncMock):
+            with pytest.raises(RuntimeError, match="timeout"):
+                await retry_async(flaky, max_retries=3, retry_if=lambda _error: False)
+
+        assert call_count == 1
+
 
 class TestExecuteSdkQuery:
     """Tests for SDK query execution failure classification."""
