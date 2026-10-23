@@ -102,6 +102,12 @@ pub(super) fn discover_content_gc(
                  AND fs.file_path = f.file_path
                  AND fs.content_hash = f.content_hash
            )
+           AND NOT EXISTS (
+               SELECT 1 FROM code_overlay_pins p
+               WHERE p.source_project_id = f.project_id
+                 AND p.file_path = f.file_path
+                 AND p.content_hash = f.content_hash
+           )
          GROUP BY f.id, f.project_id, f.file_path, f.content_hash,
                   f.graph_synced, f.vectors_synced, ps.root_path
          ORDER BY f.project_id, f.file_path, f.content_hash",
@@ -328,11 +334,21 @@ pub(super) fn content_is_unreferenced(
         "SELECT NOT EXISTS (
              SELECT 1
              FROM code_indexed_files f
-             JOIN code_indexed_file_states fs
-               ON fs.project_id = f.project_id
-              AND fs.file_path = f.file_path
-              AND fs.content_hash = f.content_hash
              WHERE f.id = $1
+               AND (
+                   EXISTS (
+                       SELECT 1 FROM code_indexed_file_states fs
+                       WHERE fs.project_id = f.project_id
+                         AND fs.file_path = f.file_path
+                         AND fs.content_hash = f.content_hash
+                   )
+                   OR EXISTS (
+                       SELECT 1 FROM code_overlay_pins p
+                       WHERE p.source_project_id = f.project_id
+                         AND p.file_path = f.file_path
+                         AND p.content_hash = f.content_hash
+                   )
+               )
          )",
         &[&db::id_param(indexed_file_id)?],
     )?
@@ -353,6 +369,12 @@ pub(super) fn delete_unreferenced_content_row(
                WHERE fs.project_id = f.project_id
                  AND fs.file_path = f.file_path
                  AND fs.content_hash = f.content_hash
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM code_overlay_pins p
+               WHERE p.source_project_id = f.project_id
+                 AND p.file_path = f.file_path
+                 AND p.content_hash = f.content_hash
            )",
         &[&db::id_param(indexed_file_id)?],
     )?;

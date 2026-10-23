@@ -1471,16 +1471,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_misc_handlers.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 79,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 26,
-      "path": "tests/hooks/test_misc_handlers.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_skill_manager.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 173,
@@ -2467,26 +2457,6 @@
       "message": "Argument \"created_at\" to \"Task\" has incompatible type \"str\"; expected \"datetime\"",
       "occurrences": 4,
       "path": "tests/mcp_proxy/tools/test_task_structured_errors.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_worktrees_create.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 533,
-      "message": "Argument \"created_at\" to \"Worktree\" has incompatible type \"str\"; expected \"datetime\"",
-      "occurrences": 2,
-      "path": "tests/mcp_proxy/tools/test_worktrees_create.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/mcp_proxy/tools/test_worktrees_create.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 106,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 12,
-      "path": "tests/mcp_proxy/tools/test_worktrees_create.py",
       "severity": "high",
       "test_name": ""
     },

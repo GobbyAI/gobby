@@ -6,6 +6,7 @@ import asyncio
 from typing import Any, Literal
 
 from gobby.agents.frozen_workspace import frozen_workspace_refusal
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import (
@@ -98,6 +99,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
             resolve_task_id=ctx.resolve_task_id,
             path_factory=generate_worktree_path,
             sidecar_writer=copy_project_json_to_worktree,
+            pinner=GcodeGateway().pin_project,
             hook_installer=install_provider_hooks,
             event_emitter=emit_worktree_event,
         )

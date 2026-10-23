@@ -71,6 +71,13 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_index_projection_cleanup_pending",
         "code_index_prune_dirty_projects",
         "code_communities",
+        "code_overlay_pins",
+    }
+    assert relations["code_overlay_pins"] == {
+        "relation": "code_overlay_pins",
+        "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"],
+        "scope_column": "overlay_project_id",
+        "machine_scope_column": "machine_id",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
     assert "columns" not in relations["projects"]
