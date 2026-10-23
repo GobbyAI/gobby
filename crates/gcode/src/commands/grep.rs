@@ -22,6 +22,22 @@ use grep_matcher::GrepMatcher;
 
 const GREP_SQL_SAFETY_LIMIT: i64 = 100_000;
 
+/// Chunk rows joined to their indexed file state; callers append `WHERE` conditions.
+const GREP_CHUNK_ROWS_SQL: &str = "SELECT c.file_path,
+                        c.line_start::BIGINT AS line_start,
+                        c.content,
+                        c.chunk_index
+                 FROM code_content_chunks c
+                 JOIN code_indexed_file_states fs
+                   ON fs.project_id = c.project_id
+                  AND fs.file_path = c.file_path
+                  AND fs.content_hash = c.content_hash
+                 JOIN code_indexed_files cf
+                   ON cf.project_id = c.project_id
+                  AND cf.file_path = c.file_path
+                  AND cf.content_hash = c.content_hash
+                 WHERE";
+
 #[derive(Clone, Copy)]
 pub struct GrepOptions<'a> {
     pub pattern: &'a str,
@@ -309,6 +325,7 @@ fn load_indexed_chunks(
                  LIMIT {limit_placeholder}",
                 conditions.join(" AND ")
             );
+            let _chunk_timings = crate::index::indexer::IndexTimings::new("grep.chunks");
             conn.query(&sql, &params)?
         }
         ProjectIndexScope::Overlay {
@@ -327,42 +344,30 @@ fn load_indexed_chunks(
             let mut conditions = vec![
                 "cf.language != $3".to_string(),
                 "fs.machine_id = $4".to_string(),
-                "(
-                    c.project_id = $1
-                    OR (
-                        c.project_id = $2
-                        AND NOT EXISTS (
-                            SELECT 1 FROM code_indexed_file_states shadow
-                            WHERE shadow.machine_id = $4
-                              AND shadow.project_id = $1
-                              AND shadow.file_path = c.file_path
-                        )
-                    )
-                )"
-                .to_string(),
             ];
             push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
             let limit = GREP_SQL_SAFETY_LIMIT + 1;
             let limit_placeholder = format!("${}", params.len() + 1);
             params.push(&limit);
+            // One branch per project: each side filters on a single project_id
+            // before the join, and only the parent branch checks for shadowing.
+            let shared = conditions.join(" AND ");
             let sql = format!(
-                "SELECT c.file_path,
-                        c.line_start::BIGINT AS line_start,
-                        c.content
-                 FROM code_content_chunks c
-                 JOIN code_indexed_file_states fs
-                   ON fs.project_id = c.project_id
-                  AND fs.file_path = c.file_path
-                  AND fs.content_hash = c.content_hash
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = c.project_id
-                  AND cf.file_path = c.file_path
-                  AND cf.content_hash = c.content_hash
-                 WHERE {}
-                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC
-                 LIMIT {limit_placeholder}",
-                conditions.join(" AND ")
+                "SELECT file_path, line_start, content, chunk_index FROM (
+                    {GREP_CHUNK_ROWS_SQL} {shared} AND c.project_id = $1
+                    UNION ALL
+                    {GREP_CHUNK_ROWS_SQL} {shared} AND c.project_id = $2
+                      AND NOT EXISTS (
+                        SELECT 1 FROM code_indexed_file_states shadow
+                        WHERE shadow.machine_id = $4
+                          AND shadow.project_id = $1
+                          AND shadow.file_path = c.file_path
+                      )
+                 ) grep_rows
+                 ORDER BY file_path ASC, line_start ASC, chunk_index ASC
+                 LIMIT {limit_placeholder}"
             );
+            let _chunk_timings = crate::index::indexer::IndexTimings::new("grep.chunks");
             conn.query(&sql, &params)?
         }
     };
