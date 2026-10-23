@@ -32,10 +32,10 @@ logger = logging.getLogger(__name__)
 def _original_close_reason(
     conn: Transaction, task_id: str, closed_at: datetime, closed_reason: str | None
 ) -> str | None:
-    """Recover the exact reason archived when migration 476 normalized a closure."""
+    """Recover the exact reason archived when migration 477 normalized a closure."""
     rows = conn.execute(
         "SELECT body FROM task_comments "
-        "WHERE task_id = %s AND author = 'migration:476' AND author_type = 'system'",
+        "WHERE task_id = %s AND author = 'migration:477' AND author_type = 'system'",
         (task_id,),
     ).fetchall()
     for row in rows:

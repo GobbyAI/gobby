@@ -10,7 +10,7 @@ ALTER TABLE tasks
 
 -- Keep the original close text before replacing the former free-form reasons.
 INSERT INTO task_comments (id, task_id, author, author_type, body)
-SELECT gen_random_uuid(), id, 'migration:476', 'system',
+SELECT gen_random_uuid(), id, 'migration:477', 'system',
        jsonb_build_object(
            'kind', 'legacy_close_reason_snapshot',
            'closed_reason', closed_reason,

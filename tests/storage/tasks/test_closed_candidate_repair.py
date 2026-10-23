@@ -88,10 +88,10 @@ def reviewed_task(
     )
     closed = manager.get_task(task.id)
     assert closed.closed_at is not None
-    # Migration 476 preserves the exact reason while normalizing the live row.
+    # Migration 477 preserves the exact reason while normalizing the live row.
     temp_db.execute(
         "INSERT INTO task_comments (id, task_id, author, author_type, body) "
-        "VALUES (%s, %s, 'migration:476', 'system', %s)",
+        "VALUES (%s, %s, 'migration:477', 'system', %s)",
         (
             str(uuid4()),
             task.id,
@@ -294,7 +294,7 @@ def test_repair_rejects_unreviewed_or_changed_state_without_writes(
         )
     elif drift == "missing_reason_snapshot":
         manager.db.execute(
-            "DELETE FROM task_comments WHERE task_id = %s AND author = 'migration:476'",
+            "DELETE FROM task_comments WHERE task_id = %s AND author = 'migration:477'",
             (review.task_id,),
         )
     before = manager.get_task(review.task_id)

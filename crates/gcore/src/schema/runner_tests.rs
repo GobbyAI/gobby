@@ -1208,7 +1208,7 @@ fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Resul
     };
     let migration_index = MIGRATIONS
         .iter()
-        .position(|migration| migration.version == 476)
+        .position(|migration| migration.version == 477)
         .expect("task state migration");
     SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
         .apply()?;
@@ -1258,7 +1258,7 @@ fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Resul
         assert_eq!(row.get::<_, String>(1), "closed");
         let body: String = client
             .query_one(
-                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:476'",
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:477'",
                 &[task_id],
             )?
             .get(0);
@@ -1280,7 +1280,7 @@ fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Resul
     );
     let snapshots: i64 = client
         .query_one(
-            "SELECT count(*) FROM task_comments WHERE author = 'migration:476'",
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:477'",
             &[],
         )?
         .get(0);
@@ -1298,7 +1298,7 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
     };
     let migration_index = MIGRATIONS
         .iter()
-        .position(|migration| migration.version == 475)
+        .position(|migration| migration.version == 476)
         .expect("review epoch migration");
     SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
         .apply()?;
@@ -1363,7 +1363,7 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
         );
         let snapshot: String = client
             .query_one(
-                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:475'",
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:476'",
                 &[&task_id],
             )?
             .get(0);
@@ -1398,7 +1398,7 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
     );
     let snapshots: i64 = client
         .query_one(
-            "SELECT count(*) FROM task_comments WHERE author = 'migration:475'",
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:476'",
             &[],
         )?
         .get(0);

@@ -1073,11 +1073,15 @@ and records `released_by_command = 'restore'`. Normal connections need no
 maintenance GUC after the command completes. The required `--database-url`
 keeps the configured origin database outside the restore mutation path.
 
-Hub backup drains run-scoped PostgreSQL logins before dumping cluster globals.
+Hub backup preserves live source seats and drains ended run-scoped PostgreSQL logins.
 The globals artifact includes the stable issuer, daemon-runtime, and capability
 roles; reserved `gobby_agent_<execution>_<generation>` login roles are excluded.
 Restore replays those stable roles, restores data, then removes any reserved
 login and retires its restored binding before the daemon can start.
+
+Cold PostgreSQL volume archives retain source password verifiers and are not
+supported for direct startup; recover through `hub-backup restore`, which uses
+password-free globals and the logical dump, then cold-drains managed roles.
 
 Qdrant, FalkorDB, and volume artifacts remain separate from this PostgreSQL
 restore command.
@@ -1097,6 +1101,9 @@ Force-revoke one managed execution after confirming its execution ID:
 ```bash
 gobby postgres force-revoke-run EXECUTION_UUID
 ```
+
+Use `gobby postgres force-revoke-run EXECUTION_UUID --release` to release the
+operator revocation and allow the run to re-handshake, confirming unless `--yes` is supplied.
 
 Use these recovery sequences:
 

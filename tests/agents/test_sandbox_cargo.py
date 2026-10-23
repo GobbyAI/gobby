@@ -385,6 +385,65 @@ def test_zsh_logout_forwards_original_directory(
     assert result.stdout == before.stdout
 
 
+@pytest.mark.unit
+def test_cargo_launcher_preserves_absolute_node_symlink(launcher: CargoLauncher) -> None:
+    versioned_node = launcher.assets / "stable-node"
+    versioned_node.symlink_to(launcher.node)
+    launcher.env.update(
+        sandbox_cargo_environment(
+            assets=launcher.assets,
+            node=versioned_node,
+            workspace=launcher.workspace,
+            target=launcher.target,
+            env=launcher.env,
+        )
+    )
+    script = (launcher.assets / "cargo-bin" / "cargo").read_text()
+    assert str(versioned_node) in script
+    result = launcher.run(["check"])
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.unit
+def test_cargo_launcher_keeps_verified_node_when_workspace_path_changes(
+    launcher: CargoLauncher,
+) -> None:
+    malicious = launcher.workspace / "bin"
+    malicious.mkdir()
+    node = malicious / "node"
+    node.write_text("#!/bin/sh\nexit 99\n")
+    node.chmod(0o700)
+    launcher.env["PATH"] = f"{malicious}{os.pathsep}{launcher.env['PATH']}"
+    trusted_node = launcher.assets / "node"
+    trusted_node.symlink_to(launcher.node)
+    launcher.env.update(
+        sandbox_cargo_environment(
+            assets=launcher.assets,
+            node=trusted_node,
+            workspace=launcher.workspace,
+            target=launcher.target,
+            env=launcher.env,
+        )
+    )
+    script = (launcher.assets / "cargo-bin" / "cargo").read_text()
+    assert str(trusted_node) in script
+    assert str(node) not in script
+    result = launcher.run(["check"])
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.unit
+def test_cargo_launcher_rejects_relative_node(launcher: CargoLauncher) -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        sandbox_cargo_environment(
+            assets=launcher.assets,
+            node=Path("node"),
+            workspace=launcher.workspace,
+            target=launcher.target,
+            env=launcher.env,
+        )
+
+
 def _checkout(root: Path, *, extra_test: bool) -> Path:
     member = root / "member"
     (member / "src").mkdir(parents=True)

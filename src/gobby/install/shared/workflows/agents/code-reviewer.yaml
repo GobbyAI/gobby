@@ -174,9 +174,9 @@ step_workflow:
       description: "Review the candidate against the current project integration head"
       status_message: |
         First call gobby-tasks:link_task_to_session(task_id=candidate_task,
-        action="reviewing") to record the assignment and admit read-only gcode
-        access to the claimant's worktree. Then call gobby-tasks:get_task on the
-        candidate.
+        action="reviewing") to record the assignment. Registered same-project
+        worktrees provide read-only gcode access independently of that link.
+        Then call gobby-tasks:get_task on the candidate.
         Review against the current project integration head with
         gcode and git diff, citing code claims through gcode evidence. A
         LAND needs your approved review step record for the exact SHA: call

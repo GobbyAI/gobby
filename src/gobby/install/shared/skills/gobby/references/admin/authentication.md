@@ -58,5 +58,8 @@ all scoped roles for that execution, with confirmation unless `--yes` is used.
 An incomplete revocation reports a pending retry rather than success. Identify
 the affected execution and coordinate its interruption before revoking access.
 
+Use `gobby postgres force-revoke-run EXECUTION_UUID --release` to release the
+operator revocation and allow the run to re-handshake, confirming unless `--yes` is supplied.
+
 See [authentication](../../../../../../../../docs/guides/admin-operations.md#authentication)
 and [HTTP authentication](../../../../../../../../docs/guides/http-endpoints.md).

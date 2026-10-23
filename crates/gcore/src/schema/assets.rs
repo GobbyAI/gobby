@@ -380,15 +380,23 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 475,
-        filename: "475_runbook_review_state.sql",
-        checksum: "6a30ab9d9a10afcd0afd1a725aa09f7a1fce7ed2b6ee67726e07ceb8e58288ff",
-        sql: include_str!("../../assets/schema/migrations/475_runbook_review_state.sql"),
+        filename: "475_recover_revoked_live_agent_principals.sql",
+        checksum: "17bfb099c85047b3427f1ed8dc828510f62eda43dc869752767425cbb7b46533",
+        sql: include_str!(
+            "../../assets/schema/migrations/475_recover_revoked_live_agent_principals.sql"
+        ),
     },
     EmbeddedMigration {
         version: 476,
-        filename: "476_runbook_task_states.sql",
-        checksum: "3d0575110e682eca894873b63c67028bfc125d0c8724ee228dc909c4cab97140",
-        sql: include_str!("../../assets/schema/migrations/476_runbook_task_states.sql"),
+        filename: "476_runbook_review_state.sql",
+        checksum: "312351fc7cd41c66d8cc3c35d9db9c06e25e09accf1faf96080cc0758754b041",
+        sql: include_str!("../../assets/schema/migrations/476_runbook_review_state.sql"),
+    },
+    EmbeddedMigration {
+        version: 477,
+        filename: "477_runbook_task_states.sql",
+        checksum: "5898d9726be534c13aa9d0764188918b38a8b37288738f21a106fdff84f0e099",
+        sql: include_str!("../../assets/schema/migrations/477_runbook_task_states.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

@@ -105,15 +105,25 @@ def scoped_roles_cmd(as_json: bool) -> None:
 
 @postgres_cli.command("force-revoke-run")
 @click.argument("managed_execution_id", type=click.UUID)
+@click.option("--release", is_flag=True, help="Allow this execution to re-handshake again.")
 @click.option("--yes", is_flag=True, help="Revoke without an interactive confirmation.")
-def force_revoke_run_cmd(managed_execution_id: UUID, yes: bool) -> None:
+def force_revoke_run_cmd(managed_execution_id: UUID, release: bool, yes: bool) -> None:
     """Force-revoke every scoped role for one managed execution."""
-    if not yes and not click.confirm(f"Force-revoke managed execution {managed_execution_id}?"):
+    action = "Release operator revocation for" if release else "Force-revoke"
+    if not yes and not click.confirm(f"{action} managed execution {managed_execution_id}?"):
         click.echo("Aborted.")
         return
     manager = _managed_credential_manager()
     try:
-        outcome = manager.revoke(managed_execution_id, reason="operator-forced")
+        if release:
+            released = manager.release_forced_revocation(managed_execution_id)
+            click.echo(
+                "Released operator revocation; the run may re-handshake."
+                if released
+                else "No operator revocation is recorded."
+            )
+            return
+        outcome = manager.force_revoke(managed_execution_id)
     finally:
         manager.close()
     if not outcome.completed:
