@@ -105,11 +105,6 @@ coordinates their queues, timeouts, and retry/backoff.
 
 All commands accept these global options unless noted:
 
-For a sibling worktree, `--project <worktree-path>` reads its branch from any checkout
-of that project; the overlay indexes changed files and serves the rest from the parent.
-Writes stay scoped to the caller's checkout. Another project or machine returns
-`code_overlay_mismatch`.
-
 | Option | Description |
 | :--- | :--- |
 | `--project <PROJECT>` | Override project root detection |
@@ -117,6 +112,11 @@ Writes stay scoped to the caller's checkout. Another project or machine returns
 | `--quiet` | Suppress warnings |
 | `--verbose` | Enable verbose output |
 | `--allow-stale` | Allow stale index data by skipping read-time freshness checks |
+
+For a sibling worktree, `--project <worktree-path>` reads its branch from any checkout
+of that project; the overlay indexes changed files and serves the rest from the parent.
+Writes stay scoped to the caller's checkout. Another project or machine returns
+`code_overlay_mismatch`.
 
 ### Index Lifecycle
 
