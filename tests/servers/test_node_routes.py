@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from collections.abc import Callable, Iterator
@@ -9,19 +10,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from gobby.agents.attention_tracker import AgentAttentionTracker
+from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.stall_classifier import StallClassifier
 from gobby.config.app import DaemonConfig
 from gobby.config.node_reports import NodeReportsConfig
-from gobby.hub import node_reports
+from gobby.hub import node_reports, remote_pane
 from gobby.hub.node_commands import CONTRACT_VERSION, ReportBody
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes import nodes
 from gobby.storage import workspace_machine_scope
+from gobby.storage.attention import AttentionStateManager, run_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
@@ -29,6 +35,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -60,7 +67,10 @@ async def _run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 
 
 def _client(
-    db: HubDatabase, monkeypatch: pytest.MonkeyPatch, config: object | None = None
+    db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    config: object | None = None,
+    monitor: object | None = None,
 ) -> TestClient:
     node_reports.node_report_inbox.cache_clear()
     auth = AuthService(lambda: db)
@@ -71,7 +81,7 @@ def _client(
         HTTPServer,
         SimpleNamespace(
             auth_service=auth,
-            services=SimpleNamespace(database=db),
+            services=SimpleNamespace(database=db, agent_lifecycle_monitor=monitor),
             run_db=_run_db,
             config=config,
         ),
@@ -679,3 +689,151 @@ def test_out_of_order_duplicate_exit_is_charged_once() -> None:
     assert not taken.snapshot.exits
     assert retained == real
     assert inbox.admit(NODE, inbox.hub_epoch, 4, probe, probe) is node_reports.Admission.ADMITTED
+
+
+API_KEY = "sk-ABCDEFGHIJKLMNOPQRSTUV"
+REDACTED_KEY = "sk-<redacted>"
+PANE_DIGEST = "ab" * 32
+
+
+def _attention_tracker(
+    db: HubDatabase, events: list[dict[str, object]]
+) -> tuple[AgentAttentionTracker, AttentionStateManager]:
+    registry = BundledDetectionRegistry()
+    config = MagicMock()
+    config.auto_enter_approval_prompts = False
+    manager = AttentionStateManager(db, event_publisher=events.append, epoch="test-epoch")
+    tracker = AgentAttentionTracker(
+        run_db=_run_db,
+        prompt_detector=PromptDetector(registry, "claude"),
+        stall_classifier=StallClassifier(registry, "claude"),
+        tmux_config=config,
+        attention_manager=manager,
+    )
+    return tracker, manager
+
+
+def _block(reason: str, excerpt: str, options: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "kind": "actionable",
+        "fingerprint": PANE_DIGEST,
+        "payload": {
+            "kind": "approval",
+            "excerpt": excerpt,
+            "options": options,
+            "fingerprint": PANE_DIGEST,
+        },
+        "dismissed": False,
+    }
+
+
+def _pane(
+    attention: dict[str, Any] | None,
+    *,
+    tail: str = "idle",
+    line: str | None = None,
+    capacity: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "attention": attention,
+        "injections": 0,
+        "composer": {"state": "draft" if line is not None else "empty", "line": line},
+        "idle": {
+            "status": "idle",
+            "turn_in_flight": False,
+            "unsubmitted_input": False,
+            "queued_message_prompt": False,
+            "capacity_message": capacity,
+            "quota": None,
+        },
+        "tail": tail,
+    }
+
+
+def test_report_pane_text_redacted(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _machines(temp_db)
+    caplog.set_level(logging.DEBUG)
+    remote_pane.remote_pane_store.cache_clear()
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    events: list[dict[str, object]] = []
+    tracker, manager = _attention_tracker(temp_db, events)
+    block = _block(API_KEY, f"excerpt {API_KEY}", [{"option": 1, "label": f"label {API_KEY}"}])
+    pane = _pane(
+        block,
+        tail=f"tail {API_KEY}",
+        line=f"draft {API_KEY}",
+        capacity=f"capacity {API_KEY}",
+    )
+    agent = {**_agent(run.run_id, run.terminal_id, None), "pane": pane}
+    monitor = SimpleNamespace(attention_tracker=tracker)
+
+    with _client(temp_db, monkeypatch, monitor=monitor) as client:
+        epoch = node_reports.node_report_inbox().hub_epoch
+        response = _post(client, "report", _report(epoch, 1, [agent]))
+        taken = node_reports.node_report_inbox().take()
+    row = manager.get(run_attention_entry_id(run.run_id))
+
+    assert response == (200, {})
+    assert row is not None
+    assert row.state == "blocked"
+    assert row.reason == REDACTED_KEY
+    assert row.payload["excerpt"] == f"excerpt {REDACTED_KEY}"
+    assert row.payload["options"] == [{"option": 1, "label": f"label {REDACTED_KEY}"}]
+    assert row.fingerprint == PANE_DIGEST
+    assert row.payload["fingerprint"] == PANE_DIGEST
+    stored = remote_pane.remote_pane_store().get(run.terminal_id)
+    assert stored is not None and stored.pane is not None
+    assert stored.pane.tail == f"tail {REDACTED_KEY}"
+    assert stored.pane.composer.line == f"draft {REDACTED_KEY}"
+    assert stored.pane.idle is not None
+    assert stored.pane.idle.capacity_message == f"capacity {REDACTED_KEY}"
+    snapshot_pane = taken[NODE].snapshot.agents[0].pane
+    assert snapshot_pane is not None
+    assert snapshot_pane.tail == f"tail {REDACTED_KEY}"
+    assert API_KEY not in repr(taken)
+    assert API_KEY not in repr(stored)
+    assert API_KEY not in repr(row)
+    assert API_KEY not in repr(events)
+    assert API_KEY not in caplog.text
+
+
+@pytest.mark.parametrize("field", ["attention", "payload"])
+def test_report_secret_fingerprint_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    field: str,
+) -> None:
+    _machines(temp_db)
+    caplog.set_level(logging.DEBUG)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    events: list[dict[str, object]] = []
+    tracker, manager = _attention_tracker(temp_db, events)
+    block = _block("approval", "Permission required", [])
+    if field == "attention":
+        block["fingerprint"] = API_KEY
+    else:
+        block["payload"]["fingerprint"] = API_KEY
+    agent = {**_agent(run.run_id, run.terminal_id, None), "pane": _pane(block)}
+    monitor = SimpleNamespace(attention_tracker=tracker)
+
+    with _client(temp_db, monkeypatch, monitor=monitor) as client:
+        epoch = node_reports.node_report_inbox().hub_epoch
+        response = _post(client, "report", _report(epoch, 1, [agent]))
+        taken = node_reports.node_report_inbox().take()
+
+    assert response == (422, {"detail": "invalid_body"})
+    assert taken == {}
+    assert manager.get(run_attention_entry_id(run.run_id)) is None
+    assert events == []
+    assert API_KEY not in caplog.text
+    assert remote_pane.remote_pane_store().get(run.terminal_id) is None

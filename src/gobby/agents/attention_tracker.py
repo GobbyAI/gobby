@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
@@ -13,6 +14,17 @@ if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.sessions import SessionManager
+
+
+@dataclass(frozen=True)
+class AttentionClassification:
+    """One pane's attention block, from a local classification or a node report."""
+
+    reason: str
+    kind: AttentionKind
+    fingerprint: str
+    payload: dict[str, object]
+    dismissed: bool
 
 
 class AgentAttentionTracker:
@@ -124,6 +136,12 @@ class AgentAttentionTracker:
             fingerprint=prompt_payload.fingerprint,
             payload=prompt_payload.to_payload(),
         )
+
+    def classify(self, run: AgentRun, pane_output: str) -> AttentionClassification | None:
+        raise NotImplementedError
+
+    async def apply(self, run: AgentRun, classification: AttentionClassification | None) -> None:
+        raise NotImplementedError
 
     async def clear_after_injection(self, run: AgentRun) -> None:
         """Clear the exact attention episode resolved by successful injection."""
