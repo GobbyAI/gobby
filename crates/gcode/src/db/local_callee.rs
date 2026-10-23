@@ -37,13 +37,14 @@ const MODULE_ROOT_FILES: &[&str] = &[
 pub fn resolve_local_callee_symbol_id(
     conn: &mut impl GenericClient,
     project_id: &str,
+    machine_id: &str,
     target_files: &[String],
     name: &str,
 ) -> anyhow::Result<Option<String>> {
     if target_files.is_empty() || name.is_empty() {
         return Ok(None);
     }
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let exact = query_exact_file_candidates(conn, &machine_id, &project_id, target_files, name)?;
     if !exact.is_empty() {
@@ -66,6 +67,7 @@ pub fn resolve_local_callee_symbol_id(
 pub fn resolve_local_type_member_symbol_id(
     conn: &mut impl GenericClient,
     project_id: &str,
+    machine_id: &str,
     target_files: &[String],
     qualifier: &str,
     name: &str,
@@ -73,7 +75,7 @@ pub fn resolve_local_type_member_symbol_id(
     if target_files.is_empty() || qualifier.is_empty() || name.is_empty() {
         return Ok(None);
     }
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let qualified_name = format!("{qualifier}::{name}");
     let sql = format!(

@@ -204,7 +204,7 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
     index_lock::with_exclusive_project_lock(ctx, || {
         let mut lifecycle = lifecycle_from_context(ctx)?;
         let mut conn = db::connect_readwrite(&ctx.database_url)?;
-        let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
+        let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id, &ctx.machine_id)?;
         db::reset_vectors_sync_for_project(&mut conn, &ctx.project_id)?;
         db::mark_project_vector_sync_attempted(&mut conn, &ctx.project_id)?;
         let symbols = code_symbols::fetch_symbols_for_project(&mut conn, &ctx.project_id)?;

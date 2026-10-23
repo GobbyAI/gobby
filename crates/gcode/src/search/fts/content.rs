@@ -113,7 +113,7 @@ pub fn search_content_visible(
 }
 
 fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
-    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
+    let Some(machine_id) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
         return "SELECT NULL::uuid AS project_id, NULL::text AS file_path,
                        NULL::text AS content_hash
                 WHERE FALSE"

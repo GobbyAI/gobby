@@ -436,7 +436,11 @@ fn resolve_index_context(
             );
         }
         let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
-        crate::config::validate_parent_code_index(&mut conn, &identity.index_scope)?;
+        crate::config::validate_parent_code_index(
+            &mut conn,
+            &identity.index_scope,
+            &ctx.machine_id,
+        )?;
         Ok((
             clone_context(ctx, target_root, identity.project_id, identity.index_scope),
             target_filter,

@@ -60,15 +60,15 @@ impl<'a, C> PostgresCodeFactSink<'a, C> {
         project_id: &str,
         root_path: &Path,
         mode: api::IndexWriteMode,
+        machine_id: &str,
     ) -> anyhow::Result<Self>
     where
         C: GenericClient,
     {
-        let machine_id = gobby_core::machine::read_local_machine_id()?;
-        api::upsert_project_seed(conn, &machine_id, project_id, root_path, mode)?;
+        api::upsert_project_seed(conn, machine_id, project_id, root_path, mode)?;
         Ok(Self {
             conn,
-            machine_id,
+            machine_id: machine_id.to_string(),
             root_path: root_path.to_path_buf(),
             mode,
         })

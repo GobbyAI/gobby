@@ -1215,7 +1215,7 @@ fn sync_graph_file_projects_inheritance_facts() {
     assert_eq!(facts.inheritance.len(), 1);
 
     fn assert_active_imports_reader<C: postgres::GenericClient>(
-        _reader: fn(&mut C, &str) -> anyhow::Result<Vec<crate::models::ImportRelation>>,
+        _reader: fn(&mut C, &str, &str) -> anyhow::Result<Vec<crate::models::ImportRelation>>,
     ) {
     }
     assert_active_imports_reader::<postgres::Client>(crate::db::read_active_imports);

@@ -74,6 +74,11 @@ pub(super) fn project_uuid_or_invisible(project_id: &str) -> Option<Uuid> {
     db::id_param(project_id).ok()
 }
 
+/// Parse a machine id for binding against a uuid column, as `project_uuid_or_invisible`.
+pub(crate) fn machine_uuid_or_invisible(machine_id: &str) -> Option<Uuid> {
+    db::id_param(machine_id).ok()
+}
+
 pub(super) fn local_machine_uuid() -> anyhow::Result<Uuid> {
     let machine_id = gobby_core::machine::read_local_machine_id()?;
     db::id_param(&machine_id)
@@ -140,7 +145,7 @@ pub(crate) fn local_active_content_hash(
 }
 
 pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
-    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+    let Some(machine_id) = machine_uuid_or_invisible(&ctx.machine_id) else {
         return false;
     };
     match &ctx.index_scope {

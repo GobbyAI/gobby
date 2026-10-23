@@ -133,8 +133,9 @@ fn run_locked(ctx: &Context, started: Instant) -> anyhow::Result<RepairOutput> {
         });
     }
 
-    let calls = resolve_project_local_import_calls(&mut conn, &ctx.project_id)?;
-    let inheritance = resolve_project_local_import_inheritance(&mut conn, &ctx.project_id)?;
+    let calls = resolve_project_local_import_calls(&mut conn, &ctx.project_id, &ctx.machine_id)?;
+    let inheritance =
+        resolve_project_local_import_inheritance(&mut conn, &ctx.project_id, &ctx.machine_id)?;
     let promotion_owners = promotion_owners(&calls, &inheritance);
     let hub_files = api::graph_synced_files(&mut conn, &machine_id, &ctx.project_id)?;
     let (drift, graph_reconcile) = match read_project_file_hashes(ctx)? {

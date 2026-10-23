@@ -134,7 +134,7 @@ fn freshness_from_lock(result: IndexLockResult<Result<(), String>>) -> Freshness
 /// same way (`--allow-stale` still bypasses it upstream).
 fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = db::id_param(&ctx.machine_id)?;
 
     // Never indexed (or no recorded timestamp): do not gate; let the existing
     // refresh path build the first index.
@@ -144,7 +144,9 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     };
 
     let indexed_paths = match &ctx.index_scope {
-        ProjectIndexScope::Single => db::list_indexed_file_paths(&mut conn, &ctx.project_id)?,
+        ProjectIndexScope::Single => {
+            db::list_indexed_file_paths(&mut conn, &ctx.project_id, &ctx.machine_id)?
+        }
         ProjectIndexScope::Overlay {
             parent_project_id, ..
         } => {

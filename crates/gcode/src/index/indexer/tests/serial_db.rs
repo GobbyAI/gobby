@@ -58,8 +58,8 @@ fn foreign_machine_index_writes_only_that_machine() -> anyhow::Result<()> {
             &root.path().to_string_lossy(),
         ],
     )?;
-    write_file(&root.path().join("lib.rs"), "pub fn foreign_index() {}\n");
-    write_file(&root.path().join("README.md"), "foreign machine content\n");
+    write_file(root.path(), "lib.rs", b"pub fn foreign_index() {}\n");
+    write_file(root.path(), "README.md", b"foreign machine content\n");
     let ctx = machine_context(&database_url, &project, root.path(), &foreign);
     for explicit_files in [Vec::new(), vec![root.path().join("lib.rs")]] {
         index_files(
@@ -128,13 +128,13 @@ fn status_reads_the_context_machine() -> anyhow::Result<()> {
     };
     seed_primary_checkout(&mut conn, &project, root.path())?;
     crate::test_env::seed_test_machine(&mut conn, &foreign).map_err(anyhow::Error::msg)?;
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&test_uuid_param(&project)],
+    )?;
     let report = || -> anyhow::Result<serde_json::Value> {
         let output = std::process::Command::new(std::env::current_exe()?)
-            .args([
-                "--exact",
-                concat!(module_path!(), "::status_reads_the_context_machine"),
-                "--nocapture",
-            ])
+            .args(["status_reads_the_context_machine", "--nocapture"])
             .env(
                 PAYLOAD,
                 serde_json::to_string(&[&database_url, &project, &foreign])?,
@@ -1093,6 +1093,7 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
             root_path: project_root.path(),
             mode: api::IndexWriteMode::Primary,
             head_blobs: &HeadBlobs::default(),
+            machine_id: &gobby_core::machine::read_local_machine_id().expect("read machine id"),
         },
         &excludes,
         &import_context,
@@ -1297,9 +1298,14 @@ fn write_postgres_parsed_file_facts_with_root(
         source: source.to_vec(),
     };
     let mut tx = conn.transaction().expect("start parsed write transaction");
-    let mut sink =
-        PostgresCodeFactSink::new(&mut tx, project_id, root_path, api::IndexWriteMode::Overlay)
-            .expect("seed project row");
+    let mut sink = PostgresCodeFactSink::new(
+        &mut tx,
+        project_id,
+        root_path,
+        api::IndexWriteMode::Overlay,
+        &gobby_core::machine::read_local_machine_id().expect("read machine id"),
+    )
+    .expect("seed project row");
     write_parsed_file_facts(
         &mut sink,
         project_id,
