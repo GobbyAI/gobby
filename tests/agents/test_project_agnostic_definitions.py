@@ -139,8 +139,30 @@ def test_project_policy_root_inventory_and_role_guidance_stay_queryable() -> Non
         assert root["epic"].startswith("#")
         assert root["description"]
     assert policy["integration_branch"] == "0.5.0"
-    assert policy["launch_defaults"]["team-lane"]["developer_provider"] == "claude"
+    assert policy["release_cadence_minutes"] == 120
+    assert {"heavy_run_cap", "close_backlog_cap"}.isdisjoint(policy)
+    devteam = policy["launch_defaults"]["devteam"]
+    assert (devteam["reviewer_provider"], devteam["reviewer_model"]) == ("codex", "gpt-6.1-sol")
+    assert devteam["reviewer_reasoning_effort"] == "medium"
+    assert (devteam["fresh_reviewer_provider"], devteam["fresh_reviewer_model"]) == (
+        "claude",
+        "claude-opus-5-5",
+    )
+    assert devteam["fresh_reviewer_reasoning_effort"] == "xhigh"
+    support = policy["launch_defaults"]["support"]
+    for seat in ("release_manager", "triage", "archivist", "recovery_steward", "consolidator"):
+        assert support[f"{seat}_provider"]
+    assert set(policy["launch_defaults"]) == {"devteam", "support", "team-planning"}
+    pipelines = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
+    for runbook, defaults in policy["launch_defaults"].items():
+        inputs = yaml.safe_load((pipelines / f"{runbook}.yaml").read_text())["inputs"]
+        assert set(defaults) <= set(inputs), runbook
+    assert set(policy["workspace_layout"]) == {"admin", "support", "devteam", "planning"}
     assert policy["role_launch_defaults"]["expansion-qa"]["model"] == "gpt-6-luna"
+    assert "task-close-reviewer" not in policy["role_launch_defaults"]
+    assert {"log-monitor", "metrics-monitor", "researcher", "security-reviewer"} <= set(
+        policy["role_launch_defaults"]
+    )
     assert {
         "analyst",
         "architect",
