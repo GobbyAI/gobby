@@ -214,9 +214,7 @@ async def test_release_finalize_and_takeover_clear_focus() -> None:
     await registry.take_control("focus-takeover", displaced.attachment_id, takeover=False)
     assert await registry.set_focus(displaced.attachment_id, True) is True
     assert registry.focus_held("focus-takeover") is True
-    takeover = await registry.take_control(
-        "focus-takeover", successor.attachment_id, takeover=True
-    )
+    takeover = await registry.take_control("focus-takeover", successor.attachment_id, takeover=True)
     assert takeover.displaced_attachment_id == displaced.attachment_id
     assert displaced.focused is False
     assert await registry.set_focus("unknown-attachment", True) is False

@@ -10,7 +10,8 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.servers.websocket.server import WebSocketServer, _message_leaves_the_read_loop
+from gobby.servers.websocket.message_classes import _message_leaves_the_read_loop
+from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager, native_locator_key
 from gobby.terminals import TerminalRuntimeRegistry
