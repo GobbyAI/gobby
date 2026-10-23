@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.85"
+version = "0.4.86"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2607,6 +2607,8 @@ dependencies = [
  "http-body-util",
  "log",
  "openssl",
+ "postgres",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "tempfile",
@@ -2614,6 +2616,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tower-service",
+ "url",
  "uuid",
 ]
 

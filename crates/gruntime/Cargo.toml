@@ -20,12 +20,15 @@ base64 = "0.22"
 fernet = { version = "0.2.2", features = ["fernet_danger_timestamps"] }
 log = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
+rand = "0.8"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync"] }
+tokio-postgres = "0.7.18"
 axum = { version = "0.8", default-features = false }
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "postgres-pool", "route-family"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+url = "2"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
@@ -34,5 +37,5 @@ futures-util = "0.3"
 http-body-util = "0.1"
 tempfile = "3"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-postgres = "0.7.18"
+postgres = "0.19"
 tower-service = "0.3"

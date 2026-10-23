@@ -1,0 +1,898 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "loopback_direct",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          },
+          {
+            "method": "POST",
+            "name": "clear_projection",
+            "path": "/api/code-index/graph/clear"
+          },
+          {
+            "method": "POST",
+            "name": "rebuild_projection",
+            "path": "/api/code-index/graph/rebuild"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "mode": "brokered",
+          "operations": [
+            {
+              "method": "POST",
+              "name": "clear_projection",
+              "path": "/api/code-index/graph/clear"
+            },
+            {
+              "method": "POST",
+              "name": "rebuild_projection",
+              "path": "/api/code-index/graph/rebuild"
+            }
+          ]
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "remote_falkor_without_password_brokers",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "falkor.remote.example",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "falkor.remote.example",
+          "mode": "direct",
+          "password": "falkor-secret",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "falkor_secret_binding_direct",
+      "secrets": {
+        "databases.falkordb.password": "falkor-secret"
+      },
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "falkor.remote.example",
+        "databases.falkordb.password": "$secret:databases.falkordb.password",
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          },
+          {
+            "method": "POST",
+            "name": "clear_projection",
+            "path": "/api/code-index/graph/clear"
+          },
+          {
+            "method": "POST",
+            "name": "rebuild_projection",
+            "path": "/api/code-index/graph/rebuild"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "mode": "brokered",
+          "operations": [
+            {
+              "method": "POST",
+              "name": "clear_projection",
+              "path": "/api/code-index/graph/clear"
+            },
+            {
+              "method": "POST",
+              "name": "rebuild_projection",
+              "path": "/api/code-index/graph/rebuild"
+            }
+          ]
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "falkor_unresolved_password_brokers",
+      "secrets": {
+        "databases.falkordb.password": null
+      },
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "falkor.remote.example",
+        "databases.falkordb.password": "$secret:databases.falkordb.password",
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "mode": "unavailable"
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "falkor_unresolved_host_unavailable",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "${FALKOR_HOST}",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "qdrant-key",
+          "mode": "direct",
+          "url": "https://qdrant.example.com"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "qdrant_remote_with_key_direct",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": "qdrant-key",
+        "databases.qdrant.url": "https://qdrant.example.com",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          },
+          {
+            "method": "POST",
+            "name": "invalidate_projection",
+            "path": "/api/code-index/invalidate"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "mode": "brokered",
+          "operations": [
+            {
+              "method": "POST",
+              "name": "invalidate_projection",
+              "path": "/api/code-index/invalidate"
+            }
+          ]
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "qdrant_remote_without_key_brokers",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "https://qdrant.example.com",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "mode": "unavailable"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "qdrant_missing_url_unavailable",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": null,
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://[::1]:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "qdrant_ipv6_loopback_direct",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://[::1]:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [],
+        "embed": {
+          "mode": "unavailable"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "embed_unset_unavailable",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "daemon"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "daemon"
+        }
+      },
+      "name": "vision_and_voice_stt_enabled",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "ai.generation.endpoints.vision.api_base": "http://gen.example.test/v1",
+        "ai.generation.endpoints.vision.input_modalities": [
+          "text",
+          "image"
+        ],
+        "ai.generation.endpoints.vision.model": "vision-model",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": true,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": true
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "daemon"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "audio_from_openai_compatible_binding",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [
+          {
+            "api_key": null,
+            "model": "whisper-1",
+            "provider": "audio-fixture",
+            "transcription_enabled": true,
+            "url": "http://audio.example.test/v1"
+          }
+        ],
+        "voice.stt_enabled": false
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "host": "localhost",
+          "mode": "direct",
+          "password": "",
+          "port": 6379
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "api_key": "",
+          "mode": "direct",
+          "url": "http://127.0.0.1:6333"
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "stt_flag_without_voice_enabled_is_unavailable",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "ai.generation.endpoints.text.api_base": "http://gen.example.test/v1",
+        "ai.generation.endpoints.text.input_modalities": [
+          "text"
+        ],
+        "ai.generation.endpoints.text.model": "text-model",
+        "databases.falkordb.host": "localhost",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "http://127.0.0.1:6333",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": true
+      }
+    },
+    {
+      "expected": {
+        "audio_transcribe": {
+          "mode": "unavailable"
+        },
+        "broker_operations": [
+          {
+            "method": "POST",
+            "name": "embed",
+            "path": "/api/embeddings"
+          },
+          {
+            "method": "POST",
+            "name": "clear_projection",
+            "path": "/api/code-index/graph/clear"
+          },
+          {
+            "method": "POST",
+            "name": "rebuild_projection",
+            "path": "/api/code-index/graph/rebuild"
+          },
+          {
+            "method": "POST",
+            "name": "invalidate_projection",
+            "path": "/api/code-index/invalidate"
+          }
+        ],
+        "embed": {
+          "mode": "daemon"
+        },
+        "falkordb": {
+          "mode": "brokered",
+          "operations": [
+            {
+              "method": "POST",
+              "name": "clear_projection",
+              "path": "/api/code-index/graph/clear"
+            },
+            {
+              "method": "POST",
+              "name": "rebuild_projection",
+              "path": "/api/code-index/graph/rebuild"
+            }
+          ]
+        },
+        "postgres": {
+          "credential_generation": 3,
+          "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+          "mode": "direct",
+          "role_name": "gobby_grant_fixture",
+          "valid_until": 4102444800
+        },
+        "qdrant": {
+          "mode": "brokered",
+          "operations": [
+            {
+              "method": "POST",
+              "name": "invalidate_projection",
+              "path": "/api/code-index/invalidate"
+            }
+          ]
+        },
+        "text_generate": {
+          "mode": "daemon"
+        },
+        "tool_chat": {
+          "mode": "daemon"
+        },
+        "vision_extract": {
+          "mode": "unavailable"
+        }
+      },
+      "name": "remote_falkor_and_qdrant_broker_operations",
+      "secrets": {},
+      "values": {
+        "ai.embeddings.model": "nomic-embed-text",
+        "databases.falkordb.host": "falkor.remote.example",
+        "databases.falkordb.password": null,
+        "databases.falkordb.port": 6379,
+        "databases.qdrant.api_key": null,
+        "databases.qdrant.url": "https://qdrant.example.com",
+        "voice.enabled": false,
+        "voice.openai_compatible_audio": [],
+        "voice.stt_enabled": false
+      }
+    }
+  ],
+  "postgres": {
+    "credential_generation": 3,
+    "dsn": "postgresql://gobby_grant_fixture:fixture@127.0.0.1:5432/gobby?sslmode=disable",
+    "mode": "direct",
+    "role_name": "gobby_grant_fixture",
+    "valid_until": 4102444800
+  }
+}
