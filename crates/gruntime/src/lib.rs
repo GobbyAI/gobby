@@ -3,6 +3,7 @@
 
 pub mod config;
 mod grant;
+pub mod secrets;
 
 use std::path::PathBuf;
 use std::sync::Arc;
