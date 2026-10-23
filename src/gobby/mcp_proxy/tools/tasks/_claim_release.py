@@ -154,3 +154,31 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
         },
         func=release_task_claim,
     )
+    register_hand_off_task_claim(registry, ctx)
+
+
+def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
+    def hand_off_task_claim(
+        task_id: str, holder_session_ref: str, recipient_session_ref: str, reason: str
+    ) -> dict[str, Any]:
+        return {"error": "Claim hand-off is not implemented", "error_code": "not_implemented"}
+
+    registry.register(
+        name="hand_off_task_claim",
+        description=(
+            "The task's Dev Manager: move the task claim from its holder to another seat of the "
+            "same team. The holder must still own the task and have no uncommitted "
+            "task-attributed files; the transfer is atomic and recorded with the reason."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "holder_session_ref": {"type": "string"},
+                "recipient_session_ref": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "required": ["task_id", "holder_session_ref", "recipient_session_ref", "reason"],
+        },
+        func=hand_off_task_claim,
+    )

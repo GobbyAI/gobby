@@ -430,6 +430,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::*` — scope-reason: authorize same-team manager claim handoff
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: compare-and-swap owner transfer within one team
 - `src/gobby/agents/team_lifecycle.py::*` — scope-reason: team record updates merge the review seat transition instead of overwriting it
+- `src/gobby/tasks/step_records.py::*` — scope-reason: grant the Sol fixer implementation step writes at the second rejection
 - `src/gobby/agents/team_review.py`
 - `tests/agents/test_team_review_loop.py`
 
