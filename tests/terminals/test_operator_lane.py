@@ -216,11 +216,11 @@ def test_bound_operator_keystroke_reads_no_machine_while_default_executor_is_hel
     machines = MachineOwnerRows({terminal.machine_id: user_id})
 
     async def type_one_key() -> object:
-        await leases.attach(terminal.id, attachment_id="att-1")
-        taken = await leases.take_control(terminal.id, "att-1")
-        assert taken.granted
         token = bind_caller(user_id, machines)
         try:
+            await leases.attach(terminal.id, attachment_id="att-1", terminal=terminal)
+            taken = await leases.take_control(terminal.id, "att-1")
+            assert taken.granted
             return await coordinator.write(
                 WriteRequest(
                     terminal_id=terminal.id,

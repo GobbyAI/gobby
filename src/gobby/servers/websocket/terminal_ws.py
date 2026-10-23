@@ -319,6 +319,22 @@ class TerminalWsMixin(TerminalWriteMixin):
     async def _handle_terminal_detach(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")
         terminal_id = data.get("terminal_id")
+        if (
+            isinstance(attachment_id, str)
+            and self._leases().owned_attachment(attachment_id, websocket=websocket) is None
+        ):
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_detach_result",
+                    "success": False,
+                    "code": "stale_attachment",
+                    "terminal_id": terminal_id,
+                    "attachment_id": attachment_id,
+                    "request_id": data.get("request_id"),
+                },
+            )
+            return
         if isinstance(attachment_id, str):
             if attachment_id in self._proxy().attachments:
                 await self._proxy().finalize_attachment(attachment_id, "detach")
@@ -394,6 +410,14 @@ class TerminalWsMixin(TerminalWriteMixin):
             )
             return
         machine_id = require_machine_id()
+        try:
+            # Holder ids are inventory too: only the machine's owner gets any of it.
+            await run_on_operator_lane(require_machine_owned, machine_id)
+        except (NodeCommandError, psycopg.Error):
+            await self._send_json(
+                websocket, encode_page([], None, snapshot=snapshot, envelope=envelope)
+            )
+            return
         # A slow page query runs off the loop so it does not delay other clients.
         items, has_more = await asyncio.to_thread(
             manager.list_page,
@@ -478,7 +502,11 @@ class TerminalWsMixin(TerminalWriteMixin):
         declare = getattr(getattr(record, "frame", None), "declare_terminal_theme", None)
         theme = data.get("theme")
         code = None
-        if (
+        if not isinstance(attachment_id, str) or (
+            self._leases().owned_attachment(attachment_id, websocket=websocket) is None
+        ):
+            code = "stale_attachment"
+        elif (
             record is None
             or record.websocket is not websocket
             or not callable(declare)
@@ -521,6 +549,16 @@ class TerminalWsMixin(TerminalWriteMixin):
     ) -> None:
         attachment_id = data.get("attachment_id")
         if not isinstance(attachment_id, str):
+            return
+        if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "code": "stale_attachment",
+                    "attachment_id": attachment_id,
+                },
+            )
             return
         requested = int(data.get("rows_from_live_edge") or 0)
         max_rows = int(data.get("max_rows") or 0)

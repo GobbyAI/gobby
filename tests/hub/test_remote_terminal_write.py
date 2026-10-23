@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import psycopg
 import pytest
@@ -232,6 +232,56 @@ async def test_write_needs_owned_machine(node: _FakeNode) -> None:
     coordinator, _, _, unbound_id = _coordinator(REMOTE_MACHINE)
     assert isinstance(await coordinator.write(_write(unbound_id)), Delivered)
     assert len(node.sent) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["automatic", "operator"])
+async def test_bound_write_snapshot_without_owned_attachment_does_not_bypass_ownership(
+    node: _FakeNode, origin: Literal["automatic", "operator"]
+) -> None:
+    """A row snapshot exempts nothing; only a live attachment this caller created does."""
+    database = _MachineRows({REMOTE_MACHINE: TEST_USER_ID})
+    coordinator, runtime, store, terminal_id = _coordinator(REMOTE_MACHINE)
+    snapshot = store.get(terminal_id)
+    assert snapshot is not None
+    attachment_id = None
+    generation = None
+    if origin == "operator":
+        # A holder that TEST_USER attached, which OTHER_USER_ID now presents.
+        attachment_id = "owner-attachment"
+        token = bind_caller(TEST_USER_ID, database)
+        try:
+            await coordinator.lease_registry.attach(
+                terminal_id, attachment_id=attachment_id, websocket=object(), terminal=snapshot
+            )
+            await coordinator.lease_registry.take_control(terminal_id, attachment_id)
+        finally:
+            reset_caller(token)
+        generation = coordinator.lease_registry.generation(terminal_id)
+    request = WriteRequest(
+        terminal_id=terminal_id,
+        action_key="act-1",
+        origin=origin,
+        kind="text",
+        payload="ls",
+        submit=True,
+        attachment_id=attachment_id,
+        expected_lease_generation=generation,
+        idempotency_key="idem-1",
+        terminal=snapshot,
+    )
+
+    token = bind_caller(OTHER_USER_ID, database)
+    try:
+        with pytest.raises(NodeTerminalWriteError) as excinfo:
+            await coordinator.write(request)
+    finally:
+        reset_caller(token)
+
+    assert excinfo.value.code == "machine_not_owned"
+    assert excinfo.value.stage == "none"
+    assert node.sent == []
+    assert runtime.write_log == []
 
 
 @pytest.mark.asyncio

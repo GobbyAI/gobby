@@ -265,12 +265,14 @@ async def _assert_write_outcome(
 ) -> None:
     server, _, _ = _server(write_result=write_result)
     registry = server.lease_registry
-    await registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
+    websocket = MockWebSocket()
+    await registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket)
     await registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     generation = registry.generation(TERMINAL_ID)
     for seq, payload in (primed_writes or {}).items():
         admitted = registry.admit_write(
             TERMINAL_ID,
+            websocket=websocket,
             attachment_id=ATTACHMENT_ID,
             expected_lease_generation=generation,
             seq=seq,
@@ -283,7 +285,6 @@ async def _assert_write_outcome(
     seq = expected["client_write_seq"]
     assert isinstance(seq, int)
     request = {**_message("input.json"), "client_write_seq": seq}
-    websocket = MockWebSocket()
     await TerminalWsMixin._handle_terminal_input(server, websocket, request)
     _assert_golden(name, _sent(websocket))
 
@@ -371,25 +372,31 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     await server.lease_registry.shutdown_lifecycle_publication()
 
     server, _, _ = _server()
-    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
-    await server.lease_registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     websocket = MockWebSocket()
+    await server.lease_registry.attach(
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+    )
+    await server.lease_registry.take_control(TERMINAL_ID, ATTACHMENT_ID)
     await TerminalWsMixin._handle_terminal_detach(server, websocket, _message("detach.json"))
     _assert_golden("attachment_finalized.json", _sent(websocket, 0))
     _assert_golden("detach_result.json", _sent(websocket, 1))
     await server.lease_registry.shutdown_lifecycle_publication()
 
     server, _, _ = _server()
-    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
+    await server.lease_registry.attach(
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+    )
     await TerminalWsMixin._handle_terminal_set_scroll_offset(
         server, websocket, _message("set_scroll_offset.json")
     )
     _assert_golden("scroll_offset_applied.json", _sent(websocket))
 
     server, _, _ = _server()
-    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
+    await server.lease_registry.attach(
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+    )
     await TerminalControlMixin._handle_terminal_take_control(
         server, websocket, _message("take_control.json")
     )
@@ -418,8 +425,10 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     server, manager, _ = _server()
-    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
+    await server.lease_registry.attach(
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+    )
     await TerminalSizingMixin._handle_terminal_resize(server, websocket, _message("resize.json"))
     assert websocket.sent_messages == []
     assert manager.get(TERMINAL_ID) == _GoldenRow()
@@ -635,8 +644,10 @@ async def test_control_result_carries_the_holder_observer_answer() -> None:
         return True
 
     server.lease_registry.set_holder_observer(granting)
-    await server.lease_registry.attach(TERMINAL_ID, attachment_id=ATTACHMENT_ID)
     websocket = MockWebSocket()
+    await server.lease_registry.attach(
+        TERMINAL_ID, attachment_id=ATTACHMENT_ID, websocket=websocket
+    )
     await TerminalControlMixin._handle_terminal_take_control(
         server, websocket, _message("take_control.json")
     )
@@ -657,9 +668,11 @@ class _ScrollFrame:
 async def test_scroll_offset_makes_no_storage_call() -> None:
     """D1a.3: scroll reads the backend from the attach snapshot, not the terminals row."""
     server, manager, _ = _server()
+    websocket = MockWebSocket()
     await server.lease_registry.attach(
         TERMINAL_ID,
         attachment_id=ATTACHMENT_ID,
+        websocket=websocket,
         backend="native",
         terminal=cast(Terminal, manager.row),
     )
@@ -667,7 +680,6 @@ async def test_scroll_offset_makes_no_storage_call() -> None:
     cast(Any, manager).get = storage
     frame = _ScrollFrame()
     cast(Any, server)._proxy = lambda: SimpleNamespace(frame_for=lambda _attachment_id: frame)
-    websocket = MockWebSocket()
 
     await TerminalWsMixin._handle_terminal_set_scroll_offset(
         server, websocket, _message("set_scroll_offset.json")

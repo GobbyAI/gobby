@@ -30,6 +30,16 @@ class TerminalSizingMixin:
         attachment_id = data.get("attachment_id")
         if not isinstance(attachment_id, str):
             return
+        if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "code": "stale_attachment",
+                    "attachment_id": attachment_id,
+                },
+            )
+            return
         admitted = self._leases().resize_pty(attachment_id, data.get("rows"), data.get("cols"))
         if not admitted.ok:
             await self._send_json(
@@ -108,6 +118,16 @@ class TerminalSizingMixin:
     async def _handle_terminal_set_viewport(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")
         if not isinstance(attachment_id, str):
+            return
+        if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_error",
+                    "code": "stale_attachment",
+                    "attachment_id": attachment_id,
+                },
+            )
             return
         try:
             await self._sync_attachment_viewport(attachment_id, data.get("rows"), data.get("cols"))

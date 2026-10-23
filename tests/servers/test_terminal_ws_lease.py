@@ -626,12 +626,14 @@ async def test_terminal_focus_marks_the_holder_and_sends_nothing(
 @pytest.mark.asyncio
 async def test_lease_write_linearizes_with_takeover() -> None:
     registry = TerminalLeaseRegistry()
-    a = await registry.attach("t", frame_delivery="proxy")
-    b = await registry.attach("t", frame_delivery="proxy")
+    socket_a, socket_b = object(), object()
+    a = await registry.attach("t", frame_delivery="proxy", websocket=socket_a)
+    b = await registry.attach("t", frame_delivery="proxy", websocket=socket_b)
     gen = (await registry.take_control("t", a.attachment_id, takeover=False)).lease_generation
     await registry.take_control("t", b.attachment_id, takeover=True)
     refused = registry.admit_write(
         "t",
+        websocket=socket_a,
         attachment_id=a.attachment_id,
         expected_lease_generation=gen,
         seq=1,
@@ -666,13 +668,15 @@ async def test_frame_and_lag_paths_finalize_the_lease() -> None:
 @pytest.mark.asyncio
 async def test_observer_finalization_keeps_holder_writable() -> None:
     registry = TerminalLeaseRegistry()
-    holder = await registry.attach("t", frame_delivery="proxy")
-    observer = await registry.attach("t", frame_delivery="proxy")
+    holder_socket, observer_socket = object(), object()
+    holder = await registry.attach("t", frame_delivery="proxy", websocket=holder_socket)
+    observer = await registry.attach("t", frame_delivery="proxy", websocket=observer_socket)
     granted = await registry.take_control("t", holder.attachment_id, takeover=False)
     await registry.finalize(observer.attachment_id, reason="detach")
     assert registry.holder("t") == holder.attachment_id
     admitted = registry.admit_write(
         "t",
+        websocket=holder_socket,
         attachment_id=holder.attachment_id,
         expected_lease_generation=granted.lease_generation,
         seq=1,
@@ -685,13 +689,15 @@ async def test_observer_finalization_keeps_holder_writable() -> None:
 @pytest.mark.asyncio
 async def test_takeover_then_old_disconnect_keeps_new_holder_writable() -> None:
     registry = TerminalLeaseRegistry()
-    old = await registry.attach("t", frame_delivery="proxy")
+    old_socket, new_socket = object(), object()
+    old = await registry.attach("t", frame_delivery="proxy", websocket=old_socket)
     await registry.take_control("t", old.attachment_id, takeover=False)
-    new = await registry.attach("t", frame_delivery="proxy")
+    new = await registry.attach("t", frame_delivery="proxy", websocket=new_socket)
     granted = await registry.take_control("t", new.attachment_id, takeover=True)
     await registry.finalize(old.attachment_id, reason="ws_loss")
     admitted = registry.admit_write(
         "t",
+        websocket=new_socket,
         attachment_id=new.attachment_id,
         expected_lease_generation=granted.lease_generation,
         seq=1,
@@ -741,6 +747,7 @@ async def test_attachment_required_and_runtime_unavailable(
 
     attachment = await server.lease_registry.attach(
         terminal_id,
+        websocket=websocket,
         attachment_id="unavailable-runtime",
     )
     granted = await server.lease_registry.take_control(
@@ -914,3 +921,122 @@ async def test_direct_gclient_holder_is_granted_and_revoked_on_transitions(
     assert gclient.messages_of_type("terminal_control_result")[-1]["host_input_granted"] is True
     await server._cleanup_terminal_client(gclient)
     assert runtime.grants[-2:] == [(terminal_id, direct), (terminal_id, None)]
+
+
+def _foreign_message(operation: str, terminal_id: str, attachment_id: str) -> dict[str, Any]:
+    fields: dict[str, dict[str, Any]] = {
+        "take_control": {"type": "terminal_take_control", "takeover": True},
+        "release_control": {"type": "terminal_release_control"},
+        "focus": {"type": "terminal_focus", "focused": True},
+        "detach": {"type": "terminal_detach", "request_id": "detach-foreign"},
+        "resize": {"type": "terminal_resize", "rows": 30, "cols": 90},
+        "viewport": {"type": "terminal_set_viewport", "rows": 20, "cols": 70},
+        "scroll": {"type": "terminal_set_scroll_offset", "rows_from_live_edge": 5, "max_rows": 10},
+    }
+    return {**fields[operation], "terminal_id": terminal_id, "attachment_id": attachment_id}
+
+
+def _owner_state(server: WebSocketServer, terminal_id: str, attachment_id: str) -> tuple[Any, ...]:
+    registry = server._leases()
+    record = registry.get(attachment_id)
+    return (
+        registry.holder(terminal_id),
+        registry.generation(terminal_id),
+        registry.focus_held(terminal_id),
+        None
+        if record is None
+        else (
+            record.finalized,
+            record.focused,
+            record.geometry,
+            record.resize_seq,
+            record.viewport,
+            record.scroll_offset,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["take_control", "release_control", "focus", "detach", "resize", "viewport", "scroll"],
+)
+async def test_foreign_attachment_operations_do_not_change_owner_state(
+    temp_db: HubDatabase, sample_project: dict[str, Any], operation: str
+) -> None:
+    """A socket that did not create the attachment cannot change its state, whatever the id."""
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db)
+    owner = MockWebSocket()
+    foreign = MockWebSocket()
+    server.clients[owner] = {"subscriptions": {"*"}}
+    server.clients[foreign] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        owner,
+        {
+            "type": "terminal_attach",
+            "request_id": "r",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    attachment = owner.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+    if operation != "take_control":
+        # Every operation but take_control acts on the holder;
+        # take_control acts on an idle attachment.
+        await _send(
+            server,
+            owner,
+            {
+                "type": "terminal_take_control",
+                "terminal_id": terminal_id,
+                "attachment_id": attachment,
+                "takeover": False,
+            },
+        )
+        assert _owner_state(server, terminal_id, attachment)[0] == attachment
+    before = _owner_state(server, terminal_id, attachment)
+
+    await _send(server, foreign, _foreign_message(operation, terminal_id, attachment))
+
+    assert _owner_state(server, terminal_id, attachment) == before
+
+
+@pytest.mark.asyncio
+async def test_foreign_theme_is_refused_as_stale_attachment(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A socket that did not create the attachment gets stale_attachment for its theme."""
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db)
+    owner = MockWebSocket()
+    foreign = MockWebSocket()
+    server.clients[owner] = {"subscriptions": {"*"}}
+    server.clients[foreign] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        owner,
+        {
+            "type": "terminal_attach",
+            "request_id": "r",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    attachment = owner.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+
+    await _send(
+        server,
+        foreign,
+        {
+            "type": "terminal_set_theme",
+            "terminal_id": terminal_id,
+            "attachment_id": attachment,
+            "theme": {"foreground": "#ffffff", "background": "#000000", "palette": []},
+        },
+    )
+
+    assert foreign.messages_of_type("terminal_error")[-1]["code"] == "stale_attachment"

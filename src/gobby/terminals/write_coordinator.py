@@ -766,6 +766,29 @@ class WriteCoordinator:
         self._record_dispatch(request)
         return await remote_terminal.write(terminal, request)
 
+    def _lease_vouches(self, request: WriteRequest) -> bool:
+        """True when this write rides an operator attachment the bound caller created.
+
+        That attachment was checked once, at attach, so the write skips the per-write
+        ownership read. A row snapshot alone vouches for nothing: any other write still
+        checks the bound caller.
+        """
+        scope = current_caller()
+        if (
+            request.origin != "operator"
+            or request.attachment_id is None
+            or request.terminal is None
+            or scope is None
+            or scope.user_id is None
+        ):
+            return False
+        record = self.lease_registry.caller_attachment(request.attachment_id)
+        return (
+            record is not None
+            and record.terminal_id == request.terminal_id
+            and record.terminal is request.terminal
+        )
+
     async def _dispatch(
         self,
         request: WriteRequest,
@@ -773,8 +796,7 @@ class WriteCoordinator:
     ) -> WriteOutcome:
         if terminal is None:
             terminal = await asyncio.to_thread(self._require, request.terminal_id)
-        if request.terminal is None:
-            # A lease-validated attachment was checked once, when it attached.
+        if not self._lease_vouches(request):
             await _require_machine_owned_write(terminal.machine_id)
         if not is_local_machine(terminal.machine_id):
             return await self._dispatch_remote(request, terminal)
