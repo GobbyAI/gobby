@@ -7,12 +7,13 @@ import base64
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.hooks import checkout_reads
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.checkout_reads import (
     CheckoutReadUnavailable,
@@ -363,6 +364,15 @@ def test_local_run_git_ignores_inherited_git_env(
     assert Path(local.stdout.decode("utf-8").strip()).resolve() == (repo / ".git").resolve()
 
 
+async def _hold_unanswered() -> NoReturn:
+    """Stand in for a node that never replies. Only the seam or the caller may end the wait."""
+    try:
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=_TIMEOUT)
+    except TimeoutError as exc:
+        raise AssertionError("the seam did not cut off an unanswered send") from exc
+    raise AssertionError("an unanswered send cannot return")
+
+
 @pytest.mark.asyncio
 async def test_send_cancellation_is_mapped(
     node: FakeNode, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -407,8 +417,7 @@ async def test_send_cancellation_is_mapped(
         machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
     ) -> dict[str, Any]:
         entered.set()
-        await asyncio.sleep(_TIMEOUT)
-        raise AssertionError("the caller should cancel before the node answers")
+        await _hold_unanswered()
 
     monkeypatch.setattr(node, "send", held_send)
     with delivery_scope(NODE_MACHINE, loop, cwd):
@@ -417,3 +426,67 @@ async def test_send_cancellation_is_mapped(
         reader.cancel()
         with pytest.raises(asyncio.CancelledError):
             await reader
+
+
+@pytest.mark.asyncio
+async def test_path_facts_empty_paths_skips_node_query(node: FakeNode, tmp_path: Path) -> None:
+    cwd = str(tmp_path)
+    other_cwd = f"{tmp_path}/other"
+    node.add_file(NODE_MACHINE, f"{cwd}/alpha.txt", b"alpha")
+    node.set_checkout(NODE_MACHINE, cwd, root=cwd, project_id="project-a")
+    node.set_checkout(NODE_MACHINE, other_cwd, root=other_cwd, project_id="project-other")
+    loop = asyncio.get_running_loop()
+
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        # No cached header yet: one header-only request supplies the checkout facts.
+        first = await asyncio.to_thread(path_facts, ())
+        assert (first.root, first.project_id) == (cwd, "project-a")
+        assert first.files == ()
+        assert node.requests == [
+            (
+                NODE_MACHINE,
+                "checkout.read",
+                {"cwd": cwd, "query": {"kind": "files", "paths": [], "read_limit": None}},
+                5000,
+            )
+        ]
+
+        # The memo holds the header, so repeat calls make no request, whatever the read_limit.
+        repeat = await asyncio.to_thread(path_facts, (), read_limit=64)
+        assert (repeat.root, repeat.project_id) == (cwd, "project-a")
+        assert repeat.files == ()
+        assert len(node.requests) == 1
+
+        # Headers are kept per checkout: another cwd gets its own request and its own facts.
+        elsewhere = await asyncio.to_thread(path_facts, (), cwd=other_cwd)
+        assert (elsewhere.root, elsewhere.project_id) == (other_cwd, "project-other")
+        assert len(node.requests) == 2
+        assert node.requests[-1][2]["cwd"] == other_cwd
+        back = await asyncio.to_thread(path_facts, (), cwd=cwd)
+        assert (back.root, back.project_id) == (cwd, "project-a")
+        assert len(node.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_send_timeout_returns_mapped_error(
+    node: FakeNode, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = str(tmp_path)
+    loop = asyncio.get_running_loop()
+
+    async def slow_send(
+        machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
+    ) -> dict[str, Any]:
+        await _hold_unanswered()
+
+    monkeypatch.setattr(node, "send", slow_send)
+    monkeypatch.setattr(checkout_reads, "_BRIDGE_MARGIN_S", 0.0)
+
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as worker:
+            await asyncio.to_thread(run_git, ["status"], cwd=cwd, timeout=0.05)
+        assert (worker.value.code, worker.value.machine_id) == ("node_timeout", NODE_MACHINE)
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as same_loop:
+            await run_git_async(["status"], cwd=cwd, timeout=0.05)
+        assert same_loop.value.code == "node_timeout"

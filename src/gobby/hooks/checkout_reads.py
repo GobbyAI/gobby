@@ -13,6 +13,7 @@ import base64
 import os
 import subprocess
 from collections.abc import Awaitable, Coroutine, Iterator, Sequence
+from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import Future
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -267,6 +268,9 @@ def _send(delivery: _NodeDelivery, payload: dict[str, Any], timeout_ms: int) -> 
     except TimeoutError as exc:
         future.cancel()
         raise _unavailable(delivery, "node_timeout") from exc
+    except FutureCancelledError as exc:
+        # The daemon loop cancelled the send, so its reply never reached this thread.
+        raise _unavailable(delivery, "node_reply_lost") from exc
 
 
 async def _send_async(
@@ -284,6 +288,13 @@ async def _send_async(
         raise _unavailable(delivery, exc.code) from exc
     except TimeoutError as exc:
         raise _unavailable(delivery, "node_timeout") from exc
+    except asyncio.CancelledError as exc:
+        # A cancel aimed at this task is the caller's own and must propagate.
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise
+        # Otherwise the send was cancelled on the daemon loop, so its reply is lost.
+        raise _unavailable(delivery, "node_reply_lost") from exc
 
 
 def _check_latch(delivery: _NodeDelivery) -> None:
