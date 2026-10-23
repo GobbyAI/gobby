@@ -63,7 +63,7 @@ async def execute_mcp_step(
     try:
         if (
             mcp_config.server == "gobby-agents"
-            and mcp_config.tool in {"spawn_agent", "dispatch_batch"}
+            and mcp_config.tool == "spawn_agent"
             and pipeline_session_id
             and tokens.resolved_session_id is None
         ):
