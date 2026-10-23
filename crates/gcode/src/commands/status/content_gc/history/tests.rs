@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use super::recent_path_hashes;
 use crate::index::hasher;
@@ -165,6 +166,56 @@ fn filtered_content_hashes_per_path() {
             pair("plain.txt", "hello\n"),
         ]),
     );
+}
+
+#[test]
+fn size_growing_filter_hashes_checkout_bytes() {
+    let repo = Repo::init(&[]);
+    repo.write(".gitattributes", "crlf.txt text eol=crlf\n");
+    repo.write("crlf.txt", "a\nb\n");
+    repo.commit("seed", None);
+    // The stored blob has LF endings. Checkout converts them to CRLF, so the
+    // filtered body is longer than the object size git reports for the blob.
+    std::fs::remove_file(repo.path().join("crlf.txt")).expect("remove crlf file");
+    repo.git(&["checkout", "--", "crlf.txt"]);
+    let checked_out = std::fs::read(repo.path().join("crlf.txt")).expect("read checkout");
+    assert_ne!(checked_out, b"a\nb\n");
+
+    assert_eq!(
+        protected(&repo, &["crlf.txt"]),
+        BTreeSet::from([("crlf.txt".to_string(), hasher::content_hash(&checked_out),)]),
+    );
+}
+
+#[test]
+fn size_shrinking_filter_does_not_hang() {
+    let repo = Repo::init(&[]);
+    repo.git(&["config", "filter.shrink.smudge", "head -c 3"]);
+    repo.write(".gitattributes", "shrink.txt filter=shrink\n");
+    repo.write("shrink.txt", "abcdef\n");
+    repo.commit("seed", None);
+    // The smudge filter keeps three bytes, fewer than the object size git reports.
+    std::fs::remove_file(repo.path().join("shrink.txt")).expect("remove shrink file");
+    repo.git(&["checkout", "--", "shrink.txt"]);
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let root = repo.path().to_path_buf();
+    std::thread::spawn(move || {
+        let candidates = BTreeSet::from(["shrink.txt".to_string()]);
+        let _ = sender.send(recent_path_hashes(&root, RETENTION_DAYS, &candidates));
+    });
+    let received = receiver.recv_timeout(Duration::from_secs(30));
+    assert!(
+        received.is_ok(),
+        "recent_path_hashes hung on a shrinking filter",
+    );
+    let hashes: BTreeSet<_> = received
+        .expect("reader sent a result")
+        .expect("read recent path hashes")
+        .into_iter()
+        .collect();
+
+    assert_eq!(hashes, BTreeSet::from([pair("shrink.txt", "abc")]));
 }
 
 #[test]

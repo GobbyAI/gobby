@@ -108,13 +108,16 @@ fn hash_blobs(
     root: &Path,
     blobs: &BTreeSet<(String, String)>,
 ) -> anyhow::Result<HashSet<(String, String)>> {
-    // `-Z` frames requests and responses with NUL, so a path containing a
-    // newline stays one request and its body end is unambiguous. `--filters`
-    // applies the path's attributes, matching the checkout the indexer reads.
+    // `--filters` applies each path's attributes, matching the checkout the
+    // indexer reads. Filtered bodies can differ in size from the stored blob,
+    // so they are framed by the empty tree (see `Batch::request_filtered`).
+    let empty_tree = git_stdout(root, &["hash-object", "-t", "tree", "/dev/null"])?
+        .trim()
+        .to_owned();
     let mut blob_reader = Batch::spawn(root, &["--batch", "-Z", "--filters"], 0)?;
     let mut protected = HashSet::new();
     for (path, blob) in blobs {
-        if let Some(body) = blob_reader.request(format!("{blob} {path}").as_bytes())? {
+        if let Some(body) = blob_reader.request_filtered(blob, path, &empty_tree)? {
             protected.insert((path.clone(), hasher::content_hash(&body)));
         }
     }
@@ -215,12 +218,7 @@ impl Batch {
         })
     }
 
-    /// Returns the object body, or `None` when git reports it missing.
-    fn request(&mut self, line: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
-        self.stdin.write_all(line)?;
-        self.stdin.write_all(&[self.delimiter])?;
-        self.stdin.flush()?;
-
+    fn read_header(&mut self) -> anyhow::Result<String> {
         let mut header = Vec::new();
         anyhow::ensure!(
             self.stdout.read_until(self.delimiter, &mut header)? > 0,
@@ -230,7 +228,17 @@ impl Batch {
             header.pop() == Some(self.delimiter),
             "git cat-file header lacked its delimiter",
         );
-        let header = String::from_utf8(header).context("git cat-file header is not UTF-8")?;
+        String::from_utf8(header).context("git cat-file header is not UTF-8")
+    }
+
+    /// Returns the object body, or `None` when git reports it missing. The body
+    /// is framed by the size in its header, so the object must not be filtered.
+    fn request(&mut self, line: &[u8]) -> anyhow::Result<Option<Vec<u8>>> {
+        self.stdin.write_all(line)?;
+        self.stdin.write_all(&[self.delimiter])?;
+        self.stdin.flush()?;
+
+        let header = self.read_header()?;
         let fields = header.split_whitespace().collect::<Vec<_>>();
         if fields.last() == Some(&"missing") {
             return Ok(None);
@@ -248,6 +256,46 @@ impl Batch {
             "git cat-file object {header:?} lacked its trailing delimiter",
         );
         Ok(Some(body))
+    }
+
+    /// Returns a filtered blob body, or `None` when git reports it missing.
+    /// Filtered output can differ in size from the header, so the body ends
+    /// where the empty tree's response begins: git answers each blob request
+    /// followed by the empty tree with the sentinel, after a NUL delimiter.
+    fn request_filtered(
+        &mut self,
+        blob: &str,
+        path: &str,
+        empty_tree: &str,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        self.stdin
+            .write_all(format!("{blob} {path}\0{empty_tree}\0").as_bytes())?;
+        self.stdin.flush()?;
+
+        let sentinel = format!("{empty_tree} tree 0\0\0");
+        let header = self.read_header()?;
+        if header.split_whitespace().last() == Some("missing") {
+            let mut response = vec![0; sentinel.len()];
+            self.stdout.read_exact(&mut response)?;
+            anyhow::ensure!(
+                response == sentinel.as_bytes(),
+                "git cat-file answered {blob} missing with an unexpected sentinel",
+            );
+            return Ok(None);
+        }
+
+        let marker = format!("\0{sentinel}");
+        let mut body = Vec::new();
+        loop {
+            anyhow::ensure!(
+                self.stdout.read_until(0, &mut body)? > 0,
+                "git cat-file ended before the sentinel for {header:?}",
+            );
+            if body.ends_with(marker.as_bytes()) {
+                body.truncate(body.len() - marker.len());
+                return Ok(Some(body));
+            }
+        }
     }
 }
 
