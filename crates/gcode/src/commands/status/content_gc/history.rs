@@ -22,10 +22,21 @@ pub(super) fn recent_path_hashes(
     if candidate_paths.is_empty() {
         return Ok(HashSet::new());
     }
+    // Tree entries and attributes key on paths from the top level, so a root
+    // below it (a nested project) is searched under its prefix.
+    let output = git_stdout(root, &["rev-parse", "--show-prefix"])?;
+    let prefix = output.strip_suffix('\n').unwrap_or(output.as_str());
+    let top_paths: BTreeSet<String> = candidate_paths
+        .iter()
+        .map(|path| format!("{prefix}{path}"))
+        .collect();
     let width = object_id_width(root)?;
     let roots = recent_root_trees(root, retention_days)?;
-    let blobs = candidate_blobs(root, width, &roots, candidate_paths)?;
-    hash_blobs(root, &blobs)
+    let blobs = candidate_blobs(root, width, &roots, &top_paths)?;
+    Ok(hash_blobs(root, &blobs)?
+        .into_iter()
+        .map(|(path, hash)| (path[prefix.len()..].to_string(), hash))
+        .collect())
 }
 
 fn object_id_width(root: &Path) -> anyhow::Result<usize> {
@@ -81,9 +92,9 @@ fn candidate_blobs(
             };
             let path = format!("{directory}{name}");
             let child = format!("{path}/");
-            match entry.mode {
-                b"40000" if directories.contains(&child) => pending.push((child, entry.oid)),
-                b"100644" | b"100755" if candidate_paths.contains(&path) => {
+            match mode_kind(entry.mode)? {
+                MODE_TREE if directories.contains(&child) => pending.push((child, entry.oid)),
+                MODE_REGULAR if candidate_paths.contains(&path) => {
                     blobs.insert((path, entry.oid));
                 }
                 _ => {}
@@ -140,6 +151,18 @@ fn parse_tree(mut body: &[u8], width: usize) -> anyhow::Result<Vec<TreeEntry<'_>
         body = &rest[width..];
     }
     Ok(entries)
+}
+
+// Type bits of a tree entry mode. Writers spell modes differently (`40000` and
+// `040000`, `100644` and `100664`), so entries are classified numerically.
+const MODE_TYPE: u32 = 0o170000;
+const MODE_TREE: u32 = 0o040000;
+const MODE_REGULAR: u32 = 0o100000;
+
+fn mode_kind(mode: &[u8]) -> anyhow::Result<u32> {
+    let text = std::str::from_utf8(mode).context("tree mode is not UTF-8")?;
+    let bits = u32::from_str_radix(text, 8).with_context(|| format!("parse tree mode {text:?}"))?;
+    Ok(bits & MODE_TYPE)
 }
 
 fn hex(bytes: &[u8]) -> String {

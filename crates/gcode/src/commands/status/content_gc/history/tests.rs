@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -192,4 +192,54 @@ fn recent_ancestor_behind_old_tip_stays_protected() {
         protected(&repo, &["keep.txt"]),
         BTreeSet::from([pair("keep.txt", "kept\n")]),
     );
+}
+
+#[test]
+fn nested_root_protects_root_relative_paths() {
+    let repo = Repo::init(&[]);
+    repo.write("sub/lib.rs", "nested\n");
+    repo.commit("seed", None);
+    // The root is a project below the git top level, as a nested .gobby project is.
+    let candidates = BTreeSet::from(["lib.rs".to_string()]);
+    let nested = recent_path_hashes(&repo.path().join("sub"), RETENTION_DAYS, &candidates)
+        .expect("read recent path hashes");
+
+    assert_eq!(nested, HashSet::from([pair("lib.rs", "nested\n")]));
+}
+
+#[test]
+fn legacy_file_modes_are_protected() {
+    let repo = Repo::init(&[]);
+    repo.write("legacy.txt", "legacy\n");
+    let blob = repo.git(&["hash-object", "-w", "legacy.txt"]);
+    // Current git normalizes modes on every write path, so a 100664 entry exists
+    // only in trees older tools wrote. Write the raw tree object to produce one.
+    let mut tree = b"100664 legacy.txt\0".to_vec();
+    tree.extend(raw_oid(&blob));
+    std::fs::write(repo.path().join("legacy-tree.bin"), &tree).expect("write raw tree");
+    let tree_oid = repo.git(&[
+        "hash-object",
+        "-t",
+        "tree",
+        "--literally",
+        "-w",
+        "legacy-tree.bin",
+    ]);
+    let commit = repo.run(
+        &["commit-tree", tree_oid.as_str(), "-m", "legacy modes"],
+        &[],
+    );
+    repo.git(&["update-ref", "HEAD", commit.as_str()]);
+
+    assert_eq!(
+        protected(&repo, &["legacy.txt"]),
+        BTreeSet::from([pair("legacy.txt", "legacy\n")]),
+    );
+}
+
+fn raw_oid(hex: &str) -> Vec<u8> {
+    (0..hex.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("hex object id"))
+        .collect()
 }
