@@ -2385,8 +2385,7 @@ def test_capability_token_never_in_argv_or_metadata(
     assert token_value not in json.dumps(metadata)
 
 
-@pytest.mark.asyncio
-async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
+def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -2395,10 +2394,9 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     Codex launches its stdio MCP subprocess with a scrubbed environment: the
     child sees only the literal ``mcp_servers.gobby.env.*`` overrides plus the
     variables forwarded by name through ``env_vars``. This drives that exact
-    model end-to-end and asserts the child's daemon headers, resolved from its
-    environment alone, carry the child's ``X-Gobby-Session-Id`` and the envelope
-    capability, so the ``get_tool_schema`` lease and the ``call_tool`` resolve
-    to the same session.
+    model end-to-end and asserts that ``daemon_auth_headers()``, resolved from the
+    child's environment alone, sends the envelope capability as the Bearer with the
+    child's session and run headers.
     """
     import json
 

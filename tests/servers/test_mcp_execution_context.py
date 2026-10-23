@@ -42,14 +42,12 @@ def _wrapper_identity_headers(env: dict[str, str]) -> dict[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_identity_transport_chain() -> None:
     from gobby.utils.session_context import (
         AGENT_RUN_ID_HEADER,
         get_current_agent_run_id,
     )
 
-    monkeypatch.setenv("GOBBY_SESSION_ID", "session-1")
-    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "21000000-0000-4000-8000-000000000071")
     wrapper_headers = _wrapper_identity_headers(
         {
             "GOBBY_SESSION_ID": "session-1",

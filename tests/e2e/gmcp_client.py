@@ -91,9 +91,11 @@ async def gmcp_session(
     """Start one gmcp process and open its MCP session.
 
     The environment is built from scratch. The MCP SDK adds only its safe defaults, so
-    no tmux, TTY, or GOBBY_* variable from the test runner reaches the wrapper.
+    no tmux, TTY, or GOBBY_* variable from the test runner reaches the wrapper. HOME is
+    the test home as well: if gmcp ignored GOBBY_HOME, its ~/.gobby fallback would find
+    nothing here rather than the operator's daemon and key.
     """
-    env = {"GOBBY_HOME": str(home)}
+    env = {"GOBBY_HOME": str(home), "HOME": str(home)}
     if daemon_url is not None:
         env["GOBBY_DAEMON_URL"] = daemon_url
     env.update(terminal_env(terminal_context or {}))

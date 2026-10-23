@@ -176,6 +176,7 @@ async def test_expired_owner_recovers_only_from_live_session_traffic(
             headers = {
                 WRAPPER_CONTRACT["protocol_version_header"]: WRAPPER_CONTRACT["protocol_version"],
                 "X-Gobby-Project-Id": sample_project["id"],
+                "X-Gobby-Caller-Project-Id": sample_project["id"],
                 "X-Gobby-Terminal-Context": json.dumps(terminal),
             }
             assert "X-Gobby-Session-Id" not in headers

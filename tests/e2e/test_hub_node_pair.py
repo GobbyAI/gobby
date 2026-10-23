@@ -272,7 +272,8 @@ async def test_gmcp_on_node_reaches_hub_through_relay(
         _wait_listener(client, pair_node)
         _wait_connection(observer, pair_node, connected=True, deadline=time.monotonic() + 30.0)
         # GOBBY_HOME is the only input: the wrapper reads the node's front door and key
-        # from its bootstrap.yaml, with no GOBBY_DAEMON_URL or GOBBY_PORT.
+        # from its bootstrap.yaml, with no GOBBY_DAEMON_URL or GOBBY_PORT. HOME is the node
+        # home too, so only the relay can answer for gobby-tasks, a hub-only registry.
         async with gmcp_session(home=pair_node.home) as gmcp:
             listed = await gmcp.list_mcp_servers()
 

@@ -322,7 +322,7 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         assert refreshed_a.status == "expired"
         assert refreshed_a.to_dict() == expired_a
 
-        # A hookless terminal has no session, so the wrapper refuses dispatch before the daemon.
+        # A hookless terminal has no session, so the daemon refuses dispatch with SESSION_REQUIRED.
         async with _gmcp_proxy(daemon_instance, _terminal_context("ambient-hookless")) as hookless:
             refused = await hookless.call_tool(
                 TARGET_SERVER,
