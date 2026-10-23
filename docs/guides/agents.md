@@ -540,7 +540,9 @@ into a terminal, the daemon probes the composer through the provider's detection
 manifest; a composer that positively shows an operator draft is left alone and the
 wake result carries `skipped: "composer_occupied"` (same bucket as `session_active`:
 the message is persisted and the hook piggyback injects it on the session's next
-turn). The probe reads a styled snapshot, so faint text (Claude Code's prompt
+turn). An operator comms wake to a pane the operator has focused is held the same way
+(`skipped: "pane_focused"`) and dispatched when focus ends. The probe reads a styled
+snapshot, so faint text (Claude Code's prompt
 suggestion, the Codex and Droid placeholders) reads as an empty composer.
 `priority="urgent"` bypasses the probe. A later mailbox
 receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interruption in
