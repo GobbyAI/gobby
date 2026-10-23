@@ -171,14 +171,13 @@ pub fn project_changed_since(
     false
 }
 
-/// Returns `true` when one explicitly requested file needs an overlay refresh:
-/// its indexable verdict differs from `indexed`, or it is indexable and was
-/// modified after `watermark` less the skew margin. Reads metadata only.
-pub fn explicit_file_changed_since(
+/// Returns `true` when one explicitly requested overlay file differs from the
+/// version the overlay serves (`served` is its content hash, `None` when it
+/// serves none). Unlike `project_changed_since`, this hashes that one file.
+pub fn explicit_file_changed(
     project_root: &Path,
-    watermark: SystemTime,
     file: &str,
-    indexed: bool,
+    served: Option<&str>,
     extra_excludes: &[String],
 ) -> bool {
     let Ok(root) = project_root.canonicalize() else {
@@ -187,16 +186,15 @@ pub fn explicit_file_changed_since(
     let path = root.join(file);
     let excludes = effective_excludes(extra_excludes);
     let indexable = walker::classify_file(&root, &path, &excludes).is_some();
-    if indexable != indexed {
-        return true;
-    }
-    if !indexable {
-        return false;
-    }
-    let threshold = watermark.checked_sub(SKEW_MARGIN).unwrap_or(watermark);
-    match path.metadata().and_then(|meta| meta.modified()) {
-        Ok(modified) => modified > threshold,
-        Err(_) => true,
+    match served {
+        None => indexable,
+        Some(hash) => {
+            !indexable
+                || crate::index::hasher::file_content_hash(&path)
+                    .ok()
+                    .as_deref()
+                    != Some(hash)
+        }
     }
 }
 

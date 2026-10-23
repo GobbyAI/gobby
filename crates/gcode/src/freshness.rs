@@ -64,8 +64,8 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
-    // Overlay explicit-file reads are served from the index unless the overlay's
-    // last stamp no longer covers the parent or the requested files.
+    // Overlay explicit-file reads skip the refresh when every requested file
+    // matches the version the overlay serves for it.
     if let FreshnessScope::Files(paths) = &scope
         && matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. })
         && !overlay_files_need_refresh(ctx, paths)?
@@ -206,42 +206,18 @@ fn project_last_indexed_at(
     }
 }
 
-/// Read-only gate for explicit files in an overlay checkout. Returns `false`
-/// when the overlay has completed an index, no parent write landed after its
-/// stamp, and every requested file still matches what the overlay recorded.
+/// Read-only gate for explicit files in an overlay checkout. Each requested file
+/// is judged on its own content: the worktree copy must match the version the
+/// overlay serves for it, so no other file's refresh can certify it.
 fn overlay_files_need_refresh(ctx: &Context, paths: &[PathBuf]) -> anyhow::Result<bool> {
-    let ProjectIndexScope::Overlay {
-        parent_project_id, ..
-    } = &ctx.index_scope
-    else {
-        return Ok(true);
-    };
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let machine_id = db::id_param(&ctx.machine_id)?;
-
-    // Explicit-file refreshes do not advance `last_indexed_at`, so the overlay
-    // watermark is its stamp, which only a successful stats write moves.
-    let has_full_index =
-        project_last_indexed_at(&mut conn, &machine_id, &ctx.project_id)?.is_some();
-    let Some(watermark) = project_stamped_at(&mut conn, &machine_id, &ctx.project_id)? else {
-        return Ok(true);
-    };
-    if !has_full_index {
-        return Ok(true);
-    }
-    let parent_stamp = project_stamped_at(&mut conn, &machine_id, parent_project_id)?;
-    if parent_stamp.is_some_and(|parent| parent > watermark) {
-        return Ok(true);
-    }
-
     for path in paths {
         let file = crate::index::normalize_storage_path(path);
-        let indexed = visibility::indexed_file_exists(&mut conn, ctx, &file);
-        if api::explicit_file_changed_since(
+        let served = overlay_served_content_hash(&mut conn, ctx, &file)?;
+        if api::explicit_file_changed(
             &ctx.project_root,
-            watermark,
             &file,
-            indexed,
+            served.as_deref(),
             &ctx.indexing.extra_excludes,
         ) {
             return Ok(true);
@@ -250,21 +226,72 @@ fn overlay_files_need_refresh(ctx: &Context, paths: &[PathBuf]) -> anyhow::Resul
     Ok(false)
 }
 
-fn project_stamped_at(
+/// Content hash of the version an overlay serves for `file_path`: its own row,
+/// else the parent row it does not shadow. `None` when it serves no file there.
+fn overlay_served_content_hash(
     conn: &mut postgres::Client,
-    machine_id: &uuid::Uuid,
-    project_id: &str,
-) -> anyhow::Result<Option<SystemTime>> {
+    ctx: &Context,
+    file_path: &str,
+) -> anyhow::Result<Option<String>> {
+    let ProjectIndexScope::Overlay {
+        overlay_project_id,
+        parent_project_id,
+        ..
+    } = &ctx.index_scope
+    else {
+        return Ok(None);
+    };
+    let Some(machine_id) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
+        return Ok(None);
+    };
+    let (Some(overlay_project_id), Some(parent_project_id)) = (
+        visibility::project_uuid_or_invisible(overlay_project_id),
+        visibility::project_uuid_or_invisible(parent_project_id),
+    ) else {
+        return Ok(None);
+    };
     let row = conn.query_opt(
-        "SELECT updated_at
-         FROM code_indexed_project_states
-         WHERE machine_id = $1 AND project_id = $2",
-        &[machine_id, &db::id_param(project_id)?],
+        "SELECT served.content_hash
+         FROM (
+            SELECT ofs.content_hash, 0 AS origin
+            FROM code_indexed_file_states ofs
+            JOIN code_indexed_files of
+              ON of.project_id = ofs.project_id
+             AND of.file_path = ofs.file_path
+             AND of.content_hash = ofs.content_hash
+            WHERE ofs.machine_id = $1
+              AND ofs.project_id = $2
+              AND ofs.file_path = $4
+              AND of.language != $5
+            UNION ALL
+            SELECT pfs.content_hash, 1 AS origin
+            FROM code_indexed_file_states pfs
+            JOIN code_indexed_files pf
+              ON pf.project_id = pfs.project_id
+             AND pf.file_path = pfs.file_path
+             AND pf.content_hash = pfs.content_hash
+            WHERE pfs.machine_id = $1
+              AND pfs.project_id = $3
+              AND pfs.file_path = $4
+              AND pf.language != $5
+              AND NOT EXISTS (
+                  SELECT 1 FROM code_indexed_file_states shadow
+                  WHERE shadow.machine_id = $1
+                    AND shadow.project_id = $2
+                    AND shadow.file_path = pfs.file_path
+              )
+         ) served
+         ORDER BY served.origin
+         LIMIT 1",
+        &[
+            &machine_id,
+            &overlay_project_id,
+            &parent_project_id,
+            &file_path,
+            &visibility::TOMBSTONE_LANGUAGE,
+        ],
     )?;
-    match row {
-        Some(row) => Ok(Some(row.try_get::<_, SystemTime>(0)?)),
-        None => Ok(None),
-    }
+    Ok(row.map(|row| row.try_get::<_, String>(0)).transpose()?)
 }
 
 pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<FreshnessStatus> {

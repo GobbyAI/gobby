@@ -727,9 +727,14 @@ fn aged_overlay_pair(label: &str) -> (tempfile::TempDir, Context, Context) {
     let aged = SystemTime::now() - std::time::Duration::from_secs(3600);
     for root in [&parent_root, &overlay_root] {
         std::fs::create_dir_all(root.join("src")).expect("create src");
-        let lib = root.join("src/lib.rs");
-        std::fs::write(&lib, b"pub fn parent_name() {}\n").expect("write source");
-        set_mtime(&lib, aged);
+        for (file, source) in [
+            ("src/lib.rs", "pub fn parent_name() {}\n"),
+            ("src/other.rs", "pub fn other_name() {}\n"),
+        ] {
+            let path = root.join(file);
+            std::fs::write(&path, source).expect("write source");
+            set_mtime(&path, aged);
+        }
     }
     let parent_ctx =
         postgres_context_with_root(&test_project_id(&format!("{label}-parent")), &parent_root);
@@ -801,21 +806,68 @@ fn overlay_explicit_file_grep_skips_refresh_when_nothing_changed() {
     ignore = "requires a PostgreSQL test database URL"
 )]
 #[serial_test::serial(serial_db)]
-fn overlay_explicit_file_grep_refreshes_after_parent_reindex() {
-    let (_tmp, parent_ctx, overlay_ctx) = aged_overlay_pair("gcode-freshness-parent-reindex");
-    let watermark = project_state_updated_at(&overlay_ctx);
+fn overlay_explicit_file_grep_refreshes_inherited_file_after_parent_reindex() {
+    let (tmp, parent_ctx, overlay_ctx) = aged_overlay_pair("gcode-freshness-parent-reindex");
 
-    // The parent reindexes after the overlay, so inherited rows may have moved.
-    full_index(&parent_ctx);
-    let status = ensure_fresh(
-        &overlay_ctx,
-        FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
+    // The main checkout rewrites lib.rs and reindexes; the worktree keeps the old text.
+    std::fs::write(
+        tmp.path().join("parent/src/lib.rs"),
+        b"pub fn parent_moved() {}\n",
     )
-    .expect("parent reindex freshness status");
+    .expect("write parent source");
+    full_index(&parent_ctx);
+
+    // An explicit read of another file must not certify the inherited lib.rs.
+    let other = FreshnessScope::Files(vec![PathBuf::from("src/other.rs")]);
+    let status = ensure_fresh(&overlay_ctx, other).expect("other file freshness status");
     assert_eq!(status, FreshnessStatus::Checked);
-    assert!(
-        project_state_updated_at(&overlay_ctx) > watermark,
-        "a parent reindex must refresh the overlay"
+    let lib = FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]);
+    let status = ensure_fresh(&overlay_ctx, lib).expect("lib freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+    assert_eq!(
+        visible_symbol_names(&overlay_ctx, "src/lib.rs"),
+        ["parent_name"],
+        "the overlay must serve the worktree's lib.rs, not the parent's new rows"
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_explicit_file_grep_refreshes_each_file_edited_before_the_first_read() {
+    let (tmp, parent_ctx, overlay_ctx) = aged_overlay_pair("gcode-freshness-two-edits");
+    std::fs::write(
+        tmp.path().join("overlay/src/lib.rs"),
+        b"pub fn lib_edited() {}\n",
+    )
+    .expect("write lib edit");
+    std::fs::write(
+        tmp.path().join("overlay/src/other.rs"),
+        b"pub fn other_edited() {}\n",
+    )
+    .expect("write other edit");
+    for file in ["src/lib.rs", "src/other.rs"] {
+        let status = ensure_fresh(
+            &overlay_ctx,
+            FreshnessScope::Files(vec![PathBuf::from(file)]),
+        )
+        .expect("explicit read freshness status");
+        assert_eq!(status, FreshnessStatus::Checked);
+    }
+    assert_eq!(
+        visible_symbol_names(&overlay_ctx, "src/lib.rs"),
+        ["lib_edited"]
+    );
+    assert_eq!(
+        visible_symbol_names(&overlay_ctx, "src/other.rs"),
+        ["other_edited"],
+        "the second edited file must refresh after the first read"
     );
 
     invalidate_test_project(&overlay_ctx);
