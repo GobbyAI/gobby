@@ -55,10 +55,12 @@ class AgentAttentionTracker:
 
     async def sync(self, run: AgentRun, pane_output: str) -> None:
         """Persist the attention episode represented by the latest pane output."""
-        manager = self._attention_manager
-        if manager is None:
+        if self._attention_manager is None:
             return
+        await self.apply(run, self.classify(run, pane_output))
 
+    def classify(self, run: AgentRun, pane_output: str) -> AttentionClassification | None:
+        """Return the attention episode the pane shows, or None when it needs no attention."""
         prompt_detector = self._prompt_detector.for_provider(run.provider)
         stall_classifier = self._stall_classifier.for_provider(run.provider)
         reason: PromptKind | None = None
@@ -99,17 +101,8 @@ class AgentAttentionTracker:
                 kind = "non_actionable"
                 classification_reason = classification.reason
 
-        entry_id = run_attention_entry_id(run.id)
-        if self._attention_metadata_store is not None:
-            if reason == "stall":
-                self._attention_metadata_store.set(entry_id, "retrying provider", 30_000)
-            elif approval_dismissed or trust_dismissed:
-                self._attention_metadata_store.set(entry_id, "needs attention", 60_000)
-
         if reason is None or kind is None:
-            await self._resolve_lifecycle_wait(entry_id)
-            await self._clear_if_current(entry_id)
-            return
+            return None
 
         prompt_payload = (
             detected
@@ -119,10 +112,36 @@ class AgentAttentionTracker:
                 label=classification_reason or reason,
             )
         )
+        return AttentionClassification(
+            reason=reason,
+            kind=kind,
+            fingerprint=prompt_payload.fingerprint,
+            payload=prompt_payload.to_payload(),
+            dismissed=approval_dismissed or trust_dismissed,
+        )
+
+    async def apply(self, run: AgentRun, classification: AttentionClassification | None) -> None:
+        """Persist an attention classification, or resolve the episode when it is None."""
+        manager = self._attention_manager
+        if manager is None:
+            return
+
+        entry_id = run_attention_entry_id(run.id)
+        if classification is None:
+            await self._resolve_lifecycle_wait(entry_id)
+            await self._clear_if_current(entry_id)
+            return
+
+        if self._attention_metadata_store is not None:
+            if classification.reason == "stall":
+                self._attention_metadata_store.set(entry_id, "retrying provider", 30_000)
+            elif classification.dismissed:
+                self._attention_metadata_store.set(entry_id, "needs attention", 60_000)
+
         await self._enter_lifecycle_wait(
             run.child_session_id,
-            reason,
-            prompt_payload.fingerprint,
+            classification.reason,
+            classification.fingerprint,
             run.provider,
         )
         await manager.transition_async(
@@ -131,17 +150,11 @@ class AgentAttentionTracker:
             state="blocked",
             run_id=run.id,
             session_id=run.child_session_id,
-            reason=reason,
-            kind=kind,
-            fingerprint=prompt_payload.fingerprint,
-            payload=prompt_payload.to_payload(),
+            reason=classification.reason,
+            kind=classification.kind,
+            fingerprint=classification.fingerprint,
+            payload=classification.payload,
         )
-
-    def classify(self, run: AgentRun, pane_output: str) -> AttentionClassification | None:
-        raise NotImplementedError
-
-    async def apply(self, run: AgentRun, classification: AttentionClassification | None) -> None:
-        raise NotImplementedError
 
     async def clear_after_injection(self, run: AgentRun) -> None:
         """Clear the exact attention episode resolved by successful injection."""
@@ -182,7 +195,7 @@ class AgentAttentionTracker:
     async def _enter_lifecycle_wait(
         self,
         session_id: str | None,
-        reason: PromptKind,
+        reason: str,
         fingerprint: str,
         provider: str,
     ) -> None:

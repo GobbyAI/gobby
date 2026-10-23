@@ -7,6 +7,7 @@ from the body, and never touch the reported paths on the hub's disk.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -28,6 +29,7 @@ from gobby.hub.node_reports import (
     record_remote_workspaces,
     report_size,
 )
+from gobby.hub.remote_pane import apply_report_panes, redact_report_panes
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
@@ -42,6 +44,8 @@ from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+logger = logging.getLogger(__name__)
 
 # The node reports every 30 seconds, so a refused report waits one interval.
 REPORT_RETRY_AFTER_SECONDS = 30
@@ -109,6 +113,24 @@ def _register_checkout(server: HTTPServer, machine_id: str, body: CheckoutBody) 
     return CheckoutResult(root_path=checkout.root_path, created=created)
 
 
+async def _apply_report_panes(server: HTTPServer, machine_id: str, body: ReportBody) -> None:
+    monitor = server.services.agent_lifecycle_monitor
+    if monitor is None:
+        logger.warning("Node pane state not applied: no agent lifecycle monitor")
+        return
+    try:
+        await apply_report_panes(
+            server.services.database,
+            monitor.attention_tracker,
+            machine_id=machine_id,
+            revision=body.revision,
+            agents=body.agents,
+            run_db=server.run_db,
+        )
+    except Exception as exc:
+        logger.warning("Node pane state not applied: %s", type(exc).__name__)
+
+
 def create_nodes_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -127,9 +149,11 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
     async def report(request: Request) -> dict[str, Any] | JSONResponse:
         machine_id = _node_machine(server, request)
         budgets = _report_budgets(server)
-        body = _body(
-            await _capped_body(request, budgets.max_request_bytes, "report_too_large"),
-            ReportBody,
+        body = redact_report_panes(
+            _body(
+                await _capped_body(request, budgets.max_request_bytes, "report_too_large"),
+                ReportBody,
+            )
         )
         inbox = node_report_inbox()
         size = report_size(body)
@@ -157,6 +181,7 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
             inbox.release(machine_id, size)
             raise
         inbox.put(machine_id, body, size)
+        await _apply_report_panes(server, machine_id, body)
         return {}
 
     return router

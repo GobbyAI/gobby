@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -26,6 +28,7 @@ APPROVAL = "Permission required: press Enter to approve this command"
 QUESTION = "Choose a response:\n1. Yes / 2. No\n"
 CLEAN = "all quiet"
 STALL = "503 service unavailable"
+_STAMP = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 async def _run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
@@ -40,8 +43,8 @@ def _run(run_id: str) -> AgentRun:
         provider="claude",
         prompt="test",
         status="running",
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=_STAMP,
+        updated_at=_STAMP,
         terminal_id="agent-run-1",
     )
 
@@ -258,3 +261,47 @@ async def test_local_sync_unchanged(temp_db: HubDatabase, monkeypatch: pytest.Mo
 
     assert split == synced
     assert any(state is not None and state[0] == "blocked" for state in synced)
+
+
+@pytest.mark.asyncio
+async def test_report_applications_keep_revision_order(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote_pane.remote_pane_store.cache_clear()
+    manager = _manager(temp_db)
+    tracker = _tracker(manager)
+    run = _run("run-order")
+    monkeypatch.setattr(
+        remote_pane,
+        "load_reported_run",
+        lambda db, machine_id, run_id, terminal_id: run,
+    )
+    held = asyncio.Event()
+    release = asyncio.Event()
+    holds = [True]
+
+    async def gated_run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
+        if holds[0]:
+            holds[0] = False
+            held.set()
+            await release.wait()
+        return function(*args, **kwargs)
+
+    older = [_agent(run.id, "term-order", _pane(attention=_attention()))]
+    newer = [_agent(run.id, "term-order", _pane(attention=None))]
+    first = asyncio.create_task(
+        remote_pane.apply_report_panes(
+            temp_db, tracker, machine_id=MACHINE, revision=1, agents=older, run_db=gated_run_db
+        )
+    )
+    await held.wait()
+    second = asyncio.create_task(
+        remote_pane.apply_report_panes(
+            temp_db, tracker, machine_id=MACHINE, revision=2, agents=newer, run_db=gated_run_db
+        )
+    )
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(first, second)
+
+    assert _blocked_state(manager, run.id) is None
