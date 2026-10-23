@@ -194,8 +194,13 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
         assert_eq!(operations, expected);
         for (_, command, using_expression, check_expression) in policies {
             let predicate = format!("{using_expression} {check_expression}");
-            assert!(predicate.contains("current_code_overlay_project_id"));
-            assert!(predicate.contains("current_project_id"));
+            if command == "SELECT" && table != "code_overlay_pins" {
+                assert!(predicate.contains("current_read_code_project_ids"));
+            } else {
+                assert!(predicate.contains("current_code_overlay_project_id"));
+                assert!(predicate.contains("current_project_id"));
+                assert!(!predicate.contains("current_read_code_project_ids"));
+            }
             if [
                 "code_indexed_project_states",
                 "code_indexed_file_states",
@@ -584,8 +589,8 @@ fn interactive_principal_binds_only_registered_worktree_overlays() -> anyhow::Re
             .query_one("SELECT count(*) FROM code_indexed_projects", &[])?
             .get(0);
         assert_eq!(
-            visible_projects, 1,
-            "main checkout must not see the overlay"
+            visible_projects, 2,
+            "main checkout reads the registered local sibling overlay"
         );
         let error = main_scoped
             .execute(
@@ -1236,7 +1241,7 @@ fn retired_task_validation_config_is_removed_on_upgrade() -> anyhow::Result<()> 
         SchemaRunner::new(&mut client, "public")?
             .apply()?
             .migrations_applied,
-        1
+        MIGRATIONS.len() - migration_index
     );
     let remaining: Vec<String> = client
         .query("SELECT key FROM config_store ORDER BY key", &[])?
