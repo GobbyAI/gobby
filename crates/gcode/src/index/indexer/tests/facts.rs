@@ -250,7 +250,7 @@ fn inheritance_pending_status_keeps_graph_only_owner() {
 
 mod serial_db {
     use super::super::super::IndexOutcome;
-    use super::super::super::file::write_parsed_file_facts;
+    use super::super::super::file::{write_content_only_file_facts, write_parsed_file_facts};
     use super::super::super::local_imports::{
         resolve_local_import_calls, resolve_local_import_inheritance,
         resolve_project_local_import_inheritance,
@@ -2168,6 +2168,81 @@ mod serial_db {
             graph_synced: row.get(2),
             graph_attempted: row.get(3),
         }
+    }
+
+    fn write_content_only(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        rel: &str,
+        language: &str,
+        hash: &str,
+        source: &[u8],
+    ) {
+        let mut tx = conn.transaction().expect("tx");
+        let mut sink = PostgresCodeFactSink::new(
+            &mut tx,
+            project_id,
+            Path::new("/tmp/inherit"),
+            api::IndexWriteMode::Overlay,
+            &local_machine_id(),
+        )
+        .expect("sink");
+        write_content_only_file_facts(
+            &mut sink,
+            project_id,
+            rel,
+            language,
+            hash,
+            source.len(),
+            source,
+        )
+        .expect("write content-only facts");
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn content_only_reroute_drops_graph_rows_and_dirties_graph_only() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-content-only-reroute");
+        let caller = reparse_symbol(&project_id, "caller", "hash-1", None);
+        let call = CallRelation::new(
+            caller.id.clone(),
+            "helper".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![caller], vec![call]),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        write_content_only(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            b"fn caller() {}\n",
+        );
+
+        assert_eq!(
+            version_flags(&mut conn, &project_id, "hash-1"),
+            ProjectionFlags {
+                vectors_synced: true,
+                vector_attempted: true,
+                graph_synced: false,
+                graph_attempted: false,
+            }
+        );
     }
 
     #[test]

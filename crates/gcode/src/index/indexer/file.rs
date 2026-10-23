@@ -348,6 +348,7 @@ pub(super) fn write_content_only_file_facts(
     byte_size: usize,
     source: &[u8],
 ) -> anyhow::Result<FileIndexCounts> {
+    let before = sink.read_version_facts(project_id, rel, content_hash)?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel, content_hash),
         project_id: project_id.to_string(),
@@ -359,6 +360,10 @@ pub(super) fn write_content_only_file_facts(
         indexed_at: epoch_secs_str(),
     })?;
     sink.delete_file_non_symbol_facts(project_id, rel, content_hash)?;
+    // Symbols are left untouched, so only dropped graph rows change the graph input.
+    if !before.imports.is_empty() || !before.calls.is_empty() || !before.inheritance.is_empty() {
+        sink.dirty_version_sync(project_id, rel, content_hash, false, true)?;
+    }
     let chunks = chunker::chunk_file_content(source, rel, project_id, content_hash, Some(language));
     let chunks_indexed = if chunks.is_empty() {
         0
