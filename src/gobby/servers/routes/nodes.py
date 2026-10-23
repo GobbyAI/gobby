@@ -7,7 +7,9 @@ from the body, and never touch the reported paths on the hub's disk.
 from __future__ import annotations
 
 import json
+import logging
 import os
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -28,6 +30,7 @@ from gobby.hub.node_reports import (
     record_remote_workspaces,
     report_size,
 )
+from gobby.hub.remote_pane import apply_report_panes, redact_report_panes
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
@@ -42,6 +45,8 @@ from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
+
+logger = logging.getLogger(__name__)
 
 # The node reports every 30 seconds, so a refused report waits one interval.
 REPORT_RETRY_AFTER_SECONDS = 30
@@ -82,7 +87,42 @@ def _body[T: BaseModel](raw: bytes, model: type[T]) -> T:
     try:
         return model.model_validate(body)
     except ValidationError as exc:
+        _log_invalid_body(model, exc)
         raise HTTPException(422, "invalid_body") from exc
+
+
+def _log_invalid_body(model: type[BaseModel], exc: ValidationError) -> None:
+    # A pydantic error quotes the input and the request's keys, so the log keeps only the
+    # schema's field names, [index] for list positions, [key] for anything else, and the type.
+    names = _schema_field_names(model)
+    for error in exc.errors():
+        location = ".".join(_loc_segment(segment, names) for segment in error["loc"])
+        logger.warning("Node body rejected at %s: %s", location, error["type"])
+
+
+def _loc_segment(segment: int | str, names: frozenset[str]) -> str:
+    if isinstance(segment, int):
+        return "[index]"
+    return segment if segment in names else "[key]"
+
+
+@cache
+def _schema_field_names(model: type[BaseModel]) -> frozenset[str]:
+    names: set[str] = set()
+    _collect_property_names(model.model_json_schema(), names)
+    return frozenset(names)
+
+
+def _collect_property_names(node: object, names: set[str]) -> None:
+    if isinstance(node, dict):
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            names.update(properties)
+        for value in node.values():
+            _collect_property_names(value, names)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_property_names(item, names)
 
 
 def _register_checkout(server: HTTPServer, machine_id: str, body: CheckoutBody) -> CheckoutResult:
@@ -109,6 +149,24 @@ def _register_checkout(server: HTTPServer, machine_id: str, body: CheckoutBody) 
     return CheckoutResult(root_path=checkout.root_path, created=created)
 
 
+async def _apply_report_panes(server: HTTPServer, machine_id: str, body: ReportBody) -> None:
+    monitor = server.services.agent_lifecycle_monitor
+    if monitor is None:
+        logger.warning("Node pane state not applied: no agent lifecycle monitor")
+        return
+    try:
+        await apply_report_panes(
+            server.services.database,
+            monitor.attention_tracker,
+            machine_id=machine_id,
+            revision=body.revision,
+            agents=body.agents,
+            run_db=server.run_db,
+        )
+    except Exception as exc:
+        logger.warning("Node pane state not applied: %s", type(exc).__name__)
+
+
 def create_nodes_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -127,9 +185,11 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
     async def report(request: Request) -> dict[str, Any] | JSONResponse:
         machine_id = _node_machine(server, request)
         budgets = _report_budgets(server)
-        body = _body(
-            await _capped_body(request, budgets.max_request_bytes, "report_too_large"),
-            ReportBody,
+        body = redact_report_panes(
+            _body(
+                await _capped_body(request, budgets.max_request_bytes, "report_too_large"),
+                ReportBody,
+            )
         )
         inbox = node_report_inbox()
         size = report_size(body)
@@ -157,6 +217,7 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
             inbox.release(machine_id, size)
             raise
         inbox.put(machine_id, body, size)
+        await _apply_report_panes(server, machine_id, body)
         return {}
 
     return router

@@ -193,7 +193,7 @@ def _record_workspace(
 def _reported_run(
     conn: Transaction, machine_id: str, run_id: str, terminal_id: str
 ) -> dict[str, object] | None:
-    if not (_is_uuid(run_id) and _is_uuid(terminal_id)):
+    if not (is_uuid(run_id) and is_uuid(terminal_id)):
         return None
     # The session join keeps the (agent_session_id, machine_id) foreign key satisfiable.
     row = conn.execute(
@@ -210,7 +210,7 @@ def _reported_run(
     return dict(row) if row is not None else None
 
 
-def _is_uuid(value: str) -> bool:
+def is_uuid(value: str) -> bool:
     try:
         uuid.UUID(value)
     except ValueError:
