@@ -1511,7 +1511,9 @@ fn build_and_stage_retirement_rebuckets_tasks_and_drops_tables() -> anyhow::Resu
         .get(0);
     assert_eq!(before, "in_progress");
 
-    SchemaRunner::new(&mut client, "public")?.apply()?;
+    // Stop at 472 so later bucket migrations cannot mask its contract.
+    let through_retirement = &MIGRATIONS[..=migration_index];
+    SchemaRunner::with_migrations_for_test(&mut client, "public", through_retirement)?.apply()?;
     for table in [
         "task_stage_states",
         "task_type_default_stages",
@@ -1604,7 +1606,7 @@ fn build_and_stage_retirement_rebuckets_tasks_and_drops_tables() -> anyhow::Resu
         assert_eq!(observed, bucket);
     }
     assert_eq!(
-        SchemaRunner::new(&mut client, "public")?
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_retirement)?
             .apply()?
             .migrations_applied,
         0
