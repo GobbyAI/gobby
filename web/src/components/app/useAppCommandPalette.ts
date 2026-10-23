@@ -79,40 +79,35 @@ export function useAppCommandPalette({
     settings.ttsEnabled,
   ]);
 
-  const restartDaemon = useCallback(
-    async (showFailureMessage: boolean) => {
-      addSystemMessage("Requesting daemon restart...");
-      try {
-        const response = await requestDaemonRestart();
-        const failure = await readDaemonRestartFailure(response);
-        if (failure?.protectedRuns.length) {
-          addSystemMessage(failure.message);
-          const shouldForce = window.confirm(
-            `${failure.message}\n\nForce restart and interrupt this work?`,
-          );
-          if (!shouldForce) return;
+  const restartDaemon = useCallback(async () => {
+    addSystemMessage("Requesting daemon restart...");
+    try {
+      const response = await requestDaemonRestart();
+      const failure = await readDaemonRestartFailure(response);
+      if (failure?.protectedRuns.length) {
+        addSystemMessage(failure.message);
+        const shouldForce = window.confirm(
+          `${failure.message}\n\nForce restart and interrupt this work?`,
+        );
+        if (!shouldForce) return;
 
-          addSystemMessage("Forcing daemon restart...");
-          const forcedResponse = await requestDaemonRestart(true);
-          const forcedFailure = await readDaemonRestartFailure(forcedResponse);
-          if (forcedFailure) throw new Error(forcedFailure.message);
-        } else if (failure) {
-          throw new Error(failure.message);
-        }
-        addSystemMessage("Daemon restart requested; reconnecting...");
-      } catch (err) {
-        console.error("Restart request failed:", err);
-        if (showFailureMessage) {
-          const message =
-            err instanceof Error && err.message
-              ? err.message
-              : "Failed to restart daemon";
-          addSystemMessage(`Failed to restart daemon: ${message}`);
-        }
+        addSystemMessage("Forcing daemon restart...");
+        const forcedResponse = await requestDaemonRestart(true);
+        const forcedFailure = await readDaemonRestartFailure(forcedResponse);
+        if (forcedFailure) throw new Error(forcedFailure.message);
+      } else if (failure) {
+        throw new Error(failure.message);
       }
-    },
-    [addSystemMessage],
-  );
+      addSystemMessage("Daemon restart requested; reconnecting...");
+    } catch (err) {
+      console.error("Restart request failed:", err);
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to restart daemon";
+      addSystemMessage(`Failed to restart daemon: ${message}`);
+    }
+  }, [addSystemMessage]);
 
   const handlePaletteSelect = useCallback(
     (item: PaletteItem) => {
@@ -147,7 +142,7 @@ export function useAppCommandPalette({
         return;
       }
       if (item.action === "restart_daemon") {
-        void restartDaemon(false);
+        void restartDaemon();
         return;
       }
       if (item.action === "exit_plan_mode") {
@@ -234,7 +229,7 @@ export function useAppCommandPalette({
         icon: "\u21BB",
         category: "action",
         onSelect: () => {
-          void restartDaemon(true);
+          void restartDaemon();
         },
       },
     ];

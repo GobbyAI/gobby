@@ -66,6 +66,9 @@ SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 # reached 168s on a loaded machine.
 STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
 DAEMON_HEALTH_TIMEOUT_SECONDS = STARTUP_READINESS_TIMEOUT_SECONDS
+# The restart route's start proof is bounded at 60 s and then answers 409. This post
+# waits longer, so a slow proof reaches the caller as its refusal, not as a timeout.
+RESTART_REQUEST_TIMEOUT_SECONDS = 75.0
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
@@ -483,11 +486,9 @@ def restart(
         setup_logging(True)
 
     # Check before stopping: refusing after the stop would leave no daemon.
-    refusal = (
-        restart_start_refusal(ctx)
-        if expected_identity is None
-        else restart_start_refusal(ctx, expected_identity=expected_identity)
-    )
+    from gobby.cli.runtime import get_cli_runtime
+
+    refusal = restart_start_refusal(get_cli_runtime(ctx), expected_identity=expected_identity)
     if refusal:
         _step(f"Refusing to restart: {refusal}", error=True)
         _step("The running daemon was left alone.")
@@ -563,7 +564,7 @@ def _restart_backend(
                     # Admission is owned by the CLI guard above.
                     params={"force": "true", "terminals": str(drain_terminals).lower()},
                     headers=daemon_auth_headers(),
-                    timeout=5.0,
+                    timeout=RESTART_REQUEST_TIMEOUT_SECONDS,
                 )
             except httpx.HTTPError as exc:
                 _step(f"Backend restart request failed: {exc}", error=True)

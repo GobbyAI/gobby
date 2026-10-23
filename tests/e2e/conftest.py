@@ -321,10 +321,9 @@ def prepare_daemon_env(
 
     # Remove test-process-specific path overrides so the daemon uses its own
     # isolated config/DB. GOBBY_TEST_PROTECT is forced here: it is the safety
-    # guard that prevents stop_daemon / kill_all_gobby_daemons /
-    # stop_daemon_process / get_daemon_pid in the spawned daemon (and any
-    # subprocesses it forks: agents, hooks, helper CLIs) from reaching the
-    # user's real daemon via system-wide psutil discovery.
+    # guard that prevents stop_daemon / kill_all_gobby_daemons / get_daemon_pid
+    # in the spawned daemon (and any subprocesses it forks: agents, hooks, helper
+    # CLIs) from reaching the user's real daemon via system-wide psutil discovery.
     env["GOBBY_TEST_PROTECT"] = "1"
     env.pop("GOBBY_DATABASE_PATH", None)
     env.pop("GOBBY_CONFIG_FILE", None)

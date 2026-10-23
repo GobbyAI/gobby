@@ -77,7 +77,7 @@ def restart_daemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[
     monkeypatch.setenv(E2E_ISOLATED_HOME_ENV, str(tmp_path))
     monkeypatch.setattr(lifecycle, "get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda _ctx: runtime)
-    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda _ctx: None)
+    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(lifecycle, "clear_protected_runs", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         lifecycle, "protect_pending_handoffs", lambda *_args, **_kwargs: nullcontext()

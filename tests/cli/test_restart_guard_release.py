@@ -32,7 +32,7 @@ def test_restart_guard_survives_real_runner_gate_fencing(
     runtime.read_only_operational_config.return_value = DaemonConfig(daemon_port=61987)
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda _ctx: runtime)
     monkeypatch.setattr(lifecycle, "is_test_protect_enabled", lambda: False)
-    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda _ctx: None)
+    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(lifecycle, "_is_daemon_healthy", lambda _port: True)
     monkeypatch.setattr(lifecycle, "clear_protected_runs", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(lifecycle, "daemon_auth_headers", lambda: {})
