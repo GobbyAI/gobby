@@ -46,6 +46,7 @@ _TABLE: dict[WorkspaceKind, str] = {"worktree": "worktrees", "clone": "clones"}
 _CLEANUP_DAYS: dict[WorkspaceKind, int] = {"worktree": 0, "clone": 7}
 _REMOVE_REFUSALS = {"dirty": "dirty", "unmerged": "unmerged", "busy": "workspace_busy"}
 _MERGE_TIMEOUT_MS = 250_000
+_LIST_TOOLS = frozenset({"list_worktrees", "list_clones"})
 
 
 def _matches(db: HubDatabase, kind: WorkspaceKind, ref: str) -> list[Any]:
@@ -211,58 +212,71 @@ def node_error_result(exc: NodeCommandError) -> dict[str, Any]:
 def route_node_workspace_tools(
     registry: InternalToolRegistry, *, kind: WorkspaceKind, db: HubDatabase
 ) -> None:
-    """Route get, merge and delete of one kind to the owning node when it is remote."""
-    routes = (("get", _remote_get), ("merge", _remote_merge), ("delete", _remote_delete))
-    for op, remote in routes:
-        name = f"{op}_{kind}"
-        tool = registry.get_tool_metadata(name)
-        if tool is None:
+    """Authorize every tool of one kind; get, merge and delete of a remote row go to its node.
+
+    The list tools keep their own machine check, which names the requested machine.
+    """
+    dispatch: dict[str, Callable[..., Any]] = {
+        f"{op}_{kind}": remote
+        for op, remote in (
+            ("get", _remote_get),
+            ("merge", _remote_merge),
+            ("delete", _remote_delete),
+        )
+    }
+    for name in dispatch:
+        if registry.get_tool_metadata(name) is None:
             raise LookupError(f"{name} is not registered on {registry.name}")
+    for entry in registry.list_tools():
+        name = entry["name"]
+        tool = registry.get_tool_metadata(name)
+        if tool is None or name in _LIST_TOOLS:
+            continue
         registry.register(
             name,
             tool.description,
             tool.input_schema,
-            _routed(tool.func, kind=kind, db=db, remote=remote),
+            _guarded(tool.func, kind=kind, db=db, remote=dispatch.get(name)),
             brief=tool.brief,
             output_schema=tool.output_schema,
             read_only=tool.read_only,
         )
 
 
-def _routed(
+def _guarded(
     original: Callable[..., Any],
     *,
     kind: WorkspaceKind,
     db: HubDatabase,
-    remote: Callable[..., Any],
+    remote: Callable[..., Any] | None,
 ) -> Callable[..., Any]:
-    """Ownership first; a remote row goes to its node, anything else to the original."""
+    """Ownership first. A remote row goes to its node when ``remote`` is given; otherwise the original runs."""
     if inspect.iscoroutinefunction(original):
 
         @functools.wraps(original)
-        async def routed_async(**kwargs: Any) -> Any:
+        async def guarded_async(**kwargs: Any) -> Any:
             try:
                 owner = _owned(db, kind, kwargs)
-                if owner is None or is_local_machine(owner[1]):
+                if remote is None or owner is None or is_local_machine(owner[1]):
                     return await original(**kwargs)
                 result = remote(db, kind, kwargs, owner)
                 return await result if inspect.isawaitable(result) else result
             except NodeCommandError as exc:
                 return node_error_result(exc)
 
-        return routed_async
+        return guarded_async
 
     @functools.wraps(original)
-    def routed_sync(**kwargs: Any) -> Any:
+    def guarded_sync(**kwargs: Any) -> Any:
         try:
             owner = _owned(db, kind, kwargs)
-            if owner is None or is_local_machine(owner[1]):
+            if remote is None or owner is None or is_local_machine(owner[1]):
                 return original(**kwargs)
             return remote(db, kind, kwargs, owner)
         except NodeCommandError as exc:
             return node_error_result(exc)
 
-    return routed_sync
+    return guarded_sync
 
 
 def _owned(db: HubDatabase, kind: WorkspaceKind, kwargs: dict[str, Any]) -> Owner | None:

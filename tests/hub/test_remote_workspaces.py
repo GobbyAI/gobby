@@ -15,6 +15,7 @@ from gobby.hub.caller_scope import bind_caller
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_workspaces import route_node_workspace_tools
 from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.mcp_proxy.services.argument_validation import check_arguments
 from gobby.mcp_proxy.tools.clones import create_clones_registry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.clones import LocalCloneManager
@@ -441,6 +442,12 @@ async def test_list_tools_take_machine_id(
     local_clones = await clones.call("list_clones", {})
     assert [item["id"] for item in local_clones["clones"]] == [local_clone]
 
+    # The proxy strips keys the input schema does not declare before a call reaches the tool.
+    for registry, name in ((worktrees, "list_worktrees"), (clones, "list_clones")):
+        schema = registry.get_schema(name)
+        assert schema is not None
+        assert check_arguments({"machine_id": node_machine}, schema["inputSchema"]) == [], name
+
 
 async def test_offline_and_other_tools_refuse(
     temp_db: HubDatabase,
@@ -548,7 +555,9 @@ async def test_workspace_tools_need_owned_machine(
 
 
 @pytest.mark.usefixtures("hub_machine")
+@pytest.mark.parametrize("tool", ["get_worktree", "abandon_worktree", "sync_worktree"])
 async def test_ambiguous_prefix_hides_foreign_ids(
+    tool: str,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     node_machine: str,
@@ -563,23 +572,23 @@ async def test_ambiguous_prefix_hides_foreign_ids(
 
     other = bind_caller(OTHER_USER_ID, temp_db)
     try:
-        refused = await worktrees.call("get_worktree", {"worktree_id": prefix})
+        refused = await worktrees.call(tool, {"worktree_id": prefix})
     finally:
         other.var.reset(other)
-    assert refused["error_code"] == "machine_not_owned"
+    assert refused.get("error_code") == "machine_not_owned", (tool, refused)
 
     owner = bind_caller(TEST_USER_ID, temp_db)
     try:
-        ambiguous = await worktrees.call("get_worktree", {"worktree_id": prefix})
+        ambiguous = await worktrees.call(tool, {"worktree_id": prefix})
     finally:
         owner.var.reset(owner)
-    assert ambiguous["error_code"] == "ambiguous_reference"
+    assert ambiguous.get("error_code") == "ambiguous_reference", (tool, ambiguous)
     for result in (refused, ambiguous):
         assert not any(row_id in str(result) for row_id in node_ids)
 
 
 @pytest.mark.usefixtures("hub_machine")
-async def test_list_refusal_precedes_session_resolution(
+async def test_list_refusal_precedes_project_resolution(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     node_machine: str,
@@ -594,6 +603,99 @@ async def test_list_refusal_precedes_session_resolution(
     finally:
         other.var.reset(other)
     assert result["error_code"] == "machine_not_owned"
+
+
+@pytest.mark.usefixtures("hub_machine")
+async def test_sibling_workspace_tools_need_owned_machine(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    hub_machine: str,
+    node_client: AsyncMock,
+) -> None:
+    session_id = _session(temp_db, sample_project, hub_machine)
+    local_worktree = _worktree(temp_db, sample_project)
+    local_clone = _clone(temp_db, sample_project)
+    temp_db.execute(
+        "UPDATE clones SET agent_session_id = %s WHERE id = %s", (session_id, local_clone)
+    )
+    worktree_before = _row(temp_db, "worktrees", local_worktree)
+    clone_before = _row(temp_db, "clones", local_clone)
+    assert worktree_before is not None
+    assert clone_before is not None
+    worktrees, clones = _registries(temp_db, sample_project)
+
+    refused: list[tuple[Any, str, dict[str, Any]]] = [
+        (worktrees, "get_worktree_stats", {}),
+        (worktrees, "get_worktree_by_task", {"task_id": "#1"}),
+        (worktrees, "create_worktree", {"branch_name": "feature/refused"}),
+        (worktrees, "abandon_worktree", {"worktree_id": local_worktree}),
+        (worktrees, "reactivate_worktree", {"worktree_id": local_worktree}),
+        (worktrees, "mark_worktree_merged", {"worktree_id": local_worktree}),
+        (worktrees, "claim_worktree", {"worktree_id": local_worktree}),
+        (worktrees, "release_worktree", {"worktree_id": local_worktree}),
+        (worktrees, "link_task_to_worktree", {"worktree_id": local_worktree, "task_id": "#1"}),
+        (worktrees, "sync_worktree", {"worktree_id": local_worktree}),
+        (worktrees, "push_branch", {"worktree_id": local_worktree}),
+        (worktrees, "detect_stale_worktrees", {}),
+        (worktrees, "cleanup_stale_worktrees", {}),
+        (clones, "get_clone_stats", {}),
+        (clones, "get_clone_by_task", {"task_id": "#1"}),
+        (clones, "create_clone", {"branch_name": "feature/refused"}),
+        (clones, "claim_clone", {"clone_id": local_clone}),
+        (clones, "release_clone", {"clone_id": local_clone}),
+        (clones, "link_task_to_clone", {"clone_id": local_clone, "task_id": "#1"}),
+        (clones, "sync_clone", {"clone_id": local_clone}),
+    ]
+    other = bind_caller(OTHER_USER_ID, temp_db)
+    try:
+        for registry, name, args in refused:
+            result = await registry.call(name, args)
+            assert result.get("error_code") == "machine_not_owned", (name, result)
+    finally:
+        other.var.reset(other)
+    node_client.send.assert_not_awaited()
+    assert _row(temp_db, "worktrees", local_worktree) == worktree_before
+    assert _row(temp_db, "clones", local_clone) == clone_before
+
+
+@pytest.mark.usefixtures("hub_machine")
+async def test_sibling_workspace_tools_owner_and_unbound_proceed(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    hub_machine: str,
+    node_machine: str,
+) -> None:
+    session_id = _session(temp_db, sample_project, hub_machine)
+    owned_worktree = _worktree(temp_db, sample_project)
+    unbound_worktree = _worktree(temp_db, sample_project)
+    owned_clone = _clone(temp_db, sample_project)
+    temp_db.execute(
+        "UPDATE clones SET agent_session_id = %s WHERE id = %s", (session_id, owned_clone)
+    )
+    node_worktree = _worktree(temp_db, sample_project, machine_id=node_machine)
+    worktrees, clones = _registries(temp_db, sample_project)
+
+    owner = bind_caller(TEST_USER_ID, temp_db)
+    try:
+        abandoned = await worktrees.call("abandon_worktree", {"worktree_id": owned_worktree})
+        assert abandoned["success"] is True
+        released = await clones.call("release_clone", {"clone_id": owned_clone})
+        assert released["success"] is True
+        remote = await worktrees.call(
+            "list_worktrees", {"project_id": sample_project["id"], "machine_id": node_machine}
+        )
+        assert [item["id"] for item in remote["worktrees"]] == [node_worktree]
+    finally:
+        owner.var.reset(owner)
+    owned_row = _row(temp_db, "worktrees", owned_worktree)
+    assert owned_row is not None
+    assert owned_row["status"] == "abandoned"
+    owned_clone_row = _row(temp_db, "clones", owned_clone)
+    assert owned_clone_row is not None
+    assert owned_clone_row["agent_session_id"] is None
+
+    unbound = await worktrees.call("abandon_worktree", {"worktree_id": unbound_worktree})
+    assert unbound["success"] is True
 
 
 def test_list_remote_applies_session_filter_and_limit_in_query(

@@ -113,6 +113,11 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
                     "description": "Maximum number of results",
                     "default": 50,
                 },
+                "machine_id": {
+                    "type": "string",
+                    "description": "Machine whose clones to list. Omitted or this machine lists "
+                    "local rows; another machine lists its rows through the hub.",
+                },
             },
         },
         func=list_clones,
