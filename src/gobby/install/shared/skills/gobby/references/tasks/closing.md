@@ -70,6 +70,15 @@ commit. `land_commit` lands that commit only for the task's Dev Manager or the
 root Orchestrator, never for the reviewer, and records a daemon-attested landing
 receipt on the task. Nothing else records a close receipt.
 
+A live release window holds every landing: `land_commit` refuses with
+`release_window_active` and does not escalate, so retry after the window ends.
+Only the Release Manager calls gobby-agents `acquire_release_window`,
+`renew_release_window(token, generation)` and
+`end_release_window(token, generation)`. The lease lasts 10 minutes from
+acquire or the last renew, and each renew returns the next generation. An
+unreadable `<git common dir>/gobby/release-window.json` refuses landings with
+`release_window_unreadable` until an operator deletes that file.
+
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,
 `repair_closed_candidate(task_id, review_id, expected_closed_commit_sha, reason)`

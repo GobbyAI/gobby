@@ -399,6 +399,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/servers/routes/agents.py::update_definition`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees."
   },
+  "MCP gobby-agents:acquire_release_window": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::acquire_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
   "MCP gobby-agents:apply_agent_definition": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::apply_agent_definition`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
@@ -434,6 +438,10 @@
   "MCP gobby-agents:end_agent_run": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::end_agent_run`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-agents:end_release_window": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::end_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
   "MCP gobby-agents:evaluate_spawn": {
     "status": "proxied",
@@ -474,6 +482,10 @@
   "MCP gobby-agents:list_running_agents": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::list_running_agents`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-agents:renew_release_window": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::renew_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
   "MCP gobby-agents:running_agent_stats": {
     "status": "proxied",

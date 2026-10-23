@@ -7,11 +7,13 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
 import psycopg
 
+from gobby.releases.window import ReleaseWindowUnreadable, admissions_closed, read_window
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
@@ -484,6 +486,12 @@ async def land_candidate(
                 # A freeze refuses outright; restart-class landings need no extra approval.
                 if (await asyncio.to_thread(read_freeze, common)).on:
                     blockers.append("landing_frozen")
+                # A held release window pins the tip; refusal waits and never escalates.
+                window = await asyncio.to_thread(read_window, common)
+                if isinstance(window, ReleaseWindowUnreadable):
+                    blockers.append("release_window_unreadable")
+                elif admissions_closed(window, datetime.now(UTC)):
+                    blockers.append("release_window_active")
                 # Only the integration tip counts; unlanded peers never block a landing.
                 if shared:
                     blockers.append("base_update_required")
