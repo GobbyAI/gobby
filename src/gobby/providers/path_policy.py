@@ -53,6 +53,10 @@ def _provider_user_directory(provider: str | None) -> str | None:
     )
 
 
+def _as_resolved(path: Path) -> Path | None:
+    return path
+
+
 def is_plan_scratch_path(
     path: str,
     provider: str | None,
@@ -60,6 +64,7 @@ def is_plan_scratch_path(
     home_root: str | Path | None = None,
     temp_root: str | Path | None = None,
     posix_tmp_root: str | Path | None = _DEFAULT_POSIX_TMP_ROOT,
+    resolved: bool = False,
 ) -> bool:
     """Return whether *path* is an approved plan-mode scratch location.
 
@@ -67,19 +72,30 @@ def is_plan_scratch_path(
     the OS temporary directory, and resolved ``/tmp`` on POSIX. Relative
     project paths and paths that escape an approved root through symlinks or
     traversal fail closed.
+
+    With ``resolved``, *path* and every root were already resolved on one
+    filesystem, the node's. They are compared as given and no local path is
+    read, so a local symlink cannot change the answer. ``home_root`` and
+    ``temp_root`` are then required.
     """
     user_directory = _provider_user_directory(provider)
     if not isinstance(path, str) or user_directory is None:
         return False
+    if resolved and (home_root is None or temp_root is None):
+        return False
 
-    resolved_home = _resolve_path(Path.home() if home_root is None else Path(home_root))
+    resolve_path = _as_resolved if resolved else _resolve_path
+    resolved_home = resolve_path(Path.home() if home_root is None else Path(home_root))
     if resolved_home is None:
         return False
-    candidate = _resolve_candidate(path, resolved_home)
+    if resolved:
+        candidate = Path(path) if Path(path).is_absolute() else None
+    else:
+        candidate = _resolve_candidate(path, resolved_home)
     if candidate is None:
         return False
 
-    provider_root = _resolve_path(resolved_home / user_directory)
+    provider_root = resolve_path(resolved_home / user_directory)
     if provider_root is None or not provider_root.is_relative_to(resolved_home):
         return False
 
@@ -88,7 +104,7 @@ def is_plan_scratch_path(
     # directory: another provider's home must not become writable merely
     # because it is also beneath that broader root.
     for metadata in provider_metadata():
-        known_root = _resolve_path(resolved_home / metadata.user_directory)
+        known_root = resolve_path(resolved_home / metadata.user_directory)
         if known_root is None or not known_root.is_relative_to(resolved_home):
             continue
         if candidate == known_root or candidate.is_relative_to(known_root):
@@ -96,12 +112,12 @@ def is_plan_scratch_path(
 
     roots: list[Path] = []
     configured_temp = Path(tempfile.gettempdir()) if temp_root is None else Path(temp_root)
-    resolved_temp = _resolve_path(configured_temp)
+    resolved_temp = resolve_path(configured_temp)
     if resolved_temp is not None:
         roots.append(resolved_temp)
 
     if posix_tmp_root is not None:
-        resolved_posix_tmp = _resolve_path(Path(posix_tmp_root))
+        resolved_posix_tmp = resolve_path(Path(posix_tmp_root))
         if resolved_posix_tmp is not None:
             roots.append(resolved_posix_tmp)
 

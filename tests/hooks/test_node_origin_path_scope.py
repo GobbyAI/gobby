@@ -32,6 +32,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 def node(monkeypatch: pytest.MonkeyPatch) -> FakeNode:
     fake = FakeNode()
     fake.install(monkeypatch)
+    for root in ("/home/node", "/tmp"):
+        fake.add_file(NODE_MACHINE, root, b"")
     return fake
 
 
@@ -145,6 +147,41 @@ async def test_node_plan_mode_writes(node: FakeNode, tmp_path: Path) -> None:
     with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
         for path in (".gobby/plans/x.md", "~/notes.md", "source.py"):
             assert not await asyncio.to_thread(allowed, path)
+
+
+async def test_node_plan_scratch_resolves_on_node_only(
+    node: FakeNode, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Hub-only links: node-private -> seat-cache and node-temp -> hub-wide.
+    seat_cache = tmp_path / "seat-cache"
+    hub_wide = tmp_path / "hub-wide"
+    seat_cache.mkdir()
+    hub_wide.mkdir()
+    (tmp_path / "node-private").symlink_to(seat_cache)
+    (tmp_path / "node-temp").symlink_to(hub_wide)
+    cwd = str(tmp_path)
+    _fact(node, cwd, "/node/repo")
+
+    def allowed(*paths: str) -> bool:
+        return plan_write_paths_allowed(
+            {"file_paths": list(paths)}, "claude", ".gobby/plans/x.md", False, project_path=cwd
+        )
+
+    monkeypatch.setattr("tests.hooks.checkout_read_fakes._TEMP_DIR", str(seat_cache))
+    _fact(node, str(seat_cache), str(seat_cache))
+    _fact(node, "seat.md", str(seat_cache / "seat.md"))
+    _fact(node, "private.md", str(tmp_path / "node-private" / "config.md"))
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
+        assert await asyncio.to_thread(allowed, "seat.md")
+        assert not await asyncio.to_thread(allowed, "private.md")
+
+    monkeypatch.setattr("tests.hooks.checkout_read_fakes._TEMP_DIR", str(tmp_path / "node-temp"))
+    _fact(node, str(tmp_path / "node-temp"), str(tmp_path / "node-temp"))
+    _fact(node, "notes.md", str(tmp_path / "node-temp" / "notes.md"))
+    _fact(node, "wide.md", str(hub_wide / "wide.md"))
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
+        assert await asyncio.to_thread(allowed, "notes.md")
+        assert not await asyncio.to_thread(allowed, "wide.md")
 
 
 async def test_unavailable_normalization_fails_closed(node: FakeNode, tmp_path: Path) -> None:

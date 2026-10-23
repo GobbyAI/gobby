@@ -584,6 +584,11 @@ def _node_plan_write_paths_allowed(
         path_facts([project_path], cwd=project_path).files[0].resolved if project_path else None
     )
     facts = path_facts(paths, cwd=project_path)
+    # Roots resolve on the node too; a hub link at a root path must not widen it.
+    home, temp, posix_tmp = (
+        fact.resolved
+        for fact in path_facts([facts.home, facts.temp_dir, "/tmp"], cwd=project_path).files
+    )
     for fact in facts.files:
         resolved = fact.resolved
         if require_current_artifact:
@@ -593,7 +598,14 @@ def _node_plan_write_paths_allowed(
             continue
         if project is not None and PurePosixPath(resolved).is_relative_to(project):
             return False
-        if is_plan_scratch_path(resolved, provider, home_root=facts.home, temp_root=facts.temp_dir):
+        if is_plan_scratch_path(
+            resolved,
+            provider,
+            home_root=home,
+            temp_root=temp,
+            posix_tmp_root=posix_tmp,
+            resolved=True,
+        ):
             continue
         return False
     return True
