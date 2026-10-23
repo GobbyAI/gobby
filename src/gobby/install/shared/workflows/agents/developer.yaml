@@ -292,7 +292,7 @@ step_workflow:
           when: >-
             tool_output.get('closed') is True
             or (tool_output.get('result') or {}).get('closed') is True
-        # A same-task re-claim keeps a candidate its release left latched (#24890).
+        # A same-task re-claim keeps a candidate its release left latched.
         - server: gobby-tasks
           tool: claim_task
           when: "(tool_output.get('result') or tool_output).get('task_id') != vars.get('assigned_task_id')"

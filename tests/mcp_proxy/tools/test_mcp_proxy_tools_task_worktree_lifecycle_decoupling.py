@@ -4,13 +4,14 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.step_records import StepRequirements
 from gobby.utils.daemon_git import GitOk
 from gobby.utils.session_context import session_context_for_test
 
@@ -109,6 +110,10 @@ async def test_close_task_does_not_mutate_worktree_status(
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close.main_checkout_target",
             return_value=(Path(TEST_REPO_PATH), "0.5.0"),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.step_requirements",
+            AsyncMock(return_value=StepRequirements((), ())),
         ),
         patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
     ):
