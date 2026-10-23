@@ -58,9 +58,12 @@ native gateway that can delegate an unported server to Python.
      hash already identifies the exact definition and detects every change.
 
 3. **gdaemon owns one policy pass around every dispatch.** The gateway resolves
-   the authenticated caller context, runs the native rule engine's semantic
-   `before_tool` event, re-resolves the possibly modified server/tool and
-   revalidates arguments, dispatches once, then runs `after_tool` once. A
+   the authenticated caller context, injects omitted schema-required
+   `session_id`/`project_id` arguments from that context while preserving
+   explicitly supplied target values, then runs the native rule engine's
+   semantic `before_tool` event. It re-resolves the possibly modified
+   server/tool, repeats that normalization, revalidates arguments, dispatches
+   once, then runs `after_tool` once. A
    `before_tool` denial or evaluator failure dispatches nothing; an `after_tool`
    evaluator failure records diagnostics and preserves the completed handler's
    original result without redispatch or replay. Listing
@@ -133,8 +136,11 @@ native gateway that can delegate an unported server to Python.
   registry, and resets every token in `finally`; the envelope never replaces or
   injects a tool's body `session_id`.
 - The gateway treats a rule mutation as a new dispatch request: resolve the new
-  server/tool, fetch its current schema, and validate the modified arguments
-  before any handler runs.
+  server/tool, fetch its current schema, apply the existing schema-required-only
+  missing `session_id`/`project_id` injection from caller context, and validate
+  the modified arguments before any handler runs. Explicit target arguments are
+  never overwritten, and native and Python backends receive the same normalized
+  argument map.
 - `schemars` is already present through `rmcp`, and `jsonschema` is already in
   the lockfile. Use those installed dependency families; add no schema compiler,
   code generator, or plugin system.
@@ -282,9 +288,11 @@ separate services.
 - 2.1.1 - The native gateway serves the existing REST surface and `/mcp` from
   one registry, with unchanged server/tool names and result envelopes. test:
   `crates/gdaemon/tests/mcp_gateway.rs::rest_and_streamable_http_share_one_catalog`.
-- 2.1.2 - Authenticated headers and claims resolve one caller `ToolContext`, a
-  body `session_id` stays in tool arguments, and missing agent/wrapper context
-  fails closed. test: `crates/gdaemon/tests/mcp_gateway.rs::caller_and_target_session_ids_remain_distinct`.
+- 2.1.2 - Authenticated headers and claims resolve one caller `ToolContext`;
+  omitted schema-required `session_id`/`project_id` fields are injected before
+  validation and backend selection, explicitly supplied target fields remain
+  unchanged, and missing agent/wrapper context fails closed. test:
+  `crates/gdaemon/tests/mcp_gateway.rs::caller_and_target_session_ids_remain_distinct`.
 - 2.1.3 - The gateway runs `before_tool`, re-resolves and revalidates a modified
   call, and dispatches once; a `before_tool` denial or evaluator failure
   dispatches nothing. It then runs `after_tool` once; when that evaluator fails,
@@ -361,8 +369,8 @@ Consumers unchanged:
   `resolve_and_seed_contexts`, `_bind_agent_run_context`, and
   `_seed_request_principal`; invokes `InternalToolRegistry.call`; and resets all
   seeded tokens in `finally`. Concurrent requests receive independent contexts.
-  Required-input injection continues to read the seeded caller context, while a
-  body `session_id` remains untouched as target-tool input.
+  It receives gdaemon's already normalized tool arguments and never independently
+  rewrites `session_id` or `project_id` target inputs.
 - Strangler order for every family: port/inject the manager; publish the family
   descriptor with committed Python parity fixtures; set its server entry to
   `compare`; clear list/schema/read-only differences and run mutation tests in
@@ -456,6 +464,9 @@ Consumers unchanged:
   affected shipped binary, a matching lockfile, complete rebuilds, and coherent
   promotion. `gcode`, `gdaemon`, and `ghook` share the installed-set identity;
   `gclient` and `gmcp` are promoted through their component paths.
+- Observed planning baselines on 2026-10-23 were `gcode` 1.9.49, `gdaemon`
+  0.4.84, `ghook` 0.9.37, `gclient` 0.1.71, and `gmcp` 0.1.2. They are evidence,
+  not prescribed shipping versions; prerequisite releases may advance them.
 - Chosen approach: make one final shipping change after all source/parity checks,
   then have the Orchestrator announce and perform the required cutover. No
   developer directly overwrites installed binaries or restarts the daemon.
@@ -469,9 +480,11 @@ files, not a second implementation state machine.
 
 **Acceptance:**
 
-- 3.1.1 - Cargo manifests, `Cargo.lock`, and `MANAGED_BIN_VERSION_PINS` agree on
-  `gcode` 1.9.50, `gdaemon` 0.4.85, `ghook` 0.9.38, `gclient` 0.1.72, and
-  `gmcp` 0.1.3; the gcode maintenance floors derive those pins unchanged.
+- 3.1.1 - At the shipping commit, `gcode`, `gdaemon`, `ghook`, `gclient`, and
+  `gmcp` are each exactly one patch version above that binary's immediately
+  preceding released version; their Cargo manifests, `Cargo.lock`, and
+  `MANAGED_BIN_VERSION_PINS` agree, and the gcode maintenance floors derive the
+  resulting gcode pin unchanged.
   behavior: "affected binary versions" in `Cargo.lock`.
 - 3.1.2 - The coherent installed trio is promoted through
   `promote_workspace_binary_set`, and the separately promoted `gclient` and
