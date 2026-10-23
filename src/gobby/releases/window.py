@@ -115,6 +115,36 @@ def admissions_closed(state: ReleaseWindow | ReleaseWindowUnreadable | None, now
     return state.active(now)
 
 
+async def require_admissions_open(db: HubDatabase, project_id: str, now: datetime) -> None:
+    """Refuse new work while a live or unreadable window holds admissions.
+
+    New-team admission calls this under ``MainCheckoutLanding(project_id)``, so it
+    serializes with acquisition. Work inside an existing team never calls it.
+    """
+    await _require_open(await _project_common_dir(db, project_id), now)
+
+
+async def require_tree_admissions_open(checkout: Path, now: datetime) -> None:
+    """Refuse a fresh worktree or clone of ``checkout`` while a window holds new work.
+
+    Every checkout of a repository shares its Git common directory, which holds the window.
+    The read takes no lock: tree creation never moves the integration tip, so a lost race
+    costs one extra tree and no candidate drift.
+    """
+    await _require_open(await _git_common_dir(checkout), now)
+
+
+async def _require_open(common: Path, now: datetime) -> None:
+    state = await asyncio.to_thread(read_window, common)
+    if isinstance(state, ReleaseWindowUnreadable):
+        raise ReleaseWindowRefused("release_window_unreadable", _UNREADABLE_MESSAGE)
+    if admissions_closed(state, now):
+        raise ReleaseWindowRefused(
+            "release_window_active",
+            "a release window holds new teams and fresh trees; retry after it ends",
+        )
+
+
 async def acquire_window(
     db: HubDatabase, *, project_id: str, owner_session_id: str, now: datetime
 ) -> ReleaseWindow:

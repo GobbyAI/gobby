@@ -77,7 +77,11 @@ Only the Release Manager calls gobby-agents `acquire_release_window`,
 `end_release_window(token, generation)`. The lease lasts 10 minutes from
 acquire or the last renew, and each renew returns the next generation. An
 unreadable `<git common dir>/gobby/release-window.json` refuses landings with
-`release_window_unreadable` until an operator deletes that file.
+`release_window_unreadable` until an operator deletes that file. The same codes
+refuse new work: `admit_team` for a team with no record, and a spawn that would
+create a fresh worktree or clone. An admitted team keeps working: its admission
+re-runs, replacement seats join its tree, an interrupted admission recovers its
+tree, and spawns that reuse a tree proceed.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,

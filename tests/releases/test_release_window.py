@@ -11,9 +11,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.agents.isolation_models import IsolationContext, SpawnConfig
+from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.release_tools import register_release_tools
+from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import prepare_spawn_isolation
 from gobby.releases.window import (
     LEASE_TTL,
     ReleaseWindowRefused,
@@ -28,9 +32,14 @@ from gobby.releases.window import (
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
+from gobby.storage.tasks import Task
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import get_current_session_id, session_context_for_test
+from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
+from tests.fixtures.team_case import TITLE, TeamWorld, execution_id, make_team_world
 
 pytestmark = pytest.mark.unit
 
@@ -41,6 +50,41 @@ FULL_SHA = re.compile(r"[0-9a-f]{40}")
 @pytest.fixture
 def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -> LandingCase:
     return make_landing_case(temp_db, sample_project, tmp_path)
+
+
+@pytest.fixture
+def world(case: LandingCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TeamWorld:
+    return make_team_world(case, tmp_path, monkeypatch)
+
+
+async def _admission(world: TeamWorld, caller: Session, task: Task) -> TeamBinding | str:
+    """Admit ``caller``'s team for ``task``, or return the refusal code."""
+    try:
+        return await world.admit(caller, task)
+    except TeamAdmissionRefused as exc:
+        return exc.code
+
+
+async def _fresh_tree(
+    case: LandingCase, task: Task
+) -> tuple[IsolationContext | None, dict[str, Any] | None]:
+    """Prepare a fresh worktree for ``task`` through a direct spawn's isolation seam."""
+    config = SpawnConfig(
+        prompt="Work the task",
+        task_id=task.id,
+        task_title=task.title,
+        task_seq_num=task.seq_num,
+        branch_name=None,
+        branch_prefix=None,
+        base_branch="trunk",
+        project_id=case.project_id,
+        project_path=str(case.repo),
+        provider="claude",
+        parent_session_id=case.creator,
+    )
+    trees = LocalWorktreeManager(case.db)
+    handler = WorktreeIsolationHandler(WorktreeGitManager(str(case.repo)), trees)
+    return await prepare_spawn_isolation(handler, config)
 
 
 async def test_expiry_and_fencing(case: LandingCase) -> None:
@@ -207,21 +251,25 @@ async def test_expiry_and_fencing(case: LandingCase) -> None:
 
 
 @pytest.mark.parametrize("ordering", ["race", "deterministic"])
-async def test_atomic_window_admission(case: LandingCase, ordering: str) -> None:
+async def test_atomic_window_admission(world: TeamWorld, ordering: str) -> None:
+    case = world.case
     common = case.repo / ".git"
     owner = case.session("release owner")
     sha = case.candidate("lane", {"docs/change.md": "land me\n"})
     task = case.reviewed(sha)
+    team_task = case.task(TITLE)
+    admitting = world.child(team_task)
     pre_tip = case.git("rev-parse", "trunk")
-    # land_candidate reads the wall clock, so the lease must be live at real time.
+    # land_candidate and admit_team read the wall clock, so the lease must be live at real time.
     live_now = datetime.now(UTC)
 
     if ordering == "race":
-        landing, lease = await asyncio.gather(
+        landing, lease, admission = await asyncio.gather(
             case.land(task, sha),
             acquire_window(
                 case.db, project_id=case.project_id, owner_session_id=owner, now=live_now
             ),
+            _admission(world, admitting, team_task),
         )
         post_tip = case.git("rev-parse", "trunk")
         if landing.get("landed"):
@@ -233,6 +281,14 @@ async def test_atomic_window_admission(case: LandingCase, ordering: str) -> None
             assert "release_window_active" in landing.get("blockers", [])
             assert lease.candidate_sha == pre_tip
             assert post_tip == pre_tip
+        if isinstance(admission, TeamBinding):
+            # Admission took the lock before the window, so its team stands.
+            assert world.task_branches() == [admission.branch]
+        else:
+            # The window took the lock first: no team is recorded and no tree is made.
+            assert admission == "release_window_active"
+            assert world.admit_step_output(admitting) == {}
+            assert world.task_branches() == []
     else:
         lease = await acquire_window(
             case.db, project_id=case.project_id, owner_session_id=owner, now=live_now
@@ -241,6 +297,9 @@ async def test_atomic_window_admission(case: LandingCase, ordering: str) -> None
         assert held.get("landed") is False
         assert "release_window_active" in held.get("blockers", [])
         assert case.git("rev-parse", "trunk") == lease.candidate_sha == pre_tip
+        assert await _admission(world, admitting, team_task) == "release_window_active"
+        assert world.admit_step_output(admitting) == {}
+        assert world.task_branches() == []
 
         await release_window(
             case.db,
@@ -254,6 +313,87 @@ async def test_atomic_window_admission(case: LandingCase, ordering: str) -> None
         landed = await case.land(task, sha)
         assert landed.get("landed") is True
         assert case.git("rev-parse", "trunk") == sha
+        admitted = await _admission(world, admitting, team_task)
+        assert isinstance(admitted, TeamBinding), admitted
+        assert world.task_branches() == [admitted.branch]
+
+
+async def test_existing_team_work_continues(world: TeamWorld) -> None:
+    case = world.case
+    common = case.repo / ".git"
+    task = case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    # A team whose admit step recorded its intent and died before it made the tree.
+    recovering_task = case.task("Recover the interrupted team")
+    recovering = world.child(recovering_task)
+    world.rewrite_admit_output(
+        recovering,
+        {
+            "team": {
+                "team_id": execution_id(recovering),
+                "task_id": recovering_task.id,
+                "project_id": case.project_id,
+                "branch": f"task-{recovering_task.seq_num}-recover-the-interrupted-team",
+                "base_branch": "trunk",
+            }
+        },
+    )
+    new_task = case.task("Start new work")
+    newcomer = world.child(new_task)
+    solo_task = case.task("Work alone")
+    orchestrator = case.session("orchestrator")
+    sha = case.candidate("lane", {"docs/change.md": "land me\n"})
+    landing_task = case.reviewed(sha)
+    pre_tip = case.git("rev-parse", "trunk")
+    lease = await acquire_window(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=case.session("release owner"),
+        now=datetime.now(UTC),
+    )
+
+    # The existing team keeps working: its admission re-runs, its seats join its tree,
+    # and a replacement execution rejoins it.
+    assert await world.admit(original, task) == team
+    for target in ({"worktree_id": team.worktree_id}, {"project_path": team.worktree_path}):
+        joined = await world.spawn(original, **target)
+        assert joined["success"] is True, (target, joined)
+    world.finish(original)
+    replacement = world.child(task)
+    assert await world.admit(replacement, task, team_id=team.team_id) == team
+    rejoined = await world.spawn(replacement, worktree_id=team.worktree_id)
+    assert rejoined["success"] is True, rejoined
+    reused = await world.direct_spawn(
+        orchestrator, task_id=task.id, worktree_id=team.worktree_id, checkout_mode="worktree"
+    )
+    assert reused["success"] is True, reused
+
+    # A team admitted before the window recovers its tree.
+    recovered = await world.admit(recovering, recovering_task)
+    assert recovered.team_id == execution_id(recovering)
+    assert Path(recovered.worktree_path).is_dir()
+
+    # New teams, fresh direct trees and landings wait, under a live or an unreadable window.
+    for code in ("release_window_active", "release_window_unreadable"):
+        if code == "release_window_unreadable":
+            window_path(common).write_text("{not json", encoding="utf-8")
+        assert await _admission(world, newcomer, new_task) == code
+        _held, refusal = await _fresh_tree(case, solo_task)
+        assert (refusal or {}).get("error_code") == code, refusal
+        assert world.admit_step_output(newcomer) == {}
+        assert sorted(world.task_branches()) == sorted([team.branch, recovered.branch])
+    landing = await case.land(landing_task, sha)
+    assert "release_window_unreadable" in landing.get("blockers", [])
+    assert case.git("rev-parse", "trunk") == lease.candidate_sha == pre_tip
+
+    # Clearing the window reopens new work.
+    window_path(common).unlink()
+    admitted = await _admission(world, newcomer, new_task)
+    assert isinstance(admitted, TeamBinding), admitted
+    fresh, refusal = await _fresh_tree(case, solo_task)
+    assert refusal is None and fresh is not None, refusal
+    assert fresh.branch_name in world.task_branches()
 
 
 async def test_release_tools_admit_only_the_release_manager(case: LandingCase) -> None:

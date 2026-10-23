@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import itertools
 import json
 import os
 import subprocess
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -58,7 +56,6 @@ class LandingCase:
     base: str
     managers: dict[str, str] = field(default_factory=dict)
     orchestrator_session: str | None = None
-    seq: Iterator[int] = field(default_factory=lambda: itertools.count(700))
 
     def git(self, *args: str, env: dict[str, str] | None = None) -> str:
         result = subprocess.run(
@@ -91,11 +88,14 @@ class LandingCase:
     def session(self, title: str, *, parent: str | None = None) -> str:
         """Register a local session in the project; ``parent`` None makes it a root."""
         session_id = str(uuid4())
+        # The next free number, so sessions registered through SessionManager never collide.
         self.db.execute(
             """
             INSERT INTO sessions (id, external_id, machine_id, source, project_id, title,
                                   status, agent_depth, seq_num, parent_session_id)
-            VALUES (%s, %s, %s, 'test', %s, %s, 'active', %s, %s, %s)
+            SELECT %s, %s, %s, 'test', %s, %s, 'active', %s,
+                   COALESCE(MAX(seq_num), 699) + 1, %s
+            FROM sessions WHERE project_id = %s
             """,
             (
                 session_id,
@@ -104,8 +104,8 @@ class LandingCase:
                 self.project_id,
                 title,
                 0 if parent is None else 1,
-                next(self.seq),
                 parent,
+                self.project_id,
             ),
         )
         return session_id

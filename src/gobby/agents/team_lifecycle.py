@@ -15,11 +15,13 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict, dataclass, fields
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
@@ -101,6 +103,8 @@ async def admit_team(
             return await _readmit(db, caller, own, target, team_id)
         if team_id is not None:
             return await _join(db, caller, target, team_id)
+        # Only a team with no record is new; recorded and joined teams keep working.
+        await _admissions_open(db, caller.project_id)
         return await _create(db, caller, target)
 
 
@@ -324,6 +328,13 @@ async def _create(db: HubDatabase, caller: _Caller, task: Task) -> TeamBinding:
     binding = TeamBinding(**intent, worktree_id=made.worktree_id, worktree_path=made.cwd)
     await asyncio.to_thread(_record, caller, asdict(binding))
     return binding
+
+
+async def _admissions_open(db: HubDatabase, project_id: str) -> None:
+    try:
+        await require_admissions_open(db, project_id, datetime.now(UTC))
+    except ReleaseWindowRefused as exc:
+        raise TeamAdmissionRefused(exc.code, str(exc)) from exc
 
 
 def _live(tree: Worktree) -> bool:
