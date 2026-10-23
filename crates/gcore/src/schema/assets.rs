@@ -378,6 +378,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "c505c7916c763265ddf70aba19e3e87de637679e17225afcb867ad0473a87944",
         sql: include_str!("../../assets/schema/migrations/474_registered_checkout_read_scope.sql"),
     },
+    EmbeddedMigration {
+        version: 475,
+        filename: "475_recover_revoked_live_agent_principals.sql",
+        checksum: "b42a82f0fd2b0e4e00a243647a2a96264fde2a8326772f21b5127753ba70d833",
+        sql: include_str!(
+            "../../assets/schema/migrations/475_recover_revoked_live_agent_principals.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

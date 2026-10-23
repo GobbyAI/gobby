@@ -31,7 +31,9 @@ def sandbox_cargo_environment(
     directory.mkdir(mode=0o700, exist_ok=True)
     launcher = directory / "cargo"
     launcher.unlink(missing_ok=True)
-    arguments = [str(node), str(runner), cargo, str(workspace.resolve()), str(target)]
+    # Resolve Node through the run's PATH on every invocation. A Cellar realpath
+    # captured at launch disappears when Homebrew upgrades Node under a live seat.
+    arguments = [node.name, str(runner), cargo, str(workspace.resolve()), str(target)]
     launcher.write_text(f'#!/bin/sh\nexec {shlex.join(arguments)} "$@"\n', encoding="utf-8")
     launcher.chmod(0o500)
     return {

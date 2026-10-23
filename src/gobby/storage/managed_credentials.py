@@ -188,7 +188,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 expires_at=normalized_expiry,
                 scoped_dsn=scoped_dsn,
             )
-            return ManagedCredential(
+            credential = ManagedCredential(
                 managed_execution_id=managed_execution_id,
                 role_name=role_name,
                 credential_generation=generation,
@@ -196,6 +196,11 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 expires_at=normalized_expiry,
                 bootstrap_path=bootstrap_path,
             )
+            if generation > 1 and (bootstrap_path.parent / "grant.json").exists():
+                if self._launch_grant_rewriter is None:
+                    raise CredentialIssuanceError("managed launch grant rewriter is unavailable")
+                self._launch_grant_rewriter(credential, scoped_dsn)
+            return credential
         except Exception as error:
             if role_name is not None and generation is not None:
                 self.revoke(
@@ -541,6 +546,28 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
 
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
+        rotated_credentials: list[ManagedCredential] = []
+        # A cold drain removes every live binding, so ordinary rotation cannot
+        # discover these seats. Reissue through the same guarded issuance path.
+        for candidate in self._database.fetchall(
+            f"SELECT * FROM {self.auth_schema}.recoverable_agent_principals(%s)",
+            (self._machine_id,),
+        ):
+            execution_id = UUID(str(_row_value(candidate, "managed_execution_id")))
+            if not (self._execution_root(execution_id) / "grant.json").exists():
+                continue
+            try:
+                rotated_credentials.append(
+                    self.issue(
+                        managed_execution_id=execution_id,
+                        owner_kind="agent_run",
+                        session_id=UUID(str(_row_value(candidate, "session_id"))),
+                        agent_run_id=UUID(str(_row_value(candidate, "agent_run_id"))),
+                        expires_at=datetime.now(UTC) + timedelta(minutes=59),
+                    )
+                )
+            except CredentialIssuanceError:
+                logger.exception("Managed credential recovery failed for %s", execution_id)
         # Bounded, deadline-only cleanup; a generic reconcile would revoke an
         # expired current binding before its live owner can refresh it.
         self._database.fetchone(
@@ -551,7 +578,6 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             f"SELECT * FROM {self.auth_schema}.principals_due_for_rotation(%s)",
             (self._machine_id,),
         )
-        rotated_credentials: list[ManagedCredential] = []
         for candidate in due:
             execution_id = UUID(str(_row_value(candidate, "managed_execution_id")))
             predecessor_generation = int(_row_value(candidate, "credential_generation"))

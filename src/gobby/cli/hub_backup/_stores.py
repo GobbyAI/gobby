@@ -210,10 +210,23 @@ def collect_source_roles(database_url: str) -> list[dict[str, object]]:
     ]
 
 
-def drain_ephemeral_principals(database_url: str) -> int:
+def drain_ephemeral_principals(database_url: str, *, restored: bool = False) -> int:
     """Revoke every scoped login and prove the reserved login namespace is empty."""
     try:
         with psycopg.connect(database_url, connect_timeout=_CONNECT_TIMEOUT_SECONDS) as conn:
+            if not restored:
+                # Hold new launches and status changes until the drain commits.
+                # A backup must refuse before revoking any standing seat.
+                conn.execute("LOCK TABLE public.agent_runs IN SHARE MODE")
+                live = conn.execute(
+                    "SELECT 1 FROM public.agent_runs "
+                    "WHERE status IN ('queued', 'pending', 'running') LIMIT 1"
+                ).fetchone()
+                if live is not None:
+                    raise click.ClickException(
+                        "Hub backup requires a quiet window: live agent runs remain; "
+                        "no scoped PostgreSQL roles were drained"
+                    )
             schema_row = conn.execute("SELECT current_schema()").fetchone()
             auth_schema = auth_schema_for(None if schema_row is None else schema_row[0])
             row = conn.execute(f"SELECT {auth_schema}.drain_ephemeral_principals()").fetchone()
@@ -232,7 +245,8 @@ def drain_ephemeral_principals(database_url: str) -> int:
 
 def reconcile_restored_principals(database_url: str) -> int:
     """Remove restored reserved-prefix roles and retire their restored bindings."""
-    return drain_ephemeral_principals(database_url)
+    # Restored running rows describe the source machine, not surviving seats.
+    return drain_ephemeral_principals(database_url, restored=True)
 
 
 def restore_postgres_globals(

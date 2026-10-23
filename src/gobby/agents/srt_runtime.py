@@ -373,7 +373,11 @@ def verify_srt_installation_locked() -> SrtInstallation:
         _raise_srt_lockout(
             node_status.error or "Node.js version could not be verified",
         )
-    node = Path(node_status.path)
+    node_path = shutil.which("node")
+    if node_path is None:
+        _raise_srt_lockout("Node.js executable could not be found")
+    # Keep the stable PATH spelling in launch metadata and emitted CLI shims.
+    node = Path(node_path)
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
 
 
@@ -387,7 +391,7 @@ def _srt_verification_cache_key() -> str:
     node_path = shutil.which("node")
     if node_path is None:
         raise FileNotFoundError("Node.js executable is missing")
-    node = Path(node_path).resolve(strict=True)
+    node = Path(node_path)
     bin_dir = native_bin_dir().resolve(strict=True)
     digest = hashlib.sha256()
     digest.update(json.dumps(SRT_RELEASE.receipt_fields(), sort_keys=True).encode())
@@ -438,6 +442,9 @@ def verify_srt_installation() -> SrtInstallation:
         if key is not None and _verified_srt_cache is not None:
             cached_key, installation = _verified_srt_cache
             if cached_key == key:
+                node_status = node_dependency_status()
+                if node_status.state != "healthy" or node_status.path is None:
+                    _raise_srt_lockout(node_status.error or "Node.js version could not be verified")
                 logger.info("Managed SRT verification cache hit key=%s", key)
                 return installation
 

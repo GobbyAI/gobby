@@ -1274,6 +1274,92 @@ def test_verify_srt_installation_accepts_release_contract(
     assert helper.stat().st_mode & 0o777 == 0o555
 
 
+def test_verified_srt_launch_keeps_the_unresolved_node_path(
+    monkeypatch: pytest.MonkeyPatch,
+    srt_root: Path,
+    tmp_path: Path,
+) -> None:
+    _write_valid_srt_install(srt_root)
+    _patch_srt_verification_runtime(monkeypatch, srt_root)
+    node = tmp_path / "bin" / "node"
+    node.parent.mkdir()
+    cellar = tmp_path / "Cellar" / "node" / "26.12.0" / "bin" / "node"
+    cellar.parent.mkdir(parents=True)
+    cellar.touch()
+    node.symlink_to(cellar)
+    monkeypatch.setattr("gobby.agents.srt_runtime.shutil.which", lambda _name: str(node))
+    monkeypatch.setattr(
+        srt_runtime,
+        "node_dependency_status",
+        lambda: DependencyStatus(
+            state="healthy",
+            installed_version="26.12.0",
+            minimum_version="22.12.0",
+            expected_version=None,
+            path=str(cellar),
+            error=None,
+        ),
+    )
+    installation = verify_srt_installation()
+    assert installation.node == node
+    assert "Cellar" not in str(installation.node)
+
+
+def test_srt_cache_key_does_not_capture_the_cellar_node_target(
+    monkeypatch: pytest.MonkeyPatch,
+    srt_root: Path,
+    tmp_path: Path,
+) -> None:
+    from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
+
+    srt_root.mkdir()
+    binaries = tmp_path / "native"
+    binaries.mkdir()
+    for filename in [IDENTITY_STAMP_NAME, *(native_bin_name(name) for name in SET_MEMBERS)]:
+        (binaries / filename).touch()
+    current = tmp_path / "current-node"
+    first = tmp_path / "Cellar" / "node" / "26.12.0" / "node"
+    second = tmp_path / "Cellar" / "node" / "26.12.1" / "node"
+    for versioned in (first, second):
+        versioned.parent.mkdir(parents=True)
+        versioned.touch()
+    current.symlink_to(first)
+    node = tmp_path / "node"
+    node.symlink_to(current)
+    monkeypatch.setattr(srt_runtime, "srt_install_root", lambda: srt_root)
+    monkeypatch.setattr(srt_runtime, "native_bin_dir", lambda: binaries)
+    monkeypatch.setattr("gobby.agents.srt_runtime.shutil.which", lambda _name: str(node))
+    before = srt_runtime._srt_verification_cache_key()
+    current.unlink()
+    current.symlink_to(second)
+    assert srt_runtime._srt_verification_cache_key() == before
+
+
+def test_srt_cache_hit_still_checks_the_node_version(
+    monkeypatch: pytest.MonkeyPatch,
+    srt_root: Path,
+) -> None:
+    _write_valid_srt_install(srt_root)
+    _patch_srt_verification_runtime(monkeypatch, srt_root)
+    monkeypatch.setattr(srt_runtime, "_srt_verification_cache_key", lambda: "same-runtime")
+    monkeypatch.setattr(srt_runtime, "_verified_srt_cache", None)
+    verify_srt_installation()
+    monkeypatch.setattr(
+        srt_runtime,
+        "node_dependency_status",
+        lambda: DependencyStatus(
+            state="missing",
+            installed_version=None,
+            minimum_version="22.12.0",
+            expected_version=None,
+            path=None,
+            error="Node.js minimum version is not satisfied",
+        ),
+    )
+    with pytest.raises(SrtRuntimeError, match="Node.js minimum version"):
+        verify_srt_installation()
+
+
 def test_verify_srt_installation_rejects_unmanifested_package_content(
     monkeypatch: pytest.MonkeyPatch,
     srt_root: Path,

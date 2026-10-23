@@ -77,6 +77,11 @@ class _FakeConnection:
     def execute(self, sql: str, _params: tuple[object, ...] | None = None) -> _FakeCursor:
         self.statements.append(sql)
         lowered = sql.lower()
+        if (
+            lowered.startswith("lock table public.agent_runs")
+            or "from public.agent_runs" in lowered
+        ):
+            return _FakeCursor([])
         if "pg_control_system" in lowered:
             return _FakeCursor([(SYSTEM_IDENTIFIER,)])
         if "from pg_database" in lowered:

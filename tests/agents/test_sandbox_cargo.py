@@ -385,6 +385,24 @@ def test_zsh_logout_forwards_original_directory(
     assert result.stdout == before.stdout
 
 
+@pytest.mark.unit
+def test_cargo_launcher_does_not_pin_a_cellar_node(launcher: CargoLauncher) -> None:
+    versioned_node = Path("/opt/homebrew/Cellar/node/26.12.0/bin/node")
+    launcher.env.update(
+        sandbox_cargo_environment(
+            assets=launcher.assets,
+            node=versioned_node,
+            workspace=launcher.workspace,
+            target=launcher.target,
+            env=launcher.env,
+        )
+    )
+    script = (launcher.assets / "cargo-bin" / "cargo").read_text()
+    assert str(versioned_node) not in script
+    result = launcher.run(["check"])
+    assert result.returncode == 0, result.stderr
+
+
 def _checkout(root: Path, *, extra_test: bool) -> Path:
     member = root / "member"
     (member / "src").mkdir(parents=True)
