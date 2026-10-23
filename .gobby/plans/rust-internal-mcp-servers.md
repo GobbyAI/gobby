@@ -503,8 +503,9 @@ files, not a second implementation state machine.
 ## V1 Plan Changelog
 `kind: framing`
 
-The dated writer/adversary consensus entry is added after consensus and before
-manifest derivation.
+2026-10-23 — The Plan Writer and Plan Adversary reached consensus on the
+narrative after resolving IMCP-01 through IMCP-06; no unresolved governing
+questions remain, and project-aware base validation passed warning-free.
 
 ## V2 Verification
 `kind: verification`
