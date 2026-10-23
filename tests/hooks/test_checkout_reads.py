@@ -361,3 +361,59 @@ def test_local_run_git_ignores_inherited_git_env(
 
     assert local.returncode == 0
     assert Path(local.stdout.decode("utf-8").strip()).resolve() == (repo / ".git").resolve()
+
+
+@pytest.mark.asyncio
+async def test_send_cancellation_is_mapped(
+    node: FakeNode, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cwd = str(tmp_path)
+    node.add_file(NODE_MACHINE, f"{cwd}/cancelled.txt", b"cancelled")
+    loop = asyncio.get_running_loop()
+
+    async def cancelled_send(
+        machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
+    ) -> dict[str, Any]:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(node, "send", cancelled_send)
+
+    # Worker thread: the bridge future reports the cancelled send as a concurrent CancelledError.
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as worker:
+            await asyncio.to_thread(run_git, ["status"], cwd=cwd, timeout=_TIMEOUT)
+    assert (worker.value.code, worker.value.machine_id) == ("node_reply_lost", NODE_MACHINE)
+
+    # Same loop: the send is awaited directly, so asyncio.CancelledError surfaces in the caller.
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        with pytest.raises(CheckoutReadUnavailable) as same_loop:
+            await run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT)
+    assert same_loop.value.code == "node_reply_lost"
+
+    # Foreign loop: the bridge future is wrapped, so the caller's loop sees asyncio.CancelledError.
+    def foreign_loop_read() -> CheckoutReadUnavailable:
+        with pytest.raises(CheckoutReadUnavailable) as foreign:
+            asyncio.run(run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT))
+        return foreign.value
+
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        foreign_error = await asyncio.to_thread(foreign_loop_read)
+    assert (foreign_error.code, foreign_error.machine_id) == ("node_reply_lost", NODE_MACHINE)
+
+    # The caller's own cancellation is not mapped: it still reaches the caller as CancelledError.
+    entered = asyncio.Event()
+
+    async def held_send(
+        machine_id: str, command: str, payload: dict[str, Any], timeout_ms: int = 30000
+    ) -> dict[str, Any]:
+        entered.set()
+        await asyncio.sleep(_TIMEOUT)
+        raise AssertionError("the caller should cancel before the node answers")
+
+    monkeypatch.setattr(node, "send", held_send)
+    with delivery_scope(NODE_MACHINE, loop, cwd):
+        reader = asyncio.create_task(run_git_async(["status"], cwd=cwd, timeout=_TIMEOUT))
+        await asyncio.wait_for(entered.wait(), timeout=_TIMEOUT)
+        reader.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader
