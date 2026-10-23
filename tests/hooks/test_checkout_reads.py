@@ -7,8 +7,8 @@ import base64
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -23,7 +23,10 @@ from gobby.hooks.checkout_reads import (
     run_git,
     run_git_async,
 )
-from gobby.hooks.events import HookResponse
+from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.checkout_read_fakes import HUB_MACHINE, NODE_MACHINE, FakeNode
 
 pytestmark = pytest.mark.unit
@@ -255,21 +258,42 @@ async def test_run_git_routes_by_origin(node: FakeNode, tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_node_content_stays_in_delivery_memo(
-    node: FakeNode, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    node: FakeNode,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cwd = str(tmp_path)
     secret_path = f"{cwd}/secret.txt"
     node.add_file(NODE_MACHINE, secret_path, b"SECRET-FILE-BODY")
     node.set_git(NODE_MACHINE, stdout=b"SECRET-GIT-OUTPUT\n")
     seen: list[tuple[bytes | None, bytes]] = []
+    set_variable = MagicMock()
+    merge_variables = MagicMock()
+    monkeypatch.setattr(SessionVariableManager, "set_variable", set_variable)
+    monkeypatch.setattr(SessionVariableManager, "merge_variables", merge_variables)
+    broadcasted = asyncio.Event()
+
+    async def broadcast(event: HookEvent, response: HookResponse) -> None:
+        broadcasted.set()
+
+    broadcaster = MagicMock()
+    broadcaster.broadcast_event = AsyncMock(side_effect=broadcast)
 
     def read_inside_delivery(event: object) -> HookResponse:
         facts = path_facts([secret_path], read_limit=64)
         git = run_git(["log"], cwd=cwd, timeout=_TIMEOUT)
         seen.append((facts.files[0].data, git.stdout))
-        return HookResponse(decision="allow")
+        return HookManager._complete_response(
+            cast(HookManager, hook_manager),
+            cast(HookEvent, event),
+            HookResponse(decision="allow"),
+            None,
+        )
 
     hook_manager = MagicMock()
+    hook_manager.broadcaster = broadcaster
+    hook_manager._loop = asyncio.get_running_loop()
     hook_manager.handle.side_effect = read_inside_delivery
     caplog.set_level(logging.DEBUG)
     result = await run_adapter_hook(
@@ -280,8 +304,20 @@ async def test_node_content_stays_in_delivery_memo(
     )
 
     # Positive control: the handler read the content, so the sink checks are not vacuous.
+    await asyncio.wait_for(broadcasted.wait(), timeout=_TIMEOUT)
     assert seen == [(b"SECRET-FILE-BODY", b"SECRET-GIT-OUTPUT\n")]
-    sinks = repr(hook_manager.mock_calls) + repr(result) + caplog.text
+    set_variable.assert_not_called()
+    merge_variables.assert_not_called()
+    assert STAGED_EFFECTS_FIELD not in result
+    broadcaster.broadcast_event.assert_awaited_once()
+    sinks = (
+        repr(hook_manager.mock_calls)
+        + repr(result)
+        + caplog.text
+        + repr(set_variable.mock_calls)
+        + repr(merge_variables.mock_calls)
+        + repr(broadcaster.broadcast_event.await_args)
+    )
     for secret in (b"SECRET-FILE-BODY", b"SECRET-GIT-OUTPUT"):
         assert secret.decode("ascii") not in sinks
         assert base64.b64encode(secret).decode("ascii") not in sinks
