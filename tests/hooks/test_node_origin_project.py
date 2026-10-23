@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -10,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.hooks.checkout_reads import delivery_scope
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType
@@ -17,6 +19,8 @@ from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
+from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.utils.project_context import get_project_context
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.hooks.checkout_read_fakes import NODE_MACHINE, FakeNode
@@ -60,6 +64,12 @@ async def test_node_cwd_resolves_from_node_rows(
     outer = _checkout(temp_db, project_manager, node_machine, node_root)
     inner = _checkout(temp_db, project_manager, node_machine, node_root / "nested")
     cwd = str(node_root / "nested" / "src")
+    marker = Path(cwd) / ".gobby" / "project.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({"id": "hub-marker-project", "name": "hub-marker"}))
+    marker_context = get_project_context(Path(cwd))
+    assert marker_context is not None
+    assert marker_context["id"] == "hub-marker-project"
     hub_walk = MagicMock(return_value="hub-marker-project")
     event = make_event(HookEventType.BEFORE_TOOL, data={"cwd": cwd}, machine_id=node_machine)
 
@@ -238,3 +248,121 @@ async def test_node_sequencer_scope_fails_closed_without_node(
     with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), "/node/repo/src"):
         with pytest.raises(ValueError, match="outside the seat's own checkout"):
             await asyncio.to_thread(check)
+
+
+def _adapter_event(machine: str, cwd: str, claimed_project: str | None) -> HookEvent:
+    """Build a hook event through the Claude Code adapter, with an optional claimed project."""
+    input_data: dict[str, Any] = {
+        "session_id": "node-spoof-session",
+        "machine_id": machine,
+        "cwd": cwd,
+        "tool_name": "Bash",
+        "tool_input": {"command": "true"},
+    }
+    if claimed_project is not None:
+        input_data["project_id"] = claimed_project
+    return ClaudeCodeAdapter().translate_to_hook_event(
+        {"hook_type": "pre-tool-use", "input_data": input_data}
+    )
+
+
+@pytest.mark.asyncio
+async def test_node_claimed_project_is_ignored_for_row_project(
+    temp_db: HubDatabase,
+    project_manager: Any,
+    node_machine: str,
+    tmp_path: Path,
+) -> None:
+    node_root = tmp_path / "node" / "repo"
+    own = _checkout(temp_db, project_manager, node_machine, node_root)
+    other = str(project_manager.create(name=f"node-{uuid4().hex[:8]}").id)
+    cwd = str(node_root / "src")
+    hub_walk = MagicMock(return_value="hub-marker-project")
+    manager = _session_manager(temp_db)
+    loop = asyncio.get_running_loop()
+
+    for claimed in (other, GLOBAL_PROJECT_ID):
+        event = _adapter_event(node_machine, cwd, claimed)
+        with delivery_scope(node_machine, loop, cwd):
+            resolution = resolve_hook_project_context(
+                event, session_manager=manager, resolve_project_id=hub_walk
+            )
+        assert (resolution.project_id, resolution.source) == (own, "cwd")
+        assert event.project_id == own
+        assert event.data["project_id"] == own
+
+    hub_walk.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_node_claimed_project_without_row_fails_closed(
+    temp_db: HubDatabase,
+    project_manager: Any,
+    node_machine: str,
+    tmp_path: Path,
+) -> None:
+    claimed = str(project_manager.create(name=f"node-{uuid4().hex[:8]}").id)
+    _checkout(temp_db, project_manager, node_machine, tmp_path / "node" / "other")
+    cwd = str(tmp_path / "node" / "repo" / "src")
+    hub_walk = MagicMock(return_value="hub-marker-project")
+    event = _adapter_event(node_machine, cwd, claimed)
+
+    with (
+        delivery_scope(node_machine, asyncio.get_running_loop(), cwd),
+        pytest.raises(ValueError) as raised,
+    ):
+        resolve_hook_project_context(
+            event, session_manager=_session_manager(temp_db), resolve_project_id=hub_walk
+        )
+
+    assert f"checkout_read_unavailable: no_checkout_row (machine {node_machine})" in str(
+        raised.value
+    )
+    hub_walk.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_node_contract_probe_cwd_fails_closed(
+    temp_db: HubDatabase,
+    project_manager: Any,
+    node_machine: str,
+    tmp_path: Path,
+) -> None:
+    _checkout(temp_db, project_manager, node_machine, tmp_path / "node" / "other")
+    cwd = "/tmp/gobby-contract-probe-node"
+    hub_walk = MagicMock(return_value="hub-marker-project")
+    event = _adapter_event(node_machine, cwd, None)
+
+    with (
+        delivery_scope(node_machine, asyncio.get_running_loop(), cwd),
+        pytest.raises(ValueError, match="no_checkout_row"),
+    ):
+        resolve_hook_project_context(
+            event, session_manager=_session_manager(temp_db), resolve_project_id=hub_walk
+        )
+
+    assert event.project_id is None
+    hub_walk.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_node_skipped_event_drops_claimed_project(
+    temp_db: HubDatabase,
+    project_manager: Any,
+    node_machine: str,
+    tmp_path: Path,
+) -> None:
+    claimed = str(project_manager.create(name=f"node-{uuid4().hex[:8]}").id)
+    _checkout(temp_db, project_manager, node_machine, tmp_path / "node" / "repo")
+    event = _adapter_event(node_machine, "/", claimed)
+
+    with delivery_scope(node_machine, asyncio.get_running_loop(), "/"):
+        resolution = resolve_hook_project_context(
+            event,
+            session_manager=_session_manager(temp_db),
+            resolve_project_id=MagicMock(return_value="hub-marker-project"),
+        )
+
+    assert resolution.skipped is True
+    assert event.project_id is None
+    assert "project_id" not in event.data

@@ -134,6 +134,12 @@ def resolve_hook_project_context(
     explicit_project_id = _as_nonempty_str(event.project_id) or _as_nonempty_str(
         event.data.get("project_id")
     )
+    if node_origin():
+        # A node's claimed project is untrusted. Drop it so no later reader sees it;
+        # its checkout rows decide the project below.
+        explicit_project_id = None
+        event.project_id = None
+        event.data.pop("project_id", None)
     if explicit_project_id:
         apply_project_id_to_event(event, explicit_project_id)
         return HookProjectResolution(explicit_project_id, source="explicit")
@@ -156,14 +162,16 @@ def resolve_hook_project_context(
         return HookProjectResolution(project_id, source="existing-session")
 
     cwd = _as_nonempty_str(event.cwd) or _as_nonempty_str(event.data.get("cwd"))
+    # Node events never reach the hub's probe shortcut: a node-chosen probe cwd must
+    # still resolve through its own checkout rows.
+    if node_origin():
+        return _resolve_node_cwd_project(event, session_manager, cwd)
+
     if is_hook_contract_probe_cwd(cwd):
         from gobby.storage.projects import GLOBAL_PROJECT_ID
 
         apply_project_id_to_event(event, GLOBAL_PROJECT_ID)
         return HookProjectResolution(GLOBAL_PROJECT_ID, source="contract-probe")
-
-    if node_origin():
-        return _resolve_node_cwd_project(event, session_manager, cwd)
 
     if is_unusable_hook_cwd(cwd):
         project_id = _project_id_from_current_context()
