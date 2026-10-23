@@ -176,6 +176,31 @@ def test_input_typed_after_a_queued_prompt_stays_a_draft() -> None:
     assert ledger.read("t1") == _DRAFT
 
 
+def test_queued_prompt_after_a_settled_interrupt_clears_its_flagged_enter() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1, interrupt="esc"))
+    ledger.observe_host_event(_host(2, submit=True))
+    ledger.record_submit("t1")
+    ledger.observe_host_event(_host(3))
+    ledger.observe_host_event(_host(4, submit=True))
+
+    ledger.record_queued_submit("t1", consumed_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == _EMPTY
+
+
+def test_queued_prompt_after_a_settled_gap_clears_its_flagged_enter() -> None:
+    ledger = _tracked()
+    ledger.block("t1", "gap")
+    ledger.observe_host_event(_host(1, submit=True))
+    ledger.record_submit("t1")
+    ledger.observe_host_event(_host(2, submit=True))
+
+    ledger.record_queued_submit("t1", consumed_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == _EMPTY
+
+
 def test_flagless_input_stays_a_draft_after_a_queued_prompt() -> None:
     ledger = _tracked()
     ledger.observe_host_event(_host(1, submit=None))
