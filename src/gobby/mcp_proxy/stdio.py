@@ -23,9 +23,7 @@ from gobby.mcp_proxy.daemon_control import (
     check_daemon_http_health,
     get_daemon_pid,
     is_daemon_running,
-    restart_daemon_process,
     start_daemon_process,
-    stop_daemon_process,
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.stdio_daemon import (
@@ -101,9 +99,7 @@ __all__ = [
     "main",
     "prepare_client_guard",
     "register_proxy_tools",
-    "restart_daemon_process",
     "start_daemon_process",
-    "stop_daemon_process",
     "time",
 ]
 

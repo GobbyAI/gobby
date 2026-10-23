@@ -23,11 +23,11 @@ def test_restart_shares_warning_set_with_full_stop_fallback(
 ) -> None:
     backend = MagicMock(return_value=None)
     stop = MagicMock(return_value=False)
-    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda _ctx: None)
+    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(lifecycle, "_restart_backend", backend)
     monkeypatch.setattr(lifecycle, "_do_stop", stop)
 
-    result = CliRunner().invoke(lifecycle.restart, ["--wait"])
+    result = CliRunner().invoke(lifecycle.restart, ["--wait"], obj=CliRuntime(config_file=None))
 
     assert result.exit_code == 1
     backend.assert_called_once()

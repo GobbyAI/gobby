@@ -608,7 +608,7 @@ def test_cli_preflights_candidate_against_selected_workspace_pin(
     observed: list[dict[str, int | str]] = []
 
     def restart_start_refusal(
-        _ctx: object,
+        _runtime: object,
         _candidate: Path,
         *,
         expected_identity: dict[str, int | str],

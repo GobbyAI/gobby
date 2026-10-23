@@ -149,6 +149,38 @@ class TestDirtyBundledContentRefusal:
 
         assert refusal is not None
 
+    def test_git_check_failure_refuses_instead_of_failing_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "install" / "shared").mkdir(parents=True)
+
+        def git_checks_time_out(cmd: list[str], cwd: str | Path, **kwargs: object) -> str | None:
+            if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+                return str(tmp_path)
+            return None
+
+        monkeypatch.setattr("gobby.sync.integrity.run_git_command", git_checks_time_out)
+
+        refusal = dirty_bundled_content_refusal(tmp_path / "install", environ={})
+
+        assert refusal is not None
+        assert "Git integrity check failed while checking unstaged changes" in refusal
+        assert DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV in refusal
+
+    def test_integrity_errors_refuse_without_dirty_files(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = IntegrityResult(errors=["Failed to read shared/skills/demo/SKILL.md: boom"])
+        monkeypatch.setattr(
+            "gobby.sync.integrity.verify_bundled_integrity", lambda _install_dir: result
+        )
+
+        refusal = dirty_bundled_content_refusal(Path("/checkout/install"), environ={})
+
+        assert refusal is not None
+        assert "Failed to read shared/skills/demo/SKILL.md: boom" in refusal
+        assert DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV in refusal
+
 
 class TestBundledContentManifest:
     """Tests for deterministic raw-byte manifest generation."""

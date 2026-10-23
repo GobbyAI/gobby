@@ -98,6 +98,8 @@ def dirty_bundled_content_refusal(
     The override intentionally applies only when its value is exactly ``"1"``.
     Ownership attribution is best effort: the integrity result remains a refusal
     even when the hub cannot identify an active session for a changed path.
+    An integrity check that cannot finish, such as a git timeout or an unreadable
+    manifest, is a refusal too, so the check fails closed.
     """
     env = os.environ if environ is None else environ
     if env.get(DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV) == "1":
@@ -105,7 +107,7 @@ def dirty_bundled_content_refusal(
 
     result = verify_bundled_integrity(install_dir)
     paths = sorted(set(result.dirty_files) | set(result.untracked_files))
-    if not paths:
+    if not paths and not result.errors:
         return None
 
     owner_sessions = _active_bundled_content_owner_sessions(database, set(paths))
@@ -122,14 +124,16 @@ def dirty_bundled_content_refusal(
         return ", ".join(rendered)
 
     changes: list[str] = []
+    if result.errors:
+        changes.append(f"integrity check did not finish: {'; '.join(result.errors)}")
     if result.dirty_files:
         changes.append(f"modified: {render(result.dirty_files)}")
     if result.untracked_files:
         changes.append(f"untracked: {render(result.untracked_files)}")
     return (
         "Refusing to publish dirty bundled content ("
-        f"{'; '.join(changes)}). Commit, restore, or remove the listed files, or set "
-        f"{DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1 to override deliberately."
+        f"{'; '.join(changes)}). Fix the integrity check, commit, restore, or remove the "
+        f"listed files, or set {DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV}=1 to override deliberately."
     )
 
 

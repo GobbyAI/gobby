@@ -229,7 +229,7 @@ def hub_backup(
     if restart_daemon and target.rehearsal is None:
         # Prove the start half before stopping: a start refused after the stop leaves the
         # daemon down, with no backup taken.
-        if refusal := restart_start_refusal(ctx):
+        if refusal := restart_start_refusal(get_cli_runtime(ctx)):
             raise click.ClickException(
                 f"Refusing to back up: {refusal} The running daemon was left alone."
             )

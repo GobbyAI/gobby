@@ -483,11 +483,9 @@ def restart(
         setup_logging(True)
 
     # Check before stopping: refusing after the stop would leave no daemon.
-    refusal = (
-        restart_start_refusal(ctx)
-        if expected_identity is None
-        else restart_start_refusal(ctx, expected_identity=expected_identity)
-    )
+    from gobby.cli.runtime import get_cli_runtime
+
+    refusal = restart_start_refusal(get_cli_runtime(ctx), expected_identity=expected_identity)
     if refusal:
         _step(f"Refusing to restart: {refusal}", error=True)
         _step("The running daemon was left alone.")

@@ -1376,7 +1376,7 @@ def test_guarded_cli_shutdown_owns_admission_and_full_restart_intent(
     monkeypatch.setattr(lifecycle, "protect_pending_handoffs", guard)
     monkeypatch.setattr("gobby.cli.daemon_lifecycle.httpx.post", post)
     monkeypatch.setattr(lifecycle, "daemon_auth_headers", lambda: {})
-    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda _ctx: None)
+    monkeypatch.setattr(lifecycle, "restart_start_refusal", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("gobby.cli.daemon_start.start", click.Command("start", callback=start))
     result = CliRunner().invoke(cli, [command, "--full"] if command == "restart" else [command])
     assert result.exit_code == 0, result.output

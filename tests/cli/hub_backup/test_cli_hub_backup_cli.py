@@ -251,7 +251,7 @@ class _Harness:
     def start_daemon(self) -> None:
         self._step("start_daemon")
 
-    def start_refusal(self, _ctx: click.Context) -> None:
+    def start_refusal(self, _runtime: object) -> None:
         return None
 
     # -- source facts ------------------------------------------------------
@@ -1109,7 +1109,7 @@ def _run_real_start_preflight(monkeypatch: pytest.MonkeyPatch, integrity: Integr
         "load_bootstrap",
         lambda: SimpleNamespace(datastore_mode="local", database_url=DATABASE_URL),
     )
-    monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
+    monkeypatch.setattr(daemon_preflight, "open_preflight_hub", lambda _runtime: None)
     monkeypatch.setattr(daemon_preflight, "plan_schema", lambda *_a, **_k: "")
     monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
