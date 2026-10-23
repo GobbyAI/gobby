@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from gobby.events.wake import NativeWakeTarget
     from gobby.runner import GobbyRunner
     from gobby.system_automation import PipelineHeartbeatService
+    from gobby.terminals.native_runtime import NativeBatchFailure
+    from gobby.terminals.runtime import WriteOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +39,107 @@ class _CronDependencyUnavailable(Exception):
     """Stop cron setup after a required dependency already logged its failure."""
 
 
-async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
-    """Send complete composer-clear/wake sequences in one native-host request."""
-    from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
-    from gobby.events.wake import CONTINUE_WAKE_MESSAGE
-    from gobby.terminals.composer_ledger import composer_drain_keys
-    from gobby.terminals.native_runtime import NativeBatchFailure, NativeBatchOperation
+def _wake_result_for(
+    result_id: str,
+    outcome: WriteOutcome | NativeBatchFailure,
+    submit_marks: dict[str, datetime],
+) -> dict[str, Any] | None:
+    """Map one write outcome onto the wake result the dispatcher reports; None when unmapped."""
+    from gobby.terminals.native_runtime import NativeBatchFailure
     from gobby.terminals.runtime import (
         AutomaticWriteQuarantined,
         Delivered,
         IndeterminateWrite,
         Suppressed,
     )
+
+    if isinstance(outcome, Delivered):
+        return {
+            "session_id": result_id,
+            "delivered": True,
+            "method": "terminal",
+            "submit_dispatched_at": submit_marks[result_id].isoformat(),
+        }
+    if isinstance(outcome, IndeterminateWrite):
+        return {
+            "session_id": result_id,
+            "delivered": False,
+            "method": "terminal",
+            "indeterminate": True,
+            "error_message": outcome.detail,
+        }
+    if isinstance(outcome, Suppressed | AutomaticWriteQuarantined):
+        return {
+            "session_id": result_id,
+            "delivered": False,
+            "method": "terminal",
+            "error": outcome.reason,
+            "error_code": outcome.reason,
+            "error_message": f"automatic write declined: {outcome.reason}",
+            "decline_reason": outcome.reason,
+        }
+    if isinstance(outcome, NativeBatchFailure):
+        return {
+            "session_id": result_id,
+            "delivered": False,
+            "method": "terminal",
+            "error": outcome.code,
+            "error_code": outcome.code,
+            "error_message": outcome.detail,
+        }
+    return None
+
+
+async def _send_remote_wake(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
+    """Send each node terminal's wake as one submitted terminal.write through its node."""
+    from gobby.events.live_wake import wake_failure
+    from gobby.events.wake import CONTINUE_WAKE_MESSAGE
+    from gobby.terminals.write_coordinator import WriteRequest
+
+    _, coordinator = wake_write_services()
+    submit_marks: dict[str, datetime] = {}
+
+    def record_submit(result_id: str) -> None:
+        submit_marks[result_id] = utc_now()
+
+    wake_results: list[dict[str, Any]] = []
+    for target in targets:
+        request = WriteRequest(
+            terminal_id=target.terminal_id,
+            action_key=f"wake:{target.terminal_id}",
+            origin="automatic",
+            kind="text",
+            payload=CONTINUE_WAKE_MESSAGE,
+            submit=True,
+        )
+        try:
+            outcome = await coordinator.write(
+                request, on_dispatch=partial(record_submit, target.session_id)
+            )
+        except Exception as exc:
+            # One target's failure must not fail the targets whose writes already reached the node.
+            logger.warning("remote wake failed for session %s", target.session_id, exc_info=True)
+            wake_results.append(
+                wake_failure(
+                    target.session_id,
+                    method="terminal",
+                    error_code=getattr(exc, "code", "remote_wake_failed"),
+                    error_message=str(exc) or type(exc).__name__,
+                )
+            )
+            continue
+        wake = _wake_result_for(target.session_id, outcome, submit_marks)
+        if wake is not None:
+            wake_results.append(wake)
+    return wake_results
+
+
+async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
+    """Send complete composer-clear/wake sequences in one native-host request."""
+    from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
+    from gobby.events.wake import CONTINUE_WAKE_MESSAGE
+    from gobby.terminals.composer_ledger import composer_drain_keys
+    from gobby.terminals.native_runtime import NativeBatchOperation
     from gobby.terminals.write_coordinator import NativeWakeBatchRequest
 
     _, coordinator = wake_write_services()
@@ -92,49 +183,9 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     batch_results = await coordinator.run_native_wake_batch(requests)
     wake_results: list[dict[str, Any]] = []
     for result in batch_results:
-        outcome = result.outcome
-        if isinstance(outcome, Delivered):
-            wake_results.append(
-                {
-                    "session_id": result.result_id,
-                    "delivered": True,
-                    "method": "terminal",
-                    "submit_dispatched_at": submit_marks[result.result_id].isoformat(),
-                }
-            )
-        elif isinstance(outcome, IndeterminateWrite):
-            wake_results.append(
-                {
-                    "session_id": result.result_id,
-                    "delivered": False,
-                    "method": "terminal",
-                    "indeterminate": True,
-                    "error_message": outcome.detail,
-                }
-            )
-        elif isinstance(outcome, Suppressed | AutomaticWriteQuarantined):
-            wake_results.append(
-                {
-                    "session_id": result.result_id,
-                    "delivered": False,
-                    "method": "terminal",
-                    "error": outcome.reason,
-                    "error_code": outcome.reason,
-                    "error_message": f"automatic write declined: {outcome.reason}",
-                    "decline_reason": outcome.reason,
-                }
-            )
-        elif isinstance(outcome, NativeBatchFailure):
-            wake_results.append(
-                {
-                    "session_id": result.result_id,
-                    "delivered": False,
-                    "method": "terminal",
-                    "error": outcome.code,
-                    "error_code": outcome.code,
-                    "error_message": outcome.detail,
-                }
-            )
+        wake = _wake_result_for(result.result_id, result.outcome, submit_marks)
+        if wake is not None:
+            wake_results.append(wake)
     return wake_results
 
 
@@ -452,6 +503,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         ism_manager=ism_manager,
         tmux_sender=_send_tmux_session_wake,
         native_batch_sender=_send_native_wake_batch,
+        remote_wake_sender=_send_remote_wake,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,
         lifecycle_refresh=refresh_wake_lifecycle,

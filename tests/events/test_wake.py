@@ -121,7 +121,7 @@ class FakeSession:
 
 def _managed_terminal() -> MagicMock:
     manager = MagicMock()
-    manager.resolve_live_for_session.return_value = MagicMock(id="terminal-1")
+    manager.resolve_live_for_session.return_value = MagicMock(id="terminal-1", machine_id=None)
     return manager
 
 
@@ -1724,7 +1724,9 @@ class TestComposerGate:
             id=WAKE_SESSION_ID, terminal_context={"tmux_pane": "%7"}
         )
         terminal_manager = MagicMock()
-        terminal_manager.resolve_live_for_session.return_value = MagicMock(id="terminal-1")
+        terminal_manager.resolve_live_for_session.return_value = MagicMock(
+            id="terminal-1", machine_id=None
+        )
         return WakeDispatcher(
             session_manager=session_manager,
             ism_manager=MagicMock(),

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -376,3 +378,72 @@ async def test_report_applications_keep_revision_order(
     await asyncio.gather(first, second)
 
     assert _blocked_state(manager, run.id) is None
+
+
+@pytest.fixture
+def fresh_pane_store() -> Iterator[None]:
+    remote_pane.remote_pane_store.cache_clear()
+    yield
+    remote_pane.remote_pane_store.cache_clear()
+
+
+async def _attend(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, *, stopped: bool
+) -> tuple[AttentionStateManager, AgentRun]:
+    manager = _manager(temp_db)
+    tracker = _tracker(manager)
+    run = _run("run-stopped")
+    agent = _agent(run.id, "term-stopped", _pane(attention=_attention()))
+    store = remote_pane.remote_pane_store()
+    store.apply_report(MACHINE, 1, [agent])
+    if stopped:
+        store.mark_stopped("term-stopped")
+
+    async def load_run(_function: Any, *_args: Any, **_kwargs: Any) -> AgentRun:
+        return run
+
+    async def ignore(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(tracker, "_enter_lifecycle_wait", ignore)
+    monkeypatch.setattr(tracker, "_resolve_lifecycle_wait", ignore)
+    await remote_pane.apply_pane_state(
+        temp_db, tracker, machine_id=MACHINE, previous={}, agents=[agent], run_db=load_run
+    )
+    return manager, run
+
+
+@pytest.mark.asyncio
+async def test_stopped_terminal_is_not_attended(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, fresh_pane_store: None
+) -> None:
+    manager, run = await _attend(temp_db, monkeypatch, stopped=True)
+
+    assert _blocked_state(manager, run.id) is None
+
+
+@pytest.mark.asyncio
+async def test_live_terminal_is_attended(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, fresh_pane_store: None
+) -> None:
+    manager, run = await _attend(temp_db, monkeypatch, stopped=False)
+
+    assert _blocked_state(manager, run.id) is not None
+
+
+def test_store_reads_wait_for_a_writer() -> None:
+    store = remote_pane.RemotePaneStore()
+    store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())])
+    read: list[remote_pane.RemotePane | None] = []
+    reader = threading.Thread(target=lambda: read.append(store.get("term-a")))
+
+    with store._lock:
+        reader.start()
+        reader.join(timeout=0.2)
+        blocked = reader.is_alive()
+    reader.join(timeout=5)
+
+    assert blocked is True
+    assert not reader.is_alive()
+    assert read[0] is not None
+    assert read[0].run_id == "run-a"

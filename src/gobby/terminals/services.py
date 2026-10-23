@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.remote_runtime import RemoteTerminalRuntime
 from gobby.storage.terminals import Terminal
 from gobby.terminals.lookup import active_terminal_for_run
 from gobby.terminals.runtime import (
@@ -28,6 +30,8 @@ class TerminalServices:
         return active_terminal_for_run(self.manager, run)
 
     def runtime_for(self, terminal: Terminal) -> TerminalRuntime:
+        if not is_local_machine(terminal.machine_id):
+            return RemoteTerminalRuntime(self.manager.db)
         return cast("TerminalRuntime", self.registry.resolve(terminal.backend))
 
     async def snapshot(
