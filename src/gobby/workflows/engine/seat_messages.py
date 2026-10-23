@@ -15,7 +15,7 @@ from gobby.storage.inter_session_messages import InterSessionMessage, InterSessi
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 
-_PREFIX = re.compile(r"^(?:LANE=\S+ )?EVENT=(\S+) TASK=(\S+)(?: |$)")
+_PREFIX = re.compile(r"^(?:LANE=\S* )?EVENT=(\S+) TASK=(\S+)(?: |$)")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _CANDIDATE_GRAMMAR = (
     "expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] RUN= WT= COMMIT=<40-hex> [NOTE=...]"
@@ -125,7 +125,7 @@ def envelope_fields(text: str) -> dict[str, str] | None:
     line = text.partition("\n")[0]
     tokens = [(match.start(), match.group()) for match in re.finditer(r"\S+", line)]
     index = 0
-    if tokens and tokens[0][1].startswith("LANE=") and len(tokens[0][1]) > len("LANE="):
+    if tokens and tokens[0][1].startswith("LANE="):
         index = 1
     if index >= len(tokens) or not tokens[index][1].startswith("EVENT="):
         return None
@@ -240,8 +240,8 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     never carries authority. Retired park/resume lines keep the loose reader.
     """
     line = message.content.partition("\n")[0]
-    is_candidate = re.match(r"^(?:LANE=\S+\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
-    candidate_intent = re.match(r"^(?:LANE=\S+\s+)?(?:EVENT=)?CANDIDATE\b", line)
+    is_candidate = re.match(r"^(?:LANE=\S*\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
+    candidate_intent = re.match(r"^(?:LANE=\S*\s+)?(?:EVENT=)?CANDIDATE\b", line)
     if candidate_intent and not is_candidate:
         raise CandidateMessageError(_CANDIDATE_GRAMMAR)
     try:

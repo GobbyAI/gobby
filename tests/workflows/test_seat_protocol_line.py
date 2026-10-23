@@ -34,6 +34,7 @@ def _parse(text: str) -> dict[str, str] | None:
     [
         f"EVENT=CANDIDATE TASK=#7 TASK_TITLE=Seat proofs RUN=run WT=tree COMMIT={SHA} NOTE=ready",
         f"LANE=2 EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA} NOTE=ready",
+        f"LANE= EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA} NOTE=ready",
         f"EVENT=CANDIDATE TASK=#7 WT=tree COMMIT={SHA} RUN=run NOTE=ready",
         f"EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA.upper()}",
         f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned",
@@ -226,4 +227,21 @@ def test_landing_template_examples_read_every_field(
 
     assert parsed is not None
     assert {token.partition("=")[0] for token in filled.split(" ")} <= set(parsed.fields)
+    assert parsed.sha == SHA
+
+
+@pytest.mark.parametrize("prefix", ["LANE= ", "LANE=2 "])
+def test_candidate_lane_prefix_is_read_by_the_receiver(
+    prefix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sender's grammar and the receiver's parser agree on an empty or numbered lane."""
+    from gobby.workflows.engine import seat_messages
+
+    monkeypatch.setattr(seat_messages, "SessionManager", _Sessions)
+    monkeypatch.setattr(seat_messages, "LocalTaskManager", _Tasks)
+    line = f"{prefix}EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA} NOTE=ready"
+
+    parsed = candidate_event(MagicMock(), cast(InterSessionMessage, _Message(line)))
+
+    assert parsed is not None
     assert parsed.sha == SHA

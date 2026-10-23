@@ -170,3 +170,50 @@ async def test_non_consumed_event_with_free_text_is_unaffected(
 
     assert result["success"] is True
     message_manager.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["LANE= ", "LANE=2 "])
+async def test_lane_prefixed_candidate_with_spaced_run_is_refused(
+    prefix: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(
+        registry, f"{prefix}EVENT=CANDIDATE TASK=#7 RUN=green pass WT=tree COMMIT={SHA}"
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "protocol_line_rejected"
+    assert result["field"] == "RUN"
+    message_manager.create_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_lane_candidate_sends_unchanged(
+    registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    content = (
+        f"LANE= EVENT=CANDIDATE TASK=#7 TASK_TITLE=Seat proofs RUN=run WT=tree "
+        f"COMMIT={SHA} NOTE=ready"
+    )
+
+    result = await _send(registry, content)
+
+    assert result["success"] is True
+    assert _stored_content(message_manager) == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    [
+        f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned",
+        f"EVENT=REVIEW_COMPLETE TASK=#7 SHA={SHA} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=",
+    ],
+)
+async def test_well_formed_withdrawal_and_review_complete_send_unchanged(
+    content: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(registry, content)
+
+    assert result["success"] is True
+    assert _stored_content(message_manager) == content
