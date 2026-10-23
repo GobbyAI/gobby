@@ -198,17 +198,17 @@ async def test_remote_merge_marks_row_merged(
 
 
 @pytest.mark.parametrize(
-    ("case", "code"),
+    ("case", "code", "option"),
     [
-        ("no_target", "target_branch_required"),
-        ("push", "remote_merge_option_unsupported"),
-        ("prefer_remote", "remote_merge_option_unsupported"),
-        ("other_source", "remote_merge_option_unsupported"),
-        ("no_branch", "branch_required"),
-        ("no_checkout", "checkout_unresolved"),
-        ("conflict", "conflict"),
-        ("target_dirty", "target_dirty"),
-        ("busy", "workspace_busy"),
+        ("no_target", "target_branch_required", None),
+        ("push", "remote_merge_option_unsupported", "push"),
+        ("prefer_remote", "remote_merge_option_unsupported", "prefer_remote"),
+        ("other_source", "remote_merge_option_unsupported", "source_branch"),
+        ("no_branch", "branch_required", None),
+        ("no_checkout", "checkout_unresolved", None),
+        ("conflict", "conflict", None),
+        ("target_dirty", "target_dirty", None),
+        ("busy", "workspace_busy", None),
     ],
 )
 async def test_remote_merge_refusals_keep_row(
@@ -218,6 +218,7 @@ async def test_remote_merge_refusals_keep_row(
     node_client: AsyncMock,
     case: str,
     code: str,
+    option: str | None,
 ) -> None:
     row_id = _worktree(
         temp_db,
@@ -252,6 +253,8 @@ async def test_remote_merge_refusals_keep_row(
 
     assert result["success"] is False
     assert result["error_code"] == code
+    if option is not None:
+        assert result["option"] == option
     if case == "conflict":
         assert result["has_conflicts"] is True
         assert result["conflicted_files"] == ["src/a.py"]
@@ -471,24 +474,42 @@ async def test_offline_and_other_tools_refuse(
 async def test_workspace_tools_need_owned_machine(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    hub_machine: str,
     node_machine: str,
     node_client: AsyncMock,
 ) -> None:
     local_worktree = _worktree(temp_db, sample_project)
+    local_clone = _clone(temp_db, sample_project)
     node_worktree = _worktree(temp_db, sample_project, machine_id=node_machine)
     node_clone = _clone(temp_db, sample_project, machine_id=node_machine)
+    local_worktree_row = _row(temp_db, "worktrees", local_worktree)
+    local_clone_row = _row(temp_db, "clones", local_clone)
+    assert local_worktree_row is not None
+    assert local_clone_row is not None
     worktrees, clones = _registries(temp_db, sample_project)
     project_id = sample_project["id"]
 
     refused: list[tuple[Any, str, dict[str, Any]]] = [
         (worktrees, "get_worktree", {"worktree_id": local_worktree}),
         (worktrees, "get_worktree", {"worktree_id": node_worktree}),
+        (worktrees, "get_worktree", {"worktree_id": "00000000-0000-4000-8000-00000000dead"}),
         (worktrees, "merge_worktree", {"worktree_id": node_worktree, "target_branch": "main"}),
         (worktrees, "delete_worktree", {"worktree_id": local_worktree}),
         (worktrees, "delete_worktree", {"worktree_id": node_worktree}),
+        (worktrees, "delete_worktree", {"worktree_path": local_worktree_row["worktree_path"]}),
+        (worktrees, "list_worktrees", {"project_id": project_id}),
+        (worktrees, "list_worktrees", {"project_id": project_id, "machine_id": None}),
+        (worktrees, "list_worktrees", {"project_id": project_id, "machine_id": hub_machine}),
         (worktrees, "list_worktrees", {"project_id": project_id, "machine_id": node_machine}),
+        (clones, "get_clone", {"clone_id": local_clone}),
         (clones, "get_clone", {"clone_id": node_clone}),
+        (clones, "merge_clone", {"clone_id": node_clone, "target_branch": "main"}),
+        (clones, "delete_clone", {"clone_id": local_clone}),
         (clones, "delete_clone", {"clone_id": node_clone}),
+        (clones, "delete_clone", {"clone_path": local_clone_row["clone_path"]}),
+        (clones, "list_clones", {}),
+        (clones, "list_clones", {"machine_id": None}),
+        (clones, "list_clones", {"machine_id": hub_machine}),
         (clones, "list_clones", {"machine_id": node_machine}),
     ]
     other = bind_caller(OTHER_USER_ID, temp_db)
@@ -502,6 +523,8 @@ async def test_workspace_tools_need_owned_machine(
     row = _row(temp_db, "worktrees", node_worktree)
     assert row is not None
     assert row["status"] == "active"
+    assert _row(temp_db, "worktrees", local_worktree) == local_worktree_row
+    assert _row(temp_db, "clones", local_clone) == local_clone_row
 
     owner = bind_caller(TEST_USER_ID, temp_db)
     try:
@@ -509,11 +532,68 @@ async def test_workspace_tools_need_owned_machine(
         assert owned["success"] is True
         owned_local = await worktrees.call("get_worktree", {"worktree_id": local_worktree})
         assert owned_local["success"] is True
+        owned_list = await worktrees.call("list_worktrees", {"project_id": project_id})
+        assert owned_list["success"] is True
+        assert local_worktree in [item["id"] for item in owned_list["worktrees"]]
+        owned_clones = await clones.call("list_clones", {"machine_id": None})
+        assert owned_clones["success"] is True
+        assert local_clone in [item["id"] for item in owned_clones["clones"]]
     finally:
         owner.var.reset(owner)
 
     unbound = await worktrees.call("get_worktree", {"worktree_id": node_worktree})
     assert unbound["success"] is True
+    unbound_list = await worktrees.call("list_worktrees", {"project_id": project_id})
+    assert unbound_list["success"] is True
+
+
+@pytest.mark.usefixtures("hub_machine")
+async def test_ambiguous_prefix_hides_foreign_ids(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    node_machine: str,
+) -> None:
+    # 17 ids over 16 hex first characters guarantee two rows share a prefix.
+    node_ids = [_worktree(temp_db, sample_project, machine_id=node_machine) for _ in range(17)]
+    by_first_char: dict[str, list[str]] = {}
+    for row_id in node_ids:
+        by_first_char.setdefault(row_id[0], []).append(row_id)
+    prefix = next(char for char, ids in by_first_char.items() if len(ids) > 1)
+    worktrees, _ = _registries(temp_db, sample_project)
+
+    other = bind_caller(OTHER_USER_ID, temp_db)
+    try:
+        refused = await worktrees.call("get_worktree", {"worktree_id": prefix})
+    finally:
+        other.var.reset(other)
+    assert refused["error_code"] == "machine_not_owned"
+
+    owner = bind_caller(TEST_USER_ID, temp_db)
+    try:
+        ambiguous = await worktrees.call("get_worktree", {"worktree_id": prefix})
+    finally:
+        owner.var.reset(owner)
+    assert ambiguous["error_code"] == "ambiguous_reference"
+    for result in (refused, ambiguous):
+        assert not any(row_id in str(result) for row_id in node_ids)
+
+
+@pytest.mark.usefixtures("hub_machine")
+async def test_list_refusal_precedes_session_resolution(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    node_machine: str,
+) -> None:
+    worktrees, _ = _registries(temp_db, sample_project)
+    other = bind_caller(OTHER_USER_ID, temp_db)
+    try:
+        result = await worktrees.call(
+            "list_worktrees",
+            {"project_path": "/node-only/no-such-project", "machine_id": node_machine},
+        )
+    finally:
+        other.var.reset(other)
+    assert result["error_code"] == "machine_not_owned"
 
 
 def test_list_remote_applies_session_filter_and_limit_in_query(

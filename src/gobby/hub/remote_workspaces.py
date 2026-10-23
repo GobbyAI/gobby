@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.caller_scope import current_caller, require_machine_owned
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError, node_command_client
 from gobby.hub.node_commands import MergePayload, MergeResult, RemovePayload, RemoveResult
@@ -48,21 +48,25 @@ _REMOVE_REFUSALS = {"dirty": "dirty", "unmerged": "unmerged", "busy": "workspace
 _MERGE_TIMEOUT_MS = 250_000
 
 
-def owner_machine(db: HubDatabase, kind: WorkspaceKind, ref: str) -> Owner | None:
-    """Return ``(full_id, machine_id)`` for the one row ``ref`` names on any machine."""
+def _matches(db: HubDatabase, kind: WorkspaceKind, ref: str) -> list[Any]:
+    """Return up to two rows, on any machine, that the reference ``ref`` names."""
     text = ref.strip()
     full = parse_uuid_reference(text)
     if full is not None:
         sql = f"SELECT id, machine_id FROM {_TABLE[kind]} WHERE id = %s"  # nosec B608
-        rows = db.fetchall(sql, (str(full),))
-    elif kind == "worktree" and _UUID_TEXT_PREFIX_RE.fullmatch(text) is not None:
+        return db.fetchall(sql, (str(full),))
+    if kind == "worktree" and _UUID_TEXT_PREFIX_RE.fullmatch(text) is not None:
         sql = (
             "SELECT id, machine_id FROM worktrees WHERE id::text LIKE %s ESCAPE '\\' "
             "ORDER BY id LIMIT 2"
         )
-        rows = db.fetchall(sql, (f"{_escape_like_prefix(text)}%",))
-    else:
-        return None
+        return db.fetchall(sql, (f"{_escape_like_prefix(text)}%",))
+    return []
+
+
+def owner_machine(db: HubDatabase, kind: WorkspaceKind, ref: str) -> Owner | None:
+    """Return ``(full_id, machine_id)`` for the one row ``ref`` names on any machine."""
+    rows = _matches(db, kind, ref)
     if len(rows) != 1:
         return None
     return str(rows[0]["id"]), str(rows[0]["machine_id"])
@@ -189,9 +193,10 @@ async def remove_remote(
 
 
 def machine_refusal(machine_id: str | None) -> dict[str, Any] | None:
-    """Return the refusal for a machine the caller does not own, or None when allowed."""
-    if machine_id is None:
-        return None
+    """Return the refusal for a machine the caller does not own, or None when allowed.
+
+    An omitted machine is the hub's own, so it is checked like any named machine.
+    """
     try:
         require_machine_owned(machine_id)
     except NodeCommandError as exc:
@@ -261,12 +266,25 @@ def _routed(
 
 
 def _owned(db: HubDatabase, kind: WorkspaceKind, kwargs: dict[str, Any]) -> Owner | None:
+    """Check the owner of the row a call names before the original runs.
+
+    A path-addressed call, or a reference that names no single row, is checked against the
+    hub's machine. A bound caller gets a generic refusal for an ambiguous prefix, so no
+    other machine's row ids reach the error.
+    """
     ref = kwargs.get(f"{kind}_id")
     if not isinstance(ref, str):
+        require_machine_owned(None)
         return None
-    owner = owner_machine(db, kind, ref)
-    if owner is not None:
-        require_machine_owned(owner[1])
+    rows = _matches(db, kind, ref)
+    owner = (str(rows[0]["id"]), str(rows[0]["machine_id"])) if len(rows) == 1 else None
+    require_machine_owned(owner[1] if owner is not None else None)
+    if owner is None and len(rows) > 1 and current_caller() is not None:
+        raise NodeCommandError(
+            "ambiguous_reference",
+            "Ambiguous workspace reference; pass the full workspace UUID to disambiguate.",
+            stage="none",
+        )
     return owner
 
 
@@ -287,11 +305,13 @@ async def _remote_merge(
     row = get_remote(db, kind, owner[0])
     if row is None:
         return _not_found(kind, owner[0])
-    if _flag(kwargs.get("push")) or _flag(kwargs.get("prefer_remote")):
-        return _refused("remote_merge_option_unsupported")
+    if _flag(kwargs.get("push")):
+        return _refused("remote_merge_option_unsupported", option="push")
+    if _flag(kwargs.get("prefer_remote")):
+        return _refused("remote_merge_option_unsupported", option="prefer_remote")
     source = kwargs.get("source_branch")
     if source is not None and source != row.branch_name:
-        return _refused("remote_merge_option_unsupported")
+        return _refused("remote_merge_option_unsupported", option="source_branch")
     return await merge_remote(
         db,
         kind,
@@ -361,8 +381,8 @@ def _path(row: Workspace) -> str:
     return row.worktree_path if isinstance(row, Worktree) else row.clone_path
 
 
-def _refused(code: str) -> dict[str, Any]:
-    return {"success": False, "error_code": code}
+def _refused(code: str, **fields: Any) -> dict[str, Any]:
+    return {"success": False, "error_code": code, **fields}
 
 
 def _not_found(kind: WorkspaceKind, workspace_id: str) -> dict[str, Any]:

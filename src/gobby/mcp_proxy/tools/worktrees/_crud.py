@@ -114,6 +114,10 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Returns:
             Dict with list of worktrees.
         """
+        refusal = machine_refusal(machine_id)
+        if refusal is not None:
+            return refusal
+
         try:
             limit = int(limit) if isinstance(limit, str) else limit
         except ValueError:
@@ -134,9 +138,6 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if error:
                 return {"success": False, "error": error}
 
-        refusal = machine_refusal(machine_id)
-        if refusal is not None:
-            return refusal
         if machine_id is not None and not is_local_machine(machine_id):
             worktrees: list[Any] = list_remote(
                 ctx.worktree_storage.db,
