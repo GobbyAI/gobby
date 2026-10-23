@@ -1,9 +1,9 @@
 tags: [default, seat, project-policy]
 
-# This project's operating structure for seats: lanes, worktrees, queue caps,
-# load and quiet hours. Bundled definitions carry roles only; this rule carries
-# how this repository runs them. Lane focus and queues live in the open epics
-# labeled `lane`.
+# This project's operating structure for seats: domain roots, worktrees, queue
+# caps, load and quiet hours. Bundled definitions carry roles only; this rule
+# carries how this repository runs them. Lanes are retired (Josh, 2026-10-23);
+# work groups under the domain roots in project_policy.roots.
 rules:
   project-operating-policy:
     description: "Inject this project's operating policy for seats once per context epoch"
@@ -22,61 +22,13 @@ rules:
         variable: project_policy
         value:
           {
-            "lanes": [
-              {
-                "number": 1,
-                "name": "Lane 1: Runbooks",
-                "epic": "#22691",
-                "description": "Runbooks: finish runbooks as pipelines (#22691). Sub-lanes allowed."
-              },
-              {
-                "number": 2,
-                "name": "Lane 2: 1.0 Rust port",
-                "epic": "#21542",
-                "description": "1.0 Rust port (#21542): the Stage 1 front door (#21543), then Stage 2 and the multi-machine path, except #21555, which is Lane 3, and hub mode (#21575), which is Lane 5. Stage 2 stays blocked until Stage 1 closes. Sub-lanes allowed."
-              },
-              {
-                "number": 3,
-                "name": "Lane 3: API keys and node registration",
-                "epic": "#21555",
-                "description": "API keys and node registration (#21555): user-issued machine-bound keys replace the shared daemon token, plus the node channel. Part of Stage 1; split from Lane 2 by operator exception on 2026-10-11. Sub-lanes allowed."
-              },
-              {
-                "number": 4,
-                "name": "Lane 4: Rust",
-                "epic": "#22801",
-                "description": "Rust (#22801): non-1.0 Rust work, including Graphify parity (#22948) and the Jev decision classifier it needs. Staffed by its Lane Manager and one developer."
-              },
-              {
-                "number": 5,
-                "name": "Lane 5: Hub mode",
-                "epic": "#21575",
-                "description": "Hub mode (#21575). Staffed by its Lane Manager, one developer and one code reviewer; implementation waits for the operator's plan approval."
-              },
-              {
-                "number": 6,
-                "name": "Lane 6: Everything else",
-                "epic": "#23378",
-                "description": "Everything else (#23378): backlog consolidation and triage. The Consolidator proposes and the Orchestrator applies every task edit. Never sweep the #22978 triage subtree or plan-expanded epics."
-              },
-              {
-                "number": 7,
-                "name": "Lane 7: Stability and restart reliability",
-                "epic": "#24093",
-                "description": "Stability and restart reliability (#24093)."
-              },
-              {
-                "number": 8,
-                "name": "Lane 8: Client chrome and UI",
-                "epic": "#24094",
-                "description": "Client chrome and UI (#24094)."
-              },
-              {
-                "number": 9,
-                "name": "Lane 9: Remove gobby build",
-                "epic": "#24317",
-                "description": "Remove gobby build (#24317): #23341. Planning first; staffed with a Lane Manager, one developer and one reviewer after the operator approves the plan."
-              }
+            "roots": [
+              {"epic": "#24818", "name": "Runbooks and task system", "lang": "Python", "description": "Runbooks v4 (#24797), seat definitions and lifecycle, handoff and coordination, task tools, close invariants, landing and DevTeam worktrees, plus critical-path Python fixes that keep seats and the hub working."},
+              {"epic": "#24819", "name": "Rust port candidates", "lang": "Python (deferred)", "description": "Leaves off the critical path. Not worked until the port unless Josh says otherwise."},
+              {"epic": "#24820", "name": "Code index", "lang": "Rust", "description": "crates/gcode: indexing, freshness, evidence."},
+              {"epic": "#24821", "name": "Terminal and client", "lang": "Rust", "description": "crates/gterminal* and crates/gclient: panes, host lifecycle, client UI, pane restore."},
+              {"epic": "#24822", "name": "Gobby Annotate", "lang": "Web/iOS", "description": "Annotate work. #22225 stays under #22978 until Josh moves it."},
+              {"epic": "#21542", "name": "Gobby 1.0", "lang": "Rust", "description": "gdaemon front door, strangler port, hub and node, including hub mode (#21575)."}
             ],
             "integration_branch": "0.5.0",
             "operator": "Josh",
@@ -193,10 +145,9 @@ rules:
           ## Project Operating Policy
           - Load brevity(max) at start/compact/clear; use throughout.
           - Josh: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
-          - Before routing/launch/handoff: get_variable(name="project_policy") for lanes/role_launch_defaults/launch_defaults. Reporter/Consolidator read role_guidance before work. Pass defaults+lane/lane_epic/worktree/first_job; bundles inherit, project-agnostic.
+          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults. Reporter/Consolidator read role_guidance before work. Pass defaults+lane/lane_epic/worktree/first_job; bundles inherit, project-agnostic.
           - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
-          - Current lanes: list_tasks(label="lane").
-          - Lanes1-4 first;5-9 heavy/close only if none waiting; stage launches by load/backlog. New tasks in lanes; outsiders stay. Found work to ORCH: low unless blocking lane work/landing; only blockers preempt; fold findings existing work resolves.
+          - Critical path first: runbooks v4 (#24818), then 1.0 hub/node (#21542); stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
           - Josh alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
           - One task/seat includes pending candidates; read-only prep allowed. ORCH-directed reviewer-LANDed waits: escalate_task(project_policy.handoff_reason_template); de-escalate/close after landing+LM release.
           - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
