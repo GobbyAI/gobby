@@ -1,6 +1,6 @@
 Plan artifact: `.gobby/plans/runbook-devteam-addendum.md`
 
-# Runbooks addendum: epic DevTeams, category reviewers and agent workspaces
+# Runbooks addendum: epic teams, category reviewers and agent workspaces
 
 **Plan ID:** runbook-devteam-addendum
 
@@ -24,7 +24,7 @@ Sources of authority, all final and encoded here without reopening:
 - Memory f3025551 (rulings 3 and 4): the reviewer only reviews; three fails escalate the epic; a stuck leaf holds the epic; merge 0.5.0 into the epic branch, never rebase or squash.
 - Memory 00d1e3fa (ruling 5): epic and leaf branch and worktree names.
 - Memory ac82c140 (#24801 rulings 1-4): workspace reads, helper scripts, node sync and retention.
-- Orchestrator #17281 rulings of 2026-10-22 on #24810 (Q1 escalation counter, Q2 workspace read scope and the persistent set), and Josh's two scope additions relayed the same day: category reviewers for docs and research, and the DevTeam as a model for other teams.
+- Orchestrator #17281 rulings of 2026-10-22 on #24810 (Q1 escalation counter, Q2 workspace read scope and the persistent set), and Josh's two scope additions relayed the same day: category reviewers for docs and research, and the `devteam` runbook as a model for other teams.
 
 No push is authorized by this plan. Operator-owned uncommitted work remains untouched.
 
@@ -33,7 +33,7 @@ No push is authorized by this plan. Operator-owned uncommitted work remains unto
 
 Numbering continues the redesign's Decisions 1-14.
 
-15. **Epic mode.** A DevTeam bound to an epic with open descendants runs in epic mode; any other bound task runs the redesign's single-task flow. Mode comes from the bound task, with no setting. The same `devteam` runbook serves both. Every Decision 1-14 rule applies unchanged except as stated in Decisions 15-24. Ruling 1, verbatim: "I want to be able to parallelize work in the same epic. The Dev Manager would spawn x devs and handle sub-worktrees merging back into the epic worktree, where x is the maximum number of parallel tasks the epic permits based on dependencies. Only the primary dev agents would persist until the epic is complete."
+15. **Epic mode.** A team bound to an epic with open descendants runs in epic mode; any other bound task runs the redesign's single-task flow. Mode comes from the bound task, with no setting. The same `devteam` runbook serves both. Every Decision 1-14 rule applies unchanged except as stated in Decisions 15-24. Ruling 1, verbatim: "I want to be able to parallelize work in the same epic. The Dev Manager would spawn x devs and handle sub-worktrees merging back into the epic worktree, where x is the maximum number of parallel tasks the epic permits based on dependencies. Only the primary dev agents would persist until the epic is complete."
 16. **Claims.** The Dev Manager holds the epic claim for the team's life. It uses that claim for merge commits, 0.5.0 merges, linking the epic tip and landing. Each working seat claims the leaf it works: the Test Writer while writing a leaf's tests, a Developer while implementing or fixing a leaf, and the Dev Manager while batch-closing it. Inside an active epic team only that team's seats may claim the epic's descendants. The per-epic report's "leaves are never claimed" (its rows 2-3 and §5) belonged to the overruled one-Developer design. Parallel developers each need their own claim for edit attribution and their own tip-bound implementation record, so ruling 1 requires leaf claims.
 17. **Developers and dispatch.** The developer names in ruling 1 ("backend-developer or frontend-developer or fullstack-developer") are the single `developer` definition launched with the leaf's `implementation_domain`; no new definitions (Orchestrator confirmation, 2026-10-22). The Dev Manager keeps at most one primary developer per domain, launched on first need and kept until the epic completes; a leaf without a domain uses the `fullstack` primary. The dispatch rule: when exactly one leaf is ready and no leaf is in flight, that leaf's domain primary works it in the epic worktree. Otherwise each ready leaf gets its own sub-worktree developer, which ends after recording its implementation. x is therefore the ready width the dependency graph allows at that moment.
 18. **Names.** Ruling 5, verbatim: "2.5 Your suggestion". The epic branch is `epic/<epic_ref>/main` in worktree `wt-epic-<epic_ref>`. A parallel leaf branch is `epic/<epic_ref>/<leaf_ref>` in worktree `wt-epic-<epic_ref>-<leaf_ref>`, branched from `epic/<epic_ref>/main`; the Dev Manager merges it back and deletes it. A ref is the task's sequence number without `#`.
@@ -59,7 +59,6 @@ The team record holds reviewer bindings, one live seat per reviewer definition. 
 Every phase heading carries `(depends: #24797)`, so expansion gives each leaf a `blocked-by` edge on #24797. Nothing here edits `.gobby/plans/runbook-devteam-redesign.md` or #24797's worktree. Where this plan extends a file #24797 creates, the extending section names that redesign section as its source.
 
 Ownership boundaries:
-- The rename of `lane-manager` and `inbox-manager` in the seat catalogues under `src/gobby/install/shared/workflows/rules/roles/` belongs to #24797. The Plan Writer reported the gap to the Orchestrator on 2026-10-22 as found work. This plan adds only its own names (`docs-reviewer`, `research-reviewer`) and the team-manager spawn exemption.
 - Research and planning tasks need implementation and closing records under redesign 2.3 whatever this plan does. Which seats write those for standalone work stays with #24797's grants. This plan adds only the review writer for research.
 - The `project_policy` "One task/seat" text lives in tracked `.gobby/workflows/rules/project-operating-policy.yaml`. This plan does not edit live project policy. The epic-mode reading ("one task per team: a leaf, or an epic in epic mode") goes to the Orchestrator with the 8.6 pilot, because only the Orchestrator edits project policy.
 
@@ -80,7 +79,7 @@ Evidence was checked on 2026-10-22 against 0.5.0 `81f6a1fe80` and #24797's branc
 Target scope rules:
 - **Bare paths for files that exist only on `task-23850` or not yet.** The main index has no record of them. This session's managed gcode principal is frozen to the main checkout and returned `code_overlay_mismatch` for the #24797 worktree overlay, the visibility gap tracked by #20664.
   - On the branch, read with `git show task-23850:<path>`: `src/gobby/tasks/step_records.py` and `src/gobby/mcp_proxy/tools/tasks/_step_records.py`.
-  - Not yet created; #24797's 3.1-3.5 create them, and this plan relies only on those sections' stated contracts: `src/gobby/agents/devteam_lifecycle.py`, `src/gobby/agents/devteam_review.py`, `src/gobby/agents/devteam_teardown.py`, `src/gobby/install/shared/workflows/pipelines/devteam.yaml`, `src/gobby/install/shared/workflows/agents/dev-manager.yaml`, `src/gobby/install/shared/workflows/agents/test-writer.yaml`, `src/gobby/install/shared/workflows/agents/triage.yaml` and `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`.
+  - Not yet created; #24797's 3.1-3.5 create them, and this plan relies only on those sections' stated contracts: `src/gobby/agents/team_lifecycle.py`, `src/gobby/agents/team_review.py`, `src/gobby/agents/team_teardown.py`, `src/gobby/install/shared/workflows/pipelines/devteam.yaml`, `src/gobby/install/shared/workflows/agents/dev-manager.yaml`, `src/gobby/install/shared/workflows/agents/test-writer.yaml`, `src/gobby/install/shared/workflows/agents/triage.yaml` and `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`.
 - **`path::*` for symbols that exist only on the branch.** `src/gobby/config/tasks.py` and `src/gobby/storage/tasks/_queries.py` exist on main, but the target symbols live only on the branch (main still has a duplicate `_external_blocker_exists_sql` in `_aggregates.py`, which the branch consolidates). Before expansion, after #24797 lands, the Plan Writer refreshes these Targets to symbol scope and reruns consumer sweeps.
 - **Corrected module names.** The per-epic report's draft names `review_verdicts.py`, `state_queries.py` and `_ancestor_gate.py`. They are `step_records.py`, `_queries.py` and `_blocking.py`.
 - **Files near the ceiling.** Line counts on main: `src/gobby/sessions/clear_continuation.py` 864, `src/gobby/mcp_proxy/tools/sessions/_terminal.py` 816, `src/gobby/runner_init/orchestration.py` 811, `src/gobby/hooks/event_handlers/_agent.py` 787. This plan avoids `clear_continuation.py`: clear inheritance uses `src/gobby/hooks/event_handlers/_session_start/materialize.py::_bind_clear_successor` (568 lines). New logic goes in new modules, and the large files get only call sites. Production files stay below 1,000 lines.
@@ -91,7 +90,7 @@ Use isolated tests: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:6
 `kind: framing`
 
 A team is a runbook pipeline bound to one task through the redesign 3.1 team record. Roles are defined by step grants, not names:
-- **Manager:** holds the bound task's claim, dispatches and lands, and writes the `closing` record. It is marked by the definition variable `team_manager: true`.
+- **Manager:** holds the bound task's claim, dispatches and lands, and writes the `closing` record. It is marked by the definition variable `team_manager: true`, which #24797 delivers with the seat-spawn exemption.
 - **Makers:** write `test` and/or `implementation` records for the work they produce.
 - **Independent reviewers:** write only `review` records and never edit. 2.3's `_require_independent_reviewer` applies to any definition holding the review grant. The team record binds one seat per reviewer definition the team's routing needs (Decision 25).
 
@@ -102,9 +101,8 @@ Places that would otherwise be dev-specific, and their owners:
 2. `src/gobby/workflows/step_binding.py::release_completed_review` keys verdict recovery on `code-reviewer`. Owner: 7.1.
 3. `src/gobby/mcp_proxy/tools/tasks/_session.py::link_task_to_session` requires a running `code-reviewer` seat for the `reviewing` link. Owner: 7.1.
 4. The `devteam` runbook's reviewer seat is fixed to `code-reviewer`; it becomes the `reviewer_agent` input and the team's first reviewer binding, and epic mode adds a binding per routed reviewer definition. Owners: 7.2 (admission), 7.3 (pipeline) and 8.2 (epic reviewer spawns).
-5. The seat-spawn exemption names `lane-manager`; it becomes `team_manager`. Owner: 8.2.
-6. Epic dispatch spawns the team's implementation-grant definition recorded in the team record, not a hardcoded `developer`. `implementation_domain` only routes developer skills and primaries. Owners: 8.1 and 8.2.
-7. Workspace folders key on `_agent_type` and `persistent_workspace`, with no role list. Owners: 9.2 and 9.3.
+5. Epic dispatch spawns the team's implementation-grant definition recorded in the team record, not a hardcoded `developer`. `implementation_domain` only routes developer skills and primaries. Owners: 8.1 and 8.2.
+6. Workspace folders key on `_agent_type` and `persistent_workspace`, with no role list. Owners: 9.2 and 9.3.
 
 Role names stay where they belong: in definitions, procedures and project policy. A future Docs, Research or SEO team supplies definitions with grants, a pipeline and procedures, and needs no new close or landing code.
 
@@ -145,12 +143,12 @@ Targets:
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: derived config carrier, regenerated and confirmed unchanged because task close policy is not daemon config
 - `src/gobby/agents/team_launch_inputs.py::*` — scope-reason: accept the reviewer_agent launch input
 - `src/gobby/agents/runbook_seats.py::*` — scope-reason: refuse a reviewer_agent whose definition lacks the review step grant
-- `src/gobby/agents/devteam_lifecycle.py`
+- `src/gobby/agents/team_lifecycle.py`
 - `tests/agents/test_review_routing.py`
 
 **Research context:** On the branch, `TaskClosePolicyConfig.review_categories` defaults to `["code", "docs"]`, and its `validate_categories` checks against `src/gobby/storage/tasks/_models.py::VALID_CATEGORIES`. `research` is valid. Change the default to `["code", "docs", "research"]`. Because `.gobby/project.json` enforces step records with default categories, Gobby research tasks will need an approved review record. `required_task_steps` in `step_records.py` reads the policy, so no close code changes.
 
-The `devteam` runbook gains a required `reviewer_agent` input. `team_launch_inputs.py` passes it through, and `runbook_seats.py` validates it at admission with one review-grant check, which 8.2's epic reviewer spawns reuse: the named definition must be enabled, installed and grant `review`. Admission records it as the first reviewer binding in the 3.1 team record (`devteam_lifecycle.py`, created by redesign 3.1). The bindings map each reviewer definition to its live seat run. A single-task team has exactly one binding and refuses a second definition. A replacement seat must have its binding's definition.
+The `devteam` runbook gains a required `reviewer_agent` input. `team_launch_inputs.py` passes it through, and `runbook_seats.py` validates it at admission with one review-grant check, which 8.2's epic reviewer spawns reuse: the named definition must be enabled, installed and grant `review`. Admission records it as the first reviewer binding in the 3.1 team record (`team_lifecycle.py`, created by redesign 3.1). The bindings map each reviewer definition to its live seat run. A single-task team has exactly one binding and refuses a second definition. A replacement seat must have its binding's definition.
 
 The admitting seat picks the reviewer with the routing table that 7.3 writes into the procedures. Code has no category map: routing stays definition-driven (Decision 26). Rejected:
 - a Python category-to-reviewer map, which would be a dev-specific place;
@@ -204,7 +202,7 @@ The routing table goes into `orchestrator.md` and `dev-manager.md` (a #24797 3.5
 
 A docs task's subject is code behavior when checking it requires reading source. It documents what an API, CLI command, MCP tool, rule, config key, agent definition, pipeline or runtime contract does, or its description or Targets name source files or symbols. Narrative, user-facing guides without such claims, plans and process or operating docs go to `docs-reviewer`. The admitting Orchestrator applies the table to the team's bound task, or for an epic passes the precedence winner over its open leaves. In epic mode the Dev Manager applies it per leaf at the leaf's first review and spawns any routed reviewer not yet bound (8.2, 8.5). The epic-tip reviewer follows the precedence `code-reviewer`, then `docs-reviewer`, then `research-reviewer`, over the definitions that wrote the leaves' current review approvals (Decision 25).
 
-`devteam.yaml` (a #24797 3.5 file) takes the reviewer seat's agent from the `reviewer_agent` input. Add both names to the inline seat catalogues so the seat rules cover them. The `lane-manager` rename gap in those catalogues stays with #24797.
+`devteam.yaml` (a #24797 3.5 file) takes the reviewer seat's agent from the `reviewer_agent` input. Add both names to the inline seat catalogues so the seat rules cover them.
 
 **Acceptance:**
 - 7.3.1 - Both definitions parse, sync, grant only `review`, block every edit tool, and load their procedure. test: `tests/agents/test_category_reviewer_definitions.py::test_reviewer_definitions_are_read_only_review_writers`.
@@ -213,7 +211,7 @@ A docs task's subject is code behavior when checking it requires reading source.
 
 **Verification:** Planned: template parsing, registry sync and runbook dry-run tests; then inspect the installed definition and rule rows after sync.
 
-## P8: Epic-bound DevTeams (depends: #24797)
+## P8: Epic-bound teams (depends: #24797)
 `kind: framing`
 
 Decisions 15-24 apply. The lifecycle runs in order:
@@ -241,15 +239,15 @@ A leaf is no-work when its finishing record carries a disposition and it has no 
 `[category: code]`
 
 Targets:
-- `src/gobby/agents/devteam_lifecycle.py`
+- `src/gobby/agents/team_lifecycle.py`
 - `src/gobby/agents/team_launch_inputs.py::*` — scope-reason: derive epic mode and the epic branch and worktree names from the bound task
 - `src/gobby/agents/isolation_models.py::*` — scope-reason: carry an explicit worktree directory name in the spawn config
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: honor the explicit worktree directory name
 - `src/gobby/agents/runbook_seats.py::*` — scope-reason: refuse overlapping epic and descendant team admissions
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: refuse descendant claims by sessions outside the active epic team
-- `tests/agents/test_devteam_epic_mode.py`
+- `tests/agents/test_team_epic_mode.py`
 
-**Research context:** Epic mode is derived from the bound task: an epic with open descendants. The 3.1 team record (`devteam_lifecycle.py`, new under redesign 3.1) gains the mode, its seat runs keyed by role and domain, and the maker definition each role uses. The leaf set is every open non-epic descendant at any depth, read live; nothing snapshots it, so found-work leaves created under the epic join automatically. Admission refuses an epic any of whose non-epic descendants has open children, with a structured refusal naming them, because such a parent is neither a container the cascade closes nor a leaf a developer works; the Orchestrator fixes the topology and places found-work leaves under an epic-type descendant. Redesign 3.3 queues teardown from a committed close; the team lookup it uses here matches only the team's bound task, so a descendant leaf close or a cascaded container close never tears the team down.
+**Research context:** Epic mode is derived from the bound task: an epic with open descendants. The 3.1 team record (`team_lifecycle.py`, new under redesign 3.1) gains the mode, its seat runs keyed by role and domain, and the maker definition each role uses. The leaf set is every open non-epic descendant at any depth, read live; nothing snapshots it, so found-work leaves created under the epic join automatically. Admission refuses an epic any of whose non-epic descendants has open children, with a structured refusal naming them, because such a parent is neither a container the cascade closes nor a leaf a developer works; the Orchestrator fixes the topology and places found-work leaves under an epic-type descendant. Redesign 3.3 queues teardown from a committed close; the team lookup it uses here matches only the team's bound task, so a descendant leaf close or a cascaded container close never tears the team down.
 
 `isolation_models.py::generate_branch_name` already lets an explicit `branch_name` win. But `isolation_worktree.py::WorktreeIsolationHandler._generate_worktree_path` derives the directory from the branch with `/` replaced by `-`, giving `epic-<seq>-main`, not ruling 5's `wt-epic-<seq>`. Add an explicit directory name to the spawn config. Epic admission passes branch `epic/<seq>/main` and directory `wt-epic-<seq>`.
 
@@ -258,12 +256,12 @@ Admission refuses an epic any of whose descendants has an active team or a claim
 The Dev Manager claims the epic at admission, as Decision 16 requires. Report row 16 is the source of the overlap rules. Its row 8 (skills only for claimed tasks) needs no change, because the working seat now claims its leaf and `claimed_task_extra_skills.py::build_claimed_task_extra_skill_state` already loads that leaf's skills.
 
 **Acceptance:**
-- 8.1.1 - Admitting an epic with open descendants records epic mode and creates branch `epic/<seq>/main` in worktree `wt-epic-<seq>`; a leaf admission stays single-task. test: `tests/agents/test_devteam_epic_mode.py::test_epic_admission_names_and_mode`.
-- 8.1.2 - Overlapping epic or descendant admissions are refused. test: `tests/agents/test_devteam_epic_mode.py::test_overlapping_admissions_refused`.
-- 8.1.3 - Inside an active epic team, team seats can claim descendants and other sessions cannot. test: `tests/agents/test_devteam_epic_mode.py::test_descendant_claims_scoped_to_team`.
-- 8.1.4 - Admission refuses an epic with a non-epic descendant that has open children; closing a descendant leaf or a cascaded phase epic queues no teardown, and closing the bound epic does. test: `tests/agents/test_devteam_epic_mode.py::test_topology_and_bound_close_teardown`.
+- 8.1.1 - Admitting an epic with open descendants records epic mode and creates branch `epic/<seq>/main` in worktree `wt-epic-<seq>`; a leaf admission stays single-task. test: `tests/agents/test_team_epic_mode.py::test_epic_admission_names_and_mode`.
+- 8.1.2 - Overlapping epic or descendant admissions are refused. test: `tests/agents/test_team_epic_mode.py::test_overlapping_admissions_refused`.
+- 8.1.3 - Inside an active epic team, team seats can claim descendants and other sessions cannot. test: `tests/agents/test_team_epic_mode.py::test_descendant_claims_scoped_to_team`.
+- 8.1.4 - Admission refuses an epic with a non-epic descendant that has open children; closing a descendant leaf or a cascaded phase epic queues no teardown, and closing the bound epic does. test: `tests/agents/test_team_epic_mode.py::test_topology_and_bound_close_teardown`.
 
-**Verification:** Planned: focused isolated tests, plus `tests/agents/test_devteam_admission.py` (redesign 3.1) rerun.
+**Verification:** Planned: focused isolated tests, plus `tests/agents/test_team_admission.py` (redesign 3.1) rerun.
 
 ### 8.2 Dev Manager dispatches leaf developers and merges sub-worktrees (depends: 8.1, 7.3)
 `kind: deliverable`
@@ -271,14 +269,10 @@ The Dev Manager claims the epic at admission, as Decision 16 requires. Report ro
 
 Targets:
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: derive and bind leaf sub-worktrees for a team manager's leaf spawns
-- `src/gobby/agents/devteam_lifecycle.py`
-- `src/gobby/install/shared/workflows/agents/dev-manager.yaml`
-- `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml::*` — scope-reason: let team managers spawn their own team's seats
-- `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml::*` — scope-reason: state the team-manager spawn exception in seat guidance
-- `tests/workflows/test_seat_rules.py::*` — scope-reason: update the seat guidance spawn assertion
-- `tests/agents/test_devteam_epic_dispatch.py`
+- `src/gobby/agents/team_lifecycle.py`
+- `tests/agents/test_team_epic_dispatch.py`
 
-**Research context:** Ruling 1 grants the Dev Manager spawn authority. `seat-spawn-policy.yaml` rule `seat-no-spawn` gets an exception: a session whose definition sets the workflow variable `team_manager: true` may call `spawn_agent`. Seats cannot set that variable themselves, because native `set_variable` is refused outside `idle_declaration.py::NATIVE_VARIABLE_ROLES`. `dev-manager.yaml` (a #24797 3.5 file) sets it. Line 26 of `inject-seat-common.yaml` becomes "No spawns except Assistant, Orchestrator, automated close review, and a team manager spawning its own team's seats." `tests/workflows/test_seat_rules.py` asserts the old sentence and changes with it.
+**Research context:** Ruling 1 grants the Dev Manager spawn authority. #24797 already delivers the `team_manager: true` definition variable, which `dev-manager.yaml` sets, and the `seat-no-spawn` exception that lets such a session call `spawn_agent`, with matching seat guidance. This section adds only the scope that exception spawns under.
 
 The factory enforces scope, extending 3.1's team-identity check at every seat spawn. A team manager may spawn only:
 - a maker: for an open descendant of its bound epic, with the team record's maker definition for that role, for a leaf that has no in-flight team seat;
@@ -291,12 +285,11 @@ A primary spawn runs in the epic worktree. A sub-worktree spawn derives branch `
 A sub-worktree developer ends with `end_agent_run` after recording its implementation. Merging uses existing tools, so no merge tool is added: the Dev Manager runs `git merge --no-ff` in the clean epic worktree under its epic claim, links the merge commit to the epic, and deletes the sub-worktree through the existing deletion path with `WorktreeDeletionRequest.merged_into` = `epic/<seq>/main` (`src/gobby/worktrees/deletion.py`), which checks ancestry against that ref. Deletion's dirty, live and unmerged refusals stay.
 
 **Acceptance:**
-- 8.2.1 - A team manager spawns a primary in the epic worktree and a sub-worktree developer on the derived leaf branch and directory; spawns outside its epic, with a non-team definition, or for an in-flight leaf are refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_manager_leaf_spawns_scoped`.
-- 8.2.2 - Seats without `team_manager` stay blocked from spawning, and the seat guidance names the exception. test: `tests/workflows/test_seat_rules.py::test_team_manager_spawn_exception`.
-- 8.2.3 - After a no-ff merge into epic main, the sub-worktree and branch delete with `merged_into` epic main; an unmerged sub-branch is refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_merged_leaf_tree_cleanup`.
-- 8.2.4 - In an epic team with code, non-code docs and research leaves, the manager spawns `code-reviewer`, `docs-reviewer` and `research-reviewer` seats, each recorded as a binding, and respawning an ended reviewer fills its own definition's binding. A definition without the review grant and a second live seat for a bound definition are refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_routed_reviewer_bindings`.
+- 8.2.1 - A team manager spawns a primary in the epic worktree and a sub-worktree developer on the derived leaf branch and directory; spawns outside its epic, with a non-team definition, or for an in-flight leaf are refused. test: `tests/agents/test_team_epic_dispatch.py::test_manager_leaf_spawns_scoped`.
+- 8.2.2 - After a no-ff merge into epic main, the sub-worktree and branch delete with `merged_into` epic main; an unmerged sub-branch is refused. test: `tests/agents/test_team_epic_dispatch.py::test_merged_leaf_tree_cleanup`.
+- 8.2.3 - In an epic team with code, non-code docs and research leaves, the manager spawns `code-reviewer`, `docs-reviewer` and `research-reviewer` seats, each recorded as a binding, and respawning an ended reviewer fills its own definition's binding. A definition without the review grant and a second live seat for a bound definition are refused. test: `tests/agents/test_team_epic_dispatch.py::test_routed_reviewer_bindings`.
 
-**Verification:** Planned: focused spawn-contract tests with fake provider launches and temporary Git repositories, plus `tests/workflows/test_seat_rules.py` rerun.
+**Verification:** Planned: focused spawn-contract tests with fake provider launches and temporary Git repositories.
 
 ### 8.3 Intra-epic blockers resolve on finished leaves (depends: 8.1)
 `kind: deliverable`
@@ -327,11 +320,11 @@ Add the Decision 20 predicate. A blocker is also resolved when:
 `[category: code]`
 
 Targets:
-- `src/gobby/agents/devteam_review.py`
-- `src/gobby/agents/devteam_lifecycle.py`
-- `tests/agents/test_devteam_epic_review.py`
+- `src/gobby/agents/team_review.py`
+- `src/gobby/agents/team_lifecycle.py`
+- `tests/agents/test_team_epic_review.py`
 
-**Research context:** Redesign 3.2's `devteam_review.py` (new under 3.2) runs the review loop from 2.3's review-step record as the durable trigger. In epic mode:
+**Research context:** Redesign 3.2's `team_review.py` (new under 3.2) runs the review loop from 2.3's review-step record as the durable trigger. In epic mode:
 - No reviewer-to-fixer transition and no fresh Opus reviewer (Decision 21).
 - Each rejection returns the leaf to a developer under the dispatch rule, and the bound seat of the definition that wrote the leaf's earlier review records reviews the next round.
 - An epic-tip rejection is not escalated before its third round. The loop returns it to the Dev Manager, which assigns each finding to an owning leaf or requests a found-work leaf from the Orchestrator (Decision 21). Once every assigned leaf is finished, merged and re-reviewed, the loop accepts the next epic-tip round on the new linked tip. Leaves whose tips did not move keep their records, and the epic's rejection count carries on.
@@ -343,10 +336,10 @@ Targets:
 Resume reads this state from the record and never recounts transcripts. `step_records.py` stays team-agnostic.
 
 **Acceptance:**
-- 8.4.1 - In epic mode, rejections go back to developers and the same reviewer reviews every round; no seat changes role. test: `tests/agents/test_devteam_epic_review.py::test_reviewer_never_fixes_in_epic_mode`.
-- 8.4.2 - A leaf's or the epic tip's third rejection escalates the epic once, holds the team, and lifts after the audited reset and re-claim. test: `tests/agents/test_devteam_epic_review.py::test_third_rejection_holds_epic`.
-- 8.4.3 - An externally blocked leaf holds landing, and no leaf is detached or reverted. test: `tests/agents/test_devteam_epic_review.py::test_blocked_leaf_holds_epic`.
-- 8.4.4 - After every leaf is approved, an epic-tip rejection returns to an owning leaf. Only that leaf's records go stale and are rewritten, and the next epic-tip round approves the new tip as round two, with the earlier epic rejection still counted. test: `tests/agents/test_devteam_epic_review.py::test_epic_tip_rejection_repairs_through_leaf`.
+- 8.4.1 - In epic mode, rejections go back to developers and the same reviewer reviews every round; no seat changes role. test: `tests/agents/test_team_epic_review.py::test_reviewer_never_fixes_in_epic_mode`.
+- 8.4.2 - A leaf's or the epic tip's third rejection escalates the epic once, holds the team, and lifts after the audited reset and re-claim. test: `tests/agents/test_team_epic_review.py::test_third_rejection_holds_epic`.
+- 8.4.3 - An externally blocked leaf holds landing, and no leaf is detached or reverted. test: `tests/agents/test_team_epic_review.py::test_blocked_leaf_holds_epic`.
+- 8.4.4 - After every leaf is approved, an epic-tip rejection returns to an owning leaf. Only that leaf's records go stale and are rewritten, and the next epic-tip round approves the new tip as round two, with the earlier epic rejection still counted. test: `tests/agents/test_team_epic_review.py::test_epic_tip_rejection_repairs_through_leaf`.
 
 **Verification:** Planned: state-transition tests with fake reviewer records, duplicate-verdict replay and restart recovery.
 
@@ -364,7 +357,7 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/docs-reviewer.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/research-reviewer.md`
 - `docs/guides/runbooks.md`
-- `tests/workflows/test_devteam_epic_runbook.py`
+- `tests/workflows/test_team_epic_runbook.py`
 
 **Research context:** `devteam.yaml` (redesign 3.5) accepts an epic binding; mode stays derived (8.1). `dev-manager.md` (3.5) gains the epic procedure:
 - the test phase: the Test Writer claims each leaf in dependency order in the epic worktree, commits tests tagged `[gobby-#<leaf>] test:`, links them and releases;
@@ -384,8 +377,8 @@ All three reviewer procedures add the epic rule: review only; one record per lea
 **Granularity:** These files jointly define one epic-mode launch and procedure contract that activates together. Splitting them would let a partially updated seat set launch.
 
 **Acceptance:**
-- 8.5.1 - The procedures state the phase order, dispatch rule, merge-only updates, unlock order, per-leaf routing and reviewer spawns, the no-work path, the epic-tip repair, hold rules, landing order, nested close order and the Orchestrator's epic admission rules, with no detach or reviewer-fix path. test: `tests/workflows/test_devteam_epic_runbook.py::test_epic_procedures`.
-- 8.5.2 - The devteam runbook dry-runs bound to an epic and to a leaf with the same seat catalogue. test: `tests/workflows/test_devteam_epic_runbook.py::test_runbook_binds_epic_or_leaf`.
+- 8.5.1 - The procedures state the phase order, dispatch rule, merge-only updates, unlock order, per-leaf routing and reviewer spawns, the no-work path, the epic-tip repair, hold rules, landing order, nested close order and the Orchestrator's epic admission rules, with no detach or reviewer-fix path. test: `tests/workflows/test_team_epic_runbook.py::test_epic_procedures`.
+- 8.5.2 - The devteam runbook dry-runs bound to an epic and to a leaf with the same seat catalogue. test: `tests/workflows/test_team_epic_runbook.py::test_runbook_binds_epic_or_leaf`.
 
 **Verification:** Planned: template parsing, registry sync and runbook dry-run tests; installed rows inspected after sync.
 
@@ -394,7 +387,7 @@ All three reviewer procedures add the epic rule: review only; one record per lea
 `[category: test]`
 
 Targets:
-- `tests/e2e/test_devteam_epic_lifecycle.py`
+- `tests/e2e/test_team_epic_lifecycle.py`
 - `.gobby/plans/research/devteam-epic-pilot-results.md`
 
 **Research context:** This proves Decisions 15-24 end to end in isolation, then once live. The isolated e2e covers a six-leaf epic with one nested phase epic:
@@ -406,9 +399,9 @@ It runs the test phase, a primary and two sub-worktree developers, no-ff merges 
 A second case drives a leaf to its third rejection and proves that the epic holds and recovers after the audited reset. A third case rejects the epic tip after every leaf is approved, repairs it through one leaf, and lands on the second epic-tip round. The live pilot runs one real epic under Release Manager authority and records results in the pilot file. The file also carries the Orchestrator-owned "one task per team" policy wording for the Orchestrator to apply.
 
 **Acceptance:**
-- 8.6.1 - The six-leaf nested epic completes from admission to teardown with parallel sub-worktrees, a no-work blocker, three routed reviewers, one rejection, one landing, closes in leaf, phase-epic and root order, and exactly one teardown. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_complete_epic_team`.
-- 8.6.2 - A third leaf rejection holds the epic until the audited reset, and then the epic lands. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_escalated_leaf_holds_then_lands`.
-- 8.6.3 - An epic-tip rejection after every leaf is approved is repaired through a leaf, and the epic lands on the second epic-tip round. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_epic_tip_rejection_repaired_then_lands`.
+- 8.6.1 - The six-leaf nested epic completes from admission to teardown with parallel sub-worktrees, a no-work blocker, three routed reviewers, one rejection, one landing, closes in leaf, phase-epic and root order, and exactly one teardown. test: `tests/e2e/test_team_epic_lifecycle.py::test_complete_epic_team`.
+- 8.6.2 - A third leaf rejection holds the epic until the audited reset, and then the epic lands. test: `tests/e2e/test_team_epic_lifecycle.py::test_escalated_leaf_holds_then_lands`.
+- 8.6.3 - An epic-tip rejection after every leaf is approved is repaired through a leaf, and the epic lands on the second epic-tip round. test: `tests/e2e/test_team_epic_lifecycle.py::test_epic_tip_rejection_repaired_then_lands`.
 - 8.6.4 - The live pilot's outcome, timings and any findings are recorded. file: `.gobby/plans/research/devteam-epic-pilot-results.md`.
 
 **Verification:** Planned: isolated e2e, then one live pilot.
@@ -529,12 +522,12 @@ Compaction and resume keep the same session and folder. A manual `/clear` withou
 `[category: code]`
 
 Targets:
-- `src/gobby/agents/devteam_lifecycle.py`
-- `src/gobby/agents/devteam_teardown.py`
+- `src/gobby/agents/team_lifecycle.py`
+- `src/gobby/agents/team_teardown.py`
 - `src/gobby/agents/agent_workspaces.py`
 - `tests/agents/test_agent_workspace_epics.py`
 
-**Research context:** For epic-mode teams only, the team record sets `_agent_workspace_epic_dir` to `epics/epic-<seq>/` on every seat run, sub-worktree developers included, and clears it when a run ends. A resumed seat gets it back only if the team still names it. `agent_workspaces.py` writes the epic README with its convention: one file per topic, append with Edit. At the bound epic's close (a cascaded phase-epic close never triggers it, per Decision 24), redesign 3.3's teardown (`devteam_teardown.py`, new under 3.3) schedules the final commit with message `epic-<seq>` and clears the variable on any surviving seat. Nothing in the workspace is a close invariant.
+**Research context:** For epic-mode teams only, the team record sets `_agent_workspace_epic_dir` to `epics/epic-<seq>/` on every seat run, sub-worktree developers included, and clears it when a run ends. A resumed seat gets it back only if the team still names it. `agent_workspaces.py` writes the epic README with its convention: one file per topic, append with Edit. At the bound epic's close (a cascaded phase-epic close never triggers it, per Decision 24), redesign 3.3's teardown (`team_teardown.py`, new under 3.3) schedules the final commit with message `epic-<seq>` and clears the variable on any surviving seat. Nothing in the workspace is a close invariant.
 
 **Acceptance:**
 - 9.4.1 - Every seat of an epic team, sub-worktree developers included, can write the epic folder; sessions outside the team cannot. test: `tests/agents/test_agent_workspace_epics.py::test_epic_folder_scoped_to_team`.
@@ -573,6 +566,7 @@ deferral:
 
 - 2026-10-22: Narrative drafted by the Lane 1 Plan Writer gobby#17344 from the two research reports, the five ruling memories and the Orchestrator's 2026-10-22 rulings and scope additions.
 - 2026-10-22: Consensus between the Plan Writer gobby#17344 and the Plan Adversary gobby#17345 on re-review of 76cab11e6a757e2e6c3b12b83ef7df988f708aa1, after the review of 0860e011c3bbe48db46f5f2505605c59eb29d399. All five blocking findings were accepted and fixed. ADD-01: mixed-category epics get reviewer bindings keyed by definition in the team record, seeded from `reviewer_agent`, added by Dev Manager spawns under the shared review-grant check, with later rounds and the epic-tip precedence derived from records (Decision 25, 7.2, 8.2). ADD-02: nested phase epics close through the existing `_close.py` ancestor cascade, the claimed bound epic is closed by the Dev Manager, admission refuses non-epic parents with open children, and teardown keys on the bound epic only (Decision 24, 8.1, 9.4). ADD-03: finished means `approved_task_step` for the implementation step, which covers no-work dispositions and latest-record semantics; no-work leaves skip merge and close with their disposition (Decision 20, 8.3, 8.5). ADD-04: predecessor folders are limited to earlier lineages of the caller's definition bound to no live session, checked at read time (Decision 27, 9.2, 9.3). ADD-05: epic-tip rejections return through owning or Orchestrator-created found-work leaves under the epic's existing counter (Decision 21, 8.4). No open questions, unresolved decisions or proportionality findings remain.
+- 2026-10-22: Revision for Josh's two pre-approval blockers, relayed by the Orchestrator #17281, after the M1 stamp at dbcdea06860d23b9c697605a3281d3d3ac557cb3, which this revision supersedes. (A) Module and test references follow #24797's generic names: `team_lifecycle.py`, `team_review.py`, `team_teardown.py` and `test_team_*`. "DevTeam" remains only for definitions, the `devteam` runbook, procedures and verbatim quotes. (B) #24797 owns every `lane-manager` removal and the `team_manager` seat-spawn exemption, so P7's lane-manager item, both gap notes and 8.2's seat-rule Targets and acceptance item are dropped. The stale M1 was removed for re-derivation.
 
 ## V2: Verification
 `kind: verification`
@@ -584,302 +578,3 @@ These are completion gates for the implementation. Except for plan validation, n
 - After 7.3, 8.2, 8.5 and 9.3 land, the installed definition and rule rows must match the templates.
 - The 8.6 isolated e2e must pass, and the live pilot results must be recorded in `.gobby/plans/research/devteam-epic-pilot-results.md`.
 - After 9.4, a real session's workspace history must show commits from every trigger: timer, set_handoff, pre-compact, session end, clear binding and epic close.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Key reviewer and maker seat steps on step grants
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '7.1.1: A seat whose definition grants only `review` gets verdict
-    binding, verdict recovery and the reviewing link whatever its name; a seat without
-    the grant gets none. test: `tests/workflows/test_grant_keyed_seats.py::test_review_grant_drives_reviewer_steps`.
-
-    7.1.2: A seat whose definition grants `implementation` gets the maker route_skills
-    and submit-bounce steps; code-reviewer and developer behavior is unchanged. test:
-    `tests/workflows/test_grant_keyed_seats.py::test_implementation_grant_drives_maker_steps`.'
-  labels:
-  - covers:runbook-devteam-addendum:7.1:7.1.1
-  - covers:runbook-devteam-addendum:7.1:7.1.2
-  tdd: true
-  source_section: '7.1'
-  implementation_domain: backend
-- title: Route review by category at team admission
-  category: code
-  task_type: feature
-  depends_on:
-  - '7.1'
-  validation_criteria: '7.2.1: A default policy requires a review record for research
-    tasks; code and docs are unchanged. test: `tests/agents/test_review_routing.py::test_research_requires_review_by_default`.
-
-    7.2.2: Admission accepts a reviewer_agent with the review grant and records it
-    as the team''s first reviewer binding. It refuses a definition without the grant,
-    a second reviewer definition on a single-task team, and a replacement whose definition
-    differs from its binding. test: `tests/agents/test_review_routing.py::test_reviewer_agent_admission`.'
-  labels:
-  - covers:runbook-devteam-addendum:7.2:7.2.1
-  - covers:runbook-devteam-addendum:7.2:7.2.2
-  tdd: true
-  source_section: '7.2'
-  implementation_domain: backend
-- title: Ship docs and research reviewers and the routing table
-  category: config
-  task_type: feature
-  depends_on:
-  - '7.2'
-  validation_criteria: '7.3.1: Both definitions parse, sync, grant only `review`,
-    block every edit tool, and load their procedure. test: `tests/agents/test_category_reviewer_definitions.py::test_reviewer_definitions_are_read_only_review_writers`.
-
-    7.3.2: The Orchestrator and Dev Manager procedures carry the identical routing
-    table and the docs-about-code rule. test: `tests/agents/test_category_reviewer_definitions.py::test_routing_table_matches_procedures`.
-
-    7.3.3: The devteam runbook launches the reviewer named by `reviewer_agent`, and
-    the seat rules match both new reviewers. test: `tests/agents/test_category_reviewer_definitions.py::test_runbook_and_seat_rules_cover_new_reviewers`.'
-  labels:
-  - covers:runbook-devteam-addendum:7.3:7.3.1
-  - covers:runbook-devteam-addendum:7.3:7.3.2
-  - covers:runbook-devteam-addendum:7.3:7.3.3
-  tdd: true
-  source_section: '7.3'
-  assigned_agent: developer
-- title: Bind a team to an epic and scope its leaf claims
-  category: code
-  task_type: feature
-  depends_on:
-  - '7.2'
-  validation_criteria: '8.1.1: Admitting an epic with open descendants records epic
-    mode and creates branch `epic/<seq>/main` in worktree `wt-epic-<seq>`; a leaf
-    admission stays single-task. test: `tests/agents/test_devteam_epic_mode.py::test_epic_admission_names_and_mode`.
-
-    8.1.2: Overlapping epic or descendant admissions are refused. test: `tests/agents/test_devteam_epic_mode.py::test_overlapping_admissions_refused`.
-
-    8.1.3: Inside an active epic team, team seats can claim descendants and other
-    sessions cannot. test: `tests/agents/test_devteam_epic_mode.py::test_descendant_claims_scoped_to_team`.
-
-    8.1.4: Admission refuses an epic with a non-epic descendant that has open children;
-    closing a descendant leaf or a cascaded phase epic queues no teardown, and closing
-    the bound epic does. test: `tests/agents/test_devteam_epic_mode.py::test_topology_and_bound_close_teardown`.'
-  labels:
-  - covers:runbook-devteam-addendum:8.1:8.1.1
-  - covers:runbook-devteam-addendum:8.1:8.1.2
-  - covers:runbook-devteam-addendum:8.1:8.1.3
-  - covers:runbook-devteam-addendum:8.1:8.1.4
-  tdd: true
-  source_section: '8.1'
-  implementation_domain: backend
-- title: Dev Manager dispatches leaf developers and merges sub-worktrees
-  category: code
-  task_type: feature
-  depends_on:
-  - '8.1'
-  - '7.3'
-  validation_criteria: '8.2.1: A team manager spawns a primary in the epic worktree
-    and a sub-worktree developer on the derived leaf branch and directory; spawns
-    outside its epic, with a non-team definition, or for an in-flight leaf are refused.
-    test: `tests/agents/test_devteam_epic_dispatch.py::test_manager_leaf_spawns_scoped`.
-
-    8.2.2: Seats without `team_manager` stay blocked from spawning, and the seat guidance
-    names the exception. test: `tests/workflows/test_seat_rules.py::test_team_manager_spawn_exception`.
-
-    8.2.3: After a no-ff merge into epic main, the sub-worktree and branch delete
-    with `merged_into` epic main; an unmerged sub-branch is refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_merged_leaf_tree_cleanup`.
-
-    8.2.4: In an epic team with code, non-code docs and research leaves, the manager
-    spawns `code-reviewer`, `docs-reviewer` and `research-reviewer` seats, each recorded
-    as a binding, and respawning an ended reviewer fills its own definition''s binding.
-    A definition without the review grant and a second live seat for a bound definition
-    are refused. test: `tests/agents/test_devteam_epic_dispatch.py::test_routed_reviewer_bindings`.'
-  labels:
-  - covers:runbook-devteam-addendum:8.2:8.2.1
-  - covers:runbook-devteam-addendum:8.2:8.2.2
-  - covers:runbook-devteam-addendum:8.2:8.2.3
-  - covers:runbook-devteam-addendum:8.2:8.2.4
-  tdd: true
-  source_section: '8.2'
-  implementation_domain: backend
-- title: Intra-epic blockers resolve on finished leaves
-  category: code
-  task_type: feature
-  depends_on:
-  - '8.1'
-  validation_criteria: '8.3.1: Inside an active epic team, a dependent unblocks once
-    its blocker has a current approved implementation record at its tip, and stays
-    blocked on test commits alone or when the record is stale. test: `tests/storage/test_intra_epic_blockers.py::test_finished_blocker_unblocks_inside_team`.
-
-    8.3.2: Without an active epic team, or across epics, blocking is unchanged, and
-    SQL projection and hydration agree. test: `tests/storage/test_intra_epic_blockers.py::test_predicate_parity_outside_teams`.
-
-    8.3.3: A no-work blocker with an approved disposition and no linked commits unblocks
-    its dependents. A blocker whose latest implementation record is rejected or superseded
-    stays blocking despite an earlier approval at the same commit. SQL projection,
-    hydration and `approved_task_step` agree on every case. test: `tests/storage/test_intra_epic_blockers.py::test_no_work_and_superseded_blockers`.'
-  labels:
-  - covers:runbook-devteam-addendum:8.3:8.3.1
-  - covers:runbook-devteam-addendum:8.3:8.3.2
-  - covers:runbook-devteam-addendum:8.3:8.3.3
-  tdd: true
-  source_section: '8.3'
-  implementation_domain: backend
-- title: Epic review loop without a fixer and epic escalation
-  category: code
-  task_type: feature
-  depends_on:
-  - '8.2'
-  validation_criteria: '8.4.1: In epic mode, rejections go back to developers and
-    the same reviewer reviews every round; no seat changes role. test: `tests/agents/test_devteam_epic_review.py::test_reviewer_never_fixes_in_epic_mode`.
-
-    8.4.2: A leaf''s or the epic tip''s third rejection escalates the epic once, holds
-    the team, and lifts after the audited reset and re-claim. test: `tests/agents/test_devteam_epic_review.py::test_third_rejection_holds_epic`.
-
-    8.4.3: An externally blocked leaf holds landing, and no leaf is detached or reverted.
-    test: `tests/agents/test_devteam_epic_review.py::test_blocked_leaf_holds_epic`.
-
-    8.4.4: After every leaf is approved, an epic-tip rejection returns to an owning
-    leaf. Only that leaf''s records go stale and are rewritten, and the next epic-tip
-    round approves the new tip as round two, with the earlier epic rejection still
-    counted. test: `tests/agents/test_devteam_epic_review.py::test_epic_tip_rejection_repairs_through_leaf`.'
-  labels:
-  - covers:runbook-devteam-addendum:8.4:8.4.1
-  - covers:runbook-devteam-addendum:8.4:8.4.2
-  - covers:runbook-devteam-addendum:8.4:8.4.3
-  - covers:runbook-devteam-addendum:8.4:8.4.4
-  tdd: true
-  source_section: '8.4'
-  implementation_domain: backend
-- title: Epic-mode procedures and runbook binding
-  category: config
-  task_type: feature
-  depends_on:
-  - '8.4'
-  - '8.3'
-  validation_criteria: '8.5.1: The procedures state the phase order, dispatch rule,
-    merge-only updates, unlock order, per-leaf routing and reviewer spawns, the no-work
-    path, the epic-tip repair, hold rules, landing order, nested close order and the
-    Orchestrator''s epic admission rules, with no detach or reviewer-fix path. test:
-    `tests/workflows/test_devteam_epic_runbook.py::test_epic_procedures`.
-
-    8.5.2: The devteam runbook dry-runs bound to an epic and to a leaf with the same
-    seat catalogue. test: `tests/workflows/test_devteam_epic_runbook.py::test_runbook_binds_epic_or_leaf`.'
-  labels:
-  - covers:runbook-devteam-addendum:8.5:8.5.1
-  - covers:runbook-devteam-addendum:8.5:8.5.2
-  tdd: true
-  source_section: '8.5'
-  assigned_agent: developer
-- title: Pilot one epic team
-  category: test
-  task_type: feature
-  depends_on:
-  - '8.5'
-  - '9.4'
-  validation_criteria: '8.6.1: The six-leaf nested epic completes from admission to
-    teardown with parallel sub-worktrees, a no-work blocker, three routed reviewers,
-    one rejection, one landing, closes in leaf, phase-epic and root order, and exactly
-    one teardown. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_complete_epic_team`.
-
-    8.6.2: A third leaf rejection holds the epic until the audited reset, and then
-    the epic lands. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_escalated_leaf_holds_then_lands`.
-
-    8.6.3: An epic-tip rejection after every leaf is approved is repaired through
-    a leaf, and the epic lands on the second epic-tip round. test: `tests/e2e/test_devteam_epic_lifecycle.py::test_epic_tip_rejection_repaired_then_lands`.
-
-    8.6.4: The live pilot''s outcome, timings and any findings are recorded. file:
-    `.gobby/plans/research/devteam-epic-pilot-results.md`.'
-  labels:
-  - covers:runbook-devteam-addendum:8.6:8.6.1
-  - covers:runbook-devteam-addendum:8.6:8.6.2
-  - covers:runbook-devteam-addendum:8.6:8.6.3
-  - covers:runbook-devteam-addendum:8.6:8.6.4
-  tdd: false
-  source_section: '8.6'
-  assigned_agent: developer
-- title: Workspace repository and daemon committer
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '9.1.1: The anchor is identical from the main checkout and
-    a linked worktree, and the work tree holds no `.git`. test: `tests/agents/test_agent_workspaces.py::test_anchor_shared_and_gitless`.
-
-    9.1.2: A commit runs only when the tree is dirty, skips oversized files and symlinks,
-    and is serialized per project. test: `tests/agents/test_agent_workspaces.py::test_commit_only_when_dirty_with_guards`.
-
-    9.1.3: A commit failure does not fail set_handoff, pre-compact or session end,
-    and the cron trigger commits a dirty tree. test: `tests/agents/test_agent_workspaces.py::test_trigger_failures_are_non_blocking`.'
-  labels:
-  - covers:runbook-devteam-addendum:9.1:9.1.1
-  - covers:runbook-devteam-addendum:9.1:9.1.2
-  - covers:runbook-devteam-addendum:9.1:9.1.3
-  tdd: true
-  source_section: '9.1'
-  implementation_domain: backend
-- title: Workspace write and read scope rules
-  category: code
-  task_type: feature
-  depends_on:
-  - '9.1'
-  validation_criteria: '9.2.1: Writes to the session''s own folder and its epic folder
-    pass for the researcher, assistant, archivist, developer and a plan-mode session;
-    writes to another folder, the Git directory or a `.gobby` segment are blocked.
-    test: `tests/workflows/test_agent_workspace_scope.py::test_write_isolation`.
-
-    9.2.2: A non-persistent seat can read only its own folder, its epic folder and
-    the README; a persistent seat can also read its definition''s eligible predecessor
-    folders, for both read tools and literal shell paths. test: `tests/workflows/test_agent_workspace_scope.py::test_read_scope_by_persistence`.
-
-    9.2.3: A literal workspace write sets no `canonical_repo_mutation`, leaves no
-    task edit-ledger entry, and native `set_variable` cannot change workspace keys.
-    test: `tests/workflows/test_agent_workspace_scope.py::test_exemptions_and_variable_protection`.
-
-    9.2.4: A persistent seat is refused a live same-definition sibling''s folder,
-    a later-started ended session''s folder and a resumed predecessor''s folder while
-    it is live, and allowed an ended earlier predecessor''s folder. A non-persistent
-    seat is refused every predecessor folder. test: `tests/workflows/test_agent_workspace_scope.py::test_predecessor_eligibility`.'
-  labels:
-  - covers:runbook-devteam-addendum:9.2:9.2.1
-  - covers:runbook-devteam-addendum:9.2:9.2.2
-  - covers:runbook-devteam-addendum:9.2:9.2.3
-  - covers:runbook-devteam-addendum:9.2:9.2.4
-  tdd: true
-  source_section: '9.2'
-  implementation_domain: backend
-- title: Session folders, the persistent flag and clear inheritance
-  category: code
-  task_type: feature
-  depends_on:
-  - '9.2'
-  validation_criteria: '9.3.1: A session gets its own folder at start and keeps it
-    across compaction and resume; a manual clear gets a new folder. test: `tests/agents/test_agent_workspace_lifecycle.py::test_session_folder_binding`.
-
-    9.3.2: A persistent seat''s clear successor inherits the predecessor''s folder;
-    a non-persistent seat''s successor gets a fresh folder. test: `tests/agents/test_agent_workspace_lifecycle.py::test_clear_inheritance_by_persistence`.
-
-    9.3.3: Exactly the five Admin definitions set `persistent_workspace`, and the
-    injection and reset rules deliver the path once per epoch, with the predecessor-read
-    restriction for persistent sessions only. test: `tests/agents/test_agent_workspace_lifecycle.py::test_persistent_set_and_injection`.'
-  labels:
-  - covers:runbook-devteam-addendum:9.3:9.3.1
-  - covers:runbook-devteam-addendum:9.3:9.3.2
-  - covers:runbook-devteam-addendum:9.3:9.3.3
-  tdd: true
-  source_section: '9.3'
-  implementation_domain: backend
-- title: Epic workspace folders
-  category: code
-  task_type: feature
-  depends_on:
-  - '9.3'
-  - '8.4'
-  validation_criteria: '9.4.1: Every seat of an epic team, sub-worktree developers
-    included, can write the epic folder; sessions outside the team cannot. test: `tests/agents/test_agent_workspace_epics.py::test_epic_folder_scoped_to_team`.
-
-    9.4.2: After epic close and teardown, the final `epic-<seq>` commit exists and
-    later writes are refused. test: `tests/agents/test_agent_workspace_epics.py::test_epic_close_commit_and_lock`.'
-  labels:
-  - covers:runbook-devteam-addendum:9.4:9.4.1
-  - covers:runbook-devteam-addendum:9.4:9.4.2
-  tdd: true
-  source_section: '9.4'
-  implementation_domain: backend
-```
