@@ -73,12 +73,13 @@ fn index_discovered_files(
         root_path,
         mode: api::IndexWriteMode::Primary,
         head_blobs: &head_blobs,
+        machine_id: &ctx.machine_id,
     };
     let mut outcome = IndexOutcome::new(project_id);
-    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    let machine_id = ctx.machine_id.as_str();
     api::upsert_project_seed(
         conn,
-        &machine_id,
+        machine_id,
         project_id,
         root_path,
         api::IndexWriteMode::Primary,
@@ -105,7 +106,7 @@ fn index_discovered_files(
     let stale: Option<HashSet<String>> = if !request.full {
         Some(get_stale_files(
             conn,
-            &machine_id,
+            machine_id,
             project_id,
             &current_files.hashes,
         )?)
@@ -116,18 +117,17 @@ fn index_discovered_files(
     let stored_selectors = if request.full {
         api::file_state::SelectorStates::new()
     } else {
-        api::file_state::selector_states(conn, &machine_id, project_id)?
+        api::file_state::selector_states(conn, machine_id, project_id)?
     };
 
     // Clean orphans only during whole-project scans. Filtered scans do not know
     // about files outside the requested subtree.
     if request.path_filter.is_none() {
-        let orphans =
-            get_orphan_files(conn, &machine_id, project_id, &current_files.present_paths)?;
+        let orphans = get_orphan_files(conn, machine_id, project_id, &current_files.present_paths)?;
         for orphan in &orphans {
             api::file_state::delete_file_state(
                 conn,
-                &machine_id,
+                machine_id,
                 project_id,
                 orphan,
                 root_path,
@@ -162,7 +162,14 @@ fn index_discovered_files(
         if let Some(ref stale_map) = stale
             && !stale_map.contains(&rel)
         {
-            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
+            record_current_blob(
+                conn,
+                machine_id,
+                project_id,
+                &rel,
+                &current_files,
+                &stored_selectors,
+            )?;
             outcome.skipped_files += 1;
             continue;
         }
@@ -170,7 +177,7 @@ fn index_discovered_files(
             && let Some(content_hash) = current_files.hashes.get(&rel)
             && api::file_state::adopt_file_state(
                 conn,
-                &machine_id,
+                machine_id,
                 project_id,
                 &rel,
                 content_hash,
@@ -178,7 +185,14 @@ fn index_discovered_files(
                 api::IndexWriteMode::Primary,
             )?
         {
-            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
+            record_current_blob(
+                conn,
+                machine_id,
+                project_id,
+                &rel,
+                &current_files,
+                &stored_selectors,
+            )?;
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
@@ -197,7 +211,7 @@ fn index_discovered_files(
             None => {
                 api::file_state::delete_file_state(
                     conn,
-                    &machine_id,
+                    machine_id,
                     project_id,
                     &rel,
                     root_path,
@@ -217,7 +231,14 @@ fn index_discovered_files(
         if let Some(ref stale_map) = stale
             && !stale_map.contains(&rel)
         {
-            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
+            record_current_blob(
+                conn,
+                machine_id,
+                project_id,
+                &rel,
+                &current_files,
+                &stored_selectors,
+            )?;
             outcome.skipped_files += 1;
             continue;
         }
@@ -225,7 +246,7 @@ fn index_discovered_files(
             && let Some(content_hash) = current_files.hashes.get(&rel)
             && api::file_state::adopt_file_state(
                 conn,
-                &machine_id,
+                machine_id,
                 project_id,
                 &rel,
                 content_hash,
@@ -233,7 +254,14 @@ fn index_discovered_files(
                 api::IndexWriteMode::Primary,
             )?
         {
-            record_current_blob(conn, project_id, &rel, &current_files, &stored_selectors)?;
+            record_current_blob(
+                conn,
+                machine_id,
+                project_id,
+                &rel,
+                &current_files,
+                &stored_selectors,
+            )?;
             adopted_paths.push(rel.clone());
             outcome.skipped_files += 1;
             progress.advance(&rel);
@@ -248,13 +276,14 @@ fn index_discovered_files(
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
     timings.phase("primary.local_imports");
-    resolve_local_import_calls(conn, project_id, &outcome.indexed_file_paths)?;
+    resolve_local_import_calls(conn, project_id, machine_id, &outcome.indexed_file_paths)?;
     if request.full && request.path_filter.is_none() {
-        resolve_project_local_import_calls(conn, project_id)?;
+        resolve_project_local_import_calls(conn, project_id, machine_id)?;
     }
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
-    let promoted_owners = resolve_local_import_inheritance(conn, project_id, &trigger_paths)?;
+    let promoted_owners =
+        resolve_local_import_inheritance(conn, project_id, machine_id, &trigger_paths)?;
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
@@ -262,7 +291,7 @@ fn index_discovered_files(
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
-        &machine_id,
+        machine_id,
         target,
         start.elapsed().as_millis() as u64,
         Some(eligible_files),
@@ -296,12 +325,13 @@ fn index_explicit_files_with_connection(
         root_path,
         mode: api::IndexWriteMode::Primary,
         head_blobs: &head_blobs,
+        machine_id: &ctx.machine_id,
     };
     let mut outcome = IndexOutcome::new(project_id);
-    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    let machine_id = ctx.machine_id.as_str();
     api::upsert_project_seed(
         conn,
-        &machine_id,
+        machine_id,
         project_id,
         root_path,
         api::IndexWriteMode::Primary,
@@ -324,7 +354,7 @@ fn index_explicit_files_with_connection(
             let rel = requested_relative_path(root_path, fp);
             api::file_state::delete_file_state(
                 conn,
-                &machine_id,
+                machine_id,
                 project_id,
                 &rel,
                 root_path,
@@ -356,7 +386,7 @@ fn index_explicit_files_with_connection(
                 };
                 api::file_state::delete_file_state(
                     conn,
-                    &machine_id,
+                    machine_id,
                     project_id,
                     &rel,
                     root_path,
@@ -369,7 +399,7 @@ fn index_explicit_files_with_connection(
     outcome.set_unsupported_file_types(unsupported_file_types(root_path, &content_only_files));
 
     let mut seen_import_candidates = std::collections::HashSet::new();
-    let mut import_candidates = db::list_indexed_file_paths(conn, project_id)?
+    let mut import_candidates = db::list_indexed_file_paths(conn, project_id, machine_id)?
         .into_iter()
         .map(|path| root_path.join(path))
         .filter(|path| seen_import_candidates.insert(path.clone()))
@@ -398,7 +428,7 @@ fn index_explicit_files_with_connection(
             && let Ok(snapshot) = selector_blob::read_snapshot(&abs, rel, &head_blobs)
             && api::file_state::adopt_file_state(
                 conn,
-                &machine_id,
+                machine_id,
                 project_id,
                 rel,
                 &snapshot.content_hash,
@@ -408,6 +438,7 @@ fn index_explicit_files_with_connection(
         {
             selector_blob::record_selector_blob(
                 conn,
+                machine_id,
                 project_id,
                 rel,
                 &snapshot.content_hash,
@@ -448,10 +479,11 @@ fn index_explicit_files_with_connection(
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
     timings.phase("primary_explicit.local_imports");
-    resolve_local_import_calls(conn, project_id, &outcome.indexed_file_paths)?;
+    resolve_local_import_calls(conn, project_id, machine_id, &outcome.indexed_file_paths)?;
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
-    let promoted_owners = resolve_local_import_inheritance(conn, project_id, &trigger_paths)?;
+    let promoted_owners =
+        resolve_local_import_inheritance(conn, project_id, machine_id, &trigger_paths)?;
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
@@ -459,7 +491,7 @@ fn index_explicit_files_with_connection(
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
-        &machine_id,
+        machine_id,
         target,
         start.elapsed().as_millis() as u64,
         Some(routed_file_count),
@@ -516,6 +548,7 @@ impl Drop for ActiveIndexProgress<'_> {
 /// The write is skipped when the stored hash and blob already equal the current pair.
 fn record_current_blob(
     conn: &mut Client,
+    machine_id: &str,
     project_id: &str,
     rel: &str,
     current: &CurrentFileState,
@@ -531,7 +564,7 @@ fn record_current_blob(
     if unchanged {
         return Ok(());
     }
-    selector_blob::record_selector_blob(conn, project_id, rel, content_hash, clean_blob)
+    selector_blob::record_selector_blob(conn, machine_id, project_id, rel, content_hash, clean_blob)
 }
 
 fn discovery_options(ctx: &Context) -> walker::DiscoveryOptions {

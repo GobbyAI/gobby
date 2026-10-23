@@ -251,7 +251,12 @@ mod serial_db {
         api::upsert_file(&mut conn, &orphan_file).expect("insert orphan file");
 
         assert_eq!(
-            db::list_indexed_file_paths(&mut conn, &project_id).expect("local paths"),
+            db::list_indexed_file_paths(
+                &mut conn,
+                &project_id,
+                &gobby_core::machine::read_local_machine_id().expect("machine id"),
+            )
+            .expect("local paths"),
             vec!["src/local.rs".to_string()]
         );
         assert_eq!(

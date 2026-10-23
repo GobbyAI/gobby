@@ -302,7 +302,7 @@ fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
 fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
     code_graph::require_graph_reads(ctx)?;
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
-    let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?;
+    let file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id, &ctx.machine_id)?;
 
     let mut files_synced = 0usize;
     let mut symbols_synced = 0usize;

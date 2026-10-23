@@ -34,8 +34,9 @@ pub struct GraphFileFacts {
 pub fn list_indexed_file_paths(
     conn: &mut impl GenericClient,
     project_id: &str,
+    machine_id: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT file_path
@@ -380,8 +381,9 @@ pub fn reset_vectors_sync_for_project(
 pub fn read_active_imports(
     conn: &mut impl GenericClient,
     project_id: &str,
+    machine_id: &str,
 ) -> anyhow::Result<Vec<ImportRelation>> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let rows = conn.query(
         "SELECT ci.source_file, ci.target_module
@@ -575,11 +577,12 @@ pub fn read_local_import_inheritance(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_paths: &[String],
+    machine_id: &str,
 ) -> anyhow::Result<Vec<InheritanceRelation>> {
     if file_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let rows = conn.query(
         &format!(
@@ -604,8 +607,9 @@ pub fn read_local_import_inheritance(
 pub fn read_project_local_import_inheritance(
     conn: &mut impl GenericClient,
     project_id: &str,
+    machine_id: &str,
 ) -> anyhow::Result<Vec<InheritanceRelation>> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let rows = conn.query(
         &format!(

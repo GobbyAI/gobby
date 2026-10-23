@@ -54,8 +54,13 @@ pub(super) fn index_file(
         .context("start indexed file transaction")?;
 
     timings.phase("file.sink");
-    let mut sink =
-        PostgresCodeFactSink::new(&mut tx, target.project_id, target.root_path, target.mode)?;
+    let mut sink = PostgresCodeFactSink::new(
+        &mut tx,
+        target.project_id,
+        target.root_path,
+        target.mode,
+        target.machine_id,
+    )?;
     timings.phase("file.facts");
     let counts = write_parsed_file_facts(
         &mut sink,
@@ -69,6 +74,7 @@ pub(super) fn index_file(
     let clean_blob = target.head_blobs.clean_blob(&rel, &parse_result.source);
     selector_blob::record_selector_blob(
         &mut tx,
+        target.machine_id,
         target.project_id,
         &rel,
         &h,
@@ -153,8 +159,13 @@ pub(super) fn index_content_only(
     let mut tx = conn
         .transaction()
         .context("start content-only file transaction")?;
-    let mut sink =
-        PostgresCodeFactSink::new(&mut tx, target.project_id, target.root_path, target.mode)?;
+    let mut sink = PostgresCodeFactSink::new(
+        &mut tx,
+        target.project_id,
+        target.root_path,
+        target.mode,
+        target.machine_id,
+    )?;
     let counts = write_content_only_file_facts(
         &mut sink,
         target.project_id,
@@ -167,6 +178,7 @@ pub(super) fn index_content_only(
     let clean_blob = target.head_blobs.clean_blob(&rel, &source);
     selector_blob::record_selector_blob(
         &mut tx,
+        target.machine_id,
         target.project_id,
         &rel,
         &content_hash,

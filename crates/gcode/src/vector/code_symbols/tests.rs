@@ -64,6 +64,7 @@ fn test_context(qdrant: Option<QdrantConfig>) -> Context {
         qdrant,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,

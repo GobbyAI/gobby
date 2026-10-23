@@ -54,15 +54,15 @@ pub(super) fn read_snapshot(path: &Path, rel: &str, head: &HeadBlobs) -> io::Res
 /// ID, so a file that became dirty stops claiming its old blob.
 pub(super) fn record_selector_blob(
     conn: &mut impl GenericClient,
+    machine_id: &str,
     project_id: &str,
     rel: &str,
     content_hash: &str,
     clean_blob: Option<&str>,
 ) -> anyhow::Result<()> {
-    let machine_id = gobby_core::machine::read_local_machine_id()?;
     api::file_state::set_selector_git_blob(
         conn,
-        &machine_id,
+        machine_id,
         project_id,
         rel,
         content_hash,

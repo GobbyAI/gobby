@@ -41,6 +41,7 @@ fn symbol_filter_rejects_language_kind_path_and_missing_disk_file() {
         qdrant: None,
         embedding: None,
         code_vectors: crate::config::CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,

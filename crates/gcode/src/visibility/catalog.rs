@@ -1,7 +1,7 @@
 use postgres::Client;
 
 use super::{
-    TOMBSTONE_LANGUAGE, VisibleFile, local_machine_uuid, local_machine_uuid_or_invisible,
+    TOMBSTONE_LANGUAGE, VisibleFile, local_machine_uuid, machine_uuid_or_invisible,
     project_uuid_or_invisible,
 };
 use crate::config::{Context, ProjectIndexScope};
@@ -170,7 +170,7 @@ pub fn tombstone_count(conn: &mut Client, ctx: &Context) -> usize {
         return 0;
     };
     let (Some(machine_id), Some(overlay_project_id)) = (
-        local_machine_uuid_or_invisible(),
+        machine_uuid_or_invisible(&ctx.machine_id),
         project_uuid_or_invisible(overlay_project_id),
     ) else {
         return 0;

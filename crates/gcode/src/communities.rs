@@ -89,10 +89,9 @@ fn refresh_with_partition_builder(
     let mut timings = crate::index::indexer::IndexTimings::new("communities.imports");
     let inputs = load_project_inputs(conn, ctx)?;
     let input_digest = inputs.digest(ctx);
-    let machine_id = gobby_core::machine::read_local_machine_id()?;
     let target_project_id = storage_project_id(ctx);
     timings.phase("communities.replace_lock");
-    let mut replace = db::begin_community_refresh(conn, &machine_id, target_project_id)?;
+    let mut replace = db::begin_community_refresh(conn, &ctx.machine_id, target_project_id)?;
     let target_signature = replace.partition_signature().map(str::to_owned);
     if replace.input_digest() == Some(input_digest.as_str())
         && target_signature
@@ -150,7 +149,7 @@ fn refresh_with_partition_builder(
         .iter()
         .filter(|community| !matched_ids.contains(&community.community_id))
         .count();
-    let rows = stored_rows(&machine_id, target_project_id, &partition, &assigned);
+    let rows = stored_rows(&ctx.machine_id, target_project_id, &partition, &assigned);
     let prior_by_id: HashMap<_, _> = replace
         .prior()
         .iter()

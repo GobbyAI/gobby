@@ -41,10 +41,11 @@ pub struct LocalImportRepair {
 pub(super) fn resolve_local_import_calls(
     conn: &mut Client,
     project_id: &str,
+    machine_id: &str,
     file_paths: &[String],
 ) -> anyhow::Result<usize> {
     let pending = db::read_local_import_calls(conn, project_id, file_paths)?;
-    Ok(resolve_pending_local_import_calls(conn, project_id, pending)?.resolved)
+    Ok(resolve_pending_local_import_calls(conn, project_id, machine_id, pending)?.resolved)
 }
 
 /// Resolve any pending `local_import` rows left from an earlier interrupted
@@ -53,14 +54,16 @@ pub(super) fn resolve_local_import_calls(
 pub(crate) fn resolve_project_local_import_calls(
     conn: &mut Client,
     project_id: &str,
+    machine_id: &str,
 ) -> anyhow::Result<LocalImportRepair> {
     let pending = db::read_project_local_import_calls(conn, project_id)?;
-    resolve_pending_local_import_calls(conn, project_id, pending)
+    resolve_pending_local_import_calls(conn, project_id, machine_id, pending)
 }
 
 fn resolve_pending_local_import_calls(
     conn: &mut Client,
     project_id: &str,
+    machine_id: &str,
     pending: Vec<CallRelation>,
 ) -> anyhow::Result<LocalImportRepair> {
     let pending_count = pending.len();
@@ -74,6 +77,7 @@ fn resolve_pending_local_import_calls(
             db::resolve_local_type_member_symbol_id(
                 conn,
                 project_id,
+                machine_id,
                 &candidate_files,
                 &qualifier,
                 &call.callee_name,
@@ -82,6 +86,7 @@ fn resolve_pending_local_import_calls(
             db::resolve_local_callee_symbol_id(
                 conn,
                 project_id,
+                machine_id,
                 &candidate_files,
                 &call.callee_name,
             )?
@@ -135,28 +140,31 @@ fn unresolved_call(original: &CallRelation) -> CallRelation {
 pub(super) fn resolve_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
+    machine_id: &str,
     trigger_paths: &[String],
 ) -> anyhow::Result<Vec<String>> {
     if trigger_paths.is_empty() {
         return Ok(Vec::new());
     }
-    let mut pending = db::read_local_import_inheritance(conn, project_id, trigger_paths)?;
-    let extra = db::read_project_local_import_inheritance(conn, project_id)?;
+    let mut pending =
+        db::read_local_import_inheritance(conn, project_id, trigger_paths, machine_id)?;
+    let extra = db::read_project_local_import_inheritance(conn, project_id, machine_id)?;
     pending.extend(
         extra
             .into_iter()
             .filter(|row| inheritance_names_trigger(row, trigger_paths)),
     );
     dedup_inheritance(&mut pending);
-    Ok(resolve_pending_local_import_inheritance(conn, project_id, pending)?.owners)
+    Ok(resolve_pending_local_import_inheritance(conn, project_id, machine_id, pending)?.owners)
 }
 
 pub(crate) fn resolve_project_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
+    machine_id: &str,
 ) -> anyhow::Result<LocalImportRepair> {
-    let pending = db::read_project_local_import_inheritance(conn, project_id)?;
-    resolve_pending_local_import_inheritance(conn, project_id, pending)
+    let pending = db::read_project_local_import_inheritance(conn, project_id, machine_id)?;
+    resolve_pending_local_import_inheritance(conn, project_id, machine_id, pending)
 }
 
 fn inheritance_names_trigger(row: &InheritanceRelation, trigger_paths: &[String]) -> bool {
@@ -192,6 +200,7 @@ const INHERITANCE_PROMOTION_BATCH: usize = 32;
 fn resolve_pending_local_import_inheritance(
     conn: &mut Client,
     project_id: &str,
+    machine_id: &str,
     pending: Vec<InheritanceRelation>,
 ) -> anyhow::Result<LocalImportRepair> {
     let pending_count = pending.len();
@@ -205,6 +214,7 @@ fn resolve_pending_local_import_inheritance(
             if let Some(id) = db::resolve_local_callee_symbol_id(
                 conn,
                 project_id,
+                machine_id,
                 &candidates,
                 &original.source_name,
             )? {
@@ -219,6 +229,7 @@ fn resolve_pending_local_import_inheritance(
             if let Some(id) = db::resolve_local_callee_symbol_id(
                 conn,
                 project_id,
+                machine_id,
                 &candidates,
                 &original.target_name,
             )? {
