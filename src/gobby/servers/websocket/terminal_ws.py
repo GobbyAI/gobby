@@ -319,9 +319,8 @@ class TerminalWsMixin(TerminalWriteMixin):
     async def _handle_terminal_detach(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")
         terminal_id = data.get("terminal_id")
-        if (
-            isinstance(attachment_id, str)
-            and self._leases().owned_attachment(attachment_id, websocket=websocket) is None
+        if isinstance(attachment_id, str) and not self._leases().created_by(
+            attachment_id, websocket=websocket
         ):
             await self._send_json(
                 websocket,

@@ -1040,3 +1040,66 @@ async def test_foreign_theme_is_refused_as_stale_attachment(
     )
 
     assert foreign.messages_of_type("terminal_error")[-1]["code"] == "stale_attachment"
+
+
+@pytest.mark.asyncio
+async def test_own_finalized_attachment_detaches_cleanly(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """The client keeps a server-finalized id and detaches it before attaching the next terminal.
+
+    The web client starts the next attach only after a successful detach, so a
+    connection's own finalized attachment must answer success without a second
+    lifecycle event.
+    """
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db)
+    websocket = MockWebSocket()
+    server.clients[websocket] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        websocket,
+        {
+            "type": "terminal_attach",
+            "request_id": "attach",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    attachment = websocket.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+    registry = server._leases()
+    event = await registry.finalize(attachment, "host_loss")
+    assert event is not None
+
+    async def publish(stamped: dict[str, Any]) -> None:
+        await server._send_json(websocket, stamped)
+
+    await registry.publish_lifecycle(
+        {
+            "type": "terminal_attachment_finalized",
+            "terminal_id": event.terminal_id,
+            "attachment_id": event.attachment_id,
+            "reason": event.reason,
+            "lease_generation": event.lease_generation,
+        },
+        publish,
+    )
+    assert len(websocket.messages_of_type("terminal_attachment_finalized")) == 1
+
+    await _send(
+        server,
+        websocket,
+        {
+            "type": "terminal_detach",
+            "request_id": "detach",
+            "terminal_id": terminal_id,
+            "attachment_id": attachment,
+        },
+    )
+
+    detach = websocket.messages_of_type("terminal_detach_result")[-1]
+    assert detach["success"] is True
+    assert detach["request_id"] == "detach"
+    assert len(websocket.messages_of_type("terminal_attachment_finalized")) == 1
+    await registry.shutdown_lifecycle_publication()

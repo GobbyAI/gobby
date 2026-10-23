@@ -421,6 +421,10 @@ class TerminalLeaseRegistry:
             return None
         return self.caller_attachment(attachment_id)
 
+    def created_by(self, attachment_id: str, *, websocket: object) -> bool:
+        """Whether this connection attached the id, live or finalized."""
+        return attachment_id in self._by_websocket.get(websocket, ())
+
     def caller_attachment(self, attachment_id: str) -> _Attachment | None:
         """The live attachment that the bound caller created, whichever connection sends."""
         record = self.get(attachment_id)
