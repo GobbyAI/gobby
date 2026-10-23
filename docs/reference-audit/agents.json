@@ -366,6 +366,21 @@
     },
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/runbook_seat_tools.py",
+        "symbol": "register_runbook_seat_tools.admit_team_tool"
+      },
+      "verification": [
+        "source-audit",
+        "team-admission"
+      ],
+      "audience": "agent; team runbook admit step only",
+      "server": "gobby-agents",
+      "tool": "admit_team"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
@@ -1206,6 +1221,12 @@
       "kind": "pytest",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_apply_persona.py tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py tests/mcp_proxy/tools/test_agent_messaging.py tests/mcp_proxy/tools/test_agent_messaging_broadcast.py tests/mcp_proxy/tools/test_agents_termination.py tests/mcp_proxy/tools/test_agent_cancellation.py tests/workflows/test_agent_definitions_v2.py tests/servers/routes/test_agents_routes.py tests/servers/routes/test_agent_spawn_routes.py -q",
       "result": "242 passed in 41.18s; isolated fixtures, no live mutation probes."
+    },
+    {
+      "id": "team-admission",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/agents/test_team_admission.py tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py tests/agents/test_runbook_seats.py -q",
+      "result": "55 passed (#24797). Concurrent admissions for one task create one team, one branch and one worktree named task-<seq>-<title-slug>; the loser gets team_exists. A re-run adopts its own tree from the recorded intent. A replacement joins with team_id and leaves commits and dirty files untouched. Admission and seat spawns refuse any task, tree, branch, base or clone drift."
     },
     {
       "id": "sandbox-cli-models",

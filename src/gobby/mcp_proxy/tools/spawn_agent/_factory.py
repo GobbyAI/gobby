@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.agents.team_lifecycle import SeatTarget
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.agent_resolver import AgentResolutionError
@@ -449,12 +450,10 @@ def create_spawn_agent_registry(
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
-        invoking_pipeline = (
-            await asyncio.to_thread(pipeline_caller, session_manager, caller_session_id)
-            if reserved_run_id is not None
-            else None
+        invoking_pipeline = await asyncio.to_thread(
+            pipeline_caller, session_manager, caller_session_id
         )
-        if reserved_run_id is not None and invoking_pipeline is not None:
+        if invoking_pipeline is not None:
             invocation_reply = await asyncio.to_thread(
                 pipeline_invocation_reply,
                 db,
@@ -463,6 +462,15 @@ def create_spawn_agent_registry(
                 parent_session_id=resolved_parent_session_id,
                 project_id=project_id,
                 reserved_run_id=reserved_run_id,
+                target=SeatTarget(
+                    task_id=task_id,
+                    checkout_mode=checkout_mode,
+                    branch_name=branch_name,
+                    base_branch=base_branch,
+                    clone_id=clone_id,
+                    worktree_id=worktree_id,
+                    project_path=project_path,
+                ),
             )
             if invocation_reply is not None:
                 return invocation_reply

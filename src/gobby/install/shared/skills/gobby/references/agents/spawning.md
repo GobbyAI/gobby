@@ -47,6 +47,15 @@ the same machine, or when a seat's agent definition is missing or disabled.
 Runbooks are fire and forget and enforce no agent slots. Seats are told apart by
 `project#session_ref`, so placement never refuses a pane title already in use.
 
+A team runbook's `admit` step calls `admit_team(task, team_id=None)`. Under the
+project landing lock it creates the task's branch and worktree from the
+integration branch, both named `task-<seq>-<title-slug>`; it accepts no branch
+or tree name. A re-run of the same execution returns the same team. A
+replacement execution passes `team_id`, the admitting execution's id, and names
+the same task. It refuses `team_exists` while the task has a live team tree. The
+runbook's seat spawns join that tree by worktree id or `project_path`, carry
+only the team's task, and request no new checkout, branch, base or clone.
+
 Runtime isolation accepts `none`, `worktree`, or `clone`; `inherit` belongs to
 agent definitions. Existing isolation IDs request reuse. Boot-failure cleanup is
 opt-in for freshly created isolation; preserve work when inspecting a failed run.

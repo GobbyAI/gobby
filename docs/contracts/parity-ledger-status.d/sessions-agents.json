@@ -403,6 +403,10 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::acquire_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
+  "MCP gobby-agents:admit_team": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::admit_team_tool`; Rust blocker: implement native single-use team admission and team-tree creation under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
   "MCP gobby-agents:apply_agent_definition": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::apply_agent_definition`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."

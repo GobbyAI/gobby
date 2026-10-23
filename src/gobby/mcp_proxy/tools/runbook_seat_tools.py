@@ -1,4 +1,4 @@
-"""gobby-agents:check_runbook_seats, the runbook's read-only seat guard (#23329)."""
+"""gobby-agents runbook tools: the read-only seat guard (#23329) and team admission."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
 from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -108,3 +109,44 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             return {"success": False, "error": str(exc)}
         # No "error" key on success: execute_mcp_step fails any result that carries one.
         return {"success": True, **asdict(admitted), **resolved}
+
+    @registry.tool(
+        name="admit_team",
+        description=(
+            "Admit a single-use team for one open task. Call it from a team runbook's "
+            "'admit' pipeline mcp step. Under the project landing lock it creates the task's "
+            "branch and worktree from the integration branch, both named "
+            "task-<seq>-<title-slug>; it accepts no branch or tree name. A re-run of the same "
+            "execution returns the same team. A replacement execution passes team_id, the "
+            "admitting execution id, and must name the same task. Refuses team_exists while "
+            "the task has a live team tree. Returns the team plus task_id, branch, worktree "
+            "and project_path for the seat steps."
+        ),
+    )
+    async def admit_team_tool(task: str, team_id: str | None = None) -> dict[str, Any]:
+        caller_ref = ctx.get_current_session_id()
+        if ctx.db is None or not caller_ref:
+            return {
+                "success": False,
+                "error": "admit_team needs a database and a caller session",
+                "error_code": "team_caller_invalid",
+            }
+        try:
+            team = await admit_team(
+                ctx.db,
+                caller_session_id=ctx.resolve_session_id(caller_ref),
+                task=task,
+                team_id=team_id,
+            )
+        except TeamAdmissionRefused as exc:
+            return {"success": False, "error": str(exc), "error_code": exc.code}
+        except ValueError as exc:
+            return {"success": False, "error": str(exc), "error_code": "team_caller_invalid"}
+        return {
+            "success": True,
+            "team": asdict(team),
+            "task_id": team.task_id,
+            "branch": team.branch,
+            "worktree": team.worktree_id,
+            "project_path": team.worktree_path,
+        }

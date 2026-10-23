@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1108. Unclassified: 0.
+Public surfaces and evidence gates: 1109. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -721,6 +721,7 @@ Public surfaces and evidence gates: 1108. Unclassified: 0.
 | `MCP HTTP gobby:set_variable` | proxied | Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.set_variable (line 546)`; blocked on Rust workflow/variable handler for `MCP HTTP gobby:set_variable`. Owner: #21567 Workflows, rules, pipelines, build, and validation. |
 | `MCP HTTP gobby:status` | proxied | Python `src/gobby/mcp_proxy/server.py::GobbyDaemonTools.status (line 151)`; blocked on Rust daemon status MCP tool handler. Owner: #21568 Remaining route families. |
 | `MCP gobby-agents:acquire_release_window` | proxied | Python `src/gobby/mcp_proxy/tools/release_tools.py::acquire_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:admit_team` | proxied | Python `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::admit_team_tool`; Rust blocker: implement native single-use team admission and team-tree creation under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:apply_agent_definition` | proxied | Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::apply_agent_definition`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:apply_persona` | proxied | Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::apply_persona`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:can_spawn_agent` | proxied | Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::can_spawn_agent`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
