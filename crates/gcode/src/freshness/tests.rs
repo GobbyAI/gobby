@@ -722,8 +722,8 @@ fn aged_overlay_pair(label: &str) -> (tempfile::TempDir, Context, Context) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let parent_root = tmp.path().join("parent");
     let overlay_root = tmp.path().join("overlay");
-    // Age the files well past the skew margin so a clean index leaves them
-    // unambiguously older than the overlay's watermark.
+    // Age the files so both indexes start settled for the project-wide
+    // freshness paths; the explicit-file gate compares content hashes only.
     let aged = SystemTime::now() - std::time::Duration::from_secs(3600);
     for root in [&parent_root, &overlay_root] {
         std::fs::create_dir_all(root.join("src")).expect("create src");
@@ -789,8 +789,7 @@ fn overlay_explicit_file_grep_skips_refresh_when_nothing_changed() {
     let refreshed = project_state_updated_at(&overlay_ctx);
     assert!(refreshed > watermark, "the edit must refresh the overlay");
 
-    // Once the index has stamped past the edit, the next read is quiet again.
-    set_mtime(&overlay_lib, refreshed - std::time::Duration::from_secs(10));
+    // The overlay now serves the edited content, so the next read is quiet.
     let status =
         ensure_fresh(&overlay_ctx, FreshnessScope::Files(file)).expect("settled freshness status");
     assert_eq!(status, FreshnessStatus::Checked);
@@ -852,6 +851,11 @@ fn overlay_explicit_file_grep_refreshes_each_file_edited_before_the_first_read()
         b"pub fn other_edited() {}\n",
     )
     .expect("write other edit");
+    // A time-based gate skips a file edited before the first read stamps the
+    // overlay, so wait past that stamp. The content gate does not need the
+    // wait; it keeps this test failing if such a gate returns.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
     for file in ["src/lib.rs", "src/other.rs"] {
         let status = ensure_fresh(
             &overlay_ctx,
