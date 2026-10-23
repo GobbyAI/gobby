@@ -55,7 +55,7 @@ class SandboxRunPaths:
     def cargo_home(self) -> Path:
         return self.shared_cache / "cargo-home"
 
-    def environment(self, provider: str) -> dict[str, str]:
+    def environment(self, provider: str, *, run_sockets: bool = False) -> dict[str, str]:
         values = {
             name: str(self.cache / name.replace("_", "-").lower()) for name in RUN_CACHE_ENV_VARS
         }
