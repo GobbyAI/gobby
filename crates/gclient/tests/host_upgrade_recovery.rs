@@ -403,6 +403,9 @@ async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
         })
         .await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        // The grant is asked of the host's control socket, which this host
+        // does not serve, so the key waits on an answer that says no.
+        tokio::time::sleep(Duration::from_millis(100)).await;
         drop(input_tx);
         reconnect
     };
@@ -425,6 +428,11 @@ async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
     assert!(
         !pane.direct_input(),
         "disconnect cannot create a host grant"
+    );
+    assert_eq!(
+        pane.status_message(),
+        Some("terminal control unavailable while the daemon is down; input not sent"),
+        "a key the outage cannot deliver says so"
     );
     assert_eq!(pane.transport(), Some(Transport::Direct));
     assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 1);

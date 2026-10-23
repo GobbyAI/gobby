@@ -8,7 +8,9 @@ use crate::ui::Chrome;
 
 use super::super::attention::apply_response;
 use super::super::{PaneId, Workspace};
-use super::control::{apply_write_abandoned, apply_write_result, apply_write_unconfirmed};
+use super::control::{
+    apply_outage_grant, apply_write_abandoned, apply_write_result, apply_write_unconfirmed,
+};
 use super::daemon_ops::{apply_kills, apply_ops};
 use super::jobs::{JobOutcome, JobResult, LoopJobs, OpIntent};
 
@@ -41,6 +43,8 @@ pub(super) fn apply_job_outcome(
             kept,
             result,
         } => return apply_kills(workspace, chrome, killed, kept, result),
+        // A host grant is real whichever generation asked for it, so it lands.
+        result @ JobResult::HostGrant { .. } => result,
         _ if !current => return,
         result => result,
     };
@@ -80,6 +84,12 @@ pub(super) fn apply_job_outcome(
         JobResult::WriteUnconfirmed { .. }
         | JobResult::WriteAbandoned { .. }
         | JobResult::Killed { .. } => {}
+        JobResult::HostGrant {
+            pane,
+            attachment,
+            grant,
+            revoked,
+        } => apply_outage_grant(workspace, chrome, jobs, pane, &attachment, grant, revoked),
         JobResult::Responded { pending, result } => {
             apply_response(workspace, chrome, pending, result);
         }

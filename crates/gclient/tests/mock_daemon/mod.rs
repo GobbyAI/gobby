@@ -5,7 +5,9 @@ mod workspace;
 pub mod host;
 
 #[allow(unused_imports)]
-pub use host::{live_workspace_on_direct_host, DirectHost};
+pub use host::{
+    live_workspace_on_direct_host, live_workspace_on_direct_host_terminals, DirectHost,
+};
 pub use workspace::WorkspaceSim;
 
 use base64::engine::general_purpose::STANDARD;
@@ -112,10 +114,11 @@ struct MockState {
     workspace_requests: Vec<Value>,
     detach_replies: VecDeque<(bool, Option<String>)>,
     proxy_attach_refusals: VecDeque<(String, String)>,
-    /// The `direct` locator every `frame_delivery: "direct"` attach answers
-    /// with. `None` omits it, which is how a daemon says the host has no
-    /// socket to offer and gclient falls back to a proxy attachment.
-    direct_attach_locator: Option<Value>,
+    /// The `direct` locators `frame_delivery: "direct"` attaches answer with,
+    /// matched by `host_terminal_id` and falling back to the first. Empty omits
+    /// the block, which is how a daemon says the host has no socket to offer
+    /// and gclient falls back to a proxy attachment.
+    direct_attach_locators: Vec<Value>,
     proxy_finalizations_before_reply: VecDeque<(String, u64, String, String)>,
     activity: Vec<String>,
     /// The daemon workspace `workspace_attach` serves and `workspace_op` moves.
@@ -174,7 +177,7 @@ impl MockDaemon {
             workspace_requests: Vec::new(),
             detach_replies: VecDeque::new(),
             proxy_attach_refusals: VecDeque::new(),
-            direct_attach_locator: None,
+            direct_attach_locators: Vec::new(),
             proxy_finalizations_before_reply: VecDeque::new(),
             workspace: WorkspaceSim::from_fixture(),
             pending_workspace_events: VecDeque::new(),
@@ -451,10 +454,16 @@ impl MockDaemon {
             .push_back((true, lease_generation, None, None));
     }
 
-    /// Answer every direct attach with `locator`, so the client connects a real
-    /// frame socket and the pane lands on `Transport::Direct`.
+    /// Answer direct attaches for this locator's `host_terminal_id` with it, so
+    /// the client connects a real frame socket and the pane lands on
+    /// `Transport::Direct`. Serving a second terminal keeps the first.
     pub fn serve_direct_attach(&self, locator: Value) {
-        self.state.lock().expect("mock state").direct_attach_locator = Some(locator);
+        let host_terminal_id = locator.get("host_terminal_id").cloned();
+        let mut state = self.state.lock().expect("mock state");
+        state
+            .direct_attach_locators
+            .retain(|existing| existing.get("host_terminal_id") != host_terminal_id.as_ref());
+        state.direct_attach_locators.push(locator);
     }
 
     pub fn enqueue_write_outcome(&self, outcome: &str, reason: Option<&str>) {
@@ -1019,11 +1028,19 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
             }
             let direct = (request.get("frame_delivery").and_then(Value::as_str) == Some("direct"))
                 .then(|| {
-                    state
+                    let requested = request.get("terminal_id").and_then(Value::as_str);
+                    let locators = state
                         .lock()
                         .expect("mock state")
-                        .direct_attach_locator
-                        .clone()
+                        .direct_attach_locators
+                        .clone();
+                    locators
+                        .iter()
+                        .find(|locator| {
+                            locator.get("host_terminal_id").and_then(Value::as_str) == requested
+                        })
+                        .or_else(|| locators.first())
+                        .cloned()
                 })
                 .flatten();
             let attachment_id = {

@@ -147,6 +147,13 @@ Josh, 2026-09-20:
    normal lease/takeover arbitration. **Restraint rung 2:** extend the existing
    frame protocol, `TerminalSlot.input_grant` and refusal path; add no second socket,
    control service, election protocol or TTL.
+   **Update (#24815, Orchestrator ruling gclient#17281):** the approved outage path
+   does not use the frame-side fallback holder. gclient asks the host's existing
+   control socket for `grant_input` and `revoke_input` after `hello`, reading the
+   token only from the owner-only `gterm-control.token` beside the frame socket. Both
+   files must be owner-only and owned by the current user. No new socket, verb or
+   fallback holder is added. The fallback items above (C0.2 and C0.4) stay
+   unimplemented.
 6. The daemon enhances native panes with leases and takeover, layout and workspace
    sync, roster, attention and agent relay. Those features degrade when it is down
    or absent. tmux, web and proxied panes remain daemon-bound and unavailable.

@@ -204,8 +204,9 @@ impl PaneModes {
 }
 
 /// Messages sent from the client to the host over the frame socket. The stream
-/// is read-only until the daemon grants it input: `grant_input` names a daemon
-/// attachment id on the control socket, the client binds that id with
+/// is read-only until the daemon grants it input, or gclient during a daemon
+/// outage grants its own frame attachment id: `grant_input` names an attachment
+/// id on the control socket, the client binds that id with
 /// [`ClientMessage::BindAttachment`], and only then do `Input` and `Paste`
 /// reach the PTY.
 ///

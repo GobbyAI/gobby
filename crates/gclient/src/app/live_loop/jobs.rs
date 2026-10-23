@@ -8,6 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::hash::Hash;
+use std::io;
+use std::path::PathBuf;
 
 use gobby_terminal::protocol::ClientMessage;
 use ratatui::backend::Backend;
@@ -23,6 +25,7 @@ use crate::ui::Chrome;
 use super::super::attention::{PendingAttention, ResponseSubmission};
 use super::super::{PaneId, Workspace};
 use super::focus_hints::{self, FocusMemo, ShownFocus};
+use super::outage_grant::{self, GrantOutcome};
 
 #[cfg(test)]
 mod tests;
@@ -33,6 +36,8 @@ pub enum JobKey {
     Geometry(PaneId),
     /// A pane's scroll offset; the latest one wins.
     Scroll(PaneId),
+    /// A direct pane's host input grant, asked for while the daemon is away.
+    HostGrant(PaneId),
     FocusHints,
     /// A pane writer's outcomes; the tag id is the write's `client_write_seq`.
     Write(PaneId),
@@ -72,6 +77,15 @@ pub enum JobResult {
     },
     /// A proxied pane's scroll offset reached the daemon, or failed to.
     Scrolled { result: Result<(), DaemonError> },
+    /// The host's answer to `pane`'s outage grant, and each other pane's
+    /// revoke that followed it. Its result applies even when the daemon has
+    /// since changed, because the host grant it names is now real either way.
+    HostGrant {
+        pane: PaneId,
+        attachment: String,
+        grant: io::Result<GrantOutcome>,
+        revoked: Vec<(PaneId, String, io::Result<()>)>,
+    },
     /// The daemon's reply to one write of `bytes`.
     Write {
         pane: PaneId,
@@ -240,6 +254,7 @@ pub(super) enum Pending {
     FocusHints(ShownFocus),
     Geometry(PaneId, u16, u16),
     Scroll(PaneId, u32),
+    HostGrant(PaneId),
 }
 
 /// One entry of the geometry pass: a shown pane, its inner rect and the
@@ -365,6 +380,54 @@ impl LoopJobs {
                         false
                     }
                 }
+            }
+            Pending::HostGrant(pane_id) => {
+                let Some(pane) = workspace.panes.get(&pane_id) else {
+                    return false;
+                };
+                if pane.writable() || pane.pending_input.is_empty() {
+                    return false;
+                }
+                let Some(locator) = pane.host_locator() else {
+                    return false;
+                };
+                let frame_socket = PathBuf::from(&locator.frame_socket_path);
+                let host_terminal_id = locator.host_terminal_id;
+                let attachment = pane.attachment_id().to_string();
+                // Each other pane with a host grant gives it up whatever this
+                // grant's outcome, so the grant follows the focus.
+                let others: Vec<_> = workspace
+                    .panes
+                    .iter()
+                    .filter(|(id, other)| **id != pane_id && other.direct_input())
+                    .filter_map(|(id, other)| {
+                        let locator = other.host_locator()?;
+                        Some((
+                            *id,
+                            PathBuf::from(locator.frame_socket_path),
+                            locator.host_terminal_id,
+                            other.attachment_id().to_string(),
+                        ))
+                    })
+                    .collect();
+                spawn_job(&self.tx, tag.clone(), async move {
+                    let grant =
+                        outage_grant::grant(&frame_socket, &host_terminal_id, &attachment).await;
+                    let mut revoked = Vec::with_capacity(others.len());
+                    for (other, other_socket, other_terminal, other_attachment) in others {
+                        let result =
+                            outage_grant::revoke(&other_socket, &other_terminal, &other_attachment)
+                                .await;
+                        revoked.push((other, other_attachment, result));
+                    }
+                    JobResult::HostGrant {
+                        pane: pane_id,
+                        attachment,
+                        grant,
+                        revoked,
+                    }
+                });
+                true
             }
             Pending::Scroll(pane_id, rows) => {
                 let daemon = workspace.daemon().clone();

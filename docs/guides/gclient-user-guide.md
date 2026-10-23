@@ -932,9 +932,11 @@ The client rides through the gap. When the daemon's connection drops:
 
 1. A direct native pane keeps receiving frames from its gterm host. If you
    already hold its host input grant, you can keep typing while the daemon is
-   unreachable; host refusal still ends that authority. Taking control of an
-   ungranted pane waits for the daemon to return. Panes that use the daemon's
-   proxy keep their last visible frame frozen.
+   unreachable; host refusal still ends that authority. Typing into a direct
+   pane you do not hold asks the host for its grant instead; see
+   [While the daemon is away](#while-the-daemon-is-away). Panes that use the
+   daemon's proxy keep their last visible frame frozen, and typing into one
+   shows status rather than sending.
    A toast names the URL and cause (`Daemon unreachable at <url>: <error>`),
    while the status bar's left slot shows
    `× Daemon unreachable · retrying in <n> s` and counts down to the next attempt.
@@ -949,6 +951,33 @@ The client rides through the gap. When the daemon's connection drops:
    control of the focused pane, refreshes the sidebar, and resumes live frames.
    The retry segment clears itself after the connection succeeds; the event
    toast expires normally or clears at the next keypress.
+
+### While the daemon is away
+
+Focus moves locally while the daemon is away, and wheel scroll on a direct pane
+scrolls its scrollback through the host, so both work without the daemon.
+
+Typing into a direct pane you do not hold asks the host for the grant on your
+behalf. gclient reaches the host's control socket, `gterm-control.sock`, beside
+the frame socket, and authenticates with the token in `gterm-control.token`. It
+reads that token only after checking that both files belong to you and are
+owner-only (mode `0600`), and it never writes the token to a log or an error.
+Keys you type wait for the grant and are then written in order. The pane you
+left keeps its host grant until your next key into another pane revokes it, as
+a daemon release would have.
+
+A key or scroll that cannot be sent says why on its pane:
+
+| Status line | What happened |
+| --- | --- |
+| `daemon is down; input not sent` | The pane types through the daemon, which is unreachable. The key was not sent. |
+| `daemon is down; scroll not sent` | The pane scrolls through the daemon, which is unreachable. The scroll was not sent. |
+| `terminal control unavailable while the daemon is down; input not sent` | The host's control socket is missing, is not owner-only, or did not answer, so no grant could be asked for. The key was not sent. |
+| `terminal did not grant input; take control again` | The host refused the grant. The pane drops to take-back and its queued keys are discarded. |
+
+When the daemon returns, the focused pane retakes control as described above,
+and that grant replaces the outage grant on the host, so typing carries on
+without a take-back.
 
 Panes, tabs, and held control therefore survive `gobby restart`. On a pane that
 types through the daemon, a write whose outcome the daemon never confirmed leaves
