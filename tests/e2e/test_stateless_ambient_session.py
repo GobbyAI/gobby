@@ -1,13 +1,14 @@
 """Cross-CLI regressions for stateless ambient MCP session identity."""
 
+import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 
 from gobby.cli.installers.shared import sync_bundled_content_to_db
-from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -16,6 +17,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, issue_agent_api_token
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, daemon_health_unavailable
+from tests.e2e.gmcp_client import GmcpSession, gmcp_session
 
 pytestmark = pytest.mark.e2e
 
@@ -44,7 +46,7 @@ def e2e_pre_daemon_setup(postgres_db: HubDatabase) -> None:
 def _terminal_context(label: str) -> dict[str, Any]:
     suffix = f"{label}-{uuid.uuid4()}"
     return {
-        "parent_pid": 49230,
+        "parent_pid": os.getpid(),
         "tmux_pane": f"%{suffix}",
         "tmux_socket_path": f"/tmp/{suffix}.sock",
         "tty": f"/dev/pts/{suffix}",
@@ -80,19 +82,21 @@ def _schema_hook_input(cli_source: str) -> dict[str, Any]:
     }
 
 
-def _new_proxy(
-    monkeypatch: pytest.MonkeyPatch,
+@asynccontextmanager
+async def _gmcp_proxy(
     daemon_instance: DaemonInstance,
     terminal_context: dict[str, Any],
-) -> DaemonProxy:
-    monkeypatch.setenv("GOBBY_HOME", str(daemon_instance.gobby_home))
-    monkeypatch.setenv("GOBBY_PROJECT_ID", PROJECT_ID)
-    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
-        lambda: terminal_context,
-    )
-    return DaemonProxy(daemon_instance.http_port)
+    identity_env: Mapping[str, str] | None = None,
+) -> AsyncIterator[GmcpSession]:
+    """One gmcp process for this daemon, carrying the terminal context under test."""
+    async with gmcp_session(
+        daemon_instance.gobby_home,
+        cwd=daemon_instance.project_dir,
+        daemon_url=f"http://127.0.0.1:{daemon_instance.http_port}",
+        terminal_context=terminal_context,
+        identity_env={"GOBBY_PROJECT_ID": PROJECT_ID, **(identity_env or {})},
+    ) as proxy:
+        yield proxy
 
 
 def test_daemon_instance_restarts_with_same_ports(daemon_instance: DaemonInstance) -> None:
@@ -194,7 +198,6 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
     cli_events: CLIEventSimulator,
     daemon_instance: DaemonInstance,
     postgres_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     terminal_context = _terminal_context(cli_source)
     external_a = f"{cli_source}-ambient-a-{uuid.uuid4()}"
@@ -229,9 +232,7 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
     variable_manager = SessionVariableManager(postgres_db)
     audit_manager = WorkflowAuditManager(postgres_db)
     session_a = _session_for(manager, external_a, cli_source)
-    proxy = _new_proxy(monkeypatch, daemon_instance, terminal_context)
-
-    try:
+    async with _gmcp_proxy(daemon_instance, terminal_context) as proxy:
         ambient_a = await proxy.list_tools(TARGET_SERVER)
         assert ambient_a.get("success") is True
         assert TARGET_SERVER in variable_manager.get_variables(session_a.id)["listed_servers"]
@@ -320,8 +321,17 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         assert refreshed_a is not None
         assert refreshed_a.status == "expired"
         assert refreshed_a.to_dict() == expired_a
-    finally:
-        await proxy.aclose()
+
+        # A hookless terminal has no session, so the daemon refuses dispatch with SESSION_REQUIRED.
+        async with _gmcp_proxy(daemon_instance, _terminal_context("ambient-hookless")) as hookless:
+            refused = await hookless.call_tool(
+                TARGET_SERVER,
+                "create_task",
+                {"title": f"must-not-dispatch-{uuid.uuid4()}", "category": "manual"},
+                preflight_enabled=False,
+            )
+        assert refused["success"] is False
+        assert refused["error_code"] == "SESSION_REQUIRED"
 
 
 @pytest.mark.asyncio
@@ -329,7 +339,6 @@ async def test_daemon_binds_schema_lease_to_child_identity_env(
     cli_events: CLIEventSimulator,
     daemon_instance: DaemonInstance,
     postgres_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Daemon-side non-regression: a child-identity env resolves leases to the child.
 
@@ -379,26 +388,21 @@ async def test_daemon_binds_schema_lease_to_child_identity_env(
     variable_manager.set_variable(child.id, "unlocked_tools", [])
     variable_manager.set_variable(parent.id, "unlocked_tools", [])
 
-    monkeypatch.setenv("GOBBY_HOME", str(daemon_instance.gobby_home))
-    monkeypatch.setenv("GOBBY_PROJECT_ID", PROJECT_ID)
-    monkeypatch.setenv("GOBBY_SESSION_ID", child.id)
-    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", run.id)
     from gobby.utils.local_token import read_managed_signing_key
 
     signing_key = read_managed_signing_key(daemon_instance.gobby_home / "bootstrap.yaml")
     assert signing_key is not None
-    monkeypatch.setenv(
-        GOBBY_AGENT_API_TOKEN_ENV,
-        issue_agent_api_token(
+    identity_env = {
+        "GOBBY_SESSION_ID": child.id,
+        "GOBBY_AGENT_RUN_ID": run.id,
+        GOBBY_AGENT_API_TOKEN_ENV: issue_agent_api_token(
             signing_key,
             agent_run_id=run.id,
             session_id=child.id,
             project_id=PROJECT_ID,
         ),
-    )
-    proxy = DaemonProxy(daemon_instance.http_port)
-
-    try:
+    }
+    async with _gmcp_proxy(daemon_instance, {}, identity_env) as proxy:
         schema = await proxy.get_tool_schema(TARGET_SERVER, TARGET_TOOL)
         assert schema.get("success") is True
         post_tool = cli_events.post_tool_use(
@@ -419,8 +423,6 @@ async def test_daemon_binds_schema_lease_to_child_identity_env(
         lease = f"{TARGET_SERVER}:{TARGET_TOOL}"
         assert lease in variable_manager.get_variables(child.id)["unlocked_tools"]
         assert lease not in variable_manager.get_variables(parent.id)["unlocked_tools"]
-    finally:
-        await proxy.aclose()
 
 
 @pytest.mark.asyncio
@@ -428,7 +430,6 @@ async def test_hookless_terminal_requires_session_before_tool_dispatch(
     cli_events: CLIEventSimulator,
     daemon_instance: DaemonInstance,
     postgres_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_result = cli_events.register_test_project(
         project_id=PROJECT_ID,
@@ -443,9 +444,7 @@ async def test_hookless_terminal_requires_session_before_tool_dispatch(
     )
     assert row is not None
     task_count_before = int(row["count"])
-    proxy = _new_proxy(monkeypatch, daemon_instance, _terminal_context("hookless"))
-
-    try:
+    async with _gmcp_proxy(daemon_instance, _terminal_context("hookless")) as proxy:
         result = await proxy.call_tool(
             "gobby-tasks",
             "create_task",
@@ -465,8 +464,6 @@ async def test_hookless_terminal_requires_session_before_tool_dispatch(
         )
         assert row is not None
         assert int(row["count"]) == task_count_before
-    finally:
-        await proxy.aclose()
 
 
 @pytest.mark.asyncio
@@ -474,7 +471,6 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
     cli_events: CLIEventSimulator,
     daemon_instance: DaemonInstance,
     postgres_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_result = cli_events.register_test_project(
         project_id=PROJECT_ID,
@@ -488,7 +484,7 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
     # terminal identity survives the daemon restart.
     suffix = f"daemon-restart-{uuid.uuid4()}"
     terminal_context = {
-        "parent_pid": 49230,
+        "parent_pid": os.getpid(),
         "tty": f"/dev/pts/{suffix}",
         "term_program": "pytest",
         "term_session_id": suffix,
@@ -516,9 +512,7 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
     manager = SessionManager(postgres_db)
     variable_manager = SessionVariableManager(postgres_db)
     session = _session_for(manager, external_id, "codex")
-    proxy = _new_proxy(monkeypatch, daemon_instance, terminal_context)
-
-    try:
+    async with _gmcp_proxy(daemon_instance, terminal_context) as proxy:
         initial = await proxy.list_tools(TARGET_SERVER)
         assert initial.get("success") is True
         assert TARGET_SERVER in variable_manager.get_variables(session.id)["listed_servers"]
@@ -542,5 +536,3 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
         assert resolved is not None
         assert resolved.status == "active"
         assert TARGET_SERVER in variable_manager.get_variables(session.id)["listed_servers"]
-    finally:
-        await proxy.aclose()

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import logging
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,6 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION,
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
@@ -20,6 +20,8 @@ from gobby.servers.routes.mcp.endpoints.request_context import (
     _set_context_for_request,
 )
 from gobby.utils.session_context import SeededContextTokens
+
+WRAPPER_CONTRACT = Path(__file__).resolve().parents[2] / "crates/gmcp/contracts/mcp_wrapper.v1.json"
 
 
 def _request(**headers: str) -> Request:
@@ -31,31 +33,28 @@ def _request(**headers: str) -> Request:
     )
 
 
+def _wrapper_identity_headers(env: dict[str, str]) -> dict[str, str]:
+    """Headers the gmcp wrapper sends for identity env, per its checked-in contract."""
+    contract = json.loads(WRAPPER_CONTRACT.read_text())
+    return {
+        header: env[name] for name, header in contract["agent_identity_env_headers"] if name in env
+    }
+
+
 @pytest.mark.asyncio
-async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_run_identity_transport_chain() -> None:
     from gobby.utils.session_context import (
         AGENT_RUN_ID_HEADER,
         get_current_agent_run_id,
     )
 
-    monkeypatch.setenv("GOBBY_SESSION_ID", "session-1")
-    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "21000000-0000-4000-8000-000000000071")
-    response = MagicMock(status_code=200)
-    response.json.return_value = {"success": True}
-    client = MagicMock()
-    client.request = AsyncMock(return_value=response)
-    client.aclose = AsyncMock()
-    deps = DaemonProxyDependencies(
-        check_daemon_http_health=AsyncMock(return_value=True),
-        read_project_id=lambda: "project-1",
-        http_client_factory=lambda: client,
-        logger=logging.getLogger("test"),
+    wrapper_headers = _wrapper_identity_headers(
+        {
+            "GOBBY_SESSION_ID": "session-1",
+            "GOBBY_AGENT_RUN_ID": "21000000-0000-4000-8000-000000000071",
+        }
     )
-    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
-
-    assert await proxy._request("POST", "/api/mcp/gobby-agents/end_agent_run") == {"success": True}
-    request_headers = client.request.await_args.kwargs["headers"]
-    assert request_headers[AGENT_RUN_ID_HEADER] == "21000000-0000-4000-8000-000000000071"
+    assert wrapper_headers[AGENT_RUN_ID_HEADER] == "21000000-0000-4000-8000-000000000071"
 
     server = MagicMock()
     server.session_manager.db = MagicMock()
@@ -70,8 +69,7 @@ async def test_run_identity_transport_chain(monkeypatch: pytest.MonkeyPatch) -> 
     seeded = SeededContextTokens(resolved_session_id="session-1")
     valid_request = _request(
         **{
-            "X-Gobby-Session-Id": "session-1",
-            AGENT_RUN_ID_HEADER: "21000000-0000-4000-8000-000000000071",
+            **wrapper_headers,
             "X-Gobby-Project-Id": "project-1",
             MCP_WRAPPER_PROTOCOL_VERSION_HEADER: MCP_WRAPPER_PROTOCOL_VERSION,
         }
