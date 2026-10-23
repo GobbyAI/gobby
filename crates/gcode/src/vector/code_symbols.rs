@@ -24,8 +24,7 @@ pub use types::{
     CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest, VectorLifecycleError,
 };
 
-#[cfg(test)]
-use embedding::vector_text_for_symbol;
+pub(crate) use embedding::vector_text_for_symbol;
 #[cfg(all(test, feature = "ai"))]
 use embedding::{embed_text, embed_text_batch, embedding_client};
 #[cfg(all(test, feature = "ai"))]
