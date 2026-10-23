@@ -17,14 +17,14 @@ pytestmark = pytest.mark.unit
 class TestGetWorktreeBaseDir:
     """Tests for _get_worktree_base_dir helper."""
 
-    def test_unix_path(self, tmp_path) -> None:
+    def test_unix_path(self, tmp_path: Path) -> None:
         """Test path uses ~/.gobby/worktrees."""
         with patch("gobby.mcp_proxy.tools.worktrees._helpers.Path.home", return_value=tmp_path):
             path = _get_worktree_base_dir()
             assert str(path) == str(tmp_path / ".gobby" / "worktrees")
             assert path.exists()
 
-    def test_creates_directory(self, tmp_path) -> None:
+    def test_creates_directory(self, tmp_path: Path) -> None:
         """Test that the directory is created if it doesn't exist."""
         mock_home = tmp_path / "fakehome"
         mock_home.mkdir()
@@ -37,7 +37,7 @@ class TestGetWorktreeBaseDir:
 class TestGenerateWorktreePath:
     """Tests for _generate_worktree_path helper."""
 
-    def test_with_project_name(self, tmp_path) -> None:
+    def test_with_project_name(self, tmp_path: Path) -> None:
         """Test path generation with project name."""
         with patch(
             "gobby.mcp_proxy.tools.worktrees._helpers.get_worktree_base_dir", return_value=tmp_path
@@ -46,7 +46,7 @@ class TestGenerateWorktreePath:
             assert "myproject" in path
             assert "feature-test" in path
 
-    def test_without_project_name(self, tmp_path) -> None:
+    def test_without_project_name(self, tmp_path: Path) -> None:
         """Test path generation without project name."""
         with patch(
             "gobby.mcp_proxy.tools.worktrees._helpers.get_worktree_base_dir", return_value=tmp_path
@@ -70,7 +70,7 @@ class TestResolveProjectContext:
         assert git_manager is None
         assert project_id is None
 
-    def test_project_path_no_gobby(self, tmp_path) -> None:
+    def test_project_path_no_gobby(self, tmp_path: Path) -> None:
         """Test with path that has no .gobby/project.json."""
         with patch(
             "gobby.mcp_proxy.tools.worktrees._helpers.get_project_context", return_value=None
@@ -83,7 +83,7 @@ class TestResolveProjectContext:
             assert error is not None
             assert "No .gobby/project.json" in error
 
-    def test_project_path_invalid_git_repo(self, tmp_path) -> None:
+    def test_project_path_invalid_git_repo(self, tmp_path: Path) -> None:
         """Test with path that's not a valid git repo."""
         with (
             patch(
@@ -149,7 +149,7 @@ class TestCopyProjectJsonToWorktree:
     """Tests for _copy_project_json_to_worktree helper."""
 
     @pytest.mark.asyncio
-    async def test_copies_project_json(self, tmp_path) -> None:
+    async def test_copies_project_json(self, tmp_path: Path) -> None:
         """Test that project.json is copied with parent reference."""
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
@@ -161,7 +161,7 @@ class TestCopyProjectJsonToWorktree:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        await _copy_project_json_to_worktree(repo_path, worktree_path)
+        await _copy_project_json_to_worktree(repo_path, worktree_path, base_commit="base-sha")
 
         worktree_project = worktree_path / ".gobby" / "project.json"
         assert worktree_project.exists()
@@ -173,9 +173,10 @@ class TestCopyProjectJsonToWorktree:
         marker = json.loads((worktree_path / ".gobby" / "isolation.json").read_text())
         assert marker["parent_project_path"] == str(repo_path.resolve())
         assert marker["parent_project_id"] == "11111111-1111-4111-8111-111111110001"
+        assert marker["base_commit"] == "base-sha"
 
     @pytest.mark.asyncio
-    async def test_skips_if_no_source(self, tmp_path) -> None:
+    async def test_skips_if_no_source(self, tmp_path: Path) -> None:
         """Test that nothing happens if source doesn't exist."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
@@ -187,7 +188,7 @@ class TestCopyProjectJsonToWorktree:
         assert not (worktree_path / ".gobby" / "project.json").exists()
 
     @pytest.mark.asyncio
-    async def test_augments_existing_with_parent_path(self, tmp_path) -> None:
+    async def test_augments_existing_with_parent_path(self, tmp_path: Path) -> None:
         """Test that existing project.json is left alone and a sidecar is written."""
         repo_path = tmp_path / "repo"
         repo_gobby = repo_path / ".gobby"
@@ -201,7 +202,7 @@ class TestCopyProjectJsonToWorktree:
             '{"id": "11111111-1111-4111-8111-111111110001"}'
         )
 
-        await _copy_project_json_to_worktree(repo_path, worktree_path)
+        await _copy_project_json_to_worktree(repo_path, worktree_path, base_commit="base-sha")
 
         import json
 
@@ -216,12 +217,12 @@ class TestCopyProjectJsonToWorktree:
 class TestInstallProviderHooks:
     """Tests for _install_provider_hooks helper."""
 
-    def test_none_provider(self, tmp_path) -> None:
+    def test_none_provider(self, tmp_path: Path) -> None:
         """Test with None provider returns False."""
         result = _install_provider_hooks(None, tmp_path)
         assert result is False
 
-    def test_claude_hooks_success(self, tmp_path) -> None:
+    def test_claude_hooks_success(self, tmp_path: Path) -> None:
         """Test Claude hooks installation success with project mode."""
         from gobby.cli.installers import claude as claude_mod
 
@@ -231,7 +232,7 @@ class TestInstallProviderHooks:
             assert result is True
             mock_install.assert_called_once_with(tmp_path, mode="project")
 
-    def test_claude_hooks_failure(self, tmp_path, caplog) -> None:
+    def test_claude_hooks_failure(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """Test Claude hooks installation failure."""
         from gobby.cli.installers import claude as claude_mod
 
@@ -252,7 +253,7 @@ class TestInstallProviderHooks:
             assert result is True
             mock_install.assert_called_once_with(tmp_path)
 
-    def test_droid_hooks_success(self, tmp_path) -> None:
+    def test_droid_hooks_success(self, tmp_path: Path) -> None:
         """Test Droid hooks installation success with project mode."""
         from gobby.cli.installers import droid as droid_mod
 
@@ -262,7 +263,9 @@ class TestInstallProviderHooks:
             assert result is True
             mock_install.assert_called_once_with(tmp_path, mode="project")
 
-    def test_hooks_install_exception(self, tmp_path, caplog) -> None:
+    def test_hooks_install_exception(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Test hooks installation handles exceptions."""
         from gobby.cli.installers import claude as claude_mod
 

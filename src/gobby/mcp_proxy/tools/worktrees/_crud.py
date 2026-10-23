@@ -6,12 +6,28 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.remote_workspaces import list_remote, machine_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.mcp_proxy.tools.worktrees._merge_state import worktree_dict_with_git_merge_state
+from gobby.storage.worktrees import Worktree
 
 logger = logging.getLogger(__name__)
+
+
+def worktree_brief(wt: Worktree) -> dict[str, Any]:
+    """Summary of one worktree row for list results."""
+    return {
+        "id": wt.id,
+        "branch_name": wt.branch_name,
+        "worktree_path": wt.worktree_path,
+        "status": wt.status,
+        "task_id": wt.task_id,
+        "agent_session_id": wt.agent_session_id,
+        "created_at": wt.created_at,
+    }
 
 
 def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -81,6 +97,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         limit: int | str = 50,
         project_id: str | None = None,
         project_path: str | None = None,
+        machine_id: str | None = None,
     ) -> dict[str, Any]:
         """List worktrees with optional filters.
 
@@ -91,6 +108,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             project_id: Explicit project ID to filter by; takes precedence over project_path.
             project_path: Project path to resolve when project_id is not provided. Current context
                 is used only when both project_id and project_path are omitted.
+            machine_id: Machine whose worktrees to list. Omitted or this machine lists local
+                rows; another machine lists its rows through the hub.
 
         Returns:
             Dict with list of worktrees.
@@ -115,27 +134,33 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if error:
                 return {"success": False, "error": error}
 
-        worktrees = ctx.worktree_storage.list_worktrees(
-            project_id=resolved_project_id,
-            status=status,
-            agent_session_id=resolved_session_id,
-            limit=limit,
-        )
+        refusal = machine_refusal(machine_id)
+        if refusal is not None:
+            return refusal
+        if machine_id is not None and not is_local_machine(machine_id):
+            remote_rows = list_remote(
+                ctx.worktree_storage.db,
+                "worktree",
+                machine_id,
+                project_id=resolved_project_id,
+                status=status,
+            )
+            if resolved_session_id:
+                remote_rows = [
+                    wt for wt in remote_rows if wt.agent_session_id == resolved_session_id
+                ]
+            worktrees: list[Any] = remote_rows[:limit]
+        else:
+            worktrees = ctx.worktree_storage.list_worktrees(
+                project_id=resolved_project_id,
+                status=status,
+                agent_session_id=resolved_session_id,
+                limit=limit,
+            )
 
         return {
             "success": True,
-            "worktrees": [
-                {
-                    "id": wt.id,
-                    "branch_name": wt.branch_name,
-                    "worktree_path": wt.worktree_path,
-                    "status": wt.status,
-                    "task_id": wt.task_id,
-                    "agent_session_id": wt.agent_session_id,
-                    "created_at": wt.created_at,
-                }
-                for wt in worktrees
-            ],
+            "worktrees": [worktree_brief(wt) for wt in worktrees],
             "count": len(worktrees),
         }
 

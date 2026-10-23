@@ -95,6 +95,7 @@ async def test_fresh_worktree_deleted_on_post_prepare_failure() -> None:
         main_repo_path="/repo",
         isolated_path="/tmp/fresh-wt",
         provider="claude",
+        base_commit="base-sha",
         phase_timings_ms=config.phase_timings_ms,
     )
     git_manager.delete_worktree.assert_called_once_with(
