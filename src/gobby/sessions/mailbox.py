@@ -7,9 +7,15 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.team_communications import (
+    RECIPIENT_REFUSED,
+    REFUSAL,
+    recipient_policy,
+    relaunched_admin_seat,
+)
 from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
@@ -118,7 +124,7 @@ class MailboxService:
         content: str,
         target_id: str | None = None,
         message_id: str | None = None,
-        wake: bool = False,
+        wake: bool | None = False,
         priority: str = "normal",
         message_type: str = "message",
         metadata: Mapping[str, Any] | None = None,
@@ -126,7 +132,13 @@ class MailboxService:
         preserve_content: bool = False,
         replace_composer: bool = False,
     ) -> MailboxSendResult:
-        """Send a mailbox message to an explicit resolved target selector."""
+        """Send a mailbox message to an explicit resolved target selector.
+
+        ``wake=None`` takes the target default: direct targets wake and fanout stays
+        queued, except that Triage's direct sends to the Orchestrator stay queued. A
+        sender that may not address the Orchestrator is refused on a direct target, and
+        fanout withholds the Orchestrator from it.
+        """
         if not preserve_content:
             content = content.strip()
         if not content.strip():
@@ -147,6 +159,27 @@ class MailboxService:
                 project_id=project_id,
             )
             recipient_ids = resolution.recipient_session_ids
+            policy = recipient_policy(self._db, from_session_id, recipient_ids)
+            if policy.withheld and not resolution.fanout:
+                return MailboxSendResult(
+                    target=resolution.target,
+                    target_id=resolution.target_id,
+                    selector_metadata=resolution.selector_metadata,
+                    error_code=RECIPIENT_REFUSED,
+                    error=REFUSAL,
+                )
+            if policy.withheld:
+                recipient_ids = [r for r in recipient_ids if r not in policy.withheld]
+                resolution = replace(
+                    resolution,
+                    recipient_session_ids=recipient_ids,
+                    selector_metadata={
+                        **resolution.selector_metadata,
+                        "withheld_recipients": len(policy.withheld),
+                    },
+                )
+            if wake is None:
+                wake = not resolution.fanout and not policy.queued
             if message_id is not None and (resolution.fanout or len(recipient_ids) != 1):
                 raise ValueError("message_id requires exactly one direct recipient")
             broadcast_id = str(uuid.uuid4()) if resolution.fanout else None
@@ -372,6 +405,12 @@ class MailboxService:
                     raise ValueError(f"Recipient clear successor is not live: {successor_id}")
                 recipient = successor
                 to_session_id = successor.id
+        if recipient.status in TERMINAL_SESSION_STATUSES:
+            holder = relaunched_admin_seat(self._db, to_session_id, recipient.project_id)
+            relaunched = self._session_manager.get(holder) if holder else None
+            if relaunched is not None:
+                recipient = relaunched
+                to_session_id = relaunched.id
 
         if project_id and recipient.project_id != self._resolve_project_ref(project_id):
             raise ValueError("Recipient session is outside the target project")

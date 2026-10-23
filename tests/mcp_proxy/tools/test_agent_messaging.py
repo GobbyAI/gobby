@@ -701,12 +701,10 @@ class TestSendMessage:
         mock_db.fetchone.side_effect = lambda sql, params=(): (
             {"id": "11111111-1111-4111-8111-111111110001"} if "FROM projects" in sql else None
         )
-        mock_db.fetchall.return_value = [
-            {
-                "id": "s-child",
-                "status": "active",
-            }
-        ]
+        # The recipient-role query finds no seats; the broadcast query finds the child.
+        mock_db.fetchall.side_effect = lambda sql, params=(): (
+            [] if "_agent_type" in sql else [{"id": "s-child", "status": "active"}]
+        )
         mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
             id="msg-broadcast",
             from_session=kwargs["from_session"],

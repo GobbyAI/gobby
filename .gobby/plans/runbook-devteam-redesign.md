@@ -490,19 +490,20 @@ Targets:
 `[category: code]`
 
 Targets:
-- `src/gobby/workflows/condition_helpers_sessions.py::*` — scope-reason: resolve recipient/sender role from durable sessions
-- `src/gobby/mcp_proxy/tools/agent_messaging.py::*` — scope-reason: enforce resolved role policy at the messaging boundary
-- `src/gobby/agents/team_communications.py`
-- `src/gobby/install/shared/workflows/rules/worker-safety/runbook-message-authority.yaml`
-- `tests/agents/test_runbook_message_authority.py`
+- `src/gobby/sessions/mailbox.py::*` — scope-reason: `MailboxService.send` resolves every selector's recipients, so the role policy, the Triage queued default and the stale Admin ref redirect live there
+- `src/gobby/agents/team_communications.py::*` — scope-reason: new module resolving sender and recipient roles and an Admin role's live holder
+- `src/gobby/mcp_proxy/tools/agent_messaging.py::*` — scope-reason: pass the caller's wake choice to the mailbox and state the restriction in the tool description
+- `tests/agents/test_runbook_message_authority.py::*` — scope-reason: new file holding the routing and digest acceptance tests
+- `tests/mcp_proxy/tools/test_agent_messaging.py::*` — scope-reason: the mocked database answers the role query
+- `tests/mcp_proxy/tools/test_agent_messaging_broadcast.py::*` — scope-reason: the mocked database answers the role query
 
-**Research context:** Current `send_message_targets` controls selector modes, not recipient roles. Resolve the actual sender and recipient agent definitions through session/run identity; no hardcoded current session IDs or stale project ref variables. Assistant and Triage can address Orchestrator; all team seats can address their Dev Manager and Triage, and normal task-required peer coordination remains available. Triage owns comms synthesis and conflict/escalation routing; it never gates successful close. Default digest cadence is five minutes, queued with `wake=false`, including urgent findings in the next digest unless the operator explicitly requests immediate wake. Restart/relaunch follows the current role binding. Enforce direct selectors and resolved fanout recipients so alternate target modes cannot bypass the restriction.
+**Research context:** Current `send_message_targets` controls selector modes, not recipient roles. Every selector (direct `session`, `parent` and `agent`, and `project` or `global` fanout) resolves its recipients inside `MailboxService.send`, and the mailbox's only callers outside the MCP tool, the Telegram decision actions and the task assignment route, send as the system session. Enforcing there covers every path, so no rule or condition helper is needed. Roles come from each session's `_agent_type` variable; no hardcoded current session IDs or stale project ref variables. Assistant, Triage and the Orchestrator's own sessions can address the Orchestrator. The daemon's system sender and the operator's unspawned terminal (no agent run, depth 0, no role or `default`) are exempt; any other sender, including one with no resolvable role, is refused. A direct send to the Orchestrator returns `message_recipient_not_allowed` with no recipients and a refusal telling the seat to report to Triage or its Dev Manager. Fanout withholds the Orchestrator and records `withheld_recipients`, so a Release Manager `global` announcement reaches Triage, which relays it. All team seats can address their Dev Manager and Triage, and normal task-required peer coordination remains available. Triage owns comms synthesis and conflict/escalation routing; it never gates successful close. When Triage leaves `wake` unset, its sends to the Orchestrator stay queued, and urgent findings ride in the next digest. An explicit `wake=true` is the operator's immediate-wake exception and is honoured. The five-minute digest cadence is paced by the Triage seat itself through `wait_for_coordination(timeout=300)` in 3.5's Triage definition, the pattern the metrics monitor uses, so the daemon keeps no digest clock or cadence setting. Restart/relaunch follows the current role binding: a direct send to an ended Admin seat (Assistant, Orchestrator, Archivist, Release Manager or Triage) with no recorded successor redirects to that role's single live holder in the project. Team roles never redirect, because several teams hold the same role. The landing notice to a task's creator and delegator is written outside the mailbox and is unaffected.
 
 **Acceptance:**
 - 3.4.1 - Only Assistant/Triage reach Orchestrator through direct and fanout selectors; all seats can report to Triage. test: `tests/agents/test_runbook_message_authority.py::test_resolved_role_routing`.
-- 3.4.2 - Relaunched role sessions replace stale refs and digest delivery remains queued at the configured cadence. test: `tests/agents/test_runbook_message_authority.py::test_triage_digest_is_queued_and_relaunch_safe`.
+- 3.4.2 - Relaunched Admin sessions replace stale refs, and Triage digests to the Orchestrator stay queued unless the sender explicitly requests a wake. test: `tests/agents/test_runbook_message_authority.py::test_triage_digest_is_queued_and_relaunch_safe`.
 
-**Verification:** Planned mailbox/MCP role tests and scheduler-clock tests without real messages or provider wakes.
+**Verification:** Mailbox role tests on the isolated test hub with seeded sessions and role variables, without provider wakes. Regression: the mailbox, messaging, broadcast, wake and Telegram decision suites. 3.5.3 verifies the five-minute cadence in the Triage definition.
 
 ### 3.5 Ship Admin and DevTeam definitions and remove retired YAML (depends: 3.4, 3.6, 4.2, 5.1, #23855, #23859, #23860)
 `kind: deliverable`
@@ -522,6 +523,11 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/code-reviewer.yaml::*` — scope-reason: enforce the independent review and security contract throughout the definition
 - `src/gobby/install/shared/workflows/agents/release-manager.yaml::*` — scope-reason: replace old release and heavy-run slot grants with the complete batch release role
 - `src/gobby/install/shared/workflows/agents/debugger.yaml::*` — scope-reason: drop the heavy-run slot instruction
+- `src/gobby/install/shared/workflows/agents/log-monitor.yaml::*` — scope-reason: the tick reports to Triage instead of the Orchestrator
+- `src/gobby/install/shared/workflows/agents/metrics-monitor.yaml::*` — scope-reason: the paired report goes to Triage and Log Monitor
+- `src/gobby/workflows/engine/seat_transitions.py::*` — scope-reason: monitor report tracking records Triage where it records the Orchestrator
+- `tests/workflows/test_seat_definitions.py::*` — scope-reason: monitor transition tests report to Triage
+- `tests/agents/test_review_observation_seat_definitions.py::*` — scope-reason: monitor definition tests report to Triage
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/reporter.md::*` — scope-reason: drop the heavy-slot report section and hold state
 - `src/gobby/agents/reporter_sources.py::*` — scope-reason: drop the heavy-slot evidence pattern
 - `tests/agents/test_reporter_sources.py::*` — scope-reason: reporter sources carry no heavy-slot pattern
@@ -549,12 +555,14 @@ Targets:
 
 The definitions grant only their role's step writer: Test Writer gets `record_test_step`, Developer gets `record_implementation_step`, Code Reviewer gets `record_review_step`, and Dev Manager gets `record_closing_step`. The Orchestrator keeps the four writers section 2.3 granted, for repair only after other avenues are exhausted. A manager-authorized reviewer-to-fixer transition grants implementation authority for that task and removes review approval authority. Procedures require approved records before landing/close; the reviewer record supplies the exact-SHA stamp and the manager's closing record confirms the summary and final checks.
 
+3.4 limits who reaches the Orchestrator, so the monitors and DevTeam seats report to Triage. Log Monitor's tick and Metrics Monitor's paired report count a report to the Triage role where `_monitor_message` now requires the Orchestrator, and the `orchestrator_session` and `orchestrator_reported` state becomes `triage_session` and `triage_reported`. The `devteam` runbook's `report_to` input names the Triage session ref, and the Orchestrator procedure passes it at launch. Triage's definition paces its digest with `wait_for_coordination(timeout=300)` and sends it to the Orchestrator with `wake=false`. Both AGENTS.md messaging contracts state the Triage exception.
+
 **Granularity:** These configuration files jointly define one usable launch contract. Runtime mechanisms land first; definition and registry activation occur as one coordinated cutover so no partially renamed seat can launch.
 
 **Acceptance:**
 - 3.5.1 - Admin launches exactly Assistant/Orchestrator/Archivist/Release Manager/Triage; DevTeam launches the four approved roles in one prepared task tree. test: `tests/workflows/test_devteam_runbooks.py::test_runbook_seat_catalogues`.
 - 3.5.2 - Old manager source/installed identities are absent; log-monitor, metrics-monitor, recovery-steward, task-close-reviewer, expansion-qa, the three standalone roles, triage-agent and planning roles remain callable. Expansion QA is runbook-spawnable for post-expansion checks. test: `tests/workflows/test_devteam_runbooks.py::test_agent_retirement_and_retention`.
-- 3.5.3 - Procedures enforce review/security, claim handoff, summary-before-close, teardown and the release-window contract without lane/activation/TDD-proof relays. test: `tests/workflows/test_devteam_runbooks.py::test_procedures_match_runtime_authority`.
+- 3.5.3 - Procedures enforce review/security, claim handoff, summary-before-close, teardown, the release-window contract and Triage's five-minute queued digest without lane/activation/TDD-proof relays; monitors and DevTeam seats report to Triage. test: `tests/workflows/test_devteam_runbooks.py::test_procedures_match_runtime_authority`.
 - 3.5.4 - No bundled definition, procedure or reporter source mentions heavy-run slots, the heavy-run cap or per-seat `CARGO_BUILD_JOBS`. test: `tests/workflows/test_devteam_runbooks.py::test_no_heavy_run_slot_guidance`.
 
 **Verification:** Planned template parsing, registry sync and runbook dry-run tests; inspect installed DB rows after activation before declaring roles/rules live. Preserve existing sessions until the pilot-controlled switchover.
