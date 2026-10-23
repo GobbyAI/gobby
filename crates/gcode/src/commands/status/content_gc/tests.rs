@@ -701,6 +701,114 @@ mod serial_db {
         );
     }
 
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn pinned_version_survives_prune() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-pinned");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        let pinned_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "gc-hash-pinned",
+            60,
+            true,
+        );
+        let overlay_id = uuid::Uuid::new_v4().to_string();
+        seed_overlay_pin(
+            &mut conn,
+            &overlay_id,
+            &project_id,
+            "src/lib.rs",
+            "gc-hash-pinned",
+        );
+
+        let discovered = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("discover GC candidates");
+        assert!(
+            discovered.is_empty(),
+            "a version an overlay pin names is never a GC candidate",
+        );
+
+        let pinned = ContentGcCandidate {
+            id: pinned_id.clone(),
+            project_id: project_id.clone(),
+            file_path: "src/lib.rs".to_string(),
+            content_hash: "gc-hash-pinned".to_string(),
+            symbol_ids: Vec::new(),
+            has_graph_facts: false,
+            graph_synced: true,
+            vectors_synced: true,
+        };
+        let services = test_context(&database_url, &project_id);
+        let totals = prune_content_versions_with(
+            &services,
+            std::slice::from_ref(&pinned),
+            || false,
+            |project_id| Ok(test_context(&database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .expect("prune must skip a pinned version instead of aborting");
+        assert_eq!(totals.deleted_versions, 0);
+        assert_eq!(totals.failed_versions, 0);
+        assert_eq!(content_row_count(&mut conn, &pinned_id), 1);
+
+        conn.execute(
+            "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1",
+            &[&db::id_param(&overlay_id).expect("overlay pin uuid")],
+        )
+        .expect("release overlay pin");
+        let totals = prune_content_versions_with(
+            &services,
+            std::slice::from_ref(&pinned),
+            || false,
+            |project_id| Ok(test_context(&database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .expect("prune an unpinned version");
+        assert_eq!(totals.deleted_versions, 1);
+        assert_eq!(content_row_count(&mut conn, &pinned_id), 0);
+    }
+
+    fn seed_overlay_pin(
+        conn: &mut postgres::Client,
+        overlay_project_id: &str,
+        source_project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
+        let machine_id = db::id_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        )
+        .expect("machine id is a uuid");
+        conn.execute(
+            "INSERT INTO code_overlay_pins
+                (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &machine_id,
+                &db::id_param(overlay_project_id).expect("overlay project uuid"),
+                &file_path,
+                &db::id_param(source_project_id).expect("source project uuid"),
+                &content_hash,
+            ],
+        )
+        .expect("insert overlay pin");
+    }
+
     struct ProjectCleanup {
         database_url: String,
         project_id: String,
@@ -953,6 +1061,7 @@ mod serial_db {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
@@ -964,6 +1073,7 @@ mod serial_db {
     fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = db::id_param(project_id)?;
         for statement in [
+            "DELETE FROM code_overlay_pins WHERE source_project_id = $1",
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             "DELETE FROM code_indexed_project_states WHERE project_id = $1",
             "DELETE FROM code_symbols WHERE project_id = $1",

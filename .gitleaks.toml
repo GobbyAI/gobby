@@ -8,7 +8,9 @@
 useDefault = true
 
 [allowlist]
-description = "Vendored upstream sources are not ours to edit"
+description = "Vendored upstream sources and synthetic test vectors; no real credentials"
 paths = [
   '''^crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/''',
+  # Synthetic cross-language seal vector: generated test data, not a credential.
+  '''^crates/gruntime/tests/fixtures/secret_seal_vector\.json$''',
 ]

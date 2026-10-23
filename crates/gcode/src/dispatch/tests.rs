@@ -159,6 +159,7 @@ fn classify_run_error_uses_graph_sync_and_embeddings_doctor_exits() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -220,4 +221,129 @@ fn retirement_uses_existing_prune_services_without_embeddings() {
         services_for(&["retire-files", "--manifest", "/private/manifest.json"]),
         services_for(&["prune", "--force"]),
     );
+}
+
+#[test]
+fn grep_of_explicit_files_refreshes_only_those_files() {
+    let project = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(project.path().join("tests")).expect("create tests");
+    std::fs::write(
+        project.path().join("tests/runner.py"),
+        "def test_a(): ...\n",
+    )
+    .expect("write file");
+    let paths = vec!["tests/runner.py".to_string()];
+
+    let scope = navigation::grep_freshness_scope(project.path(), &paths);
+
+    assert!(matches!(
+        scope,
+        freshness::FreshnessScope::Files(files)
+            if files == vec![PathBuf::from("tests/runner.py")]
+    ));
+}
+
+fn grep_scope_test_context(project_id: &str, root: &std::path::Path) -> Context {
+    let root = root.canonicalize().expect("canonical grep checkout");
+    let database_url = crate::test_env::postgres_test_database_url("grep freshness tests");
+    let mut conn = crate::db::connect_readwrite(&database_url).expect("connect test hub");
+    crate::test_env::seed_test_checkout(&mut conn, project_id, &root)
+        .expect("register grep test checkout");
+    Context {
+        database_url,
+        project_root: root,
+        project_id: project_id.to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn grep_of_one_file_refreshes_that_file_and_leaves_siblings_alone() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).expect("create src");
+    std::fs::write(root.join("src/a.rs"), "pub fn a_old() {}\n").expect("write a");
+    std::fs::write(root.join("src/b.rs"), "pub fn b_old() {}\n").expect("write b");
+    let project_id = uuid::Uuid::new_v5(
+        &crate::models::CODE_INDEX_UUID_NAMESPACE,
+        b"gcode-grep-file-scope",
+    )
+    .to_string();
+    let ctx = grep_scope_test_context(&project_id, root);
+    {
+        let mut conn = crate::db::connect_readwrite(&ctx.database_url).expect("connect test hub");
+        crate::index::indexer::invalidate(&mut conn, &ctx.project_id, None)
+            .expect("invalidate grep test project");
+    }
+    crate::index::api::index_files(
+        crate::index::api::IndexRequest {
+            project_root: ctx.project_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &ctx,
+        crate::index::api::IndexOptions::default(),
+    )
+    .expect("full index of grep test project");
+    std::fs::write(root.join("src/a.rs"), "pub fn a_new() {}\n").expect("dirty a");
+    std::fs::write(root.join("src/b.rs"), "pub fn b_new() {}\n").expect("dirty b");
+
+    let scope = navigation::grep_freshness_scope(root, &["src/a.rs".to_string()]);
+    freshness::ensure_fresh(&ctx, scope).expect("grep freshness");
+
+    assert_eq!(visible_symbol_names(&ctx, "src/a.rs"), ["a_new"]);
+    assert_eq!(visible_symbol_names(&ctx, "src/b.rs"), ["b_old"]);
+}
+
+fn visible_symbol_names(ctx: &Context, file_path: &str) -> Vec<String> {
+    let mut conn = crate::db::connect_readwrite(&ctx.database_url).expect("connect test hub");
+    crate::visibility::visible_symbols_for_file(&mut conn, ctx, file_path)
+        .expect("read visible symbols")
+        .into_iter()
+        .map(|symbol| symbol.name)
+        .collect()
+}
+
+#[test]
+fn grep_of_directories_globs_or_no_paths_keeps_project_freshness() {
+    let project = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(project.path().join("tests")).expect("create tests");
+    std::fs::write(
+        project.path().join("tests/runner.py"),
+        "def test_a(): ...\n",
+    )
+    .expect("write file");
+
+    for paths in [
+        vec![],
+        vec!["tests".to_string()],
+        vec!["tests/*.py".to_string()],
+        vec!["tests/runner.py".to_string(), "tests".to_string()],
+    ] {
+        assert!(
+            matches!(
+                navigation::grep_freshness_scope(project.path(), &paths),
+                freshness::FreshnessScope::Project
+            ),
+            "paths {paths:?} must keep the whole-project freshness check",
+        );
+    }
 }

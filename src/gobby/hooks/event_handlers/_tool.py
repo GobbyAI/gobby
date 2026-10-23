@@ -12,7 +12,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks._path_scope import checkout_root, current_tool_cwd, resolve_tool_path
-from gobby.hooks.checkout_reads import node_origin
+from gobby.hooks.checkout_reads import CheckoutReadUnavailable, node_origin
 from gobby.hooks.dispatchers import run_coro_blocking
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -37,6 +37,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EDIT_TOOLS = CANONICAL_WRITE_TOOL_NAMES
+
+
+def _seat_path(value: str) -> Path:
+    """Resolve a seat's cwd or workspace on the hub, but keep a node's as sent.
+
+    The hub's symlinks must not rewrite a node's paths before the node-backed
+    checkout primitives see them.
+    """
+    return Path(value) if node_origin() else Path(value).resolve()
 
 
 class SkillResolutionError(RuntimeError):
@@ -130,25 +139,31 @@ class ToolEventHandlerMixin(EventHandlersBase):
         if isinstance(sequencer_paths, list):
             # Sequencer recovery has repository scope but does not author a file.
             # Permit that exemption only within this seat's own checkout.
-            cwd = Path(event.cwd).resolve() if event.cwd else current_tool_cwd(data)
-            session = self._session_manager.get(session_id) if self._session_manager else None
-            workspace = session.workspace_path if session is not None else None
-            own_cwd = Path(workspace).resolve() if isinstance(workspace, str) and workspace else cwd
-            own_root = (checkout_root(own_cwd) or own_cwd) if own_cwd is not None else None
-            for path in sequencer_paths:
-                if isinstance(edit_paths, list) and path in edit_paths:
-                    continue
-                target = resolve_tool_path(path, cwd)
-                target_root = checkout_root(target) if target is not None else None
-                if (
-                    target is None
-                    or own_root is None
-                    or (target_root is not None and target_root != own_root)
-                    or not target.is_relative_to(own_root)
-                ):
-                    raise ValueError(
-                        "Sequencer recovery outside the seat's own checkout is blocked."
-                    )
+            try:
+                cwd = _seat_path(event.cwd) if event.cwd else current_tool_cwd(data)
+                session = self._session_manager.get(session_id) if self._session_manager else None
+                workspace = session.workspace_path if session is not None else None
+                own_cwd = _seat_path(workspace) if isinstance(workspace, str) and workspace else cwd
+                own_root = (checkout_root(own_cwd) or own_cwd) if own_cwd is not None else None
+                for path in sequencer_paths:
+                    if isinstance(edit_paths, list) and path in edit_paths:
+                        continue
+                    target = resolve_tool_path(path, cwd)
+                    target_root = checkout_root(target) if target is not None else None
+                    if (
+                        target is None
+                        or own_root is None
+                        or (target_root is not None and target_root != own_root)
+                        or not target.is_relative_to(own_root)
+                    ):
+                        raise ValueError(
+                            "Sequencer recovery outside the seat's own checkout is blocked."
+                        )
+            except CheckoutReadUnavailable as exc:
+                # A node that cannot answer leaves the seat's checkout unproven, so block.
+                raise ValueError(
+                    "Sequencer recovery outside the seat's own checkout is blocked."
+                ) from exc
         if str(data.get("tool_name", "")).lower() not in EDIT_TOOLS and not (
             data.get("canonical_tool_kind") == "write"
             and data.get("canonical_repo_mutation") is True

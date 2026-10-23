@@ -58,7 +58,7 @@ def _removed_wait_for_completion_result() -> dict[str, Any]:
     return {
         "success": False,
         "error": (
-            "gobby-workflows.wait_for_completion was removed. Start the agent or pipeline, "
+            "gobby-workflows:wait_for_completion was removed. Start the agent or pipeline, "
             "persist its run_id or execution_id, then resume from the daemon's durable "
             "completion notification and inspect get_task, get_agent_result, or "
             "get_pipeline_status."

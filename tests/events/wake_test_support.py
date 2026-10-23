@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+import json
+from datetime import UTC, datetime
 
 from gobby.events.wake import WakeDispatcher
+from gobby.storage.inter_session_messages import InterSessionMessage
+from gobby.storage.sessions import system_session_id
 
 
 class PendingWakeLedger:
@@ -28,3 +31,38 @@ class PendingWakeLedger:
 
     async def _record(self, session_id: str, attempted_at: datetime) -> None:
         self.recorded.append(session_id)
+
+
+def operator_comms_message(session_id: str) -> InterSessionMessage:
+    """Daemon-ingress operator DM: the only pending wake that may wipe a composer."""
+    return InterSessionMessage(
+        id=f"operator-dm-{session_id}",
+        from_session=system_session_id(),
+        to_session=session_id,
+        content="Status?",
+        priority="normal",
+        sent_at=datetime.now(UTC),
+        message_type="comms_message",
+        metadata_json=json.dumps(
+            {
+                "communications_message_id": "inbound-dm",
+                "operator_comms": True,
+                "wake_requested": True,
+                "channel": "telegram",
+            }
+        ),
+    )
+
+
+def plain_message(session_id: str) -> InterSessionMessage:
+    """An ordinary agent message, which never enters the focus hold."""
+    return InterSessionMessage(
+        id=f"plain-{session_id}",
+        from_session=system_session_id(),
+        to_session=session_id,
+        content="Heads up",
+        priority="normal",
+        sent_at=datetime.now(UTC),
+        message_type="message",
+        metadata_json=None,
+    )

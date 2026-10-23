@@ -101,7 +101,7 @@ pub(super) fn index_overlay_files(
         anyhow::bail!("overlay indexer requires an overlay project context");
     };
 
-    crate::config::validate_parent_code_index(conn, &ctx.index_scope)?;
+    crate::config::validate_parent_code_index(conn, &ctx.index_scope, &ctx.machine_id)?;
 
     timings.phase("overlay.seed");
 
@@ -114,11 +114,12 @@ pub(super) fn index_overlay_files(
         root_path,
         mode: api::IndexWriteMode::Overlay,
         head_blobs: &head_blobs,
+        machine_id: &ctx.machine_id,
     };
-    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    let machine_id = ctx.machine_id.as_str();
     api::upsert_project_seed(
         conn,
-        &machine_id,
+        machine_id,
         overlay_project_id,
         root_path,
         api::IndexWriteMode::Overlay,
@@ -140,8 +141,8 @@ pub(super) fn index_overlay_files(
         .map(|path| requested_relative_path(root_path, path))
         .collect::<Vec<_>>();
     let state_filter = explicit_request.then_some(explicit_rels.as_slice());
-    let parent_files = indexed_file_states(conn, &machine_id, parent_project_id, state_filter)?;
-    let overlay_files = indexed_file_states(conn, &machine_id, overlay_project_id, state_filter)?;
+    let parent_files = indexed_file_states(conn, machine_id, parent_project_id, state_filter)?;
+    let overlay_files = indexed_file_states(conn, machine_id, overlay_project_id, state_filter)?;
 
     let (ast_by_rel, content_by_rel, import_candidates) = if explicit_request {
         let (ast_by_rel, content_by_rel) = explicit_overlay_file_maps(
@@ -151,12 +152,17 @@ pub(super) fn index_overlay_files(
             ctx.indexing.respect_gitignore,
         );
         let mut seen = HashSet::new();
-        let mut import_candidates = db::list_indexed_file_paths(conn, parent_project_id)?
-            .into_iter()
-            .chain(db::list_indexed_file_paths(conn, overlay_project_id)?)
-            .map(|path| root_path.join(path))
-            .filter(|path| seen.insert(path.clone()))
-            .collect::<Vec<_>>();
+        let mut import_candidates =
+            db::list_indexed_file_paths(conn, parent_project_id, machine_id)?
+                .into_iter()
+                .chain(db::list_indexed_file_paths(
+                    conn,
+                    overlay_project_id,
+                    machine_id,
+                )?)
+                .map(|path| root_path.join(path))
+                .filter(|path| seen.insert(path.clone()))
+                .collect::<Vec<_>>();
         import_candidates.extend(
             ast_by_rel
                 .values()
@@ -260,7 +266,7 @@ pub(super) fn index_overlay_files(
             && let Some(hash) = current_hash
             && api::file_state::adopt_file_state(
                 conn,
-                &machine_id,
+                machine_id,
                 overlay_project_id,
                 &rel,
                 hash,
@@ -270,6 +276,7 @@ pub(super) fn index_overlay_files(
         {
             selector_blob::record_selector_blob(
                 conn,
+                machine_id,
                 overlay_project_id,
                 &rel,
                 hash,
@@ -302,7 +309,7 @@ pub(super) fn index_overlay_files(
             OverlayReconcileAction::Inherit => {
                 api::file_state::delete_file_state(
                     conn,
-                    &machine_id,
+                    machine_id,
                     overlay_project_id,
                     &rel,
                     root_path,
@@ -311,13 +318,13 @@ pub(super) fn index_overlay_files(
                 outcome.skipped_files += 1;
             }
             OverlayReconcileAction::Tombstone => {
-                write_tombstone(conn, overlay_project_id, root_path, &rel)?;
+                write_tombstone(conn, machine_id, overlay_project_id, root_path, &rel)?;
                 outcome.tombstones_indexed += 1;
             }
             OverlayReconcileAction::DeleteOverlay => {
                 api::file_state::delete_file_state(
                     conn,
-                    &machine_id,
+                    machine_id,
                     overlay_project_id,
                     &rel,
                     root_path,
@@ -334,6 +341,7 @@ pub(super) fn index_overlay_files(
                 {
                     selector_blob::record_selector_blob(
                         conn,
+                        machine_id,
                         overlay_project_id,
                         &rel,
                         hash,
@@ -348,11 +356,16 @@ pub(super) fn index_overlay_files(
     // Calls into inherited (not re-indexed) files miss and degrade to unresolved,
     // matching pre-resolution behavior; no project-wide file scan is performed.
     timings.phase("overlay.local_imports");
-    resolve_local_import_calls(conn, overlay_project_id, &outcome.indexed_file_paths)?;
+    resolve_local_import_calls(
+        conn,
+        overlay_project_id,
+        machine_id,
+        &outcome.indexed_file_paths,
+    )?;
     let mut trigger_paths = outcome.indexed_file_paths.clone();
     trigger_paths.extend(adopted_paths);
     let promoted_owners =
-        resolve_local_import_inheritance(conn, overlay_project_id, &trigger_paths)?;
+        resolve_local_import_inheritance(conn, overlay_project_id, machine_id, &trigger_paths)?;
     outcome.record_promotion_owners(promoted_owners);
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
@@ -360,7 +373,7 @@ pub(super) fn index_overlay_files(
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
-        &machine_id,
+        machine_id,
         target,
         start.elapsed().as_millis() as u64,
         Some(ast_by_rel.len() + content_by_rel.len()),
@@ -672,13 +685,19 @@ fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
 
 pub(super) fn write_tombstone(
     conn: &mut Client,
+    machine_id: &str,
     project_id: &str,
     root_path: &Path,
     rel: &str,
 ) -> anyhow::Result<()> {
     let mut tx = conn.transaction().context("start tombstone transaction")?;
-    let mut sink =
-        PostgresCodeFactSink::new(&mut tx, project_id, root_path, api::IndexWriteMode::Overlay)?;
+    let mut sink = PostgresCodeFactSink::new(
+        &mut tx,
+        project_id,
+        root_path,
+        api::IndexWriteMode::Overlay,
+        machine_id,
+    )?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel, visibility::TOMBSTONE_HASH),
         project_id: project_id.to_string(),

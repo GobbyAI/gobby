@@ -11,6 +11,7 @@ from typing import Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.app_context import get_app_context
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
@@ -33,9 +34,11 @@ from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import build_session_usage_payload
+from gobby.storage.worktrees import Worktree
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.worktrees.base_branch import select_worktree_base
+from gobby.worktrees.creation import cleanup_git_worktree
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 from gobby.worktrees.git import WorktreeGitManager, remove_missing_branch_registration
 from gobby.worktrees.occupancy import refuse_occupied_worktree
@@ -618,11 +621,12 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 reason=f"Cannot create branch '{worktree_name}': {result.message}",
             )
 
+        record: Worktree | None = None
         if self._worktree_manager and project_id:
             try:
                 if existing:
                     self._worktree_manager.delete(existing.id)
-                self._worktree_manager.create(
+                record = self._worktree_manager.create(
                     project_id=project_id,
                     branch_name=worktree_name,
                     worktree_path=worktree_path,
@@ -636,6 +640,29 @@ class MiscEventHandlerMixin(EventHandlersBase):
             install_provider_hooks("claude", worktree_path)
         except Exception as e:
             self.logger.warning("WORKTREE_CREATE post-setup failed: %s", e)
+
+        try:
+            await GcodeGateway().pin_project(Path(worktree_path))
+        except (GcodeGatewayError, OSError) as exc:
+            await cleanup_git_worktree(
+                git_manager,
+                worktree_path,
+                worktree_name,
+                create_branch=create_branch,
+                context="index pin failure",
+            )
+            if record is not None and self._worktree_manager:
+                try:
+                    self._worktree_manager.delete(record.id)
+                except Exception as cleanup_exc:
+                    self.logger.warning(
+                        "Failed to delete worktree record after index pin failure: %s",
+                        cleanup_exc,
+                    )
+            return HookResponse(
+                decision="block",
+                reason=f"Cannot pin code index for '{worktree_name}': {exc}",
+            )
 
         self.logger.info("WORKTREE_CREATE created %s", worktree_path)
         return HookResponse(worktree_path=worktree_path)

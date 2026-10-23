@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.agents.agent_health import AgentHealthMonitor
+from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
@@ -269,6 +270,11 @@ class AgentLifecycleMonitor:
     def stall_classifier(self) -> StallClassifier:
         """Return the stall classifier shared by lifecycle consumers."""
         return self._stall_classifier
+
+    @property
+    def attention_tracker(self) -> AgentAttentionTracker:
+        """Return the tracker that applies node-reported and local pane attention."""
+        return self._idle_check_handler.attention_tracker
 
     @property
     def detection_registry(self) -> DetectionRegistry:

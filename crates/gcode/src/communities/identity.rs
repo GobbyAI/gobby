@@ -210,24 +210,34 @@ fn visible_import_rows(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<(
     let Some((overlay_id, parent_ids)) = project_ids.split_first() else {
         return Ok(Vec::new());
     };
-    let mut rows = import_rows(conn, overlay_id)?;
+    let mut rows = import_rows(conn, overlay_id, &ctx.machine_id)?;
     if parent_ids.is_empty() {
         return Ok(rows);
     }
-    let overlay_paths = crate::db::list_indexed_file_paths(conn, overlay_id)?
+    let overlay_paths = crate::db::list_indexed_file_paths(conn, overlay_id, &ctx.machine_id)?
         .into_iter()
         .collect::<HashSet<_>>();
     for parent_id in parent_ids {
-        rows = merge_visible_imports(rows, import_rows(conn, parent_id)?, &overlay_paths);
+        rows = merge_visible_imports(
+            rows,
+            import_rows(conn, parent_id, &ctx.machine_id)?,
+            &overlay_paths,
+        );
     }
     Ok(rows)
 }
 
-fn import_rows(conn: &mut Client, project_id: &str) -> anyhow::Result<Vec<(String, String)>> {
-    Ok(crate::db::read_active_imports(conn, project_id)?
-        .into_iter()
-        .map(|row| (row.file_path, row.module_name))
-        .collect())
+fn import_rows(
+    conn: &mut Client,
+    project_id: &str,
+    machine_id: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    Ok(
+        crate::db::read_active_imports(conn, project_id, machine_id)?
+            .into_iter()
+            .map(|row| (row.file_path, row.module_name))
+            .collect(),
+    )
 }
 
 /// Drop the parent rows the overlay shadows, keeping every other parent row.

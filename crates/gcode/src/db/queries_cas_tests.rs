@@ -206,7 +206,8 @@ fn read_graph_file_facts_includes_inheritance_rows() {
     assert_eq!(facts.inheritance[0].target_name, "Base");
     assert_eq!(facts.inheritance[0].heritage_kind, HeritageKind::Extends);
 
-    let pairs = read_active_imports(&mut conn, &project_id).expect("active imports");
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    let pairs = read_active_imports(&mut conn, &project_id, &machine_id).expect("active imports");
     assert_eq!(pairs.len(), 1);
     assert_eq!(pairs[0].file_path, "src/lib.rs");
     assert_eq!(pairs[0].module_name, "pkg.mod");

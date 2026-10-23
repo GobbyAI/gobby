@@ -382,6 +382,10 @@ def setup_internal_registries(
             worktree_delete_executor=worktree_delete_executor,
         )
         manager.add_registry(worktrees_registry)
+        if db is not None:
+            from gobby.hub.remote_workspaces import route_node_workspace_tools
+
+            route_node_workspace_tools(worktrees_registry, kind="worktree", db=db)
         logger.debug("Worktrees registry initialized")
 
     # Workspace tools run through the WebSocket server's shared ops, which publish events.
@@ -411,6 +415,10 @@ def setup_internal_registries(
             task_manager=task_manager,
         )
         manager.add_registry(clones_registry)
+        if db is not None:
+            from gobby.hub.remote_workspaces import route_node_workspace_tools
+
+            route_node_workspace_tools(clones_registry, kind="clone", db=db)
         logger.debug("Clones registry initialized")
 
     # Initialize merge resolution registry if merge components are available

@@ -101,7 +101,7 @@ fn degraded_detail(error: &anyhow::Error) -> String {
 }
 
 fn refresh_files(ctx: &Context, explicit_files: Vec<PathBuf>) -> anyhow::Result<()> {
-    api::index_files(
+    api::index_files_for_freshness(
         api::IndexRequest {
             project_root: ctx.project_root.clone(),
             path_filter: None,
@@ -134,7 +134,7 @@ fn freshness_from_lock(result: IndexLockResult<Result<(), String>>) -> Freshness
 /// same way (`--allow-stale` still bypasses it upstream).
 fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = db::id_param(&ctx.machine_id)?;
 
     // Never indexed (or no recorded timestamp): do not gate; let the existing
     // refresh path build the first index.
@@ -144,7 +144,9 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     };
 
     let indexed_paths = match &ctx.index_scope {
-        ProjectIndexScope::Single => db::list_indexed_file_paths(&mut conn, &ctx.project_id)?,
+        ProjectIndexScope::Single => {
+            db::list_indexed_file_paths(&mut conn, &ctx.project_id, &ctx.machine_id)?
+        }
         ProjectIndexScope::Overlay {
             parent_project_id, ..
         } => {
@@ -253,6 +255,10 @@ impl Drop for FreshnessGuard {
 }
 
 #[cfg(test)]
+#[path = "freshness/bounded_refresh_tests.rs"]
+mod bounded_refresh_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::CODE_INDEX_UUID_NAMESPACE;
@@ -269,6 +275,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
@@ -299,6 +306,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
@@ -325,6 +333,7 @@ mod tests {
             qdrant: None,
             embedding: None,
             code_vectors: crate::config::CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,

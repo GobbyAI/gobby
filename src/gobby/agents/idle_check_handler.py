@@ -99,6 +99,11 @@ class IdleCheckHandler:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
 
+    @property
+    def attention_tracker(self) -> AgentAttentionTracker:
+        """Return the tracker that classifies and persists pane attention."""
+        return self._attention_tracker
+
     async def clear_attention_after_injection(self, run: AgentRun) -> None:
         await self._attention_tracker.clear_after_injection(run)
 

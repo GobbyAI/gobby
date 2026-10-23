@@ -364,6 +364,20 @@ async def ensure_isolation_code_index(
     finally:
         finish_spawn_phase(phase_timings_ms, "code_index_status", status_started)
 
+    # `pin` copies the marker's clean ancestor selectors before indexing. A failure
+    # stops the spawn: indexing or reading on the prior pin is never a fallback.
+    pin_started = start_spawn_phase()
+    try:
+        await _run_gcode(
+            [gcode_command, "pin", "--quiet", "--project", str(workspace)],
+            timeout=remaining(),
+            timeout_code="gcode_pin_timeout",
+            failure_code="gcode_pin_failed",
+            env=probe_env,
+        )
+    finally:
+        finish_spawn_phase(phase_timings_ms, "code_index_pin", pin_started)
+
     index_started = start_spawn_phase()
     index_command = [gcode_command, "index", "--quiet", "--project", str(workspace)]
     try:

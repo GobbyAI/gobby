@@ -1,9 +1,9 @@
 //! Dispatch for read-only code navigation commands.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cli::Command;
-use crate::{commands, config, output};
+use crate::{commands, config, freshness, output};
 
 pub(super) fn dispatch(
     ctx: &config::Context,
@@ -139,7 +139,14 @@ pub(super) fn dispatch(
         } => {
             let paths = resolve_filters(ctx, cwd, paths)?;
             let globs = resolve_globs(ctx, cwd, glob)?;
-            super::ensure_project_fresh(ctx, allow_stale)?;
+            match grep_freshness_scope(&ctx.project_root, &paths) {
+                freshness::FreshnessScope::Files(files) => {
+                    super::ensure_files_fresh(ctx, allow_stale, files)?
+                }
+                freshness::FreshnessScope::Project => {
+                    super::ensure_project_fresh(ctx, allow_stale)?
+                }
+            }
             commands::grep::run(
                 ctx,
                 commands::grep::GrepOptions {
@@ -299,6 +306,19 @@ fn resolve_filters(
             .map_err(Into::into)
         })
         .collect()
+}
+
+/// Freshness scope for a grep. Explicit file paths refresh only those files, the
+/// scope outline and symbol-at already use. A directory, a glob, or no path at all
+/// searches many files, so it keeps the whole-project check.
+pub(super) fn grep_freshness_scope(
+    project_root: &Path,
+    paths: &[String],
+) -> freshness::FreshnessScope {
+    if paths.is_empty() || paths.iter().any(|path| !project_root.join(path).is_file()) {
+        return freshness::FreshnessScope::Project;
+    }
+    freshness::FreshnessScope::Files(paths.iter().map(PathBuf::from).collect())
 }
 
 fn resolve_globs(

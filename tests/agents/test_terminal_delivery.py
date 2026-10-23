@@ -1010,8 +1010,9 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
         priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = "",
+        require_unread: bool = False,
     ) -> dict[str, object]:
-        del priority, bypass_debounce, prompt
+        del priority, bypass_debounce, prompt, require_unread
         dispatch_loops.append(asyncio.get_running_loop())
         if len(dispatch_loops) == 1:
             first_dispatch_started.set()

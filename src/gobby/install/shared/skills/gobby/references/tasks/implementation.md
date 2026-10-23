@@ -3,7 +3,7 @@
 Load before editing task-owned files, handling found work, or preparing validation.
 Read `get_task(brief=false)` and applicable required instruction references first.
 Dirty paths you did not change are not yours. Ask their owner to commit with
-`gobby-agents.send_message`.
+`gobby-agents:send_message`.
 
 Keep one deliverable's implementation substeps in the CLI's native tracker when it
 offers one, otherwise in your working plan.

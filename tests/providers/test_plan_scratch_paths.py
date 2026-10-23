@@ -185,3 +185,40 @@ def test_rejects_symlinked_provider_directory(tmp_path: Path) -> None:
         temp_root=temp,
         posix_tmp_root=None,
     )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation can require elevation on Windows")
+def test_rejects_inactive_provider_root_outside_home_under_temp(tmp_path: Path) -> None:
+    home, temp = _roots(tmp_path)
+    codex_state = temp / "codex-state"
+    codex_state.mkdir()
+    (home / ".codex").symlink_to(codex_state, target_is_directory=True)
+
+    assert not is_plan_scratch_path(
+        str(home / ".codex" / "settings.json"),
+        "claude",
+        home_root=home,
+        temp_root=temp,
+        posix_tmp_root=None,
+    )
+    assert not is_plan_scratch_path(
+        str(codex_state / "settings.json"),
+        "claude",
+        home_root=home,
+        temp_root=temp,
+        posix_tmp_root=None,
+    )
+    assert is_plan_scratch_path(
+        str(temp / "notes.md"),
+        "claude",
+        home_root=home,
+        temp_root=temp,
+        posix_tmp_root=None,
+    )
+    assert is_plan_scratch_path(
+        str(home / ".claude" / "scratch.md"),
+        "claude",
+        home_root=home,
+        temp_root=temp,
+        posix_tmp_root=None,
+    )

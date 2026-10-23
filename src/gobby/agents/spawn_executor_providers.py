@@ -11,7 +11,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.constants import (
     CLAUDE_MANAGED_AGENT_ENV,
@@ -47,6 +47,8 @@ from gobby.agents.trust import pre_approve_directory
 
 if TYPE_CHECKING:
     from gobby.providers.version_gate import AgySupportRecord
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.workflows.agent_models import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,44 @@ def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
     )
 
 
+def render_agent_prompt_prefix(
+    agent_body: AgentDefinitionBody | None,
+    initial_variables: dict[str, Any] | None,
+) -> str | None:
+    """Render the agent body's spawn-surface prompt, or None without a body.
+
+    Callers that already hold the agent body render it here; nothing is
+    re-resolved.
+    """
+    if not agent_body:
+        return None
+    return agent_body.prompt_for("agent", variables=initial_variables)
+
+
+def agent_prompt_prefix(
+    db: HubDatabase,
+    agent_name: str | None,
+    initial_variables: dict[str, Any] | None,
+    project_id: str | None,
+) -> str | None:
+    """Resolve an explicitly requested agent and render its spawn preamble.
+
+    Falls back to ``initial_variables["_agent_type"]`` when no name is given.
+    Resolution failures are logged at debug and yield None.
+    """
+    name = agent_name or (initial_variables or {}).get("_agent_type")
+    if not name:
+        return None
+    try:
+        from gobby.workflows.agent_resolver import resolve_agent
+
+        agent_body = resolve_agent(str(name), db, project_id=project_id)
+    except Exception:
+        logger.debug("Prompt resolution failed for spawn agent %r", name, exc_info=True)
+        return None
+    return render_agent_prompt_prefix(agent_body, initial_variables)
+
+
 def _agent_prompt_prefix(request: SpawnRequest) -> str:
     """Resolve the spawned agent's execution preamble for prompt assembly.
 
@@ -87,23 +127,15 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     """
     if request.session_manager is None:
         return ""
-    agent_name = request.agent_name or (request.initial_variables or {}).get("_agent_type")
-    if not agent_name:
-        return ""
-    try:
-        from gobby.workflows.agent_resolver import resolve_agent
-
-        agent_body = resolve_agent(
-            str(agent_name),
+    return (
+        agent_prompt_prefix(
             request.session_manager._storage.db,
-            project_id=request.project_id,
+            request.agent_name,
+            request.initial_variables,
+            request.project_id,
         )
-    except Exception:
-        logger.debug("Prompt resolution failed for spawn agent %r", agent_name, exc_info=True)
-        return ""
-    if not agent_body:
-        return ""
-    return agent_body.prompt_for("agent", variables=request.initial_variables) or ""
+        or ""
+    )
 
 
 async def _prepare_provider_sandbox(

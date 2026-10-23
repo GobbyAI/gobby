@@ -172,6 +172,92 @@ async def test_single_grant_point_across_all_paths() -> None:
 
 
 @pytest.mark.asyncio
+async def test_focus_held_requires_a_focused_holder_of_either_viewer() -> None:
+    registry = TerminalLeaseRegistry()
+    for viewer in ("gclient", "web"):
+        terminal_id = f"focus-held-{viewer}"
+        holder = await registry.attach(terminal_id, viewer=viewer)
+        watcher = await registry.attach(terminal_id, viewer=viewer)
+        assert holder.focused is False
+        granted = await registry.take_control(terminal_id, holder.attachment_id, takeover=False)
+        assert granted.granted is True
+        assert registry.focus_held(terminal_id) is False
+
+        assert await registry.set_focus(holder.attachment_id, True) is True
+        assert registry.focus_held(terminal_id) is True
+
+        assert await registry.set_focus(holder.attachment_id, False) is True
+        assert await registry.set_focus(watcher.attachment_id, True) is True
+        assert registry.focus_held(terminal_id) is False
+
+
+@pytest.mark.asyncio
+async def test_release_finalize_and_takeover_clear_focus() -> None:
+    registry = TerminalLeaseRegistry()
+    released = await registry.attach("focus-release", viewer="gclient")
+    await registry.take_control("focus-release", released.attachment_id, takeover=False)
+    assert await registry.set_focus(released.attachment_id, True) is True
+    await registry.release_control(released.attachment_id)
+    assert released.focused is False
+    assert registry.focus_held("focus-release") is False
+
+    finalized = await registry.attach("focus-finalize", viewer="web")
+    await registry.take_control("focus-finalize", finalized.attachment_id, takeover=False)
+    assert await registry.set_focus(finalized.attachment_id, True) is True
+    await registry.finalize(finalized.attachment_id, "ws_close")
+    assert finalized.focused is False
+    assert registry.focus_held("focus-finalize") is False
+    assert await registry.set_focus(finalized.attachment_id, True) is False
+
+    displaced = await registry.attach("focus-takeover", viewer="gclient")
+    successor = await registry.attach("focus-takeover", viewer="web")
+    await registry.take_control("focus-takeover", displaced.attachment_id, takeover=False)
+    assert await registry.set_focus(displaced.attachment_id, True) is True
+    assert registry.focus_held("focus-takeover") is True
+    takeover = await registry.take_control("focus-takeover", successor.attachment_id, takeover=True)
+    assert takeover.displaced_attachment_id == displaced.attachment_id
+    assert displaced.focused is False
+    assert await registry.set_focus("unknown-attachment", True) is False
+
+
+@pytest.mark.asyncio
+async def test_focus_observer_fires_on_focus_loss_and_holder_change() -> None:
+    registry = TerminalLeaseRegistry()
+    fired: list[str] = []
+    registry.set_focus_observer(fired.append)
+    holder = await registry.attach("focus-observer", viewer="gclient")
+    watcher = await registry.attach("focus-observer", viewer="web")
+
+    await registry.take_control("focus-observer", holder.attachment_id, takeover=False)
+    assert fired == ["focus-observer"]
+    await registry.take_control("focus-observer", holder.attachment_id, takeover=False)
+    assert fired == ["focus-observer"]
+
+    assert await registry.set_focus(holder.attachment_id, True) is True
+    assert await registry.set_focus(watcher.attachment_id, False) is True
+    assert fired == ["focus-observer"]
+
+    assert await registry.set_focus(holder.attachment_id, False) is True
+    assert fired == ["focus-observer"] * 2
+
+    await registry.take_control("focus-observer", watcher.attachment_id, takeover=True)
+    assert len(fired) == 3
+    await registry.release_control(watcher.attachment_id)
+    assert len(fired) == 4
+
+    async def holder_observer(change: HolderChange) -> bool | None:
+        return True
+
+    registry.set_holder_observer(holder_observer)
+    await registry.take_control("focus-observer", holder.attachment_id, takeover=False)
+    assert len(fired) == 5
+    await registry.finalize(holder.attachment_id, "ws_close")
+    assert len(fired) == 6
+    await registry.finalize(watcher.attachment_id, "ws_close")
+    assert len(fired) == 6
+
+
+@pytest.mark.asyncio
 async def test_sizing_owner_follows_viewer_precedence() -> None:
     registry = TerminalLeaseRegistry()
     web = await registry.attach("term-1", viewer="web")

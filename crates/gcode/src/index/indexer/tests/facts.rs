@@ -252,9 +252,13 @@ mod serial_db {
         assert_eq!(before.target_module.as_deref(), Some("src/base.py"));
 
         write_base_symbol(&mut conn, &project_id, "hash-b");
-        let owners =
-            resolve_local_import_inheritance(&mut conn, &project_id, &["src/base.py".to_string()])
-                .expect("promote after base");
+        let owners = resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/base.py".to_string()],
+        )
+        .expect("promote after base");
         assert_eq!(owners, vec!["src/derived.py".to_string()]);
         let after = inheritance_row(&mut conn, &project_id);
         assert_eq!(after.target_kind, "symbol");
@@ -272,8 +276,13 @@ mod serial_db {
     fn inheritance_local_import_miss_stays_retryable() {
         let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-miss");
         write_derived_pending(&mut conn, &project_id, "hash-d");
-        resolve_local_import_inheritance(&mut conn, &project_id, &["src/derived.py".to_string()])
-            .expect("miss");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/derived.py".to_string()],
+        )
+        .expect("miss");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("src/base.py"));
@@ -316,6 +325,7 @@ mod serial_db {
         let owners = resolve_local_import_inheritance(
             &mut conn,
             &project_id,
+            &local_machine_id(),
             &["pkg/__init__.py".to_string()],
         )
         .expect("promote python reexport");
@@ -353,8 +363,9 @@ mod serial_db {
                 source: b"pub trait Store {}\n",
             },
         );
-        let repair = resolve_project_local_import_inheritance(&mut conn, &project_id)
-            .expect("promote rust reexport via repair");
+        let repair =
+            resolve_project_local_import_inheritance(&mut conn, &project_id, &local_machine_id())
+                .expect("promote rust reexport via repair");
         assert_eq!(repair.owners, vec!["src/store/client.rs".to_string()]);
         assert_eq!(repair.pending, 1);
         assert_eq!(repair.resolved, 1);
@@ -410,8 +421,13 @@ mod serial_db {
                 source: b"class Base:\n    pass\n",
             },
         );
-        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/__init__.py".to_string()])
-            .expect("ambiguous subtree");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["pkg/__init__.py".to_string()],
+        )
+        .expect("ambiguous subtree");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("pkg/__init__.py"));
@@ -452,8 +468,13 @@ mod serial_db {
                 source: b"class Base:\n    pass\n",
             },
         );
-        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/api.py".to_string()])
-            .expect("plain file miss");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["pkg/api.py".to_string()],
+        )
+        .expect("plain file miss");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("pkg/api.py"));
@@ -509,8 +530,13 @@ mod serial_db {
             helper_hash,
             parse,
         );
-        resolve_local_import_inheritance(&mut conn, &project_id, &["pkg/__init__.py".to_string()])
-            .expect("nested method miss");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["pkg/__init__.py".to_string()],
+        )
+        .expect("nested method miss");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.target_kind, "local_import");
         assert_eq!(row.target_module.as_deref(), Some("pkg/__init__.py"));
@@ -531,9 +557,13 @@ mod serial_db {
         write_foo_symbols(&mut conn, &project_id, vec![bar, bar_new]);
         write_type_member_call(&mut conn, &project_id);
 
-        let resolved =
-            resolve_local_import_calls(&mut conn, &project_id, &["src/app.rs".to_string()])
-                .expect("promote Bar::new");
+        let resolved = resolve_local_import_calls(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/app.rs".to_string()],
+        )
+        .expect("promote Bar::new");
         assert_eq!(resolved, 1);
         let row = call_row(&mut conn, &project_id, "new");
         assert_eq!(row.target_kind, "symbol");
@@ -556,9 +586,13 @@ mod serial_db {
         write_foo_symbols(&mut conn, &project_id, vec![bar, free_new, baz, baz_new]);
         write_type_member_call(&mut conn, &project_id);
 
-        let resolved =
-            resolve_local_import_calls(&mut conn, &project_id, &["src/app.rs".to_string()])
-                .expect("resolve Bar::new miss");
+        let resolved = resolve_local_import_calls(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/app.rs".to_string()],
+        )
+        .expect("resolve Bar::new miss");
         assert_eq!(resolved, 0);
         let row = call_row(&mut conn, &project_id, "new");
         assert_eq!(row.target_kind, "unresolved");
@@ -590,9 +624,13 @@ mod serial_db {
         let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-source-later");
         write_impl_pending(&mut conn, &project_id);
         write_type_symbol(&mut conn, &project_id);
-        let owners =
-            resolve_local_import_inheritance(&mut conn, &project_id, &["src/type.rs".to_string()])
-                .expect("promote source");
+        let owners = resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/type.rs".to_string()],
+        )
+        .expect("promote source");
         assert_eq!(owners, vec!["src/impls.rs".to_string()]);
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.source_kind, "symbol");
@@ -614,6 +652,7 @@ mod serial_db {
         let owners = resolve_local_import_inheritance(
             &mut conn,
             &project_id,
+            &local_machine_id(),
             &["src/derived.py".to_string()],
         )
         .expect("resolve on derived write");
@@ -633,8 +672,13 @@ mod serial_db {
         let (mut conn, project_id, _cleanup) = seeded_project("gcode-inherit-type-first");
         write_type_symbol(&mut conn, &project_id);
         write_impl_pending(&mut conn, &project_id);
-        resolve_local_import_inheritance(&mut conn, &project_id, &["src/impls.rs".to_string()])
-            .expect("resolve impl source");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/impls.rs".to_string()],
+        )
+        .expect("resolve impl source");
         let row = inheritance_row(&mut conn, &project_id);
         assert_eq!(row.source_kind, "symbol");
         assert_eq!(count_inheritance(&mut conn, &project_id), 1);
@@ -653,8 +697,13 @@ mod serial_db {
         assert_eq!(before.source_module.as_deref(), Some("src/type.rs"));
         assert_eq!(before.target_module.as_deref(), Some("src/trait.rs"));
         write_type_symbol(&mut conn, &project_id);
-        resolve_local_import_inheritance(&mut conn, &project_id, &["src/type.rs".to_string()])
-            .expect("promote source only");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/type.rs".to_string()],
+        )
+        .expect("promote source only");
         let after = inheritance_row(&mut conn, &project_id);
         assert_eq!(after.source_kind, "symbol");
         assert!(after.source_module.is_none());
@@ -673,8 +722,13 @@ mod serial_db {
         write_derived_pending(&mut conn, &project_id, "hash-d");
         mark_owner_fully_synced(&mut conn, &project_id, "src/derived.py", "hash-d");
         write_base_symbol(&mut conn, &project_id, "hash-b");
-        resolve_local_import_inheritance(&mut conn, &project_id, &["src/base.py".to_string()])
-            .expect("promote");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/base.py".to_string()],
+        )
+        .expect("promote");
         let project_uuid = db::id_param(&project_id).expect("uuid");
         let row = conn
             .query_one(
@@ -703,8 +757,13 @@ mod serial_db {
         write_derived_pending(&mut conn, &project_id, "hash-d");
         write_base_symbol(&mut conn, &project_id, "hash-old");
         write_base_symbol(&mut conn, &project_id, "hash-new");
-        resolve_local_import_inheritance(&mut conn, &project_id, &["src/base.py".to_string()])
-            .expect("active hash-new");
+        resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/base.py".to_string()],
+        )
+        .expect("active hash-new");
         let promoted = inheritance_row(&mut conn, &project_id);
         assert_eq!(promoted.target_kind, "symbol");
         let project_uuid = db::id_param(&project_id).expect("uuid");
@@ -749,9 +808,13 @@ mod serial_db {
             )
             .expect("adopt provider")
         );
-        let owners =
-            resolve_local_import_inheritance(&mut conn, &project_id, &["src/base.py".to_string()])
-                .expect("promote adopted provider");
+        let owners = resolve_local_import_inheritance(
+            &mut conn,
+            &project_id,
+            &local_machine_id(),
+            &["src/base.py".to_string()],
+        )
+        .expect("promote adopted provider");
         let mut outcome = IndexOutcome::new(&project_id);
         outcome.record_promotion_owners(owners);
         assert!(
@@ -791,6 +854,10 @@ mod serial_db {
         target_kind: String,
         target_symbol_id: Option<uuid::Uuid>,
         target_module: Option<String>,
+    }
+
+    fn local_machine_id() -> String {
+        gobby_core::machine::read_local_machine_id().expect("read machine id")
     }
 
     fn seeded_project(prefix: &str) -> (postgres::Client, String, ProjectCleanup) {
@@ -1095,6 +1162,7 @@ mod serial_db {
             project_id,
             Path::new("/tmp/inherit"),
             api::IndexWriteMode::Overlay,
+            &local_machine_id(),
         )
         .expect("sink");
         write_parsed_file_facts(
@@ -1334,6 +1402,7 @@ mod serial_db {
             qdrant: None,
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
@@ -1587,6 +1656,7 @@ mod serial_db {
             qdrant: None,
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,
@@ -1660,6 +1730,7 @@ mod serial_db {
             qdrant: None,
             embedding: None,
             code_vectors: CodeVectorSettings::default(),
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing: gobby_core::config::IndexingConfig::default(),
             daemon_url: None,

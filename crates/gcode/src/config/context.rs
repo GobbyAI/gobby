@@ -186,6 +186,8 @@ impl FalkorConfig {
 /// Resolved runtime context for gcode commands.
 #[derive(Debug, Clone)]
 pub struct Context {
+    /// Machine whose indexed state this context selects.
+    pub machine_id: String,
     /// PostgreSQL hub DSN
     pub database_url: String,
     /// Project root directory
@@ -394,7 +396,8 @@ impl Context {
             &project_id,
             &identity.root,
         )?;
-        validate_parent_code_index(&mut conn, &index_scope)?;
+        let machine_id = gobby_core::machine::read_local_machine_id()?;
+        validate_parent_code_index(&mut conn, &index_scope, &machine_id)?;
         let (embedding, indexing, code_vectors) =
             services_from_acquired_settings(&acquired, services)?;
         let grant_ai = Some(GrantAiRuntime {
@@ -413,6 +416,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            machine_id,
             runtime_config_capture_degraded: false,
             indexing,
             daemon_url: Some(gobby_core::daemon_url::daemon_url()?),
@@ -505,6 +509,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            machine_id: gobby_core::machine::read_local_machine_id()?,
             runtime_config_capture_degraded: false,
             indexing,
             daemon_url: Some(gobby_core::daemon_url::daemon_url()?),
@@ -680,6 +685,7 @@ fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
 pub(crate) fn validate_parent_code_index(
     conn: &mut Client,
     scope: &ProjectIndexScope,
+    machine_id: &str,
 ) -> anyhow::Result<()> {
     let ProjectIndexScope::Overlay {
         parent_project_id,
@@ -690,7 +696,7 @@ pub(crate) fn validate_parent_code_index(
         return Ok(());
     };
 
-    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let machine_id = db::id_param(machine_id)?;
     let exists = conn
         .query_one(
             "SELECT EXISTS(

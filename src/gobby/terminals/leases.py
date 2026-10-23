@@ -141,6 +141,8 @@ class _Attachment:
     # writes dispatch against it, so a keystroke never re-reads the row.
     terminal: Terminal | None = None
     host_input_granted: bool = False
+    # Viewer report that the pane is focused. Only the holder's report counts.
+    focused: bool = False
 
 
 @dataclass
@@ -199,6 +201,7 @@ class TerminalLeaseRegistry:
         self._lifecycle_closed = False
         self._lifecycle_error: LifecyclePublicationError | None = None
         self._holder_observer: HolderObserver | None = None
+        self._focus_observer: Callable[[str], None] | None = None
         self._attachment_admission_closed = False
 
     async def finalize_shutdown_attachments(self) -> None:
@@ -435,13 +438,47 @@ class TerminalLeaseRegistry:
         """
         self._holder_observer = observer
 
+    def set_focus_observer(self, observer: Callable[[str], None] | None) -> None:
+        """Install the one callback that follows focus loss and holder changes.
+
+        It runs synchronously under the terminal lock with the terminal id, so it
+        may only schedule work. The registry never awaits it.
+        """
+        self._focus_observer = observer
+
+    def focus_held(self, terminal_id: str) -> bool:
+        attachment_id = self.holder(terminal_id)
+        record = None if attachment_id is None else self.get(attachment_id)
+        return record is not None and record.focused
+
+    async def set_focus(self, attachment_id: str, focused: bool) -> bool:
+        record = self.get(attachment_id)
+        if record is None:
+            return False
+        async with self.lock(record.terminal_id):
+            record = self.get(attachment_id)
+            if record is None:
+                return False
+            record.focused = focused
+            if not focused and self.holder(record.terminal_id) == attachment_id:
+                self._notify_focus(record.terminal_id)
+            return True
+
+    def _notify_focus(self, terminal_id: str) -> None:
+        if self._focus_observer is not None:
+            self._focus_observer(terminal_id)
+
     async def _notify_holder(
         self,
         terminal_id: str,
         terminal: Terminal | None,
         holder: _Attachment | None,
         reason: str = "lease_change",
+        *,
+        holder_changed: bool = True,
     ) -> bool | None:
+        if holder_changed:
+            self._notify_focus(terminal_id)
         if self._holder_observer is None:
             return None
         return await self._holder_observer(HolderChange(terminal_id, terminal, holder, reason))
@@ -462,7 +499,9 @@ class TerminalLeaseRegistry:
             lease = self._lease(terminal_id)
             if lease.holder == attachment_id:
                 # A repeated take is the holder's retry after a failed grant.
-                granted = await self._notify_holder(terminal_id, record.terminal, record)
+                granted = await self._notify_holder(
+                    terminal_id, record.terminal, record, holder_changed=False
+                )
                 record.host_input_granted = granted is True
                 return ControlResult(
                     attachment_id, True, None, lease.generation, host_input_granted=granted
@@ -470,6 +509,9 @@ class TerminalLeaseRegistry:
             if lease.holder is not None and not takeover:
                 return ControlResult(attachment_id, False, "held", lease.generation)
             displaced = lease.holder
+            displaced_record = None if displaced is None else self.get(displaced)
+            if displaced_record is not None:
+                displaced_record.focused = False
             self._bump(lease)
             lease.holder = attachment_id
             granted = await self._notify_holder(terminal_id, record.terminal, record)
@@ -497,6 +539,7 @@ class TerminalLeaseRegistry:
                 return ControlResult(attachment_id, False, "released", lease.generation)
             self._bump(lease)
             lease.holder = None
+            record.focused = False
             granted = await self._notify_holder(record.terminal_id, record.terminal, None)
             return ControlResult(
                 attachment_id,
@@ -561,6 +604,7 @@ class TerminalLeaseRegistry:
                             "holder observer failed while finalizing %s", attachment_id
                         )
             record.finalized = True
+            record.focused = False
             record.writes.clear()
             sizing = self._reelect_sizing(terminal_id, lease)
             if not self._live_viewers(terminal_id):

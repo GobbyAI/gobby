@@ -75,7 +75,7 @@ def format_conflict_reason(conflicts: set[ForeignPathOwner]) -> str:
             for owner in ordered_conflicts
         ],
         "Commit only your own paths with `git commit --only -- <paths>`, or ask each "
-        "owner with `gobby-agents.send_message` to commit first.",
+        "owner with `gobby-agents:send_message` to commit first.",
     ]
     return "\n".join(lines)
 
@@ -108,7 +108,7 @@ def format_dirty_edit_reason(
             ],
             *[f"- {path} — no live session owns it" for path in sorted(unowned)],
             *(
-                ["Ask each owner with `gobby-agents.send_message` to commit its work."]
+                ["Ask each owner with `gobby-agents:send_message` to commit its work."]
                 if conflicts
                 else []
             ),

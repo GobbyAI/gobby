@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
+from gobby.hooks.checkout_reads import delivery_scope
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType, HookResponse
 from gobby.hooks.project_context import resolve_hook_project_context
@@ -17,11 +20,15 @@ from gobby.hooks.session_binding import session_binds_event
 from gobby.hooks.session_lookup import SessionLookupService
 from gobby.hooks.terminal_context import enrich_terminal_context_with_cwd
 from gobby.sessions.compact_identity import CompactIdentityResolution
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.session_models import Session
 from gobby.storage.workspace_machine_scope import (
     MachineOwnershipMismatchError,
     require_local_machine_id,
 )
+from tests.fixtures.postgres import TEST_USER_ID
 
 from ._event_handler_helpers import make_event
 
@@ -291,14 +298,21 @@ def test_non_start_compact_lookup_skips_foreign_row() -> None:
     assert "_platform_session_id" not in event.metadata
 
 
-def test_project_context_skips_foreign_rows() -> None:
+@pytest.mark.asyncio
+async def test_project_context_skips_foreign_rows(
+    temp_db: HubDatabase, project_manager: Any
+) -> None:
+    LocalMachineManager(temp_db).upsert_seen(NODE, TEST_USER_ID)
+    node_project = project_manager.create(name=f"node-{uuid4().hex[:8]}")
+    LocalProjectCheckoutManager(temp_db).register(NODE, node_project.id, NODE_CWD)
     foreign = _row(OTHER)
     manager = MagicMock()
+    manager.db = temp_db
     manager.get.return_value = foreign
     manager.get_cached_session.return_value = foreign
     manager.find_active_by_external_id.return_value = foreign
     manager.recover_session.return_value = foreign
-    resolve_project_id = MagicMock(return_value="node-project")
+    resolve_project_id = MagicMock(return_value="hub-marker-project")
     event = make_event(
         HookEventType.BEFORE_TOOL,
         session_id="foreign-external",
@@ -307,17 +321,18 @@ def test_project_context_skips_foreign_rows() -> None:
         machine_id=NODE,
     )
 
-    resolution = resolve_hook_project_context(
-        event, session_manager=manager, resolve_project_id=resolve_project_id
-    )
+    with delivery_scope(NODE, asyncio.get_running_loop(), NODE_CWD):
+        resolution = resolve_hook_project_context(
+            event, session_manager=manager, resolve_project_id=resolve_project_id
+        )
 
     assert (resolution.project_id, resolution.source, resolution.session) == (
-        "node-project",
+        node_project.id,
         "cwd",
         None,
     )
-    assert event.project_id == "node-project"
-    resolve_project_id.assert_called_once_with(None, NODE_CWD)
+    assert event.project_id == node_project.id
+    resolve_project_id.assert_not_called()
 
 
 def test_remote_terminal_context_skips_local_process_inspection() -> None:

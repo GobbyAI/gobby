@@ -20,11 +20,8 @@ from gobby.storage.projects import (
 )
 from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
-from gobby.workflows.hooks import (
-    _NO_REPO_SYSTEM_PROJECTS,
-    WorkflowHookHandler,
-    _is_known_no_repo_project,
-)
+from gobby.workflows.hook_project_path import _NO_REPO_SYSTEM_PROJECTS, _is_known_no_repo_project
+from gobby.workflows.hooks import WorkflowHookHandler
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     insert_overlay,

@@ -19,6 +19,22 @@ from gobby.workflows.step_instances import (
 from gobby.workflows.task_claim_state import active_task_id_for_edit, resolve_target_task_id
 
 BOUND_TASK_VARIABLE = "assigned_task_id"
+_CANDIDATE_LATCH_VARIABLES = (
+    "candidate_sent",
+    "implementation_complete",
+    BOUND_TASK_VARIABLE,
+    "assigned_task_ref",
+)
+
+
+def _unbounced_submitted_candidate(instance: AgentStepInstance) -> bool:
+    """A developer's sent candidate that no reviewer has bounced."""
+    return (
+        instance.agent_name == "developer"
+        and instance.current_step == "submit"
+        and bool(instance.variables.get("candidate_sent"))
+        and not instance.variables.get("bounced")
+    )
 
 
 def _binding_step_index(snapshot: AgentStepWorkflowBody) -> int | None:
@@ -76,6 +92,10 @@ def release_lost_binding(
     defaults = copy.deepcopy(snapshot.variables)
     # Handoffs outlive any one binding; only observing their close retires them.
     defaults.pop(DEVELOPER_HANDOFF_TASKS_VARIABLE, None)
+    if _unbounced_submitted_candidate(instance):
+        # A release is not a bounce: a same-task re-claim resumes the candidate at submit.
+        for name in _CANDIDATE_LATCH_VARIABLES:
+            defaults[name] = instance.variables.get(name, defaults.get(name))
     rewound.variables.update(defaults)
     rewound.current_step = names[binding]
     rewound.step_action_count = 0

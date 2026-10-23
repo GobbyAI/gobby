@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
+from gobby.hooks.checkout_reads import CheckoutReadUnavailable
 from gobby.workflows.condition_helpers import _event_and_tool_paths, touches_docker_policy_path
 
 
@@ -38,18 +39,22 @@ def write_paths_within(
     Containment is component-wise, so `docs-other/` is outside `docs/`. A
     relative directory is project-relative. An empty path set is False.
     """
-    paths = _resolved_write_paths(event_data, tool_input)
-    if not paths:
+    try:
+        paths = _resolved_write_paths(event_data, tool_input)
+        if not paths:
+            return False
+        root = current_project_root(event_data or {})
+        allowed = [
+            directory
+            for directory in (
+                resolve_tool_path(raw, root) for raw in ([dirs] if isinstance(dirs, str) else dirs)
+            )
+            if directory is not None
+        ]
+        return all(any(path.is_relative_to(directory) for directory in allowed) for path in paths)
+    except CheckoutReadUnavailable:
+        # A node write whose path facts cannot be read is not provably in scope.
         return False
-    root = current_project_root(event_data or {})
-    allowed = [
-        directory
-        for directory in (
-            resolve_tool_path(raw, root) for raw in ([dirs] if isinstance(dirs, str) else dirs)
-        )
-        if directory is not None
-    ]
-    return all(any(path.is_relative_to(directory) for directory in allowed) for path in paths)
 
 
 def write_paths_match(

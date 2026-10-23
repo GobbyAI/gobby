@@ -113,6 +113,8 @@ pub(crate) enum Command {
     },
     /// Reconcile stranded index state and graph projection drift
     Repair,
+    /// Pin the isolation marker's clean ancestor selectors into this overlay before indexing
+    Pin,
     /// Show project index status
     Status,
     /// Clear index and force re-index

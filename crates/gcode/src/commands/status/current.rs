@@ -18,9 +18,7 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let stats: Option<IndexedProject> = db::id_param(&ctx.project_id)
         .ok()
         .and_then(|project_id| {
-            let machine_id = gobby_core::machine::read_local_machine_id()
-                .ok()
-                .and_then(|id| db::id_param(&id).ok())?;
+            let machine_id = db::id_param(&ctx.machine_id).ok()?;
             conn.query_opt(
                 "SELECT project_id AS id,
                     root_path,

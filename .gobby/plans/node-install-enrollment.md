@@ -110,8 +110,11 @@ replaces, and node-path tests run with a `PATH` that holds no Python interpreter
     code-index-family 1.1 (#24670) lands first, its location applies (D24).
 - **Concurrent editors and seams.**
   - #24717 (Release signing key for node binary updates) is Josh's manual task. It
-    ends with the public key committed at `crates/gdaemon/assets/release-signing.pub`.
-    3.1 depends on it, and E1's publication gate waits for it.
+    ends with the public key committed at `crates/gdaemon/assets/release-signing.pub`,
+    the private key stored once as `GOBBY_RELEASE_SIGNING_KEY` in the protected
+    GitHub `release` environment, and one offline copy stored in Josh's password
+    manager. The private key never enters the daemon, repository, any agent seat or
+    transcript. 3.1 depends on it, and E1's publication gate waits for it.
   - #24374 (SRT install verification and the launch chokepoint, node-halves 2.5)
     creates `crates/gdaemon/src/nodes/agents/sandbox/runtime.rs` with `SRT_VERSION`,
     the content-manifest builder and verifier, and the install lock. 3.3 depends on
@@ -168,14 +171,44 @@ D24; the pushbacks Josh asked for are marked.
   tagged commit's manifests name; nothing is rebuilt. Rejected: a separate node
   version, which would be a second identity to keep in step with gdaemon's, and
   building the members inside the gdaemon workflow, which duplicates five workflows.
-- **D2, signing.** Every binary release publishes `SHA256SUMS` and
-  `SHA256SUMS.sig`, an Ed25519 signature made by OpenSSL 3
-  (`openssl pkeyutl -sign -rawin`) with the secret `GOBBY_RELEASE_SIGNING_KEY` from
-  the protected GitHub environment `release`. #24717 has Josh generate the key,
-  store the private half and hand over only the public key. gdaemon embeds that key
-  and verifies with `ring`. Rejected: `.sha256` sidecars alone, because whoever can
-  replace an asset can replace its sidecar; and minisign or Sigstore, which add
-  tooling for one check.
+- **D2, signing, rotation and recovery.** Every binary release publishes
+  `SHA256SUMS` and `SHA256SUMS.sig`, an Ed25519 signature made by OpenSSL 3
+  (`openssl pkeyutl -sign -rawin`) with `GOBBY_RELEASE_SIGNING_KEY` from the
+  protected GitHub environment `release`. The key is generated once and CI reuses
+  that environment secret for every 1.0 release; there is no per-release key work
+  and the environment has no required-reviewer gate during 1.0. The gate is
+  reconsidered at 1.0. #24717 stores one offline private-key copy in Josh's password
+  manager and hands only the public key to the repository. The private key never
+  enters gdaemon, the repository, any agent seat or transcript. gdaemon embeds the
+  one public key and verifies with `ring`.
+
+  Rotation is manual and single-key: generate the successor once, store its offline
+  backup, replace `release-signing.pub` and the environment secret, publish the next
+  release signed by the new key, and reinstall every node from that official release
+  over HTTPS. Before the replacement gdaemon tag, re-sign the unchanged
+  `SHA256SUMS` of every pinned member release with the new key and replace only its
+  `SHA256SUMS.sig` asset; 1.3's assembler then verifies every member with the new
+  embedded key. Nodes that trust the old key cannot auto-update to the replacement.
+  Leak or loss of the private key uses the same boundary: revoke or abandon the
+  secret, install a new public key and secret, re-sign the pinned member checksum
+  assets, publish from the official release page, and reinstall each node over
+  HTTPS.
+
+  A fork generates its key once, replaces
+  `crates/gdaemon/assets/release-signing.pub` with its public key, stores the private
+  key as its own protected `release` environment's `GOBBY_RELEASE_SIGNING_KEY`, and
+  keeps an offline copy in its operator's password manager. Rejected for 1.0 and
+  deferred to #24839: a multi-key trust ring, recovery keys, dual signatures or any
+  other old-to-new authorization, emergency revocation lists, fork key-bootstrap
+  tooling, and an unverified install mode. An old-key-signed transition release is
+  rejected because the successor-key release assembler, fresh installer and hub
+  resolver cannot verify or target it with the fixed single-key consumers. A manual
+  staging bypass is rejected because it recreates the unverified install mode. Also
+  rejected: a required-reviewer gate during 1.0, because Josh does not want release
+  friction; regenerating a key per release, because CI can reuse the protected
+  secret; putting private material in the daemon, repository, seats or transcripts;
+  `.sha256` sidecars alone, because whoever replaces an asset can replace its
+  sidecar; and minisign or Sigstore, which add tooling for one embedded-key check.
 - **D3, first command and trust root.** The first download is trusted through HTTPS
   from GitHub. The bundle's signed `node-release.json` then proves its members are
   intact, which guards against corruption, not against a hostile first download.
@@ -407,8 +440,10 @@ Python surface replaced: none. This is release tooling (D2), and its tests are R
   step (`shell: bash`) after `Generate SHA-256 checksums`:
   `scripts/release/sign_release.sh sums` over the same globs as its `assets` array,
   with `GOBBY_RELEASE_SIGNING_KEY: ${{ secrets.GOBBY_RELEASE_SIGNING_KEY }}`. The
-  `assets` array gains `SHA256SUMS SHA256SUMS.sig`. The `.sha256` sidecars stay,
-  because `install_release.py` reads them.
+  assets array gains `SHA256SUMS SHA256SUMS.sig`. The `.sha256` sidecars stay,
+  because `install_release.py` reads them. D2's one key is generated once and reused
+  from this secret; the `release` environment has no required-reviewer gate during
+  1.0.
 - `release_workflows_sign_checksums` checks all five workflows: the step sits between
   checksum generation and `gh release create`, runs the script's `sums` mode, maps
   the secret, the job names `environment: release`, and the assets list both files.
@@ -494,6 +529,9 @@ new Python).
      and each archive's hash. A missing release or asset fails naming the member and
      version, so a gdaemon tag pushed before its members publishes nothing. gdaemon's
      own archives come from the job's build artifacts.
+     D2 rotation first replaces each pinned member release's `SHA256SUMS.sig` with a
+     new-key signature over its unchanged `SHA256SUMS`; no archive or checksum list
+     changes.
   3. The Linux x86_64 members are extracted and probed:
      `gdaemon schema version --json`, then `gcode schema-identity --json` and
      `ghook schema-identity --json`, which must agree on the six identity fields
@@ -897,7 +935,8 @@ downloads, for node binaries (D2).
   dependency), requires the 44-byte DER to start with the Ed25519 prefix
   `302a300506032b6570032100`, and verifies with `ring::signature::ED25519` over the
   last 32 bytes. In debug builds a key in `GOBBY_RELEASE_TEST_KEY`, in the same PEM
-  form, is accepted as well.
+  form, is accepted as well. There is exactly one embedded key; D2 changes it only
+  across the HTTPS reinstall boundary and adds no transition verifier.
 - `parse_sums(text)` reads `sha256sum` lines into a map; a malformed line or a
   duplicate name refuses.
 - `NodeRelease` (serde, unknown fields ignored so an older node can read a newer
@@ -929,7 +968,9 @@ Research context:
 - gcore declares `ureq = { version = "2", features = ["json"] }` without
   `default-features = false`, so rustls and gzip are already built for it; `ring`
   0.17.14 is locked through rustls.
-- `crates/gdaemon/assets/release-signing.pub` comes from #24717.
+- `crates/gdaemon/assets/release-signing.pub` comes from #24717. D2 owns its manual
+  single-key rotation, password-manager backup and HTTPS reinstall policy; no key
+  ring, old-to-new authorization or recovery-key path is implemented here.
 - Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'test(release::)'`.
 
 **Acceptance:**
@@ -1754,11 +1795,22 @@ which writes a DSN, copies `.secret_kek`, and runs `gobby auth login` and
   `gobby node update`; recovery by re-running the install command; the channel
   frames (hello `contract`, ack, refuse, release, release_status); and the rule
   that a contract change is published before the hub cuts over (D6).
+- `node-setup.md` also states D2's leak/loss boundary: a node that trusts the old
+  key cannot auto-update after that private key is unavailable or compromised, so
+  the operator downloads an official replacement bundle over HTTPS and re-runs the
+  install command.
 - `shared-stack.md`'s Client setup points at `node-setup.md`.
-- `release-guide.md` adds signing (#24717's key, the `release` environment), the gmcp
-  workflow, and the tag order: every changed member first, gdaemon last, because the
-  gdaemon job bundles the members' published releases. The first publication pushes
-  `gterm-v0.1.12`, which has never been tagged. An ordered step for a change to
+- `release-guide.md` adds D2's one-time key generation, password-manager backup and
+  protected `release` environment secret; states that CI reuses the secret without a
+  required-reviewer gate during 1.0; gives the new-key publication and HTTPS
+  reinstall sequence for planned rotation and for leak or loss, including re-signing
+  every pinned member release's unchanged checksum list before the replacement
+  gdaemon bundle; and tells a fork to replace `release-signing.pub` and set its own
+  `GOBBY_RELEASE_SIGNING_KEY` environment secret. It records #24839 as the post-1.0
+  owner of multi-key/recovery-key design. It also adds the gmcp workflow and the tag
+  order: every changed member first, gdaemon last, because the gdaemon job bundles
+  the members' published releases. The first publication pushes `gterm-v0.1.12`,
+  which has never been tagged. An ordered step for a change to
   `node_commands::CONTRACT_VERSION` publishes the gdaemon release carrying it before
   `gobby cutover` moves the hub to it, because the hub targets only published
   releases at its own contract (D6).
@@ -1782,8 +1834,8 @@ Research context:
 
 **Acceptance:**
 
-- 5.1.1 - The node guide documents the requirements, the three commands, the service, updates, both skew directions and the two operator verbs, with no Python step. file: `docs/guides/node-setup.md`.
-- 5.1.2 - The release guide documents signing, the gmcp workflow and the member-first, gdaemon-last tag order. file: `docs/guides/release-guide.md`.
+- 5.1.1 - The node guide documents the requirements, the three commands, the service, updates, both skew directions, the two operator verbs, and that a node on an old signing key needs HTTPS reinstall after rotation, leak or loss, with no Python step. file: `docs/guides/node-setup.md`.
+- 5.1.2 - The release guide documents one-time key generation and CI reuse without a required-reviewer gate through 1.0, the offline password-manager backup, new-key publication plus pinned-member checksum re-signing and HTTPS reinstall for rotation/leak/loss, the old-key node boundary, fork public-key/own-secret steps, #24839's deferred alternatives, the gmcp workflow and the member-first, gdaemon-last tag order. file: `docs/guides/release-guide.md`.
 - 5.1.3 - The CLI reference documents the four `gobby node` verbs and has no `gobby auth login` entry. file: `docs/guides/cli-commands.md`.
 - 5.1.4 - The documented install command is the one the sandbox runs without Python. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
 - 5.1.5 - No Markdown page under `docs/` outside `docs/audits/`, `docs/research/` and the generated parity ledger names `gobby auth login`. test: `crates/gdaemon/tests/node_setup.rs::no_doc_names_python_login`.
@@ -1804,7 +1856,8 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
    `PATH`.
 2. `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/ tests/cli/test_auth_login.py tests/e2e/test_auth_login_e2e.py tests/e2e/test_hub_node_pair.py tests/skills/test_reference_library.py tests/test_parity_ledger.py`
    must pass. Gate 1 runs the release-script and docs tests (1.1, 1.3, 5.1).
-3. Publication (D22): after the last bumping leaf lands and #24717 closes, Josh
+3. Publication (D22): after the last bumping leaf lands and #24717's public-key,
+   environment-secret and password-manager-backup handoff closes, Josh
    pushes the tags in the release guide's order: `gcode`, `ghook`, `gmcp`, `gclient`
    and `gterm` (`gterm-v0.1.12`, never tagged before), then `gdaemon` last. Each
    member release must carry
@@ -1875,6 +1928,25 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   gobby#16993 on the drift repair at 8ca533b. Orchestrator #15977 ruled that Josh's
   18:02 approval carries to the restamp. The stale M1 is withdrawn for a fresh
   derivation.
+- 2026-10-23: Signing-key policy revision by Plan Writer gobby#17373 under Josh's
+  #24838 rescope. D2 keeps one embedded key through 1.0: CI reuses the protected
+  release-environment secret without a required-reviewer gate. Under the
+  Orchestrator's disposition of adversary finding NIE-D2-01, planned rotation, leak
+  and loss all re-sign the pinned member checksum assets, publish with a new key and
+  reinstall nodes over HTTPS; the private key has an offline password-manager copy,
+  and forks replace the public key and set their own secret. The #24717 dependency
+  and sections 1.1, 1.3, 3.1 and 5.1 carry the same policy. Multi-key/recovery
+  mechanisms, old-to-new authorization, fork bootstrap tooling and an unverified
+  install mode are rejected for 1.0 and deferred to #24839. Finding NIE-D2-02
+  expands 5.1's existing acceptance items; M1 therefore requires fresh adversary
+  derivation.
+- 2026-10-23: Consensus between Plan Writer gobby#17373 and Plan Adversary
+  gobby#17379 on the #24838 narrative at e042b658178d512e17baffcf41a9cf0f25d7cb1d.
+  NIE-D2-01 is closed by the Option A sequence: re-sign pinned member checksum
+  assets with the new key, publish the replacement gdaemon release, then reinstall
+  nodes over HTTPS. NIE-D2-02 is closed by the expanded 5.1.1 and 5.1.2 acceptance
+  obligations. No open decisions or other findings remain; M1 stays untouched until
+  the adversary derives it from these consensus bytes.
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -2510,11 +2582,16 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   - '2.5'
   - '4.5'
   validation_criteria: '5.1.1: The node guide documents the requirements, the three
-    commands, the service, updates, both skew directions and the two operator verbs,
-    with no Python step. file: `docs/guides/node-setup.md`.
+    commands, the service, updates, both skew directions, the two operator verbs,
+    and that a node on an old signing key needs HTTPS reinstall after rotation, leak
+    or loss, with no Python step. file: `docs/guides/node-setup.md`.
 
-    5.1.2: The release guide documents signing, the gmcp workflow and the member-first,
-    gdaemon-last tag order. file: `docs/guides/release-guide.md`.
+    5.1.2: The release guide documents one-time key generation and CI reuse without
+    a required-reviewer gate through 1.0, the offline password-manager backup, new-key
+    publication plus pinned-member checksum re-signing and HTTPS reinstall for rotation/leak/loss,
+    the old-key node boundary, fork public-key/own-secret steps, #24839''s deferred
+    alternatives, the gmcp workflow and the member-first, gdaemon-last tag order.
+    file: `docs/guides/release-guide.md`.
 
     5.1.3: The CLI reference documents the four `gobby node` verbs and has no `gobby
     auth login` entry. file: `docs/guides/cli-commands.md`.

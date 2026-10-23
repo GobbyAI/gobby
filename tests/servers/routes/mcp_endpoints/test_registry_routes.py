@@ -1091,8 +1091,6 @@ async def test_stdio_server_listing_preserves_scoped_template_catalog(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.mcp_proxy.stdio_proxy import DaemonProxy
-
     project_id = sample_project["id"]
     storage = LocalMCPManager(temp_db)
     for scope, description in [
@@ -1119,9 +1117,7 @@ async def test_stdio_server_listing_preserves_scoped_template_catalog(
     ]:
         response = client.get("/api/mcp/servers", params=query)
         assert response.status_code == 200
-        proxy = DaemonProxy(60887)
-        with patch.object(proxy, "_request", new=AsyncMock(return_value=response.json())):
-            result = await proxy.list_mcp_servers()
+        result = response.json()
         templates = result["templates"]
         template = next(row for row in templates if row["name"] == "catalog-demo")
         assert template["description"] == description

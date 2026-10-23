@@ -5,6 +5,88 @@ use postgres::types::ToSql;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn content_search_reads_the_context_machine() -> anyhow::Result<()> {
+    let (mut conn, database_url) = connect_overlay_visibility_test_db();
+    let project = unique_test_id("foreign-content");
+    let _cleanup = SingleProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project.clone(),
+    };
+    insert_project(&mut conn, &project, "/tmp/gcode-two-machine");
+    let local = gobby_core::machine::read_local_machine_id()?;
+    let foreign = fixture_uuid(&format!("{project}:machine")).to_string();
+    crate::test_env::seed_test_machine(&mut conn, &foreign).map_err(anyhow::Error::msg)?;
+    for (machine, path, hash, content) in [
+        (
+            &local,
+            "shared.rs",
+            "local-hash",
+            "machinecontent localversion",
+        ),
+        (
+            &foreign,
+            "shared.rs",
+            "foreign-hash",
+            "machinecontent foreignversion",
+        ),
+        (&local, "local.rs", "local-only", "machinecontent localonly"),
+        (
+            &foreign,
+            "foreign.rs",
+            "foreign-only",
+            "machinecontent foreignonly",
+        ),
+    ] {
+        insert_file_version(&mut conn, &project, path, "rust", hash);
+        insert_machine_file_state(
+            &mut conn,
+            machine,
+            &project,
+            "/tmp/gcode-two-machine",
+            path,
+            hash,
+        );
+        insert_chunk_version(&mut conn, &project, path, 0, content, hash);
+    }
+    let mut ctx = single_project_context(&database_url, &project);
+    ctx.machine_id = foreign;
+    let results =
+        super::content::search_content_visible(&mut conn, "machinecontent", &ctx, None, &[], 10)?;
+    let mut snippets: Vec<_> = results.iter().map(|row| row.snippet.as_str()).collect();
+    snippets.sort_unstable();
+    assert_eq!(
+        snippets,
+        [
+            "machinecontent foreignonly",
+            "machinecontent foreignversion"
+        ]
+    );
+    assert_eq!(
+        count_content_visible(&mut conn, "machinecontent", &ctx, None, &[])?,
+        2
+    );
+    assert!(crate::visibility::indexed_file_exists(
+        &mut conn,
+        &ctx,
+        "foreign.rs"
+    ));
+    assert!(!crate::visibility::indexed_file_exists(
+        &mut conn, &ctx, "local.rs"
+    ));
+    assert!(crate::visibility::indexed_file_exists(
+        &mut conn,
+        &ctx,
+        "shared.rs"
+    ));
+    Ok(())
+}
+
 const OVERLAY_VISIBILITY_CHILD_TABLES: &[&str] = &[
     "code_calls",
     "code_imports",
@@ -795,6 +877,7 @@ fn overlay_visibility_context(ids: &OverlayFixtureIds) -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -818,6 +901,7 @@ fn single_project_context(database_url: &str, project_id: &str) -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,

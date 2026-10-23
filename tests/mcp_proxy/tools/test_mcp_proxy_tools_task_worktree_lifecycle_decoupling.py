@@ -17,7 +17,7 @@ from gobby.utils.session_context import session_context_for_test
 pytestmark = pytest.mark.unit
 
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
-_CHECKOUT_MACHINE = "21000000-0000-4000-8000-000000000001"
+_CHECKOUT_MACHINE = "21000000-0000-4000-8000-00000000000b"
 
 
 async def _resolving_git(argv: tuple[str, ...], **_kwargs: object) -> GitOk:
@@ -63,7 +63,7 @@ def _set_session_context() -> Iterator[None]:
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._context.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value="21000000-0000-4000-8000-00000000000b",
         ),
         patch(
             "gobby.mcp_proxy.tools.task_repo_paths.require_root",
@@ -71,11 +71,11 @@ def _set_session_context() -> Iterator[None]:
         ),
         patch(
             "gobby.mcp_proxy.tools.task_repo_paths.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value="21000000-0000-4000-8000-00000000000b",
         ),
         patch(
             "gobby.storage.project_checkouts.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value="21000000-0000-4000-8000-00000000000b",
         ),
         patch(
             "gobby.sessions.machine_scope.get_machine_id",

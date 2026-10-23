@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.servers.websocket.message_classes import _message_leaves_the_read_loop
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import AttachLocator, TerminalManager, native_locator_key
@@ -573,6 +574,53 @@ async def test_release_control_is_idempotent_and_races_takeover(
     stale = ws.messages_of_type("terminal_control_result")[-1]
     assert stale["reason"] == "stale_attachment"
     del first
+
+
+@pytest.mark.asyncio
+async def test_terminal_focus_marks_the_holder_and_sends_nothing(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db)
+    ws = MockWebSocket()
+    server.clients[ws] = {"subscriptions": {"*"}}
+    await _send(
+        server,
+        ws,
+        {
+            "type": "terminal_attach",
+            "request_id": "r",
+            "terminal_id": terminal_id,
+            "frame_delivery": "direct",
+        },
+    )
+    attachment = ws.messages_of_type("terminal_attach_result")[-1]["attachment_id"]
+    await _send(
+        server,
+        ws,
+        {
+            "type": "terminal_take_control",
+            "terminal_id": terminal_id,
+            "attachment_id": attachment,
+            "takeover": False,
+        },
+    )
+    sent = len(ws.all_messages())
+    focus = {"type": "terminal_focus", "terminal_id": terminal_id, "attachment_id": attachment}
+
+    await _send(server, ws, {**focus, "focused": True})
+    assert len(ws.all_messages()) == sent
+    assert server._leases().focus_held(terminal_id) is True
+
+    await _send(server, ws, {**focus, "focused": False})
+    assert len(ws.all_messages()) == sent
+    assert server._leases().focus_held(terminal_id) is False
+
+    await _send(server, ws, {**focus, "attachment_id": str(uuid4()), "focused": True})
+    assert len(ws.all_messages()) == sent
+
+    assert _message_leaves_the_read_loop(json.dumps(focus)) is True
 
 
 @pytest.mark.asyncio

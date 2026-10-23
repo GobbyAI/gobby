@@ -126,6 +126,7 @@ pub struct OverlayIndexMetadata {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct IndexTarget<'a> {
+    pub machine_id: &'a str,
     pub project_id: &'a str,
     pub root_path: &'a Path,
     pub mode: IndexWriteMode,

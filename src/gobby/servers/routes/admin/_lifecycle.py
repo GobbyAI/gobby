@@ -350,7 +350,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         Reload workflow definitions from disk.
 
-        Triggers the gobby-workflows.reload_cache MCP tool internally.
+        Triggers the gobby-workflows:reload_cache MCP tool internally.
         """
         start_time = time.perf_counter()
 

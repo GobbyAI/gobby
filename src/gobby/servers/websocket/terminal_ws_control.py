@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.terminals.leases import SizingDecision, TerminalLeaseRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class TerminalControlMixin:
@@ -65,6 +68,14 @@ class TerminalControlMixin:
         )
         if result.granted:
             await self._declare_holder_theme(attachment_id)
+
+    async def _handle_terminal_focus(self, websocket: Any, data: dict[str, Any]) -> None:
+        # The viewer's focus report is fire-and-forget: no reply, and a stale
+        # attachment only logs, because the lease already moved on.
+        attachment_id = str(data.get("attachment_id") or "")
+        focused = bool(data.get("focused"))
+        if not await self._leases().set_focus(attachment_id, focused):
+            logger.debug("terminal_focus ignored for stale attachment %s", attachment_id)
 
     async def _handle_terminal_release_control(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = str(data.get("attachment_id") or "")

@@ -196,7 +196,6 @@ async def test_native_create_saturates_then_expires(
         root / "src/gobby/servers/websocket/terminal_ws.py",
         root / "src/gobby/mcp_proxy/tools/spawn_agent/_factory.py",
         root / "src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py",
-        root / "src/gobby/dispatch/spawn.py",
         root / "src/gobby/scheduler/executor.py",
     ]
     allowed = {

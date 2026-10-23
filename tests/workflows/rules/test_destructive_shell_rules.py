@@ -448,7 +448,7 @@ class TestNoGitStashInteractive:
         assert "send_message" in reason
         assert "permission to disable" not in reason
         assert "git show HEAD:<path> > <path>" in reason
-        assert "gobby-worktrees.create_worktree" in reason
+        assert "gobby-worktrees:create_worktree" in reason
         assert "git add -- <paths>" in reason
 
     def test_same_pattern_as_autonomous(

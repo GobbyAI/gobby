@@ -22,6 +22,7 @@ fn test_context(falkordb: Option<crate::config::FalkorConfig>) -> Context {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -1214,7 +1215,7 @@ fn sync_graph_file_projects_inheritance_facts() {
     assert_eq!(facts.inheritance.len(), 1);
 
     fn assert_active_imports_reader<C: postgres::GenericClient>(
-        _reader: fn(&mut C, &str) -> anyhow::Result<Vec<crate::models::ImportRelation>>,
+        _reader: fn(&mut C, &str, &str) -> anyhow::Result<Vec<crate::models::ImportRelation>>,
     ) {
     }
     assert_active_imports_reader::<postgres::Client>(crate::db::read_active_imports);
