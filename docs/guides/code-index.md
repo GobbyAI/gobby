@@ -105,6 +105,11 @@ coordinates their queues, timeouts, and retry/backoff.
 
 All commands accept these global options unless noted:
 
+For a sibling worktree, `--project <worktree-path>` reads its branch from any checkout
+of that project; the overlay indexes changed files and serves the rest from the parent.
+Writes stay scoped to the caller's checkout. Another project or machine returns
+`code_overlay_mismatch`.
+
 | Option | Description |
 | :--- | :--- |
 | `--project <PROJECT>` | Override project root detection |
@@ -442,4 +447,4 @@ the rules engine before claiming a rule is disabled.
 - [configuration.md](configuration.md) - Full configuration reference
 - [http-endpoints.md](http-endpoints.md) - HTTP API reference
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-22_
