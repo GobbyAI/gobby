@@ -1,5 +1,8 @@
 """POST /api/admin/restart proves the start half before it stops the daemon."""
 
+import os
+import threading
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -83,3 +86,47 @@ def test_restart_proceeds_when_the_start_proof_passes(
     assert response.status_code == 200
     assert response.json()["status"] == "restarting"
     stop_boundaries["request"].assert_called_once()
+
+
+def test_windows_restart_refuses_before_spawning_the_helper(
+    monkeypatch: pytest.MonkeyPatch, stop_boundaries: dict[str, Any]
+) -> None:
+    monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", lambda _rt: REFUSAL)
+    spawn = MagicMock()
+    monkeypatch.setattr("gobby.runner_windows_restart.spawn_restart_helper", spawn)
+    monkeypatch.setattr(_lifecycle, "os", SimpleNamespace(name="nt", getpid=os.getpid))
+
+    response = _client().post("/api/admin/restart")
+
+    assert response.status_code == 409
+    assert response.json() == {"status": "start_refused", "message": REFUSAL}
+    spawn.assert_not_called()
+    stop_boundaries["prepare"].assert_not_called()
+    stop_boundaries["write"].assert_not_called()
+    stop_boundaries["request"].assert_not_called()
+
+
+def test_slow_start_proof_refuses_before_stopping(
+    monkeypatch: pytest.MonkeyPatch, stop_boundaries: dict[str, Any]
+) -> None:
+    release = threading.Event()
+
+    def slow_proof(_runtime: object) -> None:
+        release.wait(5)
+
+    monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", slow_proof)
+    monkeypatch.setattr(_lifecycle, "RESTART_START_PROOF_TIMEOUT_SECONDS", 0.05, raising=False)
+
+    try:
+        response = _client().post("/api/admin/restart")
+    finally:
+        release.set()
+
+    assert response.status_code == 409
+    assert response.json()["status"] == "start_refused"
+    assert "did not finish" in response.json()["message"]
+    stop_boundaries["prepare"].assert_not_called()
+    stop_boundaries["write"].assert_not_called()
+    stop_boundaries["request"].assert_not_called()
+    assert _lifecycle._restart_lock is not None
+    assert not _lifecycle._restart_lock.locked()

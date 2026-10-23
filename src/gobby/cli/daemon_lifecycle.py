@@ -66,6 +66,9 @@ SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 # reached 168s on a loaded machine.
 STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
 DAEMON_HEALTH_TIMEOUT_SECONDS = STARTUP_READINESS_TIMEOUT_SECONDS
+# The restart route's start proof is bounded at 60 s and then answers 409. This post
+# waits longer, so a slow proof reaches the caller as its refusal, not as a timeout.
+RESTART_REQUEST_TIMEOUT_SECONDS = 75.0
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
@@ -561,7 +564,7 @@ def _restart_backend(
                     # Admission is owned by the CLI guard above.
                     params={"force": "true", "terminals": str(drain_terminals).lower()},
                     headers=daemon_auth_headers(),
-                    timeout=5.0,
+                    timeout=RESTART_REQUEST_TIMEOUT_SECONDS,
                 )
             except httpx.HTTPError as exc:
                 _step(f"Backend restart request failed: {exc}", error=True)

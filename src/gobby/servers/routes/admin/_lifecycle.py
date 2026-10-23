@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 
 _restart_lock: asyncio.Lock | None = None
 
+# Bounds the start proof the restart route runs before any stop. The CLI and web clients
+# wait longer than this, so a slow proof returns its own refusal instead of a client timeout.
+RESTART_START_PROOF_TIMEOUT_SECONDS = 60.0
+
 
 def _get_restart_lock() -> asyncio.Lock:
     global _restart_lock
@@ -196,8 +200,11 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         Graceful daemon restart endpoint.
 
-        Requests backend shutdown with restart intent. The native supervisor
-        reaps and replaces this backend. Returns immediately.
+        Proves the start half first. It refuses with 409 before any stop when that
+        proof fails or does not finish within RESTART_START_PROOF_TIMEOUT_SECONDS.
+        Otherwise it requests backend shutdown with restart intent, and the native
+        supervisor reaps and replaces this backend. Returns once the stop request is
+        issued, and on Windows once the restart helper is spawned.
         ``terminals=true`` also restarts the gterm host (#22002).
         """
         start_time = time.perf_counter()
@@ -227,7 +234,16 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                         }
 
             # Refuse before any stop. force skips the cron check, never this proof.
-            if refusal := await asyncio.to_thread(_restart_start_refusal):
+            try:
+                refusal = await asyncio.wait_for(
+                    asyncio.to_thread(_restart_start_refusal),
+                    timeout=RESTART_START_PROOF_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                refusal = (
+                    f"start proof did not finish within {RESTART_START_PROOF_TIMEOUT_SECONDS:.0f}s"
+                )
+            if refusal:
                 response.status_code = 409
                 return {"status": "start_refused", "message": refusal}
 

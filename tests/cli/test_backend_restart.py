@@ -76,7 +76,7 @@ def test_backend_restart_waits_for_old_process_before_readiness(
         "http://localhost:61987/api/admin/restart",
         params={"force": "true", "terminals": "true"},
         headers={"Authorization": "Bearer test"},
-        timeout=5.0,
+        timeout=lifecycle.RESTART_REQUEST_TIMEOUT_SECONDS,
     )
     restart_boundaries["ready"].assert_called_once()
     assert restart_boundaries["ready"].call_args.args == (61987,)
@@ -102,6 +102,12 @@ def test_backend_restart_exit_wait_and_readiness_share_one_deadline(
     restart_boundaries["ready"].assert_called_once_with(
         61987, max_wait=STARTUP_READINESS_TIMEOUT_SECONDS - 60.0
     )
+
+
+def test_restart_request_timeout_outlasts_the_route_start_proof() -> None:
+    from gobby.servers.routes.admin._lifecycle import RESTART_START_PROOF_TIMEOUT_SECONDS
+
+    assert lifecycle.RESTART_REQUEST_TIMEOUT_SECONDS > RESTART_START_PROOF_TIMEOUT_SECONDS
 
 
 def test_backend_restart_fails_when_old_process_outlives_the_deadline(

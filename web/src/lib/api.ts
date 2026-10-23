@@ -1,4 +1,5 @@
-export const RESTART_TIMEOUT_MS = 10000;
+// Outlasts the daemon's 60 s start proof, so a slow proof returns its 409 refusal.
+export const RESTART_TIMEOUT_MS = 75000;
 
 export interface ProtectedCronRun {
   run_id: string;
