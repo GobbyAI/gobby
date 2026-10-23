@@ -43,7 +43,7 @@ class StopRegistry:
     - HTTP endpoint: POST /api/v1/sessions/{session_id}/stop
     - WebSocket: stop_session message
     - CLI: gobby session stop <session_id>
-    - MCP: gobby-sessions.request_stop tool
+    - MCP: gobby-sessions:request_stop tool
     - Workflow: check_stop_signal action detecting stuck state
 
     Workflows check for stop signals via the check_stop_signal action

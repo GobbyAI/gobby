@@ -551,6 +551,21 @@ async def test_later_live_claim_takes_an_uncommitted_path_from_the_earlier_claim
     (close_harness.repo_path / "shared.py").write_text("LATER = True\n", encoding="utf-8")
     variables.record_edited_files(close_harness.session_id, ["shared.py"], checkout_root=repo)
 
+    with session_context_for_test(close_harness.session_id):
+        later_evaluation = await lifecycle._evaluate_close(
+            close_harness.context,
+            task_id=later.id,
+            reason="completed",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+    later_gate = _clean_gate(later_evaluation.response(preview=True))
+    assert later_gate["status"] == "failed"
+    assert later_gate["details"]["dirty_checkouts"] == {repo: ["shared.py"]}
+    assert later_gate["message"] == "Commit task-attributed changes before closing."
+    assert "release_task_paths" not in later_gate["message"]
+
     result = await _close_task(close_harness)
 
     assert _clean_gate(result)["status"] == "passed"

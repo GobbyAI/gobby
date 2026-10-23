@@ -182,8 +182,8 @@ class SessionEditLedger(ABC):
                     task_pairs[normalized_checkout] = root_times
                     pair_times[task_id] = task_pairs
                     variables["task_edited_checkout_times"] = pair_times
-                    # Clean paths leave the live ledger, but close evidence still
-                    # needs their task attribution for later transcript edits.
+                    # Clean paths leave the live starts only. This live ledger keeps
+                    # the pair until a later claim takes the path with an edit.
                     variables.setdefault(
                         "task_edited_file_checkouts_history_started_at", time.time()
                     )

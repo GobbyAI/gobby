@@ -352,10 +352,10 @@ class TestManagedGitIsolationRules:
         worktree_reason = _first_effect(self.rules["block-git-worktree-mutations"]).reason or ""
         clone_reason = _first_effect(self.rules["block-git-clone"]).reason or ""
 
-        assert "gobby-worktrees.create_worktree" in worktree_reason
-        assert "gobby-worktrees.delete_worktree" in worktree_reason
+        assert "gobby-worktrees:create_worktree" in worktree_reason
+        assert "gobby-worktrees:delete_worktree" in worktree_reason
         assert "worktree_path" in worktree_reason
-        assert "gobby-clones.create_clone" in clone_reason
+        assert "gobby-clones:create_clone" in clone_reason
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

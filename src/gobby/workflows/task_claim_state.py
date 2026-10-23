@@ -413,7 +413,11 @@ def assert_task_edit_paths_available(
 
 
 def task_live_checkout_files(variables: dict[str, Any], task_id: str) -> dict[str, set[str]]:
-    """Return this task's live attributed paths by checkout root, without released pairs."""
+    """Return this task's live attributed paths by checkout root.
+
+    A clean reconcile leaves these pairs in place. A later claim's edit of the
+    path in that checkout takes the pair (``transfer_live_checkout_paths``).
+    """
     return {
         root: set(files)
         for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
