@@ -44,6 +44,12 @@ def apply_path_scope_metadata(
     paths: Sequence[str],
 ) -> None:
     """Annotate canonical metadata with current-project path scope."""
+    if metadata.get("canonical_tool_kind") != "write" and not metadata.get(
+        "canonical_code_navigation_action"
+    ):
+        # Only writes and code navigation read the project root or cwd; other
+        # events must not touch a node checkout they never need.
+        return
     project_root = current_project_root(event_data)
     cwd = current_tool_cwd(event_data)
 

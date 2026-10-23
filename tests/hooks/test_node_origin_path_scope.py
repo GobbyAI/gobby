@@ -20,6 +20,7 @@ from gobby.hooks._path_scope import (
 from gobby.hooks.adapter_execution import run_adapter_hook
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable, delivery_scope
 from gobby.hooks.events import HookResponse
+from gobby.providers.registry import provider_metadata
 from gobby.servers.routes.mcp.hook_responses import _hook_exception_response
 from gobby.workflows.condition_helpers_paths import write_paths_within
 from gobby.workflows.enforcement.blocking import plan_write_paths_allowed
@@ -27,12 +28,16 @@ from tests.hooks.checkout_read_fakes import NODE_MACHINE, FakeNode
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
+PROVIDER_DIRECTORIES = tuple(
+    dict.fromkeys(metadata.user_directory for metadata in provider_metadata())
+)
+
 
 @pytest.fixture
 def node(monkeypatch: pytest.MonkeyPatch) -> FakeNode:
     fake = FakeNode()
     fake.install(monkeypatch)
-    for root in ("/home/node", "/tmp"):
+    for root in ("/home/node", "/tmp", *(f"/home/node/{d}" for d in PROVIDER_DIRECTORIES)):
         fake.add_file(NODE_MACHINE, root, b"")
     return fake
 
@@ -182,6 +187,43 @@ async def test_node_plan_scratch_resolves_on_node_only(
     with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
         assert await asyncio.to_thread(allowed, "notes.md")
         assert not await asyncio.to_thread(allowed, "wide.md")
+
+
+@pytest.mark.parametrize(
+    ("temp", "codex_root"),
+    [
+        pytest.param("/home/node/cache", "/home/node/cache/codex", id="inside-home"),
+        pytest.param("/node/tmp", "/node/tmp/codex", id="outside-home"),
+    ],
+)
+async def test_node_plan_scratch_rejects_inactive_provider_root_symlink(
+    node: FakeNode,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    temp: str,
+    codex_root: str,
+) -> None:
+    # Active provider is claude. The node's inactive .codex root links into temp.
+    cwd = str(tmp_path)
+    monkeypatch.setattr("tests.hooks.checkout_read_fakes._TEMP_DIR", temp)
+    _fact(node, cwd, "/node/repo")
+    _fact(node, temp, temp)
+    _fact(node, "/home/node/.codex", codex_root)
+    _fact(node, ".codex/settings.json", f"{codex_root}/settings.json")
+    _fact(node, f"{codex_root}/settings.json", f"{codex_root}/settings.json")
+    _fact(node, f"{temp}/notes.md", f"{temp}/notes.md")
+    _fact(node, "/home/node/.claude/scratch.md", "/home/node/.claude/scratch.md")
+
+    def allowed(*paths: str) -> bool:
+        return plan_write_paths_allowed(
+            {"file_paths": list(paths)}, "claude", ".gobby/plans/x.md", False, project_path=cwd
+        )
+
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
+        assert not await asyncio.to_thread(allowed, ".codex/settings.json")
+        assert not await asyncio.to_thread(allowed, f"{codex_root}/settings.json")
+        assert await asyncio.to_thread(allowed, f"{temp}/notes.md")
+        assert await asyncio.to_thread(allowed, "/home/node/.claude/scratch.md")
 
 
 async def test_unavailable_normalization_fails_closed(node: FakeNode, tmp_path: Path) -> None:

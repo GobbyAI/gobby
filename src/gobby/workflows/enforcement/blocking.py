@@ -584,11 +584,23 @@ def _node_plan_write_paths_allowed(
         path_facts([project_path], cwd=project_path).files[0].resolved if project_path else None
     )
     facts = path_facts(paths, cwd=project_path)
-    # Roots resolve on the node too; a hub link at a root path must not widen it.
-    home, temp, posix_tmp = (
-        fact.resolved
-        for fact in path_facts([facts.home, facts.temp_dir, "/tmp"], cwd=project_path).files
+    # Roots and provider roots resolve on the node too; a hub link at one must not widen it.
+    provider_dirs = tuple(
+        dict.fromkeys(metadata.user_directory for metadata in provider_metadata())
     )
+    home, temp, posix_tmp, *provider_resolved = (
+        fact.resolved
+        for fact in path_facts(
+            [
+                facts.home,
+                facts.temp_dir,
+                "/tmp",
+                *(str(PurePosixPath(facts.home) / directory) for directory in provider_dirs),
+            ],
+            cwd=project_path,
+        ).files
+    )
+    provider_roots = dict(zip(provider_dirs, provider_resolved, strict=True))
     for fact in facts.files:
         resolved = fact.resolved
         if require_current_artifact:
@@ -604,6 +616,7 @@ def _node_plan_write_paths_allowed(
             home_root=home,
             temp_root=temp,
             posix_tmp_root=posix_tmp,
+            provider_roots=provider_roots,
             resolved=True,
         ):
             continue
