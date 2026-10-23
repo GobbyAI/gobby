@@ -76,20 +76,18 @@ def _json_safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], to_json_safe(payload))
 
 
-def _success_response_payload(result: Any, response_time_ms: float) -> dict[str, Any]:
+def _success_response_payload(result: Any) -> dict[str, Any]:
     """Build the MCP success wire payload.
 
-    Tool dicts that already report success=True are flattened with
-    response_time_ms added. Other results are wrapped under result while adding
-    success=True and response_time_ms.
+    Tool dicts that already report success=True are flattened as-is. Other results
+    are wrapped under result while adding success=True.
     """
     if isinstance(result, dict) and result.get("success") is True:
-        return _json_safe_payload({**result, "response_time_ms": response_time_ms})
+        return _json_safe_payload(result)
     return _json_safe_payload(
         {
             "success": True,
             "result": result,
-            "response_time_ms": response_time_ms,
         }
     )
 
@@ -116,11 +114,10 @@ def _http_request_scope(request: Request, server: "HTTPServer", ctx_token: Any, 
     return scope_project
 
 
-def _timeout_response_payload(timeout: float, response_time_ms: float) -> dict[str, Any]:
+def _timeout_response_payload(timeout: float) -> dict[str, Any]:
     return {
         "success": False,
         "error": f"Tool call timed out after {timeout:g} seconds",
-        "response_time_ms": response_time_ms,
     }
 
 
@@ -141,7 +138,6 @@ def _process_tool_proxy_result(
     result: Any,
     server_name: str,
     tool_name: str,
-    response_time_ms: float,
 ) -> dict[str, Any]:
     """
     Process tool proxy result with consistent metrics, logging, and error handling.
@@ -155,10 +151,9 @@ def _process_tool_proxy_result(
         result: The result from tool_proxy.call_tool()
         server_name: Name of the MCP server
         tool_name: Name of the tool called
-        response_time_ms: Response time in milliseconds
 
     Returns:
-        Result dict with success status and response time
+        Result dict with success status
     """
     # Track metrics for tool-level failures vs successes. The raw result is
     # classified like the MCP server does, so an internal {"error": ...} is a
@@ -186,7 +181,7 @@ def _process_tool_proxy_result(
                 },
             )
 
-        return _json_safe_payload({**result, "response_time_ms": response_time_ms})
+        return _json_safe_payload(result)
     else:
         inc_counter("mcp_tool_calls_succeeded_total")
         logger.debug(
@@ -196,12 +191,11 @@ def _process_tool_proxy_result(
             extra={
                 "server": server_name,
                 "tool": tool_name,
-                "response_time_ms": response_time_ms,
             },
         )
 
     # Return 200 with wrapped result for success cases
-    return _success_response_payload(result, response_time_ms)
+    return _success_response_payload(result)
 
 
 async def _call_internal_tool(
@@ -209,7 +203,6 @@ async def _call_internal_tool(
     server_name: str,
     tool_name: str,
     arguments: dict[str, Any] | None,
-    start_time: float,
 ) -> dict[str, Any]:
     """Shared helper for calling internal registry tools.
 
@@ -218,7 +211,6 @@ async def _call_internal_tool(
         server_name: Name of the MCP server
         tool_name: Name of the tool to call
         arguments: Arguments to pass to the tool
-        start_time: Request start time for response_time_ms calculation
 
     Returns:
         Tool execution result dict
@@ -236,13 +228,13 @@ async def _call_internal_tool(
                 "error": f"Tool '{tool_name}' not found on '{server_name}'. "
                 f"Available: {', '.join(available)}. "
                 f"Use list_tools(server_name='{server_name}') to see all tools, "
-                f"or get_tool_schema(server_name='{server_name}', tool_name='...') for full schema.",
+                f"or get_tool_schema(server_name='{server_name}', "
+                "tool_name='...') for full schema.",
             },
         )
     try:
         result = normalize_internal_success_result(await registry.call(tool_name, arguments or {}))
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
+        return _process_tool_proxy_result(result, server_name, tool_name)
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
         logger.exception(
@@ -293,23 +285,18 @@ async def list_mcp_tools(
                     "success": True,
                     "tools": tools,
                     "tool_count": len(tools),
-                    "response_time_ms": response_time_ms,
                 }
                 return result
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
                 "success": False,
                 "error": f"Internal server '{server_name}' not found",
-                "response_time_ms": response_time_ms,
             }
             return result
 
         if mcp_manager is None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
                 "success": False,
                 "error": "MCP manager not available",
-                "response_time_ms": response_time_ms,
             }
             return result
 
@@ -329,8 +316,6 @@ async def list_mcp_tools(
             tools_by_server = await mcp_manager.list_tools(resolved.id)
             tools = tools_by_server[server_name]
 
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-
             logger.debug(
                 "Listed %s tools from %s",
                 len(tools),
@@ -338,7 +323,6 @@ async def list_mcp_tools(
                 extra={
                     "server": server_name,
                     "tool_count": len(tools),
-                    "response_time_ms": response_time_ms,
                 },
             )
             if enforce_workflow and server.tool_proxy is not None:
@@ -351,7 +335,6 @@ async def list_mcp_tools(
                 "success": True,
                 "tools": tools,
                 "tool_count": len(tools),
-                "response_time_ms": response_time_ms,
             }
             return result
 
@@ -364,11 +347,9 @@ async def list_mcp_tools(
                 error,
                 extra={"server": server_name},
             )
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             result = {
                 "success": False,
                 "error": f"Failed to list tools: {error}",
-                "response_time_ms": response_time_ms,
             }
             return result
 
@@ -376,8 +357,7 @@ async def list_mcp_tools(
         raise
     except Exception as e:
         logger.exception("MCP list tools error: %s", server_name)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
     finally:
         request_context._reset_context(ctx_token)
 
@@ -424,7 +404,6 @@ async def get_tool_schema(
     Returns:
         Tool schema with inputSchema
     """
-    start_time = time.perf_counter()
 
     try:
         try:
@@ -459,14 +438,12 @@ async def get_tool_schema(
                 if registry:
                     schema = registry.get_schema(tool_name)
                     if schema:
-                        response_time_ms = (time.perf_counter() - start_time) * 1000
                         # Build response with description only if present
                         result: dict[str, Any] = {
                             "success": True,
                             "name": schema.get("name", tool_name),
                             "inputSchema": schema.get("inputSchema"),
                             "server": server_name,
-                            "response_time_ms": response_time_ms,
                         }
                         if schema.get("description"):
                             result["description"] = schema["description"]
@@ -506,22 +483,18 @@ async def get_tool_schema(
             if resolved is not None:
                 server_name = resolved.name
             elif resolved is None and server_name != _PROXY_NAMESPACE:
-                response_time_ms = (time.perf_counter() - start_time) * 1000
                 return {
                     "success": False,
                     "error": f"Unknown MCP server: '{server_id or server_name}'",
-                    "response_time_ms": response_time_ms,
                 }
             if server.tool_proxy is not None:
                 proxied = await server.tool_proxy.get_tool_schema(
                     server_name, tool_name, project_id=scope_project
                 )
-                response_time_ms = (time.perf_counter() - start_time) * 1000
                 if not proxied.get("success"):
                     return {
                         "success": False,
                         "error": proxied.get("error") or f"Unknown MCP server: '{server_name}'",
-                        "response_time_ms": response_time_ms,
                     }
                 tool_schema = proxied.get("tool")
                 schema = tool_schema if isinstance(tool_schema, dict) else {}
@@ -530,7 +503,6 @@ async def get_tool_schema(
                     "name": schema.get("name", tool_name),
                     "inputSchema": schema.get("inputSchema"),
                     "server": server_name,
-                    "response_time_ms": response_time_ms,
                 }
                 description = schema.get("description")
                 if description:
@@ -543,7 +515,6 @@ async def get_tool_schema(
             # Get from external MCP server
             try:
                 tool_info = await server.mcp_manager.get_tool_info(server_name, tool_name)
-                response_time_ms = (time.perf_counter() - start_time) * 1000
 
                 # Build response with description only if present
                 response: dict[str, Any] = {
@@ -551,7 +522,6 @@ async def get_tool_schema(
                     "name": tool_info.get("name", tool_name),
                     "inputSchema": tool_info.get("inputSchema"),
                     "server": server_name,
-                    "response_time_ms": response_time_ms,
                 }
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
@@ -562,8 +532,7 @@ async def get_tool_schema(
 
             except (KeyError, ValueError, MCPError) as e:
                 # Tool or server not found
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                response = {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+                response = {"success": False, "error": str(e)}
                 return response
             except Exception as e:
                 # Connection, timeout, or internal errors
@@ -573,11 +542,9 @@ async def get_tool_schema(
                     tool_name,
                     e,
                 )
-                response_time_ms = (time.perf_counter() - start_time) * 1000
                 response = {
                     "success": False,
                     "error": f"Failed to get tool schema: {e}",
-                    "response_time_ms": response_time_ms,
                 }
                 return response
         finally:
@@ -587,8 +554,7 @@ async def get_tool_schema(
         raise
     except Exception as e:
         logger.exception("Get tool schema error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def call_mcp_tool(
@@ -608,7 +574,6 @@ async def call_mcp_tool(
     Returns:
         Tool execution result
     """
-    start_time = time.perf_counter()
     inc_counter("mcp_tool_calls_total")
 
     try:
@@ -674,11 +639,9 @@ async def call_mcp_tool(
                     and isinstance(server_name, str)
                     and server._internal_manager.is_internal(server_name)
                 ):
-                    response_time_ms = (time.perf_counter() - start_time) * 1000
                     return {
                         "success": False,
                         "error": f"Unknown MCP server: '{server_id or server_name}'",
-                        "response_time_ms": response_time_ms,
                     }
                 if resolved is not None:
                     server_name = resolved.name
@@ -696,17 +659,14 @@ async def call_mcp_tool(
                     project_id=scope_project,
                     offload=offload,
                 )
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
+                return _process_tool_proxy_result(result, server_name, tool_name)
 
             # Fallback: no tool_proxy available, use direct registry calls
             # Check internal first
             if server._internal_manager and server._internal_manager.is_internal(server_name):
                 registry = server._internal_manager.get_registry(server_name)
                 if registry:
-                    return await _call_internal_tool(
-                        registry, server_name, tool_name, arguments, start_time
-                    )
+                    return await _call_internal_tool(registry, server_name, tool_name, arguments)
 
             if server.mcp_manager is None:
                 raise HTTPException(
@@ -719,13 +679,11 @@ async def call_mcp_tool(
                 result = await server.mcp_manager.call_tool(
                     server_name, tool_name, arguments, timeout=timeout
                 )
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
+                return _process_tool_proxy_result(result, server_name, tool_name)
 
             except TimeoutError:
                 inc_counter("mcp_tool_calls_failed_total")
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return _timeout_response_payload(timeout, response_time_ms)
+                return _timeout_response_payload(timeout)
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.exception(
@@ -764,7 +722,6 @@ async def mcp_proxy(
     Returns:
         Tool execution result
     """
-    start_time = time.perf_counter()
     inc_counter("mcp_tool_calls_total")
 
     try:
@@ -811,17 +768,14 @@ async def mcp_proxy(
                     # CLI commands render the whole payload; an offload envelope breaks them.
                     offload=not cli_internal,
                 )
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
+                return _process_tool_proxy_result(result, server_name, tool_name)
 
             # Fallback: no tool_proxy available, use direct registry calls
             # Check internal registries first (gobby-tasks, gobby-memory, etc.)
             if server._internal_manager and server._internal_manager.is_internal(server_name):
                 registry = server._internal_manager.get_registry(server_name)
                 if registry:
-                    return await _call_internal_tool(
-                        registry, server_name, tool_name, arguments, start_time
-                    )
+                    return await _call_internal_tool(registry, server_name, tool_name, arguments)
                 raise HTTPException(
                     status_code=404,
                     detail={
@@ -842,13 +796,11 @@ async def mcp_proxy(
                     server_name, tool_name, arguments, timeout=timeout
                 )
 
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
+                return _process_tool_proxy_result(result, server_name, tool_name)
 
             except TimeoutError:
                 inc_counter("mcp_tool_calls_failed_total")
-                response_time_ms = (time.perf_counter() - start_time) * 1000
-                return _timeout_response_payload(timeout, response_time_ms)
+                return _timeout_response_payload(timeout)
             except ValueError as e:
                 inc_counter("mcp_tool_calls_failed_total")
                 logger.warning(

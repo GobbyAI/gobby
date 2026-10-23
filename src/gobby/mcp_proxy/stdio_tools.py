@@ -353,15 +353,17 @@ def register_proxy_tools(
     async def get_variable(
         session_id: str,
         name: str | None = None,
+        brief: bool = True,
     ) -> dict[str, Any]:
         """
         Get session-scoped variable(s). Top-level shortcut — no progressive discovery needed.
 
         Args:
             session_id: Session ID (accepts #N, N, UUID, or prefix)
-            name: Variable name (omit to get all variables)
+            name: Variable name (omit to list variable names)
+            brief: Without name, return sorted names only; False returns the full map
 
         Returns:
             Dict with variable value(s)
         """
-        return await proxy.get_variable(name=name, session_id=session_id)
+        return await proxy.get_variable(name=name, session_id=session_id, brief=brief)

@@ -134,7 +134,7 @@ function getMcpEnvelopeCandidate(content: unknown): unknown {
   if (
     isRecord(output) &&
     typeof output.success === "boolean" &&
-    typeof output.response_time_ms === "number"
+    ("result" in output || "error" in output)
   ) {
     return output;
   }
@@ -150,14 +150,9 @@ function normalizeDisplayResult(
   if (
     !isRecord(parsedContent) ||
     typeof parsedContent.success !== "boolean" ||
-    typeof parsedContent.response_time_ms !== "number"
+    !("result" in parsedContent || "error" in parsedContent)
   ) {
     return { content, metadata };
-  }
-
-  const mergedMetadata = { ...(metadata ?? {}) };
-  if (mergedMetadata.response_time_ms == null) {
-    mergedMetadata.response_time_ms = parsedContent.response_time_ms;
   }
 
   const innerContent =
@@ -172,22 +167,9 @@ function normalizeDisplayResult(
               : "Unknown error",
         };
 
-  if (isRecord(innerContent) && mergedMetadata.response_time_ms != null) {
-    return {
-      content:
-        innerContent.response_time_ms == null
-          ? {
-              ...innerContent,
-              response_time_ms: mergedMetadata.response_time_ms,
-            }
-          : innerContent,
-      metadata: mergedMetadata,
-    };
-  }
-
   return {
     content: innerContent,
-    metadata: mergedMetadata,
+    metadata,
   };
 }
 

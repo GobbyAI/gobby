@@ -30,6 +30,23 @@ HEADLESS_PROVIDERS = ("grok", "droid")
 TERMINAL_PROVIDERS = ("claude", "codex")
 WAITER = "waiter-session"
 OWNER = "owner-session"
+#: Storage payload for a registered wait; brief responses keep only the identity and expiry.
+WAIT_PAYLOAD = {
+    "success": True,
+    "wait_id": "wait-1",
+    "owner_session_id": OWNER,
+    "outcome": "waiting",
+    "completed": False,
+    "notification_registered": True,
+    "expires_at": "2026-10-23T00:15:00+00:00",
+    "matched_status": None,
+    "message_id": None,
+}
+BRIEF_WAIT = {
+    "wait_id": "wait-1",
+    "outcome": "waiting",
+    "expires_at": "2026-10-23T00:15:00+00:00",
+}
 
 
 def _registry(provider: str | None) -> tuple[InternalToolRegistry, MagicMock]:
@@ -108,11 +125,11 @@ async def test_legacy_close_reviewer_uses_ordinary_codex_waits(tool: str) -> Non
         patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager,
         patch("gobby.mcp_proxy.tools.coordination.coordination_wait_payload") as payload,
     ):
-        payload.return_value = {"success": True, "outcome": "waiting"}
+        payload.return_value = WAIT_PAYLOAD
         result = await registry.call(tool, arguments)
 
     if tool == "wait_for_coordination":
-        assert result == {"success": True, "outcome": "waiting"}
+        assert result == BRIEF_WAIT
         manager.return_value.register.assert_called_once()
     else:
         assert result == {"success": False, "error": "Agent run deadbeef not found"}
@@ -128,13 +145,13 @@ async def test_terminal_run_still_registers_a_coordination_wait(provider: str) -
         patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager,
         patch("gobby.mcp_proxy.tools.coordination.coordination_wait_payload") as payload,
     ):
-        payload.return_value = {"success": True, "outcome": "waiting"}
+        payload.return_value = WAIT_PAYLOAD
         result = await registry.call(
             "wait_for_coordination",
             {"owner_session": OWNER, "coordination_key": "restart-1"},
         )
 
-    assert result == {"success": True, "outcome": "waiting"}
+    assert result == BRIEF_WAIT
     manager.return_value.register.assert_called_once()
 
 
@@ -151,12 +168,12 @@ async def test_interactive_grok_seat_registers_a_coordination_wait() -> None:
         patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager,
         patch("gobby.mcp_proxy.tools.coordination.coordination_wait_payload") as payload,
     ):
-        payload.return_value = {"success": True, "outcome": "waiting"}
+        payload.return_value = WAIT_PAYLOAD
         result = await registry.call(
             "wait_for_coordination", {"owner_session": OWNER, "reply": True}
         )
 
-    assert result == {"success": True, "outcome": "waiting"}
+    assert result == BRIEF_WAIT
     manager.return_value.register.assert_called_once()
 
 
@@ -186,13 +203,13 @@ async def test_session_without_an_agent_run_still_registers_a_coordination_wait(
         patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager,
         patch("gobby.mcp_proxy.tools.coordination.coordination_wait_payload") as payload,
     ):
-        payload.return_value = {"success": True, "outcome": "waiting"}
+        payload.return_value = WAIT_PAYLOAD
         result = await registry.call(
             "wait_for_coordination",
             {"owner_session": OWNER, "coordination_key": "restart-1"},
         )
 
-    assert result == {"success": True, "outcome": "waiting"}
+    assert result == BRIEF_WAIT
     manager.return_value.register.assert_called_once()
 
 

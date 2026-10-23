@@ -176,8 +176,7 @@ Returns a JSON object with daemon health and runtime details:
       "health": "healthy",
       "tool_count": 31
     }
-  },
-  "response_time_ms": 5.2
+  }
 }
 ```
 

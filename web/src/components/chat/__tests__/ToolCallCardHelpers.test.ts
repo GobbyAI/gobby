@@ -311,34 +311,49 @@ describe("extractResultContent", () => {
       content: {
         success: true,
         result: { success: true },
-        response_time_ms: 42,
       },
+      kind: "json",
+      truncated: false,
+    };
+
+    expect(extractResultContent(result)).toEqual({ success: true });
+  });
+
+  it("parses and flattens stringified MCP proxy envelopes", () => {
+    const result = {
+      content: '{"success":true,"result":{"task_id":"#11820"}}',
+      kind: "text",
+      truncated: false,
+      metadata: { source: "mcp" },
+    };
+
+    expect(extractResultContent(result)).toEqual({ task_id: "#11820" });
+    expect(extractResultMetadata(result)).toEqual({ source: "mcp" });
+  });
+
+  it("renders flattened success payloads without a result wrapper as raw fields", () => {
+    const result = {
+      content: { success: true, task: { ref: "#11820" } },
       kind: "json",
       truncated: false,
     };
 
     expect(extractResultContent(result)).toEqual({
       success: true,
-      response_time_ms: 42,
+      task: { ref: "#11820" },
     });
   });
 
-  it("parses and flattens stringified MCP proxy envelopes", () => {
+  it("unwraps flat MCP failures that carry an error", () => {
     const result = {
-      content:
-        '{"success":true,"result":{"task_id":"#11820"},"response_time_ms":42}',
-      kind: "text",
+      content: { success: false, error: "Tool call timed out after 30 seconds" },
+      kind: "json",
       truncated: false,
-      metadata: { source: "mcp" },
     };
 
     expect(extractResultContent(result)).toEqual({
-      task_id: "#11820",
-      response_time_ms: 42,
-    });
-    expect(extractResultMetadata(result)).toEqual({
-      source: "mcp",
-      response_time_ms: 42,
+      success: false,
+      error: "Tool call timed out after 30 seconds",
     });
   });
 
@@ -348,17 +363,13 @@ describe("extractResultContent", () => {
         output: {
           success: true,
           result: { success: true },
-          response_time_ms: 42,
         },
       },
       kind: "json",
       truncated: false,
     };
 
-    expect(extractResultContent(result)).toEqual({
-      success: true,
-      response_time_ms: 42,
-    });
+    expect(extractResultContent(result)).toEqual({ success: true });
   });
 
   it("flattens legacy Codex output-wrapped MCP failures", () => {
@@ -371,7 +382,6 @@ describe("extractResultContent", () => {
             error: "Rule enforced by Gobby: [consecutive-tool-block]",
             error_code: "TOOL_BLOCKED",
           },
-          response_time_ms: 1.59,
         },
       },
       kind: "json",
@@ -382,12 +392,11 @@ describe("extractResultContent", () => {
       success: false,
       error: "Rule enforced by Gobby: [consecutive-tool-block]",
       error_code: "TOOL_BLOCKED",
-      response_time_ms: 1.59,
     });
   });
 
   it("leaves non-envelope results untouched", () => {
-    const payload = { success: true, result: { success: true } };
+    const payload = { success: true, value: 1 };
     const result = {
       content: payload,
       kind: "json",

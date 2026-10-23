@@ -30,7 +30,7 @@ pytestmark = pytest.mark.e2e
 
 def unwrap_result(result: dict) -> dict:
     """Unwrap MCP tool call result from wrapper response."""
-    # MCP call_tool endpoint returns {"success": bool, "result": {...}, "response_time_ms": float}
+    # MCP call_tool endpoint returns {"success": bool, "result": {...}}
     # The actual tool result is in result["result"]
     if "result" in result:
         return result["result"]

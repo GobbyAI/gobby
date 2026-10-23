@@ -1351,7 +1351,6 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     wire = _process_tool_proxy_result(
         {"target": "session", "message_ids": [message.id], "delivery_status": "sent"},
         *SEND,
-        1.0,
     )
     output: dict[str, Any] = wire
     if envelope == "content":
@@ -1509,7 +1508,7 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
     with session_context_for_test(SESSION_ID):
         wait = await registry.call(WAIT[1], arguments)
     assert wait["outcome"] == "waiting"
-    wire = _process_tool_proxy_result(wait, *WAIT, 1.0)
+    wire = _process_tool_proxy_result(wait, *WAIT)
     completion = ClaudeCodeAdapter().translate_to_hook_event(
         {
             "hook_type": "post-tool-use",
@@ -1618,7 +1617,7 @@ async def test_developer_rejected_link_commit_stays_in_implement(
     assert run.step == "implement"
 
     def delivered(result: dict[str, Any]) -> dict[str, Any]:
-        wire = _process_tool_proxy_result(result, "gobby-tasks", "link_commit", 1.0)
+        wire = _process_tool_proxy_result(result, "gobby-tasks", "link_commit")
         if envelope == "content":
             return {"isError": False, "content": [{"type": "text", "text": json.dumps(wire)}]}
         if envelope == "structured":

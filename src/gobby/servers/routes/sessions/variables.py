@@ -58,6 +58,7 @@ class GetVariableRequest(BaseModel):
 
     name: str | None = None
     scope: Literal["session", "step"] = "session"
+    brief: bool = True
 
 
 def register_session_variable_routes(router: APIRouter, server: HTTPServer) -> None:
@@ -140,6 +141,7 @@ def register_session_variable_routes(router: APIRouter, server: HTTPServer) -> N
                     session_id=bound_session_id,
                     scope=payload.scope,
                     instance_manager=instance_manager,
+                    brief=payload.brief,
                 ),
             )
         except HTTPException:

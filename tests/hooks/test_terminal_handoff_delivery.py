@@ -105,7 +105,6 @@ REAL_SET_HANDOFF_OUTPUT: dict[str, Any] = {
         "cli": "claude",
         "via": "tmux",
     },
-    "response_time_ms": 663.4,
 }
 
 
@@ -114,7 +113,6 @@ def _proxy_envelope(tool_result: dict[str, Any]) -> dict[str, Any]:
     return {
         "success": True,
         "result": {key: value for key, value in tool_result.items() if key != "success"},
-        "response_time_ms": 1.0,
     }
 
 
@@ -259,6 +257,7 @@ def test_fixture_matches_the_observed_tool_result_shape() -> None:
 
     assert set(derived["result"]) == set(REAL_SET_HANDOFF_OUTPUT["result"])
     assert "success" not in derived["result"]
+    assert set(REAL_SET_HANDOFF_OUTPUT) == {"success", "result"}
 
 
 def test_clear_session_result_returns_clear_dispatch() -> None:
