@@ -322,16 +322,16 @@ def test_postgres_force_revoke_run_uses_execution_id(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    calls: list[tuple[UUID, str]] = []
+    calls: list[UUID] = []
 
-    def revoke(execution_id: UUID, *, reason: str) -> SimpleNamespace:
-        calls.append((execution_id, reason))
+    def force_revoke(execution_id: UUID) -> SimpleNamespace:
+        calls.append(execution_id)
         return SimpleNamespace(completed=True, revoked_count=1)
 
     monkeypatch.setattr(
         postgres_cli_module,
         "_managed_credential_manager",
-        lambda: SimpleNamespace(close=lambda: None, revoke=revoke),
+        lambda: SimpleNamespace(close=lambda: None, force_revoke=force_revoke),
         raising=False,
     )
 
@@ -342,8 +342,42 @@ def test_postgres_force_revoke_run_uses_execution_id(
     )
 
     assert result.exit_code == 0, result.output
-    assert calls == [(UUID(execution_id), "operator-forced")]
+    assert calls == [UUID(execution_id)]
     assert "Revoked 1 scoped role" in result.output
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_postgres_force_revoke_release_never_revokes(
+    monkeypatch: pytest.MonkeyPatch, recorded: bool
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    calls: list[UUID] = []
+
+    def release(execution_id: UUID) -> bool:
+        calls.append(execution_id)
+        return recorded
+
+    # No revoke API is present: release must call only this method.
+    monkeypatch.setattr(
+        postgres_cli_module,
+        "_managed_credential_manager",
+        lambda: SimpleNamespace(close=lambda: None, release_forced_revocation=release),
+    )
+    execution_id = UUID("01234567-89ab-cdef-0123-456789abcdef")
+    result = CliRunner().invoke(
+        postgres_cli,
+        ["force-revoke-run", str(execution_id), "--release", "--yes"],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == [execution_id]
+    expected = (
+        "Released operator revocation; the run may re-handshake."
+        if recorded
+        else "No operator revocation is recorded."
+    )
+    assert expected in result.output
 
 
 def _write_postgres_bootstrap(home: Path) -> None:

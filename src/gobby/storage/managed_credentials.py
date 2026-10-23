@@ -282,6 +282,18 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         finally:
             password = ""
 
+    def force_revoke(self, managed_execution_id: UUID) -> RevocationOutcome:
+        self._database.fetchone(
+            f"SELECT {self.auth_schema}.mark_forced_revocation(%s)", (managed_execution_id,)
+        )
+        return self.revoke(managed_execution_id, reason="operator-forced")
+
+    def release_forced_revocation(self, managed_execution_id: UUID) -> bool:
+        row = self._database.fetchone(
+            f"SELECT {self.auth_schema}.release_forced_revocation(%s)", (managed_execution_id,)
+        )
+        return bool(row and _row_value(row, "release_forced_revocation"))
+
     def revoke(
         self,
         managed_execution_id: UUID,

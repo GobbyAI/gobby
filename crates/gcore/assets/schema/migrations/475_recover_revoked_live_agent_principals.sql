@@ -1,4 +1,40 @@
 -- Recover a live run after a cold drain without recycling any credential generation.
+CREATE TABLE gobby_agent_auth.forced_revocations (
+    managed_execution_id uuid PRIMARY KEY,
+    forced_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+ALTER TABLE gobby_agent_auth.forced_revocations OWNER TO gobby_agent_issuer;
+REVOKE ALL ON TABLE gobby_agent_auth.forced_revocations FROM PUBLIC;
+
+CREATE FUNCTION gobby_agent_auth.mark_forced_revocation(p_execution_id uuid) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'gobby_agent_auth', 'pg_temp'
+AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));
+    INSERT INTO forced_revocations (managed_execution_id)
+    VALUES (p_execution_id) ON CONFLICT DO NOTHING;
+END
+$$;
+ALTER FUNCTION gobby_agent_auth.mark_forced_revocation(uuid) OWNER TO gobby_agent_issuer;
+REVOKE ALL ON FUNCTION gobby_agent_auth.mark_forced_revocation(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.mark_forced_revocation(uuid) TO gobby_daemon_runtime;
+
+CREATE FUNCTION gobby_agent_auth.release_forced_revocation(p_execution_id uuid) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'gobby_agent_auth', 'pg_temp'
+AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));
+    DELETE FROM forced_revocations WHERE managed_execution_id = p_execution_id;
+    RETURN FOUND;
+END
+$$;
+ALTER FUNCTION gobby_agent_auth.release_forced_revocation(uuid) OWNER TO gobby_agent_issuer;
+REVOKE ALL ON FUNCTION gobby_agent_auth.release_forced_revocation(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.release_forced_revocation(uuid) TO gobby_daemon_runtime;
+
+-- Markers need no terminal-state clearing: terminal runs can never return to live.
 CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_principal(requested_execution_id uuid, requested_owner_kind text, requested_session_id uuid, requested_agent_run_id uuid, requested_machine_id uuid, requested_expires_at timestamp with time zone, requested_password text, requested_project_path text DEFAULT NULL) RETURNS TABLE(role_name name, credential_generation integer)
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'gobby_agent_auth', 'pg_temp'
@@ -18,6 +54,13 @@ DECLARE
     prior_binding principal_bindings%ROWTYPE;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(requested_execution_id::TEXT, 0));
+    IF EXISTS (
+        SELECT 1 FROM forced_revocations fr
+        WHERE fr.managed_execution_id = requested_execution_id
+    ) THEN
+        RAISE EXCEPTION 'managed execution access was force-revoked by an operator'
+            USING ERRCODE = '42501';
+    END IF;
     IF requested_owner_kind NOT IN ('agent_run', 'tool_chat') THEN
         RAISE EXCEPTION 'unsupported managed principal owner kind'
             USING ERRCODE = '22023';
@@ -230,6 +273,10 @@ AS $$
       AND session.project_id = pb.project_id
       AND COALESCE(session.status, 'active') NOT IN ('expired', 'deleted')
       AND NOT EXISTS (
+          SELECT 1 FROM gobby_agent_auth.forced_revocations fr
+          WHERE fr.managed_execution_id = pb.managed_execution_id
+      )
+      AND NOT EXISTS (
           SELECT 1 FROM gobby_agent_auth.principal_bindings other
           WHERE other.managed_execution_id = pb.managed_execution_id
             AND ((other.revoked_at IS NULL AND other.revocation_requested_at IS NULL) OR
@@ -244,3 +291,11 @@ $$;
 ALTER FUNCTION gobby_agent_auth.recoverable_agent_principals(uuid) OWNER TO gobby_agent_issuer;
 REVOKE ALL ON FUNCTION gobby_agent_auth.recoverable_agent_principals(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION gobby_agent_auth.recoverable_agent_principals(uuid) TO gobby_daemon_runtime;
+
+-- Password format is a function-local invariant, independent of caller defaults.
+ALTER FUNCTION gobby_agent_auth.issue_principal(uuid, text, uuid, uuid, uuid, timestamptz, text, text) SET password_encryption TO 'scram-sha-256';
+ALTER FUNCTION gobby_agent_auth.issue_tool_principal(uuid, uuid, uuid, timestamptz, text, text) SET password_encryption TO 'scram-sha-256';
+ALTER FUNCTION gobby_agent_auth.issue_maintenance_principal(uuid, uuid, uuid, timestamptz, text, uuid) SET password_encryption TO 'scram-sha-256';
+ALTER FUNCTION gobby_agent_auth.issue_or_reuse_interactive_principal(text, uuid, uuid, uuid, timestamptz, text, uuid) SET password_encryption TO 'scram-sha-256';
+ALTER FUNCTION gobby_agent_auth.rotate_principal(uuid, timestamptz, text) SET password_encryption TO 'scram-sha-256';
+ALTER FUNCTION gobby_agent_auth.rotate_interactive_principal(text, uuid, uuid, uuid, timestamptz, text, timestamptz, uuid) SET password_encryption TO 'scram-sha-256';

@@ -802,6 +802,62 @@ def test_managed_execution_cannot_record_an_operator_dirty_path_approval(
     assert stored == {"n": 0}
 
 
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "issue_principal",
+        "issue_tool_principal",
+        "issue_maintenance_principal",
+        "issue_or_reuse_interactive_principal",
+        "rotate_principal",
+        "rotate_interactive_principal",
+    ],
+)
+def test_managed_password_functions_pin_scram(
+    authorization_fixture: AuthorizationFixture, function_name: str
+) -> None:
+    with psycopg.connect(authorization_fixture.database_url, autocommit=True) as admin:
+        rows = admin.execute(
+            "SELECT p.proconfig @> ARRAY['password_encryption=scram-sha-256'] "
+            "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = %s AND p.proname = %s "
+            "AND (p.prosrc LIKE '%%CREATE ROLE%%' OR p.prosrc LIKE '%%ALTER ROLE%%PASSWORD%%')",
+            (AUTH_SCHEMA, function_name),
+        ).fetchall()
+        assert rows, function_name
+        assert all(row == (True,) for row in rows), function_name
+
+
+@pytest.mark.parametrize("operation", ["issue", "reissue", "rotate"])
+def test_managed_passwords_override_md5_without_changing_caller(
+    authorization_fixture: AuthorizationFixture, operation: str
+) -> None:
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        if operation != "issue":
+            _issue(admin, fixture, execution_id, f"initial-{uuid4()}")
+        if operation == "reissue":
+            _as_runtime(admin, f"SELECT {AUTH_SCHEMA}.revoke_principal(%s)", (execution_id,))
+        admin.execute("SET password_encryption = 'md5'")
+        if operation == "rotate":
+            role, generation = _as_runtime(
+                admin,
+                f"SELECT * FROM {AUTH_SCHEMA}.rotate_principal(%s, "
+                "NOW() + INTERVAL '30 minutes', %s)",
+                (execution_id, f"rotated-{uuid4()}"),
+            )
+        else:
+            role, generation = _issue(admin, fixture, execution_id, f"issued-{uuid4()}")
+        assert int(generation) == (1 if operation == "issue" else 2)
+        # Never retrieve the password verifier itself, even on an assertion failure.
+        assert admin.execute(
+            "SELECT rolpassword LIKE 'SCRAM-SHA-256$%%' FROM pg_authid WHERE rolname = %s",
+            (role,),
+        ).fetchone() == (True,)
+        assert admin.execute("SHOW password_encryption").fetchone() == ("md5",)
+
+
 def test_lifecycle_uses_derived_quoted_roles_and_reconciles_expiry(
     authorization_fixture: AuthorizationFixture,
 ) -> None:
@@ -890,9 +946,9 @@ def test_operator_inventory_is_secret_free_and_drain_removes_login_authority(
 
 
 def test_crafted_missing_expired_and_duplicate_issue_inputs_are_rejected(
-    authorization_fixture: AuthorizationFixture,
+    fresh_authorization_fixture: AuthorizationFixture,
 ) -> None:
-    fixture = authorization_fixture
+    fixture = fresh_authorization_fixture
     with psycopg.connect(fixture.database_url, autocommit=True) as admin:
         admin.execute(f"SET ROLE {RUNTIME_ROLE}")
         try:
