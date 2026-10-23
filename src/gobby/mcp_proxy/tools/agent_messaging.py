@@ -177,6 +177,19 @@ def add_messaging_tools(
             if not content:
                 return {"success": False, "error": "content is required."}
 
+            from gobby.workflows.engine.seat_messages import CandidateMessageError, envelope_fields
+
+            try:
+                envelope_fields(content)
+            except CandidateMessageError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": "protocol_line_rejected",
+                    "field": exc.field,
+                    "canonical_order": exc.canonical,
+                }
+
             if target is None or not target.strip():
                 preview_from_id = _resolve(from_session)
                 preview_sess = session_manager.get(preview_from_id)
