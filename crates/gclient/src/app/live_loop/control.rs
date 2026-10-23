@@ -13,6 +13,7 @@ use crate::frame_source::{FrameError, PaneFrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
+use super::super::pane::PendingInput;
 use super::super::{
     AttachState, ControlOutcome, ControlState, Pane, PaneId, Workspace, HOST_GRANT_UNAVAILABLE,
 };
@@ -82,6 +83,23 @@ fn move_live_focus(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) -> bo
 /// `focus_live_pane`.
 pub(super) fn take_live_control(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) {
     workspace.request_control(pane_id, true);
+}
+
+// Writes queued keys in order. A key whose write fails reports its own error,
+// and the keys after it are still written, so no failure drops keys silently.
+fn flush_pending_input(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    jobs: &LoopJobs,
+    pane_id: PaneId,
+    pending: Vec<PendingInput>,
+) {
+    for input in pending {
+        let (data, paste) = input.parts();
+        if let Err(error) = send_live_write(workspace, jobs, pane_id, data, paste) {
+            chrome.notify(Toast::error(error.to_string()));
+        }
+    }
 }
 
 /// Applies the reply to a control request the loop started beside it. Every
@@ -159,13 +177,7 @@ pub(super) fn apply_control_outcome(
         }
         pane.take_pending_input()
     };
-    for input in pending {
-        let (data, paste) = input.parts();
-        if let Err(error) = send_live_write(workspace, jobs, pane_id, data, paste) {
-            chrome.notify(Toast::error(error.to_string()));
-            break;
-        }
-    }
+    flush_pending_input(workspace, chrome, jobs, pane_id, pending);
 }
 
 pub(super) fn retire_live_control(
@@ -453,13 +465,7 @@ pub(super) fn apply_outage_grant(
         Ok(GrantOutcome::Granted) => {
             pane.restore_host_control();
             let pending = pane.take_pending_input();
-            for input in pending {
-                let (data, paste) = input.parts();
-                if let Err(error) = send_live_write(workspace, jobs, pane_id, data, paste) {
-                    chrome.notify(Toast::error(error.to_string()));
-                    break;
-                }
-            }
+            flush_pending_input(workspace, chrome, jobs, pane_id, pending);
         }
         Ok(GrantOutcome::Refused(_)) => {
             pane.apply_host_grant(Some(false));
@@ -712,3 +718,7 @@ pub(super) fn apply_live_write_outcome(workspace: &mut Workspace<LiveDaemon>, me
         }
     }
 }
+
+#[cfg(test)]
+#[path = "control/tests.rs"]
+mod tests;
