@@ -60,7 +60,10 @@ native gateway that can delegate an unported server to Python.
 3. **gdaemon owns one policy pass around every dispatch.** The gateway resolves
    the authenticated caller context, runs the native rule engine's semantic
    `before_tool` event, re-resolves the possibly modified server/tool and
-   revalidates arguments, dispatches once, then runs `after_tool` once. Listing
+   revalidates arguments, dispatches once, then runs `after_tool` once. A
+   `before_tool` denial or evaluator failure dispatches nothing; an `after_tool`
+   evaluator failure records diagnostics and preserves the completed handler's
+   original result without redispatch or replay. Listing
    servers/tools and serving a schema update the same hub session variables and
    schema leases used by progressive discovery. Provider/runtime hook names such
    as `before_agent`, `after_agent`, and `stop` do not enter this API.
@@ -124,6 +127,11 @@ native gateway that can delegate an unported server to Python.
 - The Python compatibility endpoint accepts only the inherited front-door
   secret from a loopback peer, exposes no external MCP server, and bypasses
   Python workflow enforcement because gdaemon has already performed it.
+- The compatibility request carries a secret-authenticated internal context
+  envelope separately from tool arguments. Python validates it, seeds the
+  existing session/project/principal/agent-run ContextVars, invokes the
+  registry, and resets every token in `finally`; the envelope never replaces or
+  injects a tool's body `session_id`.
 - The gateway treats a rule mutation as a new dispatch request: resolve the new
   server/tool, fetch its current schema, and validate the modified arguments
   before any handler runs.
@@ -216,6 +224,7 @@ production modules, and the acceptance items are one atomic reusable seam.
 
 Targets:
 - `crates/gdaemon/Cargo.toml`
+- `crates/gdaemon/src/lib.rs`
 - `crates/gdaemon/src/front_door/mod.rs::FrontDoorState`
 - `crates/gdaemon/src/front_door/mod.rs::FrontDoorState::new`
 - `crates/gdaemon/src/front_door/routes.rs::FAMILIES`
@@ -248,15 +257,25 @@ Consumers unchanged:
   `FAMILIES` table. The gateway owns the public REST and streamable-HTTP MCP
   adapters, resolves a `ToolContext`, executes one policy pipeline, and chooses
   native family, Python compatibility, or external multiplexer dispatch.
+  `crates/gdaemon/src/lib.rs` exports the proposed `mcp` module so integration
+  tests and the front-door composition use the same implementation.
+- Restart contract: streamable HTTP keeps no authoritative transport session
+  state. Discovery, leases, workflow state, and tool data remain in the hub.
+  After either a gdaemon or Python-backend restart, a client reconnects and can
+  list, lease, and call again. An interrupted call returns a structured
+  transport/backend-unavailable result and is never replayed automatically,
+  because replay could duplicate a mutation.
 - Planned verification:
   `cargo nextest run -p gobby-daemon --test mcp_gateway`,
   `cargo nextest run -p gobby-daemon --test http_contracts`, and
   `cargo fmt -p gobby-daemon -- --check` pass against isolated PostgreSQL.
 
-**Granularity:** Two independently testable concerns are already separated:
-1.1 owns descriptor/schema construction; 2.1 owns request-time context, policy,
-discovery, and dispatch. The four proposed MCP modules keep those subconcerns
-below the production-file ceiling without creating separate services.
+**Granularity:** Seven acceptance items triggered inspection. Two independently
+testable concerns are already separated: 1.1 owns descriptor/schema
+construction; 2.1 owns one request-time gateway lifecycle covering context,
+policy, discovery, dispatch, and reconnect behavior. The four proposed MCP
+modules keep its subconcerns below the production-file ceiling without creating
+separate services.
 
 **Acceptance:**
 
@@ -267,8 +286,11 @@ below the production-file ceiling without creating separate services.
   body `session_id` stays in tool arguments, and missing agent/wrapper context
   fails closed. test: `crates/gdaemon/tests/mcp_gateway.rs::caller_and_target_session_ids_remain_distinct`.
 - 2.1.3 - The gateway runs `before_tool`, re-resolves and revalidates a modified
-  call, dispatches once, and runs `after_tool` once; denial or evaluator failure
-  dispatches nothing. test: `crates/gdaemon/tests/mcp_gateway.rs::policy_wraps_dispatch_exactly_once`.
+  call, and dispatches once; a `before_tool` denial or evaluator failure
+  dispatches nothing. It then runs `after_tool` once; when that evaluator fails,
+  diagnostics retain the failure and the original handler result is preserved
+  without redispatch or replay. The test uses a mutating handler to prove the
+  side effect occurs exactly once. test: `crates/gdaemon/tests/mcp_gateway.rs::policy_wraps_dispatch_exactly_once`.
 - 2.1.4 - `list_mcp_servers`, `list_tools`, and `get_tool_schema` update the
   authoritative session discovery variables and schema lease for the resolved
   caller. test: `crates/gdaemon/tests/mcp_gateway.rs::discovery_updates_hub_session_state`.
@@ -278,6 +300,9 @@ below the production-file ceiling without creating separate services.
 - 2.1.6 - External server calls and management operations use #21566's
   multiplexer behind the same policy pass; internal and external dispatch cannot
   bypass the gateway. test: `crates/gdaemon/tests/mcp_gateway.rs::external_and_internal_calls_share_policy`.
+- 2.1.7 - A fresh client can list, lease, and call after either gdaemon or the
+  Python backend restarts; an interrupted call is failed once and is never
+  replayed automatically. test: `crates/gdaemon/tests/mcp_gateway.rs::streamable_http_recovers_across_restarts_without_replay`.
 
 ### 2.2 Python compatibility backend and per-server cutover [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -329,6 +354,15 @@ Consumers unchanged:
   and `native` invokes the Rust descriptor. The endpoint implements list,
   schema, and call only for internal registries and never exposes external
   configuration or workflow enforcement.
+- Context projection: gdaemon serializes only the already-resolved caller
+  session, project/scope, principal, agent run, machine, intent, and origin into
+  a private envelope authenticated by the same loopback secret. The endpoint
+  rejects missing, malformed, or contradictory identity fields; reuses
+  `resolve_and_seed_contexts`, `_bind_agent_run_context`, and
+  `_seed_request_principal`; invokes `InternalToolRegistry.call`; and resets all
+  seeded tokens in `finally`. Concurrent requests receive independent contexts.
+  Required-input injection continues to read the seeded caller context, while a
+  body `session_id` remains untouched as target-tool input.
 - Strangler order for every family: port/inject the manager; publish the family
   descriptor with committed Python parity fixtures; set its server entry to
   `compare`; clear list/schema/read-only differences and run mutation tests in
@@ -344,9 +378,9 @@ Consumers unchanged:
   and the same protected pytest prefix for
   `tests/e2e/test_internal_mcp_strangler.py -v` pass with isolated daemons.
 
-**Granularity:** One lifecycle owner: compatibility dispatch from Python to
-native per public server. The Rust and Python unit tests plus one isolated e2e
-test prove the same cutover state machine; splitting them would create test-only
+**Granularity:** Seven acceptance items share one lifecycle owner: compatibility
+dispatch from Python to native per public server. The Rust and Python unit tests
+plus one isolated e2e test prove the same cutover state machine; splitting them would create test-only
 wrapper work rather than an independently shippable outcome.
 
 **Acceptance:**
@@ -354,19 +388,23 @@ wrapper work rather than an independently shippable outcome.
 - 2.2.1 - The compatibility endpoint refuses non-loopback or wrong-secret
   requests, resolves only an internal registry, and invokes it without a second
   workflow pass. test: `tests/servers/routes/mcp_endpoints/test_internal_backend.py::test_endpoint_is_secret_bound_and_policy_free`.
-- 2.2.2 - One server can be `native` while every absent or `proxy` server still
+- 2.2.2 - Valid internal context envelopes seed and reset caller, project,
+  principal, and agent-run ContextVars independently across concurrent calls;
+  missing or forged envelopes fail closed, and body `session_id` remains tool
+  input. test: `tests/servers/routes/mcp_endpoints/test_internal_backend.py::test_context_envelope_isolated_and_reset`.
+- 2.2.3 - One server can be `native` while every absent or `proxy` server still
   lists schemas and executes through Python under the same public name. test:
   `crates/gdaemon/tests/mcp_strangler.rs::native_and_python_servers_coexist`.
-- 2.2.3 - `compare` returns Python, compares list/schema and read-only results,
+- 2.2.4 - `compare` returns Python, compares list/schema and read-only results,
   records differences, and executes each mutating call only once in Python.
   test: `crates/gdaemon/tests/mcp_strangler.rs::compare_never_duplicates_mutation`.
-- 2.2.4 - A node has no internal registry or hub credential; a node-side `gmcp`
+- 2.2.5 - A node has no internal registry or hub credential; a node-side `gmcp`
   call reaches the hub registry, while standalone serves the same descriptor
   locally. test: `tests/e2e/test_internal_mcp_strangler.py::test_hub_node_and_standalone_placement`.
-- 2.2.5 - Native dispatch remains available when Python is down; a still-proxied
+- 2.2.6 - Native dispatch remains available when Python is down; a still-proxied
   server returns a typed backend-unavailable error rather than falling back to
   another machine or bypassing policy. test: `crates/gdaemon/tests/mcp_strangler.rs::backend_loss_is_server_scoped`.
-- 2.2.6 - The `gobby-tasks` sample parity corpus proves identical tool inventory,
+- 2.2.7 - The `gobby-tasks` sample parity corpus proves identical tool inventory,
   schemas, structured errors, and representative read/write results before its
   server entry can become `native`. test: `tests/e2e/test_internal_mcp_strangler.py::test_tasks_family_cutover_contract`.
 
@@ -384,6 +422,31 @@ Targets:
 - `crates/gclient/Cargo.toml`
 - `crates/gmcp/Cargo.toml`
 - `docs/contracts/internal-mcp.md`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: installer freshness checks already read the gclient pin dynamically.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: installer freshness checks already read the gcode pin dynamically.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: installer freshness checks already read the gdaemon pin dynamically.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: installer freshness checks already read the ghook pin dynamically.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: installer freshness checks already read the gmcp pin dynamically.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: the unrelated gterm pin and its dynamic installer lookup do not change.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: the shared minimum-version predicate already reads every managed pin dynamically.
+- `src/gobby/code_index/gcode_versions.py` — no-edit-reason: both gcode maintenance floors already derive from `MANAGED_BIN_VERSION_PINS["gcode"]` and advance automatically with the pin.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: its ghook compatibility floor already derives from the managed ghook pin.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: freshness records already enumerate the managed pin map dynamically.
+- `src/gobby/install/distribution.py` — no-edit-reason: distribution inspection already selects each managed binary's minimum from the shared pin map.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: the unrelated grok installer expectations continue to read the unchanged gterm pin fixture path.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: ghook install tests already derive expectations from the managed pin.
+- `tests/cli/test_install_setup.py` — no-edit-reason: shared setup tests already derive expected managed versions from the pin map.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: gclient setup tests already derive expectations from the managed pin.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: gdaemon setup tests already derive expectations from the managed pin.
+- `tests/cli/test_install_setup_gmcp.py` — no-edit-reason: gmcp setup tests already derive expectations from the managed pin.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: the unrelated gterm pin and assertions do not change.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: gcode compatibility expectations already derive from the managed gcode pin.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: hook compatibility expectations already derive from the managed ghook pin.
+- `tests/install/test_distribution.py` — no-edit-reason: distribution tests already parameterize expectations from the managed pin map.
+- `tests/install/test_version_pins.py` — no-edit-reason: the existing generic parity test covers every changed crate pin without a test edit.
 
 **Research context:**
 - Observed: all five listed binaries depend directly on `gobby-core`; the new
@@ -406,8 +469,9 @@ files, not a second implementation state machine.
 
 **Acceptance:**
 
-- 3.1.1 - `gcode`, `gdaemon`, `ghook`, `gclient`, and `gmcp` each carry exactly
-  one patch bump relative to the pre-plan release and `Cargo.lock` matches.
+- 3.1.1 - Cargo manifests, `Cargo.lock`, and `MANAGED_BIN_VERSION_PINS` agree on
+  `gcode` 1.9.50, `gdaemon` 0.4.85, `ghook` 0.9.38, `gclient` 0.1.72, and
+  `gmcp` 0.1.3; the gcode maintenance floors derive those pins unchanged.
   behavior: "affected binary versions" in `Cargo.lock`.
 - 3.1.2 - The coherent installed trio is promoted through
   `promote_workspace_binary_set`, and the separately promoted `gclient` and
