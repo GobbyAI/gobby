@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
@@ -87,9 +88,17 @@ class _Caller:
 
 
 async def admit_team(
-    db: HubDatabase, *, caller_session_id: str, task: str, team_id: str | None = None
+    db: HubDatabase,
+    *,
+    caller_session_id: str,
+    task: str,
+    team_id: str | None = None,
+    fresh_reviewer: bool = False,
+    exclude_reviewers: Sequence[str] = (),
 ) -> TeamBinding:
     """Admit the caller execution's team for ``task``, or join team ``team_id`` as a replacement."""
+    if fresh_reviewer:
+        raise TeamAdmissionRefused("not_implemented", "fresh-reviewer admission is a stub")
     if team_id is not None:
         team_uuid = parse_uuid_reference(team_id)
         if team_uuid is None:

@@ -123,7 +123,12 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "and project_path for the seat steps."
         ),
     )
-    async def admit_team_tool(task: str, team_id: str | None = None) -> dict[str, Any]:
+    async def admit_team_tool(
+        task: str,
+        team_id: str | None = None,
+        fresh_reviewer: bool = False,
+        exclude_reviewers: str | None = None,
+    ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
             return {
@@ -137,6 +142,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 caller_session_id=ctx.resolve_session_id(caller_ref),
                 task=task,
                 team_id=team_id,
+                fresh_reviewer=fresh_reviewer,
             )
         except TeamAdmissionRefused as exc:
             return {"success": False, "error": str(exc), "error_code": exc.code}

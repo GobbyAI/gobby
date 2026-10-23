@@ -1,0 +1,16 @@
+name: devteam
+type: pipeline
+version: "1.0"
+description: |
+  One-task development team. Plan 3.2 stub: declares the task input and the admission step
+  id, and launches no seats.
+
+inputs:
+  task:
+    type: string
+    required: true
+    description: "Task to admit the team for"
+
+steps:
+  - id: admit
+    exec: "true"

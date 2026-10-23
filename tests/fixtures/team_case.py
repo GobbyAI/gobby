@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,12 +70,12 @@ class TeamWorld:
     def executions(self) -> LocalPipelineExecutionManager:
         return LocalPipelineExecutionManager(self.case.db, self.case.project_id)
 
-    def child(self, task: Task) -> Session:
+    def child(self, task: Task, definition: PipelineDefinition = RUNBOOK) -> Session:
         """Start a running team runbook execution for ``task`` whose admit step is running."""
         execution = self.executions.create_execution(
-            RUNBOOK.name,
+            definition.name,
             json.dumps({"task": task.id}),
-            definition_json=RUNBOOK.model_dump_json(),
+            definition_json=definition.model_dump_json(),
             project_id=self.case.project_id,
         )
         child = SessionManager(self.case.db).register(
@@ -113,9 +114,22 @@ class TeamWorld:
             self.executions.update_step_execution(step.id, status=StepStatus.COMPLETED)
         self.executions.update_execution_status(execution_id(child), ExecutionStatus.COMPLETED)
 
-    async def admit(self, caller: Session, task: Task, team_id: str | None = None) -> TeamBinding:
+    async def admit(
+        self,
+        caller: Session,
+        task: Task,
+        team_id: str | None = None,
+        *,
+        fresh_reviewer: bool = False,
+        exclude_reviewers: Sequence[str] = (),
+    ) -> TeamBinding:
         return await admit_team(
-            self.case.db, caller_session_id=caller.id, task=task.id, team_id=team_id
+            self.case.db,
+            caller_session_id=caller.id,
+            task=task.id,
+            team_id=team_id,
+            fresh_reviewer=fresh_reviewer,
+            exclude_reviewers=exclude_reviewers,
         )
 
     async def spawn(self, caller: Session, **target: Any) -> dict[str, Any]:
