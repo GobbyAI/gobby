@@ -39,9 +39,10 @@ AttentionInjectionStage = Literal["none", "partial"]
 class AttentionInjectionError(RuntimeError):
     """An attention answer failed before or after payload delivery."""
 
-    def __init__(self, *, stage: AttentionInjectionStage) -> None:
+    def __init__(self, *, stage: AttentionInjectionStage, code: str | None = None) -> None:
         super().__init__(f"attention injection failed at stage {stage}")
         self.stage = stage
+        self.code = code
 
 
 class TmuxTextInjectionError(RuntimeError):
