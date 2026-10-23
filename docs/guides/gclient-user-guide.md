@@ -620,6 +620,15 @@ reach it depends on the control lease, summarized at the pane's bottom-right.
 | ` · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the title or use `prefix+shift+a` to take control. |
 | ` · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the title or take control again to continue. |
 
+A focused pane's focus is reported to the daemon, which holds operator messages
+for that pane's seat while it is focused. Activity is a key, a paste, or a mouse
+event other than pointer motion, anywhere in gclient (scrolling and clicks count;
+moving the pointer alone does not). After `focus_hold_seconds` (default 300, set
+under `[ui]`; see [Settings](#settings)) with no activity, gclient reports the
+focused pane unfocused. The lease stays with the pane, and the next activity
+reports it focused again. Moving focus to another pane reports that pane focused.
+Focus-in and focus-out events from your terminal do not count as activity.
+
 ### Where your keystrokes go
 
 A local native pane you hold types straight to the terminal host over the same
@@ -790,6 +799,12 @@ Terminals hold after you drag their dividers, in that order; `0` keeps a
 section derived, and an entry that is not a whole number of rows loads as
 `0`), and the `[ui.project_labels]` table (your label per project id).
 
+`focus_hold_seconds` under `[ui]` is file-only and has no popup row. It is the
+number of seconds a focused pane may go without operator activity before gclient
+reports that pane unfocused to the daemon, default `300`. `0` turns expiry off, so
+focus stays until it moves to another pane. See
+[Attach and control](#attach-and-control) for what counts as activity.
+
 ```toml
 [ui]
 theme = "dark"
@@ -801,6 +816,7 @@ confirm_close = true
 hide_tab_bar_when_single_tab = false
 sidebar_width = 26
 title_scrolling = "left"
+focus_hold_seconds = 300
 project_order = ["4b1c…", "9e2f…"]
 sidebar_section_heights = [8, 6, 0, 0]
 

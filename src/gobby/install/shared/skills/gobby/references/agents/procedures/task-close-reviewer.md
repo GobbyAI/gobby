@@ -104,7 +104,7 @@ close_review_min_severity in the launch prompt; retain every lower-severity
 finding in the verdict. A finding about what specific code does takes its
 `path` and line bounds from a `gcode evidence` read and quotes the
 `excerpt_hash` in its description, as gobby:references/code-index/evidence.md
-describes, fallbacks included. Submit this verdict object to submit_close_review:
+describes, fallbacks included. Produce this verdict object:
 {
   "status": "valid|invalid",
   "criteria": [
@@ -126,15 +126,7 @@ the complete evidence set the next close has to supply: the entry point that
 must be invoked, whether collaborators must be real or may be fake, and the
 artifact or observable outcome that must result; a committed log or receipt
 of a command run is never required evidence. Use null when the rejection
-does not depend on evidence fidelity. Call
-submit_close_review(review_id=<exact launch review_id>, verdict=<object>).
-Correct any malformed-verdict response while the review remains running.
-After a terminal closed, invalid, external_pending, stale, or error response,
-call end_agent_run with current_state summarizing that result and next_steps
-stating the action the close caller must take. Name no session in
-next_steps: you are not given the caller's session, and your own session is
-never the one that acts on the verdict. A `pending: true` response means
-the verdict was accepted and the daemon is still finalizing it: call
-end_agent_run with current_state saying so, without resubmitting. Gobby
-delivers the persisted terminal payload to the originating session
-automatically.
+does not depend on evidence fidelity. After the verdict, call end_agent_run
+with current_state summarizing it and next_steps stating the action the close
+caller must take. Name no session in next_steps: you are not given the caller's
+session, and your own session is never the one that acts on the verdict.

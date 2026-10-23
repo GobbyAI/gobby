@@ -192,6 +192,9 @@ pub struct ClientPrefs {
     /// Pinned heights, in rows, of the sidebar's Machines, Projects, Agents
     /// and Terminals sections; `0` leaves that section derived.
     pub sidebar_section_heights: [u16; 4],
+    /// Seconds without operator activity in a focused pane before gclient
+    /// reports it unfocused; `0` never expires (decision 17).
+    pub focus_hold_seconds: u64,
 }
 
 impl Default for ClientPrefs {
@@ -219,6 +222,7 @@ impl Default for ClientPrefs {
             status_right: Vec::new(),
             nerd_glyphs: true,
             sidebar_section_heights: [0; 4],
+            focus_hold_seconds: 300,
         }
     }
 }

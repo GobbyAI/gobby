@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use postgres::GenericClient;
 
+use crate::db::{self, GraphFileFacts};
 use crate::index::api;
 use crate::models::{
     CallRelation, ContentChunk, ImportRelation, IndexedFile, InheritanceRelation, Symbol,
@@ -45,6 +46,20 @@ pub(super) trait CodeFactSink {
         inheritance: &[InheritanceRelation],
     ) -> anyhow::Result<usize>;
     fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize>;
+    fn read_version_facts(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) -> anyhow::Result<GraphFileFacts>;
+    fn dirty_version_sync(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+        vectors: bool,
+        graph: bool,
+    ) -> anyhow::Result<()>;
 }
 
 pub(super) struct PostgresCodeFactSink<'a, C> {
@@ -151,5 +166,33 @@ where
 
     fn upsert_content_chunks(&mut self, chunks: &[ContentChunk]) -> anyhow::Result<usize> {
         api::upsert_content_chunks(self.conn, chunks)
+    }
+
+    fn read_version_facts(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) -> anyhow::Result<GraphFileFacts> {
+        db::read_version_graph_facts(self.conn, project_id, file_path, content_hash)
+    }
+
+    fn dirty_version_sync(
+        &mut self,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+        vectors: bool,
+        graph: bool,
+    ) -> anyhow::Result<()> {
+        db::dirty_version_sync(
+            self.conn,
+            project_id,
+            file_path,
+            content_hash,
+            vectors,
+            graph,
+        )?;
+        Ok(())
     }
 }

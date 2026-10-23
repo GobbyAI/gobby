@@ -1363,6 +1363,7 @@ def _reviewer_stop_event(cwd: Path) -> HookEvent:
     [
         ("EVENT=SEAT_READY NOTE=idle", True),
         ("LANE=3 EVENT=SEAT_READY NOTE=idle", True),
+        ("LANE= EVENT=SEAT_READY NOTE=idle", True),
         ("LANE=3 EVENT=SEAT_READY RUN=gobby#16009 NOTE=idle", True),
         ("EVENT=SEAT_READY RUN=gobby#16009 NOTE=idle", True),
         ("LANE=3 EVENT=OTHER NOTE=idle", False),

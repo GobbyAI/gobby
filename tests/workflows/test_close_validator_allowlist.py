@@ -28,7 +28,6 @@ READ_ONLY_TOOLS = {
 EXPECTED_ALLOWED_TOOLS = {
     "gobby-tasks:get_task",
     "gobby-tasks:list_tasks",
-    "gobby-tasks:submit_close_review",
     "gobby-agents:end_agent_run",
     *READ_ONLY_TOOLS,
 }

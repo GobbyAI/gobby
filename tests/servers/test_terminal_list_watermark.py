@@ -285,17 +285,21 @@ async def test_publication_order_matches_sequence_under_forced_yields() -> None:
 
 async def test_direct_lifecycle_fallbacks_are_ordered() -> None:
     server = _server()
-    detached = await server.lease_registry.attach("term-1", attachment_id="attachment-1")
     detach_socket = MockWebSocket()
+    detached = await server.lease_registry.attach(
+        "term-1", attachment_id="attachment-1", websocket=detach_socket
+    )
     await server._handle_terminal_detach(
         detach_socket,
         {"terminal_id": "term-1", "attachment_id": detached.attachment_id},
     )
 
     previous = await server.lease_registry.attach("term-2", attachment_id="previous")
-    replacement = await server.lease_registry.attach("term-2", attachment_id="replacement")
-    assert (await server.lease_registry.take_control("term-2", previous.attachment_id)).granted
     requester = MockWebSocket()
+    replacement = await server.lease_registry.attach(
+        "term-2", attachment_id="replacement", websocket=requester
+    )
+    assert (await server.lease_registry.take_control("term-2", previous.attachment_id)).granted
     await server._handle_terminal_take_control(
         requester,
         {

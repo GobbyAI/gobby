@@ -31,6 +31,7 @@ function makeSettings(overrides: Partial<Settings> = {}): Settings {
     density: "comfortable",
     tickerDirection: "left",
     tickerSpeed: "normal",
+    focusHoldSeconds: 300,
     ...overrides,
   };
 }
@@ -51,6 +52,7 @@ function makeClient(settings: Settings): UseSettingsReturn {
     updateTickerSpeed: vi.fn(),
     updatePlanPendingVariant: vi.fn(),
     updateDensity: vi.fn(),
+    updateFocusHoldSeconds: vi.fn(),
     resetSettings: vi.fn(),
   };
 }
@@ -123,6 +125,20 @@ describe("AppearanceSection", () => {
       within(densityGroup).getByRole("radio", { name: "Compact" }),
     );
     expect(client.updateDensity).toHaveBeenCalledWith("compact");
+  });
+
+  it("routesAFocusHoldChangeToUpdateFocusHoldSeconds", () => {
+    const client = makeClient(makeSettings({ focusHoldSeconds: 300 }));
+    renderSection(client);
+
+    const field = screen.getByRole("spinbutton", {
+      name: "Terminal focus hold",
+    });
+    expect(field).toHaveValue(300);
+    expect(field).toHaveAttribute("min", "0");
+
+    fireEvent.change(field, { target: { value: "120" } });
+    expect(client.updateFocusHoldSeconds).toHaveBeenCalledWith(120);
   });
 
   it("bounds the font-size slider to 12-24 and routes changes to updateFontSize", () => {

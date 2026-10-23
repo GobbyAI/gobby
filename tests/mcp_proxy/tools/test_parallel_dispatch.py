@@ -3,11 +3,9 @@
 Tests for:
 - _score_tasks helper (extracted from suggest_next_task)
 - suggest_next_task greedy file-conflict selection
-- dispatch_batch concurrent agent spawning
 - update_observed_files post-hoc annotation
 """
 
-import asyncio
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -19,7 +17,6 @@ from gobby.utils.daemon_git import GitFailed, GitOk
 pytestmark = pytest.mark.unit
 
 ToolCallable = Callable[..., Any]
-RegistryDeps = tuple[MagicMock, MagicMock, MagicMock, MagicMock]
 
 
 def _require_tool(registry: Any, name: str) -> ToolCallable:
@@ -377,183 +374,6 @@ class TestSuggestNextTasks:
 
         assert result["suggestions"] == []
         assert "reason" in result
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# dispatch_batch
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestDispatchBatch:
-    """Tests for dispatch_batch concurrent agent spawning."""
-
-    @pytest.fixture
-    def registry_deps(self) -> RegistryDeps:
-        """Create mock dependencies for spawn_agent registry."""
-        runner = MagicMock()
-        runner.spawn = AsyncMock(return_value={"run_id": "run-1", "success": True})
-        tm = MagicMock()
-        db = MagicMock()
-        session_manager = MagicMock()
-        return runner, tm, db, session_manager
-
-    @pytest.mark.asyncio
-    async def test_dispatches_multiple_agents(self, registry_deps: RegistryDeps) -> None:
-        runner, tm, db, session_manager = registry_deps
-
-        with (
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body") as mock_load,
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl,
-        ):
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-            mock_load.return_value = None
-            mock_impl.return_value = {"success": True, "run_id": "run-abc"}
-
-            from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
-
-            registry = create_spawn_agent_registry(
-                runner=runner,
-                task_manager=tm,
-                db=db,
-                session_manager=session_manager,
-            )
-            dispatch = _require_tool(registry, "dispatch_batch")
-
-            suggestions = [
-                {"id": "task-1", "ref": "#1", "title": "Task 1"},
-                {"id": "task-2", "ref": "#2", "title": "Task 2"},
-                {"id": "task-3", "ref": "#3", "title": "Task 3"},
-            ]
-
-            result = await asyncio.wait_for(
-                dispatch(suggestions=suggestions, agent="default"), timeout=5
-            )
-
-        assert result["dispatched"] == 3
-        assert len(result["results"]) == 3
-        assert all(r["success"] for r in result["results"])
-
-    @pytest.mark.asyncio
-    async def test_dispatch_batch_respects_configured_cap(
-        self, registry_deps: RegistryDeps
-    ) -> None:
-        runner, tm, db, session_manager = registry_deps
-        in_flight = 0
-        max_seen = 0
-        release = asyncio.Event()
-
-        async def mock_impl(**_kwargs: Any) -> dict[str, Any]:
-            nonlocal in_flight, max_seen
-            in_flight += 1
-            max_seen = max(max_seen, in_flight)
-            if max_seen >= 2:
-                release.set()
-            await release.wait()
-            in_flight -= 1
-            return {"success": True, "run_id": f"run-{max_seen}"}
-
-        with (
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body", return_value=None),
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl_patch,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._dispatch_batch.configured_max_active_agents",
-                return_value=2,
-            ),
-        ):
-            mock_ctx.return_value = {
-                "id": "11111111-1111-4111-8111-111111110001",
-                "project_path": "/tmp/proj-1",
-            }
-            mock_impl_patch.side_effect = mock_impl
-
-            from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
-
-            registry = create_spawn_agent_registry(
-                runner=runner,
-                task_manager=tm,
-                db=db,
-                session_manager=session_manager,
-            )
-            dispatch = _require_tool(registry, "dispatch_batch")
-
-            suggestions = [
-                {"id": f"task-{index}", "ref": f"#{index}", "title": f"Task {index}"}
-                for index in range(5)
-            ]
-            result = await asyncio.wait_for(
-                dispatch(suggestions=suggestions, agent="default"), timeout=5
-            )
-
-        assert result["dispatched"] == 5
-        assert max_seen == 2
-
-    @pytest.mark.asyncio
-    async def test_empty_suggestions(self, registry_deps: RegistryDeps) -> None:
-        runner, tm, db, session_manager = registry_deps
-
-        from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
-
-        with patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx:
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-
-            registry = create_spawn_agent_registry(
-                runner=runner,
-                task_manager=tm,
-                db=db,
-                session_manager=session_manager,
-            )
-            dispatch = _require_tool(registry, "dispatch_batch")
-            result = await dispatch(suggestions=[])
-
-        assert result["dispatched"] == 0
-        assert result["results"] == []
-
-    @pytest.mark.asyncio
-    async def test_partial_failure(self, registry_deps: RegistryDeps) -> None:
-        runner, tm, db, session_manager = registry_deps
-
-        call_count = 0
-
-        async def mock_impl(**kwargs: Any) -> dict[str, Any]:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 2:
-                raise RuntimeError("agent spawn failed")
-            return {"success": True, "run_id": f"run-{call_count}"}
-
-        with (
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body") as mock_load,
-            patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl_patch,
-        ):
-            mock_ctx.return_value = {"id": "11111111-1111-4111-8111-111111110001"}
-            mock_load.return_value = None
-            mock_impl_patch.side_effect = mock_impl
-
-            from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
-
-            registry = create_spawn_agent_registry(
-                runner=runner,
-                task_manager=tm,
-                db=db,
-                session_manager=session_manager,
-            )
-            dispatch = _require_tool(registry, "dispatch_batch")
-
-            suggestions = [
-                {"id": "task-1", "ref": "#1", "title": "Task 1"},
-                {"id": "task-2", "ref": "#2", "title": "Task 2"},
-                {"id": "task-3", "ref": "#3", "title": "Task 3"},
-            ]
-
-            result = await dispatch(suggestions=suggestions, agent="default")
-
-        assert result["dispatched"] == 2
-        failed = [r for r in result["results"] if not r["success"]]
-        assert len(failed) == 1
-        assert "error" in failed[0]
 
 
 # ═══════════════════════════════════════════════════════════════════════

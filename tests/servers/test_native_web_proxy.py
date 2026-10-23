@@ -1565,7 +1565,7 @@ async def test_a_proxied_theme_is_declared_as_the_senders_own_attachment(
     # the grant holder's declaration (gterminal terminal_theme tests).
     assert frame_b.themes == [(att_b, _THEME)]
     assert frame_a.themes == []
-    assert _theme_errors(ws_b) == ["theme_not_relayed"]
+    assert _theme_errors(ws_b) == ["stale_attachment"]
     assert _theme_errors(ws_a) == []
 
 
@@ -1585,7 +1585,7 @@ async def test_a_proxied_theme_is_refused_without_a_theming_native_host(
 
     assert _theme_errors(ws) == [
         "theme_not_relayed",
-        "theme_not_relayed",
+        "stale_attachment",
         "invalid_terminal_theme",
     ]
     # gclient would take an attachment's terminal_error as the answer to a

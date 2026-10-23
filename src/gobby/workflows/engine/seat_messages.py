@@ -15,7 +15,7 @@ from gobby.storage.inter_session_messages import InterSessionMessage, InterSessi
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 
-_PREFIX = re.compile(r"^(?:LANE=\S+ )?EVENT=(\S+) TASK=(\S+)(?: |$)")
+_PREFIX = re.compile(r"^(?:LANE=\S* )?EVENT=(\S+) TASK=(\S+)(?: |$)")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _CANDIDATE_GRAMMAR = (
     "expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] RUN= WT= COMMIT=<40-hex> [NOTE=...]"
@@ -49,38 +49,148 @@ class CandidateEvent:
 
 
 class CandidateMessageError(ValueError):
-    """A CANDIDATE envelope cannot safely bind a review unit."""
+    """A consumed seat envelope cannot safely bind a review unit.
+
+    ``field`` names the first offending field and ``canonical`` the field order
+    that the event requires after EVENT and TASK.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        event: str | None = None,
+        field: str | None = None,
+        canonical: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.event = event
+        self.field = field
+        self.canonical = canonical
 
 
-def _candidate_fields(line: str) -> dict[str, str]:
-    tokens = line.split()
-    if tokens[0].startswith("LANE="):
-        tokens.pop(0)
-    fields = {"EVENT": tokens.pop(0).partition("=")[2]}
-    if not tokens or not tokens[0].startswith("TASK="):
-        raise CandidateMessageError("missing TASK")
-    fields["TASK"] = tokens.pop(0).partition("=")[2]
-    if tokens and tokens[0].startswith("TASK_TITLE="):
-        # The free title ends at the first required binding field. NOTE ends
-        # authority even if the title has no binding fields after it.
-        while tokens and not tokens[0].startswith(("RUN=", "WT=", "COMMIT=", "NOTE=")):
-            tokens.pop(0)
-    required = {"EVENT", "TASK", "RUN", "WT", "COMMIT"}
-    for token in tokens:
+# Canonical field order after EVENT and TASK, as senders are taught. NOTE is last.
+_ENVELOPE_CANONICAL: dict[str, str] = {
+    "CANDIDATE": "TASK_TITLE RUN WT COMMIT NOTE",
+    "CANDIDATE_WITHDRAWN": "SHA NOTE",
+    "CANDIDATE_VERDICT": "SHA VERDICT TASK_TITLE NOTE",
+    "LANDED": (
+        "SHA BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
+        "PROJECT_SYNC_REQUIRED PROVENANCE RETEST TASK_TITLE NOTE"
+    ),
+    "ALREADY_LANDED": "SHA RECEIPT LANDED_BY_SESSION_ID TASK_TITLE NOTE",
+    "REVIEW_COMPLETE": "SHA VERDICT LANDING NOTE",
+}
+# Ordering the receiver depends on: ranks must not decrease, and unlisted keys are
+# unordered. TASK_TITLE is free text, so a binding field must precede it, except on
+# CANDIDATE, where RUN, WT and COMMIT follow the title. Fields after the title are
+# still read; they are never silently dropped.
+_ENVELOPE_RANKS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "CANDIDATE": (("TASK_TITLE",), ("RUN", "WT", "COMMIT")),
+    "CANDIDATE_WITHDRAWN": (("SHA",),),
+    "CANDIDATE_VERDICT": (("SHA",), ("VERDICT",), ("TASK_TITLE",)),
+    "LANDED": (("SHA",), ("TASK_TITLE",)),
+    "ALREADY_LANDED": (("SHA",), ("TASK_TITLE",)),
+    "REVIEW_COMPLETE": (("SHA",), ("VERDICT",)),
+}
+# Fields that must be non-empty. TASK is required for every event.
+_ENVELOPE_REQUIRED: dict[str, tuple[str, ...]] = {
+    "CANDIDATE": ("RUN", "WT", "COMMIT"),
+    "CANDIDATE_WITHDRAWN": ("SHA",),
+    "CANDIDATE_VERDICT": ("SHA", "VERDICT"),
+    "LANDED": ("SHA",),
+    "ALREADY_LANDED": ("SHA",),
+    "REVIEW_COMPLETE": ("SHA",),
+}
+
+
+def _rejected(event: str, field: str, problem: str) -> CandidateMessageError:
+    canonical = _ENVELOPE_CANONICAL[event]
+    return CandidateMessageError(
+        f"EVENT={event} {field} {problem}; canonical order after EVENT and TASK: {canonical}",
+        event=event,
+        field=field,
+        canonical=canonical,
+    )
+
+
+def envelope_fields(text: str) -> dict[str, str] | None:
+    """Parse the first line of a consumed seat envelope.
+
+    This is the single grammar that send_message enforces before storing and that
+    candidate_event reads. It returns None when the line is not an envelope this
+    module consumes. Otherwise it raises CandidateMessageError naming the first
+    field that breaks the canonical order.
+    """
+    line = text.partition("\n")[0]
+    tokens = [(match.start(), match.group()) for match in re.finditer(r"\S+", line)]
+    index = 0
+    if tokens and tokens[0][1].startswith("LANE="):
+        index = 1
+    if index >= len(tokens) or not tokens[index][1].startswith("EVENT="):
+        return None
+    event = tokens[index][1].removeprefix("EVENT=")
+    if event not in _ENVELOPE_RANKS:
+        return None
+    fields = {"EVENT": event}
+    index += 1
+    if index >= len(tokens) or not tokens[index][1].startswith("TASK="):
+        raise _rejected(event, "TASK", "must follow EVENT")
+    fields["TASK"] = tokens[index][1].removeprefix("TASK=")
+    rank_of = {key: rank for rank, group in enumerate(_ENVELOPE_RANKS[event]) for key in group}
+    # Title words may contain '=', so only the keys that can follow the title end it.
+    # CANDIDATE keeps its historical boundary; other envelopes end the title at any field.
+    title_ends = set(rank_of) if event == "CANDIDATE" else set(rank_of) | _ENVELOPE_FIELDS
+    rank = -1
+    last_key = "TASK"
+    in_title = False
+    for start, token in tokens[index + 1 :]:
         key, separator, value = token.partition("=")
-        if key == "NOTE" and separator:
+        if separator and key == "NOTE":
+            fields["NOTE"] = line[start + len("NOTE=") :]
             break
+        if in_title and not (separator and key in title_ends):
+            continue
         if not separator or not key:
-            raise CandidateMessageError(f"expected KEY=value token: {token}")
-        if key in required and key in fields:
-            raise CandidateMessageError(f"duplicate {key}")
+            raise _rejected(event, last_key, f"value must be one token, found {token!r}")
+        if key in fields:
+            raise _rejected(event, key, "appears twice")
+        if key in rank_of:
+            if rank_of[key] < rank:
+                raise _rejected(event, key, "is out of canonical order")
+            rank = rank_of[key]
+        elif event != "CANDIDATE" and key not in _ENVELOPE_FIELDS | {"TASK_TITLE"}:
+            # CANDIDATE alone accepts extra keyed metadata.
+            raise _rejected(event, key, "is not a field of this event")
+        in_title = key == "TASK_TITLE"
         fields[key] = value
-    for key in ("TASK", "RUN", "WT", "COMMIT"):
+        last_key = key
+    for key in ("TASK", *_ENVELOPE_REQUIRED[event]):
         if not fields.get(key):
-            raise CandidateMessageError(f"missing {key}")
-    if re.fullmatch(r"[0-9a-fA-F]{40}", fields["COMMIT"]) is None:
-        raise CandidateMessageError("COMMIT must be 40 hex characters")
-    fields["COMMIT"] = fields["COMMIT"].lower()
+            raise _rejected(event, key, "is missing")
+    sha_key = "COMMIT" if event == "CANDIDATE" else "SHA"
+    if re.fullmatch(r"[0-9a-fA-F]{40}", fields[sha_key]) is None:
+        raise _rejected(event, sha_key, "must be 40 hex characters")
+    fields[sha_key] = fields[sha_key].lower()
+    return fields
+
+
+def _loose_envelope_fields(line: str) -> dict[str, str] | None:
+    """Read retired park/resume lines with the pre-grammar reader."""
+    prefix = _PREFIX.match(line)
+    if prefix is None:
+        return None
+    fields = {"EVENT": prefix[1], "TASK": prefix[2]}
+    tail = line[prefix.end() :]
+    for token in tail.split(" "):
+        key, separator, value = token.partition("=")
+        if key in {"TASK_TITLE", "NOTE"}:
+            break
+        if not separator or key not in _ENVELOPE_FIELDS:
+            return None
+        if key in fields:
+            return None
+        fields[key] = value
     return fields
 
 
@@ -125,34 +235,24 @@ def completion_messages(
 def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateEvent | None:
     """Resolve the task and full SHA from a stored protocol line.
 
-    CANDIDATE accepts keyed metadata after its optional free title. NOTE never
-    carries authority. Other events retain their fixed envelope boundary.
+    Consumed envelopes are read by envelope_fields, the grammar send_message also
+    enforces. CANDIDATE accepts keyed metadata after its optional free title. NOTE
+    never carries authority. Retired park/resume lines keep the loose reader.
     """
     line = message.content.partition("\n")[0]
-    is_candidate = re.match(r"^(?:LANE=\S+\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
-    candidate_intent = re.match(r"^(?:LANE=\S+\s+)?(?:EVENT=)?CANDIDATE\b", line)
+    is_candidate = re.match(r"^(?:LANE=\S*\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
+    candidate_intent = re.match(r"^(?:LANE=\S*\s+)?(?:EVENT=)?CANDIDATE\b", line)
     if candidate_intent and not is_candidate:
         raise CandidateMessageError(_CANDIDATE_GRAMMAR)
-    if is_candidate:
-        try:
-            fields = _candidate_fields(line)
-        except CandidateMessageError as exc:
+    try:
+        parsed = envelope_fields(line)
+    except CandidateMessageError as exc:
+        if is_candidate or exc.event == "CANDIDATE_WITHDRAWN":
             raise CandidateMessageError(_CANDIDATE_GRAMMAR) from exc
-    else:
-        prefix = _PREFIX.match(line)
-        if prefix is None:
-            return None
-        fields = {"EVENT": prefix[1], "TASK": prefix[2]}
-        tail = line[prefix.end() :]
-        for token in tail.split(" "):
-            key, separator, value = token.partition("=")
-            if key in {"TASK_TITLE", "NOTE"}:
-                break
-            if not separator or key not in _ENVELOPE_FIELDS:
-                return None
-            if key in fields:
-                return None
-            fields[key] = value
+        return None
+    fields = parsed if parsed is not None else _loose_envelope_fields(line)
+    if fields is None:
+        return None
     if not is_candidate and "SHA" in fields and "COMMIT" in fields:
         return None
     task_ref = fields.get("TASK")

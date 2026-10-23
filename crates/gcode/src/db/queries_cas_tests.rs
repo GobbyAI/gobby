@@ -722,3 +722,48 @@ fn unique_id(prefix: &str) -> String {
     )
     .to_string()
 }
+
+fn stamp_both_synced(conn: &mut postgres::Client, project_id: &str, hash: &str) {
+    let project_uuid = id_param(project_id).expect("uuid");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = TRUE, vector_sync_attempted_at = NOW(),
+             graph_synced = TRUE, graph_sync_attempted_at = NOW()
+         WHERE project_id = $1 AND file_path = 'src/lib.rs' AND content_hash = $2",
+        &[&project_uuid, &hash],
+    )
+    .expect("stamp both synced");
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn dirty_version_sync_touches_only_named_flags_and_version() {
+    let (mut conn, project_id, _cleanup) = seeded_file("gcode-dirty-version", "hash-a");
+    upsert_content_version(&mut conn, &project_id, "hash-b");
+    stamp_both_synced(&mut conn, &project_id, "hash-a");
+    stamp_both_synced(&mut conn, &project_id, "hash-b");
+
+    dirty_version_sync(&mut conn, &project_id, "src/lib.rs", "hash-b", true, false)
+        .expect("dirty unreferenced version");
+
+    assert_eq!(
+        projection_flags(&mut conn, &project_id, "hash-b", Projection::Vectors),
+        (false, true)
+    );
+    assert_eq!(
+        projection_flags(&mut conn, &project_id, "hash-b", Projection::Graph),
+        (true, false)
+    );
+    assert_eq!(
+        projection_flags(&mut conn, &project_id, "hash-a", Projection::Vectors),
+        (true, false)
+    );
+    assert_eq!(
+        projection_flags(&mut conn, &project_id, "hash-a", Projection::Graph),
+        (true, false)
+    );
+}

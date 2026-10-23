@@ -41,6 +41,8 @@ export interface Settings {
   density: Density;
   tickerDirection: TickerDirection;
   tickerSpeed: TickerSpeed;
+  // Client-only, like density: read by readFocusHoldSeconds, never sent to the API.
+  focusHoldSeconds: number;
 }
 
 export const MODEL_OPTIONS = [
@@ -64,6 +66,7 @@ const DEFAULT_SETTINGS: Settings = {
   density: "comfortable",
   tickerDirection: "left",
   tickerSpeed: "normal",
+  focusHoldSeconds: 300,
 };
 
 const STORAGE_KEY = "gobby-settings";
@@ -232,7 +235,33 @@ function normalizePersistedSettings(value: unknown): Partial<Settings> {
   if (settings.tickerSpeed !== undefined && settings.tickerSpeed !== null) {
     normalized.tickerSpeed = normalizeTickerSpeed(settings.tickerSpeed);
   }
+  if (settings.focusHoldSeconds !== undefined) {
+    normalized.focusHoldSeconds = normalizeFocusHoldSeconds(
+      settings.focusHoldSeconds,
+    );
+  }
   return normalized;
+}
+
+/**
+ * The web terminal's idle hold on operator wakes, in whole seconds. Zero never
+ * expires; anything that is not a finite non-negative number takes the default.
+ */
+function normalizeFocusHoldSeconds(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : DEFAULT_SETTINGS.focusHoldSeconds;
+}
+
+/**
+ * Read fresh on every arm of the focus report, so a change in Settings applies
+ * from the next activity without threading settings through the terminal tab.
+ */
+export function readFocusHoldSeconds(): number {
+  return (
+    normalizePersistedSettings(loadFromLocalStorage()).focusHoldSeconds ??
+    DEFAULT_SETTINGS.focusHoldSeconds
+  );
 }
 
 async function fetchUISettings(): Promise<Partial<Settings> | null> {
@@ -515,6 +544,13 @@ export function useSettings() {
     [updateSettings],
   );
 
+  const updateFocusHoldSeconds = useCallback(
+    (focusHoldSeconds: number) => {
+      updateSettings({ focusHoldSeconds });
+    },
+    [updateSettings],
+  );
+
   const resetSettings = useCallback(() => {
     updateSettings(DEFAULT_SETTINGS);
   }, [updateSettings]);
@@ -532,6 +568,7 @@ export function useSettings() {
     updateVoiceInputMode,
     updatePlanPendingVariant,
     updateDensity,
+    updateFocusHoldSeconds,
     updateTickerDirection,
     updateTickerSpeed,
     resetSettings,
