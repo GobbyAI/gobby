@@ -86,7 +86,7 @@ def _stored_content(message_manager: MagicMock) -> str:
 
 
 async def _send(registry: InternalToolRegistry, content: str) -> dict[str, Any]:
-    return await registry.call(
+    result: dict[str, Any] = await registry.call(
         "send_message",
         {
             "from_session": "s-from",
@@ -95,6 +95,7 @@ async def _send(registry: InternalToolRegistry, content: str) -> dict[str, Any]:
             "content": content,
         },
     )
+    return result
 
 
 @pytest.mark.asyncio

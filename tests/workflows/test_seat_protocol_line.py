@@ -6,10 +6,12 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.workflows.engine.seat_messages import CandidateMessageError, candidate_event
 
 pytestmark = pytest.mark.unit
@@ -219,7 +221,8 @@ def test_landing_template_examples_read_every_field(
     monkeypatch.setattr(seat_messages, "SessionManager", _Sessions)
     monkeypatch.setattr(seat_messages, "LocalTaskManager", _Tasks)
 
-    parsed = candidate_event(MagicMock(), _Message(filled))
+    message = cast(InterSessionMessage, _Message(filled))
+    parsed = candidate_event(MagicMock(), message)
 
     assert parsed is not None
     assert {token.partition("=")[0] for token in filled.split(" ")} <= set(parsed.fields)
