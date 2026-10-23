@@ -335,6 +335,9 @@ roles for one execution, confirming unless `--yes` is supplied. Coordinate the
 affected execution before revoking its access. A pending retry is an incomplete
 revocation, not a successful cleanup.
 
+Use `gobby postgres force-revoke-run EXECUTION_UUID --release` to release the
+operator revocation and allow the run to re-handshake, confirming unless `--yes` is supplied.
+
 ## Lifecycle And Recovery
 
 Start and restart from the main checkout. Startup validates native/schema

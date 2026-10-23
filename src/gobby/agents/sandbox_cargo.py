@@ -23,6 +23,8 @@ def sandbox_cargo_environment(
     cargo = shutil.which("cargo", path=search_path)
     if cargo is None:
         return {}
+    if not node.is_absolute():
+        raise ValueError("Node.js executable must have an absolute PATH spelling")
     runner = assets / "cargo-runner.mjs"
     runner.unlink(missing_ok=True)
     shutil.copyfile(Path(__file__).with_name("sandbox_cargo_runner.mjs"), runner)
@@ -31,6 +33,8 @@ def sandbox_cargo_environment(
     directory.mkdir(mode=0o700, exist_ok=True)
     launcher = directory / "cargo"
     launcher.unlink(missing_ok=True)
+    # Preserve the absolute symlink spelling across Homebrew upgrades and later
+    # workspace PATH changes. Never bake in a Cellar realpath or a bare command.
     arguments = [str(node), str(runner), cargo, str(workspace.resolve()), str(target)]
     launcher.write_text(f'#!/bin/sh\nexec {shlex.join(arguments)} "$@"\n', encoding="utf-8")
     launcher.chmod(0o500)

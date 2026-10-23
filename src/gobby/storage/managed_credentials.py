@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from psycopg.errors import UniqueViolation
+from psycopg.errors import InsufficientPrivilege, UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.interactive_credentials import (
@@ -188,7 +188,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 expires_at=normalized_expiry,
                 scoped_dsn=scoped_dsn,
             )
-            return ManagedCredential(
+            credential = ManagedCredential(
                 managed_execution_id=managed_execution_id,
                 role_name=role_name,
                 credential_generation=generation,
@@ -196,6 +196,11 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 expires_at=normalized_expiry,
                 bootstrap_path=bootstrap_path,
             )
+            if generation > 1 and (bootstrap_path.parent / "grant.json").exists():
+                if self._launch_grant_rewriter is None:
+                    raise CredentialIssuanceError("managed launch grant rewriter is unavailable")
+                self._launch_grant_rewriter(credential, scoped_dsn)
+            return credential
         except Exception as error:
             if role_name is not None and generation is not None:
                 self.revoke(
@@ -206,6 +211,10 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             if isinstance(error, UniqueViolation):
                 raise CredentialAuthorizationError(
                     "managed principal binding already exists"
+                ) from None
+            if isinstance(error, InsufficientPrivilege):
+                raise CredentialAuthorizationError(
+                    "managed execution access is not authorized"
                 ) from None
             if isinstance(error, CredentialIssuanceError):
                 raise
@@ -277,6 +286,15 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         finally:
             password = ""
 
+    def force_revoke(self, managed_execution_id: UUID) -> RevocationOutcome:
+        return self.revoke(managed_execution_id, reason="operator-forced")
+
+    def release_forced_revocation(self, managed_execution_id: UUID) -> bool:
+        row = self._database.fetchone(
+            f"SELECT {self.auth_schema}.release_forced_revocation(%s)", (managed_execution_id,)
+        )
+        return bool(row and _row_value(row, "release_forced_revocation"))
+
     def revoke(
         self,
         managed_execution_id: UUID,
@@ -284,12 +302,19 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         generation: int | None = None,
         reason: str,
     ) -> RevocationOutcome:
+        if reason == "operator-forced" and generation is not None:
+            raise ValueError("operator-forced revocation cannot specify a generation")
+        failure_code: str | None = None
         try:
             deadline = time.monotonic() + REVOCATION_DRAIN_TIMEOUT_SECONDS
             while True:
                 row = self._database.fetchone(
-                    f"SELECT {self.auth_schema}.revoke_principal(%s, %s)",
-                    (managed_execution_id, generation),
+                    f"SELECT {self.auth_schema}.force_revoke_principal(%s) AS revoke_principal"
+                    if reason == "operator-forced"
+                    else f"SELECT {self.auth_schema}.revoke_principal(%s, %s)",
+                    (managed_execution_id,)
+                    if reason == "operator-forced"
+                    else (managed_execution_id, generation),
                 )
                 if row is None:
                     raise RuntimeError("managed credential revocation returned no result")
@@ -298,34 +323,23 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                     break
                 time.sleep(REVOCATION_POLL_SECONDS)
         except Exception as error:
-            self._delete_bootstrap(managed_execution_id, generation)
             failure_code = type(error).__name__
-            self._write_retry_record(
-                managed_execution_id,
-                generation,
-                reason,
-                failure_code=failure_code,
-            )
-            return RevocationOutcome(
-                completed=False,
-                revoked_count=0,
-                retry_recorded=True,
-                failure_code=failure_code,
-            )
+            revoked_count = -1
 
         if revoked_count < 0:
+            failure_code = failure_code or "active_sessions_remaining"
             self._delete_bootstrap(managed_execution_id, generation)
             self._write_retry_record(
                 managed_execution_id,
                 generation,
                 reason,
-                failure_code="active_sessions_remaining",
+                failure_code=failure_code,
             )
             return RevocationOutcome(
                 completed=False,
                 revoked_count=0,
                 retry_recorded=True,
-                failure_code="active_sessions_remaining",
+                failure_code=failure_code,
             )
 
         self._delete_bootstrap(managed_execution_id, generation)
@@ -541,6 +555,28 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
 
     def rotate_due(self) -> list[ManagedCredential]:
         self.heartbeat()
+        rotated_credentials: list[ManagedCredential] = []
+        # A cold drain removes every live binding, so ordinary rotation cannot
+        # discover these seats. Reissue through the same guarded issuance path.
+        for candidate in self._database.fetchall(
+            f"SELECT * FROM {self.auth_schema}.recoverable_agent_principals(%s)",
+            (self._machine_id,),
+        ):
+            execution_id = UUID(str(_row_value(candidate, "managed_execution_id")))
+            if not (self._execution_root(execution_id) / "grant.json").exists():
+                continue
+            try:
+                rotated_credentials.append(
+                    self.issue(
+                        managed_execution_id=execution_id,
+                        owner_kind="agent_run",
+                        session_id=UUID(str(_row_value(candidate, "session_id"))),
+                        agent_run_id=UUID(str(_row_value(candidate, "agent_run_id"))),
+                        expires_at=datetime.now(UTC) + timedelta(minutes=59),
+                    )
+                )
+            except (CredentialIssuanceError, CredentialAuthorizationError):
+                logger.exception("Managed credential recovery failed for %s", execution_id)
         # Bounded, deadline-only cleanup; a generic reconcile would revoke an
         # expired current binding before its live owner can refresh it.
         self._database.fetchone(
@@ -551,7 +587,6 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             f"SELECT * FROM {self.auth_schema}.principals_due_for_rotation(%s)",
             (self._machine_id,),
         )
-        rotated_credentials: list[ManagedCredential] = []
         for candidate in due:
             execution_id = UUID(str(_row_value(candidate, "managed_execution_id")))
             predecessor_generation = int(_row_value(candidate, "credential_generation"))
