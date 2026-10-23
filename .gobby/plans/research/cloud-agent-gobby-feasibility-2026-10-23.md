@@ -137,3 +137,27 @@ To test background execution and listening, you may create one nonsecret tempora
 ```
 
 **Record from the result:** cloud session URL/ID, repository revision, timestamps, host identity/resources, observed hook events versus configured hooks, MCP names, each network result, listener/PID/marker observations before and after a supported follow-up, and pause/end status. Redact secrets. A prerequisite failure is a valid result; missing observations stay **unknown**. Background survival within one command or turn does not prove survival across a turn, pause, VM reclaim or a new session. No Gobby installation is authorized: node installation remains gated on hub-node and hub installation on completion of 1.0.
+
+**First-hand launch retry under temporary exemption:** Josh approved a one-command exemption through the Orchestrator. The researcher submitted the prompt above from the main checkout using a noninteractive execution surface. The CLI exited with code 1 and this exact error, before returning any cloud session ID or URL:
+
+```text
+Error: --cloud requires an interactive terminal.
+Non-interactive invocations (piped stdout, --init-only, --sdk-url) run locally and would silently ignore --cloud. Drop --cloud, or run from a TTY.
+```
+
+Source: researcher session `gobby#17363`, terminal execution result on 2026-10-23. The researcher immediately sent `EVENT=PROBE_LAUNCHED RESULT=ERROR` to the Orchestrator to restore the rule and ran no further provider command. No cloud session was created. A subsequent attempt requires an interactive terminal and renewed authorization for the launch exemption; account prerequisites and all cloud measurements remain **unknown**. The CLI error is first-hand evidence for this invocation, not proof that every provider version behaves identically.
+
+**Attempt 2 — TTY, first-hand local result:** the Orchestrator authorized one retry with an interactive terminal. It reached these four onboarding lines:
+
+```text
+Welcome to Claude Code v2.1.309
+Let's get started.
+Choose the text style that looks best with your terminal
+To change this later, run /theme
+```
+
+Nothing was selected, no login screen was reached, and no credentials were entered. No cloud session ID or URL was returned. The researcher immediately sent `EVENT=PROBE_LAUNCHED RESULT=PREREQUISITE`. Source: researcher session `gobby#17363`, PTY `86067`, 2026-10-23. Authorized Ctrl-C restored terminal mode, but the PTY did not confirm exit. Process inspection was denied with `operation not permitted`, so the researcher sent no SIGTERM and handed cleanup to the Orchestrator. The Orchestrator (`gobby#17281`) found the leftover process (pid `68859`, command `claude`, child of the researcher's `codex` pid `8630`, elapsed 6:33), sent it SIGTERM at about 03:32Z, and confirmed with `ps` that it had exited.
+
+**Rule windows — Orchestrator-reported UTC timestamps:** attempt 1 OFF `03:24:18Z`, ON `03:24:35Z`; attempt 2 OFF approximately `03:25Z`, ON `03:27:25Z`. The Orchestrator reports `block-direct-provider-launch` enabled since `03:27:25Z`. These are coordination records from `gobby#17281`, not independently inspected rule-state measurements.
+
+**Conclusion:** this Gobby-managed seat could not complete the cloud probe: the default launch guard blocked it, and the temporary exceptions exposed the TTY requirement and incomplete first-run onboarding. The seat did not reach login, so its authentication state remains untested. The Orchestrator's next step is Josh running the supplied prompt in his own logged-in TTY. No hosted Claude measurement was obtained; documentation-based provider verdicts above remain unchanged.
