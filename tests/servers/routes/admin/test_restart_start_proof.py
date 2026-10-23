@@ -1,0 +1,85 @@
+"""POST /api/admin/restart proves the start half before it stops the daemon."""
+
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import APIRouter, FastAPI
+from fastapi.testclient import TestClient
+
+from gobby.servers.http import HTTPServer
+from gobby.servers.routes.admin import _lifecycle
+from gobby.servers.routes.admin._lifecycle import register_lifecycle_routes
+
+pytestmark = pytest.mark.unit
+
+REFUSAL = "Refusing to publish dirty bundled content (modified: shared/skills/demo/SKILL.md)."
+
+
+class FakeServer:
+    def get_runner(self) -> None:
+        return None
+
+    async def run_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+
+@pytest.fixture
+def stop_boundaries(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    monkeypatch.setattr(_lifecycle, "_restart_lock", None)
+    monkeypatch.setattr(_lifecycle, "require_machine_id", lambda: "machine")
+    prepare = AsyncMock()
+    monkeypatch.setattr(_lifecycle, "_prepare_handoff_shutdown", prepare)
+    request = MagicMock(return_value=True)
+    monkeypatch.setattr(_lifecycle, "_request_runner_shutdown", request)
+    write = MagicMock()
+    monkeypatch.setattr("gobby.runner_maintenance.write_shutdown_source", write)
+    return {"prepare": prepare, "request": request, "write": write}
+
+
+def _client() -> TestClient:
+    router = APIRouter(prefix="/api/admin")
+    register_lifecycle_routes(router, cast(HTTPServer, FakeServer()))
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def test_restart_refuses_before_stopping_when_the_start_proof_fails(
+    monkeypatch: pytest.MonkeyPatch, stop_boundaries: dict[str, Any]
+) -> None:
+    monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", lambda _rt: REFUSAL)
+
+    response = _client().post("/api/admin/restart")
+
+    assert response.status_code == 409
+    assert response.json() == {"status": "start_refused", "message": REFUSAL}
+    stop_boundaries["prepare"].assert_not_called()
+    stop_boundaries["write"].assert_not_called()
+    stop_boundaries["request"].assert_not_called()
+    assert _lifecycle._restart_lock is not None
+    assert not _lifecycle._restart_lock.locked()
+
+
+def test_force_does_not_bypass_the_start_proof(
+    monkeypatch: pytest.MonkeyPatch, stop_boundaries: dict[str, Any]
+) -> None:
+    monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", lambda _rt: REFUSAL)
+
+    response = _client().post("/api/admin/restart?force=true")
+
+    assert response.status_code == 409
+    stop_boundaries["write"].assert_not_called()
+    stop_boundaries["request"].assert_not_called()
+
+
+def test_restart_proceeds_when_the_start_proof_passes(
+    monkeypatch: pytest.MonkeyPatch, stop_boundaries: dict[str, Any]
+) -> None:
+    monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", lambda _rt: None)
+
+    response = _client().post("/api/admin/restart")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "restarting"
+    stop_boundaries["request"].assert_called_once()

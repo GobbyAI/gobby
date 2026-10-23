@@ -167,6 +167,29 @@ class TestDirtyBundledContentRefusal:
         assert "Git integrity check failed while checking unstaged changes" in refusal
         assert DIRTY_BUNDLED_CONTENT_OVERRIDE_ENV in refusal
 
+    def test_rev_parse_failure_without_manifest_names_git(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "install" / "shared").mkdir(parents=True)
+        monkeypatch.setattr("gobby.sync.integrity.run_git_command", lambda *_a, **_k: None)
+
+        refusal = dirty_bundled_content_refusal(tmp_path / "install", environ={})
+
+        assert refusal is not None
+        assert "git rev-parse --show-toplevel failed or timed out" in refusal
+        assert "manifest not found" in refusal
+
+    def test_rev_parse_failure_with_clean_manifest_passes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        shared = tmp_path / "shared"
+        (shared / "skills" / "demo").mkdir(parents=True)
+        (shared / "skills" / "demo" / "SKILL.md").write_text("content", encoding="utf-8")
+        write_bundled_content_manifest(tmp_path)
+        monkeypatch.setattr("gobby.sync.integrity.run_git_command", lambda *_a, **_k: None)
+
+        assert dirty_bundled_content_refusal(tmp_path, environ={}) is None
+
     def test_integrity_errors_refuse_without_dirty_files(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

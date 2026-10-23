@@ -423,6 +423,9 @@ class _StoppedServices:
 
     def stop(self) -> None:
         if _daemon_is_running():
+            # Residual: this proof runs before the archived bootstrap.yaml is restored, so it
+            # checks the bootstrap and schema as they were before the restore. Escape:
+            # `gobby stop`, then unpack.
             _refuse_before_stopping_daemon("unpack")
             click.echo("  Stopping daemon...")
             if not stop_daemon(quiet=True):

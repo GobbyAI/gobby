@@ -210,9 +210,15 @@ def verify_bundled_integrity(install_dir: Path) -> IntegrityResult:
     # Find the repo root so we can scope git commands
     repo_root = run_git_command(["git", "rev-parse", "--show-toplevel"], cwd=shared_dir)
     if repo_root is None:
-        # Not a git repo — installed package context
+        # Not a git repo (installed package), or git failed or timed out. The manifest is
+        # the only check; when it cannot run, name the git failure as well.
         result.git_available = False
-        return _verify_manifest_integrity(install_dir, result)
+        _verify_manifest_integrity(install_dir, result)
+        if not result.checked:
+            result.errors.append(
+                f"git rev-parse --show-toplevel failed or timed out in {shared_dir}"
+            )
+        return result
 
     repo_root_path = Path(repo_root)
 

@@ -74,6 +74,23 @@ async def _prepare_handoff_shutdown(server: "HTTPServer", machine_id: str) -> No
         raise
 
 
+def _restart_start_refusal() -> str | None:
+    """Name why the start half would fail, or None, before the daemon stops.
+
+    The HTTP restart stops the daemon as the CLI restart does, so it proves the same
+    start half with its own runtime. It runs in a worker thread: the proof does git
+    and DB I/O.
+    """
+    from gobby.cli.daemon_preflight import restart_start_refusal
+    from gobby.cli.runtime import CliRuntime
+
+    runtime = CliRuntime(config_file=None)
+    try:
+        return restart_start_refusal(runtime)
+    finally:
+        runtime.close()
+
+
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/cron/protected-runs")
     async def protected_cron_runs() -> dict[str, Any]:
@@ -208,6 +225,11 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                             "message": "Restart blocked by active protected cron runs",
                             "protected_runs": protected_runs,
                         }
+
+            # Refuse before any stop. force skips the cron check, never this proof.
+            if refusal := await asyncio.to_thread(_restart_start_refusal):
+                response.status_code = 409
+                return {"status": "start_refused", "message": refusal}
 
             if not force:
                 await _prepare_handoff_shutdown(server, machine_id)

@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import tempfile
-from typing import Any, Literal
+from typing import Any
 
 import httpx
 import psutil
@@ -14,9 +14,6 @@ from gobby.paths import get_gobby_home
 from gobby.utils.env import is_test_protect_enabled
 
 logger = logging.getLogger("gobby.daemon.control")
-
-DaemonShutdownIntent = Literal["stop", "restart"]
-DaemonShutdownSource = Literal["mcp_stop", "mcp_restart"]
 
 # Above `gobby start`'s own health (300 s) and readiness (300 s) waits, leaving
 # room for managed services and the schema apply.
@@ -54,8 +51,7 @@ def get_daemon_pid() -> int | None:
     Under GOBBY_TEST_PROTECT, only return a PID whose cmdline references
     the current GOBBY_HOME / GOBBY_CONFIG_FILE — without this fence, this
     helper does a system-wide psutil scan and would return the user's
-    production daemon PID, which any caller (e.g. stop_daemon) would then
-    SIGTERM.
+    production daemon PID to the caller.
     """
     current_pid = os.getpid()
     test_protect = is_test_protect_enabled()
