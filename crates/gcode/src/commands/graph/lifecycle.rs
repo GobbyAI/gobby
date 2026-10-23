@@ -132,7 +132,7 @@ fn lifecycle_output(
     }
 }
 
-enum GraphFileSyncOutcome {
+pub(super) enum GraphFileSyncOutcome {
     Synced {
         relationships_written: usize,
         symbols_synced: usize,
@@ -141,6 +141,7 @@ enum GraphFileSyncOutcome {
     SkippedMissingIndexedFile {
         reconcile_failures: Vec<ProjectionReconcileFailure>,
     },
+    SkippedSuperseded,
 }
 
 pub(super) fn skipped_missing_indexed_file_payload(
@@ -200,6 +201,47 @@ pub(super) fn skipped_no_graph_facts_payload(ctx: &Context, file_path: &str) -> 
     })
 }
 
+pub(super) fn skipped_superseded_payload(ctx: &Context, file_path: &str) -> Value {
+    json!({
+        "success": true,
+        "project_id": ctx.project_id,
+        "file_path": file_path,
+        "status": "skipped",
+        "reason": "sync_superseded",
+        "synced_files": 0,
+        "synced_symbols": 0,
+        "skipped_files": 1,
+        "failed_files": 0,
+        "relationships_written": 0,
+        "degraded": false,
+        "error": null,
+        "summary": format!("skipped graph sync for {file_path}: superseded by a newer index"),
+    })
+}
+
+/// Marks the attempt synced only if it still names the current row. A failed
+/// compare-and-set means the file moved to another hash mid-sync, so the
+/// completed outcome is reported as superseded instead of success.
+pub(super) fn complete_graph_sync(
+    conn: &mut postgres::Client,
+    project_id: &str,
+    file_path: &str,
+    attempt: &db::GraphSyncAttempt,
+    outcome: GraphFileSyncOutcome,
+) -> anyhow::Result<GraphFileSyncOutcome> {
+    if db::mark_graph_synced(
+        conn,
+        project_id,
+        file_path,
+        &attempt.content_hash,
+        attempt.attempted_at,
+    )? {
+        Ok(outcome)
+    } else {
+        Ok(GraphFileSyncOutcome::SkippedSuperseded)
+    }
+}
+
 pub(super) fn has_no_graph_facts<I, D, C, H>(
     imports: &[I],
     definitions: &[D],
@@ -236,14 +278,13 @@ fn sync_file_graph(
         &facts.inheritance,
     ) {
         code_graph::sync_no_fact_file(ctx, &facts.file_path, &facts.content_hash)?;
-        db::mark_graph_synced(
+        return complete_graph_sync(
             &mut conn,
             &ctx.project_id,
             file_path,
-            &attempt.content_hash,
-            attempt.attempted_at,
-        )?;
-        return Ok(GraphFileSyncOutcome::SkippedNoGraphFacts);
+            &attempt,
+            GraphFileSyncOutcome::SkippedNoGraphFacts,
+        );
     }
     // Per-file sync intentionally does NOT run project-wide orphan cleanup:
     // `cleanup_orphans` performs O(project graph size) anti-join sweeps that are
@@ -261,17 +302,16 @@ fn sync_file_graph(
         &facts.inheritance,
         false,
     )?;
-    db::mark_graph_synced(
+    complete_graph_sync(
         &mut conn,
         &ctx.project_id,
         file_path,
-        &attempt.content_hash,
-        attempt.attempted_at,
-    )?;
-    Ok(GraphFileSyncOutcome::Synced {
-        relationships_written,
-        symbols_synced: facts.definitions.len(),
-    })
+        &attempt,
+        GraphFileSyncOutcome::Synced {
+            relationships_written,
+            symbols_synced: facts.definitions.len(),
+        },
+    )
 }
 
 fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
@@ -517,6 +557,19 @@ pub fn sync_file(
             relationships_written,
             symbols_synced,
         } => (relationships_written, symbols_synced),
+        GraphFileSyncOutcome::SkippedSuperseded => {
+            let payload = file_lock_payload(skipped_superseded_payload(ctx, &file_path), &locks);
+            return match format {
+                Format::Json => output::print_json(&payload),
+                Format::Text => {
+                    output::print_text(&format!(
+                        "Skipped code-index graph sync for project {}: `{file_path}` was superseded by a newer index",
+                        ctx.project_id
+                    ))?;
+                    output::print_json(&payload)
+                }
+            };
+        }
         GraphFileSyncOutcome::SkippedNoGraphFacts => {
             let payload =
                 file_lock_payload(skipped_no_graph_facts_payload(ctx, &file_path), &locks);
