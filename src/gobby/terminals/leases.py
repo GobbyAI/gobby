@@ -14,6 +14,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from gobby.hub.caller_scope import current_caller
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.ws_protocol import (
     PASTE_MAX_BYTES,
@@ -140,6 +141,9 @@ class _Attachment:
     # The terminal row as it stood when the attachment was granted. Operator
     # writes dispatch against it, so a keystroke never re-reads the row.
     terminal: Terminal | None = None
+    # The user the creating caller was bound to. Only that user may write with this
+    # attachment, so a holder id that leaks to another caller grants nothing.
+    creator_user: str | None = None
     host_input_granted: bool = False
     # Viewer report that the pane is focused. Only the holder's report counts.
     focused: bool = False
@@ -399,11 +403,33 @@ class TerminalLeaseRegistry:
             viewer=viewer,
             backend=backend,
             terminal=terminal,
+            creator_user=_caller_user(),
         )
         self._attachments[minted] = record
         self._lease(terminal_id)
         if websocket is not None:
             self._by_websocket.setdefault(websocket, set()).add(minted)
+        return record
+
+    def owned_attachment(self, attachment_id: str, *, websocket: object) -> _Attachment | None:
+        """The live attachment that this connection created for the bound caller.
+
+        A known attachment id grants nothing by itself: the sending connection and
+        the bound caller must both match the ones that attached it.
+        """
+        if attachment_id not in self._by_websocket.get(websocket, ()):
+            return None
+        return self.caller_attachment(attachment_id)
+
+    def created_by(self, attachment_id: str, *, websocket: object) -> bool:
+        """Whether this connection attached the id, live or finalized."""
+        return attachment_id in self._by_websocket.get(websocket, ())
+
+    def caller_attachment(self, attachment_id: str) -> _Attachment | None:
+        """The live attachment that the bound caller created, whichever connection sends."""
+        record = self.get(attachment_id)
+        if record is None or record.finalized or record.creator_user != _caller_user():
+            return None
         return record
 
     def get(self, attachment_id: str) -> _Attachment | None:
@@ -684,13 +710,14 @@ class TerminalLeaseRegistry:
         self,
         terminal_id: str,
         *,
+        websocket: object,
         attachment_id: str,
         expected_lease_generation: int | None,
         seq: object,
         kind: str,
         payload: bytes,
     ) -> WriteAdmit:
-        record = self.get(attachment_id)
+        record = self.owned_attachment(attachment_id, websocket=websocket)
         if record is None or record.terminal_id != terminal_id:
             return WriteAdmit(False, "stale_attachment")
         try:
@@ -821,6 +848,11 @@ def _as_seq(value: object) -> int:
     if value < 0 or value > TERMINAL_WS_SAFE_INTEGER_MAX:
         raise SafeIntegerOverflowError()
     return value
+
+
+def _caller_user() -> str | None:
+    scope = current_caller()
+    return None if scope is None else scope.user_id
 
 
 def paste_oversize(text: str) -> bool:

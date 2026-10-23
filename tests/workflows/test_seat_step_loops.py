@@ -696,6 +696,47 @@ async def test_developer_bounce_requires_incoming_assigned_reviewer(
     assert run.step == "submit"
 
 
+async def test_developer_returns_to_implement_on_security_bounce_envelope(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    """The envelope a Security Reviewer sends, read by the developer at submit (#24890)."""
+    run, task, sha, _ = linked_developer
+    line = (
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE "
+        "TASK_TITLE=security NOTE=exploit path at src/example.py:1"
+    )
+    message_id = await run.incoming(line, PEER_ID)
+    assert run.step == "implement"
+    message = InterSessionMessageManager(run.db).get_message(message_id)
+    assert message is not None
+    await run.call(
+        "gobby-agents",
+        "get_inter_session_message",
+        {"message_id": message_id},
+        {"success": True, "message": message.to_dict()},
+    )
+    assert run.step == "implement"
+    assert run.vars["bounced"] is True
+    assert run.vars["implementation_complete"] is False
+
+
+async def test_security_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) -> None:
+    """An incoming Security BOUNCE for the reviewed unit ends the Code Reviewer's unit (#24890)."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    assert run.vars["candidate_received"] is True
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE "
+        "TASK_TITLE=security NOTE=exploit path",
+        PEER_ID,
+    )
+    assert run.vars["candidate_received"] is False
+    assert run.vars["candidate_sha"] is None
+
+
 async def test_developer_submit_returns_to_implement_on_reviewer_request(
     linked_developer: tuple[SeatRun, Task, str, str],
 ) -> None:

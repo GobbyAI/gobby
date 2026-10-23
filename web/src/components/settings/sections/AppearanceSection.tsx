@@ -63,6 +63,7 @@ const PLAN_PENDING_OPTIONS: readonly SegmentedControlOption<PlanPendingVariant>[
 const FONT_SIZE_MIN = 12;
 const FONT_SIZE_MAX = 24;
 const FONT_SIZE_FIELD_ID = "appearance-font-size";
+const FOCUS_HOLD_FIELD_ID = "appearance-focus-hold";
 
 interface AppearanceFieldProps {
   label: string;
@@ -112,6 +113,7 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
     updatePlanPendingVariant,
     updateTickerDirection,
     updateTickerSpeed,
+    updateFocusHoldSeconds,
     resetSettings,
   } = client;
 
@@ -214,6 +216,43 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
           options={PLAN_PENDING_OPTIONS}
           onChange={updatePlanPendingVariant}
         />
+      </AppearanceField>
+
+      <AppearanceField
+        label="Terminal focus hold"
+        htmlFor={FOCUS_HOLD_FIELD_ID}
+        description="Seconds without input before a focused terminal pane stops holding operator messages. 0 holds until focus moves."
+      >
+        <div className="flex items-center gap-3">
+          <Input
+            id={FOCUS_HOLD_FIELD_ID}
+            wrapperClassName="w-auto"
+            className="w-[8ch] text-right tabular-nums"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            step={1}
+            value={settings.focusHoldSeconds}
+            onChange={(event) => {
+              const seconds = Number(event.target.value);
+              // An empty or negative entry is ignored: 0 means "never expire",
+              // so a cleared field must not silently turn the hold off.
+              if (
+                event.target.value !== "" &&
+                Number.isFinite(seconds) &&
+                seconds >= 0
+              ) {
+                updateFocusHoldSeconds(Math.floor(seconds));
+              }
+            }}
+          />
+          <span
+            className="text-sm leading-[1.6] text-muted-foreground"
+            aria-hidden="true"
+          >
+            s
+          </span>
+        </div>
       </AppearanceField>
 
       <Button type="button" variant="secondary" onClick={resetSettings}>

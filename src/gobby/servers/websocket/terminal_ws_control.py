@@ -36,9 +36,29 @@ class TerminalControlMixin:
 
         async def _declare_holder_theme(self, attachment_id: str) -> None: ...
 
+    async def _refuse_unowned_control(self, websocket: Any, attachment_id: str) -> None:
+        """Answer a control request for an attachment this connection did not create.
+
+        The answer matches an unknown attachment, so a foreign connection learns nothing.
+        """
+        await self._send_json(
+            websocket,
+            {
+                "type": "terminal_control_result",
+                "attachment_id": attachment_id,
+                "granted": False,
+                "reason": "stale_attachment",
+                "lease_generation": None,
+                "host_input_granted": None,
+            },
+        )
+
     async def _handle_terminal_take_control(self, websocket: Any, data: dict[str, Any]) -> None:
         terminal_id = str(data.get("terminal_id") or "")
         attachment_id = str(data.get("attachment_id") or "")
+        if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
+            await self._refuse_unowned_control(websocket, attachment_id)
+            return
         result = await self._leases().take_control(
             terminal_id,
             attachment_id,
@@ -74,11 +94,17 @@ class TerminalControlMixin:
         # attachment only logs, because the lease already moved on.
         attachment_id = str(data.get("attachment_id") or "")
         focused = bool(data.get("focused"))
+        if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
+            logger.debug("terminal_focus ignored for unowned attachment %s", attachment_id)
+            return
         if not await self._leases().set_focus(attachment_id, focused):
             logger.debug("terminal_focus ignored for stale attachment %s", attachment_id)
 
     async def _handle_terminal_release_control(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = str(data.get("attachment_id") or "")
+        if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
+            await self._refuse_unowned_control(websocket, attachment_id)
+            return
         record = self._leases().get(attachment_id)
         result = await self._leases().release_control(attachment_id)
         if record is not None:

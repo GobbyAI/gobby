@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { createAttachmentReadiness } from "./terminalAttachmentReadiness";
+import { createFocusReport } from "./terminalFocusReport";
 import {
   createPendingRequestSlot,
   type PendingRequest,
@@ -38,6 +39,7 @@ import {
   terminalSetScrollOffsetMessage,
   terminalSetViewportMessage,
 } from "./tmuxSessionMessages";
+import { readFocusHoldSeconds } from "./useSettings";
 
 export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
 export const TMUX_RECONNECT_BASE_MS = 2_000;
@@ -151,6 +153,13 @@ export function useTmuxSessions(
       connectionGeneration: () => connectionGenerationRef.current,
       requestTimeoutMs: TMUX_REQUEST_TIMEOUT_MS,
       onChange: setLease,
+    }),
+  );
+  const [focusReport] = useState(() =>
+    createFocusReport({
+      socket: () => wsRef.current,
+      terminalId: () => attachedTargetRef.current?.terminal_id,
+      holdSeconds: readFocusHoldSeconds,
     }),
   );
   // One request at a time. The slot mirrors itself into requestPending and
@@ -682,7 +691,17 @@ export function useTmuxSessions(
     [control],
   );
 
-  const releaseControl = useCallback(() => control.release(), [control]);
+  // Ruling 4: a window switch blurs the pane while the document has no focus, and
+  // the lease and its focus report stay until focus moves inside the page.
+  const releaseControl = useCallback(() => {
+    if (document.hasFocus()) control.release();
+  }, [control]);
+  useEffect(
+    () => focusReport.sync(lease.holder, streamingId),
+    [focusReport, lease.holder, streamingId],
+  );
+  useEffect(() => focusReport.listen(document), [focusReport]);
+  useEffect(() => () => focusReport.dispose(), [focusReport]);
 
   const sendInput = useCallback(
     (data: string) => control.write("input", data),

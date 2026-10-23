@@ -62,10 +62,11 @@ async def test_external_tmux_row_resizes_and_releases(
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
     runtime = TmuxTerminalRuntime()
     server = _SizingServer(row, runtime)
-    attachment = await server.lease_registry.attach("term-1", viewer="gclient")
+    websocket = object()
+    attachment = await server.lease_registry.attach("term-1", viewer="gclient", websocket=websocket)
 
     await server._handle_terminal_resize(
-        object(),
+        websocket,
         {"attachment_id": attachment.attachment_id, "rows": 40, "cols": 120},
     )
     assert commands[:2] == [
@@ -75,7 +76,7 @@ async def test_external_tmux_row_resizes_and_releases(
 
     await TerminalWsMixin._handle_terminal_detach(
         server,
-        object(),
+        websocket,
         {"attachment_id": attachment.attachment_id, "terminal_id": "term-1"},
     )
     assert commands[-1] == ("set-option", "-wu", "-t", "%1", "window-size")
@@ -103,10 +104,10 @@ async def test_proxy_socket_failure_applies_re_elected_size(
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
     runtime = TmuxTerminalRuntime()
     server = _SizingServer(row, runtime)
-    web = await server.lease_registry.attach("term-1", viewer="web")
-    gclient = await server.lease_registry.attach("term-1", viewer="gclient")
-    await server.lease_registry.take_control("term-1", web.attachment_id)
     websocket = object()
+    web = await server.lease_registry.attach("term-1", viewer="web", websocket=websocket)
+    gclient = await server.lease_registry.attach("term-1", viewer="gclient", websocket=websocket)
+    await server.lease_registry.take_control("term-1", web.attachment_id)
 
     await server._handle_terminal_resize(
         websocket,
@@ -160,8 +161,10 @@ async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
     runtime = TmuxTerminalRuntime()
     server = _SizingServer(row, runtime)
-    web = await server.lease_registry.attach("term-1", viewer="web", backend="tmux")
     websocket = object()
+    web = await server.lease_registry.attach(
+        "term-1", viewer="web", backend="tmux", websocket=websocket
+    )
     control = {"terminal_id": "term-1", "attachment_id": web.attachment_id}
     pin = [
         ("set-option", "-w", "-t", "%1", "window-size", "manual"),
@@ -214,10 +217,11 @@ async def test_typed_resize_refusal_answers_instead_of_killing_the_handler() -> 
     row = make_memory_terminal(terminal_id="term-1", backend="native")
     runtime = _RefusingRuntime()
     server = _NativeSizingServer(row, runtime)
-    attachment = await server.lease_registry.attach("term-1", viewer="gclient")
+    websocket = object()
+    attachment = await server.lease_registry.attach("term-1", viewer="gclient", websocket=websocket)
 
     await server._handle_terminal_resize(
-        object(),
+        websocket,
         {"attachment_id": attachment.attachment_id, "rows": 40, "cols": 120},
     )
 
@@ -264,11 +268,12 @@ async def test_sizing_runs_get_and_set_dims_on_the_executor() -> None:
     server = _NativeSizingServer(row, runtime)
     store = _ThreadRecordingStore(row)
     server.terminal_manager = store
-    attachment = await server.lease_registry.attach("term-1", viewer="gclient")
+    websocket = object()
+    attachment = await server.lease_registry.attach("term-1", viewer="gclient", websocket=websocket)
     loop_thread = threading.get_ident()
 
     await server._handle_terminal_resize(
-        object(),
+        websocket,
         {"attachment_id": attachment.attachment_id, "rows": 40, "cols": 120},
     )
 

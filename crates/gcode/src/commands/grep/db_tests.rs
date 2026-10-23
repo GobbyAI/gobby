@@ -117,6 +117,202 @@ fn insert_chunk_version(
     ignore = "requires a PostgreSQL test database URL"
 )]
 #[serial_test::serial(serial_db)]
+fn overlay_grep_hides_parent_rows_shadowed_by_overlay_state() {
+    let database_url = crate::test_env::postgres_test_database_url("overlay grep PostgreSQL tests");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect grep PostgreSQL test database");
+    crate::schema::validate_runtime_schema(&mut conn).expect("grep test schema is valid");
+
+    let parent_root = tempfile::tempdir().expect("create parent root");
+    let overlay_root = tempfile::tempdir().expect("create overlay root");
+    // The overlay deleted src/tombstoned.rs, so only the parent has it on disk.
+    for (root, file_path) in [
+        (parent_root.path(), "src/parent_only.rs"),
+        (parent_root.path(), "src/shadowed.rs"),
+        (parent_root.path(), "src/tombstoned.rs"),
+        (overlay_root.path(), "src/overlay_only.rs"),
+        (overlay_root.path(), "src/shadowed.rs"),
+    ] {
+        let absolute = root.join(file_path);
+        std::fs::create_dir_all(absolute.parent().expect("file has parent"))
+            .expect("create src dir");
+        std::fs::write(&absolute, "fn marker() {}\n").expect("write fixture file");
+    }
+
+    let parent_id = unique_project_id("grep-overlay-parent");
+    let overlay_id = unique_project_id("grep-overlay-child");
+    let parent_uuid = crate::db::id_param(&parent_id).expect("parent project uuid");
+    let overlay_uuid = crate::db::id_param(&overlay_id).expect("overlay project uuid");
+    ProjectCleanup::run(&mut conn, &parent_uuid);
+    ProjectCleanup::run(&mut conn, &overlay_uuid);
+    let _parent_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_uuid,
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_uuid,
+    };
+    for project in [&parent_uuid, &overlay_uuid] {
+        conn.execute(
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+            &[project],
+        )
+        .expect("insert project");
+    }
+
+    let machine = crate::db::id_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    )
+    .expect("local machine uuid");
+    let parent_root_path = parent_root.path().to_string_lossy().to_string();
+    let overlay_root_path = overlay_root.path().to_string_lossy().to_string();
+
+    for (file_path, content, hash) in [
+        (
+            "src/parent_only.rs",
+            "grepmarker parent_only",
+            "hash-parent-only",
+        ),
+        (
+            "src/shadowed.rs",
+            "grepmarker parent_shadowed",
+            "hash-parent-shadowed",
+        ),
+        (
+            "src/tombstoned.rs",
+            "grepmarker parent_tombstoned",
+            "hash-parent-tombstoned",
+        ),
+    ] {
+        insert_file_version(&mut conn, &parent_uuid, file_path, hash);
+        insert_machine_state(
+            &mut conn,
+            &machine,
+            &parent_uuid,
+            &parent_root_path,
+            file_path,
+            hash,
+        );
+        insert_chunk_version(&mut conn, &parent_uuid, file_path, content, hash);
+    }
+    for (file_path, content, hash) in [
+        (
+            "src/overlay_only.rs",
+            "grepmarker overlay_only",
+            "hash-overlay-only",
+        ),
+        (
+            "src/shadowed.rs",
+            "grepmarker overlay_shadowed",
+            "hash-overlay-shadowed",
+        ),
+    ] {
+        insert_file_version(&mut conn, &overlay_uuid, file_path, hash);
+        insert_machine_state(
+            &mut conn,
+            &machine,
+            &overlay_uuid,
+            &overlay_root_path,
+            file_path,
+            hash,
+        );
+        insert_chunk_version(&mut conn, &overlay_uuid, file_path, content, hash);
+    }
+    // An overlay tombstone has a state row, which must shadow the parent row,
+    // and its chunk must stay hidden because the file version is a tombstone.
+    let tombstone_hash = "hash-overlay-tombstone";
+    insert_file_version(
+        &mut conn,
+        &overlay_uuid,
+        "src/tombstoned.rs",
+        tombstone_hash,
+    );
+    conn.execute(
+        "UPDATE code_indexed_files SET language = $1
+         WHERE project_id = $2 AND file_path = $3 AND content_hash = $4",
+        &[
+            &crate::visibility::TOMBSTONE_LANGUAGE,
+            &overlay_uuid,
+            &"src/tombstoned.rs",
+            &tombstone_hash,
+        ],
+    )
+    .expect("mark overlay file version as tombstone");
+    insert_machine_state(
+        &mut conn,
+        &machine,
+        &overlay_uuid,
+        &overlay_root_path,
+        "src/tombstoned.rs",
+        tombstone_hash,
+    );
+    insert_chunk_version(
+        &mut conn,
+        &overlay_uuid,
+        "src/tombstoned.rs",
+        "grepmarker overlay_tombstoned",
+        tombstone_hash,
+    );
+
+    let ctx = Context {
+        database_url: database_url.clone(),
+        project_root: overlay_root.path().to_path_buf(),
+        project_id: overlay_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Overlay {
+            overlay_project_id: overlay_id.clone(),
+            overlay_root: overlay_root.path().to_path_buf(),
+            parent_project_id: parent_id.clone(),
+            parent_root: parent_root.path().to_path_buf(),
+        },
+    };
+    let options = GrepOptions {
+        pattern: "grepmarker",
+        paths: &[],
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: false,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+
+    let result = grep_repo(&ctx, &mut conn, &options).expect("grep overlay repo");
+    let mut lines: Vec<&str> = result.matches.iter().map(|m| m.text.as_str()).collect();
+    lines.sort_unstable();
+    assert_eq!(
+        lines,
+        vec![
+            "grepmarker overlay_only",
+            "grepmarker overlay_shadowed",
+            "grepmarker parent_only",
+        ],
+        "overlay grep must show overlay rows and unshadowed parent rows only"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
 fn grep_scopes_chunks_to_local_machine_file_state() {
     let database_url = crate::test_env::postgres_test_database_url("grep PostgreSQL tests");
     let mut conn = gobby_core::postgres::connect_readwrite(&database_url)

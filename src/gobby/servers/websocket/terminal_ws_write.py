@@ -11,6 +11,9 @@ from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_obs
 from gobby.terminals.leases import TerminalLeaseRegistry, paste_oversize
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, TerminalWriteError
 
+if TYPE_CHECKING:
+    from gobby.storage.terminals import Terminal
+
 WRITE_FAULT_NAME = "terminal_write_fault"
 
 
@@ -69,10 +72,13 @@ class TerminalWriteMixin:
             return
         if not isinstance(payload, str):
             payload = ""
-        record = self._leases().get(attachment_id)
+        # Only this connection's own attachment, for its creator, is admitted. A
+        # leaked holder id from another connection is refused before any state moves.
+        record = self._leases().owned_attachment(attachment_id, websocket=websocket)
         generation = None if record is None else self._leases().generation(terminal_id)
         admitted = self._leases().admit_write(
             terminal_id,
+            websocket=websocket,
             attachment_id=attachment_id,
             expected_lease_generation=generation
             if self._leases().holder(terminal_id) == attachment_id
@@ -110,6 +116,7 @@ class TerminalWriteMixin:
                 payload=payload,
                 generation=generation,
                 seq=seq,
+                terminal=None if record is None else record.terminal,
             )
         finally:
             if isinstance(seq, int):
@@ -137,6 +144,7 @@ class TerminalWriteMixin:
         payload: str,
         generation: int | None,
         seq: object = None,
+        terminal: Terminal | None,
     ) -> tuple[WriteOutcome, str | None]:
         """Deliver an admitted write to the backend; returns (outcome, reason)."""
         outcome: WriteOutcome = "delivered"
@@ -151,7 +159,6 @@ class TerminalWriteMixin:
                 WriteRequest,
             )
 
-            record = self._leases().get(attachment_id)
             result = await coordinator.write(
                 WriteRequest(
                     terminal_id=terminal_id,
@@ -161,7 +168,7 @@ class TerminalWriteMixin:
                     payload=payload,
                     attachment_id=attachment_id,
                     expected_lease_generation=generation,
-                    terminal=None if record is None else record.terminal,
+                    terminal=terminal,
                 )
             )
         except RuntimeUnavailableError:
