@@ -50,7 +50,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
-    // Read-only parent and review scopes must never attempt index writes.
+    // Read-only parent and sibling scopes must never attempt index writes.
     if !ctx.can_refresh_index()? {
         return Ok(FreshnessStatus::Checked);
     }

@@ -1143,9 +1143,15 @@ def test_existing_reviewer_login_gains_only_live_assignment_reads(
             visible = _ids(agent, "SELECT id FROM code_indexed_projects")
             assert overlay_ids[0] not in visible
             assert overlay_ids[1] in visible
-            owner.execute("UPDATE tasks SET closed_at = now() WHERE id = %s", (task_id,))
+            owner.execute(
+                "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s",
+                (task_id,),
+            )
             assert not set(overlay_ids) & _ids(agent, "SELECT id FROM code_indexed_projects")
-            owner.execute("UPDATE tasks SET closed_at = NULL WHERE id = %s", (task_id,))
+            owner.execute(
+                "UPDATE tasks SET closed_at = NULL, closed_reason = NULL WHERE id = %s",
+                (task_id,),
+            )
             owner.execute("DELETE FROM session_tasks WHERE task_id = %s", (task_id,))
             assert not set(overlay_ids) & _ids(agent, "SELECT id FROM code_indexed_projects")
         finally:
@@ -1158,3 +1164,74 @@ def test_existing_reviewer_login_gains_only_live_assignment_reads(
                 "WHERE id = %s",
                 (*original_run, fixture.agent_run_id),
             )
+
+
+def test_managed_checkout_reads_only_registered_local_sibling_overlays(
+    fresh_authorization_fixture: AuthorizationFixture,
+) -> None:
+    """Registration grants live reads to ordinary seats; writes remain frozen."""
+    fixture = fresh_authorization_fixture
+    roots = [f"/tmp/sibling-{uuid4()}" for _ in range(6)]
+    with (
+        psycopg.connect(fixture.database_url, autocommit=True) as owner,
+        psycopg.connect(fixture.agent_url, autocommit=True) as agent,
+    ):
+        binding = agent.execute(
+            "SELECT gobby_agent_auth.current_project_id(), "
+            "gobby_agent_auth.current_code_overlay_project_id()"
+        ).fetchone()
+        assert binding == (fixture.project_id, None)
+        overlay_ids: list[UUID] = []
+        try:
+            for index, root in enumerate(roots):
+                row = owner.execute(
+                    "SELECT gobby_agent_auth.code_index_project_id(%s)", (root,)
+                ).fetchone()
+                assert row is not None
+                overlay_ids.append(row[0])
+                owner.execute("INSERT INTO code_indexed_projects(id) VALUES (%s)", (row[0],))
+                if index == 5:
+                    continue  # Index metadata cannot authorize an unregistered checkout.
+                table, column = (
+                    ("clones", "clone_path") if index == 1 else ("worktrees", "worktree_path")
+                )
+                owner.execute(
+                    sql.SQL(
+                        "INSERT INTO {}(id, project_id, machine_id, branch_name, {}, status) "
+                        "VALUES (%s, %s, %s, %s, %s, %s)"
+                    ).format(sql.Identifier(table), sql.Identifier(column)),
+                    (
+                        uuid4(),
+                        fixture.other_project_id if index == 2 else fixture.project_id,
+                        fixture.other_machine_id if index == 3 else fixture.machine_id,
+                        root,
+                        root,
+                        "removed" if index == 4 else "active",
+                    ),
+                )
+            visible = _ids(agent, "SELECT id FROM code_indexed_projects")
+            assert set(overlay_ids[:2]) <= visible
+            assert not set(overlay_ids[2:]) & visible
+            for overlay_id in overlay_ids[:2]:
+                with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                    agent.execute(
+                        "INSERT INTO code_indexed_files(id, project_id, file_path, language, "
+                        "content_hash) VALUES (%s, %s, 'denied.rs', 'rust', 'denied')",
+                        (uuid4(), overlay_id),
+                    )
+                assert (
+                    agent.execute(
+                        "DELETE FROM code_indexed_projects WHERE id = %s", (overlay_id,)
+                    ).rowcount
+                    == 0
+                )
+            owner.execute(
+                "UPDATE worktrees SET status = 'removed' WHERE worktree_path = %s", (roots[0],)
+            )
+            assert overlay_ids[0] not in _ids(agent, "SELECT id FROM code_indexed_projects")
+            owner.execute("DELETE FROM clones WHERE clone_path = %s", (roots[1],))
+            assert overlay_ids[1] not in _ids(agent, "SELECT id FROM code_indexed_projects")
+        finally:
+            owner.execute("DELETE FROM worktrees WHERE worktree_path = ANY(%s)", (roots,))
+            owner.execute("DELETE FROM clones WHERE clone_path = ANY(%s)", (roots,))
+            owner.execute("DELETE FROM code_indexed_projects WHERE id = ANY(%s)", (overlay_ids,))

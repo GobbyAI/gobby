@@ -1366,7 +1366,7 @@ class TestComments:
         assert response.json()["detail"] == "Task step records cannot be deleted"
         assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (step_id,))
 
-    @pytest.mark.parametrize("author", ["migration:474", "migration:475"])
+    @pytest.mark.parametrize("author", ["migration:475", "migration:476"])
     def test_create_comment_refuses_migration_snapshot(
         self, client: TestClient, sample_task: dict[str, Any], author: str
     ) -> None:
@@ -1381,7 +1381,7 @@ class TestComments:
         )
         assert client.get(f"/api/tasks/{sample_task['id']}/comments").json()["total"] == 0
 
-    @pytest.mark.parametrize("author", ["migration:474", "migration:475"])
+    @pytest.mark.parametrize("author", ["migration:475", "migration:476"])
     def test_delete_comment_preserves_migration_snapshot(
         self,
         client: TestClient,
@@ -1403,7 +1403,7 @@ class TestComments:
         assert row["body"] == body
 
     @pytest.mark.parametrize(
-        ("author", "author_type"), [("migration:475", "session"), ("watchdog", "system")]
+        ("author", "author_type"), [("migration:476", "session"), ("watchdog", "system")]
     )
     def test_comment_with_unreserved_author_pair_remains_mutable(
         self, client: TestClient, sample_task: dict[str, Any], author: str, author_type: str

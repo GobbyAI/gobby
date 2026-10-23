@@ -17,7 +17,7 @@ REVOKE INSERT, UPDATE, DELETE ON task_close_review_history FROM gobby_daemon_run
 
 -- Preserve every prior task-level outcome before starting the independent-review epoch.
 INSERT INTO task_comments (id, task_id, author, author_type, body)
-SELECT gen_random_uuid(), id, 'migration:474', 'system',
+SELECT gen_random_uuid(), id, 'migration:475', 'system',
        jsonb_build_object(
            'kind', 'legacy_review_snapshot',
            'epoch', 0,

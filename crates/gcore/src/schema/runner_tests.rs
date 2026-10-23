@@ -194,8 +194,13 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
         assert_eq!(operations, expected);
         for (_, command, using_expression, check_expression) in policies {
             let predicate = format!("{using_expression} {check_expression}");
-            assert!(predicate.contains("current_code_overlay_project_id"));
-            assert!(predicate.contains("current_project_id"));
+            if command == "SELECT" && table != "code_overlay_pins" {
+                assert!(predicate.contains("current_read_code_project_ids"));
+            } else {
+                assert!(predicate.contains("current_code_overlay_project_id"));
+                assert!(predicate.contains("current_project_id"));
+                assert!(!predicate.contains("current_read_code_project_ids"));
+            }
             if [
                 "code_indexed_project_states",
                 "code_indexed_file_states",
@@ -584,8 +589,8 @@ fn interactive_principal_binds_only_registered_worktree_overlays() -> anyhow::Re
             .query_one("SELECT count(*) FROM code_indexed_projects", &[])?
             .get(0);
         assert_eq!(
-            visible_projects, 1,
-            "main checkout must not see the overlay"
+            visible_projects, 2,
+            "main checkout reads the registered local sibling overlay"
         );
         let error = main_scoped
             .execute(
@@ -1203,7 +1208,7 @@ fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Resul
     };
     let migration_index = MIGRATIONS
         .iter()
-        .position(|migration| migration.version == 475)
+        .position(|migration| migration.version == 476)
         .expect("task state migration");
     SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
         .apply()?;
@@ -1253,7 +1258,7 @@ fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Resul
         assert_eq!(row.get::<_, String>(1), "closed");
         let body: String = client
             .query_one(
-                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:475'",
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:476'",
                 &[task_id],
             )?
             .get(0);
@@ -1275,7 +1280,7 @@ fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Resul
     );
     let snapshots: i64 = client
         .query_one(
-            "SELECT count(*) FROM task_comments WHERE author = 'migration:475'",
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:476'",
             &[],
         )?
         .get(0);
@@ -1293,7 +1298,7 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
     };
     let migration_index = MIGRATIONS
         .iter()
-        .position(|migration| migration.version == 474)
+        .position(|migration| migration.version == 475)
         .expect("review epoch migration");
     SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
         .apply()?;
@@ -1358,7 +1363,7 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
         );
         let snapshot: String = client
             .query_one(
-                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:474'",
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:475'",
                 &[&task_id],
             )?
             .get(0);
@@ -1393,7 +1398,7 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
     );
     let snapshots: i64 = client
         .query_one(
-            "SELECT count(*) FROM task_comments WHERE author = 'migration:474'",
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:475'",
             &[],
         )?
         .get(0);
@@ -1444,7 +1449,7 @@ fn retired_task_validation_config_is_removed_on_upgrade() -> anyhow::Result<()> 
         SchemaRunner::new(&mut client, "public")?
             .apply()?
             .migrations_applied,
-        1
+        MIGRATIONS.len() - migration_index
     );
     let remaining: Vec<String> = client
         .query("SELECT key FROM config_store ORDER BY key", &[])?

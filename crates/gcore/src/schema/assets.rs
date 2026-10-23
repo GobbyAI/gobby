@@ -374,15 +374,21 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 474,
-        filename: "474_runbook_review_state.sql",
-        checksum: "7835942b14a328d04388a5fae421d6871a4c33f6fddd9f0eb868feb7691b4bfc",
-        sql: include_str!("../../assets/schema/migrations/474_runbook_review_state.sql"),
+        filename: "474_registered_checkout_read_scope.sql",
+        checksum: "c505c7916c763265ddf70aba19e3e87de637679e17225afcb867ad0473a87944",
+        sql: include_str!("../../assets/schema/migrations/474_registered_checkout_read_scope.sql"),
     },
     EmbeddedMigration {
         version: 475,
-        filename: "475_runbook_task_states.sql",
-        checksum: "1eea8ea3f53d81d8cff578f7bd1af038507740d6bc48cd9607552ec846076d7a",
-        sql: include_str!("../../assets/schema/migrations/475_runbook_task_states.sql"),
+        filename: "475_runbook_review_state.sql",
+        checksum: "6a30ab9d9a10afcd0afd1a725aa09f7a1fce7ed2b6ee67726e07ceb8e58288ff",
+        sql: include_str!("../../assets/schema/migrations/475_runbook_review_state.sql"),
+    },
+    EmbeddedMigration {
+        version: 476,
+        filename: "476_runbook_task_states.sql",
+        checksum: "3d0575110e682eca894873b63c67028bfc125d0c8724ee228dc909c4cab97140",
+        sql: include_str!("../../assets/schema/migrations/476_runbook_task_states.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

@@ -20,6 +20,9 @@ use super::{
 #[path = "serial_db_persistence_tests.rs"]
 mod serial_db_persistence_tests;
 
+#[path = "sibling_read_tests.rs"]
+mod sibling_read_tests;
+
 #[test]
 #[serial_test::serial(serial_db)]
 fn input_digest_skips_partition_build_and_rebuilds_changed_imports() {
@@ -433,7 +436,7 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                 .get(0);
             assert_eq!(foreign_count, 0);
 
-            // The already-issued login gains read authority from a live review link.
+            // The already-issued reviewer login gains reads from live registration.
             // Its frozen admitted overlay remains its only write scope.
             let developer_id = uuid::Uuid::new_v4();
             let reviewer_run_id = uuid::Uuid::new_v4();
@@ -558,7 +561,7 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             )
             .expect("developer indexes committed candidate");
             let mut review_ctx =
-                resolve(&foreign_root).expect("live assignment admits reviewer evidence");
+                resolve(&foreign_root).expect("registered sibling admits reviewer evidence");
             review_ctx.quiet = false;
             assert!(
                 !review_ctx
@@ -614,7 +617,14 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             owner
                 .execute("DELETE FROM session_tasks WHERE task_id = $1", &[&task_id])
                 .expect("end review assignment");
-            resolve(&foreign_root).expect_err("unassigned developer worktree is refused again");
+            resolve(&foreign_root).expect("registered sibling remains readable without assignment");
+            owner
+                .execute(
+                    "UPDATE worktrees SET status = 'removed' WHERE id = $1",
+                    &[&review_worktree_id],
+                )
+                .expect("retire sibling worktree");
+            resolve(&foreign_root).expect_err("inactive sibling worktree is refused again");
         },
     );
 }
@@ -2039,6 +2049,24 @@ fn managed_overlay_principal(
     overlay_root: &Path,
     expected_overlay_id: uuid::Uuid,
 ) -> ManagedPrincipal {
+    managed_principal(
+        owner,
+        database_url,
+        parent_id,
+        parent_root,
+        overlay_root,
+        Some(expected_overlay_id),
+    )
+}
+
+fn managed_principal(
+    owner: &mut postgres::Client,
+    database_url: &str,
+    parent_id: &str,
+    parent_root: &Path,
+    overlay_root: &Path,
+    expected_overlay_id: Option<uuid::Uuid>,
+) -> ManagedPrincipal {
     let machine_id =
         db::id_param(&gobby_core::machine::read_local_machine_id().expect("machine id"))
             .expect("machine uuid");
@@ -2071,21 +2099,23 @@ fn managed_overlay_principal(
             &[&session_id, &external_id, &machine_id, &parent_id],
         )
         .expect("seed managed principal session");
-    owner
-        .execute(
-            "INSERT INTO worktrees(
+    if expected_overlay_id.is_some() {
+        owner
+            .execute(
+                "INSERT INTO worktrees(
                  id, project_id, machine_id, branch_name, worktree_path, agent_session_id
              ) VALUES ($1, $2, $3, $4, $5, $6)",
-            &[
-                &worktree_id,
-                &parent_id,
-                &machine_id,
-                &format!("community-managed-{worktree_id}"),
-                &overlay_root,
-                &session_id,
-            ],
-        )
-        .expect("seed managed principal worktree");
+                &[
+                    &worktree_id,
+                    &parent_id,
+                    &machine_id,
+                    &format!("community-managed-{worktree_id}"),
+                    &overlay_root,
+                    &session_id,
+                ],
+            )
+            .expect("seed managed principal worktree");
+    }
     let issued = owner
         .query_one(
             "SELECT role_name::TEXT, credential_generation
@@ -2106,7 +2136,7 @@ fn managed_overlay_principal(
         )
         .expect("read managed principal binding")
         .get(0);
-    assert_eq!(bound_overlay_id, Some(expected_overlay_id));
+    assert_eq!(bound_overlay_id, expected_overlay_id);
 
     let mut config = database_url
         .parse::<postgres::Config>()

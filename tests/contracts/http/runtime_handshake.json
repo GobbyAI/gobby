@@ -33,10 +33,10 @@
         "schema_identity": {
           "runner_protocol": 1,
           "baseline_version": 420,
+          "latest_version": 476,
           "baseline_checksum": "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a",
-          "latest_version": 473,
-          "latest_checksum": "c1677080e1d8274ebd424b538e6a4805d0e27135d770a6845c277402a7c8af99",
-          "assets_root_hash": "02b8ef643555f8eb30fced2a0b495e16d0a225f9b113e70c17d2d9e28fed6444"
+          "latest_checksum": "3d0575110e682eca894873b63c67028bfc125d0c8724ee228dc909c4cab97140",
+          "assets_root_hash": "ad8a2355c27f0d12b5fccd6608642f07009906c9087ef55def15bbca4faeda01"
         },
         "principal": {
           "kind": "interactive",

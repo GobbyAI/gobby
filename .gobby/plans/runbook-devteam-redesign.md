@@ -36,7 +36,7 @@ Josh approved implementing the complete redesign, including finishing removal of
 
 The existing `.gobby/plans/remove-gobby-build.md` and epic #23341 remain authoritative for their existing leaves. Do not duplicate or re-expand them under this plan. Finish #23850 (external dispatch drivers/callers), #23851 (build/dispatch packages), #23852–#23856 (stage-only agents and tools), #23857/#23858/#24062 (consumers and storage), #23859/#23860 (guidance) and #23861 (schema drop) under their current ownership. Preserve already-landed P1 and sections 2.1–2.3.
 
-The prerequisite epic #23341 and all of #24317 closed on October 22 at `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`. Its absorbed #24799 delivered sections 1.1–1.4. The build drop uses migration 472, and migration 473 retires its stored configuration. Sections 2.1 onward execute under #24797 alone, without expansion or per-leaf claims, as Josh explicitly directed. Preserve task-close-reviewer and all other protected definitions under the later operator ruling. Numeric allocation remains mechanical: verify all refs and the live schema immediately before writing; the next candidate migrations are 474 and 475.
+The prerequisite epic #23341 and all of #24317 closed on October 22 at `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`. Its absorbed #24799 delivered sections 1.1–1.4. The build drop uses migration 472, and migration 473 retires its stored configuration. Sections 2.1 onward execute under #24797 alone, without expansion or per-leaf claims, as Josh explicitly directed. Preserve task-close-reviewer and all other protected definitions under the later operator ruling. Numeric allocation remains mechanical: verify all refs and the live schema immediately before writing. #24812 took migration 474 on October 22, so this plan's migrations are 475 (review state) and 476 (task states).
 
 To avoid a cycle, #23861 waits on this plan's 1.4, while 1.1–1.4 wait only on the needed code/storage removals, not #23861 or epic #23341. Sections 2.1 onward that need the schema wait on #23861. Task #23817 remains open for human-review routing, deferred follow-up behavior and their UI; the approved seven-state values and minimum invariants belong here. Verify #23433's snapshot-only worktree indexing delivery before changing its status. Do not adopt #23902 or create competing performance work.
 
@@ -71,7 +71,7 @@ Delivery evidence: `0911dcc603` and its linked correction commits; final #23341 
 `[category: code]`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/474_runbook_review_state.sql`
+- `crates/gcore/assets/schema/migrations/475_runbook_review_state.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the complete schema catalog carrier
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: carry regenerated schema identity
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: verify schema and review data migration
@@ -141,7 +141,7 @@ Targets:
 - `web/src/lib/taskState.ts::*` — scope-reason: share canonical state projection and read-only filters
 - `web/src/components/tasks/TaskBadges.tsx::*` — scope-reason: render the approved task state values
 - `web/src/components/activity/TasksTabFilters.tsx::*` — scope-reason: filter the approved state vocabulary without adding lifecycle controls
-- `crates/gcore/assets/schema/migrations/475_runbook_task_states.sql`
+- `crates/gcore/assets/schema/migrations/476_runbook_task_states.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the complete state schema catalog carrier
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: carry state schema identity
 - `crates/gcore/tests/schema_contract.rs::*` — scope-reason: verify claim-trigger state computation
