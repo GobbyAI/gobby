@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -206,11 +207,16 @@ async def test_successful_pinned_batch(case: LandingCase) -> None:
 
     # Changed paths choose the plan: Python, the changed crate and its reverse path
     # dependent (never the independent crate), and the web checks that are configured.
+    # Pytest runs on the isolated test hub, so hub-backed tests fail instead of skipping.
+    guarded = (
+        "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks -q"
+    )
     assert record.check_plan == (
         Check("lint", "lint-cmd"),
         Check("format", "format-cmd"),
         Check("type_check", "type-cmd"),
-        Check("pytest", "uv run pytest tests/tasks -q"),
+        Check("pytest", guarded),
         Check("cargo_fmt", "fmt-cmd"),
         Check("clippy", "cargo clippy -p gobby-core -p gobby-daemon -- -D warnings"),
         Check("nextest", "cargo nextest run -p gobby-core -p gobby-daemon"),
@@ -615,11 +621,13 @@ async def test_release_authority_and_worker_reconnect(
     tool_claims = replace(
         run_claims, agent_run_id=None, managed_execution_id="exec", kind="tool_chat"
     )
+    unregistered = replace(run_claims, project_id="00000000-0000-4000-8000-000000000000")
     for route in ("shutdown", "restart"):
         assert _route_status(case.db, route, run_claims) == 403, route
         assert _route_status(case.db, route, run_claims, "0" * 32) == 403, route
         assert _route_status(case.db, route, tool_claims) == 403, route
         assert _route_status(case.db, route, False) == 403, route
+        assert _route_status(case.db, route, unregistered, held.token) == 403, route
     boundaries["prepare"].assert_not_called()
     boundaries["request"].assert_not_called()
     assert _route_status(case.db, "shutdown", run_claims, held.token) == 200
@@ -700,3 +708,51 @@ def test_direct_start_drops_agent_identity(monkeypatch: pytest.MonkeyPatch, tmp_
     env = popen.call_args.kwargs["env"]
     assert not identity.keys() & env.keys()
     assert env["GOBBY_HOME"] == str(tmp_path / "home")
+
+
+@pytest.mark.parametrize("command", ["restart", "cutover"])
+def test_activation_starts_the_daemon_it_stopped_after_the_lease_lapses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, command: str
+) -> None:
+    """Refusing the start after the command's own stop would leave no daemon."""
+    stopped: list[bool] = []
+
+    def stop(*_args: object, **_kwargs: object) -> bool:
+        stopped.append(True)
+        return True
+
+    def run_cutover(
+        _root: Path,
+        _bin_dir: Path,
+        *,
+        stop_daemon: Callable[[], bool],
+        start_daemon: Callable[[], None],
+        start_refusal: object,
+    ) -> None:
+        stop_daemon()
+        start_daemon()
+
+    monkeypatch.setattr(
+        "gobby.releases.window.agent_activation_refusal",
+        lambda: "release_window_stale: the lease expired" if stopped else None,
+    )
+    monkeypatch.setattr(daemon_lifecycle, "restart_start_refusal", lambda *_a, **_k: None)
+    monkeypatch.setattr(daemon_lifecycle, "_do_stop", stop)
+    monkeypatch.setattr(cutover_cli, "_do_stop", stop)
+    monkeypatch.setattr(cutover_cli, "load_bootstrap", MagicMock())
+    monkeypatch.setattr(cutover_cli, "node_daemon_refusal", lambda _bootstrap: None)
+    monkeypatch.setattr(cutover_cli, "_workspace_root", lambda _path: tmp_path)
+    monkeypatch.setattr(cutover_cli, "read_workspace_pin", lambda _root: {})
+    monkeypatch.setattr(cutover_cli, "run_cutover", run_cutover)
+    start_probe = MagicMock(return_value="probe")
+    monkeypatch.setattr(daemon_start, "worktree_daemon_refusal", start_probe)
+    entry, args = (
+        (daemon_lifecycle.restart, ["--full"])
+        if command == "restart"
+        else (cutover_cli.cutover, ["--allow-dirty"])
+    )
+
+    result = CliRunner().invoke(entry, args, obj=CliRuntime(config_file=None))
+
+    assert stopped == [True], result.output
+    assert start_probe.called, result.output

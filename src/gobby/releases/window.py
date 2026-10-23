@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import secrets
 from dataclasses import dataclass, replace
@@ -24,9 +25,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gobby.storage.hub.protocol import MainCheckoutLanding
-from gobby.storage.project_checkouts import require_root
+from gobby.storage.project_checkouts import (
+    CheckoutNotFoundError,
+    CheckoutSentinelRejectedError,
+    require_root,
+)
 from gobby.sync.jsonl_io import atomic_write_text
+from gobby.utils import spawn
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.local_token import GOBBY_RELEASE_TOKEN_ENV
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -38,6 +45,7 @@ RENEW_INTERVAL = timedelta(seconds=60)
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _TOKEN_BYTES = 16
+_COMMON_DIR_ARGS = ("rev-parse", "--path-format=absolute", "--git-common-dir")
 _UNREADABLE_MESSAGE = "release window state is unreadable; delete release-window.json to recover"
 
 
@@ -244,13 +252,14 @@ def require_window_owner(
     *,
     owner_session_id: str,
     token: str,
-    generation: int,
+    generation: int | None = None,
     now: datetime,
 ) -> ReleaseWindow:
     """Fence an irreversible step by returning the live lease the caller still owns.
 
-    Raises ``release_window_stale`` on any owner, token or generation mismatch, or when
-    the lease has expired at ``now``.
+    Raises ``release_window_stale`` on any owner, token or given generation mismatch, or
+    when the lease has expired at ``now``. A batch passes no generation, because its
+    keeper renews the lease while the step runs.
     """
     return _fenced(
         read_window(git_common_dir),
@@ -259,6 +268,51 @@ def require_window_owner(
         generation=generation,
         now=now,
     )
+
+
+def agent_activation_refusal() -> str | None:
+    """Refuse a daemon activation step unless the caller may take it now.
+
+    A caller holding a release token must own the live window of the checkout it runs
+    in. A spawned agent without a token is refused. The operator and persona panes
+    carry neither and pass.
+    """
+    token = os.environ.get(GOBBY_RELEASE_TOKEN_ENV, "").strip()
+    if not token:
+        if os.environ.get("GOBBY_AGENT_RUN_ID", "").strip():
+            return (
+                "release_token_missing: spawned agents stop, start, restart and cut over "
+                "the daemon only through `gobby release batch`"
+            )
+        return None
+    try:
+        require_window_owner(
+            sync_git_common_dir(Path.cwd()),
+            owner_session_id=os.environ.get("GOBBY_SESSION_ID", "").strip(),
+            token=token,
+            now=datetime.now(UTC),
+        )
+    except ReleaseWindowRefused as refused:
+        return f"{refused.code}: {refused}"
+    return None
+
+
+async def route_activation_refusal(
+    db: HubDatabase, *, session_id: str, project_id: str, token: str, now: datetime
+) -> str | None:
+    """Refuse a managed caller's shutdown or restart request without its live token."""
+    if not token:
+        return "release_token_missing: managed callers need the live release token"
+    try:
+        common = await _project_common_dir(db, project_id)
+        await asyncio.to_thread(
+            require_window_owner, common, owner_session_id=session_id, token=token, now=now
+        )
+    except (CheckoutNotFoundError, CheckoutSentinelRejectedError) as exc:
+        return f"main_checkout_unavailable: {exc}"
+    except ReleaseWindowRefused as refused:
+        return f"{refused.code}: {refused}"
+    return None
 
 
 def _parse(data: object) -> ReleaseWindow | ReleaseWindowUnreadable:
@@ -335,7 +389,7 @@ def _fenced(
     *,
     owner_session_id: str,
     token: str,
-    generation: int,
+    generation: int | None,
     now: datetime,
 ) -> ReleaseWindow:
     """Return ``state`` when the caller holds it live; otherwise raise the matching refusal."""
@@ -346,7 +400,7 @@ def _fenced(
     if (
         state.owner_session_id != owner_session_id
         or state.token != token
-        or state.generation != generation
+        or (generation is not None and state.generation != generation)
     ):
         raise ReleaseWindowRefused(
             "release_window_stale", "the release window belongs to another lease"
@@ -366,7 +420,17 @@ async def _git_text(cwd: Path, *args: str) -> str:
 
 
 async def _git_common_dir(cwd: Path) -> Path:
-    return Path(await _git_text(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+    return Path(await _git_text(cwd, *_COMMON_DIR_ARGS))
+
+
+def sync_git_common_dir(cwd: Path) -> Path:
+    """Resolve the common dir without an event loop, for CLI entry points and threads."""
+    result = spawn.run(["git", *_COMMON_DIR_ARGS], cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ReleaseWindowRefused(
+            "main_checkout_unavailable", f"git rev-parse failed: {result.stderr.strip()}"
+        )
+    return Path(result.stdout.strip())
 
 
 async def _project_common_dir(db: HubDatabase, project_id: str) -> Path:

@@ -4,9 +4,10 @@ import asyncio
 import logging
 import os
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from gobby.sessions.handoff_shutdown import (
     HandoffShutdownBlocked,
@@ -15,6 +16,7 @@ from gobby.sessions.handoff_shutdown import (
 )
 from gobby.shutdown_intent import ShutdownIntent, shutdown_marker_details
 from gobby.telemetry.instruments import inc_counter
+from gobby.utils.local_token import RELEASE_TOKEN_HEADER
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -95,6 +97,27 @@ def _restart_start_refusal() -> str | None:
         runtime.close()
 
 
+async def _managed_activation_refusal(server: "HTTPServer", request: Request) -> str | None:
+    """Refuse a managed caller that does not present its live release window token.
+
+    Operators, the web UI and break-glass callers have no managed principal and pass.
+    """
+    principal = await server.run_db(server.auth_service.request_principal, request)
+    if principal is None:
+        return None
+    if principal is False:
+        return "the managed credential was rejected"
+    from gobby.releases.window import route_activation_refusal
+
+    return await route_activation_refusal(
+        server.services.database,
+        session_id=principal.session_id,
+        project_id=principal.project_id,
+        token=request.headers.get(RELEASE_TOKEN_HEADER, "").strip(),
+        now=datetime.now(UTC),
+    )
+
+
 def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/cron/protected-runs")
     async def protected_cron_runs() -> dict[str, Any]:
@@ -110,6 +133,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
     @router.post("/shutdown")
     async def shutdown(
+        request: Request,
         response: Response,
         terminals: bool = False,
         force: bool = False,
@@ -126,6 +150,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         start_time = time.perf_counter()
         inc_counter("shutdown_requests_total")
+        if refusal := await _managed_activation_refusal(server, request):
+            raise HTTPException(status_code=403, detail=refusal)
         machine_id = require_machine_id()
         shutdown_initiated = False
         admission_prepared = False
@@ -193,6 +219,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
     @router.post("/restart")
     async def restart(
+        request: Request,
         response: Response,
         force: bool = False,
         terminals: bool = False,
@@ -208,6 +235,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         ``terminals=true`` also restarts the gterm host (#22002).
         """
         start_time = time.perf_counter()
+        if refusal := await _managed_activation_refusal(server, request):
+            raise HTTPException(status_code=403, detail=refusal)
 
         restart_lock = _get_restart_lock()
         if restart_lock.locked():

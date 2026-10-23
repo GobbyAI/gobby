@@ -87,6 +87,8 @@ class TestAdminRoutes:
         server._running = True
         server.port = 60887
         server.test_mode = False
+        # An operator caller: no managed principal, so the release window fence passes.
+        server.auth_service.request_principal.return_value = None
 
         # Mock Daemon
         server._daemon = MagicMock()
@@ -144,9 +146,14 @@ class TestAdminRoutes:
         return server
 
     @pytest.fixture
-    def client(self, mock_server: MagicMock) -> TestClient:
+    def client(self, mock_server: MagicMock, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         from fastapi import FastAPI
 
+        # The real start proof reads this machine's checkout, binaries and hub;
+        # tests/servers/routes/admin/test_restart_start_proof.py covers it.
+        monkeypatch.setattr(
+            "gobby.servers.routes.admin._lifecycle._restart_start_refusal", lambda: None
+        )
         app = FastAPI()
         router = create_admin_router(mock_server)
         app.include_router(router)
@@ -1112,7 +1119,7 @@ class TestAdminRoutes:
             "message": f"{'Restart' if endpoint == 'restart' else 'Shutdown'} blocked by active protected cron runs",
             "protected_runs": protected_runs,
         }
-        mock_server.run_db.assert_awaited_once_with(scheduler.list_protected_runs)
+        mock_server.run_db.assert_any_await(scheduler.list_protected_runs)
         assert mock_server._runner._shutdown_requested is False
 
     @pytest.mark.parametrize(

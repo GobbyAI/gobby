@@ -123,6 +123,10 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("GET", "/api/embeddings/switch/status", False),
     _AgentRoute("GET", "/api/memories/graph/counts", False),
     _AgentRoute("GET", "/api/memories/graph/rebuild/status", False),
+    # Daemon activation; the routes refuse managed callers without the live
+    # release window token.
+    _AgentRoute("POST", "/api/admin/shutdown", True),
+    _AgentRoute("POST", "/api/admin/restart", True),
 )
 
 
