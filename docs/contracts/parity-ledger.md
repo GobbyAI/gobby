@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1109. Unclassified: 0.
+Public surfaces and evidence gates: 1110. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -979,6 +979,7 @@ Public surfaces and evidence gates: 1109. Unclassified: 0.
 | `MCP gobby-tasks:get_task_sessions` | proxied | Blocked on #21560 Tasks family: port `get_task_sessions` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:289`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:get_task_stages` | dropped by decision #23341 | Stage dispatch and stage-review surface retired under #23341; no native replacement is required. |
 | `MCP gobby-tasks:get_task_type_defaults` | dropped by decision #23341 | Stage dispatch and stage-review surface retired under #23341; no native replacement is required. |
+| `MCP gobby-tasks:hand_off_task_claim` | proxied | Python `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::hand_off_task_claim`; Rust blocker: #21560 Tasks family and #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:link_commit` | proxied | Blocked on #21560 Tasks family: port `link_commit` from Python handler `src/gobby/mcp_proxy/tools/task_commits.py:135`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:link_task_to_session` | proxied | Blocked on #21560 Tasks family: port `link_task_to_session` from Python handler `src/gobby/mcp_proxy/tools/tasks/_session.py:125`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |
 | `MCP gobby-tasks:list_blocked_tasks` | proxied | Blocked on #21560 Tasks family: port `list_blocked_tasks` from Python handler `src/gobby/mcp_proxy/tools/task_readiness.py:499`; #21570 MCP front door flip must re-front `gobby-tasks` onto Rust. |

@@ -380,6 +380,19 @@ def _caller_binding(db: HubDatabase, caller: Session) -> TeamBinding | None:
     return binding
 
 
+def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
+    """The admitted team whose runbook launched this seat, or None outside any team."""
+    sessions = SessionManager(db)
+    seat = sessions.get(session_id)
+    runbook = sessions.get(seat.parent_session_id) if seat and seat.parent_session_id else None
+    if runbook is None:
+        return None
+    try:
+        return _caller_binding(db, runbook)
+    except TeamAdmissionRefused:
+        return None
+
+
 def _task_id(db: HubDatabase, ref: str, binding: TeamBinding) -> str | None:
     try:
         return LocalTaskManager(db).resolve_task_reference(ref, binding.project_id)

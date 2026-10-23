@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import (
+    Task,
     TaskAlreadyClaimedError,
     TaskClosedError,
     TaskNotFoundError,
@@ -23,6 +24,32 @@ from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_s
 from gobby.workflows.task_claim_state import active_task_id_for_edit
 
 logger = logging.getLogger(__name__)
+
+
+def record_claimant_state(ctx: RegistryContext, session_id: str, task: Task) -> None:
+    """Link a new claimant to its committed claim, refresh its skill state and retitle it."""
+    # Link task to session (best-effort, don't fail the claim if this fails)
+    try:
+        ctx.session_task_manager.link_task(session_id, task.id, "claimed")
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.debug("Best-effort session claim linking failed: %s", e)
+
+    # Storage commits ownership and selection together. A delayed MCP result
+    # must not overwrite a newer selection made by another concurrent claim.
+    session_vars = ctx.session_var_manager.get_variables(session_id)
+    ctx.session_var_manager.merge_variables(
+        session_id,
+        build_claimed_task_extra_skill_state(session_vars, ctx.task_manager),
+    )
+
+    try:
+        from gobby.sessions.title_lifecycle import update_title_for_claim
+
+        update_title_for_claim(ctx.session_manager, session_id, task)
+    except Exception as e:
+        logger.warning("Failed to update session title after claiming %s: %s", task.id, e)
 
 
 def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
@@ -160,28 +187,7 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         if not updated:
             return {"error": f"Failed to claim task {task_id}"}
 
-        # Link task to session (best-effort, don't fail the claim if this fails)
-        try:
-            ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "claimed")
-        except ValueError:
-            raise
-        except Exception as e:
-            logger.debug("Best-effort session claim linking failed: %s", e)
-
-        # Storage commits ownership and selection together. A delayed MCP result
-        # must not overwrite a newer selection made by another concurrent claim.
-        session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
-        ctx.session_var_manager.merge_variables(
-            resolved_session_id,
-            build_claimed_task_extra_skill_state(session_vars, ctx.task_manager),
-        )
-
-        try:
-            from gobby.sessions.title_lifecycle import update_title_for_claim
-
-            update_title_for_claim(ctx.session_manager, resolved_session_id, updated)
-        except Exception as e:
-            logger.warning("Failed to update session title after claiming %s: %s", task_id, e)
+        record_claimant_state(ctx, resolved_session_id, updated)
 
         # The title travels with the claim so memory surfacing can query the
         # task's subject without a second read; step workflows bind the ref.

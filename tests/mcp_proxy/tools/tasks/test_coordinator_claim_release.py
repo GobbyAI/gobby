@@ -24,6 +24,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_dirty_state import task_dirty_paths
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.landing_case import grant_orchestrator
 
 pytestmark = pytest.mark.unit
 
@@ -121,8 +122,7 @@ def world(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
             "task_edited_file_checkouts": {task.id: {str(repo): ["note.py"]}},
         },
     )
-    AgentDefinitionManager(temp_db).create("orchestrator", {}, project_id=checkout.project.id)
-    variables.set_variable(coordinator.id, "_agent_type", "orchestrator")
+    grant_orchestrator(temp_db, coordinator.id, checkout.project.id)
     return ReleaseWorld(
         temp_db,
         tasks,
