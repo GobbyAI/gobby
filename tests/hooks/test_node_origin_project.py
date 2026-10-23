@@ -12,7 +12,7 @@ import pytest
 
 from gobby.hooks.checkout_reads import delivery_scope
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -161,56 +161,80 @@ async def test_node_project_path_uses_node_row(
         assert event.metadata["project_path"] == expected
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("sequencer_path", "allowed"),
-    [("/node/repo/src/b.py", True), ("/node/other/c.py", False)],
-)
-async def test_node_sequencer_scope_keeps_node_paths(
-    event_handlers: EventHandlers,
-    monkeypatch: pytest.MonkeyPatch,
-    sequencer_path: str,
-    allowed: bool,
-) -> None:
-    FakeNode().install(monkeypatch)
-    # The hub must not rewrite a node's cwd or workspace through its own symlinks.
-    # The path primitives are node-backed under #24525; these lexical stand-ins
-    # only record the strings the handler passes them.
-    seen: list[tuple[str, Path | None]] = []
+def _node_entry(node: FakeNode, path: str, *, root: str, kind: str = "file") -> None:
+    node.add_file(NODE_MACHINE, path, b"")
+    node.files[NODE_MACHINE][path].update(resolved=path, kind=kind, checkout_root=root)
 
-    def lexical_root(path: Path) -> None:
-        seen.append(("checkout_root", path))
 
-    def lexical_target(path: Any, cwd: Path | None) -> Path | None:
-        seen.append(("resolve_tool_path", cwd))
-        return Path(path)
-
-    monkeypatch.setattr("gobby.hooks.event_handlers._tool.checkout_root", lexical_root)
-    monkeypatch.setattr("gobby.hooks.event_handlers._tool.resolve_tool_path", lexical_target)
+def _seat_sequencer_event(
+    event_handlers: EventHandlers, monkeypatch: pytest.MonkeyPatch, sequencer_path: str
+) -> HookEvent:
     session = MagicMock()
     session.workspace_path = "/node/repo"
     manager = MagicMock()
     manager.get.return_value = session
     monkeypatch.setattr(event_handlers, "_session_manager", manager)
-
-    def hub_forbidden(*_args: Any, **_kwargs: Any) -> Any:
-        raise AssertionError("node event resolved its cwd or workspace on the hub")
-
-    monkeypatch.setattr(Path, "resolve", hub_forbidden)
-    cwd = "/node/repo/src"
     event = make_event(
         HookEventType.BEFORE_TOOL,
         data={"tool_name": "Bash", "canonical_git_sequencer_scope_paths": [sequencer_path]},
         machine_id=NODE_MACHINE,
     )
-    event.cwd = cwd
+    event.cwd = "/node/repo/src"
+    return event
 
-    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sequencer_path", "checkout", "allowed"),
+    [
+        ("/node/repo/src/b.py", "/node/repo", True),
+        ("/node/other/c.py", "/node/other", False),
+    ],
+)
+async def test_node_sequencer_scope_uses_node_checkout(
+    event_handlers: EventHandlers,
+    monkeypatch: pytest.MonkeyPatch,
+    sequencer_path: str,
+    checkout: str,
+    allowed: bool,
+) -> None:
+    node = FakeNode()
+    node.install(monkeypatch)
+    _node_entry(node, "/node/repo", root="/node/repo", kind="dir")
+    _node_entry(node, sequencer_path, root=checkout)
+    event = _seat_sequencer_event(event_handlers, monkeypatch, sequencer_path)
+
+    def hub_forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("node event resolved its cwd or workspace on the hub")
+
+    monkeypatch.setattr(Path, "resolve", hub_forbidden)
+
+    def check() -> None:
+        event_handlers._assert_edit_path_selection(event, "node-session")
+
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), "/node/repo/src"):
         if allowed:
-            event_handlers._assert_edit_path_selection(event, "node-session")
+            await asyncio.to_thread(check)
         else:
             with pytest.raises(ValueError, match="outside the seat's own checkout"):
-                event_handlers._assert_edit_path_selection(event, "node-session")
+                await asyncio.to_thread(check)
 
-    assert ("checkout_root", Path("/node/repo")) in seen
-    assert ("resolve_tool_path", Path(cwd)) in seen
+    queried = {path for request in node.requests for path in request[2]["query"]["paths"]}
+    assert {"/node/repo", sequencer_path} <= queried
+
+
+@pytest.mark.asyncio
+async def test_node_sequencer_scope_fails_closed_without_node(
+    event_handlers: EventHandlers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node = FakeNode()
+    node.install(monkeypatch)
+    node.fail(NODE_MACHINE, "channel_closed")
+    event = _seat_sequencer_event(event_handlers, monkeypatch, "/node/repo/src/b.py")
+
+    def check() -> None:
+        event_handlers._assert_edit_path_selection(event, "node-session")
+
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), "/node/repo/src"):
+        with pytest.raises(ValueError, match="outside the seat's own checkout"):
+            await asyncio.to_thread(check)
