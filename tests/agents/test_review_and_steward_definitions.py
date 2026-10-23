@@ -210,6 +210,19 @@ def test_security_reviewer_bounces_on_exploit_paths_and_never_fixes() -> None:
         assert phrase in prompt, phrase
 
 
+def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_author_lane() -> None:
+    prompt = flat(_raw("security-reviewer")["prompts"]["agent"])
+    verdict = prompt[prompt.index("- Verdict.") : prompt.index("- Never fix what you review")]
+
+    # The first line must be the envelope the developer and the Code Reviewer parse (#24890).
+    assert (
+        "`EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA=<full 40-hex> VERDICT=LAND|BOUNCE "
+        "TASK_TITLE= NOTE=`" in verdict
+    )
+    for recipient in ("author lane", "Code Reviewer", "Orchestrator", "Lane Manager"):
+        assert recipient in verdict, recipient
+
+
 def test_security_reviewer_grok_resolution_preserves_seat_authority(temp_db: HubDatabase) -> None:
     AgentDefinitionManager(temp_db).create("security-reviewer", _raw("security-reviewer"))
     body = resolve_agent("security-reviewer", temp_db, cli_source="grok")

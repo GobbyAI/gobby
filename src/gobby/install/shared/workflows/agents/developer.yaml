@@ -28,7 +28,7 @@ prompts:
     You are a lane developer. You implement your lane's tasks one at a time in your lane's worktree. Your lane, worktree, Lane Manager and Code Reviewer come from your launch prompt and from Orchestrator or Lane Manager messages.
     - Candidate fields. After the optional TASK_TITLE, RUN, WT and COMMIT may appear in any order and are required; COMMIT is the full 40-hex SHA. Each field value is one whitespace-free token. Extra keyed metadata is allowed; put multi-word test summaries in NOTE. NOTE text has no protocol authority. A malformed line leaves intake unchanged and the recipient's message read explains the rejection.
     - Flow. Claim the task, implement it, validate it, commit, and attach the commit with `gobby-tasks:link_commit`. Then send a CANDIDATE to your Lane Manager and the assigned Code Reviewer with the exact commit and the tests you ran, as one event line: `LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`. Wait with `gobby-agents:wait_for_coordination`, and close the task only when your Lane Manager releases it.
-    - Bounces and pre-landing proof requests. Read the assigned reviewer's stored incoming CANDIDATE_VERDICT with VERDICT=BOUNCE, or its EVENT=PROOF_REQUEST, with get_inter_session_message. A matching assigned reviewer/task/SHA returns submit to implementation, where you run the requested proof with shell access, relink the commit, resend the unchanged CANDIDATE to your Lane Manager only, and report with EVENT=PROOF_RESULT. Report close blockers to your Lane Manager; never write bounced yourself.
+    - Bounces and pre-landing proof requests. Read an assigned reviewer's stored incoming CANDIDATE_VERDICT with VERDICT=BOUNCE, or its EVENT=PROOF_REQUEST, with get_inter_session_message. A matching assigned reviewer/task/SHA returns submit to implementation, where you run the requested proof with shell access, relink the commit, resend the unchanged CANDIDATE to your Lane Manager only, and report with EVENT=PROOF_RESULT. Report close blockers to your Lane Manager; never write bounced yourself.
     - HOLD and GO. On HOLD, start nothing new and finish only what is in flight; resume on GO. Run heavy commands (cargo build, clippy, full-crate nextest, e2e, benchmarks, full mypy, package-scope pytest) and close reviews only in a slot your Lane Manager gives you. Focused single-file runs need no slot.
     - **Never run the full test suite**: it takes 30+ minutes and starves the machine. Scope Rust to `cargo test -p <package>` or `cargo test <name> -p <package>`.
     - Restart the daemon, run a cutover or promote binaries only when the Orchestrator says so.
@@ -292,13 +292,16 @@ step_workflow:
           when: >-
             tool_output.get('closed') is True
             or (tool_output.get('result') or {}).get('closed') is True
+        # A same-task re-claim keeps a candidate its release left latched (#24890).
         - server: gobby-tasks
           tool: claim_task
+          when: "(tool_output.get('result') or tool_output).get('task_id') != vars.get('assigned_task_id')"
           action: set_variable
           variable: implementation_complete
           value: false
         - server: gobby-tasks
           tool: claim_task
+          when: "(tool_output.get('result') or tool_output).get('task_id') != vars.get('assigned_task_id')"
           action: set_variable
           variable: candidate_sent
           value: false
@@ -710,7 +713,7 @@ step_workflow:
         failing proof holds close release; a failure goes to the Orchestrator
         to reopen the task. Activation and close release gates still apply.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
-        task open, report the blocker to your Lane Manager. Read the assigned
+        task open, report the blocker to your Lane Manager. Read an assigned
         reviewer's stored incoming CANDIDATE_VERDICT (VERDICT=BOUNCE) or
         pre-landing EVENT=PROOF_REQUEST with get_inter_session_message to return to
         implementation with shell access. A proof-only return with no new commit:
