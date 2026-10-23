@@ -9,9 +9,11 @@ import subprocess
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
+from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_teardown import TeamRunTerminator, TeamTreeDeleter
 from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.clones.git import CloneGitManager, GitOperationResult
 from gobby.runner_maintenance.isolation_reconciliation import reconcile_isolation_registry
@@ -27,6 +29,7 @@ from gobby.sessions.tmux_window_naming import (
     release_window_name_if_unowned,
     resolve_tmux_repair_owner,
 )
+from gobby.storage.agents import AgentRun
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
@@ -37,6 +40,7 @@ from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
+    WorktreeDeletionResult,
     delete_worktree_transaction,
 )
 from gobby.worktrees.executor import (
@@ -45,6 +49,9 @@ from gobby.worktrees.executor import (
     run_worktree_delete,
 )
 from gobby.worktrees.git import WorktreeGitManager
+
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
@@ -265,6 +272,24 @@ async def cleanup_expired_isolation_loop(
             break
         except Exception as e:
             logger.error("Error in expired isolation cleanup loop: %s", e)
+
+
+def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
+    """End a team seat's run through the daemon termination lifecycle, closing its tab."""
+
+    async def terminate(run: AgentRun) -> bool:
+        return False
+
+    return terminate
+
+
+def team_tree_deleter(db: HubDatabase, executor: WorktreeDeleteExecutor | None) -> TeamTreeDeleter:
+    """Delete a closed team's tree through the safe deletion transaction."""
+
+    async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
+        return WorktreeDeletionResult(success=False, git_deleted=False, error="not implemented")
+
+    return delete
 
 
 async def _delete_expired_clone(

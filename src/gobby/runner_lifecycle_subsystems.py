@@ -22,11 +22,8 @@ from gobby.runner_lifecycle_agents import (
     _recover_agent_completion_subscribers_on_startup,
     _retry_parked_non_task_resumes,
 )
-from gobby.runner_lifecycle_reconcile import (
-    _reclassify_reconciliation_pending_runs,
-    _reconcile_agent_runs_after_restart,
-    _rotate_due_managed_credentials,
-)
+from gobby.runner_lifecycle_callbacks import reconcile_agent_lifecycle_state
+from gobby.runner_lifecycle_reconcile import _reconcile_agent_runs_after_restart
 from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
 from gobby.storage.sessions import SessionManager
@@ -57,15 +54,6 @@ HUB_ONLY_STARTUP_PHASES = frozenset(
         "system_automation_start",
     }
 )
-
-
-async def _reconcile_agent_lifecycle_state(runner: GobbyRunner) -> int:
-    # Rotation goes first so a failing step below cannot starve it: a binding left
-    # past its hour is revoked at the next restart, and its live run can never
-    # handshake again.
-    rotated = await _rotate_due_managed_credentials(runner)
-    reclassified = await _reclassify_reconciliation_pending_runs(runner)
-    return rotated + reclassified
 
 
 async def _run_db(
@@ -805,7 +793,7 @@ async def init_subsystems(
         if getattr(runner, "agent_runner", None) is not None:
             raise RuntimeError("Agent reconciliation owner is unavailable")
     else:
-        monitor.set_reconciliation_callback(lambda: _reconcile_agent_lifecycle_state(runner))
+        monitor.set_reconciliation_callback(lambda: reconcile_agent_lifecycle_state(runner))
         monitor.set_non_task_resume_callback(lambda: _retry_parked_non_task_resumes(runner))
     # First: clients reconnect as soon as HTTP serves and re-attach their
     # terminals, so the surviving gterm host must be adopted (or a fresh one

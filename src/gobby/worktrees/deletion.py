@@ -33,6 +33,7 @@ class DeletionSurface(Enum):
     MCP = "mcp"
     HTTP = "http"
     MAINTENANCE = "maintenance"
+    TEARDOWN = "teardown"
 
 
 @dataclass(frozen=True)
