@@ -7,6 +7,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import psycopg
 import pytest
 
 from gobby.hub import remote_terminal
@@ -19,6 +20,7 @@ from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordin
 from gobby.utils.machine_id import require_machine_id
 from tests.terminals.fakes import (
     FakeRuntime,
+    MachineOwnerRows,
     MemoryTerminalStore,
     make_memory_terminal,
     runtime_registry,
@@ -256,3 +258,22 @@ async def test_remote_refuses_client_fd_and_unnamed_keys(node: _FakeNode) -> Non
     assert node.sent == []
     assert runtime.write_log == []
     assert _unresolved(store, terminal_id) == {}
+
+
+@pytest.mark.asyncio
+async def test_ownership_read_failure_clears_latch(node: _FakeNode) -> None:
+    """A machines read that fails sends nothing and clears the latch like any refusal."""
+    coordinator, runtime, store, terminal_id = _coordinator(REMOTE_MACHINE)
+    database = MachineOwnerRows({}, error=psycopg.OperationalError("database unavailable"))
+    token = bind_caller(TEST_USER_ID, database)
+    try:
+        with pytest.raises(NodeTerminalWriteError) as excinfo:
+            await coordinator.write(_write(terminal_id))
+    finally:
+        reset_caller(token)
+
+    assert excinfo.value.code == "machine_ownership_unavailable"
+    assert excinfo.value.stage == "none"
+    assert not _latched(store, terminal_id)
+    assert runtime.write_log == []
+    assert node.sent == []

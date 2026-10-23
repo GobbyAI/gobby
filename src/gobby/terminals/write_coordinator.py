@@ -14,8 +14,10 @@ from datetime import datetime
 from functools import partial
 from typing import Literal, Protocol
 
+import psycopg
+
 from gobby.hub import remote_terminal
-from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.caller_scope import current_caller, require_machine_owned
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_terminal import NodeTerminalWriteError
@@ -771,12 +773,9 @@ class WriteCoordinator:
     ) -> WriteOutcome:
         if terminal is None:
             terminal = await asyncio.to_thread(self._require, request.terminal_id)
-        try:
-            # Off the loop: a bound caller's ownership check reads the machines table.
-            await asyncio.to_thread(require_machine_owned, terminal.machine_id)
-        except NodeCommandError as exc:
-            # Refused before anything is sent, so _write_locked clears the latch.
-            raise NodeTerminalWriteError(exc.code, stage="none") from exc
+        if request.terminal is None:
+            # A lease-validated attachment was checked once, when it attached.
+            await _require_machine_owned_write(terminal.machine_id)
         if not is_local_machine(terminal.machine_id):
             return await self._dispatch_remote(request, terminal)
         try:
@@ -811,6 +810,22 @@ class WriteCoordinator:
             if exc.stage == "partial":
                 raise TerminalWriteError(stage="partial") from exc
             raise TerminalWriteError(stage="none") from exc
+
+
+async def _require_machine_owned_write(machine_id: str | None) -> None:
+    """Refuse a bound caller's write to a machine it does not own, before anything is sent."""
+    if current_caller() is None:
+        # Unbound writers take no worker hop and no machines read.
+        return
+    try:
+        # Off the loop: the ownership check reads the machines table.
+        await asyncio.to_thread(require_machine_owned, machine_id)
+    except NodeCommandError as exc:
+        # Refused before anything is sent, so _write_locked clears the latch.
+        raise NodeTerminalWriteError(exc.code, stage="none") from exc
+    except psycopg.Error as exc:
+        # A failed read sends nothing either, so the latch must clear too.
+        raise NodeTerminalWriteError("machine_ownership_unavailable", stage="none") from exc
 
 
 def _latches(request: WriteRequest) -> bool:

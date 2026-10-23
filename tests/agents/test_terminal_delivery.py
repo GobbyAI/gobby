@@ -909,8 +909,6 @@ async def test_concurrent_terminal_delivery_retries_failed_row_cleanup() -> None
         **kwargs: Any,
     ) -> Any:
         nonlocal removal_attempts
-        if func.__name__ == "terminal_review_delivery":
-            return None
         if func.__name__ == "remove_delivered_subscribers":
             removal_attempts += 1
             if removal_attempts == 1:

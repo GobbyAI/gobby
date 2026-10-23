@@ -68,6 +68,7 @@ pytestmark = pytest.mark.unit
 class _GoldenRow:
     id: str = TERMINAL_ID
     backend: str = "native"
+    machine_id: str = MACHINE_ID
     ownership: str = "gobby"
     state: str = "live"
     title: str | None = "sess"

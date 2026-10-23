@@ -10,9 +10,11 @@ from types import MethodType
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import psycopg
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.websocket import terminal_ws, terminal_ws_write
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.server import WebSocketServer
@@ -22,7 +24,12 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalWriteError, WriteOutcome
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.write_coordinator import WriteCoordinator
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal, runtime_registry
+from tests.terminals.fakes import (
+    MachineOwnerRows,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 TmuxResult = tuple[int, str, str]
 
@@ -402,6 +409,54 @@ async def test_input_without_an_attach_client_stays_on_the_runtime() -> None:
 
     assert runtime.inputs == [b"\x1b[<64;13;12M"]
     assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_attach_refuses_a_caller_who_does_not_own_the_machine() -> None:
+    """A bound non-owner is refused at attach, before any lease or proxy starts."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    server, _ = await _server(terminal, runtime)
+    start_proxy = AsyncMock(return_value=None)
+    cast(Any, server)._start_proxy_attach = start_proxy
+    websocket = _WebSocket()
+    owners = MachineOwnerRows({terminal.machine_id: "20000000-0000-4000-8000-000000000001"})
+    token = bind_caller("20000000-0000-4000-8000-000000000002", owners)
+    try:
+        await TerminalWsMixin._handle_terminal_attach(
+            server, websocket, {"request_id": "attach-1", "terminal_id": terminal.id}
+        )
+    finally:
+        reset_caller(token)
+
+    attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"] is False
+    assert attach_result["code"] == "machine_not_owned"
+    assert start_proxy.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_attach_reports_unavailable_when_the_ownership_read_fails() -> None:
+    """A failed ownership read refuses the attach with a typed code, not a silent hang."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    server, _ = await _server(terminal, runtime)
+    start_proxy = AsyncMock(return_value=None)
+    cast(Any, server)._start_proxy_attach = start_proxy
+    websocket = _WebSocket()
+    owners = MachineOwnerRows({}, error=psycopg.OperationalError("database unavailable"))
+    token = bind_caller("20000000-0000-4000-8000-000000000002", owners)
+    try:
+        await TerminalWsMixin._handle_terminal_attach(
+            server, websocket, {"request_id": "attach-1", "terminal_id": terminal.id}
+        )
+    finally:
+        reset_caller(token)
+
+    attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"] is False
+    assert attach_result["code"] == "machine_ownership_unavailable"
+    assert start_proxy.await_count == 0
 
 
 async def test_operator_write_uses_attach_snapshot() -> None:

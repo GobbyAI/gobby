@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.mcp_proxy.tools.workspaces.registry import create_workspaces_registry
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.storage.terminals import Terminal
@@ -36,6 +37,7 @@ from gobby.terminals.write_coordinator import (
 )
 from tests.terminals.fakes import (
     FakeRuntime,
+    MachineOwnerRows,
     MemoryTerminalStore,
     make_memory_terminal,
     runtime_registry,
@@ -198,6 +200,47 @@ def test_operator_keystroke_answers_while_the_default_executor_is_held() -> None
 
     assert type(outcome).__name__ == "Delivered"
     assert runtime.write_log == [("input", b"x")]
+
+
+def test_bound_operator_keystroke_reads_no_machine_while_default_executor_is_held() -> None:
+    """A bound keystroke on a lease-validated attachment takes no worker hop and no machines read."""
+    user_id = "20000000-0000-4000-8000-000000000001"
+    terminal = make_memory_terminal()
+    runtime = FakeRuntime()
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, MemoryTerminalStore(terminal)),
+        runtime_registry(runtime),
+        lease_registry=leases,
+    )
+    machines = MachineOwnerRows({terminal.machine_id: user_id})
+
+    async def type_one_key() -> object:
+        await leases.attach(terminal.id, attachment_id="att-1")
+        taken = await leases.take_control(terminal.id, "att-1")
+        assert taken.granted
+        token = bind_caller(user_id, machines)
+        try:
+            return await coordinator.write(
+                WriteRequest(
+                    terminal_id=terminal.id,
+                    action_key="ws:att-1:1",
+                    origin="operator",
+                    kind="input",
+                    payload="x",
+                    attachment_id="att-1",
+                    expected_lease_generation=taken.lease_generation,
+                    terminal=terminal,
+                )
+            )
+        finally:
+            reset_caller(token)
+
+    outcome = _run_while_default_executor_held(type_one_key())
+
+    assert type(outcome).__name__ == "Delivered"
+    assert runtime.write_log == [("input", b"x")]
+    assert machines.calls == 0
 
 
 class _Sizer(TerminalSizingMixin):

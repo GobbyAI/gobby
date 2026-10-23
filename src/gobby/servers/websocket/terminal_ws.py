@@ -8,6 +8,10 @@ import time
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, Literal
 
+import psycopg
+
+from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.node_client import NodeCommandError
 from gobby.servers.websocket.proxy_relay import bind_proxy_frame, close_frame_quietly
 
 # WRITE_FAULT_NAME is re-exported: e2e fixtures import it from this module.
@@ -218,6 +222,27 @@ class TerminalWsMixin(TerminalWriteMixin):
                     "success": False,
                     "code": code,
                     "reason": "terminal row is exited or orphaned; nothing to attach",
+                    "terminal_id": terminal_id,
+                },
+            )
+            log_slow(code, row.id, row_loaded, row_loaded, row_loaded)
+            return
+        try:
+            # Once per attach: the lease then carries the row, so keystrokes skip this read.
+            await run_on_operator_lane(require_machine_owned, row.machine_id)
+        except (NodeCommandError, psycopg.Error) as exc:
+            # An owner that cannot be read refuses the attach too: nothing attaches unverified.
+            code = (
+                exc.code if isinstance(exc, NodeCommandError) else "machine_ownership_unavailable"
+            )
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_attach_result",
+                    "request_id": request_id,
+                    "success": False,
+                    "code": code,
+                    "reason": "terminal machine ownership is not verified for this caller",
                     "terminal_id": terminal_id,
                 },
             )

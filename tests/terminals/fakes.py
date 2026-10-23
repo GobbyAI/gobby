@@ -786,6 +786,32 @@ def uuid_of(terminal: Terminal) -> UUID:
     return UUID(terminal.id)
 
 
+class MachineOwnerRows:
+    """Machines table that names each machine's owner and counts ownership reads."""
+
+    def __init__(self, owners: Mapping[str, str], error: Exception | None = None) -> None:
+        self.owners = dict(owners)
+        self.error = error
+        self.calls = 0
+
+    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        machine_id = str(params[0])
+        owner = self.owners.get(machine_id)
+        if owner is None:
+            return None
+        now = datetime.now(UTC)
+        return {
+            "id": machine_id,
+            "owner_user_id": owner,
+            "first_seen": now,
+            "last_seen": now,
+            "ref": 1,
+        }
+
+
 def runtime_registry(*runtimes: Any) -> TerminalRuntimeRegistry:
     """Build a registry holding the given runtimes, keyed by their backend."""
     registry = TerminalRuntimeRegistry()
