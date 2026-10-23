@@ -76,6 +76,7 @@ class SessionEditLedger(ABC):
             normalize_task_checkout_root,
             record_task_live_edit_starts,
             task_selected_at,
+            transfer_live_checkout_paths,
         )
 
         normalized_checkout = normalize_task_checkout_root(checkout_root)
@@ -131,6 +132,10 @@ class SessionEditLedger(ABC):
                 record_task_live_edit_starts(
                     variables, task_id, normalized_paths, normalized_checkout, stamp
                 )
+                if normalized_checkout is not None:
+                    transfer_live_checkout_paths(
+                        variables, task_id, normalized_paths, normalized_checkout
+                    )
                 raw_task_files = variables.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])
@@ -143,10 +148,9 @@ class SessionEditLedger(ABC):
                 task_files = dict(task_files)
                 task_files[task_id] = files_for_task
                 variables["task_edited_files"] = task_files
-                # Epoch seconds of the newest edit per path: release_task_paths compares
-                # it against the last commit touching the path to tell this task's own
-                # uncommitted work from someone else's dirt on a stale attribution. A
-                # stale replay never lowers a newer stamp.
+                # Epoch seconds of the newest edit per path. The claim window reads it
+                # to tell this task's own edits from older dirt. A stale replay never
+                # lowers a newer stamp.
                 raw_times = variables.get("task_edited_file_times") or {}
                 task_times = raw_times if isinstance(raw_times, dict) else {}
                 raw_task_times = task_times.get(task_id, {})
@@ -178,8 +182,8 @@ class SessionEditLedger(ABC):
                     task_pairs[normalized_checkout] = root_times
                     pair_times[task_id] = task_pairs
                     variables["task_edited_checkout_times"] = pair_times
-                    # Clean paths leave the live ledger, but close evidence still
-                    # needs their task attribution for later transcript edits.
+                    # Clean paths leave the live starts only. This live ledger keeps
+                    # the pair until a later claim takes the path with an edit.
                     variables.setdefault(
                         "task_edited_file_checkouts_history_started_at", time.time()
                     )
