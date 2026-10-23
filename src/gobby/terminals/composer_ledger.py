@@ -326,20 +326,26 @@ class ComposerLedger:
                 entry.clean_seq = entry.flagged_seq
 
     def record_queued_submit(self, terminal_id: str, *, consumed_at: datetime) -> None:
-        """A consumed queued prompt settles its interrupt, preserving human edits.
+        """A consumed queued prompt settles its flagged submit and any interrupt.
 
-        The queued prompt was submitted before the interrupt. Consume only a
-        flagged submit before that boundary; later input and unsubmitted edits on
-        either side remain drafts. An unknown or newer interrupt stays blocked.
-        Interrupt time is daemon receipt time: a delayed host event received
-        after transcript consumption fails safe until the next submit.
+        The queued prompt was submitted while a turn ran, so no submit record saw its
+        Enter. Without an interrupt, consume only its flagged submit: unflagged input
+        is never proven to be the prompt, so it stays a draft. With an interrupt,
+        consume only a flagged submit before that boundary; later input and unsubmitted
+        edits on either side remain drafts. An unknown or newer interrupt stays blocked.
+        Interrupt time is daemon receipt time: a delayed host event received after
+        transcript consumption fails safe until the next submit.
         """
         with self._lock:
             entry = self._entries.get(terminal_id)
+            if entry is None or entry.unsafe not in {None, "interrupt"}:
+                return
+            if entry.unsafe is None:
+                entry.clean_seq = max(entry.clean_seq, entry.flagged_seq)
+                self._next()
+                return
             if (
-                entry is None
-                or entry.unsafe != "interrupt"
-                or entry.interrupt_prior_human_seq is None
+                entry.interrupt_prior_human_seq is None
                 or entry.interrupt_at is None
                 or entry.interrupt_at >= to_aware_utc(consumed_at).timestamp()
             ):

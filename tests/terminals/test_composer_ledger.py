@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -150,6 +151,37 @@ def test_record_without_a_new_flagged_write_does_not_move_the_clean_point() -> N
     ledger = _tracked()
     ledger.observe_host_event(_host(1))
     ledger.record_submit("t1")
+
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_queued_prompt_without_an_interrupt_clears_its_flagged_enter() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, submit=True))
+
+    ledger.record_queued_submit("t1", consumed_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == _EMPTY
+
+
+def test_input_typed_after_a_queued_prompt_stays_a_draft() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1))
+    ledger.observe_host_event(_host(2, submit=True))
+    ledger.observe_host_event(_host(3))
+
+    ledger.record_queued_submit("t1", consumed_at=datetime.now(UTC) + timedelta(seconds=1))
+
+    assert ledger.read("t1") == _DRAFT
+
+
+def test_flagless_input_stays_a_draft_after_a_queued_prompt() -> None:
+    ledger = _tracked()
+    ledger.observe_host_event(_host(1, submit=None))
+    ledger.observe_host_event(_host(2, submit=None))
+
+    ledger.record_queued_submit("t1", consumed_at=datetime.now(UTC) + timedelta(seconds=1))
 
     assert ledger.read("t1") == _DRAFT
 
