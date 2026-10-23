@@ -15,9 +15,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.storage.sessions import SessionManager
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import LIVE_SESSION_STATUSES, SessionManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
@@ -46,6 +48,9 @@ class CatalogueSeat:
 class AdmittedSeats:
     workspace_id: str
     seats: tuple[CatalogueSeat, ...]
+    launch: tuple[str, ...]
+    live: Mapping[str, str]
+    tab_exists: bool
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class RunbookSeatStores:
     executions: Callable[[str], LocalPipelineExecutionManager]
     definitions: AgentDefinitionManager
     workspaces: WorkspaceManager
+    runs: LocalAgentRunManager
 
 
 def check_runbook_seats(
@@ -67,6 +73,8 @@ def check_runbook_seats(
     catalogue: Sequence[Mapping[str, Any]],
     report_to: str | None = None,
     require_report_to: bool = False,
+    skip_live_seats: bool = False,
+    tab_title: str | None = None,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
@@ -76,6 +84,11 @@ def check_runbook_seats(
     in the same workspace on the same machine, then each seat's agent definition. A storage error, a
     truncated read, or a live sibling whose machine or workspace is unknown refuses with
     its cause.
+
+    ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each seat
+    whose agent already has an active run on this machine with a live session in this
+    project, and ``live`` maps those seats to that session. ``tab_exists`` says whether the
+    workspace has the tab titled ``tab_title``; two such tabs refuse.
     """
     if (require_report_to and report_to is None) or (
         report_to is not None and not report_to.strip()
@@ -83,7 +96,14 @@ def check_runbook_seats(
         raise RunbookSeatRefusal("report_to must be a nonempty session ref")
     seats = _requested_seats(requested, catalogue)
     try:
-        return _admit(stores, seats, caller_session_id=caller_session_id, workspace=workspace)
+        return _admit(
+            stores,
+            seats,
+            caller_session_id=caller_session_id,
+            workspace=workspace,
+            skip_live_seats=skip_live_seats,
+            tab_title=tab_title,
+        )
     except RunbookSeatRefusal:
         raise
     except Exception as exc:
@@ -132,6 +152,8 @@ def _admit(
     *,
     caller_session_id: str,
     workspace: str,
+    skip_live_seats: bool,
+    tab_title: str | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
     if (
@@ -154,7 +176,44 @@ def _admit(
         stores, executions, execution, machine_id=session.machine_id, workspace_id=workspace_id
     )
     _refuse_unresolved_agents(stores.definitions, project_id, seats)
-    return AdmittedSeats(workspace_id=workspace_id, seats=seats)
+    live = _live_seats(stores, session, seats) if skip_live_seats else {}
+    return AdmittedSeats(
+        workspace_id=workspace_id,
+        seats=seats,
+        launch=tuple(seat.name for seat in seats if seat.name not in live),
+        live=live,
+        tab_exists=tab_title is not None
+        and _tab_exists(stores.workspaces, workspace_id, tab_title),
+    )
+
+
+def _live_seats(
+    stores: RunbookSeatStores, caller: Session, seats: Sequence[CatalogueSeat]
+) -> dict[str, str]:
+    """Map each seat whose agent runs here with a live session in the project to that session."""
+    runs = stores.runs.list_active_for_machine(caller.machine_id, limit=READ_BOUND + 1)
+    _refuse_truncated(runs, "active agent run")
+    live: dict[str, str] = {}
+    for seat in seats:
+        for run in runs:
+            if run.agent_name != seat.agent or not run.child_session_id:
+                continue
+            child = stores.sessions.get(run.child_session_id)
+            if (
+                child is not None
+                and child.project_id == caller.project_id
+                and child.status in LIVE_SESSION_STATUSES
+            ):
+                live[seat.name] = child.id
+                break
+    return live
+
+
+def _tab_exists(workspaces: WorkspaceManager, workspace_id: str, title: str) -> bool:
+    tabs = [tab for tab in workspaces.list_tabs(workspace_id) if tab.title == title]
+    if len(tabs) > 1:
+        raise RunbookSeatRefusal(f"the workspace has {len(tabs)} tabs titled {title!r}")
+    return bool(tabs)
 
 
 def _workspace_id(workspaces: WorkspaceManager, workspace: str) -> str:

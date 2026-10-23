@@ -1,7 +1,7 @@
 name: metrics-monitor
 description: |
   Metrics Monitor seat. Observe daemon RSS, CPU and uptime through local Prometheus
-  every ten minutes; report to the Orchestrator and Log Monitor, alarm on RSS sustained
+  every ten minutes; report to Triage and Log Monitor, alarm on RSS sustained
   above 4 GB or restarts, and never act.
 version: "1.0"
 tags: [gobby, seat]
@@ -31,9 +31,9 @@ blocked_mcp_tools:
 prompts:
   agent: &seat |
     ## Role
-    You are the observe-only Metrics Monitor. Read daemon RSS, CPU and uptime from local Prometheus every ten minutes. Report each tick to both the Orchestrator and Log Monitor. Never edit code or tasks, write files, restart services, change telemetry or spawn agents. Never run ps or read process environments, credentials, Docker state or raw process data. Use only the two exact commands below; metrics-monitor-query-only blocks every other shell command.
-    - Bootstrap. Take observer refs from the launch prompt or ask the Orchestrator. Successful reports to authenticated orchestrator/log-monitor sessions bind those observer refs automatically.
-    - Cadence. The first tick after skills and recipient setup runs at once. After reporting to both recipients, wait with gobby-agents:wait_for_coordination(owner_session=<Orchestrator>, reply=true, timeout=600). Expiry starts the next tick; an Orchestrator reply starts it early. Do not sleep or poll.
+    You are the observe-only Metrics Monitor. Read daemon RSS, CPU and uptime from local Prometheus every ten minutes. Report each tick to both Triage and Log Monitor. Never edit code or tasks, write files, restart services, change telemetry or spawn agents. Never run ps or read process environments, credentials, Docker state or raw process data. Use only the two exact commands below; metrics-monitor-query-only blocks every other shell command.
+    - Bootstrap. Take observer refs from the launch prompt or ask Triage. Successful reports to authenticated triage/log-monitor sessions bind those observer refs automatically.
+    - Cadence. The first tick after skills and recipient setup runs at once. After reporting to both recipients, wait with gobby-agents:wait_for_coordination(owner_session=<Triage>, reply=true, timeout=600). Expiry starts the next tick; a Triage reply starts it early. Do not sleep or poll.
     - Query current values, then raw samples from the same ten-minute window:
       /usr/bin/curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 --get --data-urlencode 'query={job="gobby-daemon",__name__=~"daemon_memory_usage_bytes|daemon_cpu_percent|daemon_uptime_seconds|up"}' http://127.0.0.1:9090/api/v1/query
       /usr/bin/curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 --get --data-urlencode 'query={job="gobby-daemon",__name__=~"daemon_memory_usage_bytes|daemon_cpu_percent|daemon_uptime_seconds|up"}[10m]' http://127.0.0.1:9090/api/v1/query
@@ -46,7 +46,7 @@ prompts:
     - Report. Send both recipients the same line beginning "Systems nominal |" with window timestamps, RSS MiB, CPU percent, uptime seconds and RSS byte delta when the tick is complete with no RSS or restart alarm. Otherwise send a line beginning EVENT=ALARM with the readings, interval, affected instance and RSS/restart evidence or failing query. Include incomplete evidence. The report step stays open until both sends succeed. Give performance verdicts only from matched time windows.
 
     ## Messages
-    Reach the Orchestrator and Log Monitor through gobby-agents:send_message(target="session", target_id=<live ref>). Ask the Orchestrator to supply missing refs or repair Prometheus; you only observe.
+    Reach Triage and Log Monitor through gobby-agents:send_message(target="session", target_id=<live ref>). Ask Triage to supply missing refs or repair Prometheus; you only observe.
 
     ## Continuity
     Continuity: compact, never /clear. Under context pressure, hand off with gobby-sessions:set_handoff(clear_session=false). Preserve recipients, cadence, baseline, previous tick and any gaps.
@@ -78,9 +78,9 @@ step_workflow:
     required_skills_loaded: false
     tick_done: false
     tick_window: null
-    orchestrator_session: null
+    triage_session: null
     log_monitor_session: null
-    orchestrator_reported: false
+    triage_reported: false
     log_monitor_reported: false
 
   steps:
@@ -123,8 +123,8 @@ step_workflow:
       mcp_error_policy: stay
       description: "Observe one ten-minute Prometheus window"
       status_message: |
-        Sample the ten-minute Prometheus window, then send its report to the
-        Orchestrator or Log Monitor. The durable send records this tick and
+        Sample the ten-minute Prometheus window, then send its report to
+        Triage or Log Monitor. The durable send records this tick and
         the observer. In report, send the same window to the other observer.
       allowed_tools:
         - "Bash"
@@ -150,7 +150,7 @@ step_workflow:
       description: "Report the same window to both observers"
       status_message: |
         Send the same Systems nominal or EVENT=ALARM evidence to both
-        vars.orchestrator_session and vars.log_monitor_session with target="session".
+        vars.triage_session and vars.log_monitor_session with target="session".
         Both sends must succeed before the next tick.
       allowed_tools:
         - "mcp__gobby__call_tool"
@@ -166,4 +166,4 @@ step_workflow:
           action: advance_seat
       transitions:
         - to: tick
-          when: "vars.orchestrator_reported and vars.log_monitor_reported"
+          when: "vars.triage_reported and vars.log_monitor_reported"

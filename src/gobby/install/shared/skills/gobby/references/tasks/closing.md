@@ -83,6 +83,17 @@ create a fresh worktree or clone. An admitted team keeps working: its admission
 re-runs, replacement seats join its tree, an interrupted admission recovers its
 tree, and spawns that reuse a tree proceed.
 
+The Release Manager validates and activates the window's pinned candidate with
+`gobby release batch --token <token> --generation <n> [--base-sha <sha>]`, run
+in the background from its session. It refuses before touching the window
+unless the caller owns it, the main checkout HEAD is the pinned candidate, and
+the baseline (the last succeeded batch, else `--base-sha`) is an ancestor of
+it. It then renews the lease while it runs the checks the diff selects,
+activates by cutover or restart, and smokes the daemon. Each batch writes a
+record under `<git common dir>/gobby/release-batches/` and then ends the
+window if it still owns it. A success becomes the next baseline; a failure
+keeps the old one and files one regression task per candidate.
+
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,
 `repair_closed_candidate(task_id, review_id, expected_closed_commit_sha, reason)`
@@ -96,4 +107,4 @@ a lifecycle event.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
-_Last verified: 2026-10-22_
+_Last verified: 2026-10-23_

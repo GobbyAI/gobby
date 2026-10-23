@@ -8,13 +8,11 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import AgentTaskClaimMutation, SessionVariableTransfer
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
-from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
 from gobby.workflows.task_dirty_state import task_dirty_paths
@@ -25,34 +23,21 @@ _STALE_HOLDER = {
 }
 
 
-def _can_release(ctx: RegistryContext, caller: Session, holder: Session) -> bool:
+def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id: str) -> bool:
+    """The Orchestrator, or the Dev Manager of the task's team when the holder is its seat."""
     if caller.project_id != holder.project_id or caller.machine_id != holder.machine_id:
         return False
     role = ctx.session_var_manager.get_variable_subset(caller.id, ("_agent_type",))
-    agent_type = role.get("_agent_type")
-    if agent_type == "orchestrator":
+    if role.get("_agent_type") == "orchestrator":
         return is_operator_coordinator(ctx.task_manager, caller)
-    if agent_type != "lane-manager" or caller.machine_id != require_machine_id():
-        return False
-    definition = AgentDefinitionManager(ctx.task_manager.db).get_by_name(
-        "lane-manager", caller.project_id
+    db = ctx.task_manager.db
+    team = seat_team(db, caller.id)
+    return (
+        team is not None
+        and team.task_id == task_id
+        and _bound_dev_manager(ctx, caller, task_id)
+        and seat_team(db, holder.id) == team
     )
-    if definition is None or not definition.enabled:
-        return False
-    runs = LocalAgentRunManager(ctx.task_manager.db)
-    manager_run = runs.get(caller.agent_run_id) if caller.agent_run_id else None
-    holder_run = runs.get(holder.agent_run_id) if holder.agent_run_id else None
-    if (
-        manager_run is None
-        or manager_run.status != "running"
-        or manager_run.agent_name != "lane-manager"
-        or manager_run.child_session_id != caller.id
-        or holder_run is None
-        or holder_run.child_session_id != holder.id
-    ):
-        return False
-    lane = (manager_run.resume_metadata_json or {}).get("lane")
-    return bool(lane) and lane == (holder_run.resume_metadata_json or {}).get("lane")
 
 
 def _uncommitted_refusal(
@@ -105,12 +90,12 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
                 holder_session_ref, caller.project_id
             )
             holder = ctx.session_manager.get(holder_id)
-            if holder is None or not _can_release(ctx, caller, holder):
+            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+            if holder is None or not _can_release(ctx, caller, holder, resolved_id):
                 return {
-                    "error": "Only the Orchestrator or the holder's Lane Manager may release a claim",
+                    "error": "Only the Orchestrator or the holder's Dev Manager may release a claim",
                     "error_code": "coordinator_required",
                 }
-            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
             db = ctx.task_manager.db
             with db.transaction() as conn:
                 # Serialize ownership, file attribution and projection cleanup with
@@ -150,7 +135,8 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
     registry.register(
         name="release_task_claim",
         description=(
-            "Orchestrator or owning Lane Manager: release a named seat's claim on an open task. "
+            "Orchestrator or the holder's Dev Manager: release a named seat's claim on an open "
+            "task. "
             "Refuses uncommitted task-attributed files, records the actor and reason, "
             "and preserves unrelated task bindings."
         ),

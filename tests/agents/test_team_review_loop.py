@@ -15,7 +15,7 @@ import yaml
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
-from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks import _claim_release, create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -41,6 +41,7 @@ from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_dirty_state import task_dirty_paths
 from gobby.workflows.templates import TemplateEngine
 from tests.fixtures.landing_case import bind_task_manager, make_landing_case
 from tests.fixtures.review_approvals import grant_review_writes, grant_step_writes
@@ -123,6 +124,14 @@ async def hand_off(
     }
     with session_context_for_test(caller):
         return cast(dict[str, Any], await tools.call("hand_off_task_claim", arguments))
+
+
+async def release(
+    tools: InternalToolRegistry, caller: str, task: Task, holder: str
+) -> dict[str, Any]:
+    arguments = {"task_id": task.id, "holder_session_ref": holder, "reason": "Seat is stuck"}
+    with session_context_for_test(caller):
+        return cast(dict[str, Any], await tools.call("release_task_claim", arguments))
 
 
 def claimed_tasks(db: HubDatabase, session_id: str) -> dict[str, Any]:
@@ -339,6 +348,78 @@ async def test_claim_handoff_is_scoped_and_atomic(world: TeamWorld) -> None:
     replay = await hand_off(tools, manager, task, writer, recipient)
     assert replay.get("error_code") == "task_claim_conflict", replay
     assert holder() == recipient
+
+
+@pytest.mark.asyncio
+async def test_hand_off_dirty_check_runs_off_the_event_loop(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The registry runs hand_off_task_claim on a worker thread, and that worker runs the dirty check.
+    tasks = LocalTaskManager(world.case.db)
+    tools = create_task_registry(tasks)
+    task = world.case.task(TITLE)
+    runbook = world.child(task)
+    team = await world.admit(runbook, task)
+    manager = seat(world, runbook, "dev-manager", manages=task)
+    writer, developer = (seat(world, runbook, role) for role in ("test-writer", "developer"))
+    tasks.claim_task(task.id, writer, force=True)
+    tree = Path(team.worktree_path)
+    (tree / "test_scroll.py").write_text("def test_scroll() -> None: ...\n")
+    SessionVariableManager(world.case.db).merge_variables(
+        writer,
+        {
+            "task_edited_files": {task.id: ["test_scroll.py"]},
+            "task_edited_file_checkouts": {task.id: {str(tree): ["test_scroll.py"]}},
+        },
+    )
+    loop_running: list[bool] = []
+
+    def recording(paths: set[str], root: str) -> set[str] | None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop_running.append(False)
+        else:
+            loop_running.append(True)
+        return task_dirty_paths(paths, root)
+
+    monkeypatch.setattr(_claim_release, "task_dirty_paths", recording)
+    refused = await hand_off(tools, manager, task, writer, developer)
+    assert refused.get("error_code") == "task_has_uncommitted_changes", refused
+    assert loop_running == [False]
+
+
+@pytest.mark.asyncio
+async def test_only_the_holders_dev_manager_releases_its_claim(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    tools = create_task_registry(tasks)
+    task = world.case.task(TITLE)
+    runbook = world.child(task)
+    await world.admit(runbook, task)
+    manager = seat(world, runbook, "dev-manager", manages=task)
+    unbound, developer = (seat(world, runbook, role) for role in ("dev-manager", "developer"))
+    other_task = world.case.task("Another team's task")
+    other_runbook = world.child(other_task)
+    await world.admit(other_runbook, other_task)
+    other_manager = seat(world, other_runbook, "dev-manager", manages=other_task)
+    outsider = seat(world, other_runbook, "developer")
+
+    # Another team's Dev Manager, an unbound manager seat and a team developer are refused.
+    tasks.claim_task(task.id, developer, force=True)
+    for caller in (other_manager, unbound, developer):
+        refused = await release(tools, caller, task, developer)
+        assert refused.get("error_code") == "coordinator_required", refused
+    # The Dev Manager cannot release a claim held outside its team.
+    tasks.claim_task(task.id, outsider, force=True)
+    refused = await release(tools, manager, task, outsider)
+    assert refused.get("error_code") == "coordinator_required", refused
+    assert tasks.get_task(task.id).claimed_by_session_id == outsider
+
+    tasks.claim_task(task.id, developer, force=True)
+    released = await release(tools, manager, task, developer)
+    assert released.get("success") is True, released
+    assert released["released_by_session_id"] == manager
+    assert tasks.get_task(task.id).claimed_by_session_id is None
 
 
 @pytest.mark.asyncio

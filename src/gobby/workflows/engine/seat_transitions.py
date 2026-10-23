@@ -112,27 +112,25 @@ def _monitor_message(
     recipient_role = SessionVariableManager(db).get_variable_subset(recipient, ("_agent_type",))
     target_role = recipient_role.get("_agent_type")
     if role == "log-monitor":
-        if target_role != "orchestrator":
+        if target_role != "triage":
             return {}
         return {"tick_done": False, "tick_window": sent_at}
-    if target_role not in {"orchestrator", "log-monitor"}:
+    if target_role not in {"triage", "log-monitor"}:
         return {}
     if step == "report" and content != state.get("_window_report"):
         return {}
-    orchestrator = state.get("orchestrator_reported", False) if step == "report" else False
+    triage = state.get("triage_reported", False) if step == "report" else False
     log_monitor = state.get("log_monitor_reported", False) if step == "report" else False
-    orchestrator = orchestrator or target_role == "orchestrator"
+    triage = triage or target_role == "triage"
     log_monitor = log_monitor or target_role == "log-monitor"
     changes = {
         "tick_window": state.get("tick_window") if step == "report" else sent_at,
         "_window_report": content,
-        "tick_done": not (orchestrator and log_monitor),
-        "orchestrator_reported": orchestrator,
+        "tick_done": not (triage and log_monitor),
+        "triage_reported": triage,
         "log_monitor_reported": log_monitor,
     }
-    changes["orchestrator_session" if target_role == "orchestrator" else "log_monitor_session"] = (
-        recipient
-    )
+    changes["triage_session" if target_role == "triage" else "log_monitor_session"] = recipient
     return changes
 
 

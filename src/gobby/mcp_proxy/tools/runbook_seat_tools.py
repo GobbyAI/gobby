@@ -10,6 +10,7 @@ from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -24,6 +25,7 @@ def runbook_seat_stores(db: HubDatabase) -> RunbookSeatStores:
         executions=lambda project_id: LocalPipelineExecutionManager(db, project_id),
         definitions=AgentDefinitionManager(db),
         workspaces=WorkspaceManager(db),
+        runs=LocalAgentRunManager(db),
     )
 
 
@@ -37,6 +39,10 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "same project in the same workspace on the same machine, or when a seat's agent "
             "definition is missing or disabled. If supplied, report_to must be a nonempty "
             "session ref; require_report_to rejects omission without lane inference. "
+            "launch names the seats to start; skip_live_seats leaves out each seat whose "
+            "agent already runs on this machine with a live session in this project and "
+            "maps it to that session under live. tab_title sets tab_exists for that tab of "
+            "the workspace. "
             "For team-lane, lane resolves omitted report_to from the one running "
             "lane-manager whose run recorded that lane, and omitted workspace, lane_pane and "
             "worktree from live state, and omitted lane_columns and "
@@ -58,6 +64,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         lane_pane: str | None = None,
         lane_columns: int | None = None,
         lane_rows: int | None = None,
+        skip_live_seats: bool = False,
+        tab_title: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -102,6 +110,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 catalogue=catalogue,
                 report_to=report_to,
                 require_report_to=require_report_to,
+                skip_live_seats=skip_live_seats,
+                tab_title=tab_title,
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}

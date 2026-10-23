@@ -1,8 +1,9 @@
-"""Acceptance tests for the Admin and DevTeam runbooks and their seat definitions.
+"""Acceptance tests for the Support and DevTeam runbooks and their seat definitions.
 
-Admin holds the Assistant, Orchestrator, Archivist, Release Manager and Triage. The
-Assistant and Orchestrator are the operator's persona panes, never spawned, so the
-Admin runbook launches the other three. A DevTeam is the four seats of one task tree.
+Admin is the operator's Assistant and Orchestrator panes, which `/gobby admin` and
+`/gobby assistant` set up in one tab; no runbook launches them. The Support runbook
+launches the standing seats into their own tab. A DevTeam is the four seats of one task
+tree. The Log and Metrics Monitors stay bundled, and no runbook launches them.
 """
 
 from __future__ import annotations
@@ -33,16 +34,19 @@ SKILLS = SHARED / "skills/gobby"
 PROCEDURES = SKILLS / "references/agents/procedures"
 REPORTER_SOURCES = ROOT / "src/gobby/agents/reporter_sources.py"
 
-ADMIN_SEATS = ["archivist", "release-manager", "triage"]
+SUPPORT_SEATS = ["release-manager", "triage", "archivist", "recovery-steward", "consolidator"]
 PERSONA_PANES = ("assistant", "orchestrator")
+MONITORS = ("log-monitor", "metrics-monitor")
+RUNBOOKS_GUIDE = ROOT / "docs/guides/runbooks.md"
 DEVTEAM_SEATS = ["dev-manager", "test-writer", "developer", "code-reviewer"]
-RETIRED_AGENTS = ("lane-manager", "inbox-manager")
+RETIRED_AGENTS = ("lane-manager", "inbox-manager", "task-close-reviewer")
 RETIRED_RUNBOOKS = ("team-coordination", "team-lane")
+# No source names these. The close reviewer's name stays where old runs are refused a resume.
+RETIRED_NAMES = ("lane-manager", "inbox-manager", *RETIRED_RUNBOOKS)
 RETAINED_AGENTS = (
     "log-monitor",
     "metrics-monitor",
     "recovery-steward",
-    "task-close-reviewer",
     "expansion-qa",
     "researcher",
     "security-reviewer",
@@ -101,6 +105,14 @@ def _spawns(definition: PipelineDefinition) -> dict[str, dict[str, Any]]:
     return spawns
 
 
+def _conditions(definition: PipelineDefinition) -> dict[str, str | None]:
+    return {
+        step.id: step.condition
+        for step in definition.steps
+        if step.mcp is not None and step.mcp.tool == "spawn_agent"
+    }
+
+
 def _guidance(name: str) -> str:
     """The definition's agent prompt plus its seat procedure, whitespace-collapsed."""
     body = _agent(name)
@@ -118,22 +130,33 @@ def test_runbook_seat_catalogues() -> None:
         for path in PIPELINES.glob("*.yaml")
         if "runbook" in (yaml.safe_load(path.read_text()).get("tags") or [])
     )
-    assert runbooks == ["admin", "devteam", "planning", "team-planning"]
-
-    admin = _pipeline("admin")
-    assert admin.resume_on_restart
+    assert runbooks == ["devteam", "planning", "support", "team-planning"]
+    # Admin panes are operator shells that the cold start sets up, never a runbook.
+    assert not (PIPELINES / "admin.yaml").exists()
     for pane in PERSONA_PANES:
         assert _agent(pane).surfaces == ["persona"], pane
-        assert pane.capitalize() in (admin.description or ""), pane
-    assert [entry["name"] for entry in _catalogue(admin)] == ADMIN_SEATS
-    assert [entry["agent"] for entry in _catalogue(admin)] == ADMIN_SEATS
-    admin_spawns = _spawns(admin)
-    assert list(admin_spawns) == ADMIN_SEATS
-    for seat, arguments in admin_spawns.items():
+
+    support = _pipeline("support")
+    assert support.resume_on_restart
+    guard = support.steps[0].mcp
+    assert guard is not None and guard.arguments is not None
+    # A re-run skips seats that are already live, so it never duplicates one.
+    assert guard.arguments["skip_live_seats"] is True
+    assert [entry["name"] for entry in _catalogue(support)] == SUPPORT_SEATS
+    assert [entry["agent"] for entry in _catalogue(support)] == SUPPORT_SEATS
+    support_spawns = _spawns(support)
+    assert list(support_spawns) == SUPPORT_SEATS
+    for seat, arguments in support_spawns.items():
         assert arguments["agent"] == seat
         assert arguments["checkout_mode"] == "none"
         assert arguments["project_path"] == "${{ inputs.project_path }}"
         assert "task_id" not in arguments
+        assert "Support" in str(arguments["placement"]), seat
+    for seat, condition in _conditions(support).items():
+        assert f"'{seat}' in steps.guard.output.launch" in (condition or ""), seat
+    for name in runbooks:
+        agents = {entry["agent"] for entry in _catalogue(_pipeline(name))}
+        assert agents.isdisjoint(MONITORS), name
 
     devteam = _pipeline("devteam")
     assert [step.id for step in devteam.steps[:2]] == ["guard", "admit"]
@@ -148,7 +171,7 @@ def test_runbook_seat_catalogues() -> None:
         "dev-manager"
     ]
 
-    for seat in ADMIN_SEATS + DEVTEAM_SEATS:
+    for seat in SUPPORT_SEATS + DEVTEAM_SEATS:
         body = _agent(seat)
         assert body.name == seat
         assert body.supports_surface("spawn"), seat
@@ -160,7 +183,7 @@ def test_agent_retirement_and_retention(temp_db: HubDatabase, tmp_path: Path) ->
         assert not (PROCEDURES / f"{name}.md").exists(), name
     for name in RETIRED_RUNBOOKS:
         assert not (PIPELINES / f"{name}.yaml").exists(), name
-    retired = re.compile("|".join(RETIRED_AGENTS + RETIRED_RUNBOOKS))
+    retired = re.compile("|".join(RETIRED_NAMES))
     sources = [
         path
         for pattern in ("**/*.py", "**/*.yaml", "**/*.md")
@@ -186,7 +209,7 @@ def test_agent_retirement_and_retention(temp_db: HubDatabase, tmp_path: Path) ->
         assert manager.get_by_name(name) is None, name
         swept = manager.get_by_name(name, include_deleted=True)
         assert swept is not None and SYNC_ORPHAN_TAG in (swept.tags or []), name
-    for name in RETAINED_AGENTS + tuple(ADMIN_SEATS) + tuple(DEVTEAM_SEATS):
+    for name in RETAINED_AGENTS + tuple(SUPPORT_SEATS) + tuple(DEVTEAM_SEATS):
         row = manager.get_by_name(name)
         assert row is not None and row.enabled, name
         body = AgentDefinitionBody.model_validate(row.definition_json)
@@ -235,8 +258,11 @@ def test_procedures_match_runtime_authority() -> None:
         "exclude_reviewers=",
         "launch_defaults.devteam",
         "escalate_task",
+        "/gobby admin",
+        "launch_defaults.support",
     ):
         assert phrase in orchestrator, phrase
+    assert "/gobby assistant" in _guidance("assistant")
 
     triage = _agent("triage")
     assert {"session"} <= set(triage.send_message_targets)
@@ -255,6 +281,14 @@ def test_procedures_match_runtime_authority() -> None:
         text = _guidance(seat)
         assert "Triage" in text, seat
         assert RETIRED_RELAYS.findall(text) == [], seat
+
+
+def test_runbooks_guide_opens_with_the_cold_start() -> None:
+    guide = RUNBOOKS_GUIDE.read_text()
+    opening = guide.split("\n## ", 2)[1]
+    for command in ("/gobby admin", "$gobby admin", "/gobby assistant", "$gobby assistant"):
+        assert command in opening, command
+    assert "Support" in guide and "DevTeam" in guide
 
 
 def test_no_heavy_run_slot_guidance() -> None:

@@ -873,8 +873,12 @@ async def test_monitor_windows_complete_from_durable_reports(
 ) -> None:
     run = SeatRun(temp_db, name)
     SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    # Monitors report to Triage; a report to the Orchestrator completes nothing.
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "orchestrator")
     await run.load(*run.vars["required_skills"])
-    assert run.step == "tick"
+    await run.send("Systems nominal | sample window", COORDINATOR_ID)
+    assert run.step == "tick" and run.vars["tick_window"] is None
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
     for _ in range(2):
         await run.send("Systems nominal | sample window", COORDINATOR_ID)
         if name == "metrics-monitor":

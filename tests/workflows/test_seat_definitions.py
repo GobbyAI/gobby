@@ -166,9 +166,9 @@ ENGINE_OWNED_FLAGS = frozenset(
         "consensus",
         "implementation_complete",
         "log_monitor_reported",
-        "orchestrator_reported",
         "skills_routed",
         "tick_done",
+        "triage_reported",
         "verdict_ready",
     }
 )

@@ -245,7 +245,7 @@ def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> No
 @pytest.mark.parametrize(
     ("target", "content", "expected"),
     [
-        ("gobby#10", "Systems nominal | RSS 200", {"orchestrator_reported"}),
+        ("gobby#10", "Systems nominal | RSS 200", {"triage_reported"}),
         ("gobby#11", "EVENT=ALARM | uptime decreased", {"log_monitor_reported"}),
         ("gobby#12", "Systems nominal | RSS 200", set()),
         ("gobby#10", "checking", set()),
@@ -267,36 +267,36 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
     tick_done_value: bool | str,
 ) -> None:
     sessions = SessionManager(temp_db)
-    caller, orchestrator, log_monitor, other = (
+    caller, triage, log_monitor, other = (
         sessions.register(
             external_id=f"metrics-report-{name}",
             machine_id=get_machine_id(),
             source="codex",
             project_id=sample_project["id"],
         )
-        for name in ("caller", "orchestrator", "log-monitor", "other")
+        for name in ("caller", "triage", "log-monitor", "other")
     )
-    recipients = {"gobby#10": orchestrator, "gobby#11": log_monitor, "gobby#12": other}
-    for recipient, role in ((orchestrator, "orchestrator"), (log_monitor, "log-monitor")):
+    recipients = {"gobby#10": triage, "gobby#11": log_monitor, "gobby#12": other}
+    for recipient, role in ((triage, "triage"), (log_monitor, "log-monitor")):
         SessionVariableManager(temp_db).set_variable(recipient.id, "_agent_type", role)
     body = _load("metrics-monitor")
     assert body.step_workflow is not None
     stored_refs = {
-        "uuid": (orchestrator.id, log_monitor.id),
+        "uuid": (triage.id, log_monitor.id),
         "qualified": (
-            f"{sample_project['name']}#{orchestrator.seq_num}",
+            f"{sample_project['name']}#{triage.seq_num}",
             f"{sample_project['name']}#{log_monitor.seq_num}",
         ),
-        "local": (f"#{orchestrator.seq_num}", f"#{log_monitor.seq_num}"),
+        "local": (f"#{triage.seq_num}", f"#{log_monitor.seq_num}"),
     }
     variables = {
         **body.step_workflow.variables,
-        "orchestrator_session": stored_refs[stored_form][0],
+        "triage_session": stored_refs[stored_form][0],
         "log_monitor_session": stored_refs[stored_form][1],
         "tick_done": tick_done_value,
         "tick_window": "sample-window",
         "_window_report": content,
-        "orchestrator_reported": False,
+        "triage_reported": False,
         "log_monitor_reported": False,
     }
     manager = AgentStepInstanceManager(temp_db)
@@ -342,14 +342,12 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
     instance = manager.get_for_session(caller.id)
     assert instance is not None
     matched = {
-        name
-        for name in ("orchestrator_reported", "log_monitor_reported")
-        if instance.variables[name]
+        name for name in ("triage_reported", "log_monitor_reported") if instance.variables[name]
     }
     assert matched == (expected if succeeded else set())
     assert instance.current_step == "report"
     if expected and succeeded:
-        remaining = log_monitor if target == "gobby#10" else orchestrator
+        remaining = log_monitor if target == "gobby#10" else triage
         notice = await send(remaining.id, remaining.seq_num)
         assert notice is not None and notice.startswith("Step transition: report -> tick")
         instance = manager.get_for_session(caller.id)
@@ -363,7 +361,7 @@ async def test_metrics_monitor_report_requires_both_live_recipients(
         assert notice is not None and notice.startswith("Step transition: tick -> report")
         instance = manager.get_for_session(caller.id)
         assert instance is not None and instance.current_step == "report"
-        assert instance.variables["orchestrator_reported"] is (target == "gobby#10")
+        assert instance.variables["triage_reported"] is (target == "gobby#10")
         assert instance.variables["log_monitor_reported"] is (target == "gobby#11")
         assert instance.variables["tick_window"] != "sample-window"
         # Repeating one recipient cannot complete the two-recipient window.
@@ -764,6 +762,7 @@ async def test_log_monitor_resets_only_on_a_nominal_or_alarm_report(
     temp_db: PostgresHubDatabase, content: str, resets: bool
 ) -> None:
     run = SeatRun(temp_db, "log-monitor")
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
     await run.load(*run.vars["required_skills"])
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
