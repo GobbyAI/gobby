@@ -111,3 +111,29 @@
 | Grok Build on supplied compute | Ordinary self-hosted candidate | Ordinary self-hosted candidate | Machine-specific install, supervision and network; no Grok Bot parity assumed |
 | Cursor Cloud Agents | Candidate with lifecycle gaps | Not recommended on task VM | Cursor adapter; bootstrap replacing session events; HTTP or stdio MCP |
 | Devin hosted sessions | MCP client; ephemeral node plausible | Not recommended on session VM | Blueprint bootstrap; event adapter; command-scoped secrets; reconnect proof |
+
+## Cloud probe 2026-10-23
+
+**First-hand local blocker:** after Josh approved one Claude-only probe through the Assistant and Orchestrator, Gobby's PreToolUse rule `block-direct-provider-launch` denied `claude --cloud` before execution. **No cloud session ran.** Exact diagnostic:
+
+```text
+Direct provider launches bypass Gobby-managed sandbox policy, tracking, and lifecycle controls. Use gobby-agents:spawn_agent; for external workspace writes supply extra_write_paths and a nonblank write_paths_reason. Only literal help/version and supported authentication-status commands are allowed here. There is no per-command or session-variable bypass.
+```
+
+Source: researcher session `gobby#17363`, blocked tool invocation on 2026-10-23; Orchestrator messages in `gobby#17281` authorize recording the blocker and handing launch back to Josh. This establishes a local Gobby guard, not a Claude cloud limitation. Hosted Claude claims above remain documentation-based with their linked official sources; hardware, hooks, MCP, networking and persistence remain untested first-hand.
+
+Per the Orchestrator, `spawn_agent` has no supported cloud target today; the earlier `isolation=remote` attempt fell back to a local worktree and supplies no cloud evidence.
+
+**Operator copy-paste probe:** run once from the main checkout using Claude Code shell mode (`!`). The approved scope accepts cloning `origin/0.5.0` at `af9d6bad36`; push nothing. Codex and Grok remain docs-only. Exact prompt to submit:
+
+```text
+! claude --cloud "Read-only cloud environment feasibility probe for Gobby research #24826. Do not modify repository files, commit, push, open a PR, install packages, run uv sync, run gobby install, or configure Gobby as a hub or node. Do not read credentials, secrets, bootstrap files, or print environment variables. Stop if GitHub App setup, cloud environment configuration, org policy, or login is required; report exactly what is missing and never type into a credential prompt.
+
+Report first-hand observations separately from documentation and assumptions. Record OS and kernel, CPU count and architecture, RAM, disk space and uptime. Establish that this is a cloud host before drawing conclusions. Report which hook events actually fire; check whether repository .claude/settings.json exists and summarize hook event names and command paths only. Check whether ghook resolves and whether ~/.gobby/bin/ghook exists. Do not execute hooks manually or expose settings secrets. List visible MCP server names without credential or configuration contents.
+
+Use bounded unauthenticated HTTP HEAD requests to https://github.com, https://pypi.org, https://crates.io and http://127.0.0.1:60887/health. Record status or exact connection errors. Do not scan private networks or guess home-host addresses. Report whether any already documented home-host route is reachable only if it can be checked without credentials or private configuration; otherwise mark unknown. Remember cloud loopback is the cloud host, not the home daemon.
+
+To test background execution and listening, you may create one nonsecret temporary marker in /tmp and one in HOME, and start one background process and one loopback-only HTTP listener on an unused high port, both with an automatic 120-second timeout. Do not kill other processes. Record marker paths, PID, port, start time and initial local connection result. If documented follow-up messages are supported, describe the supported follow-up mechanism and recheck the same markers, PID and listener after a follow-up; do not claim cross-turn persistence until tested. Report how the session ends or pauses, distinguishing observed behavior from documentation. Finish with a concise evidence table and exact errors. Do not create a PR."
+```
+
+**Record from the result:** cloud session URL/ID, repository revision, timestamps, host identity/resources, observed hook events versus configured hooks, MCP names, each network result, listener/PID/marker observations before and after a supported follow-up, and pause/end status. Redact secrets. A prerequisite failure is a valid result; missing observations stay **unknown**. Background survival within one command or turn does not prove survival across a turn, pause, VM reclaim or a new session. No Gobby installation is authorized: node installation remains gated on hub-node and hub installation on completion of 1.0.
