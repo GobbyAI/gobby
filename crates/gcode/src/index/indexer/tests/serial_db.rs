@@ -13,6 +13,163 @@ use crate::visibility;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn machine_context(database_url: &str, project_id: &str, root: &Path, machine: &str) -> Context {
+    Context {
+        machine_id: machine.to_string(),
+        database_url: database_url.to_string(),
+        project_root: root.to_path_buf(),
+        project_id: project_id.to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn foreign_machine_index_writes_only_that_machine() -> anyhow::Result<()> {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let root = tempfile::tempdir()?;
+    let project = unique_test_uuid("foreign-index");
+    let foreign = unique_test_uuid("foreign-index-machine");
+    let local = gobby_core::machine::read_local_machine_id()?;
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project, root.path())?;
+    crate::test_env::seed_test_machine(&mut conn, &foreign).map_err(anyhow::Error::msg)?;
+    conn.execute(
+        "INSERT INTO project_checkouts (machine_id, project_id, root_path) VALUES ($1, $2, $3)",
+        &[
+            &test_uuid_param(&foreign),
+            &test_uuid_param(&project),
+            &root.path().to_string_lossy(),
+        ],
+    )?;
+    write_file(&root.path().join("lib.rs"), "pub fn foreign_index() {}\n");
+    write_file(&root.path().join("README.md"), "foreign machine content\n");
+    let ctx = machine_context(&database_url, &project, root.path(), &foreign);
+    for explicit_files in [Vec::new(), vec![root.path().join("lib.rs")]] {
+        index_files(
+            IndexRequest {
+                project_root: root.path().to_path_buf(),
+                path_filter: None,
+                explicit_files,
+                full: true,
+                require_cpp_semantics: false,
+                sync_projections: false,
+            },
+            &ctx,
+            IndexOptions::default(),
+        )?;
+        for (machine, expected_projects, expected_files) in
+            [(&foreign, 1_i64, 2_i64), (&local, 0, 0)]
+        {
+            let params: &[&(dyn postgres::types::ToSql + Sync)] =
+                &[&test_uuid_param(machine), &test_uuid_param(&project)];
+            let projects: i64 = conn.query_one(
+                "SELECT COUNT(*) FROM code_indexed_project_states WHERE machine_id = $1 AND project_id = $2",
+                params,
+            )?.get(0);
+            let files: i64 = conn.query_one(
+                "SELECT COUNT(*) FROM code_indexed_file_states WHERE machine_id = $1 AND project_id = $2",
+                params,
+            )?.get(0);
+            assert_eq!(
+                (projects, files),
+                (expected_projects, expected_files),
+                "machine {machine}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn status_reads_the_context_machine() -> anyhow::Result<()> {
+    // Execute run in a child test process so its real stdout is observable without
+    // changing the production output API or process-wide stdout redirection.
+    const PAYLOAD: &str = "GCODE_TEST_FOREIGN_STATUS";
+    if let Ok(payload) = std::env::var(PAYLOAD) {
+        let [database_url, project, machine]: [String; 3] = serde_json::from_str(&payload)?;
+        let ctx = machine_context(
+            &database_url,
+            &project,
+            Path::new("/tmp/foreign-status"),
+            &machine,
+        );
+        return crate::commands::status::run(&ctx, crate::output::Format::Json);
+    }
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let root = tempfile::tempdir()?;
+    let project = unique_test_uuid("foreign-status");
+    let foreign = unique_test_uuid("foreign-status-machine");
+    let local = gobby_core::machine::read_local_machine_id()?;
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project, root.path())?;
+    crate::test_env::seed_test_machine(&mut conn, &foreign).map_err(anyhow::Error::msg)?;
+    let report = || -> anyhow::Result<serde_json::Value> {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                concat!(module_path!(), "::status_reads_the_context_machine"),
+                "--nocapture",
+            ])
+            .env(
+                PAYLOAD,
+                serde_json::to_string(&[&database_url, &project, &foreign])?,
+            )
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout)?;
+        let json = stdout
+            .lines()
+            .find(|line| line.starts_with('{'))
+            .expect("status JSON");
+        Ok(serde_json::from_str(json)?)
+    };
+    conn.execute(
+        "INSERT INTO code_indexed_project_states (machine_id, project_id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
+         VALUES ($1, $2, '/tmp/local-status', 7, 11, NOW(), 0)",
+        &[&test_uuid_param(&local), &test_uuid_param(&project)],
+    )?;
+    assert_eq!(report()?["indexed"], false, "foreign machine has no index");
+    conn.execute(
+        "INSERT INTO code_indexed_project_states (machine_id, project_id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
+         VALUES ($1, $2, '/tmp/foreign-status', 3, 5, NOW(), 0)",
+        &[&test_uuid_param(&foreign), &test_uuid_param(&project)],
+    )?;
+    let status = report()?;
+    assert_eq!(status["root_path"], "/tmp/foreign-status");
+    assert_eq!(status["total_files"], 3);
+    assert_eq!(status["total_symbols"], 5);
+    Ok(())
+}
+
 struct RewriteDuringParse {
     path: PathBuf,
     replacement: Vec<u8>,
@@ -117,6 +274,7 @@ fn overlay_incremental_index_shadows_parent_rows_for_commit_diverged_files() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -427,6 +585,7 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -548,6 +707,7 @@ fn full_indexing_reparses_previously_adopted_content() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -711,6 +871,7 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,
@@ -838,6 +999,7 @@ fn explicit_file_index_preserves_last_indexed_at_until_full_index() {
         qdrant: None,
         embedding: None,
         code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
         runtime_config_capture_degraded: false,
         indexing: gobby_core::config::IndexingConfig::default(),
         daemon_url: None,

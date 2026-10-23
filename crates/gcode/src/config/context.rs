@@ -186,6 +186,8 @@ impl FalkorConfig {
 /// Resolved runtime context for gcode commands.
 #[derive(Debug, Clone)]
 pub struct Context {
+    /// Machine whose indexed state this context selects.
+    pub machine_id: String,
     /// PostgreSQL hub DSN
     pub database_url: String,
     /// Project root directory
@@ -413,6 +415,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing,
             daemon_url: Some(gobby_core::daemon_url::daemon_url()?),
@@ -505,6 +508,7 @@ impl Context {
             qdrant,
             embedding,
             code_vectors,
+            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
             runtime_config_capture_degraded: false,
             indexing,
             daemon_url: Some(gobby_core::daemon_url::daemon_url()?),
