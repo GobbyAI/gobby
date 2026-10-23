@@ -544,7 +544,8 @@ turn). An operator comms wake to a pane the operator has focused is held the sam
 (`skipped: "pane_focused"`) and dispatched when focus ends. The probe reads a styled
 snapshot, so faint text (Claude Code's prompt
 suggestion, the Codex and Droid placeholders) reads as an empty composer.
-`priority="urgent"` bypasses the probe. A later mailbox
+`priority="urgent"` bypasses only the active-row check (`session_active`); the composer
+probe and the focus hold still apply. A later mailbox
 receipt, not a live trigger outcome, acknowledges delivery. Direct tmux interruption in
 Antigravity cannot be protected without positive provider or Gobby-mediated key/output
 evidence, so unconfirmed sessions remain active.

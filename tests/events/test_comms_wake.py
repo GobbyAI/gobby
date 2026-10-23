@@ -458,3 +458,40 @@ async def test_focus_release_after_the_mailbox_was_read_sends_nothing(
         assert composer_ledger.read(TERMINAL_ID) == ledger_before
     finally:
         _cancel_background(seat.dispatcher)
+
+
+async def test_unfocused_comms_wake_drops_a_stale_focus_hold(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    seat.session.status = "paused"
+    seat.dispatcher._ism_manager = _ism_with(operator_comms_message(seat.session.id))
+
+    async def parked_retry(delay: float) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(seat.dispatcher, "_composer_retry_wait", parked_retry)
+    registry, attachment_id = await _focus_holder(seat.dispatcher)
+    try:
+        held = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert held.get("skipped") == PANE_FOCUSED
+
+        # Unfocus before any observer is wired, so the hold outlives its focus.
+        await registry.set_focus(attachment_id, False)
+        sent = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert sent.get("delivered") is True
+
+        # A later focus cycle must not replay the hold the unfocused send already covered.
+        registry.set_focus_observer(seat.dispatcher.release_focus_hold)
+        await registry.set_focus(attachment_id, True)
+        await registry.set_focus(attachment_id, False)
+        await asyncio.gather(*list(seat.dispatcher._focus_releases))
+
+        seat.pane_sender.assert_awaited_once()
+    finally:
+        _cancel_background(seat.dispatcher)

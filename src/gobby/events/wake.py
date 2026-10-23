@@ -797,6 +797,8 @@ class WakeDispatcher:
             if self._lease_registry.focus_held(terminal_id):
                 self._focus_holds.setdefault(terminal_id, {})[session_id] = priority
                 return pane_focused_result(session_id, method=method), False
+            # The pane is unfocused now, so a hold recorded earlier is stale.
+            self._focus_holds.get(terminal_id, {}).pop(session_id, None)
         if comms_pending:
             # Josh's operator policy: a comms wake replaces leftover composer text.
             # False forces the existing clear-before-submit path, even on an empty ledger.
