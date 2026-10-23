@@ -2582,11 +2582,16 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   - '2.5'
   - '4.5'
   validation_criteria: '5.1.1: The node guide documents the requirements, the three
-    commands, the service, updates, both skew directions and the two operator verbs,
-    with no Python step. file: `docs/guides/node-setup.md`.
+    commands, the service, updates, both skew directions, the two operator verbs,
+    and that a node on an old signing key needs HTTPS reinstall after rotation, leak
+    or loss, with no Python step. file: `docs/guides/node-setup.md`.
 
-    5.1.2: The release guide documents signing, the gmcp workflow and the member-first,
-    gdaemon-last tag order. file: `docs/guides/release-guide.md`.
+    5.1.2: The release guide documents one-time key generation and CI reuse without
+    a required-reviewer gate through 1.0, the offline password-manager backup, new-key
+    publication plus pinned-member checksum re-signing and HTTPS reinstall for rotation/leak/loss,
+    the old-key node boundary, fork public-key/own-secret steps, #24839''s deferred
+    alternatives, the gmcp workflow and the member-first, gdaemon-last tag order.
+    file: `docs/guides/release-guide.md`.
 
     5.1.3: The CLI reference documents the four `gobby node` verbs and has no `gobby
     auth login` entry. file: `docs/guides/cli-commands.md`.
