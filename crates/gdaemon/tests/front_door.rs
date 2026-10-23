@@ -800,6 +800,7 @@ async fn unavailable_native_backend_reports_supervisor_state() {
             lease_state: None,
             backend: receiver,
             write_token: Default::default(),
+            terminal_route: Default::default(),
         }));
         let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
         let door = FrontDoor::new(state, table);
@@ -1892,4 +1893,138 @@ async fn self_signed_generated_once_and_reused() {
         .await
         .expect("pinned request timed out");
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// The terminal write route gates in order: loopback peers, the backend
+/// child's current token, the body bound, then the route's services. A refusal
+/// never echoes the token it was given.
+#[cfg(unix)]
+#[tokio::test]
+async fn terminal_write_route_requires_loopback_and_the_current_token() {
+    use gobby_core::bootstrap::RunMode;
+    use gobby_daemon::{lifecycle::backend::BackendStatus, state::RuntimeState};
+    use gobby_terminals::write_api::TokenSlot;
+
+    const LOOPBACK: &str = "127.0.0.1:4000";
+    const REMOTE: &str = "203.0.113.9:4000";
+    // MAX_CONTROL_LINE (2 MiB) plus 64 KiB of envelope.
+    const BODY_LIMIT: usize = 2 * 1024 * 1024 + 64 * 1024;
+
+    fn write_door(backend: SocketAddr, token: TokenSlot) -> FrontDoor {
+        let (_status, receiver) = tokio::sync::watch::channel(BackendStatus::Starting { pid: 42 });
+        let mut state = FrontDoorState::new(
+            backend,
+            BackendState::Down,
+            Arc::new(AuthState::new("boot-secret".into(), None, Default::default()).unwrap()),
+        );
+        state.runtime = Some(Arc::new(RuntimeState {
+            mode: RunMode::Standalone,
+            lease: None,
+            lease_state: None,
+            backend: receiver,
+            write_token: token,
+            terminal_route: Default::default(),
+        }));
+        let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+        FrontDoor::new(state, table)
+    }
+
+    async fn answer(
+        door: &FrontDoor,
+        peer: &str,
+        token: Option<&str>,
+        body: Vec<u8>,
+    ) -> (StatusCode, String) {
+        let mut builder = Request::post("/api/internal/terminals/write");
+        if let Some(token) = token {
+            builder = builder.header("x-gobby-write-token", token);
+        }
+        let request = builder.body(Body::from(body)).expect("request");
+        let response = door
+            .handle(request, peer.parse().expect("peer"), false)
+            .await;
+        let status = response.status();
+        let text = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        (status, String::from_utf8_lossy(&text).into_owned())
+    }
+
+    let backend = refused_addr().await;
+    let body = b"{}".to_vec();
+
+    // A child's token is retired once the next child installs its own.
+    let token = TokenSlot::default();
+    let _retired = token.install("retired-token".into());
+    let _current = token.install("current-token".into());
+    let door = write_door(backend, token);
+
+    let (status, _) = answer(&door, REMOTE, Some("current-token"), body.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "non-loopback peers never reach the route"
+    );
+
+    let (status, _) = answer(&door, LOOPBACK, None, body.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "a missing token is refused"
+    );
+    for presented in ["wrong-token", "retired-token"] {
+        let (status, text) = answer(&door, LOOPBACK, Some(presented), body.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "{presented} is not the current token"
+        );
+        assert!(
+            !text.contains("current-token"),
+            "a refusal never echoes the token"
+        );
+    }
+
+    let no_child = write_door(backend, TokenSlot::default());
+    let (status, _) = answer(&no_child, LOOPBACK, Some("current-token"), body.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no backend child is unavailable"
+    );
+
+    let (status, _) = answer(&door, LOOPBACK, Some("current-token"), body.clone()).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no route services are published"
+    );
+
+    let (status, _) = answer(
+        &door,
+        LOOPBACK,
+        Some("current-token"),
+        vec![b' '; BODY_LIMIT],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "a body at the bound is admitted"
+    );
+    let (status, _) = answer(
+        &door,
+        LOOPBACK,
+        Some("current-token"),
+        vec![b' '; BODY_LIMIT + 1],
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "a body over the bound is refused"
+    );
 }

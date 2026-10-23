@@ -74,6 +74,7 @@ async fn native_standby_control_is_authenticated_and_other_routes_refuse() -> Re
             lease_state,
             backend: rx,
             write_token: Default::default(),
+            terminal_route: Default::default(),
         });
         let home = tempfile::tempdir()?;
         let bootstrap = home.path().join("bootstrap.yaml");

@@ -73,7 +73,8 @@ const NAMED_KEYS: &[&str] = &[
     "kpenter",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Origin {
     Operator,
     Automatic,
@@ -92,7 +93,8 @@ impl Origin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Kind {
     Text,
     Key,
@@ -119,7 +121,7 @@ pub struct Step {
 }
 
 /// The lease an operator write was admitted under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 pub struct LeaseClaim {
     pub attachment_id: Uuid,
     pub generation: u64,
@@ -709,14 +711,14 @@ impl Coordinator {
             .await?)
     }
 
-    async fn require(&self, terminal_id: Uuid) -> Result<Terminal, Refusal> {
+    pub(crate) async fn require(&self, terminal_id: Uuid) -> Result<Terminal, Refusal> {
         self.load(terminal_id)
             .await?
             .ok_or(Refusal::TerminalNotFound(terminal_id))
     }
 
     /// Operator writes must still hold the lease they were admitted under.
-    async fn revalidate(
+    pub(crate) async fn revalidate(
         &self,
         terminal_id: Uuid,
         origin: Origin,

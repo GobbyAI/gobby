@@ -248,6 +248,11 @@ impl<T> ActionGate<T> {
         self.queue.len()
     }
 
+    /// True when nothing holds, runs, or waits on the terminal.
+    pub fn is_idle(&self) -> bool {
+        self.hold.is_none() && self.in_flight.is_none() && self.queue.is_empty()
+    }
+
     fn current(&self, token: HoldToken) -> Result<(), HoldError> {
         match &self.hold {
             Some(hold) if hold.token == token => Ok(()),
