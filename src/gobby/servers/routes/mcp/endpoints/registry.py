@@ -7,7 +7,6 @@ These endpoints handle tool registry operations like embedding, status, and refr
 
 import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, HTTPException, Request
@@ -46,7 +45,6 @@ async def embed_mcp_tools(
     Returns:
         Embedding generation stats
     """
-    start_time = time.perf_counter()
 
     try:
         body = await request.json()
@@ -59,7 +57,6 @@ async def embed_mcp_tools(
             return {
                 "success": False,
                 "error": str(e),
-                "response_time_ms": (time.perf_counter() - start_time) * 1000,
             }
 
         # Use semantic search to embed all tools
@@ -70,30 +67,25 @@ async def embed_mcp_tools(
                     mcp_manager=server._mcp_db_manager,
                     internal_manager=server._internal_manager,
                 )
-                response_time_ms = (time.perf_counter() - start_time) * 1000
                 return {
                     "success": True,
                     "stats": stats,
-                    "response_time_ms": response_time_ms,
                 }
             except Exception as e:
                 logger.error("Embedding generation failed: %s", e)
                 return {
                     "success": False,
                     "error": str(e),
-                    "response_time_ms": (time.perf_counter() - start_time) * 1000,
                 }
 
         return {
             "success": False,
             "error": "Semantic search not configured",
-            "response_time_ms": (time.perf_counter() - start_time) * 1000,
         }
 
     except Exception as e:
         logger.exception("Embed tools error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def get_mcp_status(
@@ -105,7 +97,6 @@ async def get_mcp_status(
     Returns:
         Status summary with server counts and health info
     """
-    start_time = time.perf_counter()
 
     try:
         total_servers = 0
@@ -140,21 +131,17 @@ async def get_mcp_status(
                     "failures": health.consecutive_failures if health else 0,
                 }
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-
         return {
             "success": True,
             "total_servers": total_servers,
             "connected_servers": connected_servers,
             "cached_tools": cached_tools,
             "server_health": server_health,
-            "response_time_ms": response_time_ms,
         }
 
     except Exception as e:
         logger.exception("Get MCP status error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def refresh_mcp_tools(
@@ -174,7 +161,6 @@ async def refresh_mcp_tools(
     Returns:
         Refresh stats with new/changed/unchanged tool counts
     """
-    start_time = time.perf_counter()
 
     try:
         body = await request.json()
@@ -195,7 +181,6 @@ async def refresh_mcp_tools(
             return {
                 "success": False,
                 "error": "MCP database manager not configured",
-                "response_time_ms": (time.perf_counter() - start_time) * 1000,
             }
 
         from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
@@ -291,7 +276,6 @@ async def refresh_mcp_tools(
                 "success": False,
                 "error": f"Unknown MCP server: '{wanted}' (searched {searched})",
                 "error_code": "unknown_server",
-                "response_time_ms": (time.perf_counter() - start_time) * 1000,
             }
 
         for server_name, instance in work:
@@ -479,20 +463,17 @@ async def refresh_mcp_tools(
                 logger.error("Error processing server %s: %s", server_name, e)
                 stats["by_server"][server_name] = {"error": str(e)}
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
             "success": True,
             "force": force,
             "stats": stats,
-            "response_time_ms": response_time_ms,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Refresh tools error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 __all__ = [

@@ -319,7 +319,6 @@ describe("ToolCallCard rendering", () => {
               content: {
                 success: true,
                 result: { success: true },
-                response_time_ms: 42,
               },
               kind: "json",
               truncated: false,
@@ -335,11 +334,12 @@ describe("ToolCallCard rendering", () => {
     const resultPanel = screen.getByText("Result").parentElement;
     expect(resultPanel).toHaveClass("min-w-0", "max-w-full", "overflow-hidden");
 
-    // The MCP proxy envelope ({success, result, response_time_ms}) gets flattened
-    // and rendered through JsonResultBlock — the inner `result` wrapper is gone.
+    // The MCP proxy envelope ({success, result}) gets flattened and rendered
+    // through JsonResultBlock — the inner `result` wrapper is gone, and no
+    // timing is shown.
     const code = container.querySelector("code")?.textContent ?? "";
     expect(code).toContain('"success": true');
-    expect(code).toContain('"response_time_ms": 42');
+    expect(code).not.toContain("response_time_ms");
     expect(code).not.toContain('"result":');
   });
 

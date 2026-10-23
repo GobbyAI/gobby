@@ -266,7 +266,8 @@
           "query": {},
           "body": {
             "name": "flag",
-            "scope": "session"
+            "scope": "session",
+            "brief": true
           }
         }
       ]

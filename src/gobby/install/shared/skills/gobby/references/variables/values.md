@@ -2,8 +2,9 @@
 
 Load before reading or writing session values. Use top-level `get_variable` and
 `set_variable`; these do not need a discovery lease. Pass the intended session
-explicitly. Omit read `name` for the effective map; inspect `exists` as well as
-`value` to distinguish missing from present null.
+explicitly. Omit read `name` for sorted variable names only; pass `brief=false` for
+the full effective map. Inspect `exists` as well as `value` to distinguish missing
+from present null.
 
 Read first, change only an authorized user setting, then read it back. Runtime
 set accepts native JSON values and coerces boolean/null/number strings; it does

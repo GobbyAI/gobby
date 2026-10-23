@@ -163,7 +163,11 @@ pub fn call(dialer: &Dialer, name: &str, arguments: &JsonObject) -> Result<Value
                     None,
                 ));
             }
-            let body = json!({"name": value_arg(arguments, "name"), "scope": "session"});
+            let body = json!({
+                "name": value_arg(arguments, "name"),
+                "scope": "session",
+                "brief": arg_or(arguments, "brief", json!(true)),
+            });
             let path = format!("/api/sessions/{}/variables/get", quote(target));
             Ok(dialer.request("POST", &path, Some(&body), scoped(Some(target))))
         }
