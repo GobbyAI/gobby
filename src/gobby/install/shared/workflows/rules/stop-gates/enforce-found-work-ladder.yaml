@@ -63,8 +63,8 @@ rules:
     # leave unclaimed is the intended hand-off, not found work to finish.
     when: >
       unclaimed_found_work
-      and variables.get('_agent_type') not in ['orchestrator', 'assistant', 'lane-manager',
-        'release-manager', 'reporter']
+      and variables.get('_agent_type') not in ['orchestrator', 'assistant', 'dev-manager',
+        'lane-manager', 'triage', 'release-manager', 'reporter']
       and not variables.get('plan_mode')
       and not variables.get('is_spawned_agent')
       and not has_active_agent_wait()

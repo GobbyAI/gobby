@@ -233,7 +233,7 @@ class AgentPaneReserver:
     ) -> ResolvedPlacement:
         """Resolve and authorize ``placement`` read-only.
 
-        ``own_seat_resume`` admits an autonomous caller only for its own lane's seat resume.
+        ``own_seat_resume`` admits an autonomous caller only for its own team's seat resume.
         """
         return await asyncio.to_thread(
             self._preflight, actor, project_id, placement, own_seat_resume

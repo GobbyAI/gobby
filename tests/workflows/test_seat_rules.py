@@ -160,7 +160,8 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     assert "Push: operator approves exact SHA" in first
     assert 'healthy="Systems nominal"' in first
     assert "stalled-session resume only" in first
-    assert "No spawns except Assistant, Orchestrator and automated close review." in first
+    assert "No spawns except Assistant and Orchestrator." in first
+    assert "Team managers may resume their team's seats" in first
     assert GUIDANCE_HEADING not in second
 
 
@@ -230,7 +231,7 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "agent_type", ("lane-manager", "developer", "code-reviewer", "archivist", "plan-writer")
+    "agent_type", ("dev-manager", "developer", "code-reviewer", "archivist", "plan-writer")
 )
 async def test_other_seats_cannot_launch_pipelines(engine: RuleEngine, agent_type: str) -> None:
     for launch in PIPELINE_LAUNCHES:
@@ -250,8 +251,8 @@ async def test_orchestrator_and_assistant_launch_pipelines(
         assert allowed.decision == "allow", launch
 
 
-WORKER_SEATS = ("developer", "code-reviewer", "plan-writer")
 RESUME = {"agent": "developer", "resume_session_id": "gobby#15771"}
+TEAM_MANAGER = {"_agent_type": "dev-manager", "team_manager": True}
 
 
 @pytest.mark.asyncio
@@ -269,11 +270,8 @@ async def test_orchestrator_and_assistant_spawn_fresh_sessions(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", ("lane-manager",))
-async def test_recovery_seats_resume_an_existing_session(
-    engine: RuleEngine, agent_type: str
-) -> None:
-    seat = {"_agent_type": agent_type}
+async def test_a_team_manager_resumes_an_existing_session(engine: RuleEngine) -> None:
+    seat = TEAM_MANAGER
 
     resumed = await _decide(engine, _proxy_call("gobby-agents", "spawn_agent", RESUME), seat)
     new_spawn = await _decide(
@@ -288,7 +286,10 @@ async def test_recovery_seats_resume_an_existing_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", WORKER_SEATS)
+# A dev-manager session without its definition's team_manager variable resumes nothing.
+@pytest.mark.parametrize(
+    "agent_type", ("developer", "code-reviewer", "test-writer", "plan-writer", "dev-manager")
+)
 async def test_other_seats_cannot_resume_or_spawn(engine: RuleEngine, agent_type: str) -> None:
     seat = {"_agent_type": agent_type}
 
@@ -405,10 +406,10 @@ NOT_PROJECT_CREATES = (
 )
 PROJECT_CREATE_BLOCKED: tuple[dict[str, Any], ...] = (
     DEVELOPER,
-    {"_agent_type": "lane-manager"},
+    TEAM_MANAGER,
     {"is_spawned_agent": True},
     {"_agent_type": "default", "is_spawned_agent": True},
-    {"_agent_type": "task-close-reviewer", "is_spawned_agent": True},
+    {"_agent_type": "test-writer", "is_spawned_agent": True},
 )
 PROJECT_CREATE_ALLOWED: tuple[dict[str, Any], ...] = (
     ASSISTANT,

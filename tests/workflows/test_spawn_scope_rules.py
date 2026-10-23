@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -26,8 +28,9 @@ from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.landing_case import make_landing_case
+from tests.fixtures.team_case import make_team_world, running_seat
 
 pytestmark = pytest.mark.unit
 
@@ -87,12 +90,17 @@ def _spawn_event(
 
 
 def _define_agent(
-    db: HubDatabase, name: str, spawnable: list[str] | None, fallback: str | None = None
+    db: HubDatabase,
+    name: str,
+    spawnable: list[str] | None,
+    fallback: str | None = None,
+    *,
+    variables: dict[str, Any] | None = None,
 ) -> None:
     body: dict[str, Any] = {
         "name": name,
         "prompts": {"agent": "Work."},
-        "workflows": {"rule_selectors": {"include": ["tag:default"]}},
+        "workflows": {"rule_selectors": {"include": ["tag:default"]}, "variables": variables or {}},
     }
     if spawnable is not None:
         body["spawnable_agents"] = spawnable
@@ -669,13 +677,12 @@ class TestLimitSpawnNetworkOverride:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", ["lane-manager"])
-async def test_spawn_rules_let_a_root_recovery_seat_resume_a_session(
+async def test_spawn_rules_let_a_team_manager_resume_a_session(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    agent_type: str,
 ) -> None:
+    """The seat rule exempts only a team manager's resume; its fresh spawn stays blocked."""
     _only_rules_enabled(
         temp_db,
         SEAT_NO_SPAWN,
@@ -683,9 +690,9 @@ async def test_spawn_rules_let_a_root_recovery_seat_resume_a_session(
         LIMIT_SPAWN_NETWORK_OVERRIDE,
         "no-agent-spawn-for-merge",
     )
-    seat = _register(session_manager, str(sample_project["id"]), f"seat-{agent_type}")
+    seat = _register(session_manager, str(sample_project["id"]), "seat-dev-manager")
     engine = RuleEngine(temp_db, session_manager=session_manager)
-    variables = {"_agent_type": agent_type}
+    variables = {"_agent_type": "dev-manager", "team_manager": True}
 
     resumed = await engine.evaluate(
         _spawn_event(seat.id, "spawn_agent", "developer", resume_session_id="gobby#15771"),
@@ -715,51 +722,90 @@ def test_spawn_any_wildcard_stands_alone() -> None:
         )
 
 
-def _seat_in_lane(
-    db: HubDatabase,
-    session_manager: SessionManager,
-    root: Session,
-    name: str,
-    agent_name: str,
-    lane: str,
-) -> Session:
-    """A running child of ``root`` whose agent run names ``agent_name`` and records ``lane``."""
-    child = _register(session_manager, root.project_id, name, root)
-    runs = LocalAgentRunManager(db)
-    run = runs.create(
-        parent_session_id=root.id,
-        provider="claude",
-        prompt="work",
-        agent_name=agent_name,
-        child_session_id=child.id,
-        resume_metadata_json={"lane": lane},
+TEAM_SEAT_TYPES = ("test-writer", "developer", "code-reviewer")
+
+
+@dataclass
+class _Teams:
+    """A Dev Manager with a seat of each type in its admitted team, and another team's developer."""
+
+    db: HubDatabase
+    manager: Session
+    seats: dict[str, Session]
+    outsider: Session
+
+    def target(self, name: str) -> Session:
+        return self.outsider if name == "outsider" else self.seats[name]
+
+
+@pytest.fixture
+async def teams(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> _Teams:
+    world = make_team_world(
+        make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
     )
-    started = runs.start(run.id)
-    assert started is not None and started.status == "running"
-    updated = session_manager.update_terminal_pickup_metadata(child.id, agent_run_id=run.id)
-    assert updated is not None and updated.agent_run_id == run.id
-    return updated
+    runbooks = []
+    for title in ("Resume a seat of this team", "Another team's task"):
+        task = world.case.task(title)
+        runbook = world.child(task)
+        await world.admit(runbook, task)
+        runbooks.append(runbook)
+    own, other = runbooks
+    built = _Teams(
+        db=temp_db,
+        manager=running_seat(world, own, "dev-manager"),
+        seats={name: running_seat(world, own, name) for name in (*TEAM_SEAT_TYPES, "orchestrator")},
+        outsider=running_seat(world, other, "developer"),
+    )
+    # A runbook completes once its seats launch; the team outlives the execution.
+    for runbook in runbooks:
+        world.finish(runbook)
+    return built
+
+
+# Refused resumes: (target seat, resume, requested agent, the manager's team_manager value).
+_REFUSED_RESUMES = pytest.mark.parametrize(
+    ("target", "resume", "agent", "team_manager"),
+    [
+        ("outsider", True, "developer", True),
+        ("orchestrator", True, "orchestrator", True),
+        ("developer", False, "developer", True),
+        ("developer", True, "release-manager", True),
+        ("developer", True, "dev-manager", True),
+        ("developer", True, "developer", False),
+    ],
+    ids=[
+        "other-team-seat",
+        "orchestrator-seat",
+        "fresh-spawn",
+        "retyped-to-release-manager",
+        "retyped-to-dev-manager",
+        "not-a-team-manager",
+    ],
+)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("seat_type", ["developer", "code-reviewer"])
-async def test_lane_manager_resumes_a_seat_in_its_own_lane(
-    temp_db: HubDatabase,
-    session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    seat_type: str,
+@pytest.mark.parametrize("seat_type", TEAM_SEAT_TYPES)
+async def test_team_manager_resumes_a_seat_of_its_own_team(
+    teams: _Teams, session_manager: SessionManager, seat_type: str
 ) -> None:
-    _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
-    _define_agent(temp_db, "lane-manager", None)
-    root = _register(session_manager, str(sample_project["id"]), f"lane-root-{seat_type}")
-    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
-    seat = _seat_in_lane(temp_db, session_manager, root, f"seat-{seat_type}", seat_type, "7")
-    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
-    engine = RuleEngine(temp_db, session_manager=session_manager)
+    _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
+    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": True})
+    engine = RuleEngine(teams.db, session_manager=session_manager)
 
     resumed = await engine.evaluate(
-        _spawn_event(manager.id, "spawn_agent", seat_type, resume_session_id=seat.id),
-        session_id=manager.id,
+        _spawn_event(
+            teams.manager.id,
+            "spawn_agent",
+            seat_type,
+            resume_session_id=teams.seats[seat_type].id,
+        ),
+        session_id=teams.manager.id,
         variables={},
     )
 
@@ -767,48 +813,27 @@ async def test_lane_manager_resumes_a_seat_in_its_own_lane(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("seat_type", "seat_lane", "resume", "agent"),
-    [
-        ("developer", "3", True, "developer"),
-        ("orchestrator", "7", True, "orchestrator"),
-        ("developer", "7", False, "developer"),
-        ("developer", "7", True, "release-manager"),
-        ("developer", "7", True, "lane-manager"),
-    ],
-    ids=[
-        "other-lane-seat",
-        "orchestrator-seat",
-        "fresh-spawn",
-        "retyped-to-release-manager",
-        "retyped-to-lane-manager",
-    ],
-)
-async def test_lane_manager_refuses_a_seat_outside_its_lane_or_a_fresh_spawn(
-    temp_db: HubDatabase,
+@_REFUSED_RESUMES
+async def test_team_manager_refuses_another_teams_seat_a_retype_or_a_fresh_spawn(
+    teams: _Teams,
     session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    seat_type: str,
-    seat_lane: str,
+    target: str,
     resume: bool,
     agent: str,
+    team_manager: bool,
 ) -> None:
-    _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
-    _define_agent(temp_db, "lane-manager", None)
-    root = _register(session_manager, str(sample_project["id"]), f"lane-refuse-{seat_type}")
-    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
-    seat = _seat_in_lane(temp_db, session_manager, root, "seat", seat_type, seat_lane)
-    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
-    engine = RuleEngine(temp_db, session_manager=session_manager)
+    _only_rules_enabled(teams.db, LIMIT_SPAWNABLE_AGENTS)
+    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": team_manager})
+    engine = RuleEngine(teams.db, session_manager=session_manager)
 
     refused = await engine.evaluate(
         _spawn_event(
-            manager.id,
+            teams.manager.id,
             "spawn_agent",
             agent,
-            resume_session_id=seat.id if resume else None,
+            resume_session_id=teams.target(target).id if resume else None,
         ),
-        session_id=manager.id,
+        session_id=teams.manager.id,
         variables={},
     )
 
@@ -824,67 +849,44 @@ def _admit_as(monkeypatch: pytest.MonkeyPatch, caller: Session) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("seat_type", ["developer", "code-reviewer"])
-async def test_lane_manager_admission_resumes_its_own_lane_seat(
+@pytest.mark.parametrize("seat_type", TEAM_SEAT_TYPES)
+async def test_team_manager_admission_resumes_its_own_teams_seat(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db: HubDatabase,
+    teams: _Teams,
     session_manager: SessionManager,
-    sample_project: dict[str, Any],
     seat_type: str,
 ) -> None:
-    _define_agent(temp_db, "lane-manager", None)
-    root = _register(session_manager, str(sample_project["id"]), f"admit-root-{seat_type}")
-    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
-    seat = _seat_in_lane(temp_db, session_manager, root, "seat", seat_type, "7")
-    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
-    _admit_as(monkeypatch, manager)
+    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": True})
+    _admit_as(monkeypatch, teams.manager)
 
     caller = await _spawn_guards.enforce_spawn_caller(
-        session_manager, seat_type, manager.project_id, resume_session_id=seat.id
+        session_manager,
+        seat_type,
+        teams.manager.project_id,
+        resume_session_id=teams.seats[seat_type].id,
     )
 
-    assert caller == manager.id
+    assert caller == teams.manager.id
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("seat_type", "seat_lane", "resume", "agent"),
-    [
-        ("developer", "3", True, "developer"),
-        ("orchestrator", "7", True, "orchestrator"),
-        ("developer", "7", False, "developer"),
-        ("developer", "7", True, "release-manager"),
-        ("developer", "7", True, "lane-manager"),
-    ],
-    ids=[
-        "other-lane-seat",
-        "orchestrator-seat",
-        "fresh-spawn",
-        "retyped-to-release-manager",
-        "retyped-to-lane-manager",
-    ],
-)
-async def test_lane_manager_admission_refuses_other_lanes_retypes_and_fresh_spawns(
+@_REFUSED_RESUMES
+async def test_team_manager_admission_refuses_other_teams_retypes_and_fresh_spawns(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db: HubDatabase,
+    teams: _Teams,
     session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    seat_type: str,
-    seat_lane: str,
+    target: str,
     resume: bool,
     agent: str,
+    team_manager: bool,
 ) -> None:
-    _define_agent(temp_db, "lane-manager", None)
-    root = _register(session_manager, str(sample_project["id"]), f"admit-refuse-{seat_type}")
-    manager = _seat_in_lane(temp_db, session_manager, root, "lane-manager", "lane-manager", "7")
-    seat = _seat_in_lane(temp_db, session_manager, root, "seat", seat_type, seat_lane)
-    SessionVariableManager(temp_db).merge_variables(seat.id, {"_agent_type": seat_type})
-    _admit_as(monkeypatch, manager)
+    _define_agent(teams.db, "dev-manager", None, variables={"team_manager": team_manager})
+    _admit_as(monkeypatch, teams.manager)
 
     with pytest.raises(ValueError, match="caller may not spawn"):
         await _spawn_guards.enforce_spawn_caller(
             session_manager,
             agent,
-            manager.project_id,
-            resume_session_id=seat.id if resume else None,
+            teams.manager.project_id,
+            resume_session_id=teams.target(target).id if resume else None,
         )

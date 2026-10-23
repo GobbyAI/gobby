@@ -9,7 +9,11 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.agent_resolver import resolve_agent
+from gobby.workflows.agent_resolver import (
+    AgentResolutionError,
+    resolve_agent,
+    resolve_agent_with_row,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -176,19 +180,13 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     return caller, run.agent_name
 
 
-_LANE_SEAT_TYPES = frozenset({"developer", "code-reviewer"})
-
-
-def _run_lane(runs: LocalAgentRunManager, run_id: str | None) -> str | None:
-    run = runs.get(run_id) if run_id else None
-    lane = (run.resume_metadata_json or {}).get("lane") if run is not None else None
-    return lane if isinstance(lane, str) and lane else None
+_TEAM_SEAT_TYPES = frozenset({"test-writer", "developer", "code-reviewer"})
 
 
 def own_seat_resume(
     session_manager: SessionManager, caller_ref: Any, agent: Any, resume_session_id: Any
 ) -> bool:
-    """Whether the caller is a lane manager resuming its own lane's seat.
+    """Whether the caller is a team manager resuming a seat of its own team.
 
     Admission and placement both decide through this check, so an autonomous caller
     passes placement only where admission already allowed the same resume. A caller
@@ -196,38 +194,38 @@ def own_seat_resume(
     """
     try:
         caller, agent_name = _spawn_caller(session_manager, caller_ref)
-    except ValueError:
+        return _manager_resumes_own_seat(
+            session_manager, caller, agent_name, agent, resume_session_id
+        )
+    except (ValueError, AgentResolutionError):
         return False
-    return _lane_manager_resumes_own_seat(
-        session_manager, caller, agent_name, agent, resume_session_id
-    )
 
 
-def _lane_manager_resumes_own_seat(
+def _manager_resumes_own_seat(
     session_manager: SessionManager,
     caller: Session,
     agent_name: str | None,
     agent: Any,
     resume_session_id: Any,
 ) -> bool:
-    """Whether a running lane manager resumes its own lane's seat as that seat's own type.
+    """Whether a running team manager resumes a seat of its own team as the seat's type.
 
-    This mirrors the release rule in ``_claim_release._can_release``: the enabled
-    lane-manager definition, the caller's running run bound to the caller, and the
-    seat's run bound to the seat in the same lane. The seat must be a developer or
-    code-reviewer in the caller's project and machine, and the resume must name its
-    stored type, so a resume cannot re-type it. A fresh spawn has no resume reference.
+    The caller's enabled installed definition must set the ``team_manager`` variable,
+    so a session variable alone never grants it. The caller's running run must be
+    bound to the caller, and the seat's run to the seat. The seat must be a test
+    writer, developer or code reviewer in the caller's project and machine, launched
+    by a runbook of the caller's admitted team. The resume must name the seat's stored
+    type, so a resume cannot re-type it. A fresh spawn has no resume reference.
     """
+    from gobby.agents.team_lifecycle import seat_team
     from gobby.workflows.state_manager import SessionVariableManager
 
-    if agent_name != "lane-manager":
+    if agent_name is None or not isinstance(resume_session_id, str) or not resume_session_id:
         return False
-    if not isinstance(resume_session_id, str) or not resume_session_id:
+    found = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
+    if found is None or not found[1].enabled:
         return False
-    definition = AgentDefinitionManager(session_manager.db).get_by_name(
-        "lane-manager", caller.project_id
-    )
-    if definition is None or not definition.enabled:
+    if found[0].workflows.variables.get("team_manager") is not True:
         return False
     runs = LocalAgentRunManager(session_manager.db)
     manager_run = runs.get(caller.agent_run_id) if caller.agent_run_id else None
@@ -237,8 +235,8 @@ def _lane_manager_resumes_own_seat(
         or manager_run.child_session_id != caller.id
     ):
         return False
-    lane = _run_lane(runs, manager_run.id)
-    if lane is None:
+    team = seat_team(session_manager.db, caller.id)
+    if team is None:
         return False
     seat = session_manager.get(
         session_manager.resolve_session_reference(resume_session_id, caller.project_id)
@@ -250,14 +248,13 @@ def _lane_manager_resumes_own_seat(
         .get_variable_subset(seat.id, ("_agent_type",))
         .get("_agent_type")
     )
-    if seat_type not in _LANE_SEAT_TYPES or agent != seat_type:
+    if seat_type not in _TEAM_SEAT_TYPES or agent != seat_type:
         return False
     seat_run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
-    return (
-        seat_run is not None
-        and seat_run.child_session_id == seat.id
-        and _run_lane(runs, seat_run.id) == lane
-    )
+    if seat_run is None or seat_run.child_session_id != seat.id:
+        return False
+    seat_binding = seat_team(session_manager.db, seat.id)
+    return seat_binding is not None and seat_binding.team_id == team.team_id
 
 
 def spawn_target_allowed(
@@ -277,8 +274,8 @@ def spawn_target_allowed(
     decides: any agent, the listed agents, or none. Every effective target must
     be allowed. Without a resolved target project, a before_tool rule checks
     only requested names. Admission passes the launch's target project to check
-    its fallback chain as well. A lane manager may also resume an existing seat in
-    its own lane, which is the one spawn its definition does not list. Anything
+    its fallback chain as well. A team manager may also resume an existing seat of
+    its own team, which is the one spawn its definition does not list. Anything
     unresolvable raises and fails closed.
     """
     if session_manager is None:
@@ -286,7 +283,7 @@ def spawn_target_allowed(
     caller, agent_name = _spawn_caller(session_manager, caller_ref)
     if agent_name is None:
         return True
-    if tool_name == "spawn_agent" and _lane_manager_resumes_own_seat(
+    if tool_name == "spawn_agent" and _manager_resumes_own_seat(
         session_manager, caller, agent_name, agent, resume_session_id
     ):
         return True

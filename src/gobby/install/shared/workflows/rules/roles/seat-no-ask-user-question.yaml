@@ -9,15 +9,15 @@ rules:
     enabled: true
     priority: 10
     when: >
-      variables.get('_agent_type') in ['orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['orchestrator', 'dev-manager', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
     effects:
       - type: block
         tools: [AskUserQuestion]
         reason: >-
-          Use `gobby-agents:send_message` to send your question to your Lane Manager
+          Use `gobby-agents:send_message` to send your question to your Dev Manager
           or the Orchestrator. A decision for the operator goes through the Assistant, as
           Telegram buttons or plain text at the end of its turn.

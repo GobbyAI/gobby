@@ -5,21 +5,23 @@ tags: [roles, seat, enforcement, gobby, default]
 # (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
-    description: "Seats, the Plan Writer included, do not spawn agents; Lane Managers may resume one. The Assistant and Orchestrator are outside this rule"
+    description: "Seats, the Plan Writer included, do not spawn agents; a team manager may resume one. The Assistant and Orchestrator are outside this rule"
     event: before_tool
     enabled: true
     priority: 10
     # The Assistant and Orchestrator launch seats for the operator, so this rule
     # never covers them (Josh, 2026-10-21). Only a resume re-mints an expired seat
-    # capability, and Lane Managers recover stalled sessions, so they may resume one.
+    # capability, and a team manager (its definition sets the `team_manager`
+    # variable) recovers its team's stalled seats, so it may resume one. Spawn
+    # admission limits that resume to a seat of the manager's own team.
     when: >
-      variables.get('_agent_type') in ['lane-manager',
+      variables.get('_agent_type') in ['dev-manager', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and not (
-        variables.get('_agent_type') == 'lane-manager'
+        variables.get('team_manager')
         and tool_input.get('server_name') == 'gobby-agents'
         and tool_input.get('tool_name') == 'spawn_agent'
         and ((tool_input.get('arguments') or tool_input) or {}).get('resume_session_id')
@@ -28,10 +30,9 @@ rules:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
         reason: >-
-          Seats do not spawn agents. The Assistant, the Orchestrator and the
-          automated task-close reviewer spawn seats, and Lane Managers may only
-          resume an existing session with spawn_agent resume_session_id; send other
-          work to the Orchestrator.
+          Seats do not spawn agents. The Assistant and the Orchestrator spawn seats,
+          and a team manager may only resume an existing seat of its team with
+          spawn_agent resume_session_id; send other work to the Orchestrator.
 
   # The Orchestrator is the primary pipeline launcher and the Assistant is the
   # backup, launching only while the Orchestrator is down. The split is a norm in
@@ -44,9 +45,9 @@ rules:
     # `block` mcp_tools matching is exact or `server:*`, and exposed pipelines are
     # named `pipeline:<name>`, so the condition alone selects the call.
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and variables.get('_agent_type') not in ['assistant', 'orchestrator']
@@ -69,9 +70,9 @@ rules:
     enabled: true
     priority: 10
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and variables.get('_agent_type') not in ['assistant', 'orchestrator']
@@ -91,9 +92,9 @@ rules:
     enabled: true
     priority: 10
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
     effects:
@@ -101,14 +102,14 @@ rules:
         tools: [Bash]
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:--config(?:=|\\s+)\\S+\\s+)?agents\\s+spawn\\b"
         reason: >-
-          Seats do not spawn agents from the shell. The automated task-close
-          reviewer is the only spawn path; send the request to the Orchestrator.
+          Seats do not spawn agents from the shell. Agents start through
+          gobby-agents spawn_agent or a runbook; send the request to the Orchestrator.
 
   # Every agent except the Assistant and Orchestrator needs this rule against new
   # project creation. Root sessions fall back to `_agent_type` 'default' and stay
-  # open. A spawned session is blocked whatever its type, the task-close reviewer
-  # and definition-less spawns included. The Assistant and Orchestrator are root
-  # persona panes and never spawned. Surfaces: the proxy's init_project tool,
+  # open. A spawned session is blocked whatever its type, definition-less spawns
+  # included. The Assistant and Orchestrator are root persona panes and never
+  # spawned. Surfaces: the proxy's init_project tool,
   # `gobby init`, `gobby install --no-interactive` (it initializes a git root with
   # no project), and any shell request naming the /api/projects/init route, which
   # stays open for the operator's gclient and web flows. A grep, rg or gcode search

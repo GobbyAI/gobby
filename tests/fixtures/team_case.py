@@ -30,6 +30,7 @@ from gobby.utils.session_context import get_current_session_id, session_context_
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import LandingCase
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -159,6 +160,26 @@ class TeamWorld:
     def tree_ids(self) -> list[str]:
         trees = LocalWorktreeManager(self.case.db).list_worktrees(project_id=self.case.project_id)
         return [tree.id for tree in trees]
+
+
+def running_seat(world: TeamWorld, runbook: Session, agent_type: str) -> Session:
+    """A seat ``runbook`` launched as ``agent_type``, with its running run bound to it."""
+    db = world.case.db
+    child = world.case.session(agent_type, parent=runbook.id)
+    runs = LocalAgentRunManager(db)
+    run = runs.create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt=f"Run the {agent_type} seat.",
+        agent_name=agent_type,
+        child_session_id=child,
+    )
+    started = runs.start(run.id)
+    assert started is not None and started.status == "running"
+    SessionVariableManager(db).merge_variables(child, {"_agent_type": agent_type})
+    seat = SessionManager(db).update_terminal_pickup_metadata(child, agent_run_id=run.id)
+    assert seat is not None and seat.agent_run_id == run.id
+    return seat
 
 
 def make_team_world(
