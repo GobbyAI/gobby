@@ -189,6 +189,9 @@ pub struct ClientPrefs {
     /// Draw Nerd Font symbols (the pane's sandbox lock); `false` spells them
     /// in plain text for a font without them.
     pub nerd_glyphs: bool,
+    /// Pinned heights, in rows, of the sidebar's Machines, Projects, Agents
+    /// and Terminals sections; `0` leaves that section derived.
+    pub sidebar_section_heights: [u16; 4],
 }
 
 impl Default for ClientPrefs {
@@ -215,6 +218,7 @@ impl Default for ClientPrefs {
             status_left: vec!["focus".to_string()],
             status_right: Vec::new(),
             nerd_glyphs: true,
+            sidebar_section_heights: [0; 4],
         }
     }
 }

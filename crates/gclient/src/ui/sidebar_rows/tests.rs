@@ -266,12 +266,17 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     assert_eq!(rows[0].definition, "Codex");
     assert_eq!(rows[0].reference, "#77");
     assert_eq!(rows[0].model_slug, "gpt-5-high");
-    let third = row_third_line(&rows[0], 34, &Chrome::dark());
-    assert_eq!(line_text(&third), "   gpt-5-high");
-    assert!(third
+    // The model sits under the title, the task status below it (#24895).
+    let model_line = row_second_line(&rows[0], 34, &Chrome::dark());
+    assert_eq!(line_text(&model_line), "   gpt-5-high");
+    assert!(model_line
         .spans
         .iter()
         .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
+    assert_eq!(
+        line_text(&row_third_line(&rows[0], 34, &Chrome::dark())),
+        "   No assigned task"
+    );
     // The model takes the theme's model colour in every palette, grays
     // included, and never a state hue (#23416's model-line board).
     let mut mono = Chrome::dark();
@@ -281,7 +286,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     light.set_theme(ThemeKind::Light);
     for chrome in [Chrome::dark(), light, mono] {
         let p = &chrome.palette;
-        let model = row_third_line(&rows[0], 34, &chrome).spans[1].style.fg;
+        let model = row_second_line(&rows[0], 34, &chrome).spans[1].style.fg;
         assert_eq!(model, Some(p.model));
         assert!(model != Some(p.text) && model != Some(p.overlay1));
     }
@@ -292,7 +297,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         ..SidebarRow::default()
     };
     assert_eq!(
-        line_text(&row_third_line(&fable, 34, &Chrome::dark())),
+        line_text(&row_second_line(&fable, 34, &Chrome::dark())),
         "   claude-fable-5.1-xhigh",
         "the whole model shows while the width holds it"
     );
@@ -450,11 +455,11 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     };
     let wide = line_text(&row_line(&row, 60, &chrome, 0));
     assert_eq!(wide, " ⍾ #123: Backend");
+    assert_eq!(line_text(&row_second_line(&row, 60, &chrome)), "   gpt-5");
     assert_eq!(
-        line_text(&row_second_line(&row, 60, &chrome)),
+        line_text(&row_third_line(&row, 60, &chrome)),
         "   Working task 123 Review auth"
     );
-    assert_eq!(line_text(&row_third_line(&row, 60, &chrome)), "   gpt-5");
     let idle = SidebarRow {
         state: RowState::Idle,
         ..row.clone()
@@ -473,11 +478,11 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     );
     assert_eq!(
         line_text(&row_second_line(&nested, 60, &chrome)),
-        " │    Working task 123 Review auth"
+        " │    gpt-5"
     );
     assert_eq!(
         line_text(&row_third_line(&nested, 60, &chrome)),
-        " │    gpt-5"
+        " │    Working task 123 Review auth"
     );
     let descendant = SidebarRow {
         ancestor_branches: vec![true],
@@ -490,11 +495,11 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     );
     assert_eq!(
         line_text(&row_second_line(&descendant, 60, &chrome)),
-        " │       Working task 123 Review auth"
+        " │       gpt-5"
     );
     assert_eq!(
         line_text(&row_third_line(&descendant, 60, &chrome)),
-        " │       gpt-5"
+        " │       Working task 123 Review auth"
     );
     let last = SidebarRow {
         last_child: true,
@@ -502,7 +507,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     };
     assert_eq!(
         line_text(&row_third_line(&last, 60, &chrome)),
-        "      gpt-5"
+        "      Working task 123 Review auth"
     );
     for width in 0..12 {
         for line in [
@@ -516,8 +521,9 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
         }
     }
     let bare = SidebarRow { task: None, ..row };
+    assert_eq!(line_text(&row_second_line(&bare, 60, &chrome)), "   gpt-5");
     assert_eq!(
-        line_text(&row_second_line(&bare, 60, &chrome)),
+        line_text(&row_third_line(&bare, 60, &chrome)),
         "   No assigned task"
     );
 }
@@ -547,11 +553,11 @@ fn parents_connect_to_their_first_child_on_both_continuation_lines() {
     ] {
         assert_eq!(
             line_text(&row_second_line(row, 60, &chrome)),
-            format!("{prefix}No assigned task")
+            format!("{prefix}codex")
         );
         assert_eq!(
             line_text(&row_third_line(row, 60, &chrome)),
-            format!("{prefix}codex")
+            format!("{prefix}No assigned task")
         );
         for width in 0..12 {
             for line in [
@@ -620,25 +626,25 @@ fn every_overflowing_row_uses_the_selected_scroll_direction() {
     assert_eq!(row_travel(&row, 60), 0);
     // A plain row scrolls like the active one.
     assert_eq!(
-        line_text(&row_second_line(&row, 24, &chrome)),
+        line_text(&row_third_line(&row, 24, &chrome)),
         "   rking task 1 abcdefgh"
     );
     // Beside a longer title it reads the same clock, then parks at its
     // end while the longer one walks on.
     chrome.view.title_travel = 10;
     assert_eq!(
-        line_text(&row_second_line(&row, 24, &chrome)),
+        line_text(&row_third_line(&row, 24, &chrome)),
         "   rking task 1 abcdefgh"
     );
     chrome.ticker = (TICKER_PAUSE + 8) * TICKER_STEP;
     assert_eq!(
-        line_text(&row_second_line(&row, 24, &chrome)),
+        line_text(&row_third_line(&row, 24, &chrome)),
         "   ing task 1 abcdefghij"
     );
     // Off truncates like any other title.
     chrome.prefs.title_scrolling = TitleScrolling::Off;
     assert_eq!(
-        line_text(&row_second_line(&row, 24, &chrome)),
+        line_text(&row_third_line(&row, 24, &chrome)),
         "   Working task 1 abcde…"
     );
 
@@ -646,12 +652,12 @@ fn every_overflowing_row_uses_the_selected_scroll_direction() {
     chrome.prefs.title_scrolling = TitleScrolling::Right;
     chrome.ticker = 0;
     assert_eq!(
-        line_text(&row_second_line(&row, 24, &chrome)),
+        line_text(&row_third_line(&row, 24, &chrome)),
         "   ing task 1 abcdefghij"
     );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     assert_eq!(
-        line_text(&row_second_line(&row, 24, &chrome)),
+        line_text(&row_third_line(&row, 24, &chrome)),
         "   rking task 1 abcdefgh"
     );
 }
@@ -667,16 +673,16 @@ fn the_whole_task_line_tickers_as_one_string() {
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    let first = line_text(&row_second_line(&row, 24, &chrome));
+    let first = line_text(&row_third_line(&row, 24, &chrome));
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    let later = line_text(&row_second_line(&row, 24, &chrome));
+    let later = line_text(&row_third_line(&row, 24, &chrome));
     assert_eq!(first, "   Working task 13936 修");
     assert_eq!(later, "   rking task 13936 修复");
     assert!(row_travel(&row, 24) > 0);
 
     let unassigned = SidebarRow { task: None, ..row };
     assert_eq!(
-        line_text(&row_second_line(&unassigned, 24, &chrome)),
+        line_text(&row_third_line(&unassigned, 24, &chrome)),
         "   No assigned task"
     );
 }
@@ -1017,10 +1023,10 @@ fn sidebar_rows_paint_the_option_b_roles() {
         assert_role(&line, ": ", p.subtext0, false, case);
         assert_role(&line, "Claude Code", p.text, true, case);
         let second = row_second_line(&agent, 30, &chrome);
-        assert_role(&second, "Working task 23280", p.text, false, case);
-        assert_role(&second, " gclient", p.subtext0, false, case);
+        assert_role(&second, "claude-opus-5.5-high", p.model, false, case);
         let third = row_third_line(&agent, 30, &chrome);
-        assert_role(&third, "claude-opus-5.5-high", p.model, false, case);
+        assert_role(&third, "Working task 23280", p.text, false, case);
+        assert_role(&third, " gclient", p.subtext0, false, case);
 
         let idle = SidebarRow {
             definition: "Codex".into(),
@@ -1037,9 +1043,9 @@ fn sidebar_rows_paint_the_option_b_roles() {
             case,
         );
         let second = row_second_line(&idle, 30, &chrome);
-        assert_role(&second, "No assigned task", p.subtext0, false, case);
+        assert_role(&second, "gpt-5-codex-high", p.model, false, case);
         let third = row_third_line(&idle, 30, &chrome);
-        assert_role(&third, "gpt-5-codex-high", p.model, false, case);
+        assert_role(&third, "No assigned task", p.subtext0, false, case);
 
         let machine = SidebarRow {
             kind: RowKind::Machine,
@@ -1117,8 +1123,75 @@ fn a_scrolling_task_line_keeps_text_and_subtext_roles() {
         ..SidebarRow::default()
     };
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    let line = row_second_line(&row, 24, &chrome);
+    let line = row_third_line(&row, 24, &chrome);
     assert_eq!(line_text(&line), "   rking task 13936 修复");
     assert_role(&line, "rking task 13936", p.text, false, "scrolled");
     assert_role(&line, " 修复", p.subtext0, false, "scrolled");
+}
+
+/// Agent line two is the model under the title and line three the task
+/// status under the model (#24895).
+#[test]
+fn an_agent_puts_the_model_on_line_two_and_the_task_on_line_three() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "Assistant".into(),
+        reference: "#15976".into(),
+        task: Some(("#24895".into(), "gclient sidebar".into())),
+        model_slug: "claude-opus-5.5-medium".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_second_line(&row, 40, &chrome)),
+        "   claude-opus-5.5-medium"
+    );
+    assert_eq!(
+        line_text(&row_third_line(&row, 40, &chrome)),
+        "   Working task 24895 gclient sidebar"
+    );
+}
+
+/// A sandboxed agent's lock sits on line one only, between the state dot
+/// and `#ref: Role`; the model and task lines never carry it (#24895).
+#[test]
+fn a_sandboxed_agent_marks_its_first_line_and_only_its_first() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "Assistant".into(),
+        reference: "#15976".into(),
+        model_slug: "claude-opus-5.5-medium".into(),
+        kind: RowKind::Agent,
+        sandbox_mark: Some("\u{f023}"),
+        ..SidebarRow::default()
+    };
+    let first = line_text(&row_line(&row, 40, &chrome, 0));
+    assert!(first.ends_with(" \u{f023} #15976: Assistant"), "{first}");
+    let plain = SidebarRow {
+        sandbox_mark: None,
+        ..row.clone()
+    };
+    let plain_first = line_text(&row_line(&plain, 40, &chrome, 0));
+    assert!(plain_first.ends_with(" #15976: Assistant"), "{plain_first}");
+    assert!(!line_text(&row_second_line(&row, 40, &chrome)).contains('\u{f023}'));
+    assert!(!line_text(&row_third_line(&row, 40, &chrome)).contains('\u{f023}'));
+}
+
+/// The lock takes its cells from the title window, so the travel of a
+/// sandboxed name grows by exactly those cells (#24895).
+#[test]
+fn the_sandbox_lock_takes_its_cells_from_the_title_window() {
+    let row = SidebarRow {
+        definition: "An extraordinarily long agent name".into(),
+        reference: "#77".into(),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    let sandboxed = SidebarRow {
+        sandbox_mark: Some("\u{f023}"),
+        ..row.clone()
+    };
+    let plain_travel = row_travel(&row, 24);
+    assert!(plain_travel > 0, "the name must overrun for this to bite");
+    assert_eq!(row_travel(&sandboxed, 24), plain_travel + 2);
 }

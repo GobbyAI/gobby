@@ -184,9 +184,12 @@ Machines, Projects, Agents, and Terminals. The selected row and the active
 row sit on the selection fill, and the selected row also leads with the `▸`
 marker. The Terminals heading is hidden
 while no bare terminal is open. The sidebar controls live directly in
-**View**. Machines and Projects together
+**View**. Until you drag a divider, Machines and Projects together
 never take more than the top half of the sidebar (each scrolls inside its cap);
-Agents and Terminals share the rest. A section with more rows than room draws a
+Agents and Terminals share the rest. Drag the blank row that divides two
+sections to trade rows between them: the pair keeps its total height, and each
+section holds at least its minimum (Machines 3, Projects 3, Agents 5, Terminals
+3 rows). Released heights are saved and reopen on the next start. A section with more rows than room draws a
 scrollbar thumb and no track. The thumb is dim at rest, and brightens for a
 second after the section scrolls or while the navigate cursor is in it.
 
@@ -209,15 +212,17 @@ second after the section scrolls or while the navigate cursor is in it.
   as the Agents titles.
   **View › Show all projects** lists every registered project by default;
   unchecked, it lists only the current project.
-- *Agents* lists active agents and sessions with their state, reference, name,
-  task title, and model. A session named by hand shows that name where the
-  definition goes (`#14069: Assistant`). Otherwise the agent definition names
-  the row, or the provider when there is none; the provider is not repeated
-  beside the title. The third line is the model, led by its family
-  (`claude-opus-5.5`, `gpt-6.1-sol`) with the effort appended, in the
-  theme's model colour, a muted teal or clay that no state uses. The provider
-  and model are identified by their words: the model colour is the same for
-  every provider.
+- *Agents* lists active agents and sessions over three lines. The first holds
+  the state glyph, a sandbox lock (`sbx` when nerd glyphs are off) for a
+  sandboxed session only, the reference, and the name. A session named by hand
+  shows that name where the definition goes (`#14069: Assistant`). Otherwise the
+  agent definition names the row, or the provider when there is none; the
+  provider is not repeated beside the title. The second line is the model, led
+  by its family (`claude-opus-5.5`, `gpt-6.1-sol`) with the effort appended, in
+  the theme's model colour, a muted teal or clay that no state uses. The third
+  line is the task: `Working task <ref> <title>`, or `No assigned task`. The
+  provider and model are identified by their words: the model colour is the
+  same for every provider.
   Runs can nest under their
   parent session. Selecting one in another workspace switches to that workspace
   and focuses its existing pane. If the
@@ -778,9 +783,12 @@ the `Done` and `Close` buttons. Rows are clickable. Every change is written to
 The file is optional and every key in it is optional; an unknown key is a
 startup error that names the line. The retired keys `pane_borders` and
 `sidebar_collapsed` still load and are dropped on the next save. The sidebar
-writes two keys of its own as you use it: `project_order` (project ids in the
+writes three keys of its own as you use it: `project_order` (project ids in the
 order you dragged them; projects it does not name follow in the daemon's
-order) and the `[ui.project_labels]` table (your label per project id).
+order), `sidebar_section_heights` (the rows Machines, Projects, Agents and
+Terminals hold after you drag their dividers, in that order; `0` keeps a
+section derived, and an entry that is not a whole number of rows loads as
+`0`), and the `[ui.project_labels]` table (your label per project id).
 
 ```toml
 [ui]
@@ -794,6 +802,7 @@ hide_tab_bar_when_single_tab = false
 sidebar_width = 26
 title_scrolling = "left"
 project_order = ["4b1c…", "9e2f…"]
+sidebar_section_heights = [8, 6, 0, 0]
 
 [ui.project_labels]
 "4b1c…" = "api"
@@ -911,7 +920,7 @@ until a terminal is opened in it. The client writes nothing about layout.
 | Where | What it holds |
 | --- | --- |
 | Workspace rows on the daemon | Tabs, split layout, tab and pane names, the project's default workspace (distinct from the focused project), and the focus hints (focused project, tab, and pane) |
-| `~/.gobby/client/prefs.toml` | Settings, plus `project_order` and `[ui.project_labels]`, which the sidebar writes as you change them |
+| `~/.gobby/client/prefs.toml` | Settings, plus `project_order`, `sidebar_section_heights` and `[ui.project_labels]`, which the sidebar writes as you change them |
 | The window's own memory | Zoom, whether the sidebar is pinned, scrollback position, copy mode, and the machine, projects, and sessions filters |
 
 On launch the client attaches the workspace — the project's own workspace when
