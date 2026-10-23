@@ -33,6 +33,7 @@ from psycopg_pool import ConnectionPool, PoolTimeout
 from gobby.storage.hub._ambient import TransactionOpener, enter_transaction
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.operation_deadline import current_database_operation_deadline
+from gobby.storage.hub.pool_census import maybe_start_activity_census
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
     AgentTaskClaimMutation,
@@ -220,6 +221,7 @@ def _acquire_with_backoff(
         pool_stats(),
         exc_info=True,
     )
+    maybe_start_activity_census(pool, pool_stats)
     raise
 
 
