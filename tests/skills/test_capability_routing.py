@@ -9,10 +9,12 @@ from gobby.cli.installers.skill_install import (
     install_router_skills_as_commands,
 )
 from gobby.skills.capability_catalog import load_capability_catalog
-from gobby.skills.capability_routing import route_gobby_request, standalone_menu
+from gobby.skills.capability_routing import GobbyRoute, route_gobby_request, standalone_menu
 from gobby.skills.parser import ParsedSkill
 
 pytestmark = pytest.mark.unit
+
+_NO_SKILLS: dict[str, ParsedSkill] = {}
 
 
 @pytest.mark.parametrize("prefix", ["$gobby", "/gobby"])
@@ -87,3 +89,41 @@ def test_provider_carriers_use_catalog_without_reference_bodies(tmp_path: Path) 
         assert capability.description not in command
     assert "get_skill_file" in command
     assert "## Exact Interactive Close Sequence" not in command
+
+
+@pytest.mark.parametrize("prefix", ["$gobby", "/gobby"])
+@pytest.mark.parametrize(
+    ("command", "role"), [("admin", "orchestrator"), ("Assistant", "assistant")]
+)
+def test_bare_operator_command_cold_starts_its_pane(prefix: str, command: str, role: str) -> None:
+    """A bare admin or assistant names one deterministic tool call for that pane's role."""
+    route = route_gobby_request(command, resolve_skill=_NO_SKILLS.get, command_prefix=prefix)
+    assert route.kind == "cold_start"
+    assert route.arguments == ""
+    assert 'get_tool_schema(server_name="gobby-agents", tool_name="cold_start_admin")' in (
+        route.context
+    )
+    assert f'call_tool("gobby-agents", "cold_start_admin", {{"role": "{role}"}})' in route.context
+    assert "both seat refs" in route.context
+    assert "references/admin/overview.md" not in route.context
+
+
+def test_admin_requests_and_capability_loads_keep_the_admin_capability() -> None:
+    """Arguments, references and non-operator carriers never cold start."""
+    request = route_gobby_request("admin check daemon health", resolve_skill=_NO_SKILLS.get)
+    assert request.kind == "reference"
+    assert request.arguments == "check daemon health"
+    assert '"path":"references/admin/overview.md"' in request.context
+    assert route_gobby_request("admin references", resolve_skill=_NO_SKILLS.get).kind == "menu"
+    loaded = route_gobby_request("admin", resolve_skill=_NO_SKILLS.get, operator_commands=False)
+    assert loaded.kind == "reference"
+    assert '"path":"references/admin/overview.md"' in loaded.context
+    assert "cold_start_admin" not in loaded.context
+    unknown = route_gobby_request(
+        "assistant", resolve_skill=_NO_SKILLS.get, operator_commands=False
+    )
+    assert unknown == GobbyRoute("unknown", "", "", "assistant")
+    custom = ParsedSkill(name="assistant", description="Custom", content="PRIVATE")
+    explicit = route_gobby_request("skill assistant", resolve_skill={"assistant": custom}.get)
+    assert explicit.kind == "skill"
+    assert "cold_start_admin" not in explicit.context
