@@ -2395,18 +2395,16 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     Codex launches its stdio MCP subprocess with a scrubbed environment: the
     child sees only the literal ``mcp_servers.gobby.env.*`` overrides plus the
     variables forwarded by name through ``env_vars``. This drives that exact
-    model end-to-end and asserts DaemonProxy emits the child's
-    ``X-Gobby-Session-Id`` on both the schema fetch and the following tool
-    call, so the ``get_tool_schema`` lease and the ``call_tool`` resolve to
-    the same session.
+    model end-to-end and asserts the child's daemon headers, resolved from its
+    environment alone, carry the child's ``X-Gobby-Session-Id`` and the envelope
+    capability, so the ``get_tool_schema`` lease and the ``call_tool`` resolve
+    to the same session.
     """
     import json
 
     from gobby.agents.constants import get_terminal_env_vars
     from gobby.agents.spawn_executor_support import _codex_mcp_config_overrides
-    from gobby.config.bootstrap import load_bootstrap
-    from gobby.mcp_proxy.stdio_proxy import DaemonProxy
-    from gobby.utils.daemon_url import resolve_daemon_url
+    from gobby.utils.local_token import daemon_auth_headers
 
     child_session_id = "11111111-2222-3333-4444-555555555555"
     parent_session_id = "99999999-8888-7777-6666-000000000000"
@@ -2477,41 +2475,14 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
     for variable, value in child_env.items():
         monkeypatch.setenv(variable, value)
 
-    response = MagicMock(status_code=200)
-    response.json.return_value = {"success": True, "tool_timeouts": {}}
-    client = MagicMock()
-    client.request = AsyncMock(return_value=response)
-    deps = MagicMock()
-    deps.read_project_id.side_effect = lambda: os.environ.get("GOBBY_PROJECT_ID")
-    deps.http_client_factory.return_value = client
     # The sandbox makes the operator bootstrap invisible to the child.
     bootstrap_path.unlink()
-    bootstrap = load_bootstrap()
-    proxy = DaemonProxy(
-        bootstrap.daemon_port,
-        deps_factory=lambda: deps,
-        base_url=resolve_daemon_url(bootstrap=bootstrap),
-    )
+    headers = daemon_auth_headers()
 
-    await proxy.get_tool_schema("gobby-tasks", "list_tasks")
-    await proxy.call_tool("gobby-tasks", "list_tasks", {}, preflight_enabled=False)
-
-    # Discovery inventory, schema, the first call's tool-timeout read, and the call.
-    base_url = "http://127.0.0.1:31579"
-    assert [request_call.args[:2] for request_call in client.request.await_args_list] == [
-        ("GET", f"{base_url}/api/mcp/servers"),
-        ("POST", f"{base_url}/api/mcp/tools/schema"),
-        ("GET", f"{base_url}/api/mcp/bridge/tool-timeouts"),
-        ("POST", f"{base_url}/api/mcp/gobby-tasks/tools/list_tasks"),
-    ]
-    assert client.request.await_count == 4
-    for request_call in client.request.await_args_list:
-        assert request_call.args[1].startswith("http://127.0.0.1:31579/api/mcp/")
-        headers = request_call.kwargs["headers"]
-        assert headers["X-Gobby-Session-Id"] == child_session_id
-        assert headers["X-Gobby-Agent-Run-Id"] == run_id
-        assert headers["Authorization"] == f"Bearer {capability}"
-        assert all(parent_session_id not in value for value in headers.values())
+    assert headers["Authorization"] == f"Bearer {capability}"
+    assert headers["X-Gobby-Session-Id"] == child_session_id
+    assert headers["X-Gobby-Agent-Run-Id"] == run_id
+    assert all(parent_session_id not in value for value in headers.values())
 
 
 def _codex_delivery_target(runtime: FakeRuntime) -> tuple[WriteCoordinator, Terminal]:

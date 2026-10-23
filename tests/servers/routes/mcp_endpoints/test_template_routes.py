@@ -12,11 +12,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.cli.mcp_proxy import mcp_proxy
-from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.tools import create_mcp_router
 from tests.mcp_proxy.services.test_scope_resolution_matrix import PROJECT_ID
-from tests.mcp_proxy.test_stdio_proxy import _capture_stdio_tools, _response
 
 pytestmark = pytest.mark.unit
 
@@ -75,8 +73,7 @@ def test_http_endpoints_documents_scoped_servers_and_templates() -> None:
     assert "template" in text
 
 
-@pytest.mark.asyncio
-async def test_disabled_template_instantiation_parity_across_adapters() -> None:
+def test_disabled_template_instantiation_parity_across_adapters() -> None:
     disabled = {
         "success": False,
         "error": "template_disabled",
@@ -135,26 +132,3 @@ async def test_disabled_template_instantiation_parity_across_adapters() -> None:
         )
     assert "template_disabled" in cli.output
     assert cli.exit_code != 0 or "template_disabled" in cli.output
-
-    proxy = DaemonProxy(60887)
-    httpx_client = MagicMock()
-    httpx_client.request = AsyncMock(return_value=_response(200, disabled))
-    with patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=httpx_client):
-        stdio = await proxy.add_mcp_server(
-            name="disabled-instance",
-            template="disabled-tmpl",
-            values={},
-            scope="project",
-        )
-    assert stdio["error"] == "template_disabled"
-    posted = httpx_client.request.await_args.kwargs["json"]
-    assert posted["template"] == "disabled-tmpl"
-
-    tools = _capture_stdio_tools(MagicMock(add_mcp_server=AsyncMock(return_value=disabled)))
-    mcp_result = await tools["add_mcp_server"](
-        name="disabled-instance",
-        template="disabled-tmpl",
-        values={},
-        scope="project",
-    )
-    assert mcp_result["error"] == "template_disabled"

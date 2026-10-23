@@ -24,10 +24,14 @@ from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.terminal_ownership import recorded_process_exited
 from gobby.utils.session_context import reset_seeded_contexts
-from tests.mcp_proxy.test_stateless_stdio_proxy import _proxy_with_response, _success_response
 from tests.servers.routes.mcp_endpoints.test_execution_context import _make_server
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+
+# Header names, protocol version, and terminal keys come from the gmcp wrapper contract.
+WRAPPER_CONTRACT = json.loads(
+    (Path(__file__).resolve().parents[4] / "crates/gmcp/contracts/mcp_wrapper.v1.json").read_text()
+)
 
 
 @pytest.mark.parametrize(
@@ -160,18 +164,20 @@ async def test_expired_owner_recovers_only_from_live_session_traffic(
 
         if traffic == "mcp_after_hook":
             monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
-            with (
-                patch(
-                    "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
-                    return_value=recovered.terminal_context,
-                ),
-                patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers", return_value={}),
-            ):
-                proxy, outgoing = _proxy_with_response(_success_response())
-            proxy._project_id = sample_project["id"]
-            await proxy._request("GET", "/api/status")
-            assert outgoing.await_args is not None
-            headers = outgoing.await_args.kwargs["headers"]
+            assert recovered.terminal_context is not None
+            terminal_keys = set(WRAPPER_CONTRACT["terminal_context_keys"])
+            terminal = {
+                key: value
+                for key, value in recovered.terminal_context.items()
+                if key in terminal_keys
+            }
+            # The wrapper's request headers for recovered terminal traffic: protocol, project,
+            # and the filtered terminal context, with no session header.
+            headers = {
+                WRAPPER_CONTRACT["protocol_version_header"]: WRAPPER_CONTRACT["protocol_version"],
+                "X-Gobby-Project-Id": sample_project["id"],
+                "X-Gobby-Terminal-Context": json.dumps(terminal),
+            }
             assert "X-Gobby-Session-Id" not in headers
             request = Request(
                 {

@@ -14,17 +14,16 @@ from urllib.parse import unquote, urlsplit
 
 import click
 from markdown_it import MarkdownIt
-from mcp.server.mcpserver import MCPServer
 
 from gobby.cli import cli
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
-from gobby.mcp_proxy.stdio_tools import register_proxy_tools
 from gobby.skills.capability_catalog import load_capability_catalog
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL_ROOT = Path("src/gobby/install/shared/skills/gobby")
+STDIO_TOOLS_FIXTURE = ROOT / "crates/gmcp/contracts/tools_list.v1.json"
 Audit = dict[str, Any]
 
 
@@ -78,10 +77,10 @@ def cli_inventory(command: click.Command = cli, prefix: str = "gobby") -> set[st
 async def proxy_tool_inventory() -> set[tuple[str, str]]:
     # Registration needs real method signatures but never calls the handler.
     daemon = create_mcp_server(object.__new__(GobbyDaemonTools))
-    stdio = MCPServer("reference-inventory")
-    register_proxy_tools(stdio, MagicMock(name="inert_daemon_proxy"))
-    return {
-        ("gobby", tool.name) for server in (daemon, stdio) for tool in await server.list_tools()
+    daemon_tools = await daemon.list_tools()
+    stdio_tools = json.loads(STDIO_TOOLS_FIXTURE.read_text())["tools"]
+    return {("gobby", tool.name) for tool in daemon_tools} | {
+        ("gobby", row["name"]) for row in stdio_tools
     }
 
 

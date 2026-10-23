@@ -28,6 +28,7 @@ from tests.e2e.conftest import (
     prepare_daemon_env,
     spawn_daemon_instance,
 )
+from tests.e2e.gmcp_client import gmcp_session
 from tests.e2e.test_auth_login_e2e import TEST_EMAIL, _login
 from tests.e2e.test_auth_login_e2e import e2e_pre_daemon_setup as e2e_pre_daemon_setup
 from tests.fixtures.postgres import TEST_USER_ID
@@ -246,3 +247,34 @@ def test_node_enrolls_and_relays(
         _wait_connection(observer, pair_node, connected=False, deadline=revoked_at + 30.0)
         refused = client.get("/api/machines", headers=authorization)
         assert refused.status_code == 401, refused.text
+
+
+@pytest.mark.asyncio
+async def test_gmcp_on_node_reaches_hub_through_relay(
+    pair_hub: DaemonInstance, pair_node: EnrolledNode, postgres_db: HubDatabase
+) -> None:
+    """1.5.5: gmcp given only the node home lists the hub's servers through the relay."""
+    assert pair_hub.cert_path is not None
+    pinned_tls = ssl.create_default_context(cafile=pair_hub.cert_path)
+    keys = ApiKeyManager(postgres_db)
+    observer_key, _ = keys.mint(
+        TEST_USER_ID, "21000000-0000-4000-8000-000000000002", "pair-gmcp-observer"
+    )
+    with (
+        httpx.Client(
+            base_url=f"https://127.0.0.1:{pair_hub.http_port}",
+            verify=pinned_tls,
+            headers={"Authorization": f"Bearer {observer_key}"},
+            timeout=1.0,
+        ) as observer,
+        httpx.Client(base_url=pair_node.origin, timeout=1.0) as client,
+    ):
+        _wait_listener(client, pair_node)
+        _wait_connection(observer, pair_node, connected=True, deadline=time.monotonic() + 30.0)
+        # GOBBY_HOME is the only input: the wrapper reads the node's front door and key
+        # from its bootstrap.yaml, with no GOBBY_DAEMON_URL or GOBBY_PORT.
+        async with gmcp_session(home=pair_node.home) as gmcp:
+            listed = await gmcp.list_mcp_servers()
+
+    assert listed["success"] is True, listed
+    assert "gobby-tasks" in {server["name"] for server in listed["servers"]}
