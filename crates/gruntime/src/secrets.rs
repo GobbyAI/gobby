@@ -30,6 +30,10 @@ const SEAL_INFO: &[u8] = b"gobby.secret-store.seal.v1";
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
 const MIN_TOKEN_LEN: usize = 28;
+// Fernet's skew check rejects tokens stamped more than a minute ahead of the clock it is given.
+// Python's `Fernet.decrypt` without a TTL skips that check, so pin the clock at the maximum
+// (minus the skew window) where no token can be stamped ahead of it.
+const UNCHECKED_TIME: u64 = u64::MAX - 60;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
@@ -41,6 +45,8 @@ pub enum SecretError {
     Undecryptable,
     #[error("secret store database access failed")]
     Database(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("secret key file unavailable")]
+    KeyFile(#[source] io::Error),
 }
 
 fn unavailable<E>(_: E) -> SecretError {
@@ -107,7 +113,7 @@ impl SecretStore {
         let envelope = self.envelope().await?;
         let value = envelope
             .cipher
-            .decrypt(&encrypted)
+            .decrypt_at_time(&encrypted, None, UNCHECKED_TIME)
             .map_err(|_| SecretError::Undecryptable)?;
         String::from_utf8(value)
             .map(Some)
@@ -228,7 +234,7 @@ impl SecretStore {
         };
         let fernet = Fernet::new(&kek).ok_or(SecretError::Unavailable)?;
         let dek = fernet
-            .decrypt(&material.wrapped_dek)
+            .decrypt_at_time(&material.wrapped_dek, None, UNCHECKED_TIME)
             .map_err(|_| SecretError::Unavailable)?;
         String::from_utf8(dek).map_err(unavailable)
     }
@@ -348,7 +354,7 @@ fn read_kek_file(path: &Path) -> Result<Option<String>, SecretError> {
     let raw = match fs::read(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(SecretError::Unavailable),
+        Err(error) => return Err(SecretError::KeyFile(error)),
     };
     let key = std::str::from_utf8(raw.trim_ascii())
         .map_err(unavailable)?
@@ -357,18 +363,23 @@ fn read_kek_file(path: &Path) -> Result<Option<String>, SecretError> {
         return Err(SecretError::Unavailable);
     }
     // Python only warns when the chmod fails; keep reading the same way.
-    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    if let Err(error) = fs::set_permissions(path, fs::Permissions::from_mode(0o600)) {
+        log::warn!(
+            "could not restrict {} to mode 0600: {error}",
+            path.display()
+        );
+    }
     Ok(Some(key))
 }
 
 fn kek_file_or_create(home: &Path) -> Result<String, SecretError> {
-    fs::create_dir_all(home).map_err(unavailable)?;
+    fs::create_dir_all(home).map_err(SecretError::KeyFile)?;
     let path = home.join(KEK_FILENAME);
     if let Some(kek) = read_kek_file(&path)? {
         return Ok(kek);
     }
     let kek = Fernet::generate_key();
-    if publish_private_file(&path, kek.as_bytes()).map_err(unavailable)? {
+    if publish_private_file(&path, kek.as_bytes()).map_err(SecretError::KeyFile)? {
         return Ok(kek);
     }
     // A racing initializer won the link; adopt its file.
@@ -378,7 +389,22 @@ fn kek_file_or_create(home: &Path) -> Result<String, SecretError> {
 /// Publishes `data` at `path` with mode 0600 and never replaces an existing file.
 /// Returns `false` when another publisher won the link.
 pub fn publish_private_file(path: &Path, data: &[u8]) -> io::Result<bool> {
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    publish_with(path, data, fsync_directory)
+}
+
+fn fsync_directory(directory: &Path) -> io::Result<()> {
+    File::open(directory)?.sync_all()
+}
+
+fn publish_with(
+    path: &Path,
+    data: &[u8],
+    sync: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<bool> {
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "path has no file name"))?;
@@ -398,11 +424,21 @@ pub fn publish_private_file(path: &Path, data: &[u8]) -> io::Result<bool> {
     let removed = fs::remove_file(&temp);
     let published = outcome?;
     match removed {
-        Err(error) if error.kind() != ErrorKind::NotFound => return Err(error),
+        Err(error) if error.kind() != ErrorKind::NotFound => {
+            // The link already decided the outcome; only a losing publisher reports the failure.
+            if !published {
+                return Err(error);
+            }
+            log::warn!("could not remove temp file {}: {error}", temp.display());
+        }
         _ => {}
     }
-    if published {
-        File::open(directory)?.sync_all()?;
+    if published && let Err(error) = sync(directory) {
+        log::warn!(
+            "could not sync directory {} after publishing {}: {error}",
+            directory.display(),
+            path.display()
+        );
     }
     Ok(published)
 }
@@ -418,3 +454,7 @@ fn write_and_link(file: &mut File, data: &[u8], temp: &Path, path: &Path) -> io:
         Err(error) => Err(error),
     }
 }
+
+#[cfg(test)]
+#[path = "secrets/tests.rs"]
+mod tests;

@@ -17,7 +17,8 @@ workspace = true
 
 [dependencies]
 base64 = "0.22"
-fernet = "0.2.2"
+fernet = { version = "0.2.2", features = ["fernet_danger_timestamps"] }
+log = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "sync"] }

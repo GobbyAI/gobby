@@ -6,11 +6,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::panic::AssertUnwindSafe;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
+use fernet::Fernet;
 use futures_util::FutureExt;
 use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_runtime::secrets::{SecretError, SecretStore, publish_private_file};
@@ -448,6 +449,33 @@ async fn missing_envelope_with_existing_secrets_fails_closed() -> Result<()> {
         ensure!(
             stored == text(&vector, "encrypted_secret")?,
             "the stored secret must be unchanged"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn decrypts_envelope_stamped_ahead_of_the_local_clock() -> Result<()> {
+    let vector = vector()?;
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        write_kek(home.path(), text(&vector, "kek")?)?;
+        // Python's Fernet.decrypt without a TTL has no clock-skew check, so a row written by
+        // a clock more than 60 s ahead must still open.
+        let future = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 61;
+        let kek = Fernet::new(text(&vector, "kek")?).context("the fixture KEK is a Fernet key")?;
+        let dek = Fernet::generate_key();
+        db.seed_key_file_row(&kek.encrypt_at_time(dek.as_bytes(), future))
+            .await?;
+        let cipher = Fernet::new(&dek).context("the generated DEK is a Fernet key")?;
+        db.seed_secret("future", &cipher.encrypt_at_time(b"future secret", future))
+            .await?;
+        let store = SecretStore::new(pool(&db.url)?, home.path().to_path_buf());
+
+        assert_eq!(
+            store.secret("future").await?.as_deref(),
+            Some("future secret")
         );
         Ok(())
     })

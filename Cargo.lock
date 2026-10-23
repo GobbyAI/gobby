@@ -2605,6 +2605,7 @@ dependencies = [
  "futures-util",
  "gobby-core",
  "http-body-util",
+ "log",
  "openssl",
  "serde",
  "serde_json",
