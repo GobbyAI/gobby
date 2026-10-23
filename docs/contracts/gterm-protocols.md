@@ -9,12 +9,13 @@ The host binds two Unix sockets in `~/.gobby` (mode `0600`):
 
 | Socket | Speaks | Credential | Can write a PTY |
 | --- | --- | --- | --- |
-| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, for the attachment the daemon granted |
-| `gterm-control.sock` | newline-delimited JSON | `~/.gobby/gterm-control.token` | yes |
+| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, for the attachment named in `grant_input` |
+| `gterm-control.sock` | newline-delimited JSON, spoken by the daemon and by gclient while the daemon is unreachable | `~/.gobby/gterm-control.token` | yes |
 
 The API key alone still reaches nothing writable: a frame stream is read-only
-until the daemon names one daemon attachment id in `grant_input` over the
-control socket and the client binds that id. The credential proves who may
+until the daemon, or gclient during a daemon outage for its own frame attachment
+id, names one attachment id in `grant_input` over the control socket and the
+client binds that id. The credential proves who may
 watch; the grant decides who may type. If the daemon's control connection
 drops, frames keep arriving and standing grants keep working — only
 `revoke_input` or removing the terminal clears one.
@@ -117,7 +118,9 @@ After `hello { protocol_version, control_token }`, the daemon may call `ping`,
 `list`, `host_shutdown`, `reserve_observer`, `release_observer`, `spawn` →
 `spawn_prepared` / `spawn_commit`, `kill`, `resize`, `snapshot`, `write`
 (`encoding: "utf8-b64"`), `write_batch`, `grant_input`, `revoke_input`, and
-`subscribe_events`.
+`subscribe_events`. While the daemon is unreachable, gclient may also call
+`grant_input` and `revoke_input` for its own frame attachment ids, after the same
+`hello`.
 
 `grant_input { host_terminal_id, attachment_id }` names the one daemon
 attachment id allowed to type on a frame stream and answers
@@ -344,3 +347,10 @@ through the daemon. Memory `be35449d` updated to point at the superseding
 decision in memory `b59e4ce9` and its plan,
 `.gobby/plans/gclient-direct-input.md`. The daemon still owns leases, layout,
 workspaces, and every automatic write.
+
+Task #24815 adds one exception: while the daemon is unreachable, gclient may send
+`grant_input` and `revoke_input` for its own frame attachment ids. Scope: the same
+user only. gclient reads the token only from `gterm-control.token` beside the
+frame socket, after both control files pass an owner-only check and are owned by
+the caller. The token is never logged or placed in error text. The last grant
+wins. On daemon return, the focused pane's retake replaces the outage grant.

@@ -394,8 +394,8 @@ impl LoopJobs {
                 let frame_socket = PathBuf::from(&locator.frame_socket_path);
                 let host_terminal_id = locator.host_terminal_id;
                 let attachment = pane.attachment_id().to_string();
-                // Each other pane with a host grant gives it up once this one
-                // has its own, so the grant follows the focus.
+                // Each other pane with a host grant gives it up whatever this
+                // grant's outcome, so the grant follows the focus.
                 let others: Vec<_> = workspace
                     .panes
                     .iter()

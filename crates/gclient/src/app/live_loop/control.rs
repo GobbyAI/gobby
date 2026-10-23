@@ -59,8 +59,8 @@ pub(super) fn observe_live_pane(workspace: &mut Workspace<LiveDaemon>, pane_id: 
     move_live_focus(workspace, pane_id);
 }
 
-/// Move focus and release the previous pane's lease. `false` when the loop
-/// is exiting or the daemon is not ready, in which case nothing moved.
+/// Move focus and release the previous pane's lease. `false` only when the
+/// loop is exiting, in which case nothing moved.
 fn move_live_focus(workspace: &mut Workspace<LiveDaemon>, pane_id: PaneId) -> bool {
     if workspace.exit_reason().is_some() {
         return false;
