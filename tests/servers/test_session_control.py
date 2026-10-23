@@ -19,6 +19,7 @@ import pytest
 from gobby.llm.context_windows import resolve_context_window
 from gobby.servers.websocket.handlers.session_observe import _resolve_fallback_inject_context
 from gobby.sessions.terminal_kill import kill_terminal_session
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -430,6 +431,7 @@ class TestContinueInChatTerminalKill:
 
         source_session = MagicMock()
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -526,6 +528,7 @@ class TestContinueInChatTerminalKill:
 
         source_session = MagicMock()
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -727,6 +730,7 @@ class TestContinueInChatTerminalKill:
 
         source_session = MagicMock()
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -783,6 +787,7 @@ class TestContinueInChatTerminalKill:
 
         source_session = MagicMock()
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -845,6 +850,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = "cli-session-123"
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -954,6 +960,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = None
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -1142,6 +1149,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = None
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -1220,6 +1228,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = None
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -1373,6 +1382,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.external_id = None
         source_session.project_id = "proj-1"
         source_session.transcript_path = None
@@ -1471,6 +1481,7 @@ class TestContinueInChatTerminalKill:
         source_session.last_prompt_cache_creation_tokens = 2301
         source_session.last_completion_output_tokens = 456
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         # Proxy attach requires real tmux liveness, so a bare MagicMock attribute
         # reports False. Model the live pane the way sibling attach tests do.
         source_session.terminal_context = {"tmux_pane": "%5"}
@@ -1537,6 +1548,7 @@ class TestContinueInChatTerminalKill:
         source_session.git_branch = "main"
         source_session.context_window = 128000
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.terminal_context = {"tmux_pane": "%8"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
@@ -1594,6 +1606,7 @@ class TestContinueInChatTerminalKill:
         source_session.git_branch = "main"
         source_session.context_window = 200000
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.terminal_context = {"tmux_pane": "%8"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
@@ -1647,6 +1660,7 @@ class TestContinueInChatTerminalKill:
         source_session.git_branch = "main"
         source_session.context_window = 1_000_000
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.terminal_context = {"tmux_pane": "%9"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
@@ -1696,6 +1710,7 @@ class TestContinueInChatTerminalKill:
         source_session.external_id = "cli-session-123"
         source_session.project_id = "project-1"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
 
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
@@ -1756,6 +1771,7 @@ class TestContinueInChatTerminalKill:
         source_session.git_branch = "main"
         source_session.context_window = 200000
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.terminal_context = {"tmux_pane": "%8"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
@@ -1911,6 +1927,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.project_id = "proj-1"
         source_session.terminal_context = {
             "tmux_pane": "%7",
@@ -2019,6 +2036,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.machine_id = require_machine_id()
         source_session.project_id = "proj-1"
         source_session.terminal_context = {"tmux_pane": "%7"}
         source_session.metadata = None

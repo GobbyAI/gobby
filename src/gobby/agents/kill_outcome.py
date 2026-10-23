@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import KILL_ERROR_NO_TARGET_PID
+from gobby.hub.machine_routing import is_local_machine
+
+if TYPE_CHECKING:
+    from gobby.storage.agents import AgentRun
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +20,14 @@ def kill_confirmed(result: Mapping[str, Any]) -> bool:
     return bool(result.get("success")) or result.get("error_code") == KILL_ERROR_NO_TARGET_PID
 
 
-def may_cancel_run(result: Mapping[str, Any] | None) -> bool:
-    """Proceed unless a kill returned an unconfirmed outcome; a raised kill proceeds."""
-    return result is None or kill_confirmed(result)
+def may_cancel_run(result: Mapping[str, Any] | None, run: AgentRun) -> bool:
+    """A confirmed kill may cancel the run. A raised kill may cancel only a local run.
+
+    The raised path for a local run predates remote cancel, so it keeps reconciling.
+    """
+    if result is None:
+        return is_local_machine(run.machine_id)
+    return kill_confirmed(result)
 
 
 def reconcile_cancelled_run(manager: Any, run_id: str) -> None:

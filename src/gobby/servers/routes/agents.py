@@ -908,7 +908,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 try:
                     result = await kill_agent(run, db, signal_name="TERM")
                 finally:
-                    if may_cancel_run(result):
+                    if may_cancel_run(result, run):
                         try:
                             await server.services.run_db(reconcile_cancelled_run, manager, run_id)
                         finally:

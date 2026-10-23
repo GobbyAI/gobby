@@ -15,6 +15,7 @@ from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.websocket.handlers.session_observe_continue import (
     _release_source_session,
     check_resume_blocked,
+    handle_continue_in_chat,
 )
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.storage.agents import AgentRun
@@ -62,7 +63,7 @@ def _release_mixin(
     *,
     wake_result: dict[str, bool],
 ) -> tuple[SessionControlMixin, MagicMock, CompletionEventRegistry, AsyncMock]:
-    run = SimpleNamespace(id=RUN_ID)
+    run = SimpleNamespace(id=RUN_ID, machine_id=None)
     terminal_run = SimpleNamespace(id=RUN_ID, status="cancelled", error=None)
     manager = MagicMock()
     manager.get_by_session.return_value = run
@@ -121,7 +122,7 @@ async def test_release_source_session_settles_acknowledged_delivery(
             new_callable=AsyncMock,
         ),
     ):
-        await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+        await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace(machine_id=None))
 
     assert CompletionSubscriberManager(temp_db).get_completion_subscribers(RUN_ID) == (
         expected_subscribers
@@ -152,7 +153,9 @@ async def test_release_source_session_delivers_capture_commit_before_kill_error(
         ),
     ):
         with pytest.raises(RuntimeError, match="failed to kill running agent"):
-            await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+            await _release_source_session(
+                mixin, SOURCE_SESSION_ID, SimpleNamespace(machine_id=None)
+            )
 
     manager.cancel.assert_not_called()
     assert CompletionSubscriberManager(temp_db).get_completion_subscribers(RUN_ID) == []
@@ -186,7 +189,9 @@ async def test_release_source_session_fails_when_terminal_delivery_admission_is_
         ),
     ):
         with pytest.raises(RuntimeError, match="terminal delivery admission is closed"):
-            await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+            await _release_source_session(
+                mixin, SOURCE_SESSION_ID, SimpleNamespace(machine_id=None)
+            )
 
     assert completion_registry.get_subscribers(RUN_ID) == [SOURCE_SESSION_ID]
     kill_agent.assert_not_awaited()
@@ -220,7 +225,7 @@ async def test_release_source_session_cancellation_waits_for_delivery(
         ),
     ):
         task = asyncio.create_task(
-            _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+            _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace(machine_id=None))
         )
         await capture_committed.wait()
         task.cancel()
@@ -256,7 +261,7 @@ async def test_release_source_session_closes_terminal_through_mixin_services(
             new_callable=AsyncMock,
         ),
     ):
-        await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+        await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace(machine_id=None))
 
     kill_agent.assert_awaited_once()
     assert kill_agent.await_args is not None
@@ -267,13 +272,28 @@ async def test_release_source_session_closes_terminal_through_mixin_services(
     }
 
 
+def _owned_machine(temp_db: HubDatabase, owner_user_id: str) -> str:
+    temp_db.execute(
+        """
+        INSERT INTO users (id, email, name, password_hash)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (owner_user_id, f"{owner_user_id}@example.com", "Owner", "not-a-password"),
+    )
+    machine_id = str(uuid4())
+    LocalMachineManager(temp_db).upsert_seen(machine_id, owner_user_id)
+    return machine_id
+
+
 async def _refused_remote_release(
     temp_db: HubDatabase,
     caller: str,
     reply: dict[str, bool],
+    source_owner: str,
 ) -> tuple[AsyncMock, MagicMock, str]:
-    machine_id = str(uuid4())
-    LocalMachineManager(temp_db).upsert_seen(machine_id, TEST_USER_ID)
+    machine_id = _owned_machine(temp_db, TEST_USER_ID)
+    source_machine_id = _owned_machine(temp_db, source_owner)
     stamp = datetime(2026, 1, 1, tzinfo=UTC)
     run = AgentRun(
         id=RUN_ID,
@@ -295,6 +315,11 @@ async def _refused_remote_release(
     manager.get_by_session.return_value = run
     node = AsyncMock()
     node.send.return_value = reply
+    source_session = SimpleNamespace(
+        id=SOURCE_SESSION_ID,
+        machine_id=source_machine_id,
+        terminal_context=None,
+    )
     token = bind_caller(caller, temp_db)
     try:
         with (
@@ -306,7 +331,7 @@ async def _refused_remote_release(
             patch("gobby.hub.remote_cancel.node_command_client", return_value=node),
         ):
             with pytest.raises(RuntimeError, match="failed to kill running agent") as raised:
-                await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+                await _release_source_session(mixin, SOURCE_SESSION_ID, source_session)
     finally:
         reset_caller(token)
     return node, manager, str(raised.value)
@@ -314,10 +339,12 @@ async def _refused_remote_release(
 
 @pytest.mark.integration
 async def test_release_source_session_refuses_unowned_remote_kill(temp_db: HubDatabase) -> None:
+    # The caller owns the source machine, so only the run's own machine guard refuses.
     node, manager, message = await _refused_remote_release(
         temp_db,
         OTHER_USER_ID,
         {"stopped": True},
+        source_owner=OTHER_USER_ID,
     )
 
     assert message == (
@@ -335,6 +362,7 @@ async def test_release_source_session_refuses_unconfirmed_remote_kill(
         temp_db,
         TEST_USER_ID,
         {"stopped": False},
+        source_owner=TEST_USER_ID,
     )
 
     assert message == (
@@ -342,3 +370,168 @@ async def test_release_source_session_refuses_unconfirmed_remote_kill(
     )
     node.send.assert_awaited_once()
     manager.cancel.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("has_run", [True, False])
+async def test_release_source_session_refuses_unowned_source_before_any_change(
+    temp_db: HubDatabase,
+    has_run: bool,
+) -> None:
+    source_machine_id = _owned_machine(temp_db, TEST_USER_ID)
+    source_session = SimpleNamespace(
+        id=SOURCE_SESSION_ID,
+        machine_id=source_machine_id,
+        terminal_context={"parent_pid": 4242},
+    )
+    mixin, manager, completion_registry, wake_callback = _release_mixin(
+        temp_db,
+        wake_result={"ism_persisted": True},
+    )
+    manager.get_by_session.return_value = (
+        SimpleNamespace(id=RUN_ID, machine_id=source_machine_id) if has_run else None
+    )
+    kill_agent = AsyncMock(return_value={"success": True})
+    kill_terminal = AsyncMock(return_value=True)
+
+    token = bind_caller(OTHER_USER_ID, temp_db)
+    try:
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue."
+                "agent_storage.LocalAgentRunManager",
+                return_value=manager,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue.agent_kill.kill_agent",
+                kill_agent,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
+                kill_terminal,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="machine_not_owned"):
+                await _release_source_session(mixin, SOURCE_SESSION_ID, source_session)
+    finally:
+        reset_caller(token)
+
+    kill_agent.assert_not_awaited()
+    kill_terminal.assert_not_awaited()
+    manager.cancel.assert_not_called()
+    wake_callback.assert_not_awaited()
+    assert completion_registry.is_registered(RUN_ID)
+    assert CompletionSubscriberManager(temp_db).get_completion_subscribers(RUN_ID) == [
+        SOURCE_SESSION_ID
+    ]
+
+
+@pytest.mark.integration
+async def test_release_source_session_refuses_nonlocal_plain_terminal(
+    temp_db: HubDatabase,
+) -> None:
+    remote_machine_id = _owned_machine(temp_db, TEST_USER_ID)
+    source_session = SimpleNamespace(
+        id=SOURCE_SESSION_ID,
+        machine_id=remote_machine_id,
+        terminal_context={"parent_pid": 4242},
+    )
+    mixin, manager, completion_registry, wake_callback = _release_mixin(
+        temp_db,
+        wake_result={"ism_persisted": True},
+    )
+    manager.get_by_session.return_value = None
+    kill_agent = AsyncMock(return_value={"success": True})
+    kill_terminal = AsyncMock(return_value=True)
+
+    token = bind_caller(TEST_USER_ID, temp_db)
+    try:
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue."
+                "agent_storage.LocalAgentRunManager",
+                return_value=manager,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue.agent_kill.kill_agent",
+                kill_agent,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
+                kill_terminal,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="another machine"):
+                await _release_source_session(mixin, SOURCE_SESSION_ID, source_session)
+    finally:
+        reset_caller(token)
+
+    kill_terminal.assert_not_awaited()
+    kill_agent.assert_not_awaited()
+    manager.cancel.assert_not_called()
+    wake_callback.assert_not_awaited()
+    assert completion_registry.is_registered(RUN_ID)
+
+
+@pytest.mark.integration
+async def test_continue_in_chat_refuses_unowned_source_before_mutation(
+    temp_db: HubDatabase,
+) -> None:
+    source_machine_id = _owned_machine(temp_db, TEST_USER_ID)
+    source_session = SimpleNamespace(
+        id=SOURCE_SESSION_ID,
+        session_type="terminal",
+        source="claude",
+        external_id="sdk-session-1",
+        project_id=None,
+        transcript_path=None,
+        machine_id=source_machine_id,
+        terminal_context={"parent_pid": 4242},
+    )
+    session_manager = MagicMock()
+    session_manager.db = temp_db
+    session_manager.get.return_value = source_session
+
+    async def run_db(function: Callable[..., object], *args: object, **kwargs: object) -> object:
+        return function(*args, **kwargs)
+
+    send_error = AsyncMock()
+    mixin = cast(
+        SessionControlMixin,
+        SimpleNamespace(
+            session_manager=session_manager,
+            _chat_sessions={},
+            _send_error=send_error,
+            run_db=run_db,
+        ),
+    )
+    kill_agent = AsyncMock(return_value={"success": True})
+    kill_terminal = AsyncMock(return_value=True)
+
+    token = bind_caller(OTHER_USER_ID, temp_db)
+    try:
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue.agent_kill.kill_agent",
+                kill_agent,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
+                kill_terminal,
+            ),
+        ):
+            await handle_continue_in_chat(
+                mixin,
+                MagicMock(),
+                {"source_session_id": SOURCE_SESSION_ID, "conversation_id": "conversation-1"},
+            )
+    finally:
+        reset_caller(token)
+
+    send_error.assert_awaited_once()
+    assert send_error.await_args is not None
+    assert "Failed to release source session" in send_error.await_args.args[1]
+    assert [call[0] for call in session_manager.method_calls] == ["get"]
+    assert mixin._chat_sessions == {}
+    kill_agent.assert_not_awaited()
+    kill_terminal.assert_not_awaited()

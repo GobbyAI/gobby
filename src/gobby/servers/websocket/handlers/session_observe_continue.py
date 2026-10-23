@@ -15,6 +15,9 @@ from gobby.agents.terminal_delivery import (
     deliver_existing_terminal_run_in_scope,
     shielded_terminal_delivery,
 )
+from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.node_client import NodeCommandError
 from gobby.servers.websocket.chat._session_checkout import ChatCheckoutRequiredError
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.handlers.session_observe_support import (
@@ -47,6 +50,10 @@ async def _release_source_session(
     source_session: Any,
 ) -> None:
     """Stop the active terminal/agent runtime before resuming in web chat."""
+    try:
+        require_machine_owned(source_session.machine_id)
+    except NodeCommandError as exc:
+        raise RuntimeError(f"source session was not released: {exc.code}") from exc
     killed = False
     session_manager = getattr(mixin, "session_manager", None)
 
@@ -79,7 +86,7 @@ async def _release_source_session(
                         )
                     finally:
                         # Same proceed rule as the cancel route; no delivery when unconfirmed.
-                        if may_cancel_run(result):
+                        if may_cancel_run(result, run):
                             await deliver_existing_terminal_run_in_scope(
                                 db=session_manager.db,
                                 agent_run_manager=arm,
@@ -100,6 +107,8 @@ async def _release_source_session(
     if killed:
         return
 
+    if not is_local_machine(source_session.machine_id):
+        raise RuntimeError(f"terminal session {source_session_id} runs on another machine")
     terminal_ctx = getattr(source_session, "terminal_context", None)
     if not terminal_ctx:
         return

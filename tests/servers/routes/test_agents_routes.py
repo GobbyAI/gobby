@@ -2061,6 +2061,49 @@ class TestCancelAgentRun:
         assert current is not None
         assert current.status == "running"
 
+    def test_raised_remote_kill_leaves_run_running(
+        self,
+        temp_db: HubDatabase,
+        server: HTTPServer,
+        client: TestClient,
+        sample_project: dict[str, Any],
+        running_agent_run: tuple[LocalAgentRunManager, AgentRun],
+    ) -> None:
+        manager, run = running_agent_run
+        machine_id = str(uuid4())
+        LocalMachineManager(temp_db).upsert_seen(machine_id, TEST_USER_ID)
+        terminal_id = str(uuid4())
+        TerminalManager(temp_db).create_pending(
+            terminal_id=terminal_id,
+            project_id=sample_project["id"],
+            backend="tmux",
+            ownership="gobby",
+            spawn_key=f"gobby-{terminal_id}",
+            machine_id=machine_id,
+        )
+        temp_db.execute(
+            "UPDATE agent_runs SET machine_id = %s, terminal_id = %s WHERE id = %s",
+            (machine_id, terminal_id, run.id),
+        )
+        node = AsyncMock()
+        node.send.side_effect = RuntimeError("boom")
+        authenticate_as(server, TEST_USER_ID)
+
+        with (
+            patch("gobby.hub.remote_cancel.node_command_client", return_value=node),
+            patch(
+                "gobby.agents.terminal_delivery.deliver_existing_terminal_run_in_scope",
+                new_callable=AsyncMock,
+            ) as deliver,
+        ):
+            response = client.post(f"/api/agents/runs/{run.id}/cancel")
+
+        assert response.status_code == 500
+        deliver.assert_not_awaited()
+        current = manager.get(run.id)
+        assert current is not None
+        assert current.status == "running"
+
     def test_cancel_missing_run(self, client: TestClient) -> None:
         with patch("gobby.agents.kill.kill_agent", new=AsyncMock()) as kill:
             response = client.post(f"/api/agents/runs/{UNKNOWN_ID}/cancel")

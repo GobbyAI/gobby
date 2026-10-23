@@ -7,7 +7,11 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any, Protocol
 
+from gobby.hub.caller_scope import current_caller, require_machine_owned
+from gobby.hub.node_client import NodeCommandError
+from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_state import (
     ApprovalRequired,
@@ -207,6 +211,49 @@ async def _execute_pipeline_background(
             logger.exception("Failed to mark execution as failed")
 
 
+def _snapshot_pipeline_runs(
+    execution_id: str, db: HubDatabase | None
+) -> tuple[Session | None, list[AgentRun]]:
+    """Read the pipeline child session and the runs cancel would kill, without writing."""
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    if db is None:
+        return None, []
+    pipeline_session = SessionManager(db).find_active_by_external_id(
+        f"pipeline-{execution_id}",
+        "pipeline",
+    )
+    if pipeline_session is None:
+        return None, []
+    return pipeline_session, LocalAgentRunManager(db).list_by_parent(pipeline_session.id)
+
+
+def _require_pipeline_cancel_owned(
+    execution: PipelineExecution,
+    db: HubDatabase | None,
+    pipeline_session: Session | None,
+    runs: list[AgentRun],
+) -> None:
+    """A bound caller may cancel only when it owns the execution's session and every target."""
+    if current_caller() is None:
+        return
+    from gobby.storage.sessions import SessionManager
+
+    owner = (
+        SessionManager(db).get(execution.session_id)
+        if db is not None and execution.session_id
+        else None
+    )
+    if owner is None:
+        raise NodeCommandError("machine_not_found", stage="none")
+    require_machine_owned(owner.machine_id)
+    if pipeline_session is not None:
+        require_machine_owned(pipeline_session.machine_id)
+    for run in runs:
+        require_machine_owned(run.machine_id)
+
+
 async def cancel_pipeline(
     execution_manager: PipelineExecutionManager | None,
     execution_id: str,
@@ -222,7 +269,8 @@ async def cancel_pipeline(
         execution_id: ID of the execution to cancel
 
     Returns:
-        Dict with execution status (cancelled)
+        Dict with execution status (cancelled). A bound caller that does not own
+        every target gets success=False and error_code before any change.
     """
     if not execution_manager:
         return {"success": False, "error": "No execution manager configured"}
@@ -241,6 +289,23 @@ async def cancel_pipeline(
             "success": False,
             "error": f"Pipeline already in a terminal state (current status: {execution.status.value})",
         }
+
+    # Resolve and authorize every kill target before the first write or kill.
+    _db: HubDatabase | None = getattr(execution_manager, "db", None)
+    try:
+        pipeline_session, active_runs = _snapshot_pipeline_runs(execution_id, _db)
+        _require_pipeline_cancel_owned(execution, _db, pipeline_session, active_runs)
+    except NodeCommandError as exc:
+        return {
+            "success": False,
+            "error": f"Pipeline cancel refused: {exc.code}",
+            "error_code": exc.code,
+        }
+    except Exception as e:
+        if current_caller() is not None:
+            raise
+        logger.warning("Failed to find agents for pipeline %s: %s", execution_id, e)
+        pipeline_session, active_runs = None, []
 
     # Stop the exact fire-and-forget task before yielding to agent termination.
     background_task = _background_tasks_by_execution.get(execution_id)
@@ -276,25 +341,14 @@ async def cancel_pipeline(
     if background_task and background_task is not asyncio.current_task():
         await asyncio.gather(background_task, return_exceptions=True)
 
-    # Kill only agents owned by the deterministic pipeline child session.
-    # Never fall back to execution.session_id because an early cancellation
-    # may still contain the unrelated caller session there.
+    # Kill only the runs snapshotted from the pipeline child session. Never fall back
+    # to execution.session_id: an early cancellation may still hold the caller there.
     try:
         from gobby.agents.kill import kill_agent
         from gobby.agents.kill_outcome import kill_confirmed
-        from gobby.storage.agents import LocalAgentRunManager
-        from gobby.storage.sessions import SessionManager
 
-        _db: HubDatabase | None = getattr(execution_manager, "db", None)
         if _db is None:
             raise RuntimeError("execution manager has no database")
-        pipeline_session = SessionManager(_db).find_active_by_external_id(
-            f"pipeline-{execution_id}",
-            "pipeline",
-        )
-        pipeline_session_id = pipeline_session.id if pipeline_session else None
-        arm = LocalAgentRunManager(_db)
-        active_runs = arm.list_by_parent(pipeline_session_id) if pipeline_session_id else []
         killed_count = 0
         for run in active_runs:
             result = await kill_agent(run, _db, signal_name="KILL")
