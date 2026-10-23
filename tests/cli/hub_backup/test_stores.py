@@ -77,6 +77,8 @@ class _FakeConnection:
     def execute(self, sql: str, _params: tuple[object, ...] | None = None) -> _FakeCursor:
         self.statements.append(sql)
         lowered = sql.lower()
+        if "principal_bindings pb join public.agent_runs" in lowered:
+            return _FakeCursor([])
         if (
             lowered.startswith("lock table public.agent_runs")
             or "from public.agent_runs" in lowered
@@ -366,18 +368,33 @@ def test_dump_postgres_routes_every_client_to_protected_test_container(
     assert all("gobby-postgres" not in command for command in commands)
 
 
-def test_dump_postgres_aborts_while_ephemeral_login_remains(
+def test_dump_postgres_excludes_ephemeral_roles_without_revoking_live_logins(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    connection = _FakeConnection(
-        roles=[("gobby_agent_0123456789abcdef0123456789abcdef_1", False, True)]
-    )
+    role = "gobby_agent_0123456789abcdef0123456789abcdef_1"
+    connection = _FakeConnection(roles=[(role, False, True)])
     _patch_psycopg(monkeypatch, connection)
-    monkeypatch.setattr(subprocess, "run", _postgres_runner([]))
-
-    with pytest.raises(click.ClickException, match="ephemeral PostgreSQL login remains"):
-        stores.dump_postgres(DATABASE_URL, tmp_path)
+    payload = (
+        "CREATE ROLE gobby;\n"
+        f"CREATE ROLE {role};\nALTER ROLE {role} WITH LOGIN;\n"
+        f"COMMENT ON ROLE {role} IS 'first;\nsecond';\n"
+        f"GRANT gobby_gcode_capability TO {role} GRANTED BY gobby_agent_issuer;\n"
+        "CREATE ROLE gobby_ix_abcd1234_12345678_12345678_1;\n"
+        'CREATE ROLE "gobby_mnt_0123456789abcdef0123456789abcdef_2";\n'
+        f"COMMENT ON ROLE gobby IS '{role} remains live';\n"
+        f'CREATE ROLE "{role}""";\n'
+        "GRANT stable_capability TO gobby;\n"
+    ).encode()
+    monkeypatch.setattr(subprocess, "run", _postgres_runner([], globals_payload=payload))
+    stores.dump_postgres(DATABASE_URL, tmp_path)
+    script = (tmp_path / stores.GLOBALS_DUMP_RELPATH).read_text()
+    assert script == (
+        "CREATE ROLE gobby;\n"
+        f"COMMENT ON ROLE gobby IS '{role} remains live';\n"
+        f'CREATE ROLE "{role}""";\n'
+        "GRANT stable_capability TO gobby;\n"
+    )
 
 
 def test_restore_postgres_globals_targets_protected_test_container(

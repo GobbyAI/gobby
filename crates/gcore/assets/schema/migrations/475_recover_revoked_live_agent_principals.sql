@@ -39,7 +39,7 @@ BEGIN
         IF requested_owner_kind <> 'agent_run' OR EXISTS (
             SELECT 1 FROM principal_bindings pb
             WHERE pb.managed_execution_id = requested_execution_id
-              AND (pb.revoked_at IS NULL OR
+              AND ((pb.revoked_at IS NULL AND pb.revocation_requested_at IS NULL) OR
                    ROW(pb.owner_kind, pb.agent_run_id, pb.session_id, pb.issuing_machine_id,
                        pb.project_id, pb.code_overlay_project_id)
                    IS DISTINCT FROM
@@ -61,6 +61,18 @@ BEGIN
         IF NOT FOUND THEN
             RAISE EXCEPTION 'managed principal recovery requires the same live owner'
                 USING ERRCODE = '42501';
+        END IF;
+        -- Finish a prior revocation before minting any successor. The execution
+        -- lock and identity checks above also cover this retry.
+        IF EXISTS (
+            SELECT 1 FROM principal_bindings pb
+            WHERE pb.managed_execution_id = requested_execution_id
+              AND pb.revoked_at IS NULL AND pb.revocation_requested_at IS NOT NULL
+        ) THEN
+            IF revoke_principal(requested_execution_id, NULL) < 0 THEN
+                RAISE EXCEPTION 'managed principal revocation is pending; retry recovery'
+                    USING ERRCODE = '55000';
+            END IF;
         END IF;
     END IF;
 
@@ -220,7 +232,7 @@ AS $$
       AND NOT EXISTS (
           SELECT 1 FROM gobby_agent_auth.principal_bindings other
           WHERE other.managed_execution_id = pb.managed_execution_id
-            AND (other.revoked_at IS NULL OR
+            AND ((other.revoked_at IS NULL AND other.revocation_requested_at IS NULL) OR
                  ROW(other.owner_kind, other.agent_run_id, other.session_id,
                      other.project_id, other.issuing_machine_id, other.code_overlay_project_id)
                  IS DISTINCT FROM

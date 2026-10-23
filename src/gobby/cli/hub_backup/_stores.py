@@ -79,8 +79,8 @@ _REDIS_DBSIZE = "DBSIZE"
 
 _TABLE_LIST_SQL = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
 # Managed principals -- scoped agent logins, per-session interactive principals,
-# and maintenance logins -- are drained before the globals dump and re-minted on
-# demand, so the restore target never has to reproduce them. This is the same
+# and maintenance logins -- are excluded from globals without revoking live seats,
+# so the restore target never has to reproduce them. This is the same
 # namespace the schema reapers match (migrations 389/393/399).
 _MANAGED_PRINCIPAL_PATTERN = (
     r"^(gobby_agent_[0-9a-f]{32}"
@@ -95,7 +95,7 @@ _ROLE_LIST_SQL = (
 )
 _EPHEMERAL_ROLE_SQL = (
     "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles "
-    "WHERE rolcanlogin AND rolname ~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$' "
+    f"WHERE rolcanlogin AND rolname ~ '{_MANAGED_PRINCIPAL_PATTERN}' "
     "ORDER BY rolname"
 )
 _ROLE_CREATE_LINE_RE = re.compile(rb"^CREATE ROLE .+;$", re.MULTILINE)
@@ -110,6 +110,12 @@ _ROLE_ATTRIBUTES_RE = re.compile(
     re.MULTILINE,
 )
 _ROLE_PASSWORD_RE = re.compile(rb" PASSWORD (?:NULL|E'(?:[^'\\]|''|\\.)*'|'(?:[^']|'')*')(?=[ ;])")
+_GLOBALS_TOKEN_RE = re.compile(
+    rb"(?P<string>E'(?:[^'\\]|''|\\.)*'|'(?:[^']|'')*')"
+    rb'|(?P<identifier>"(?:[^"]|"")*")'
+    rb"|(?P<comment>--[^\n]*|/\*[\s\S]*?\*/)"
+    rb"|(?P<word>[A-Za-z_][A-Za-z0-9_$]*)|(?P<end>;)",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -211,29 +217,43 @@ def collect_source_roles(database_url: str) -> list[dict[str, object]]:
 
 
 def drain_ephemeral_principals(database_url: str, *, restored: bool = False) -> int:
-    """Revoke every scoped login and prove the reserved login namespace is empty."""
+    """Drain ended seats for backup, or every restored principal for a cold restore."""
     try:
         with psycopg.connect(database_url, connect_timeout=_CONNECT_TIMEOUT_SECONDS) as conn:
-            if not restored:
-                # Hold new launches and status changes until the drain commits.
-                # A backup must refuse before revoking any standing seat.
-                conn.execute("LOCK TABLE public.agent_runs IN SHARE MODE")
-                live = conn.execute(
-                    "SELECT 1 FROM public.agent_runs "
-                    "WHERE status IN ('queued', 'pending', 'running') LIMIT 1"
-                ).fetchone()
-                if live is not None:
-                    raise click.ClickException(
-                        "Hub backup requires a quiet window: live agent runs remain; "
-                        "no scoped PostgreSQL roles were drained"
-                    )
             schema_row = conn.execute("SELECT current_schema()").fetchone()
             auth_schema = auth_schema_for(None if schema_row is None else schema_row[0])
-            row = conn.execute(f"SELECT {auth_schema}.drain_ephemeral_principals()").fetchone()
-            if row is None:
-                raise click.ClickException("Managed-role drain returned no result")
-            drained = int(row[0])
-            remaining = conn.execute(_EPHEMERAL_ROLE_SQL).fetchall()
+            if restored:
+                row = conn.execute(f"SELECT {auth_schema}.drain_ephemeral_principals()").fetchone()
+                if row is None:
+                    raise click.ClickException("Managed-role drain returned no result")
+                drained = int(row[0])
+                remaining = conn.execute(_EPHEMERAL_ROLE_SQL).fetchall()
+            else:
+                # Standing seats survive a stopped daemon. Only terminal run
+                # ownership permits backup to revoke their scoped authority.
+                ended = (
+                    f"FROM {auth_schema}.principal_bindings pb JOIN public.agent_runs run "
+                    "ON run.id = pb.agent_run_id WHERE pb.owner_kind = 'agent_run' "
+                    "AND run.status IN ('success', 'error', 'timeout', 'cancelled')"
+                )
+                candidates = conn.execute(
+                    "SELECT pb.managed_execution_id, pb.credential_generation "
+                    + ended
+                    + " AND pb.revoked_at IS NULL"
+                ).fetchall()
+                drained = 0
+                for execution_id, generation in candidates:
+                    row = conn.execute(
+                        f"SELECT {auth_schema}.revoke_principal(%s, %s)",
+                        (execution_id, generation),
+                    ).fetchone()
+                    if row is None or int(row[0]) < 0:
+                        raise click.ClickException("Ended managed-role drain is incomplete")
+                    drained += int(row[0])
+                remaining = conn.execute(
+                    "SELECT pb.role_name " + ended + " AND EXISTS (SELECT 1 FROM pg_roles role "
+                    "WHERE role.rolname = pb.role_name AND role.rolcanlogin)"
+                ).fetchall()
     except psycopg.Error as exc:
         raise click.ClickException(f"Unable to drain scoped PostgreSQL roles: {exc}") from exc
     if drained < 0 or remaining:
@@ -296,6 +316,31 @@ def _without_role_passwords(script: bytes) -> bytes:
     return _ROLE_ATTRIBUTES_RE.sub(
         lambda match: match.group(1) + _ROLE_PASSWORD_RE.sub(b"", match.group(2)), script
     )
+
+
+def _without_managed_roles(script: bytes) -> bytes:
+    """Exclude whole pg_dumpall statements referencing ephemeral role identifiers.
+
+    Strings and comments may contain role-like text or semicolons. Tokenize those
+    first so metadata on stable roles survives, including multiline comments.
+    """
+    kept: list[bytes] = []
+    start = 0
+    ephemeral = False
+    for token in _GLOBALS_TOKEN_RE.finditer(script):
+        if token.lastgroup in ("identifier", "word"):
+            identifier = token.group()
+            if token.lastgroup == "identifier":
+                identifier = identifier[1:-1].replace(b'""', b'"')
+            name = identifier.decode("utf-8")
+            ephemeral |= MANAGED_PRINCIPAL_RE.fullmatch(name) is not None
+        elif token.lastgroup == "end":
+            if not ephemeral:
+                kept.append(script[start : token.end()])
+            start = token.end()
+            ephemeral = False
+    kept.append(script[start:])
+    return b"".join(kept)
 
 
 def _idempotent_global_role_creates(script: bytes) -> bytes:
@@ -374,6 +419,7 @@ def dump_postgres(
         timeout=dump_timeout,
     )
 
+    globals_path.write_bytes(_without_managed_roles(globals_path.read_bytes()))
     _check_archive_readable(dump_path, container=container)
 
     artifacts = [

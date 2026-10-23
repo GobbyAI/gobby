@@ -566,7 +566,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                         expires_at=datetime.now(UTC) + timedelta(minutes=59),
                     )
                 )
-            except CredentialIssuanceError:
+            except (CredentialIssuanceError, CredentialAuthorizationError):
                 logger.exception("Managed credential recovery failed for %s", execution_id)
         # Bounded, deadline-only cleanup; a generic reconcile would revoke an
         # expired current binding before its live owner can refresh it.

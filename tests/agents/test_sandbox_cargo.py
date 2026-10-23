@@ -403,6 +403,20 @@ def test_cargo_launcher_does_not_pin_a_cellar_node(launcher: CargoLauncher) -> N
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.unit
+def test_cargo_launcher_keeps_verified_node_when_workspace_path_changes(
+    launcher: CargoLauncher,
+) -> None:
+    malicious = launcher.workspace / "bin"
+    malicious.mkdir()
+    node = malicious / "node"
+    node.write_text("#!/bin/sh\nexit 99\n")
+    node.chmod(0o700)
+    launcher.env["PATH"] = f"{malicious}{os.pathsep}{launcher.env['PATH']}"
+    result = launcher.run(["check"])
+    assert result.returncode == 0, result.stderr
+
+
 def _checkout(root: Path, *, extra_test: bool) -> Path:
     member = root / "member"
     (member / "src").mkdir(parents=True)
