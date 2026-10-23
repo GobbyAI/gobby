@@ -10,21 +10,38 @@ from __future__ import annotations
 
 import re
 from functools import cache
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.skills.sync import get_bundled_skills_path
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import validate_workflow_definition_data
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
 
 AGENTS_DIR = get_bundled_agents_path()
 SKILLS_DIR = get_bundled_skills_path()
+SEAT_GATES = AGENTS_DIR.parent / "rules/skill-discovery/require-seat-procedure.yaml"
+GCLIENT_REFERENCE = "gobby:references/agents/gclient.md"
+SEAT_REFERENCE_EXEMPT_TOOLS = [
+    ("gobby", "get_tool_schema"),
+    ("gobby", "get_variable"),
+    ("gobby-skills", "get_skill_file"),
+    ("gobby-results", "get_tool_result"),
+    ("gobby-sessions", "get_handoff"),
+    ("gobby-sessions", "set_handoff"),
+    ("gobby-memory", "get_memory"),
+    ("gobby-agents", "send_message"),
+    ("gobby-agents", "wait_for_coordination"),
+]
 
 SEAT_CATALOGUE = {
     "assistant",
@@ -362,3 +379,53 @@ def test_developer_routes_skills_by_task() -> None:
     assert ROUTED_SKILLS <= routed
     for skill in routed:
         assert (SKILLS_DIR / skill / "SKILL.md").is_file(), skill
+
+
+@pytest.mark.parametrize("name", ["orchestrator", "assistant"])
+def test_seat_references_gate_required_reading(name: str) -> None:
+    raw = yaml.safe_load(SEAT_GATES.read_text())
+    rule = raw["rules"]["require-seat-references"]
+    assert rule["enabled"] and rule["event"] == "before_tool"
+    [effect] = rule["effects"]
+    assert effect["type"] == "block"
+
+    seat = _bundled()[name]
+    assert GCLIENT_REFERENCE in seat["workflows"]["variables"]["_seat_references"]
+    assert "tag:default" in _selectors(seat)["include"] and "default" in raw["tags"]
+    content = (SKILLS_DIR / "gobby" / GCLIENT_REFERENCE.split(":", 1)[1]).read_text()
+    assert len(content) < 15_000 and "{{" not in content and "{%" not in content
+    for topic in ("tab_title", "capture_output", "send_keys", "project policy"):
+        assert topic in content, topic
+
+    procedure = "gobby:references/agents/procedures/orchestrator.md"
+    variables: dict[str, Any] = {
+        "_seat_references": [procedure, GCLIENT_REFERENCE],
+        "loaded_skill_references": [],
+    }
+    event = SimpleNamespace(data={"tool_name": "Bash", "tool_input": {"command": "git status"}})
+    context = {"variables": variables, "event": event, "tool_input": event.data["tool_input"]}
+    helpers = build_condition_helpers(context=context)
+    evaluator = SafeExpressionEvaluator(context, helpers)
+
+    def reason() -> str:  # The engine adds skill_fetch_directive to the condition helpers.
+        funcs = {**helpers, "skill_fetch_directive": skill_fetch_directive}
+        return TemplateEngine(strict_undefined=False).render(effect["reason"], {**context, **funcs})
+
+    assert evaluator.evaluate(rule["when"]), "Work must wait for every listed reference"
+    assert reason() == skill_fetch_directive(procedure)
+    variables["loaded_skill_references"] = [procedure]
+    assert evaluator.evaluate(rule["when"]), "One loaded reference cannot release the rest"
+    assert reason() == skill_fetch_directive(GCLIENT_REFERENCE)
+    variables["loaded_skills"] = [GCLIENT_REFERENCE]
+    assert evaluator.evaluate(rule["when"]), "A skill entrypoint cannot replace its reference"
+    variables["loaded_skill_references"] = [procedure, GCLIENT_REFERENCE]
+    assert not evaluator.evaluate(rule["when"])
+    variables["loaded_skill_references"] = []  # Context loss clears tracked reference loads.
+    assert evaluator.evaluate(rule["when"]), "Compaction must require the references again"
+    for server, tool in SEAT_REFERENCE_EXEMPT_TOOLS:
+        event.data = {"mcp_server": server, "mcp_tool": tool}
+        assert not evaluator.evaluate(rule["when"]), f"Recovery must remain available: {tool}"
+    event.data = {"mcp_server": "gobby-agents", "mcp_tool": "spawn_agent"}
+    assert evaluator.evaluate(rule["when"]), "Pane placement must wait for the reference"
+    del variables["_seat_references"]
+    assert not evaluator.evaluate(rule["when"]), "Definitions without the list stay ungated"

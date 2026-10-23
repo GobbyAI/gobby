@@ -432,7 +432,7 @@ Targets:
 - `src/gobby/agents/team_lifecycle.py::*` — scope-reason: team record updates merge the review seat transition instead of overwriting it
 - `src/gobby/tasks/step_records.py::*` — scope-reason: grant the Sol fixer implementation step writes at the second rejection
 - `src/gobby/agents/team_review.py`
-- `tests/agents/test_team_review_loop.py`
+- `tests/agents/test_team_review_loop.py::*` — scope-reason: new file holding the claim hand-off, review sequence and recovery acceptance tests
 
 **Research context:** Storage supports expected-owner handoff but the MCP layer currently conflicts unless forced/delegated, and release authority is lane-based. Use the bound Dev Manager and expected owner to transfer the single task claim atomically; never use a global force bypass. Persist the review round and seat transition in team metadata, using 2.3's review-step record as the durable trigger. Sequence exactly: Test Writer → Developer → Sol review; rejection one → original Developer → same Sol review; rejection two → Sol reviewer becomes claimant/fixer → fresh Opus review; rejection three → Triage. Each seat writes its own step through the dedicated tool; the second rejection changes the Sol seat's authority to implementation before it edits. A seat that edits is recorded as an editor even if its role label still says reviewer. Resuming a team resumes this state, never recounts transcript messages.
 
@@ -545,10 +545,20 @@ The definitions grant only their role's step writer: Test Writer gets `record_te
 `[category: code]`
 
 Targets:
-- `src/gobby/install/shared/skills/gobby/references/gclient/operations.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/gclient.md`
 - `src/gobby/install/shared/skills/gobby/catalog.json::*` — scope-reason: list the reference as a topic of the agents area
 - `docs/reference-audit/agents.json::*` — scope-reason: audit entry for the new reference
 - `src/gobby/install/shared/workflows/rules/skill-discovery/require-seat-procedure.yaml::*` — scope-reason: sibling gate for a definition's required references
+- `src/gobby/workflows/safe_evaluator.py::*` — scope-reason: condition helper that names the first unloaded listed reference for the gate and its Jinja reason
+- `src/gobby/workflows/assistant_response_matching.py::*` — scope-reason: new module that receives the assistant-response matching moved out of `safe_evaluator.py`
+- `tests/workflows/test_safe_evaluator.py::*` — scope-reason: import the moved response patterns from their new module
+- `tests/workflows/test_skill_discovery_rules.py::*` — scope-reason: list both seat gates and import the moved response patterns
+- `src/gobby/hooks/_normalization_tools.py::*` — scope-reason: found work; a gcode search segment without an explicit bound stays broad, as the segment merge already treats it
+- `tests/agents/test_project_agnostic_definitions.py::*` — scope-reason: found work; the lane-manager keeps the author-owned retest proof after the reviewer's LAND became verdict-only
+- `tests/agents/test_review_observation_seat_definitions.py::*` — scope-reason: found work; the verdict-only reviewer carries no landing retest protocol
+- `src/gobby/install/shared/workflows/rules/context-handoff/require-handoff-pull-before-tool.yaml::*` — scope-reason: redirect opener the block-reason corpus requires
+- `src/gobby/install/shared/workflows/rules/AGENTS.md::*` — scope-reason: skill-discovery rule count and gate description
+- `tests/framing_corpus.py::*` — scope-reason: classify the new gate and the live rules the corpus missed
 - `src/gobby/install/shared/workflows/agents/orchestrator.yaml::*` — scope-reason: require the gclient operations reference
 - `src/gobby/install/shared/workflows/agents/assistant.yaml::*` — scope-reason: require the gclient operations reference
 - `src/gobby/terminals/workspace_agent_panes.py::*` — scope-reason: split placement may name its tab by title
@@ -556,7 +566,7 @@ Targets:
 - `tests/workflows/test_seat_definitions.py::*` — scope-reason: required-reference gate and grants
 - `tests/terminals/test_workspace_agent_panes.py::*` — scope-reason: tab-title placement
 
-**Research context:** No seat has gclient operating guidance. The Orchestrator reverse-engineered spawn placement from the `_factory.py` docstring and guessed a pane ref from another session's terminal ID to place reviewers in an operator tab (Josh via the Orchestrator, October 22). The new reference `gobby:references/gclient/operations.md` covers:
+**Research context:** No seat has gclient operating guidance. The Orchestrator reverse-engineered spawn placement from the `_factory.py` docstring and guessed a pane ref from another session's terminal ID to place reviewers in an operator tab (Josh via the Orchestrator, October 22). The new reference `gobby:references/agents/gclient.md` covers (it sits in the agents folder because the reference library requires each catalog topic to live in its area's folder):
 - workspaces, tabs and panes, and how to read a tab or pane ref;
 - the placement forms `{"tab": {"workspace", "title"}}` and `{"split": {"pane", "axis", "columns", "rows", "title"}}`, plus the tab-title form below;
 - keeping operator and admin tabs free of agent panes;
@@ -567,6 +577,8 @@ It stays generic (memory 191ab225): no Gobby tab names or layouts. It tells seat
 The reference is required reading through the rule-backed gate that already enforces seat procedures. `require-seat-procedure` blocks every non-bootstrap tool until the definition's `_seat_procedure` is `skill_loaded`. That check runs once per context epoch and re-arms after compaction. A sibling rule in the same file does the same for a definition list variable, `_seat_references`, and names the first unloaded entry in its block reason. `orchestrator.yaml` and `assistant.yaml` list the reference; `dev-manager.yaml` lists it in 3.5. Other pane-placing definitions opt in by adding it to the list.
 
 Placement today resolves only numeric refs or a workspace name (`WorkspaceManager.resolve_reference`, `src/gobby/storage/workspaces.py:371-402`). `AgentPlacement.parse` (`workspace_agent_panes.py:101`) accepts a split only beside a pane ref. The split form gains `workspace` plus `tab_title` in place of `pane`. It splits beside that tab's focused pane, the pattern `team_launch_inputs._manager_lane_placement` already uses, and refuses with `invalid_ref` unless exactly one tab in that workspace has the title. `pane` and `tab_title` are mutually exclusive. A separate listing tool is rejected: one placement call answers the need, with no ref lookup.
+
+`safe_evaluator.py` was already above the 850-line growth threshold, so this deliverable moves the assistant-response matching (its patterns, text extraction, cited-span masking and pattern matching) from `src/gobby/workflows/safe_evaluator.py` into `src/gobby/workflows/assistant_response_matching.py`. The evaluator keeps the per-context text cache and registers the condition helper.
 
 **Acceptance:**
 - 3.6.1 - A definition that lists `_seat_references` is blocked until each listed reference loads, and the gate re-arms after compaction. The Orchestrator and Assistant definitions list the gclient reference. test: `tests/workflows/test_seat_definitions.py::test_seat_references_gate_required_reading`.

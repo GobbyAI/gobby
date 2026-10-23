@@ -57,4 +57,6 @@ workflows:
     # The Assistant edits tasks when the operator asks.
     exclude:
       - "name:block-update-task"
-  variables: {}
+  variables:
+    _seat_references:
+      - gobby:references/agents/gclient.md

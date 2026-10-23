@@ -317,21 +317,16 @@ def test_moved_seat_procedures_are_required_in_every_context_epoch(name: str) ->
         assert not evaluator.evaluate(rule["when"]), f"Recovery must remain available: {tool}"
 
 
-@pytest.mark.parametrize("name", ["code-reviewer", "lane-manager"])
-def test_extracted_retest_procedures_keep_author_owned_proof(name: str) -> None:
+def test_lane_manager_procedure_keeps_author_owned_retest_proof() -> None:
     shared = get_bundled_agents_path().parents[1]
-    procedure = shared / f"skills/gobby/references/agents/procedures/{name}.md"
+    procedure = shared / "skills/gobby/references/agents/procedures/lane-manager.md"
     content = procedure.read_text()
 
     for protocol in ("PROOF_RESULT", "UNAVAILABLE"):
-        assert protocol in content, f"{name} must retain the current {protocol} proof contract"
-    assert "author" in content
-    # #24756: the reviewer sends LANDED at once; the closing seat owns the retest.
+        assert protocol in content, f"lane-manager must retain the current {protocol} contract"
+    assert "The author lane owns the landed retest" in content
+    # The Orchestrator lands and reports LANDED; the author owns the retest.
     assert "PROOF_REQUEST" not in content
     assert "run them in the main checkout" not in content
     assert "the reviewer has run the retest" not in content
-    if name == "code-reviewer":
-        assert "closing seat owns the landed retest" in content
-        assert "run no retest yourself" in content
-    else:
-        assert "confirm it with the author before raising found work" in content
+    assert "confirm it with the author before raising found work" in content

@@ -48,3 +48,5 @@ workflows:
       - "name:block-update-task"
   variables:
     _seat_procedure: gobby:references/agents/procedures/orchestrator.md
+    _seat_references:
+      - gobby:references/agents/gclient.md

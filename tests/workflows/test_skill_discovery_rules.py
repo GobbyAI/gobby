@@ -24,11 +24,11 @@ from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.assistant_response_matching import ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.blocked_tool_recovery import _CODE_INDEX_REMEDIATION_RULES
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import (
-    ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     SafeExpressionEvaluator,
     build_condition_helpers,
 )
@@ -131,6 +131,8 @@ SKILL_DISCOVERY_RULES = {
     "require-ruby-skill",
     "require-rust-skill",
     "require-scala-skill",
+    "require-seat-procedure",
+    "require-seat-references",
     "require-swift-skill",
     "require-typescript-skill",
     "require-yaml-skill",
@@ -148,6 +150,8 @@ LANGUAGE_SKILL_RULES = {
         "require-code-review-skill",
         "require-impeccable-skill",
         "require-plan-skill",
+        "require-seat-procedure",
+        "require-seat-references",
     }
 }
 

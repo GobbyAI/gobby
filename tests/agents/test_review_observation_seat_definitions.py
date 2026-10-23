@@ -642,6 +642,9 @@ def test_code_reviewer_hands_each_land_verdict_to_the_orchestrator() -> None:
         "REVIEW_COMPLETE",
         "landing_approval",
         "parked",
+        "EVENT=LANDED",
+        "PROOF_RESULT",
+        "RETEST=",
     ):
         assert retired not in prompt
         assert retired not in definition

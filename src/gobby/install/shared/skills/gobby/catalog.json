@@ -216,6 +216,12 @@
           "description": "Inspect, wait for, cancel, and end runs",
           "path": "references/agents/lifecycle.md",
           "when": "Monitoring or terminating agent execution"
+        },
+        {
+          "name": "gclient",
+          "description": "Place agent panes and read workspace refs",
+          "path": "references/agents/gclient.md",
+          "when": "Placing a spawned agent's pane or controlling another session's terminal"
         }
       ]
     },

@@ -110,6 +110,15 @@
         "source-audit",
         "focused-agents"
       ]
+    },
+    {
+      "path": "docs/guides/gclient-user-guide.md",
+      "anchors": [
+        "workspaces"
+      ],
+      "evidence": [
+        "gclient-placement"
+      ]
     }
   ],
   "operations": [
@@ -1257,6 +1266,12 @@
       "kind": "pytest",
       "command": "RTK_DISABLED=1 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv --directory /Users/josh/.gobby/worktrees/gobby/task-23308-coordination-wait-contract run pytest tests/events/test_coordination_waits.py -k test_mcp_replay_contract_matches_public_guidance -q",
       "result": "3 failed before the guidance repair, after all runtime assertions passed; the same command then passed all 3 cases. Isolated MCP registration covers active ID/expiry preservation, release after registration, fresh wait on identical terminal replay and independent fresh-key hold. MCP description, guide and bundled messaging reference agree with that behavior. Runtime behavior remains as intentionally changed in e90924169c5c3740501fdf247973010535ee692c. No live wait mutation."
+    },
+    {
+      "id": "gclient-placement",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/terminals/test_workspace_agent_panes.py tests/workflows/test_seat_definitions.py -q",
+      "result": "59 passed in 8.77s (#24797). Covers the three placement forms, including a split beside the focused pane of the one tab with a given title, the refusal codes, and the seat-references gate that requires the gclient reference again after context loss. Isolated fixtures; no live workspace mutation."
     }
   ],
   "discrepancies": [
