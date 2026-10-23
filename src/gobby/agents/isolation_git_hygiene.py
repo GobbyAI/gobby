@@ -20,6 +20,11 @@ GENERATED_ISOLATION_EXCLUDE_PATHS = (
     ".factory/hooks/hooks.json",
     ".gobby/isolation.json",
 )
+GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES = (
+    ".claude/",
+    ".codex/",
+    ".factory/",
+)
 
 
 async def apply_isolation_git_hygiene(
@@ -85,6 +90,53 @@ def is_generated_isolation_project_json(
     if isinstance(source_project_id, str) and source_project_id:
         return parent_project_id == source_project_id and project_id == source_project_id
     return project_id == parent_project_id
+
+
+def blocking_status_lines(
+    status_output: str,
+    worktree_path: Path,
+    main_repo_path: str | Path | None,
+) -> list[str]:
+    """Porcelain status lines left after dropping Gobby-generated isolation files.
+
+    A linked worktree shares ``info/exclude`` with the main checkout, so its
+    generated files show as untracked here unless the project ignores them.
+    """
+    blocking: list[str] = []
+    for line in status_output.splitlines():
+        relative_path = _porcelain_path(line)
+        if _is_generated_isolation_status_path(line, relative_path):
+            continue
+        if relative_path == PROJECT_JSON_RELATIVE_PATH and is_generated_isolation_project_json(
+            worktree_path / PROJECT_JSON_RELATIVE_PATH,
+            main_repo_path=main_repo_path,
+        ):
+            continue
+        blocking.append(line)
+    return blocking
+
+
+def _is_generated_isolation_status_path(line: str, relative_path: str) -> bool:
+    if relative_path in GENERATED_ISOLATION_EXCLUDE_PATHS:
+        return True
+    if not line.startswith("?? "):
+        return False
+    return any(
+        relative_path == prefix or relative_path.startswith(prefix)
+        for prefix in GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES
+    )
+
+
+def _porcelain_path(line: str) -> str:
+    """Return the best-effort path from a porcelain v1 status line.
+
+    This intentionally supports the simple short-format lines emitted by
+    ``git status --porcelain``. It does not fully unescape quoted pathnames.
+    """
+    path = line[3:].strip() if len(line) > 3 else line.strip()
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[1]
+    return path.strip('"')
 
 
 def _load_json_object(path: Path) -> dict[str, Any] | None:

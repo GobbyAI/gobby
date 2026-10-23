@@ -118,7 +118,10 @@ def test_reset_preserves_protection_committed_while_waiting_for_task_lock(
                     (session.id, leaf.id),
                 )
             elif protection == "closed":
-                holder.execute("UPDATE tasks SET closed_at = now() WHERE id = %s", (leaf.id,))
+                holder.execute(
+                    "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s",
+                    (leaf.id,),
+                )
             elif protection == "escalated":
                 holder.execute("UPDATE tasks SET escalated_at = now() WHERE id = %s", (leaf.id,))
             elif protection == "commits":

@@ -43,7 +43,9 @@ def _git(repo: Path, *args: str) -> str:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("protection", ["landed", "unmerged", "dirty", "claimed_task"])
+@pytest.mark.parametrize(
+    "protection", ["landed", "generated_only", "unmerged", "dirty", "claimed_task"]
+)
 async def test_expiry_preserves_active_or_unlanded_work(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -79,7 +81,12 @@ async def test_expiry_preserves_active_or_unlanded_work(
     storage.mark_merged(worktree.id)
     if protection == "unmerged":
         _git(path, "commit", "--allow-empty", "-m", "new unlanded work")
-    elif protection == "dirty":
+    elif protection in ("generated_only", "dirty"):
+        # Spawns write these untracked; a linked worktree has no info/exclude to hide them.
+        (path / ".mcp.json").write_text("{}\n")
+        (path / ".claude").mkdir()
+        (path / ".claude" / "settings.json").write_text("{}\n")
+    if protection == "dirty":
         (path / "uncommitted.txt").write_text("must survive\n")
     source_tip = _git(repo, "rev-parse", "refs/heads/task/expired")
     shutdown = iter([False, True])
@@ -87,7 +94,7 @@ async def test_expiry_preserves_active_or_unlanded_work(
 
     await cleanup_expired_isolation_loop(temp_db, lambda: next(shutdown), interval_hours=0)
 
-    if protection == "landed":
+    if protection in ("landed", "generated_only"):
         assert not path.exists()
         assert storage.get(worktree.id) is None
         assert _git(repo, "branch", "--list", "task/expired") == ""
@@ -191,7 +198,9 @@ async def test_missing_records_preserve_current_owners(
         validation_criteria="Missing owned workspace metadata survives cleanup",
     )
     if owner in ("closed_task", "claimed_workspace"):
-        temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+        temp_db.execute(
+            "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+        )
     worktrees = LocalWorktreeManager(temp_db)
     clones = LocalCloneManager(temp_db)
     storage = worktrees if kind == "worktree" else clones
@@ -305,7 +314,9 @@ async def test_missing_worktree_requires_absent_source_ref(
         "Closed missing workspace task",
         validation_criteria="Missing source checkout does not erase surviving branch registration",
     )
-    temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    temp_db.execute(
+        "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+    )
     storage = LocalWorktreeManager(temp_db)
     workspace = storage.create(project.id, "task/missing", str(path), task_id=task.id)
     storage.update(workspace.id, status="merged", cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))

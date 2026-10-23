@@ -310,6 +310,7 @@ async def test_teardown_recovers_after_restart(
         world.case.project_id,
         "Team teardown refused",
         labels=[FINDING_LABEL, f"team-{refused.binding.team_id}"],
+        validation_criteria="The refused team tree is deleted or kept with a reason.",
     )
     close(world, refused, commit(refused, "unmerged.py"), minutes_ago=1)
     await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)

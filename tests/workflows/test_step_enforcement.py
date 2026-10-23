@@ -3418,7 +3418,7 @@ def _running_rule_engine_with_bound_task(
     )
     if task_closed:
         db.execute(
-            "UPDATE tasks SET closed_at = CURRENT_TIMESTAMP WHERE id = %s",
+            "UPDATE tasks SET closed_at = CURRENT_TIMESTAMP, closed_reason = 'done' WHERE id = %s",
             (task.id,),
         )
     run_manager = LocalAgentRunManager(db)

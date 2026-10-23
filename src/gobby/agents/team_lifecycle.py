@@ -137,6 +137,10 @@ def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> No
     binding = _caller_binding(db, caller)
     if binding is None:
         return
+    if LocalTaskManager(db).get_task(binding.task_id).closed_at is not None:
+        raise TeamAdmissionRefused(
+            "team_closed", f"team {binding.team_id} collapsed when task {binding.task_id} closed"
+        )
     if (
         target.checkout_mode in ("worktree", "clone")
         or target.branch_name
