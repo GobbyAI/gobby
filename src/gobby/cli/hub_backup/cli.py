@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import click
 
 from gobby.cli.daemon import _services_start, _services_stop
+from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.hub_backup._integrity import (
     create_staging_directory,
     publish_staged_backup,
@@ -225,6 +226,13 @@ def hub_backup(
         target.rehearsal.require_private_path(rehearsal_logs, "logs_dir")
 
     restart_daemon = _daemon_is_running()
+    if restart_daemon and target.rehearsal is None:
+        # Prove the start half before stopping: a start refused after the stop leaves the
+        # daemon down, with no backup taken.
+        if refusal := restart_start_refusal(ctx):
+            raise click.ClickException(
+                f"Refusing to back up: {refusal} The running daemon was left alone."
+            )
     staging_root = create_staging_directory(backup_root)
     manifest_path = backup_root / MANIFEST_NAME
     try:

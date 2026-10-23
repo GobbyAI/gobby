@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, NamedTuple
 
 import click
@@ -22,6 +23,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from gobby.cli import cli as root_cli
+from gobby.cli import daemon_preflight
 from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.hub_backup._manifest import (
@@ -46,7 +48,10 @@ from gobby.cli.installers.container_restart import FALKORDB_CONTAINER
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
+from gobby.storage import schema_divergence
 from gobby.storage.config_repository import UnknownKeyPolicy, UnknownStoredConfigKeyError
+from gobby.sync import integrity as bundled_integrity
+from gobby.sync.integrity import IntegrityResult
 
 pytestmark = pytest.mark.unit
 
@@ -246,6 +251,9 @@ class _Harness:
     def start_daemon(self) -> None:
         self._step("start_daemon")
 
+    def start_refusal(self, _ctx: click.Context) -> None:
+        return None
+
     # -- source facts ------------------------------------------------------
 
     def collect_postgres_identity(self, database_url: str) -> tuple[SourceIdentity, int]:
@@ -426,6 +434,7 @@ class _Harness:
             "_daemon_is_running": self.daemon_is_running,
             "stop_daemon": self.stop_daemon,
             "_start_daemon": self.start_daemon,
+            "restart_start_refusal": self.start_refusal,
             "collect_postgres_identity": self.collect_postgres_identity,
             "collect_row_count_probes": self.collect_row_count_probes,
             "collect_schema_object_counts": self.collect_schema_object_counts,
@@ -1082,3 +1091,72 @@ class TestJsonOutput:
 
         assert DATABASE_PASSWORD not in result.output
         assert "postgresql://" not in result.output
+
+
+_DIRTY_BUNDLED_PATH = "src/gobby/install/shared/skills/gobby/references/code-index/overview.md"
+
+
+def _run_real_start_preflight(monkeypatch: pytest.MonkeyPatch, integrity: IntegrityResult) -> None:
+    """Run the real start-half preflight, stubbing only the host-bound gates."""
+    monkeypatch.setattr(hub_cli, "restart_start_refusal", daemon_preflight.restart_start_refusal)
+    config = DaemonConfig()
+    config.agent_sandbox.enabled = False
+    config.web_chat_sandbox.enabled = False
+    monkeypatch.setattr(CliRuntime, "read_only_operational_config", lambda _runtime: config)
+    monkeypatch.setattr(daemon_preflight, "worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr(
+        daemon_preflight,
+        "load_bootstrap",
+        lambda: SimpleNamespace(datastore_mode="local", database_url=DATABASE_URL),
+    )
+    monkeypatch.setattr(daemon_preflight, "_open_hub", lambda _ctx: None)
+    monkeypatch.setattr(daemon_preflight, "plan_schema", lambda *_a, **_k: "")
+    monkeypatch.setattr(schema_divergence, "binary_set_apply_refusal", lambda *_a, **_k: None)
+    monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
+    monkeypatch.setattr(
+        bundled_integrity, "verify_bundled_integrity", lambda _install_dir: integrity
+    )
+
+
+def test_backup_refuses_dirty_bundled_content_before_stopping_the_daemon(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT", raising=False)
+    _run_real_start_preflight(
+        monkeypatch, IntegrityResult(checked=True, source="git", dirty_files=[_DIRTY_BUNDLED_PATH])
+    )
+
+    result = _invoke(runtime, "--output", str(tmp_path / "backup"))
+
+    assert result.exit_code == 1, result.output
+    assert _DIRTY_BUNDLED_PATH in result.output
+    assert "GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT=1" in result.output
+    assert "The running daemon was left alone." in result.output
+    assert "stop_daemon" not in harness.calls
+    assert "start_daemon" not in harness.calls
+
+
+def test_backup_proceeds_over_dirty_bundled_content_under_the_override(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT", "1")
+    _run_real_start_preflight(
+        monkeypatch, IntegrityResult(checked=True, source="git", dirty_files=[_DIRTY_BUNDLED_PATH])
+    )
+
+    _run_ok(runtime, tmp_path / "backup")
+
+    assert "stop_daemon" in harness.calls
+    assert "start_daemon" in harness.calls
+
+
+def test_backup_proceeds_over_clean_bundled_content(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT", raising=False)
+    _run_real_start_preflight(monkeypatch, IntegrityResult(checked=True, source="git"))
+
+    _run_ok(runtime, tmp_path / "backup")
+
+    assert "stop_daemon" in harness.calls
+    assert "start_daemon" in harness.calls

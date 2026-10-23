@@ -752,6 +752,28 @@ def test_run_cutover_refuses_before_promotion_when_candidate_plan_fails(
     promotion.assert_not_called()
 
 
+def test_run_cutover_refusal_leaves_the_daemon_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The start proof runs before the stop, so a refused cutover never stops the daemon."""
+    root = tmp_path / "workspace"
+    root.mkdir()
+    artifacts = _artifacts(root, _identity(420))
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(artifacts))
+    stop = Mock(return_value=True)
+
+    with pytest.raises(cutover_module.CutoverError, match="dirty bundled content"):
+        cutover_module.run_cutover(
+            root,
+            tmp_path / "bin",
+            stop_daemon=stop,
+            start_daemon=pytest.fail,
+            start_refusal=lambda _candidate: "Refusing to publish dirty bundled content",
+        )
+
+    stop.assert_not_called()
+
+
 def test_cli_refuses_dirty_schema_inputs_and_names_them(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

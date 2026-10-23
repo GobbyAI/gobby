@@ -18,6 +18,8 @@ from gobby.config.bootstrap import load_bootstrap
 from gobby.install.bin_set_coherence import BinarySetCoherenceError
 from gobby.storage import schema_divergence
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
+from gobby.sync import integrity as bundled_integrity
+from gobby.sync.integrity import IntegrityResult
 
 pytestmark = pytest.mark.unit
 
@@ -136,6 +138,57 @@ def test_runner_checksum_mismatch_refuses_before_schema_plan(
         "Managed SRT sandbox preflight failed: "
         "SRT runner checksum does not match the pinned release"
     )
+    assert plan_calls == []
+
+
+_DIRTY_BUNDLED_PATH = "src/gobby/install/shared/skills/gobby/references/code-index/overview.md"
+
+
+def _dirty_bundled_integrity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the real dirty-content check against a git result with one changed template."""
+    monkeypatch.delenv("GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT", raising=False)
+    monkeypatch.setattr(
+        daemon_preflight,
+        "dirty_bundled_content_refusal",
+        bundled_integrity.dirty_bundled_content_refusal,
+    )
+    monkeypatch.setattr(
+        bundled_integrity,
+        "verify_bundled_integrity",
+        lambda _install_dir: IntegrityResult(
+            checked=True, source="git", dirty_files=[_DIRTY_BUNDLED_PATH]
+        ),
+    )
+
+
+def test_restart_refuses_dirty_bundled_content_before_stopping(
+    plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stopped: list[str] = []
+    monkeypatch.setattr(daemon_module, "_do_stop", lambda *_a, **_k: stopped.append("stop"))
+    _dirty_bundled_integrity(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["restart"])
+
+    assert result.exit_code == 1, result.output
+    assert _DIRTY_BUNDLED_PATH in result.output
+    assert "GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT=1" in result.output
+    assert "The running daemon was left alone." in result.output
+    assert stopped == []
+    assert plan_calls == []
+
+
+def test_cutover_candidate_refuses_dirty_bundled_content_before_the_plan(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(daemon_preflight, "_candidate_identity_refusal", lambda *_a, **_k: None)
+    _dirty_bundled_integrity(monkeypatch)
+
+    refusal = daemon_preflight.restart_start_refusal(ctx, _CANDIDATE)
+
+    assert refusal is not None
+    assert _DIRTY_BUNDLED_PATH in refusal
+    assert "GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT=1" in refusal
     assert plan_calls == []
 
 
