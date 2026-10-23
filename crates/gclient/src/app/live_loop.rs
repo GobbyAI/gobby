@@ -348,7 +348,8 @@ pub async fn run_live_loop<B: Backend>(
                 match event {
                     Ok(event) => {
                         if let Err(error) =
-                            handle_live_event(workspace, chrome, &mut supervisor, event).await
+                            handle_live_event(workspace, chrome, &mut supervisor, &mut jobs, event)
+                                .await
                         {
                             begin_reconnect(workspace, chrome, &mut supervisor, &daemon, error);
                         }

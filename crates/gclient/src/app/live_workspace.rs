@@ -114,6 +114,15 @@ impl Workspace<LiveDaemon> {
             .collect()
     }
 
+    /// Whether `terminal_id` is still unresolved in the selected project now.
+    /// A read started earlier must not install into a pane that closed or a
+    /// project that lost focus.
+    pub(super) fn is_unresolved_terminal(&self, terminal_id: &str) -> bool {
+        self.unresolved_terminal_ids()
+            .iter()
+            .any(|unresolved| unresolved == terminal_id)
+    }
+
     pub(super) async fn open_unresolved_terminals(&mut self) {
         for terminal_id in self.unresolved_terminal_ids() {
             // Best effort: an unavailable row leaves the slot empty.
