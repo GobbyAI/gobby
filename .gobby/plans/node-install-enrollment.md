@@ -182,28 +182,33 @@ D24; the pushbacks Josh asked for are marked.
   enters gdaemon, the repository, any agent seat or transcript. gdaemon embeds the
   one public key and verifies with `ring`.
 
-  Rotation is manual and single-key: generate the successor once and back it up
-  while the environment still holds the old key, then publish a transition release
-  whose
-  `release-signing.pub` contains the successor public key but whose assets are signed
-  by the old private key. After installed nodes trust the successor, replace the
-  environment secret. If the private key leaks or both the environment secret and
-  password-manager copy are lost, no trusted key can publish an automatic recovery;
-  revoke or abandon the secret, replace `release-signing.pub`, publish from the
-  official release page, and reinstall each node over HTTPS. Nodes that trust only
-  the old key cannot auto-update until reinstalled.
+  Rotation is manual and single-key: generate the successor once, store its offline
+  backup, replace `release-signing.pub` and the environment secret, publish the next
+  release signed by the new key, and reinstall every node from that official release
+  over HTTPS. Before the replacement gdaemon tag, re-sign the unchanged
+  `SHA256SUMS` of every pinned member release with the new key and replace only its
+  `SHA256SUMS.sig` asset; 1.3's assembler then verifies every member with the new
+  embedded key. Nodes that trust the old key cannot auto-update to the replacement.
+  Leak or loss of the private key uses the same boundary: revoke or abandon the
+  secret, install a new public key and secret, re-sign the pinned member checksum
+  assets, publish from the official release page, and reinstall each node over
+  HTTPS.
 
   A fork generates its key once, replaces
   `crates/gdaemon/assets/release-signing.pub` with its public key, stores the private
   key as its own protected `release` environment's `GOBBY_RELEASE_SIGNING_KEY`, and
   keeps an offline copy in its operator's password manager. Rejected for 1.0 and
-  deferred to #24839: a multi-key trust ring, recovery keys, emergency revocation
-  lists, fork key-bootstrap tooling, and an unverified install mode. Also rejected:
-  a required-reviewer gate during 1.0, because Josh does not want release friction;
-  regenerating a key per release, because CI can reuse the protected secret; putting
-  private material in the daemon, repository, seats or transcripts; `.sha256`
-  sidecars alone, because whoever replaces an asset can replace its sidecar; and
-  minisign or Sigstore, which add tooling for one embedded-key check.
+  deferred to #24839: a multi-key trust ring, recovery keys, dual signatures or any
+  other old-to-new authorization, emergency revocation lists, fork key-bootstrap
+  tooling, and an unverified install mode. An old-key-signed transition release is
+  rejected because the successor-key release assembler, fresh installer and hub
+  resolver cannot verify or target it with the fixed single-key consumers. A manual
+  staging bypass is rejected because it recreates the unverified install mode. Also
+  rejected: a required-reviewer gate during 1.0, because Josh does not want release
+  friction; regenerating a key per release, because CI can reuse the protected
+  secret; putting private material in the daemon, repository, seats or transcripts;
+  `.sha256` sidecars alone, because whoever replaces an asset can replace its
+  sidecar; and minisign or Sigstore, which add tooling for one embedded-key check.
 - **D3, first command and trust root.** The first download is trusted through HTTPS
   from GitHub. The bundle's signed `node-release.json` then proves its members are
   intact, which guards against corruption, not against a hostile first download.
@@ -524,6 +529,9 @@ new Python).
      and each archive's hash. A missing release or asset fails naming the member and
      version, so a gdaemon tag pushed before its members publishes nothing. gdaemon's
      own archives come from the job's build artifacts.
+     D2 rotation first replaces each pinned member release's `SHA256SUMS.sig` with a
+     new-key signature over its unchanged `SHA256SUMS`; no archive or checksum list
+     changes.
   3. The Linux x86_64 members are extracted and probed:
      `gdaemon schema version --json`, then `gcode schema-identity --json` and
      `ghook schema-identity --json`, which must agree on the six identity fields
@@ -927,9 +935,8 @@ downloads, for node binaries (D2).
   dependency), requires the 44-byte DER to start with the Ed25519 prefix
   `302a300506032b6570032100`, and verifies with `ring::signature::ED25519` over the
   last 32 bytes. In debug builds a key in `GOBBY_RELEASE_TEST_KEY`, in the same PEM
-  form, is accepted as well. There is exactly one embedded key; D2 rotation works
-  because the old key verifies the transition release before that release installs
-  the successor `release-signing.pub`.
+  form, is accepted as well. There is exactly one embedded key; D2 changes it only
+  across the HTTPS reinstall boundary and adds no transition verifier.
 - `parse_sums(text)` reads `sha256sum` lines into a map; a malformed line or a
   duplicate name refuses.
 - `NodeRelease` (serde, unknown fields ignored so an older node can read a newer
@@ -963,7 +970,7 @@ Research context:
   0.17.14 is locked through rustls.
 - `crates/gdaemon/assets/release-signing.pub` comes from #24717. D2 owns its manual
   single-key rotation, password-manager backup and HTTPS reinstall policy; no key
-  ring or recovery-key path is implemented here.
+  ring, old-to-new authorization or recovery-key path is implemented here.
 - Planned checks: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon -E 'test(release::)'`.
 
 **Acceptance:**
@@ -1795,9 +1802,10 @@ which writes a DSN, copies `.secret_kek`, and runs `gobby auth login` and
 - `shared-stack.md`'s Client setup points at `node-setup.md`.
 - `release-guide.md` adds D2's one-time key generation, password-manager backup and
   protected `release` environment secret; states that CI reuses the secret without a
-  required-reviewer gate during 1.0; gives the old-key-signed transition-release
-  sequence for manual rotation; gives the HTTPS reinstall procedure for leak or
-  loss; and tells a fork to replace `release-signing.pub` and set its own
+  required-reviewer gate during 1.0; gives the new-key publication and HTTPS
+  reinstall sequence for planned rotation and for leak or loss, including re-signing
+  every pinned member release's unchanged checksum list before the replacement
+  gdaemon bundle; and tells a fork to replace `release-signing.pub` and set its own
   `GOBBY_RELEASE_SIGNING_KEY` environment secret. It records #24839 as the post-1.0
   owner of multi-key/recovery-key design. It also adds the gmcp workflow and the tag
   order: every changed member first, gdaemon last, because the gdaemon job bundles
@@ -1826,8 +1834,8 @@ Research context:
 
 **Acceptance:**
 
-- 5.1.1 - The node guide documents the requirements, the three commands, the service, updates, both skew directions and the two operator verbs, with no Python step. file: `docs/guides/node-setup.md`.
-- 5.1.2 - The release guide documents signing, the gmcp workflow and the member-first, gdaemon-last tag order. file: `docs/guides/release-guide.md`.
+- 5.1.1 - The node guide documents the requirements, the three commands, the service, updates, both skew directions, the two operator verbs, and that a node on an old signing key needs HTTPS reinstall after rotation, leak or loss, with no Python step. file: `docs/guides/node-setup.md`.
+- 5.1.2 - The release guide documents one-time key generation and CI reuse without a required-reviewer gate through 1.0, the offline password-manager backup, new-key publication plus pinned-member checksum re-signing and HTTPS reinstall for rotation/leak/loss, the old-key node boundary, fork public-key/own-secret steps, #24839's deferred alternatives, the gmcp workflow and the member-first, gdaemon-last tag order. file: `docs/guides/release-guide.md`.
 - 5.1.3 - The CLI reference documents the four `gobby node` verbs and has no `gobby auth login` entry. file: `docs/guides/cli-commands.md`.
 - 5.1.4 - The documented install command is the one the sandbox runs without Python. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`.
 - 5.1.5 - No Markdown page under `docs/` outside `docs/audits/`, `docs/research/` and the generated parity ledger names `gobby auth login`. test: `crates/gdaemon/tests/node_setup.rs::no_doc_names_python_login`.
@@ -1922,14 +1930,16 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   derivation.
 - 2026-10-23: Signing-key policy revision by Plan Writer gobby#17373 under Josh's
   #24838 rescope. D2 keeps one embedded key through 1.0: CI reuses the protected
-  release-environment secret without a required-reviewer gate, planned rotation uses
-  an old-key-signed transition release, the private key has an offline
-  password-manager copy, leak or loss requires HTTPS reinstall, and forks replace
-  the public key and set their own secret. The #24717 dependency and sections 1.1,
-  3.1 and 5.1 carry the same policy. Multi-key/recovery mechanisms, fork bootstrap
-  tooling and an unverified install mode are rejected for 1.0 and deferred to
-  #24839. M1 remains byte-for-byte unchanged because no deliverable, acceptance ID,
-  category, dependency or validation criterion changed.
+  release-environment secret without a required-reviewer gate. Under the
+  Orchestrator's disposition of adversary finding NIE-D2-01, planned rotation, leak
+  and loss all re-sign the pinned member checksum assets, publish with a new key and
+  reinstall nodes over HTTPS; the private key has an offline password-manager copy,
+  and forks replace the public key and set their own secret. The #24717 dependency
+  and sections 1.1, 1.3, 3.1 and 5.1 carry the same policy. Multi-key/recovery
+  mechanisms, old-to-new authorization, fork bootstrap tooling and an unverified
+  install mode are rejected for 1.0 and deferred to #24839. Finding NIE-D2-02
+  expands 5.1's existing acceptance items; M1 therefore requires fresh adversary
+  derivation.
 
 ## M1 Task Manifest
 `kind: manifest`
