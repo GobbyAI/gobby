@@ -124,8 +124,8 @@ async def test_landed_with_title_before_sha_is_refused_with_template_order(
     assert result["error_code"] == "protocol_line_rejected"
     assert result["field"] == "SHA"
     assert (
-        "SHA TASK_TITLE BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
-        "PROJECT_SYNC_REQUIRED PROVENANCE RETEST NOTE"
+        "SHA BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
+        "PROJECT_SYNC_REQUIRED PROVENANCE RETEST TASK_TITLE NOTE"
     ) in result["error"]
     message_manager.create_message.assert_not_called()
 

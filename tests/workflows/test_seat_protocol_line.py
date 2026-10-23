@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 import pytest
 
-from gobby.workflows.engine.seat_messages import CandidateMessageError
+from gobby.workflows.engine.seat_messages import CandidateMessageError, candidate_event
 
 pytestmark = pytest.mark.unit
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 LANDED_CANONICAL = (
-    "SHA TASK_TITLE BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
-    "PROJECT_SYNC_REQUIRED PROVENANCE RETEST NOTE"
+    "SHA BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
+    "PROJECT_SYNC_REQUIRED PROVENANCE RETEST TASK_TITLE NOTE"
 )
 
 
@@ -136,3 +142,85 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
 )
 def test_lines_without_a_consumed_event_are_unaffected(line: str) -> None:
     assert _parse(line) is None
+
+
+TEMPLATE = Path(__file__).resolve().parents[2] / (
+    "src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md"
+)
+
+
+@dataclass
+class _Message:
+    content: str
+    to_session: str = "s-caller"
+
+
+class _Sessions:
+    def __init__(self, db: object) -> None:
+        pass
+
+    def get(self, session_id: str) -> SimpleNamespace:
+        return SimpleNamespace(project_id="p")
+
+
+class _Tasks:
+    def __init__(self, db: object) -> None:
+        pass
+
+    def resolve_task_reference(self, ref: str, project_id: str) -> str:
+        return "task-id"
+
+    def get_task(self, task_id: str) -> str:
+        return task_id
+
+
+def _landing_templates() -> dict[str, str]:
+    text = TEMPLATE.read_text(encoding="utf-8")
+    lines = re.findall(r"`(EVENT=(?:LAND_PENDING|ALREADY_LANDED|LANDED) [^`]*)`", text)
+    return {line.split(" ", 1)[0].removeprefix("EVENT="): line for line in lines}
+
+
+def _filled(line: str) -> str:
+    """Give each empty template value a sample, keeping the template's field order."""
+    tokens = []
+    for token in line.split(" "):
+        key, separator, value = token.partition("=")
+        if not separator:
+            tokens.append(token)
+            continue
+        if key == "TASK":
+            value = "#7"
+        elif key == "SHA":
+            value = SHA
+        else:
+            value = value.split("|", 1)[0] or f"{key.lower()}-value"
+        tokens.append(f"{key}={value}")
+    return " ".join(tokens)
+
+
+def test_landing_templates_cover_every_landing_event() -> None:
+    assert set(_landing_templates()) == {"LAND_PENDING", "ALREADY_LANDED", "LANDED"}
+
+
+@pytest.mark.parametrize("event", ["LAND_PENDING", "ALREADY_LANDED", "LANDED"])
+def test_landing_templates_put_title_just_before_note(event: str) -> None:
+    keys = [token.partition("=")[0] for token in _landing_templates()[event].split(" ")]
+
+    assert keys[-2:] == ["TASK_TITLE", "NOTE"]
+
+
+@pytest.mark.parametrize("event", ["ALREADY_LANDED", "LANDED"])
+def test_landing_template_examples_read_every_field(
+    event: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.workflows.engine import seat_messages
+
+    filled = _filled(_landing_templates()[event])
+    monkeypatch.setattr(seat_messages, "SessionManager", _Sessions)
+    monkeypatch.setattr(seat_messages, "LocalTaskManager", _Tasks)
+
+    parsed = candidate_event(MagicMock(), _Message(filled))
+
+    assert parsed is not None
+    assert {token.partition("=")[0] for token in filled.split(" ")} <= set(parsed.fields)
+    assert parsed.sha == SHA
