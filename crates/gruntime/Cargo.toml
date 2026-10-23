@@ -16,6 +16,11 @@ path = "src/lib.rs"
 workspace = true
 
 [dependencies]
+base64 = "0.22"
+fernet = "0.2.2"
+openssl = { version = "0.10", features = ["vendored"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "sync"] }
 axum = { version = "0.8", default-features = false }
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "postgres-pool", "route-family"] }
 serde = { version = "1", features = ["derive"] }
