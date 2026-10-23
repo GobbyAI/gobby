@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -86,7 +87,42 @@ def _body[T: BaseModel](raw: bytes, model: type[T]) -> T:
     try:
         return model.model_validate(body)
     except ValidationError as exc:
+        _log_invalid_body(model, exc)
         raise HTTPException(422, "invalid_body") from exc
+
+
+def _log_invalid_body(model: type[BaseModel], exc: ValidationError) -> None:
+    # A pydantic error quotes the input and the request's keys, so the log keeps only the
+    # schema's field names, [index] for list positions, [key] for anything else, and the type.
+    names = _schema_field_names(model)
+    for error in exc.errors():
+        location = ".".join(_loc_segment(segment, names) for segment in error["loc"])
+        logger.warning("Node body rejected at %s: %s", location, error["type"])
+
+
+def _loc_segment(segment: int | str, names: frozenset[str]) -> str:
+    if isinstance(segment, int):
+        return "[index]"
+    return segment if segment in names else "[key]"
+
+
+@cache
+def _schema_field_names(model: type[BaseModel]) -> frozenset[str]:
+    names: set[str] = set()
+    _collect_property_names(model.model_json_schema(), names)
+    return frozenset(names)
+
+
+def _collect_property_names(node: object, names: set[str]) -> None:
+    if isinstance(node, dict):
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            names.update(properties)
+        for value in node.values():
+            _collect_property_names(value, names)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_property_names(item, names)
 
 
 def _register_checkout(server: HTTPServer, machine_id: str, body: CheckoutBody) -> CheckoutResult:

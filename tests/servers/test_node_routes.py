@@ -837,3 +837,53 @@ def test_report_secret_fingerprint_refused(
     assert events == []
     assert API_KEY not in caplog.text
     assert remote_pane.remote_pane_store().get(run.terminal_id) is None
+
+
+def test_invalid_body_log_names_fields_not_keys(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _machines(temp_db)
+    caplog.set_level(logging.DEBUG)
+    sandbox = {
+        "runtime_version": "0.0.66",
+        "policy_schema_version": 1,
+        "policy_hash": PANE_DIGEST,
+        "violation_count": 0,
+        "violation_count_truncated": False,
+        "denial_operations": {API_KEY: 1},
+        "recent_violations": None,
+    }
+    agent = {**_agent("run-probe", "term-probe", None), "sandbox": sandbox}
+
+    with _client(temp_db, monkeypatch) as client:
+        epoch = node_reports.node_report_inbox().hub_epoch
+        response = _post(client, "report", _report(epoch, 1, [agent]))
+
+    assert response == (422, {"detail": "invalid_body"})
+    assert "denial_operations" in caplog.text
+    assert API_KEY not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("run_status", "terminal_state"),
+    [("running", "exited"), ("success", "pending")],
+)
+def test_reported_run_must_be_active(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    run_status: str,
+    terminal_state: str,
+) -> None:
+    _machines(temp_db)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    with temp_db.transaction() as conn:
+        conn.execute("UPDATE agent_runs SET status = %s WHERE id = %s", (run_status, run.run_id))
+        conn.execute(
+            "UPDATE terminals SET state = %s WHERE id = %s", (terminal_state, run.terminal_id)
+        )
+
+    assert remote_pane.load_reported_run(temp_db, NODE, run.run_id, run.terminal_id) is None

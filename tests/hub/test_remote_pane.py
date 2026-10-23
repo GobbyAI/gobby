@@ -148,6 +148,37 @@ def test_store_follows_report_revisions() -> None:
     assert store.get("term-b") is not None
 
 
+def test_store_marks_terminal_stopped() -> None:
+    store = remote_pane.RemotePaneStore()
+    store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())])
+    store.apply_report(OTHER, 1, [_agent("run-d", "term-d", _pane())])
+
+    store.mark_stopped("term-a")
+    store.mark_stopped("term-d")
+    stopped = store.get("term-a")
+    assert stopped is not None
+    assert stopped.stopped is True
+    other = store.get("term-d")
+    assert other is not None
+    assert other.stopped is True
+
+    store.mark_stopped("term-unknown")
+    assert store.get("term-unknown") is None
+
+    store.apply_report(MACHINE, 2, [_agent("run-a", "term-a", _pane())])
+    kept = store.get("term-a")
+    assert kept is not None
+    assert kept.stopped is True
+
+    store.apply_report(MACHINE, 3, [_agent("run-b", "term-a", _pane())])
+    restarted = store.get("term-a")
+    assert restarted is not None
+    assert restarted.stopped is False
+
+    store.apply_report(MACHINE, 4, [])
+    assert store.get("term-a") is None
+
+
 @pytest.mark.asyncio
 async def test_node_attention_applies(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
@@ -260,7 +291,47 @@ async def test_local_sync_unchanged(temp_db: HubDatabase, monkeypatch: pytest.Mo
         split.append(_state(manager, split_run.id))
 
     assert split == synced
-    assert any(state is not None and state[0] == "blocked" for state in synced)
+    # Recorded from the pre-split tracker at e74de3693b, so the split changes no transition.
+    assert [None if state is None else state[:3] for state in synced] == [
+        ("blocked", "approval", "actionable"),
+        (None, None, None),
+        ("blocked", "question", "actionable"),
+        (None, None, None),
+        (None, None, None),
+        ("blocked", "stall", "non_actionable"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bad_attention_kind_does_not_block_later_agent(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = _manager(temp_db)
+    tracker = _tracker(manager)
+    bad = _run("run-bad")
+    good = _run("run-good")
+    runs = {bad.id: bad, good.id: good}
+    monkeypatch.setattr(
+        remote_pane,
+        "load_reported_run",
+        lambda db, machine_id, run_id, terminal_id: runs.get(run_id),
+    )
+    agents = [
+        _agent(bad.id, "term-bad", _pane(attention=_attention(kind="unknown"))),
+        _agent(good.id, "term-good", _pane(attention=_attention())),
+    ]
+
+    await remote_pane.apply_pane_state(
+        temp_db,
+        tracker,
+        machine_id=MACHINE,
+        previous={},
+        agents=agents,
+        run_db=_run_db,
+    )
+
+    assert _blocked_state(manager, good.id) == "blocked"
+    assert _blocked_state(manager, bad.id) is None
 
 
 @pytest.mark.asyncio
