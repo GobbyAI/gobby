@@ -34,7 +34,10 @@ pub(super) struct FocusHold {
     reported: Option<(PaneId, String)>,
     /// The report `step` returned last, so a refused send can be undone.
     in_flight: Option<FocusReport>,
-    /// An unfocus the daemon refused; it is sent again on the next tick.
+    /// An unfocus the daemon refused. It is sent again on the next tick only
+    /// while the hold is still idle and its pane is still the focused held key.
+    /// A focus move, a replaced attachment or returning activity makes it moot,
+    /// so it is dropped and the next report is the normal one.
     owed_unfocus: Option<(PaneId, String)>,
     last_activity: Instant,
 }
@@ -83,12 +86,15 @@ impl FocusHold {
         idle: bool,
     ) -> Option<FocusReport> {
         let report = match self.owed_unfocus.take() {
-            Some((pane, attachment_id)) => Some(FocusReport {
-                pane,
-                attachment_id,
-                focused: false,
-            }),
-            None => self.next_report(key, idle),
+            Some(owed) if idle && key.as_ref() == Some(&owed) => {
+                let (pane, attachment_id) = owed;
+                Some(FocusReport {
+                    pane,
+                    attachment_id,
+                    focused: false,
+                })
+            }
+            _ => self.next_report(key, idle),
         };
         self.in_flight = report.clone();
         report
@@ -232,18 +238,54 @@ mod tests {
         );
         hold.unsent();
         assert_eq!(
-            hold.step(None, true),
+            hold.step(Some((pane, "attach-1".to_string())), true),
             Some(FocusReport {
                 pane,
                 attachment_id: "attach-1".to_string(),
                 focused: false,
             }),
-            "an unfocus the daemon refused is owed again"
+            "an unfocus the daemon refused is owed again while its pane is still held"
         );
         assert_eq!(
-            hold.step(None, true),
+            hold.step(Some((pane, "attach-1".to_string())), true),
             None,
             "an unfocus the daemon accepted is not repeated"
+        );
+    }
+
+    #[test]
+    fn a_refused_unfocus_for_a_replaced_attachment_is_dropped() {
+        let mut hold = FocusHold::new(Instant::now());
+        let pane = PaneId(1);
+        hold.step(Some((pane, "attach-1".to_string())), false);
+        hold.step(Some((pane, "attach-1".to_string())), true);
+        hold.unsent();
+        assert_eq!(
+            hold.step(Some((pane, "attach-2".to_string())), false),
+            Some(FocusReport {
+                pane,
+                attachment_id: "attach-2".to_string(),
+                focused: true,
+            }),
+            "a refused unfocus for a replaced attachment does not block the new focus"
+        );
+    }
+
+    #[test]
+    fn a_refused_unfocus_is_not_resent_once_activity_returns() {
+        let mut hold = FocusHold::new(Instant::now());
+        let pane = PaneId(1);
+        hold.step(Some((pane, "attach-1".to_string())), false);
+        hold.step(Some((pane, "attach-1".to_string())), true);
+        hold.unsent();
+        assert_eq!(
+            hold.step(Some((pane, "attach-1".to_string())), false),
+            Some(FocusReport {
+                pane,
+                attachment_id: "attach-1".to_string(),
+                focused: true,
+            }),
+            "an owed unfocus is dropped once activity returns, and the pane is reported focused"
         );
     }
 }

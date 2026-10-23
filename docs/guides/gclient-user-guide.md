@@ -616,11 +616,11 @@ reach it depends on the control lease, summarized at the pane's bottom-right.
 | ` · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the title or take control again to continue. |
 
 A focused pane's focus is reported to the daemon, which holds operator messages
-for that pane's seat while it is focused. Activity in the focused pane is a key,
-a paste, or a mouse event other than pointer motion (scrolling and clicks count;
+for that pane's seat while it is focused. Activity is a key, a paste, or a mouse
+event other than pointer motion, anywhere in gclient (scrolling and clicks count;
 moving the pointer alone does not). After `focus_hold_seconds` (default 300, set
-under `[ui]`; see [Settings](#settings)) with no activity there, gclient reports
-the pane unfocused. The lease stays with the pane, and the next activity in it
+under `[ui]`; see [Settings](#settings)) with no activity, gclient reports the
+focused pane unfocused. The lease stays with the pane, and the next activity
 reports it focused again. Moving focus to another pane reports that pane focused.
 Focus-in and focus-out events from your terminal do not count as activity.
 
