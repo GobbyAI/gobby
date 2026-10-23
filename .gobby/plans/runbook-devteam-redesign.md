@@ -379,6 +379,7 @@ Targets:
 - `tests/tasks/test_close_receipts.py::*` — scope-reason: landing-only receipts
 - `tests/cli/installers/test_landing_guard_hook.py::*` — scope-reason: the bound Dev Manager lands through the guard
 - `tests/mcp_proxy/tools/tasks/test_cross_project_task_refs.py::*` — scope-reason: cross-project landing runs as a granted Orchestrator
+- `tests/mcp_proxy/tools/tasks/test_transfer_task_authority.py::*` — operation: delete — scope-reason: deleted with the retired tool
 - `tests/mcp_proxy/tools/test_tasks_list_coverage.py::*` — scope-reason: drop the retired tools from coverage
 - `tests/servers/routes/test_tasks_routes.py::*` — scope-reason: landing-only receipt fixtures
 - `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: retired tools absent from enforcement lists
@@ -388,8 +389,7 @@ Targets:
 - `tests/workflows/test_seat_step_loops.py::*` — scope-reason: reviewer loop ends at its verdict
 - `tests/workflows/test_step_definition_refresh.py::*` — scope-reason: reloaded reviewer ends on its own verdict
 
-**Research context:** The cited landing evidence separates schema carriers from restart approval. The assessment notes current landing requires the caller's own reviewer receipt and refuses former claimants. Authorize the task's Dev Manager to use the distinct independent reviewer's approved review-step record for the exact task tip. Retire the old receipt as an alternative approval authority. Preserve current ancestry-safe landing and transaction/lock checks, idempotently record the landing, resolve the actual source branch/tree from Git and task binding, refresh its registry association, and call `mark_merged(cleanup_days=0)`. Do not rely on stale lane labels. Disjoint intervening integration changes permit a two-parent merge without per-task retest; overlapping paths or semantic conflicts produce a structured Triage escalation. No creator/delegator receipt transfer or activation wait remains. The Code Reviewer's LAND becomes verdict-only here; the Orchestrator lands each approved LAND with `land_commit` until 3.5 hands landings to Dev Managers. `tests/mcp_proxy/tools/tasks/test_transfer_task_authority.py` is deleted with its tool.
-
+**Research context:** The cited landing evidence separates schema carriers from restart approval. The assessment notes current landing requires the caller's own reviewer receipt and refuses former claimants. Authorize the task's Dev Manager to use the distinct independent reviewer's approved review-step record for the exact task tip. Retire the old receipt as an alternative approval authority. Preserve current ancestry-safe landing and transaction/lock checks, idempotently record the landing, resolve the actual source branch/tree from Git and task binding, refresh its registry association, and call `mark_merged(cleanup_days=0)`. Do not rely on stale lane labels. Disjoint intervening integration changes permit a two-parent merge without per-task retest; overlapping paths or semantic conflicts produce a structured Triage escalation. No creator/delegator receipt transfer or activation wait remains. The Code Reviewer's LAND becomes verdict-only here; the Orchestrator lands each approved LAND with `land_commit` until 3.5 hands landings to Dev Managers.
 **Acceptance:**
 - 2.4.1 - Bound Dev Manager can land an independently approved exact SHA; unrelated manager, missing approval and self-review fail. test: `tests/tasks/test_dev_manager_landing.py::test_manager_landing_authority`.
 - 2.4.2 - Disjoint integration updates preserve the task tip as an ancestor; overlaps reach Triage and never silently overwrite. test: `tests/tasks/test_dev_manager_landing.py::test_disjoint_and_overlapping_landings`.
@@ -410,15 +410,15 @@ Targets:
 - `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::*` — scope-reason: expose task/team preparation and idempotent admission
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: validate durable team identity at every seat spawn
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: bind one task branch and worktree to team creation
-- `src/gobby/agents/devteam_lifecycle.py`
-- `tests/agents/test_devteam_admission.py`
+- `src/gobby/agents/team_lifecycle.py`
+- `tests/agents/test_team_admission.py`
 
-**Research context:** Existing runbooks are ordinary pipelines, and `reserved_run_id` identifies their invocation. Reuse pipeline execution metadata as the durable team record: task ID, branch, worktree ID, project, team invocation ID, seat runs and lifecycle status. Register the binding before spawning seats; validate it under the existing task spawn serialization. One active team per task; retries repair a partial launch without creating duplicate seats. A replacement must name the same team/task/worktree and seat role; it cannot smuggle in a new task. Reject branch creation or task reassignment inside a bound team tree. Keep workspace/session bindings correct from spawn rather than asking seats to hop trees. Decomposition lives in new `devteam_lifecycle.py` rather than growing the runbook/factory modules.
+**Research context:** Existing runbooks are ordinary pipelines, and `reserved_run_id` identifies their invocation. Reuse pipeline execution metadata as the durable team record: task ID, branch, worktree ID, project, team invocation ID, seat runs and lifecycle status. The record is the runbook's pipeline execution: its inputs name the task and its admission step output carries the binding, the pattern `runbook_seats._launches_here` already reads. Seat runs are the execution's step invocations, and lifecycle status derives from task state and live seat runs. No migration is needed: `outputs_json` is rewritten on completion and `review_json` belongs to the conductor. Register the binding before spawning seats; validate it under the project landing lock (`MainCheckoutLanding`), which 4.1's release lease also takes, so admission, landing and lease acquisition serialize. One active team per task; retries resume the same execution, whose `reserved_run_id` adoption creates no duplicate seats. A replacement must name the same team/task/worktree and seat role; it cannot smuggle in a new task. Only one active run per task may carry `task_id`, so the manager seat holds the run-level task binding that 2.4's landing authority reads; other seats join through the team record. Reject branch creation or task reassignment inside a bound team tree. Keep workspace/session bindings correct from spawn rather than asking seats to hop trees. Decomposition lives in new `team_lifecycle.py` rather than growing the runbook/factory modules. Section 3's modules, tests and team record are generic; "DevTeam" names only the definitions, the devteam runbook and the procedures (Josh via the Orchestrator, October 22). The `team-lane` lane inference stays beside the task path until 3.5 deletes that runbook.
 
 **Acceptance:**
-- 3.1.1 - Duplicate and concurrent launch attempts produce one team and one task-bound branch/tree. test: `tests/agents/test_devteam_admission.py::test_idempotent_team_admission`.
-- 3.1.2 - Partial launch recovery and replacement preserve team identity and existing seats. test: `tests/agents/test_devteam_admission.py::test_replacement_stays_in_admitted_team`.
-- 3.1.3 - Rebinding a team to another task/tree or creating a replacement branch is refused. test: `tests/agents/test_devteam_admission.py::test_team_binding_cannot_drift`.
+- 3.1.1 - Duplicate and concurrent launch attempts produce one team and one task-bound branch/tree. test: `tests/agents/test_team_admission.py::test_idempotent_team_admission`.
+- 3.1.2 - Partial launch recovery and replacement preserve team identity and existing seats. test: `tests/agents/test_team_admission.py::test_replacement_stays_in_admitted_team`.
+- 3.1.3 - Rebinding a team to another task/tree or creating a replacement branch is refused. test: `tests/agents/test_team_admission.py::test_team_binding_cannot_drift`.
 
 **Verification:** Planned isolated pipeline/spawn/worktree tests, including concurrent admissions and provider launch failure.
 
@@ -429,16 +429,16 @@ Targets:
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::*` — scope-reason: authorize same-team manager claim handoff
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: compare-and-swap owner transfer within one team
-- `src/gobby/agents/devteam_lifecycle.py`
-- `src/gobby/agents/devteam_review.py`
-- `tests/agents/test_devteam_review_loop.py`
+- `src/gobby/agents/team_lifecycle.py`
+- `src/gobby/agents/team_review.py`
+- `tests/agents/test_team_review_loop.py`
 
 **Research context:** Storage supports expected-owner handoff but the MCP layer currently conflicts unless forced/delegated, and release authority is lane-based. Use the bound Dev Manager and expected owner to transfer the single task claim atomically; never use a global force bypass. Persist the review round and seat transition in team metadata, using 2.3's review-step record as the durable trigger. Sequence exactly: Test Writer → Developer → Sol review; rejection one → original Developer → same Sol review; rejection two → Sol reviewer becomes claimant/fixer → fresh Opus review; rejection three → Triage. Each seat writes its own step through the dedicated tool; the second rejection changes the Sol seat's authority to implementation before it edits. A seat that edits is recorded as an editor even if its role label still says reviewer. Resuming a team resumes this state, never recounts transcript messages.
 
 **Acceptance:**
-- 3.2.1 - Same-team expected-owner transfers succeed once and cross-team/stale transfers fail. test: `tests/agents/test_devteam_review_loop.py::test_claim_handoff_is_scoped_and_atomic`.
-- 3.2.2 - The three-review sequence uses the approved provider/model/reasoning identities and never lets a fixer review itself. test: `tests/agents/test_devteam_review_loop.py::test_review_escalation_sequence`.
-- 3.2.3 - Resume and duplicated verdict delivery do not spawn extra reviewers or lose the claim. test: `tests/agents/test_devteam_review_loop.py::test_review_loop_recovers_idempotently`.
+- 3.2.1 - Same-team expected-owner transfers succeed once and cross-team/stale transfers fail. test: `tests/agents/test_team_review_loop.py::test_claim_handoff_is_scoped_and_atomic`.
+- 3.2.2 - The three-review sequence uses the approved provider/model/reasoning identities and never lets a fixer review itself. test: `tests/agents/test_team_review_loop.py::test_review_escalation_sequence`.
+- 3.2.3 - Resume and duplicated verdict delivery do not spawn extra reviewers or lose the claim. test: `tests/agents/test_team_review_loop.py::test_review_loop_recovers_idempotently`.
 
 **Verification:** Planned state-transition and spawn-contract tests with fake provider launches; model availability failure goes to Triage without silently changing the chosen review sequence.
 
@@ -448,20 +448,20 @@ Targets:
 
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::*` — scope-reason: enqueue durable team teardown after committed close
-- `src/gobby/agents/devteam_lifecycle.py`
-- `src/gobby/agents/devteam_teardown.py`
+- `src/gobby/agents/team_lifecycle.py`
+- `src/gobby/agents/team_teardown.py`
 - `src/gobby/runner_maintenance/isolation.py::*` — scope-reason: reconcile closed team teardown and merged worktree cleanup
 - `src/gobby/storage/worktrees.py::*` — scope-reason: preserve accurate merged status and safe cleanup candidates
 - `src/gobby/storage/worktree_cleanup_queries.py`
 - `src/gobby/worktrees/deletion.py::*` — scope-reason: validate actual branch/tree identity and preserve live/dirty/unmerged refusals
-- `tests/agents/test_devteam_teardown.py`
+- `tests/agents/test_team_teardown.py`
 
 **Research context:** The post-mortem shows no close-to-worktree trigger; deletion correctly refuses a live manager standing in its own tree. Close commits first, records teardown due in the durable team metadata, then a daemon-owned reconciler ends all team runs/tabs and invokes existing safe deletion after occupancy clears. The manager writes its summary/lessons before close. Startup and periodic reconciliation recover a crash between close, seat termination and cleanup. Split cleanup candidate queries from `src/gobby/storage/worktrees.py` to new `worktree_cleanup_queries.py` (baseline 852 lines). Preserve Git's merged-ancestor, dirty and live checks; a refusal is a visible owned Triage finding, never forced deletion or silent retention. Closed teams never receive another task.
 
 **Acceptance:**
-- 3.3.1 - Successful close ends every team seat and tab while preserving task history, commits and lessons. test: `tests/agents/test_devteam_teardown.py::test_close_collapses_all_team_seats`.
-- 3.3.2 - Restart at every teardown boundary converges without duplicated termination or lost cleanup. test: `tests/agents/test_devteam_teardown.py::test_teardown_recovers_after_restart`.
-- 3.3.3 - Dirty, occupied, mismatched or unmerged trees remain intact with a visible Triage finding; eligible trees/branches are deleted. test: `tests/agents/test_devteam_teardown.py::test_cleanup_preserves_unsafe_trees`.
+- 3.3.1 - Successful close ends every team seat and tab while preserving task history, commits and lessons. test: `tests/agents/test_team_teardown.py::test_close_collapses_all_team_seats`.
+- 3.3.2 - Restart at every teardown boundary converges without duplicated termination or lost cleanup. test: `tests/agents/test_team_teardown.py::test_teardown_recovers_after_restart`.
+- 3.3.3 - Dirty, occupied, mismatched or unmerged trees remain intact with a visible Triage finding; eligible trees/branches are deleted. test: `tests/agents/test_team_teardown.py::test_cleanup_preserves_unsafe_trees`.
 
 **Verification:** Planned isolated lifecycle and temporary-worktree integration tests, including close-return versus manager-termination ordering.
 
@@ -472,7 +472,7 @@ Targets:
 Targets:
 - `src/gobby/workflows/condition_helpers_sessions.py::*` — scope-reason: resolve recipient/sender role from durable sessions
 - `src/gobby/mcp_proxy/tools/agent_messaging.py::*` — scope-reason: enforce resolved role policy at the messaging boundary
-- `src/gobby/agents/devteam_communications.py`
+- `src/gobby/agents/team_communications.py`
 - `src/gobby/install/shared/workflows/rules/worker-safety/runbook-message-authority.yaml`
 - `tests/agents/test_runbook_message_authority.py`
 
@@ -505,6 +505,9 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — scope-reason: retain the runbook role and replace its retired automatic-close tool instructions
 - `src/gobby/install/shared/workflows/agents/expansion-qa.yaml::*` — scope-reason: repurpose the retained agent for runbook-spawned tree and dependency checks
 - `src/gobby/install/shared/rules/build/build-agent-safety.yaml::*` — operation: delete — scope-reason: retire build-only safety rules after build removal
+- `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml::*` — scope-reason: seat catalogue names dev-manager, triage and test-writer instead of the retired managers
+- `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml::*` — scope-reason: seat catalogues and the manager spawn exemption keyed on the `team_manager` definition variable
+- `src/gobby/install/shared/workflows/rules/roles/seat-no-ask-user-question.yaml::*` — scope-reason: seat catalogue names the renamed seats
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md::*` — operation: delete — scope-reason: rename and rewrite the complete procedure as dev-manager.md
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/triage.md`
@@ -517,7 +520,7 @@ Targets:
 - `docs/guides/runbooks.md`
 - `tests/workflows/test_devteam_runbooks.py`
 
-**Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Retain log-monitor, metrics-monitor, recovery-steward, task-close-reviewer and expansion-qa under Josh's overriding ruling. Expansion QA checks the expanded tree against its plan and fixes dependency or consistency errors when spawned by the Orchestrator or planning team. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text. Retire the build-specific `build-agent-block-full-pytest` rule and its obsolete template while preserving the general no-full-pytest policy.
+**Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Retain log-monitor, metrics-monitor, recovery-steward, task-close-reviewer and expansion-qa under Josh's overriding ruling. Expansion QA checks the expanded tree against its plan and fixes dependency or consistency errors when spawned by the Orchestrator or planning team. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text. Retire the build-specific `build-agent-block-full-pytest` rule and its obsolete template while preserving the general no-full-pytest policy. Remove every lane-manager and inbox-manager reference, including the inline seat catalogues in the `rules/roles` rules (found by #24810's writer). The lane-manager seat-spawn exemption becomes a definition variable, `team_manager: true`, which dev-manager.yaml sets (Josh via the Orchestrator, October 22). This section also deletes the `team-lane` lane inference that 3.1 left beside the task path.
 
 The definitions grant only their role's step writer: Test Writer gets `record_test_step`, Developer gets `record_implementation_step`, Code Reviewer gets `record_review_step`, and Dev Manager gets `record_closing_step`. The Orchestrator keeps the four writers section 2.3 granted, for repair only after other avenues are exhausted. A manager-authorized reviewer-to-fixer transition grants implementation authority for that task and removes review approval authority. Procedures require approved records before landing/close; the reviewer record supplies the exact-SHA stamp and the manager's closing record confirms the summary and final checks.
 
@@ -540,7 +543,7 @@ The definitions grant only their role's step writer: Test Writer gets `record_te
 Targets:
 - `src/gobby/tasks/landing_policy.py::*` — scope-reason: replace release hold handling with owner/token/expiry checks
 - `src/gobby/tasks/land_commit.py::*` — scope-reason: enforce release lease under the landing critical section
-- `src/gobby/agents/devteam_lifecycle.py`
+- `src/gobby/agents/team_lifecycle.py`
 - `src/gobby/releases/window.py`
 - `src/gobby/mcp_proxy/tools/release_tools.py`
 - `src/gobby/mcp_proxy/tools/agents_registry.py::*` — scope-reason: register the release-window tools alongside runbook coordination tools
