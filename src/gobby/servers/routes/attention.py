@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from gobby.agents.attention_metadata import validate_metadata_text, validate_metadata_ttl_ms
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
+from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.node_client import NodeCommandError
 from gobby.servers.routes.attention_roster import (
     _load_roster_entries,
     _model_display_names,
@@ -131,10 +133,11 @@ class AttentionMetadataRequest(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class AttentionPane:
-    """Resolved terminal row target and its capture operation."""
+    """Resolved terminal row target, its machine, and its capture operation."""
 
     target: str
     capture: Callable[[], Awaitable[str | None]]
+    machine_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -368,6 +371,7 @@ def create_attention_router(
                 pane = await resolve_pane(current)
                 if pane is None:
                     raise _injection_http_error(stage="none")
+                await _require_pane_owned(pane)
                 pane_output = await pane.capture()
                 if pane_output is None:
                     raise _injection_http_error(stage="none")
@@ -532,6 +536,14 @@ def _validate_option_membership(state: AttentionState, answer: AttentionAnswer) 
         )
 
 
+async def _require_pane_owned(pane: AttentionPane) -> None:
+    """Refuse a caller that does not own the pane's machine before the episode changes."""
+    try:
+        await asyncio.to_thread(require_machine_owned, pane.machine_id)
+    except NodeCommandError as exc:
+        raise HTTPException(status_code=403, detail={"code": exc.code}) from exc
+
+
 def _injection_http_error(*, stage: Literal["none", "partial"]) -> HTTPException:
     code = "injection_failed" if stage == "none" else "injection_indeterminate"
     return HTTPException(status_code=502, detail={"code": code, "stage": stage})
@@ -679,6 +691,7 @@ async def _resolve_attention_pane(
             return AttentionPane(
                 target=row.id,
                 capture=capture_session_pane,
+                machine_id=row.machine_id,
             )
 
     agent_runner = services.agent_runner
@@ -700,4 +713,5 @@ async def _resolve_attention_pane(
     return AttentionPane(
         target=row.id,
         capture=capture_run_pane,
+        machine_id=row.machine_id,
     )

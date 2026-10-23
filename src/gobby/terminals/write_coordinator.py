@@ -14,6 +14,13 @@ from datetime import datetime
 from functools import partial
 from typing import Literal, Protocol
 
+import psycopg
+
+from gobby.hub import remote_terminal
+from gobby.hub.caller_scope import current_caller, require_machine_owned
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.node_client import NodeCommandError
+from gobby.hub.remote_terminal import NodeTerminalWriteError
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.host_client import HostCommandError
@@ -739,21 +746,7 @@ class WriteCoordinator:
         terminal.automatic_write_quarantine_action_key = None
         return True
 
-    async def _dispatch(
-        self,
-        request: WriteRequest,
-        terminal: Terminal | None = None,
-    ) -> WriteOutcome:
-        if terminal is None:
-            terminal = await asyncio.to_thread(self._require, request.terminal_id)
-        try:
-            runtime = self.runtime_for(terminal)
-        except UnregisteredBackendError as exc:
-            # Nothing was dispatched, so no bytes can exist — that is exactly
-            # stage="none", which _write_locked clears the latch for. Letting the
-            # KeyError subclass propagate would leave the latch persisted and
-            # suppress every later automatic write to this terminal.
-            raise RuntimeUnavailableError(terminal.backend) from exc
+    def _record_dispatch(self, request: WriteRequest) -> None:
         # Recorded before dispatch: an indeterminate write may still have landed.
         self.composer_ledger.observe_write(
             request.terminal_id,
@@ -762,6 +755,60 @@ class WriteCoordinator:
             payload=request.payload,
             submit=request.submit,
         )
+
+    async def _dispatch_remote(self, request: WriteRequest, terminal: Terminal) -> WriteOutcome:
+        # A client PTY is local to this hub, and the node does not vet key names,
+        # so the hub refuses both here as it does locally, before anything is sent.
+        if request.client_fd is not None or (
+            request.kind == "key" and not is_named_key(request.payload)
+        ):
+            raise TerminalWriteError(stage="none")
+        self._record_dispatch(request)
+        return await remote_terminal.write(terminal, request)
+
+    def _lease_vouches(self, request: WriteRequest) -> bool:
+        """True when this write rides an operator attachment the bound caller created.
+
+        That attachment was checked once, at attach, so the write skips the per-write
+        ownership read. A row snapshot alone vouches for nothing: any other write still
+        checks the bound caller.
+        """
+        scope = current_caller()
+        if (
+            request.origin != "operator"
+            or request.attachment_id is None
+            or request.terminal is None
+            or scope is None
+            or scope.user_id is None
+        ):
+            return False
+        record = self.lease_registry.caller_attachment(request.attachment_id)
+        return (
+            record is not None
+            and record.terminal_id == request.terminal_id
+            and record.terminal is request.terminal
+        )
+
+    async def _dispatch(
+        self,
+        request: WriteRequest,
+        terminal: Terminal | None = None,
+    ) -> WriteOutcome:
+        if terminal is None:
+            terminal = await asyncio.to_thread(self._require, request.terminal_id)
+        if not self._lease_vouches(request):
+            await _require_machine_owned_write(terminal.machine_id)
+        if not is_local_machine(terminal.machine_id):
+            return await self._dispatch_remote(request, terminal)
+        try:
+            runtime = self.runtime_for(terminal)
+        except UnregisteredBackendError as exc:
+            # Nothing was dispatched, so no bytes can exist — that is exactly
+            # stage="none", which _write_locked clears the latch for. Letting the
+            # KeyError subclass propagate would leave the latch persisted and
+            # suppress every later automatic write to this terminal.
+            raise RuntimeUnavailableError(terminal.backend) from exc
+        self._record_dispatch(request)
         try:
             if request.kind == "text":
                 return await runtime.write_text(terminal, request.payload, request.submit)
@@ -785,6 +832,22 @@ class WriteCoordinator:
             if exc.stage == "partial":
                 raise TerminalWriteError(stage="partial") from exc
             raise TerminalWriteError(stage="none") from exc
+
+
+async def _require_machine_owned_write(machine_id: str | None) -> None:
+    """Refuse a bound caller's write to a machine it does not own, before anything is sent."""
+    if current_caller() is None:
+        # Unbound writers take no worker hop and no machines read.
+        return
+    try:
+        # Off the loop: the ownership check reads the machines table.
+        await asyncio.to_thread(require_machine_owned, machine_id)
+    except NodeCommandError as exc:
+        # Refused before anything is sent, so _write_locked clears the latch.
+        raise NodeTerminalWriteError(exc.code, stage="none") from exc
+    except psycopg.Error as exc:
+        # A failed read sends nothing either, so the latch must clear too.
+        raise NodeTerminalWriteError("machine_ownership_unavailable", stage="none") from exc
 
 
 def _latches(request: WriteRequest) -> bool:

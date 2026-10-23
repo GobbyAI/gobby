@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -19,10 +20,13 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending
+from tests.terminals.fakes import MachineOwnerRows
 
 pytestmark = pytest.mark.unit
 
 SOCKET = "/private/tmp/tmux-501/default"
+OWNER_USER_ID = "20000000-0000-4000-8000-000000000001"
+OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 
 
 @pytest.fixture(autouse=True)
@@ -298,3 +302,34 @@ async def test_terminal_list_exposes_backend(
 
     # Each terminal.list row names the backend its stored terminal row records.
     assert {item["terminal_id"]: item["backend"] for item in page["items"]} == stored
+
+
+@pytest.mark.asyncio
+async def test_non_owner_cannot_list_machine_holder_ids(
+    server: WebSocketServer,
+    manager: TerminalManager,
+    sample_project: dict[str, Any],
+) -> None:
+    """Holder ids reach only the machine's owner; a non-owner gets no inventory at all."""
+    held = seed_pane(manager, sample_project["id"], "%1", "held")
+    owners = MachineOwnerRows({LOCAL_MACHINE_ID: OWNER_USER_ID})
+    token = bind_caller(OWNER_USER_ID, owners)
+    try:
+        await server._leases().attach(
+            held.id, attachment_id="holder-id", websocket=MockWebSocket(), terminal=held
+        )
+        granted = await server._leases().take_control(held.id, "holder-id")
+        assert granted.granted
+        owner_page = await listed(server, {"request_id": "owner"})
+    finally:
+        reset_caller(token)
+    by_id = {item["terminal_id"]: item for item in owner_page["items"]}
+    assert by_id[held.id]["lease_holder"]["attachment_id"] == "holder-id"
+
+    token = bind_caller(OTHER_USER_ID, owners)
+    try:
+        page = await listed(server, {"request_id": "other"})
+    finally:
+        reset_caller(token)
+    assert page["items"] == []
+    assert "holder-id" not in str(page)
