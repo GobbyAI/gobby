@@ -1,3 +1,4 @@
+use anyhow::Context;
 use postgres::Client;
 
 use crate::schema;
@@ -22,6 +23,18 @@ pub use resolution::*;
 pub fn connect_readwrite(database_url: &str) -> anyhow::Result<Client> {
     let mut client = gobby_core::postgres::connect_readwrite(database_url)?;
     schema::validate_runtime_schema(&mut client)?;
+    Ok(client)
+}
+
+/// Open the connection for freshness refreshes, which run under a try-lock and
+/// must not wait on a row another session holds. Both bounds are session-level
+/// and scoped to this connection: a lock wait past the timeout fails the refresh
+/// (55P03) and a runaway statement is cancelled (57014).
+pub fn connect_freshness_readwrite(database_url: &str) -> anyhow::Result<Client> {
+    let mut client = connect_readwrite(database_url)?;
+    client
+        .batch_execute("SET lock_timeout = '5s'; SET statement_timeout = '60s'")
+        .context("failed to bound the freshness refresh connection")?;
     Ok(client)
 }
 
