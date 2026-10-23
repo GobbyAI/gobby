@@ -6,19 +6,25 @@ CREATE TABLE gobby_agent_auth.forced_revocations (
 ALTER TABLE gobby_agent_auth.forced_revocations OWNER TO gobby_agent_issuer;
 REVOKE ALL ON TABLE gobby_agent_auth.forced_revocations FROM PUBLIC;
 
-CREATE FUNCTION gobby_agent_auth.mark_forced_revocation(p_execution_id uuid) RETURNS void
+CREATE FUNCTION gobby_agent_auth.force_revoke_principal(p_execution_id uuid) RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path TO 'gobby_agent_auth', 'pg_temp'
+SET createrole_self_grant TO ''
 AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));
     INSERT INTO forced_revocations (managed_execution_id)
     VALUES (p_execution_id) ON CONFLICT DO NOTHING;
+    UPDATE principal_bindings
+    SET revocation_requested_at = COALESCE(revocation_requested_at, clock_timestamp()),
+        predecessor_drain_deadline = NULL
+    WHERE managed_execution_id = p_execution_id AND revoked_at IS NULL;
+    RETURN revoke_principal(p_execution_id, NULL);
 END
 $$;
-ALTER FUNCTION gobby_agent_auth.mark_forced_revocation(uuid) OWNER TO gobby_agent_issuer;
-REVOKE ALL ON FUNCTION gobby_agent_auth.mark_forced_revocation(uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION gobby_agent_auth.mark_forced_revocation(uuid) TO gobby_daemon_runtime;
+ALTER FUNCTION gobby_agent_auth.force_revoke_principal(uuid) OWNER TO gobby_agent_issuer;
+REVOKE ALL ON FUNCTION gobby_agent_auth.force_revoke_principal(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION gobby_agent_auth.force_revoke_principal(uuid) TO gobby_daemon_runtime;
 
 CREATE FUNCTION gobby_agent_auth.release_forced_revocation(p_execution_id uuid) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER

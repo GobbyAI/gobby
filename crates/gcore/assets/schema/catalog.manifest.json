@@ -7533,6 +7533,10 @@
       "definition": "CREATE OR REPLACE FUNCTION $auth_schema.enforce_principal_lifetime()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog'\nAS $function$\nBEGIN\nIF NEW.expires_at <= NEW.issued_at THEN\nRAISE EXCEPTION 'managed principal expiry must follow issuance'\nUSING ERRCODE = '22023';\nEND IF;\nIF NEW.expires_at > NEW.issued_at + INTERVAL '24 hours' THEN\nRAISE EXCEPTION 'managed principal lifetime exceeds 24 hours'\nUSING ERRCODE = '22023';\nEND IF;\nRETURN NEW;\nEND\n$function$"
     },
     {
+      "name": "$auth_schema.force_revoke_principal(p_execution_id uuid)",
+      "definition": "CREATE OR REPLACE FUNCTION $auth_schema.force_revoke_principal(p_execution_id uuid)\n RETURNS integer\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO '$auth_schema', 'pg_temp'\n SET createrole_self_grant TO ''\nAS $function$\nBEGIN\nPERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));\nINSERT INTO forced_revocations (managed_execution_id)\nVALUES (p_execution_id) ON CONFLICT DO NOTHING;\nUPDATE principal_bindings\nSET revocation_requested_at = COALESCE(revocation_requested_at, clock_timestamp()),\npredecessor_drain_deadline = NULL\nWHERE managed_execution_id = p_execution_id AND revoked_at IS NULL;\nRETURN revoke_principal(p_execution_id, NULL);\nEND\n$function$"
+    },
+    {
       "name": "$auth_schema.heartbeat_daemon(p_machine_id uuid, p_lease_duration interval)",
       "definition": "CREATE OR REPLACE FUNCTION $auth_schema.heartbeat_daemon(p_machine_id uuid, p_lease_duration interval DEFAULT '00:02:00'::interval)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', '$auth_schema'\nAS $function$\nDECLARE\nv_now TIMESTAMPTZ := clock_timestamp();\nBEGIN\nIF p_lease_duration <= INTERVAL '0 seconds'\nOR p_lease_duration > INTERVAL '5 minutes' THEN\nRAISE EXCEPTION 'daemon lease duration must be between zero and five minutes'\nUSING ERRCODE = '22023';\nEND IF;\nIF NOT EXISTS (SELECT 1 FROM $schema.machines WHERE id = p_machine_id) THEN\nRAISE EXCEPTION 'unknown issuing machine' USING ERRCODE = '23503';\nEND IF;\n\nINSERT INTO $auth_schema.daemon_registry (\nmachine_id, heartbeat_at, lease_expires_at, started_at\n) VALUES (\np_machine_id, v_now, v_now + p_lease_duration, v_now\n)\nON CONFLICT (machine_id) DO UPDATE\nSET heartbeat_at = EXCLUDED.heartbeat_at,\nlease_expires_at = EXCLUDED.lease_expires_at;\nRETURN p_machine_id;\nEND\n$function$"
     },
@@ -7579,10 +7583,6 @@
     {
       "name": "$auth_schema.managed_execution_is_login_capable(p_execution_id uuid)",
       "definition": "CREATE OR REPLACE FUNCTION $auth_schema.managed_execution_is_login_capable(p_execution_id uuid)\n RETURNS boolean\n LANGUAGE sql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', '$auth_schema'\nAS $function$\nSELECT EXISTS (\nSELECT 1\nFROM $auth_schema.principal_bindings AS binding\nJOIN pg_catalog.pg_roles AS role ON role.rolname = binding.role_name\nWHERE binding.managed_execution_id = p_execution_id\nAND binding.revoked_at IS NULL\nAND binding.expires_at > clock_timestamp()\nAND role.rolcanlogin\n)\n$function$"
-    },
-    {
-      "name": "$auth_schema.mark_forced_revocation(p_execution_id uuid)",
-      "definition": "CREATE OR REPLACE FUNCTION $auth_schema.mark_forced_revocation(p_execution_id uuid)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO '$auth_schema', 'pg_temp'\nAS $function$\nBEGIN\nPERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));\nINSERT INTO forced_revocations (managed_execution_id)\nVALUES (p_execution_id) ON CONFLICT DO NOTHING;\nEND\n$function$"
     },
     {
       "name": "$auth_schema.principals_due_for_rotation(p_machine_id uuid)",

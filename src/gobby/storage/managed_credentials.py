@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
-from psycopg.errors import UniqueViolation
+from psycopg.errors import InsufficientPrivilege, UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.interactive_credentials import (
@@ -212,6 +212,10 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                 raise CredentialAuthorizationError(
                     "managed principal binding already exists"
                 ) from None
+            if isinstance(error, InsufficientPrivilege):
+                raise CredentialAuthorizationError(
+                    "managed execution access is not authorized"
+                ) from None
             if isinstance(error, CredentialIssuanceError):
                 raise
             raise CredentialIssuanceError("managed credential issuance failed") from error
@@ -283,9 +287,6 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             password = ""
 
     def force_revoke(self, managed_execution_id: UUID) -> RevocationOutcome:
-        self._database.fetchone(
-            f"SELECT {self.auth_schema}.mark_forced_revocation(%s)", (managed_execution_id,)
-        )
         return self.revoke(managed_execution_id, reason="operator-forced")
 
     def release_forced_revocation(self, managed_execution_id: UUID) -> bool:
@@ -301,12 +302,19 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
         generation: int | None = None,
         reason: str,
     ) -> RevocationOutcome:
+        if reason == "operator-forced" and generation is not None:
+            raise ValueError("operator-forced revocation cannot specify a generation")
+        failure_code: str | None = None
         try:
             deadline = time.monotonic() + REVOCATION_DRAIN_TIMEOUT_SECONDS
             while True:
                 row = self._database.fetchone(
-                    f"SELECT {self.auth_schema}.revoke_principal(%s, %s)",
-                    (managed_execution_id, generation),
+                    f"SELECT {self.auth_schema}.force_revoke_principal(%s) AS revoke_principal"
+                    if reason == "operator-forced"
+                    else f"SELECT {self.auth_schema}.revoke_principal(%s, %s)",
+                    (managed_execution_id,)
+                    if reason == "operator-forced"
+                    else (managed_execution_id, generation),
                 )
                 if row is None:
                     raise RuntimeError("managed credential revocation returned no result")
@@ -315,34 +323,23 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                     break
                 time.sleep(REVOCATION_POLL_SECONDS)
         except Exception as error:
-            self._delete_bootstrap(managed_execution_id, generation)
             failure_code = type(error).__name__
-            self._write_retry_record(
-                managed_execution_id,
-                generation,
-                reason,
-                failure_code=failure_code,
-            )
-            return RevocationOutcome(
-                completed=False,
-                revoked_count=0,
-                retry_recorded=True,
-                failure_code=failure_code,
-            )
+            revoked_count = -1
 
         if revoked_count < 0:
+            failure_code = failure_code or "active_sessions_remaining"
             self._delete_bootstrap(managed_execution_id, generation)
             self._write_retry_record(
                 managed_execution_id,
                 generation,
                 reason,
-                failure_code="active_sessions_remaining",
+                failure_code=failure_code,
             )
             return RevocationOutcome(
                 completed=False,
                 revoked_count=0,
                 retry_recorded=True,
-                failure_code="active_sessions_remaining",
+                failure_code=failure_code,
             )
 
         self._delete_bootstrap(managed_execution_id, generation)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,14 +20,18 @@ from gobby.runtime_grants.launch import materialize_managed_launch, rewrite_mana
 from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
 from gobby.storage.managed_credential_types import OwnerKind
 from gobby.storage.managed_credentials import (
-    CredentialIssuanceError,
+    CredentialAuthorizationError,
     ManagedCredential,
     ManagedCredentialManager,
 )
 from gobby.utils import local_token
 from tests.runtime_grants.support import DEPLOYMENT_TOKEN, FENCING_EPOCH, GOLDEN_SECRET
 from tests.storage.test_managed_credentials import _manager, _secret_store
-from tests.storage.test_postgres_agent_authorization import AUTH_SCHEMA, AuthorizationFixture
+from tests.storage.test_postgres_agent_authorization import (
+    AUTH_SCHEMA,
+    AuthorizationFixture,
+    _as_runtime,
+)
 from tests.storage.test_postgres_agent_authorization import (
     fresh_authorization_fixture as authorization_fixture,
 )
@@ -361,12 +366,15 @@ def test_pending_forced_revocation_is_not_completed_and_reminted(
     _launch_recovery_run(fixture, manager)
     manager.bind_launch_grant_rewriter(_rewrite_recovery_grant)
     try:
-        # Simulate a crash between persisting operator intent and revoking roles.
-        with patch.object(manager, "revoke"):
-            manager.force_revoke(fixture.agent_run_id)
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            _as_runtime(
+                admin, f"SELECT {AUTH_SCHEMA}.force_revoke_principal(%s)", (fixture.agent_run_id,)
+            )
+            # Preserve a pending row after cleanup, as a failed revocation retry
+            # would. The SQL-only crash regression below never edits bindings.
             admin.execute(
-                f"UPDATE {AUTH_SCHEMA}.principal_bindings SET revocation_requested_at = NOW() "
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings "
+                "SET revocation_requested_at = NOW(), revoked_at = NULL "
                 "WHERE managed_execution_id = %s",
                 (fixture.agent_run_id,),
             )
@@ -391,6 +399,190 @@ def test_pending_forced_revocation_is_not_completed_and_reminted(
         store.db.close()
 
 
+@pytest.mark.parametrize("binding_shape", ["current", "draining_pair"])
+def test_force_revoke_sql_alone_cuts_live_access(
+    authorization_fixture: AuthorizationFixture, tmp_path: Path, binding_shape: str
+) -> None:
+    fixture = authorization_fixture
+    execution_id = fixture.agent_run_id
+    manager = _manager(fixture, tmp_path)
+    store = _secret_store(fixture)
+    credential = _launch_recovery_run(fixture, manager)
+    old_dsns = [_dsn(credential.bootstrap_path)]
+    manager.bind_launch_grant_rewriter(_rewrite_recovery_grant)
+    expiry = datetime.now(UTC) + timedelta(minutes=30)
+    try:
+        if binding_shape == "draining_pair":
+            credential = manager.rotate(managed_execution_id=execution_id, expires_at=expiry)
+            old_dsns.append(_dsn(credential.bootstrap_path))
+            reusable = manager.reuse_current_during_drain(
+                managed_execution_id=execution_id,
+                owner_kind="agent_run",
+                session_id=fixture.session_id,
+                project_id=fixture.project_id,
+            )
+            assert reusable is not None
+            assert reusable.credential_generation == 2
+        assert manager.get_live_binding_generation(execution_id) == credential.credential_generation
+        grant_path = credential.bootstrap_path.parent / "grant.json"
+        original_grant = grant_path.read_bytes()
+        with psycopg.connect(old_dsns[-1], autocommit=True) as active:
+            assert active.execute("SELECT 1").fetchone() == (1,)
+            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                # No Python revocation follows this call, as if the CLI exited
+                # immediately after the database transaction committed.
+                _as_runtime(
+                    admin, f"SELECT {AUTH_SCHEMA}.force_revoke_principal(%s)", (execution_id,)
+                )
+                assert admin.execute(
+                    "SELECT bool_and(pb.revoked_at IS NOT NULL OR "
+                    "(pb.revocation_requested_at IS NOT NULL AND NOT COALESCE(r.rolcanlogin, FALSE))) "
+                    f"FROM {AUTH_SCHEMA}.principal_bindings pb "
+                    "LEFT JOIN pg_roles r ON r.rolname = pb.role_name "
+                    "WHERE pb.managed_execution_id = %s",
+                    (execution_id,),
+                ).fetchone() == (True,)
+            with pytest.raises(psycopg.OperationalError):
+                active.execute("SELECT 1")
+        for old_dsn in old_dsns:
+            with pytest.raises(psycopg.OperationalError):
+                psycopg.connect(old_dsn, autocommit=True).close()
+        manager.close()
+        manager = _manager(fixture, tmp_path)
+        manager.bind_launch_grant_rewriter(_rewrite_recovery_grant)
+        assert manager.get_live_binding_generation(execution_id) is None
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                _as_runtime(
+                    admin,
+                    f"SELECT * FROM {AUTH_SCHEMA}.rotate_principal(%s, %s, %s)",
+                    (execution_id, expiry, "test-password"),
+                )
+        with pytest.raises(CredentialAuthorizationError):
+            manager.issue(
+                managed_execution_id=execution_id,
+                owner_kind="agent_run",
+                session_id=fixture.session_id,
+                agent_run_id=execution_id,
+                expires_at=expiry,
+            )
+        with pytest.raises(HandshakeRejection):
+            issue_grant_postgres(
+                _principal(fixture),
+                credentials=manager,
+                deployment_token=DEPLOYMENT_TOKEN,
+                secrets=store,
+                managed_bootstrap_dsn=_dsn,
+            )
+        with pytest.raises(CredentialAuthorizationError):
+            manager.rotate(managed_execution_id=execution_id, expires_at=expiry)
+        assert (
+            manager.reuse_current_during_drain(
+                managed_execution_id=execution_id,
+                owner_kind="agent_run",
+                session_id=fixture.session_id,
+                project_id=fixture.project_id,
+            )
+            is None
+        )
+        assert manager.rotate_due() == []
+        manager.reconcile()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            assert admin.execute(
+                f"SELECT max(credential_generation), bool_and(revoked_at IS NOT NULL) "
+                f"FROM {AUTH_SCHEMA}.principal_bindings WHERE managed_execution_id = %s",
+                (execution_id,),
+            ).fetchone() == (credential.credential_generation, True)
+        assert grant_path.read_bytes() == original_grant
+        assert manager.release_forced_revocation(execution_id)
+        direct = issue_grant_postgres(
+            _principal(fixture),
+            credentials=manager,
+            deployment_token=DEPLOYMENT_TOKEN,
+            secrets=store,
+            managed_bootstrap_dsn=_dsn,
+        )
+        assert direct.credential_generation == credential.credential_generation + 1
+        with psycopg.connect(direct.dsn, autocommit=True) as agent:
+            assert agent.execute("SELECT current_user").fetchone() == (direct.role_name,)
+    finally:
+        manager.revoke(execution_id, reason="test-cleanup")
+        manager.close()
+        store.db.close()
+
+
+def test_forced_retry_record_replays_force(
+    authorization_fixture: AuthorizationFixture, tmp_path: Path
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path)
+    _launch_recovery_run(fixture, manager)
+    try:
+        with patch.object(
+            manager._database,
+            "fetchone",
+            side_effect=psycopg.OperationalError("isolated forced-call failure"),
+        ):
+            outcome = manager.force_revoke(fixture.agent_run_id)
+        assert not outcome.completed
+        assert outcome.retry_recorded
+        manager.close()
+        manager = _manager(fixture, tmp_path)
+        manager.reconcile()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            assert admin.execute(
+                f"SELECT EXISTS (SELECT 1 FROM {AUTH_SCHEMA}.forced_revocations "
+                "WHERE managed_execution_id = %s)",
+                (fixture.agent_run_id,),
+            ).fetchone() == (True,)
+            assert admin.execute(
+                f"SELECT bool_and(revoked_at IS NOT NULL) FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s",
+                (fixture.agent_run_id,),
+            ).fetchone() == (True,)
+    finally:
+        manager.revoke(fixture.agent_run_id, reason="test-cleanup")
+        manager.close()
+
+
+def test_force_revoke_rejects_generation_bound_calls(
+    authorization_fixture: AuthorizationFixture, tmp_path: Path
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path)
+    try:
+        with pytest.raises(ValueError, match="generation"):
+            manager.revoke(fixture.agent_run_id, generation=1, reason="operator-forced")
+    finally:
+        manager.close()
+
+
+def test_forced_handshake_refusal_is_authorization_without_traceback(
+    authorization_fixture: AuthorizationFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path)
+    store = _secret_store(fixture)
+    try:
+        manager.force_revoke(fixture.agent_run_id)
+        caplog.clear()
+        with caplog.at_level(logging.ERROR):
+            for _ in range(2):
+                with pytest.raises(HandshakeRejection) as rejected:
+                    issue_grant_postgres(
+                        _principal(fixture),
+                        credentials=manager,
+                        deployment_token=DEPLOYMENT_TOKEN,
+                        secrets=store,
+                        managed_bootstrap_dsn=_dsn,
+                    )
+                assert rejected.value.code == "claims_mismatch"
+        assert not any(record.exc_info for record in caplog.records)
+    finally:
+        manager.close()
+        store.db.close()
+
+
 def test_force_revoke_before_first_binding_blocks_issue(
     authorization_fixture: AuthorizationFixture, tmp_path: Path
 ) -> None:
@@ -398,7 +590,7 @@ def test_force_revoke_before_first_binding_blocks_issue(
     manager = _manager(fixture, tmp_path)
     try:
         assert manager.force_revoke(fixture.agent_run_id).completed
-        with pytest.raises(CredentialIssuanceError):
+        with pytest.raises(CredentialAuthorizationError):
             manager.issue(
                 managed_execution_id=fixture.agent_run_id,
                 owner_kind="agent_run",

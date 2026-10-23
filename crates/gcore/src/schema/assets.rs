@@ -381,7 +381,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 475,
         filename: "475_recover_revoked_live_agent_principals.sql",
-        checksum: "8efd75ffce88de6123028f46e41e27845a11d479289ab926927b5c819cb55de5",
+        checksum: "25b02f8c505e6c3797040e572be79f9b70c434251d78a90a9b0f1416c87baffe",
         sql: include_str!(
             "../../assets/schema/migrations/475_recover_revoked_live_agent_principals.sql"
         ),
