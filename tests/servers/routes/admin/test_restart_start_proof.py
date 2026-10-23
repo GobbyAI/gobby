@@ -130,3 +130,28 @@ def test_slow_start_proof_refuses_before_stopping(
     stop_boundaries["request"].assert_not_called()
     assert _lifecycle._restart_lock is not None
     assert not _lifecycle._restart_lock.locked()
+
+
+def test_slow_start_proof_timeout_is_logged(
+    monkeypatch: pytest.MonkeyPatch,
+    stop_boundaries: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    release = threading.Event()
+
+    def slow_proof(_runtime: object) -> None:
+        release.wait(5)
+
+    monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", slow_proof)
+    monkeypatch.setattr(_lifecycle, "RESTART_START_PROOF_TIMEOUT_SECONDS", 0.05, raising=False)
+    caplog.set_level("WARNING", logger=_lifecycle.__name__)
+
+    try:
+        _client().post("/api/admin/restart")
+    finally:
+        release.set()
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "start proof timed out" in warnings[0]
+    assert "refused before stop" in warnings[0]

@@ -240,6 +240,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                     timeout=RESTART_START_PROOF_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
+                logger.warning(
+                    "Restart start proof timed out after %.0fs; refused before stop",
+                    RESTART_START_PROOF_TIMEOUT_SECONDS,
+                )
                 refusal = (
                     f"start proof did not finish within {RESTART_START_PROOF_TIMEOUT_SECONDS:.0f}s"
                 )
