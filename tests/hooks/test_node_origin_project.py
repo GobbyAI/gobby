@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.hooks.checkout_reads import delivery_scope
+from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.storage.hub.protocol import HubDatabase
@@ -18,6 +19,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests.fixtures.postgres import TEST_USER_ID
+from tests.hooks.checkout_read_fakes import NODE_MACHINE, FakeNode
 
 from ._event_handler_helpers import make_event
 
@@ -157,3 +159,58 @@ async def test_node_project_path_uses_node_row(
             path = handler._resolve_project_path(event, worktree_root)
         assert path == expected
         assert event.metadata["project_path"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sequencer_path", "allowed"),
+    [("/node/repo/src/b.py", True), ("/node/other/c.py", False)],
+)
+async def test_node_sequencer_scope_keeps_node_paths(
+    event_handlers: EventHandlers,
+    monkeypatch: pytest.MonkeyPatch,
+    sequencer_path: str,
+    allowed: bool,
+) -> None:
+    FakeNode().install(monkeypatch)
+    # The hub must not rewrite a node's cwd or workspace through its own symlinks.
+    # The path primitives are node-backed under #24525; these lexical stand-ins
+    # only record the strings the handler passes them.
+    seen: list[tuple[str, Path | None]] = []
+
+    def lexical_root(path: Path) -> None:
+        seen.append(("checkout_root", path))
+
+    def lexical_target(path: Any, cwd: Path | None) -> Path | None:
+        seen.append(("resolve_tool_path", cwd))
+        return Path(path)
+
+    monkeypatch.setattr("gobby.hooks.event_handlers._tool.checkout_root", lexical_root)
+    monkeypatch.setattr("gobby.hooks.event_handlers._tool.resolve_tool_path", lexical_target)
+    session = MagicMock()
+    session.workspace_path = "/node/repo"
+    manager = MagicMock()
+    manager.get.return_value = session
+    monkeypatch.setattr(event_handlers, "_session_manager", manager)
+
+    def hub_forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("node event resolved its cwd or workspace on the hub")
+
+    monkeypatch.setattr(Path, "resolve", hub_forbidden)
+    cwd = "/node/repo/src"
+    event = make_event(
+        HookEventType.BEFORE_TOOL,
+        data={"tool_name": "Bash", "canonical_git_sequencer_scope_paths": [sequencer_path]},
+        machine_id=NODE_MACHINE,
+    )
+    event.cwd = cwd
+
+    with delivery_scope(NODE_MACHINE, asyncio.get_running_loop(), cwd):
+        if allowed:
+            event_handlers._assert_edit_path_selection(event, "node-session")
+        else:
+            with pytest.raises(ValueError, match="outside the seat's own checkout"):
+                event_handlers._assert_edit_path_selection(event, "node-session")
+
+    assert ("checkout_root", Path("/node/repo")) in seen
+    assert ("resolve_tool_path", Path(cwd)) in seen
