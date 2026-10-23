@@ -146,7 +146,11 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::MenuBarEmpty | Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty
+        Hit::MenuBarEmpty
+        | Hit::TabBarEmpty
+        | Hit::Empty
+        | Hit::SidebarEmpty
+        | Hit::SidebarSectionDivider { .. }
             if button == MouseButton::Right =>
         {
             open_menu(
