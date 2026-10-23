@@ -1,6 +1,7 @@
 """Regression tests for cancelling background pipeline executions."""
 
 import asyncio
+import logging
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -44,7 +45,11 @@ async def test_cancel_pipeline_stops_exact_background_task_and_preserves_cancell
     running_step = MagicMock(id="step-execution-1", status=StepStatus.RUNNING)
     manager.get_steps_for_execution.return_value = [running_step]
     blocker = asyncio.Event()
-    background_task = asyncio.create_task(blocker.wait())
+
+    async def blocked() -> None:
+        await blocker.wait()
+
+    background_task = asyncio.create_task(blocked())
     _register_background_task("execution-123", background_task)
 
     with (
@@ -92,4 +97,35 @@ async def test_cancel_pipeline_kills_only_pipeline_child_session_agents() -> Non
     )
     agent_manager_cls.return_value.list_by_parent.assert_called_once_with("pipeline-session")
     kill_agent.assert_awaited_once_with(pipeline_run, manager.db, signal_name="KILL")
+    assert kill_agent.await_args is not None
     assert kill_agent.await_args.args[0] is not unrelated_caller_run
+
+
+@pytest.mark.asyncio
+async def test_cancel_pipeline_does_not_count_a_refused_kill(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    manager, _execution = _execution_manager()
+    manager.get_steps_for_execution.return_value = []
+    pipeline_run = MagicMock(id="pipeline-run")
+
+    with (
+        patch("gobby.storage.sessions.SessionManager") as session_manager_cls,
+        patch("gobby.storage.agents.LocalAgentRunManager") as agent_manager_cls,
+        patch(
+            "gobby.agents.kill.kill_agent",
+            new_callable=AsyncMock,
+            return_value={"success": False, "error_code": "machine_not_owned"},
+        ) as kill_agent,
+    ):
+        session_manager_cls.return_value.find_active_by_external_id.return_value = MagicMock(
+            id="pipeline-session"
+        )
+        agent_manager_cls.return_value.list_by_parent.return_value = [pipeline_run]
+
+        result = await cancel_pipeline(manager, "execution-123")
+
+    assert result["success"] is True
+    kill_agent.assert_awaited_once()
+    assert "Killed 1 agents" not in caplog.text

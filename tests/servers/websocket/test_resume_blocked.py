@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.websocket.handlers.session_observe_continue import (
     _release_source_session,
     check_resume_blocked,
 )
 from gobby.servers.websocket.session_control import SessionControlMixin
+from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from tests.fixtures.postgres import TEST_USER_ID
+from tests.servers.conftest import OTHER_USER_ID
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -25,9 +32,12 @@ SOURCE_SESSION_ID = "fc5b117b-9770-45d6-a52e-e2eeed66db36"
 
 async def test_resume_db_checks_use_websocket_db_executor() -> None:
     db = MagicMock()
-    mixin = SimpleNamespace(
-        session_manager=SimpleNamespace(db=db),
-        _chat_sessions={},
+    mixin = cast(
+        SessionControlMixin,
+        SimpleNamespace(
+            session_manager=SimpleNamespace(db=db),
+            _chat_sessions={},
+        ),
     )
     source_session = SimpleNamespace(id="session-1")
 
@@ -255,3 +265,80 @@ async def test_release_source_session_closes_terminal_through_mixin_services(
         "close_terminal": True,
         "terminal_services": terminal_services,
     }
+
+
+async def _refused_remote_release(
+    temp_db: HubDatabase,
+    caller: str,
+    reply: dict[str, bool],
+) -> tuple[AsyncMock, MagicMock, str]:
+    machine_id = str(uuid4())
+    LocalMachineManager(temp_db).upsert_seen(machine_id, TEST_USER_ID)
+    stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    run = AgentRun(
+        id=RUN_ID,
+        parent_session_id=SOURCE_SESSION_ID,
+        child_session_id=None,
+        provider="claude",
+        prompt="do it",
+        status="running",
+        created_at=stamp,
+        updated_at=stamp,
+        machine_id=machine_id,
+        terminal_id=str(uuid4()),
+        pid=None,
+    )
+    mixin, manager, _completion_registry, _wake_callback = _release_mixin(
+        temp_db,
+        wake_result={"ism_persisted": True},
+    )
+    manager.get_by_session.return_value = run
+    node = AsyncMock()
+    node.send.return_value = reply
+    token = bind_caller(caller, temp_db)
+    try:
+        with (
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue."
+                "agent_storage.LocalAgentRunManager",
+                return_value=manager,
+            ),
+            patch("gobby.hub.remote_cancel.node_command_client", return_value=node),
+        ):
+            with pytest.raises(RuntimeError, match="failed to kill running agent") as raised:
+                await _release_source_session(mixin, SOURCE_SESSION_ID, SimpleNamespace())
+    finally:
+        reset_caller(token)
+    return node, manager, str(raised.value)
+
+
+@pytest.mark.integration
+async def test_release_source_session_refuses_unowned_remote_kill(temp_db: HubDatabase) -> None:
+    node, manager, message = await _refused_remote_release(
+        temp_db,
+        OTHER_USER_ID,
+        {"stopped": True},
+    )
+
+    assert message == (
+        f"failed to kill running agent: agent run {RUN_ID} was not stopped: machine_not_owned"
+    )
+    node.send.assert_not_awaited()
+    manager.cancel.assert_not_called()
+
+
+@pytest.mark.integration
+async def test_release_source_session_refuses_unconfirmed_remote_kill(
+    temp_db: HubDatabase,
+) -> None:
+    node, manager, message = await _refused_remote_release(
+        temp_db,
+        TEST_USER_ID,
+        {"stopped": False},
+    )
+
+    assert message == (
+        f"failed to kill running agent: agent run {RUN_ID} was not stopped: not_stopped"
+    )
+    node.send.assert_awaited_once()
+    manager.cancel.assert_not_called()

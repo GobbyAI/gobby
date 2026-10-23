@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -106,8 +107,9 @@ async def test_remote_run_cancels_through_node(
 ) -> None:
     signalled = MagicMock()
     monkeypatch.setattr(kill, "_signal_process_group", signalled)
+    monkeypatch.setattr(kill, "pid_matches_agent_identity", AsyncMock(return_value=True))
     node.send.return_value = {"stopped": True}
-    run = _run(remote_machine, live_terminal)
+    run = _run(remote_machine, live_terminal, pid=os.getpid())
 
     result = await kill.kill_agent(run, temp_db, signal_name="KILL", close_terminal=True)
 
@@ -118,6 +120,8 @@ async def test_remote_run_cancels_through_node(
         {"run_id": run.id, "terminal_id": live_terminal, "signal": "KILL", "close_terminal": True},
     )
     signalled.assert_not_called()
+    assert result["method"] == "node_command"
+    assert _state(temp_db, live_terminal) == "exited"
 
 
 async def test_offline_node_is_typed(
@@ -150,6 +154,36 @@ async def test_close_terminal_settles_row(
     assert result["success"] is True
     assert result["method"] == "node_command"
     assert _state(temp_db, live_terminal) == "exited"
+
+
+async def test_malformed_reply_is_node_reply_lost(
+    temp_db: HubDatabase,
+    remote_machine: str,
+    live_terminal: str,
+    node: AsyncMock,
+) -> None:
+    node.send.return_value = {"ok": True}
+    run = _run(remote_machine, live_terminal)
+
+    result = await kill.kill_agent(run, temp_db, close_terminal=True)
+
+    assert result["success"] is False
+    assert result["error_code"] == "node_reply_lost"
+    assert _state(temp_db, live_terminal) == "live"
+
+
+async def test_no_terminal_is_refused_without_node_call(
+    temp_db: HubDatabase,
+    remote_machine: str,
+    node: AsyncMock,
+) -> None:
+    run = _run(remote_machine, None)
+
+    result = await kill.kill_agent(run, temp_db, close_terminal=True)
+
+    assert result["success"] is False
+    assert result["error_code"] == "no_terminal"
+    node.send.assert_not_awaited()
 
 
 async def test_not_found_counts_as_stopped(

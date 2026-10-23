@@ -281,6 +281,7 @@ async def cancel_pipeline(
     # may still contain the unrelated caller session there.
     try:
         from gobby.agents.kill import kill_agent
+        from gobby.agents.kill_outcome import kill_confirmed
         from gobby.storage.agents import LocalAgentRunManager
         from gobby.storage.sessions import SessionManager
 
@@ -296,7 +297,14 @@ async def cancel_pipeline(
         active_runs = arm.list_by_parent(pipeline_session_id) if pipeline_session_id else []
         killed_count = 0
         for run in active_runs:
-            await kill_agent(run, _db, signal_name="KILL")
+            result = await kill_agent(run, _db, signal_name="KILL")
+            if not kill_confirmed(result):
+                logger.warning(
+                    "Agent %s was not stopped by pipeline cancel: %s",
+                    run.id,
+                    result.get("error_code") or result.get("error"),
+                )
+                continue
             killed_count += 1
 
         if killed_count > 0:

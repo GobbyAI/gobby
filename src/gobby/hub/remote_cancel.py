@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from pydantic import ValidationError
+
 from gobby.hub.node_client import NodeCommandError, node_command_client
+from gobby.hub.node_commands import StoppedResult
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import TerminalManager
@@ -21,7 +24,7 @@ async def cancel(
 ) -> dict[str, Any]:
     """Send agent.cancel to the run's node. A stopped run's terminal row settles when asked."""
     if run.terminal_id is None:
-        return {"success": False, "error": "agent run has no terminal"}
+        return {"success": False, "error": "agent run has no terminal", "error_code": "no_terminal"}
     payload = {
         "run_id": run.id,
         "terminal_id": run.terminal_id,
@@ -35,7 +38,15 @@ async def cancel(
         if exc.code != "not_found":
             return {"success": False, "error": str(exc), "error_code": exc.code}
     else:
-        if not reply["stopped"]:
+        try:
+            stopped = StoppedResult.model_validate(reply).stopped
+        except ValidationError:
+            return {
+                "success": False,
+                "error": f"Node machine {run.machine_id} sent an unreadable cancel reply",
+                "error_code": "node_reply_lost",
+            }
+        if not stopped:
             return {
                 "success": False,
                 "error": f"Node machine {run.machine_id} did not stop run {run.id}",
@@ -51,8 +62,8 @@ async def cancel(
 
 
 async def _settle_terminal(db: HubDatabase, terminal_id: str) -> None:
+    # The row's compare-and-set transitions make a concurrent settle safe without a shared lock.
     terminals = TerminalManager(db)
-    async with terminals.settle_lock(terminal_id):
-        current = await asyncio.to_thread(terminals.get, terminal_id)
-        if current is not None and current.state != "exited":
-            await settle_proven_exit(terminals, current)
+    current = await asyncio.to_thread(terminals.get, terminal_id)
+    if current is not None and current.state != "exited":
+        await settle_proven_exit(terminals, current)

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.agents import kill as agent_kill
+from gobby.agents.kill_outcome import kill_confirmed, may_cancel_run
 from gobby.agents.sandbox import web_chat_sandbox_policy_hash
 from gobby.agents.terminal_delivery import (
     deliver_existing_terminal_run_in_scope,
@@ -60,26 +61,32 @@ async def _release_source_session(
                     return await run_db(mixin, func, *args, **kwargs)
 
                 async def kill_and_deliver() -> bool:
+                    result: dict[str, Any] | None = None
                     try:
-                        await agent_kill.kill_agent(
+                        result = await agent_kill.kill_agent(
                             run,
                             session_manager.db,
                             close_terminal=True,
                             terminal_services=getattr(mixin, "terminal_services", None),
                         )
+                        if not kill_confirmed(result):
+                            reason = result.get("error_code") or result.get("error")
+                            raise RuntimeError(f"agent run {run.id} was not stopped: {reason}")
                         await run_storage(
                             arm.cancel,
                             run.id,
                             terminal_reason="user_cancelled",
                         )
                     finally:
-                        await deliver_existing_terminal_run_in_scope(
-                            db=session_manager.db,
-                            agent_run_manager=arm,
-                            completion_registry=mixin.completion_registry,
-                            run_id=run.id,
-                            run_db=run_storage,
-                        )
+                        # Same proceed rule as the cancel route; no delivery when unconfirmed.
+                        if may_cancel_run(result):
+                            await deliver_existing_terminal_run_in_scope(
+                                db=session_manager.db,
+                                agent_run_manager=arm,
+                                completion_registry=mixin.completion_registry,
+                                run_id=run.id,
+                                run_db=run_storage,
+                            )
                     return True
 
                 delivery_result = await shielded_terminal_delivery(run.id, kill_and_deliver)
