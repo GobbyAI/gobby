@@ -279,3 +279,47 @@ print('quoted Python data stays literal')
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "quoted Python data stays literal"
+
+
+def test_command_word_expansion_pattern_is_bounded_on_long_uv_run_probe() -> None:
+    # The rule's `when` is the bounded token scanner in approval_brace_guard.py,
+    # not a regex. The probe repeats the `uv run --directory` phrase that pinned the
+    # daemon's rule loop. A child process keeps a regressed scanner from holding
+    # pytest's GIL past the timeout.
+    probe = "uv run --no-sync python -c '" + "uv run --directory /repo " * 95 + "'"
+    assert len(probe) == 2404
+    program = """
+import sys
+import time
+
+import yaml
+
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.sync_rules import get_bundled_rules_path
+
+path = get_bundled_rules_path() / 'task-enforcement/block-dirty-path-approval-cli.yaml'
+rule = yaml.safe_load(path.read_text())['rules']['block-gobby-command-word-expansion']
+helpers = build_condition_helpers()
+
+
+def blocked(command: str) -> bool:
+    evaluator = SafeExpressionEvaluator({'tool_input': {'command': command}}, allowed_funcs=helpers)
+    return bool(evaluator.evaluate(rule['when']))
+
+
+started = time.perf_counter()
+assert not blocked(sys.argv[1])
+assert blocked('gobby sessions {list,} ' + sys.argv[1])
+assert time.perf_counter() - started < 1.0
+print('bounded word expansion passes')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", program, probe],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "bounded word expansion passes"

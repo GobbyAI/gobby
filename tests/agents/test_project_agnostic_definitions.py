@@ -142,7 +142,7 @@ def test_team_lane_passes_assignment_inputs_to_each_spawn() -> None:
         }
 
 
-def test_project_policy_lane_inventory_and_role_guidance_stay_queryable() -> None:
+def test_project_policy_root_inventory_and_role_guidance_stay_queryable() -> None:
     path = (
         Path(__file__).resolve().parents[2] / ".gobby/workflows/rules/project-operating-policy.yaml"
     )
@@ -156,14 +156,20 @@ def test_project_policy_lane_inventory_and_role_guidance_stay_queryable() -> Non
     assert 'get_variable(name="project_policy")' in rendered
     assert "role_guidance before work" in rendered
     assert "project_policy.handoff_reason_template" in rendered
-    assert [lane["number"] for lane in policy["lanes"]] == list(range(1, 10))
-    for lane in policy["lanes"]:
-        assert lane["name"]
-        assert lane["epic"].startswith("#")
-        assert lane["description"]
-    assert len(policy["lanes"]) == 9
+    assert [root["epic"] for root in policy["roots"]] == [
+        "#24818",
+        "#24819",
+        "#24820",
+        "#24821",
+        "#24822",
+        "#21542",
+    ]
+    for root in policy["roots"]:
+        assert root["name"]
+        assert root["epic"].startswith("#")
+        assert root["description"]
     assert policy["integration_branch"] == "0.5.0"
-    assert policy["launch_defaults"]["team-lane"]["developer_provider"] == "codex"
+    assert policy["launch_defaults"]["team-lane"]["developer_provider"] == "claude"
     assert policy["role_launch_defaults"]["expansion-qa"]["model"] == "gpt-6-luna"
     assert {
         "analyst",

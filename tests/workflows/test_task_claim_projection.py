@@ -27,7 +27,13 @@ def _local_machine_identity() -> Iterator[None]:
 def test_merge_claimed_task_projection_declares_tdd_obligations(
     isolated_checkout_factory: IsolatedCheckoutFactory, temp_db: HubDatabase, tmp_path: Path
 ) -> None:
-    """A claim observation persists the TDD obligations the refresh derives (#24766)."""
+    """A claim observation merges without an undeclared obligations key (#24766).
+
+    The obligations projection was retired with the TDD proof runtime by #23341. A
+    claim that still wrote the key raised "undeclared variable keys" in the stop
+    hook, so this pins the surviving contract: the merge succeeds, TDD metadata
+    persists, and no obligations key is stored.
+    """
     project = isolated_checkout_factory(temp_db, "claim-projection", root=tmp_path).project
     session_id = SessionManager(temp_db).register_session(
         external_id="claim-projection-external",
@@ -47,11 +53,13 @@ def test_merge_claimed_task_projection_declares_tdd_obligations(
         validation_criteria="Projection tests pass.",
     )
     variables = SessionVariableManager(temp_db)
-    variables.merge_variables(session_id, {"enforce_tdd": True})
 
     assert variables.merge_variables(
         session_id, {"task_claimed": True}, observed_claim_task_id=task.id
     )
 
-    stored = variables.get_variable_subset(session_id, ("claimed_task_tdd_obligations",))
-    assert set(stored["claimed_task_tdd_obligations"]) == {task.id}
+    stored = variables.get_variable_subset(
+        session_id, ("claimed_task_requires_tdd", "claimed_task_tdd_obligations")
+    )
+    assert stored["claimed_task_requires_tdd"] is True
+    assert "claimed_task_tdd_obligations" not in stored
