@@ -11,6 +11,8 @@ LANGUAGE plpgsql SECURITY DEFINER
 SET search_path TO 'gobby_agent_auth', 'pg_temp'
 SET createrole_self_grant TO ''
 AS $$
+DECLARE
+    scoped_role NAME;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended(p_execution_id::TEXT, 0));
     INSERT INTO forced_revocations (managed_execution_id)
@@ -19,6 +21,20 @@ BEGIN
     SET revocation_requested_at = COALESCE(revocation_requested_at, clock_timestamp()),
         predecessor_drain_deadline = NULL
     WHERE managed_execution_id = p_execution_id AND revoked_at IS NULL;
+    -- A bounded cleanup retry must never skip another generation's authority.
+    FOR scoped_role IN
+        SELECT pb.role_name FROM principal_bindings pb
+        JOIN pg_roles role ON role.rolname = pb.role_name
+        WHERE pb.managed_execution_id = p_execution_id AND pb.revoked_at IS NULL
+    LOOP
+        EXECUTE format('ALTER ROLE %I NOLOGIN', scoped_role);
+    END LOOP;
+    PERFORM pg_terminate_backend(pid, 5000)
+    FROM pg_stat_activity
+    WHERE usename IN (
+        SELECT pb.role_name::TEXT FROM principal_bindings pb
+        WHERE pb.managed_execution_id = p_execution_id AND pb.revoked_at IS NULL
+    ) AND pid <> pg_backend_pid();
     RETURN revoke_principal(p_execution_id, NULL);
 END
 $$;

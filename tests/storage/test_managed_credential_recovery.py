@@ -511,6 +511,98 @@ def test_force_revoke_sql_alone_cuts_live_access(
         store.db.close()
 
 
+def test_forced_retry_cuts_every_generation_before_shared_early_return(
+    authorization_fixture: AuthorizationFixture, tmp_path: Path
+) -> None:
+    fixture = authorization_fixture
+    execution_id = fixture.agent_run_id
+    manager = _manager(fixture, tmp_path)
+    predecessor = _launch_recovery_run(fixture, manager)
+    predecessor_dsn = _dsn(predecessor.bootstrap_path)
+    manager.bind_launch_grant_rewriter(_rewrite_recovery_grant)
+    current = manager.rotate(
+        managed_execution_id=execution_id,
+        expires_at=datetime.now(UTC) + timedelta(minutes=30),
+    )
+    current_dsn = _dsn(current.bootstrap_path)
+    try:
+        with (
+            psycopg.connect(predecessor_dsn, autocommit=True) as held,
+            psycopg.connect(current_dsn, autocommit=True) as active,
+            psycopg.connect(fixture.database_url, autocommit=True) as admin,
+        ):
+            held_pid = held.info.backend_pid
+            current_pid = active.info.backend_pid
+            originals: list[str] = []
+            try:
+                # Inject a timeout only for the real predecessor backend in both
+                # SQL functions. Other backends must still terminate normally.
+                for signature in ("force_revoke_principal(uuid)", "revoke_principal(uuid,integer)"):
+                    row = admin.execute(
+                        "SELECT pg_get_functiondef(%s::regprocedure)",
+                        (f"{AUTH_SCHEMA}.{signature}",),
+                    ).fetchone()
+                    assert row is not None
+                    definition = str(row[0])
+                    originals.append(definition)
+                    injected = definition.replace(
+                        "pg_terminate_backend(pid, 5000)",
+                        f"CASE WHEN pid = {held_pid} THEN FALSE "
+                        "ELSE pg_terminate_backend(pid, 5000) END",
+                    )
+                    admin.execute(injected)
+                assert (
+                    _as_runtime(
+                        admin,
+                        f"SELECT {AUTH_SCHEMA}.force_revoke_principal(%s)",
+                        (execution_id,),
+                    )
+                    == -1
+                )
+                assert held.execute("SELECT 1").fetchone() == (1,)
+                assert admin.execute(
+                    "SELECT r.rolcanlogin FROM pg_roles r "
+                    f"JOIN {AUTH_SCHEMA}.principal_bindings pb ON pb.role_name = r.rolname "
+                    "WHERE pb.managed_execution_id = %s ORDER BY pb.credential_generation",
+                    (execution_id,),
+                ).fetchall() == [(False,), (False,)]
+                for stale_dsn in (predecessor_dsn, current_dsn):
+                    with pytest.raises(psycopg.OperationalError):
+                        psycopg.connect(stale_dsn, autocommit=True).close()
+                assert admin.execute(
+                    "SELECT count(*) FROM pg_stat_activity WHERE pid = %s",
+                    (current_pid,),
+                ).fetchone() == (0,)
+                with pytest.raises(psycopg.OperationalError):
+                    active.execute("SELECT 1")
+            finally:
+                # Restore the isolated database before retry or fixture teardown.
+                for definition in reversed(originals):
+                    admin.execute(definition)
+            # Terminate the formerly held backend, then let a fresh transaction
+            # observe its departure before finishing the drop bookkeeping.
+            _as_runtime(admin, f"SELECT {AUTH_SCHEMA}.force_revoke_principal(%s)", (execution_id,))
+            assert admin.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE pid = %s", (held_pid,)
+            ).fetchone() == (0,)
+            assert (
+                _as_runtime(
+                    admin,
+                    f"SELECT {AUTH_SCHEMA}.force_revoke_principal(%s)",
+                    (execution_id,),
+                )
+                >= 0
+            )
+            assert admin.execute(
+                f"SELECT bool_and(revoked_at IS NOT NULL) FROM {AUTH_SCHEMA}.principal_bindings "
+                "WHERE managed_execution_id = %s",
+                (execution_id,),
+            ).fetchone() == (True,)
+    finally:
+        manager.revoke(execution_id, reason="test-cleanup")
+        manager.close()
+
+
 def test_forced_retry_record_replays_force(
     authorization_fixture: AuthorizationFixture, tmp_path: Path
 ) -> None:
