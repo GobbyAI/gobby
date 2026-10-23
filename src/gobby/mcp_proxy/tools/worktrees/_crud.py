@@ -138,18 +138,15 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if refusal is not None:
             return refusal
         if machine_id is not None and not is_local_machine(machine_id):
-            remote_rows = list_remote(
+            worktrees: list[Any] = list_remote(
                 ctx.worktree_storage.db,
                 "worktree",
                 machine_id,
                 project_id=resolved_project_id,
                 status=status,
+                agent_session_id=resolved_session_id,
+                limit=limit,
             )
-            if resolved_session_id:
-                remote_rows = [
-                    wt for wt in remote_rows if wt.agent_session_id == resolved_session_id
-                ]
-            worktrees: list[Any] = remote_rows[:limit]
         else:
             worktrees = ctx.worktree_storage.list_worktrees(
                 project_id=resolved_project_id,

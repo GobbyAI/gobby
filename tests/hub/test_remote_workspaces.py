@@ -514,3 +514,30 @@ async def test_workspace_tools_need_owned_machine(
 
     unbound = await worktrees.call("get_worktree", {"worktree_id": node_worktree})
     assert unbound["success"] is True
+
+
+def test_list_remote_applies_session_filter_and_limit_in_query(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    node_machine: str,
+) -> None:
+    session_id = _session(temp_db, sample_project, node_machine)
+    other_session_id = _session(temp_db, sample_project, node_machine)
+    for owner_session in (session_id, session_id, session_id, other_session_id):
+        row_id = _worktree(temp_db, sample_project, machine_id=node_machine)
+        temp_db.execute(
+            "UPDATE worktrees SET agent_session_id = %s WHERE id = %s",
+            (owner_session, row_id),
+        )
+
+    rows = remote_workspaces.list_remote(
+        temp_db,
+        "worktree",
+        node_machine,
+        project_id=sample_project["id"],
+        agent_session_id=session_id,
+        limit=2,
+    )
+
+    assert len(rows) == 2
+    assert {row.agent_session_id for row in rows} == {session_id}

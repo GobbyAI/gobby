@@ -80,6 +80,8 @@ def list_remote(
     machine_id: str,
     project_id: str | None = None,
     status: str | None = None,
+    agent_session_id: str | None = None,
+    limit: int | None = None,
 ) -> list[Any]:
     conditions = ["machine_id = %s"]
     params: list[Any] = [machine_id]
@@ -89,8 +91,14 @@ def list_remote(
     if status:
         conditions.append("status = %s")
         params.append(status)
+    if agent_session_id:
+        conditions.append("agent_session_id = %s")
+        params.append(agent_session_id)
     where_clause = " AND ".join(conditions)
     sql = f"SELECT * FROM {_TABLE[kind]} WHERE {where_clause} ORDER BY created_at DESC"  # nosec B608
+    if limit is not None:
+        sql += " LIMIT %s"
+        params.append(limit)
     rows = db.fetchall(sql, tuple(params))
     return [_from_row(kind, row) for row in rows]
 

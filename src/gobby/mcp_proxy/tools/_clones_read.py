@@ -76,14 +76,14 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         if refusal is not None:
             return refusal
         if machine_id is not None and not is_local_machine(machine_id):
-            remote_rows = list_remote(
+            clones: list[Any] = list_remote(
                 ctx.clone_storage.db,
                 "clone",
                 machine_id,
                 project_id=ctx.project_id,
                 status=status,
+                limit=limit,
             )
-            clones: list[Any] = remote_rows[:limit]
         else:
             clones = ctx.clone_storage.list_clones(
                 project_id=ctx.project_id,
