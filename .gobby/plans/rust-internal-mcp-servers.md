@@ -515,3 +515,155 @@ questions remain, and project-aware base validation passed warning-free.
   applies `## M1 Task Manifest` from consensus bytes.
 - Focused implementation checks are owned by their deliverable sections. No
   full pytest or whole-workspace Rust suite is required.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Typed internal-tool descriptor and schema identity
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: A family crate can publish one immutable server descriptor
+    containing typed async handlers, descriptions, brief text, output schema, and
+    read-only metadata without depending on gdaemon. symbol: `ToolFamily`.
+
+    1.1.2: Request types derive the normalized input schema used for both validation
+    and discovery; malformed arguments fail before deserialization or handler execution.
+    test: `crates/gcore/tests/mcp_contract.rs::derived_schema_validates_before_dispatch`.
+
+    1.1.3: Canonical Rust definition hashes equal committed Python parity vectors
+    and are invariant to JSON key order. test: `crates/gcore/tests/mcp_contract.rs::definition_hash_matches_python_vectors`.
+
+    1.1.4: Duplicate server/tool names, invalid public names, and schemas that expose
+    `ToolContext` fail registry construction. test: `crates/gcore/tests/mcp_contract.rs::invalid_descriptors_fail_startup`.
+
+    1.1.5: The durable contract documents the family-author checklist, schema compatibility
+    rule, per-server backend states, handler context, and hub-only placement. behavior:
+    "internal MCP family contract" in `docs/contracts/internal-mcp.md`.'
+  labels:
+  - covers:rust-internal-mcp-servers:1.1:1.1.1
+  - covers:rust-internal-mcp-servers:1.1:1.1.2
+  - covers:rust-internal-mcp-servers:1.1:1.1.3
+  - covers:rust-internal-mcp-servers:1.1:1.1.4
+  - covers:rust-internal-mcp-servers:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Native policy, discovery, and dispatch gateway
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: The native gateway serves the existing REST surface
+    and `/mcp` from one registry, with unchanged server/tool names and result envelopes.
+    test: `crates/gdaemon/tests/mcp_gateway.rs::rest_and_streamable_http_share_one_catalog`.
+
+    2.1.2: Authenticated headers and claims resolve one caller `ToolContext`; omitted
+    schema-required `session_id`/`project_id` fields are injected before validation
+    and backend selection, explicitly supplied target fields remain unchanged, and
+    missing agent/wrapper context fails closed. test: `crates/gdaemon/tests/mcp_gateway.rs::caller_and_target_session_ids_remain_distinct`.
+
+    2.1.3: The gateway runs `before_tool`, re-resolves and revalidates a modified
+    call, and dispatches once; a `before_tool` denial or evaluator failure dispatches
+    nothing. It then runs `after_tool` once; when that evaluator fails, diagnostics
+    retain the failure and the original handler result is preserved without redispatch
+    or replay. The test uses a mutating handler to prove the side effect occurs exactly
+    once. test: `crates/gdaemon/tests/mcp_gateway.rs::policy_wraps_dispatch_exactly_once`.
+
+    2.1.4: `list_mcp_servers`, `list_tools`, and `get_tool_schema` update the authoritative
+    session discovery variables and schema lease for the resolved caller. test: `crates/gdaemon/tests/mcp_gateway.rs::discovery_updates_hub_session_state`.
+
+    2.1.5: Validation errors, timeout errors, offloaded results, and tool failures
+    retain the current structured codes and response shapes. test: `crates/gdaemon/tests/mcp_gateway.rs::gateway_error_contract_matches_python`.
+
+    2.1.6: External server calls and management operations use #21566''s multiplexer
+    behind the same policy pass; internal and external dispatch cannot bypass the
+    gateway. test: `crates/gdaemon/tests/mcp_gateway.rs::external_and_internal_calls_share_policy`.
+
+    2.1.7: A fresh client can list, lease, and call after either gdaemon or the Python
+    backend restarts; an interrupted call is failed once and is never replayed automatically.
+    test: `crates/gdaemon/tests/mcp_gateway.rs::streamable_http_recovers_across_restarts_without_replay`.'
+  labels:
+  - covers:rust-internal-mcp-servers:2.1:2.1.1
+  - covers:rust-internal-mcp-servers:2.1:2.1.2
+  - covers:rust-internal-mcp-servers:2.1:2.1.3
+  - covers:rust-internal-mcp-servers:2.1:2.1.4
+  - covers:rust-internal-mcp-servers:2.1:2.1.5
+  - covers:rust-internal-mcp-servers:2.1:2.1.6
+  - covers:rust-internal-mcp-servers:2.1:2.1.7
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Python compatibility backend and per-server cutover
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: The compatibility endpoint refuses non-loopback or
+    wrong-secret requests, resolves only an internal registry, and invokes it without
+    a second workflow pass. test: `tests/servers/routes/mcp_endpoints/test_internal_backend.py::test_endpoint_is_secret_bound_and_policy_free`.
+
+    2.2.2: Valid internal context envelopes seed and reset caller, project, principal,
+    and agent-run ContextVars independently across concurrent calls. An agent remains
+    that exact agent principal, operator authority exists only when explicitly projected,
+    contradictory run/principal/session data and missing or forged envelopes fail
+    closed, and body `session_id` remains tool input. test: `tests/servers/routes/mcp_endpoints/test_internal_backend.py::test_context_envelope_isolated_and_reset`.
+
+    2.2.3: One server can be `native` while every absent or `proxy` server still lists
+    schemas and executes through Python under the same public name. test: `crates/gdaemon/tests/mcp_strangler.rs::native_and_python_servers_coexist`.
+
+    2.2.4: `compare` returns Python, compares list/schema and read-only results, records
+    differences, and executes each mutating call only once in Python. test: `crates/gdaemon/tests/mcp_strangler.rs::compare_never_duplicates_mutation`.
+
+    2.2.5: A node has no internal registry or hub credential; a node-side `gmcp` call
+    reaches the hub registry, while standalone serves the same descriptor locally.
+    test: `tests/e2e/test_internal_mcp_strangler.py::test_hub_node_and_standalone_placement`.
+
+    2.2.6: Native dispatch remains available when Python is down; a still-proxied
+    server returns a typed backend-unavailable error rather than falling back to another
+    machine or bypassing policy. test: `crates/gdaemon/tests/mcp_strangler.rs::backend_loss_is_server_scoped`.
+
+    2.2.7: The `gobby-tasks` sample parity corpus proves identical tool inventory,
+    schemas, structured errors, and representative read/write results before its server
+    entry can become `native`. test: `tests/e2e/test_internal_mcp_strangler.py::test_tasks_family_cutover_contract`.'
+  labels:
+  - covers:rust-internal-mcp-servers:2.2:2.2.1
+  - covers:rust-internal-mcp-servers:2.2:2.2.2
+  - covers:rust-internal-mcp-servers:2.2:2.2.3
+  - covers:rust-internal-mcp-servers:2.2:2.2.4
+  - covers:rust-internal-mcp-servers:2.2:2.2.5
+  - covers:rust-internal-mcp-servers:2.2:2.2.6
+  - covers:rust-internal-mcp-servers:2.2:2.2.7
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Rebuild and version every affected shipped binary
+  category: code
+  task_type: chore
+  depends_on:
+  - '1.1'
+  - '2.1'
+  - '2.2'
+  validation_criteria: '3.1.1: At the shipping commit, `gcode`, `gdaemon`, `ghook`,
+    `gclient`, and `gmcp` are each exactly one patch version above that binary''s
+    immediately preceding released version; their Cargo manifests, `Cargo.lock`, and
+    `MANAGED_BIN_VERSION_PINS` agree, and the gcode maintenance floors derive the
+    resulting gcode pin unchanged. behavior: "affected binary versions" in `Cargo.lock`.
+
+    3.1.2: The coherent installed trio is promoted through `promote_workspace_binary_set`,
+    and the separately promoted `gclient` and `gmcp` pass their identity guards; no
+    binary is copied in place. behavior: "coherent native component promotion" in
+    `docs/contracts/internal-mcp.md`.
+
+    3.1.3: After the announced cutover, `gmcp` lists the unchanged catalog, leases
+    a native schema, calls one native read/write tool, and calls one still-proxied
+    tool successfully. test: `tests/e2e/test_internal_mcp_strangler.py::test_post_cutover_mixed_catalog_smoke`.'
+  labels:
+  - covers:rust-internal-mcp-servers:3.1:3.1.1
+  - covers:rust-internal-mcp-servers:3.1:3.1.2
+  - covers:rust-internal-mcp-servers:3.1:3.1.3
+  tdd: false
+  source_section: '3.1'
+  implementation_domain: fullstack
+```
