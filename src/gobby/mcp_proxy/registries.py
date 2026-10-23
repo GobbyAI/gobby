@@ -349,6 +349,7 @@ def setup_internal_registries(
             detection_registry=detection_registry,
             agent_pane_reserver_resolver=agent_pane_reserver_resolver,
             lease_registry_resolver=lease_registry_resolver,
+            workspace_ops_resolver=workspace_ops_resolver,
         )
 
         # Add inter-agent messaging tools if dependencies are available

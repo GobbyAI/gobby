@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+    from gobby.terminals.workspace_ops import WorkspaceOps
     from gobby.workflows.dry_run import MCPInventoryProtocol
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.git import WorktreeGitManager
@@ -55,6 +56,7 @@ class AgentsRegistryContext:
     detection_registry: DetectionManifestRegistry | None = None
     agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None
     lease_registry_resolver: Callable[[], TerminalLeaseRegistry | None] | None = None
+    workspace_ops_resolver: Callable[[], WorkspaceOps | None] | None = None
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from gobby.mcp_proxy.tools.admin_cold_start import register_admin_cold_start_tools
 from gobby.mcp_proxy.tools.agents_checkpoint_tools import register_agent_checkpoint_tools
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_lifecycle_tools import register_agent_lifecycle_tools
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+    from gobby.terminals.workspace_ops import WorkspaceOps
     from gobby.workflows.dry_run import MCPInventoryProtocol
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.git import WorktreeGitManager
@@ -59,6 +61,7 @@ def create_agents_registry(
     detection_registry: DetectionManifestRegistry | None = None,
     agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None,
     lease_registry_resolver: Callable[[], TerminalLeaseRegistry | None] | None = None,
+    workspace_ops_resolver: Callable[[], WorkspaceOps | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -122,6 +125,7 @@ def create_agents_registry(
         detection_registry=detection_registry,
         agent_pane_reserver_resolver=agent_pane_reserver_resolver,
         lease_registry_resolver=lease_registry_resolver,
+        workspace_ops_resolver=workspace_ops_resolver,
         agent_run_manager=agent_run_manager,
         resolve_session_id=_resolve_session_id,
         get_current_session_id=get_current_session_id,
@@ -137,5 +141,6 @@ def create_agents_registry(
     register_agent_checkpoint_tools(registry, ctx)
     register_agent_spawn_tools(registry, ctx)
     register_runbook_seat_tools(registry, ctx)
+    register_admin_cold_start_tools(registry, ctx)
     register_release_tools(registry, ctx)
     return registry

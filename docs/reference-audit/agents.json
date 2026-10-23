@@ -332,6 +332,21 @@
       "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
       "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/admin_cold_start.py",
+        "symbol": "register_admin_cold_start_tools.cold_start_admin"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator pane; /gobby admin and /gobby assistant cold start",
+      "server": "gobby-agents",
+      "tool": "cold_start_admin"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
+      "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
         "symbol": "register_agent_spawn_tools.apply_persona"
       },
