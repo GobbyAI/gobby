@@ -46,7 +46,7 @@ for compatibility across supported CLIs.
 `spawn_agent` refuses a spawn when the project already has `max_active_agents`
 active agents. The daemon config key defaults to 20; see
 [Configuration](./configuration.md#spawn-cap). `can_spawn_agent` reports the same
-check, and `dispatch_batch` bounds its concurrency with the same value.
+check.
 
 ## Related Guides
 

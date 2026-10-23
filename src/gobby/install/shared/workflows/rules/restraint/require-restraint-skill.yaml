@@ -38,7 +38,7 @@ rules:
             )
             or (
               event.data.get('mcp_server') == 'gobby-agents'
-              and event.data.get('mcp_tool') in ('spawn_agent', 'dispatch_batch')
+              and event.data.get('mcp_tool') == 'spawn_agent'
             )
           )
         )

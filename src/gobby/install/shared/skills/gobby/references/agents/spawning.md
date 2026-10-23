@@ -35,8 +35,6 @@ result. Task claim, preflight, and launch are separate failure points. A returne
 run is not proof the worker finished. Inspect the result before retrying an
 indeterminate response; avoid duplicate workers for the same task.
 
-`dispatch_batch` sends task suggestions through the same spawn machinery. Inspect
-every item for partial failures instead of retrying the whole batch blindly.
 Use `wait_for_agent` once for a live run and yield; read final evidence on wake.
 The lifecycle reference covers output and cancellation.
 
