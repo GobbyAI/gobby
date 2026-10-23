@@ -449,6 +449,40 @@ def release_task_live_edit_starts(
         starts.pop(task_id, None)
 
 
+def transfer_live_checkout_paths(
+    variables: dict[str, Any], task_id: str, paths: list[str], root: str
+) -> None:
+    """Give ``task_id`` the live interval of each path in ``root``.
+
+    One claim holds a path's live interval: the one whose edit recorded it last.
+    Earlier claims lose the path from their live checkout ledger and live starts.
+    Edit history stays append-only.
+    """
+    moved = set(paths)
+    live = variables.get("task_edited_file_checkouts")
+    if isinstance(live, dict):
+        ledger = dict(live)
+        for other_id, checkouts in live.items():
+            if other_id == task_id or not isinstance(checkouts, dict):
+                continue
+            files = checkouts.get(root)
+            if not isinstance(files, list):
+                continue
+            remaining = [path for path in files if path not in moved]
+            if len(remaining) == len(files):
+                continue
+            kept_checkouts = dict(checkouts)
+            if remaining:
+                kept_checkouts[root] = remaining
+            else:
+                del kept_checkouts[root]
+            ledger[other_id] = kept_checkouts
+        variables["task_edited_file_checkouts"] = ledger
+    for other_id in list(variables.get("task_live_edit_starts", {})):
+        if other_id != task_id:
+            release_task_live_edit_starts(variables, other_id, paths, root)
+
+
 def task_edited_checkout_paths(
     variables: dict[str, Any], task_id: str
 ) -> frozenset[tuple[str, str]]:
