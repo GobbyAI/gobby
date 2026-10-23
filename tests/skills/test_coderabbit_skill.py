@@ -55,7 +55,7 @@ def test_coderabbit_skill_requires_plan_mode_triage_before_edits() -> None:
     )
     assert "session-level planning is the\nassistant's internal planning posture" in body
     assert "`EnterPlanMode`" in body
-    assert "gobby-sessions.send_keys(session_id, keys, literal=true)" in body
+    assert "gobby-sessions:send_keys(session_id, keys, literal=true)" in body
     assert "$gobby plan\\n" in body
     assert "/gobby plan\\n" in body
     assert "Unsupported or unknown provider" in body

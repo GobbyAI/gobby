@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -60,6 +61,22 @@ pub(crate) fn git_output(path: &Path, args: &[&str]) -> anyhow::Result<String> {
         anyhow::bail!("git command failed");
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Parses `git ls-tree -r -z` records into `path -> blob id`, keeping only blob entries.
+pub(crate) fn parse_ls_tree(listing: &str) -> HashMap<String, String> {
+    listing
+        .split('\0')
+        .filter_map(|entry| {
+            let (meta, path) = entry.split_once('\t')?;
+            let mut fields = meta.split(' ');
+            let _mode = fields.next()?;
+            if fields.next()? != "blob" {
+                return None;
+            }
+            Some((path.to_string(), fields.next()?.to_string()))
+        })
+        .collect()
 }
 
 fn resolve_git_path(top_level: &Path, git_dir: &Path, raw: &str) -> anyhow::Result<PathBuf> {

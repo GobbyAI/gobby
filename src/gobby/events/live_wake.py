@@ -26,10 +26,13 @@ ActivityProbe = Callable[[Any, Any | None], Awaitable[TerminalActivity]]
 
 COMPOSER_OCCUPIED = "composer_occupied"
 COMPOSER_UNCONFIRMED = "composer_unconfirmed"
+PANE_FOCUSED = "pane_focused"
 
 # Skips that must be retried rather than treated as a final outcome: the durable
 # message is persisted and the composer may clear on a later probe.
-RETRYABLE_WAKE_SKIPS = frozenset({"session_active", COMPOSER_OCCUPIED, COMPOSER_UNCONFIRMED})
+RETRYABLE_WAKE_SKIPS = frozenset(
+    {"session_active", COMPOSER_OCCUPIED, COMPOSER_UNCONFIRMED, PANE_FOCUSED}
+)
 
 
 def parse_tmux_session(terminal_context: Any) -> str | None:
@@ -146,6 +149,24 @@ def composer_unconfirmed_result(session_id: str, *, method: str) -> dict[str, An
         "method": method,
         "skipped": COMPOSER_UNCONFIRMED,
         "decline_reason": COMPOSER_UNCONFIRMED,
+        "ism_persisted": True,
+    }
+
+
+def pane_focused_result(session_id: str, *, method: str) -> dict[str, Any]:
+    """Return the skip outcome for an operator comms wake held on a focused pane.
+
+    The operator is typing into the pane, so the wake waits for focus to end
+    rather than writing into it. Same durable bucket as ``composer_occupied_result``:
+    the message is persisted, the hold is retried, and the release re-dispatches it.
+    """
+    return {
+        "session_id": session_id,
+        "delivered": False,
+        "method": method,
+        "skipped": PANE_FOCUSED,
+        "decline_reason": PANE_FOCUSED,
+        "reason": "terminal pane focused; delivered when focus ends",
         "ism_persisted": True,
     }
 

@@ -95,6 +95,7 @@ Routing also reuses `node_offline`.
 
 | Code |
 | --- |
+| `ambiguous_reference` |
 | `checkout_unresolved` |
 | `machine_not_found` |
 | `machine_not_owned` |

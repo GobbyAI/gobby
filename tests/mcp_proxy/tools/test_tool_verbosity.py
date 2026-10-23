@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -55,7 +56,6 @@ async def test_task_verbosity_reduction(
     """Verify create_task doesn't echo back full task."""
     mock_manager = MagicMock()
     mock_manager.db = temp_db
-    mock_sync = MagicMock()
 
     mock_task = MagicMock()
     mock_task.id = "task-123"
@@ -72,7 +72,7 @@ async def test_task_verbosity_reduction(
     mock_manager.get_task.return_value = mock_task
     mock_manager.update_task.return_value = mock_task
 
-    registry = create_task_registry(mock_manager, mock_sync)
+    registry = create_task_registry(mock_manager)
 
     with session_context_for_test(canonical_task_session.id):
         result = await registry.call(
@@ -116,6 +116,7 @@ async def test_worktree_verbosity_reduction() -> None:
         unittest.mock.patch(
             "gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event", return_value=None
         ),
+        unittest.mock.patch.object(GcodeGateway, "pin_project", new_callable=AsyncMock),
     ):
         mock_ctx.return_value = (mock_git, "11111111-1111-4111-8111-111111110123", None)
 

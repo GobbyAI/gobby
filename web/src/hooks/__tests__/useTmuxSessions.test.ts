@@ -1490,6 +1490,9 @@ describe("useTmuxSessions", () => {
   });
 
   it("takes and releases control around focus", () => {
+    // jsdom reports no document focus without a focused element; a pane blur
+    // releases only while the document has focus (ruling 4).
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     const { result, unmount } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
     open(ws);
@@ -1563,10 +1566,51 @@ describe("useTmuxSessions", () => {
       }),
     );
     expect(result.current.hasControl).toBe(false);
+    hasFocus.mockRestore();
+    unmount();
+  });
+
+  it("reportsFocusAfterTheTakeAndKeepsTheLeaseOnWindowBlur", () => {
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const ws = mockWs.instances[0];
+    open(ws);
+    act(() => result.current.attachSession("term-1", "tmux"));
+    respondToAttach(
+      ws,
+      requestId(ws, "terminal_attach"),
+      "term-1",
+      "tmux",
+      "att-1",
+    );
+
+    ws.send.mockClear();
+    grantControl(ws, result.current.takeControl, "att-1");
+    expect(result.current.hasControl).toBe(true);
+    expect(sentMessages(ws, "terminal_focus")).toEqual([
+      {
+        type: "terminal_focus",
+        terminal_id: "term-1",
+        attachment_id: "att-1",
+        focused: true,
+      },
+    ]);
+
+    // Switching to another application blurs the pane while the document has
+    // no focus: the lease and its focus report both stay.
+    hasFocus.mockReturnValue(false);
+    ws.send.mockClear();
+    act(() => result.current.releaseControl());
+    expect(sentMessages(ws, "terminal_release_control")).toEqual([]);
+    expect(sentMessages(ws, "terminal_focus")).toEqual([]);
+    expect(result.current.hasControl).toBe(true);
+
+    hasFocus.mockRestore();
     unmount();
   });
 
   it("refuses extra input and clears the pending slot on every failure path", () => {
+    const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
     const { result, unmount } = renderHook(() => useTmuxSessions());
     const ws = mockWs.instances[0];
     open(ws);
@@ -1658,6 +1702,7 @@ describe("useTmuxSessions", () => {
       "Reconnected before the keystroke was sent.",
     );
     expect(sentMessages(ws, "terminal_input")).toEqual([]);
+    hasFocus.mockRestore();
     unmount();
   });
 

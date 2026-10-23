@@ -10,7 +10,7 @@ use std::path::Path;
 
 use postgres::GenericClient;
 
-use crate::git::git_output;
+use crate::git::{git_output, parse_ls_tree};
 use crate::index::{api, hasher};
 
 #[derive(Debug, Default)]
@@ -77,20 +77,4 @@ fn blob_id(bytes: &[u8]) -> Option<String> {
     gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, bytes)
         .ok()
         .map(|oid| oid.to_string())
-}
-
-/// Parses `git ls-tree -r -z` records, keeping only blob entries.
-fn parse_ls_tree(listing: &str) -> HashMap<String, String> {
-    listing
-        .split('\0')
-        .filter_map(|entry| {
-            let (meta, path) = entry.split_once('\t')?;
-            let mut fields = meta.split(' ');
-            let _mode = fields.next()?;
-            if fields.next()? != "blob" {
-                return None;
-            }
-            Some((path.to_string(), fields.next()?.to_string()))
-        })
-        .collect()
 }

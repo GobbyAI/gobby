@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.agents.idle_detector import ComposerRead
 from gobby.events.comms_wake import is_operator_comms_wake
-from gobby.events.live_wake import ActivityProbe
+from gobby.events.live_wake import (
+    PANE_FOCUSED,
+    RETRYABLE_WAKE_SKIPS,
+    ActivityProbe,
+    TerminalActivity,
+)
 from gobby.events.wake import WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.terminals.composer_ledger import ComposerLedger
-from tests.events.test_wake_composer_attention import _seat
+from gobby.terminals.leases import TerminalLeaseRegistry
+from tests.events.test_wake_composer_attention import TERMINAL_ID, _seat
 from tests.events.test_wake_native_terminal import (
     NATIVE_TERMINAL_CONTEXT,
     WAKE_SEQUENCE,
@@ -26,7 +34,11 @@ from tests.events.test_wake_native_terminal import (
     _session_manager,
 )
 from tests.events.test_wake_native_terminal import managed_chain as _native_chain_fixture
-from tests.events.wake_test_support import PendingWakeLedger
+from tests.events.wake_test_support import (
+    PendingWakeLedger,
+    operator_comms_message,
+    plain_message,
+)
 from tests.sessions.test_mailbox import _mailbox, _register_session
 
 pytestmark = pytest.mark.asyncio
@@ -218,3 +230,268 @@ async def test_operator_comms_wake_replaces_idle_composer_only(
         ]
         for task in tasks:
             task.cancel()
+
+
+async def _focus_holder(
+    dispatcher: WakeDispatcher,
+    *,
+    viewer: Literal["web", "gclient"] = "gclient",
+    focused: bool = True,
+) -> tuple[TerminalLeaseRegistry, str]:
+    registry = TerminalLeaseRegistry()
+    dispatcher.set_lease_registry(registry)
+    record = await registry.attach(TERMINAL_ID, viewer=viewer)
+    await registry.take_control(TERMINAL_ID, record.attachment_id)
+    if focused:
+        await registry.set_focus(record.attachment_id, True)
+    return registry, record.attachment_id
+
+
+def _ism_with(message: InterSessionMessage) -> MagicMock:
+    messages = MagicMock()
+    messages.get_undelivered_wake_messages.return_value = [message]
+    messages.get_undelivered_messages.return_value = [message]
+    return messages
+
+
+def _cancel_background(dispatcher: WakeDispatcher) -> None:
+    tasks = [
+        *dispatcher._deferred_refreshes.values(),
+        *dispatcher._composer_retries.values(),
+        *dispatcher._focus_releases,
+    ]
+    for task in tasks:
+        task.cancel()
+
+
+async def test_operator_comms_wake_holds_while_the_pane_is_focused(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    seat.session.status = "paused"
+    seat.dispatcher._ism_manager = _ism_with(operator_comms_message(seat.session.id))
+    await _focus_holder(seat.dispatcher)
+    try:
+        result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+
+        assert result.get("skipped") == PANE_FOCUSED
+        assert result.get("delivered") is False
+        assert PANE_FOCUSED in RETRYABLE_WAKE_SKIPS
+        assert seat.session.id in seat.dispatcher._composer_retries
+        seat.pane_sender.assert_not_awaited()
+        assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id: "normal"}}
+    finally:
+        _cancel_background(seat.dispatcher)
+
+
+async def test_focus_release_dispatches_the_held_wake_with_a_wipe(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="text", payload="leftover")
+    seat.session.status = "paused"
+    seat.dispatcher._ism_manager = _ism_with(operator_comms_message(seat.session.id))
+
+    async def parked_retry(delay: float) -> None:
+        # Park the backoff retry so only the focus release can deliver the wake.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(seat.dispatcher, "_composer_retry_wait", parked_retry)
+    registry, attachment_id = await _focus_holder(seat.dispatcher)
+    registry.set_focus_observer(seat.dispatcher.release_focus_hold)
+    try:
+        held = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert held.get("skipped") == PANE_FOCUSED
+        seat.pane_sender.assert_not_awaited()
+
+        await registry.set_focus(attachment_id, False)
+        results = await asyncio.gather(*list(seat.dispatcher._focus_releases))
+
+        assert [result["delivered"] for result in results] == [True]
+        seat.pane_sender.assert_awaited_once()
+        assert seat.pane_sender.await_args is not None
+        assert seat.pane_sender.await_args.kwargs["clear_before_submit"] is True
+
+        # The hold was consumed, so a second release dispatches nothing.
+        seat.dispatcher.release_focus_hold(TERMINAL_ID)
+        await asyncio.gather(*list(seat.dispatcher._focus_releases))
+        seat.pane_sender.assert_awaited_once()
+    finally:
+        _cancel_background(seat.dispatcher)
+
+
+async def _turn_in_flight(_session: Any, _terminal: Any) -> TerminalActivity:
+    return TerminalActivity(ComposerRead("empty"), turn_in_flight_fingerprint="run-7")
+
+
+@pytest.mark.parametrize(
+    ("turn_in_flight", "status", "expected", "held"),
+    [
+        (True, "paused", "composer_unconfirmed", False),
+        (False, "active", "session_active", False),
+        # Control: with neither protection in force, the same holder does hold the wake.
+        (False, "paused", PANE_FOCUSED, True),
+    ],
+    ids=["open-turn", "active-row", "idle-control"],
+)
+async def test_active_turn_protection_outranks_the_focus_hold(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+    turn_in_flight: bool,
+    status: str,
+    expected: str,
+    held: bool,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    seat.dispatcher._ism_manager = _ism_with(operator_comms_message(seat.session.id))
+    seat.session.status = status
+    if turn_in_flight:
+        seat.dispatcher._activity_probe = _turn_in_flight
+    await _focus_holder(seat.dispatcher)
+    try:
+        result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+
+        assert result.get("skipped") == expected
+        seat.pane_sender.assert_not_awaited()
+        held_sessions = {TERMINAL_ID: {seat.session.id: "normal"}} if held else {}
+        assert seat.dispatcher._focus_holds == held_sessions
+    finally:
+        _cancel_background(seat.dispatcher)
+
+
+@pytest.mark.parametrize(
+    ("viewer", "focused", "comms", "held"),
+    [
+        ("gclient", True, True, True),
+        ("web", True, True, True),
+        ("gclient", False, True, False),
+        ("web", False, True, False),
+        (None, False, True, False),
+        ("gclient", True, False, False),
+    ],
+    ids=[
+        "gclient-focused",
+        "web-focused",
+        "gclient-unfocused",
+        "web-unfocused",
+        "no-registry",
+        "non-comms-message",
+    ],
+)
+async def test_focus_hold_applies_only_to_comms_wakes_with_a_focused_holder(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+    viewer: Literal["web", "gclient"] | None,
+    focused: bool,
+    comms: bool,
+    held: bool,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    seat.session.status = "paused"
+    message = operator_comms_message(seat.session.id) if comms else plain_message(seat.session.id)
+    seat.dispatcher._ism_manager = _ism_with(message)
+    if viewer is not None:
+        await _focus_holder(seat.dispatcher, viewer=viewer, focused=focused)
+    try:
+        result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+
+        if held:
+            assert result.get("skipped") == PANE_FOCUSED
+            seat.pane_sender.assert_not_awaited()
+            assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id: "normal"}}
+        else:
+            assert result.get("skipped") != PANE_FOCUSED
+            assert result.get("delivered") is True
+            seat.pane_sender.assert_awaited_once()
+            assert seat.dispatcher._focus_holds == {}
+    finally:
+        _cancel_background(seat.dispatcher)
+
+
+async def test_focus_release_after_the_mailbox_was_read_sends_nothing(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="text", payload="leftover")
+    seat.session.status = "paused"
+    messages = _ism_with(operator_comms_message(seat.session.id))
+    seat.dispatcher._ism_manager = messages
+
+    async def parked_retry(delay: float) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(seat.dispatcher, "_composer_retry_wait", parked_retry)
+    registry, attachment_id = await _focus_holder(seat.dispatcher)
+    registry.set_focus_observer(seat.dispatcher.release_focus_hold)
+    ledger_before = composer_ledger.read(TERMINAL_ID)
+    try:
+        held = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert held.get("skipped") == PANE_FOCUSED
+
+        # A hook read the durable message while the hold stood.
+        messages.get_undelivered_messages.return_value = []
+        await registry.set_focus(attachment_id, False)
+        results = await asyncio.gather(*list(seat.dispatcher._focus_releases))
+
+        assert [result.get("skipped") for result in results] == ["mailbox_read"]
+        seat.pane_sender.assert_not_awaited()
+        assert composer_ledger.read(TERMINAL_ID) == ledger_before
+    finally:
+        _cancel_background(seat.dispatcher)
+
+
+async def test_unfocused_comms_wake_drops_a_stale_focus_hold(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    composer_ledger: ComposerLedger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seat = _seat(temp_db, session_manager, sample_project)
+    composer_ledger.record_spawn(TERMINAL_ID, "host-epoch-1")
+    seat.session.status = "paused"
+    seat.dispatcher._ism_manager = _ism_with(operator_comms_message(seat.session.id))
+
+    async def parked_retry(delay: float) -> None:
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(seat.dispatcher, "_composer_retry_wait", parked_retry)
+    registry, attachment_id = await _focus_holder(seat.dispatcher)
+    try:
+        held = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert held.get("skipped") == PANE_FOCUSED
+
+        # Unfocus before any observer is wired, so the hold outlives its focus.
+        await registry.set_focus(attachment_id, False)
+        sent = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+        assert sent.get("delivered") is True
+
+        # A later focus cycle must not replay the hold the unfocused send already covered.
+        registry.set_focus_observer(seat.dispatcher.release_focus_hold)
+        await registry.set_focus(attachment_id, True)
+        await registry.set_focus(attachment_id, False)
+        await asyncio.gather(*list(seat.dispatcher._focus_releases))
+
+        seat.pane_sender.assert_awaited_once()
+    finally:
+        _cancel_background(seat.dispatcher)

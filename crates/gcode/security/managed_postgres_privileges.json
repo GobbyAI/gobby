@@ -27,7 +27,8 @@
     {"relation": "code_inheritance", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_content_chunks", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_index_projection_cleanup_pending", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
-    {"relation": "code_index_prune_dirty_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id", "machine_scope_column": "machine_id"}
+    {"relation": "code_index_prune_dirty_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id", "machine_scope_column": "machine_id"},
+    {"relation": "code_overlay_pins", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "overlay_project_id", "machine_scope_column": "machine_id"}
   ],
   "sequences": [
     {"sequence": "code_imports_id_seq", "operations": ["USAGE", "SELECT"]},
@@ -60,6 +61,7 @@
     {"path": "crates/gcode/src/codewiki_facts/text.rs", "calls": {"query": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/commands/evidence.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
     {"path": "crates/gcode/src/commands/graph/view/class_hierarchy/fetch.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
+    {"path": "crates/gcode/src/commands/pin.rs", "calls": {"execute": 2, "prepare": 1, "query_opt": 1}, "classification": "project-write"},
     {"path": "crates/gcode/src/commands/scope.rs", "calls": {"query": 1, "query_opt": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/content_gc.rs", "calls": {"execute": 2, "query": 1, "query_one": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/current.rs", "calls": {"query_opt": 1}, "classification": "project-read"},
@@ -70,6 +72,7 @@
     {"path": "crates/gcode/src/config/runtime_contract.rs", "calls": {"query": 1, "query_one": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/db/communities.rs", "calls": {"execute": 4, "query": 2, "query_one": 1, "query_opt": 2}, "classification": "project-write"},
     {"path": "crates/gcode/src/db/local_callee.rs", "calls": {"query": 4}, "classification": "project-write"},
+    {"path": "crates/gcode/src/db/mod.rs", "calls": {"batch_execute": 1}, "classification": "project-write"},
     {"path": "crates/gcode/src/db/queries.rs", "calls": {"execute": 5, "query": 11, "query_one": 3, "query_opt": 3}, "classification": "project-write"},
     {"path": "crates/gcode/src/freshness.rs", "calls": {"query_opt": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/graph/code_graph/read/graph_payloads.rs", "calls": {"query": 12}, "classification": "external-non-postgresql"},
@@ -86,7 +89,7 @@
     {"path": "crates/gcode/src/search/fts/content.rs", "calls": {"query": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/search/fts/graph.rs", "calls": {"query": 2}, "classification": "project-read"},
     {"path": "crates/gcode/src/vector/code_symbols/repository.rs", "calls": {"query": 1}, "classification": "project-read"},
-    {"path": "crates/gcode/src/visibility/catalog.rs", "calls": {"query": 4, "query_one": 1}, "classification": "project-read"},
+    {"path": "crates/gcode/src/visibility/catalog.rs", "calls": {"query": 5, "query_one": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/visibility/graph.rs", "calls": {"query": 2}, "classification": "project-read"},
     {"path": "crates/gcode/src/visibility.rs", "calls": {"query": 4, "query_one": 7, "query_opt": 2}, "classification": "project-read"},
     {"path": "crates/gcore/src/ai/generation/tool_loop.rs", "calls": {"execute": 1}, "classification": "external-non-postgresql"},

@@ -514,3 +514,59 @@ async def test_clean_close_clears_attribution_without_validation_override(
     assert close_harness.task.id not in variables.get("task_edited_files", {})
     assert close_harness.task.id not in variables.get("task_edited_file_checkouts", {})
     assert close_harness.task.id not in variables.get("claimed_tasks", {})
+
+
+@pytest.mark.asyncio
+async def test_later_live_claim_takes_an_uncommitted_path_from_the_earlier_claim(
+    close_harness: CloseHarness,
+) -> None:
+    """The earlier claim's close stops listing a path that a later live claim of the
+    same session edited after the earlier claim's interval reconciled clean."""
+    repo = str(close_harness.repo_path)
+    later = close_harness.manager.create_task(
+        project_id=close_harness.task.project_id,
+        title="Later live claim takes the path",
+        category="code",
+        task_type="task",
+        implementation_domain="backend",
+        validation_criteria="Focused tests pass.",
+    )
+    close_harness.manager.claim_task(later.id, close_harness.session_id)
+    variables = close_harness.variable_manager
+    variables.merge_variables(
+        close_harness.session_id,
+        {
+            "claimed_tasks": {
+                close_harness.task.id: f"#{close_harness.task.seq_num}",
+                later.id: f"#{later.seq_num}",
+            },
+            "active_task_id": close_harness.task.id,
+        },
+    )
+    variables.record_edited_files(close_harness.session_id, ["shared.py"], checkout_root=repo)
+    variables.release_session_dirty_files(
+        close_harness.session_id, ["shared.py"], checkout_root=repo
+    )
+    variables.merge_variables(close_harness.session_id, {"active_task_id": later.id})
+    (close_harness.repo_path / "shared.py").write_text("LATER = True\n", encoding="utf-8")
+    variables.record_edited_files(close_harness.session_id, ["shared.py"], checkout_root=repo)
+
+    with session_context_for_test(close_harness.session_id):
+        later_evaluation = await lifecycle._evaluate_close(
+            close_harness.context,
+            task_id=later.id,
+            reason="completed",
+            commit_sha=None,
+            project_path=None,
+            response_detail="diagnostic",
+        )
+    later_gate = _clean_gate(later_evaluation.response(preview=True))
+    assert later_gate["status"] == "failed"
+    assert later_gate["details"]["dirty_checkouts"] == {repo: ["shared.py"]}
+    assert later_gate["message"] == "Commit task-attributed changes before closing."
+    assert "release_task_paths" not in later_gate["message"]
+
+    result = await _close_task(close_harness)
+
+    assert _clean_gate(result)["status"] == "passed"
+    assert result["closed"] is True

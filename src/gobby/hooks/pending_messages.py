@@ -118,7 +118,7 @@ def _render_message_line(
 
     reference = (
         f"{len(content):,}-character message; retrieve with "
-        f'gobby-agents.get_inter_session_message(message_id="{message_id}").'
+        f'gobby-agents:get_inter_session_message(message_id="{message_id}").'
     )
     return f"- {priority_label}{sender}{reference}"
 

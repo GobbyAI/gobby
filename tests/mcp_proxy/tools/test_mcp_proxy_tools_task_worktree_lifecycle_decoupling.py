@@ -4,19 +4,20 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.utils.daemon_git import GitOk
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
-_CHECKOUT_MACHINE = "21000000-0000-4000-8000-000000000001"
+_CHECKOUT_MACHINE = "21000000-0000-4000-8000-00000000000b"
 
 
 def _checkout_session_manager() -> MagicMock:
@@ -56,7 +57,7 @@ def _set_session_context() -> Iterator[None]:
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._context.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value="21000000-0000-4000-8000-00000000000b",
         ),
         patch(
             "gobby.mcp_proxy.tools.task_repo_paths.require_root",
@@ -64,11 +65,11 @@ def _set_session_context() -> Iterator[None]:
         ),
         patch(
             "gobby.mcp_proxy.tools.task_repo_paths.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value="21000000-0000-4000-8000-00000000000b",
         ),
         patch(
             "gobby.storage.project_checkouts.require_local_machine_id",
-            return_value="21000000-0000-4000-8000-000000000001",
+            return_value="21000000-0000-4000-8000-00000000000b",
         ),
         patch(
             "gobby.storage.project_checkouts.require_root",
@@ -97,6 +98,18 @@ async def test_close_task_does_not_mutate_worktree_status(
             side_effect=lambda sha, cwd=None: sha,
         ),
         patch("gobby.hooks.event_handlers._plan.on_epic_terminal"),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.main_checkout_target",
+            new=AsyncMock(return_value=(Path(TEST_REPO_PATH), "main")),
+        ),
+        patch(
+            "gobby.tasks.close_invariants.daemon_git",
+            MagicMock(
+                run=AsyncMock(
+                    return_value=GitOk(status="ok", argv=(), stdout="abc123\n", stderr="")
+                )
+            ),
+        ),
     ):
         mock_wt_instance = MagicMock()
         MockWorktreeManager.return_value = mock_wt_instance
@@ -142,7 +155,6 @@ async def test_close_task_does_not_mutate_worktree_status(
         "task_id": mock_task.id,
         "commit_shas": ["abc123"],
         "candidate_commit_sha": None,
-        "clean_proof": {"status": "clean"},
     }
     mock_task_manager.close_task.assert_called_once()
     assert mock_task_manager.close_task.call_args.args == (mock_task.id,)

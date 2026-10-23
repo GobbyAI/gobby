@@ -626,6 +626,11 @@ class GcodeGateway:
             env=env,
         )
 
+    async def pin_project(self, project_root: Path) -> None:
+        """Pin the checkout's isolation-marker selectors into its overlay."""
+        binary = await self._ensure_version()
+        await self._run_command([binary, "pin", "--quiet", "--project", str(project_root)])
+
     async def incremental_index(
         self,
         project_root: Path,

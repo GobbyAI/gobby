@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from gobby.code_index.gcode_gateway import GcodeGatewayError
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.utils import project_context
@@ -34,6 +35,10 @@ class SidecarWriter(Protocol):
         *,
         base_commit: str | None = None,
     ) -> None: ...
+
+
+class Pinner(Protocol):
+    async def __call__(self, project_root: Path, /) -> None: ...
 
 
 type HookInstaller = Callable[[Provider | None, str | Path], bool]
@@ -83,6 +88,7 @@ async def create_worktree(
     resolve_task_id: Callable[[str], str] | None = None,
     path_factory: PathFactory | None = None,
     sidecar_writer: SidecarWriter | None = None,
+    pinner: Pinner | None = None,
     hook_installer: HookInstaller | None = None,
     event_emitter: EventEmitter | None = None,
 ) -> WorktreeCreationResult:
@@ -159,7 +165,7 @@ async def create_worktree(
         try:
             resolved_task_id = await asyncio.to_thread(resolve_task_id, task_id)
         except (ValueError, TaskNotFoundError) as exc:
-            await _cleanup_git_worktree(
+            await cleanup_git_worktree(
                 git_manager,
                 worktree_path,
                 branch_name,
@@ -183,7 +189,7 @@ async def create_worktree(
             workspace_role=workspace_role,
         )
     except Exception as exc:
-        await _cleanup_git_worktree(
+        await cleanup_git_worktree(
             git_manager,
             worktree_path,
             branch_name,
@@ -200,25 +206,37 @@ async def create_worktree(
     try:
         await writer(git_manager.repo_path, worktree.worktree_path, base_commit=base_commit_sha)
     except (IsolationProjectJsonError, OSError) as exc:
-        await _cleanup_git_worktree(
+        await _discard_worktree(
             git_manager,
-            worktree.worktree_path,
-            branch_name,
+            worktree_storage,
+            worktree,
+            branch_name=branch_name,
             create_branch=create_branch,
             context="isolation sidecar failure",
         )
-        try:
-            await asyncio.to_thread(worktree_storage.delete, worktree.id)
-        except Exception as cleanup_exc:
-            logger.warning(
-                "Failed to delete worktree record after isolation sidecar failure: %s",
-                cleanup_exc,
-            )
         return WorktreeCreationResult(
             success=False,
             error=f"Failed to write isolation marker: {exc}",
             error_code="isolation_marker_failed",
         )
+
+    if pinner is not None:
+        try:
+            await pinner(Path(worktree.worktree_path))
+        except (GcodeGatewayError, OSError) as exc:
+            await _discard_worktree(
+                git_manager,
+                worktree_storage,
+                worktree,
+                branch_name=branch_name,
+                create_branch=create_branch,
+                context="index pin failure",
+            )
+            return WorktreeCreationResult(
+                success=False,
+                error=f"Failed to pin code index: {exc}",
+                error_code="code_index_pin_failed",
+            )
 
     hooks_installed = False
     if hook_installer is not None:
@@ -260,7 +278,7 @@ async def create_worktree(
     )
 
 
-async def _cleanup_git_worktree(
+async def cleanup_git_worktree(
     git_manager: WorktreeGitManager,
     worktree_path: str,
     branch_name: str,
@@ -279,3 +297,30 @@ async def _cleanup_git_worktree(
         )
     except Exception as exc:
         logger.warning("Failed to clean up worktree after %s: %s", context, exc)
+
+
+async def _discard_worktree(
+    git_manager: WorktreeGitManager,
+    worktree_storage: LocalWorktreeManager,
+    worktree: Worktree,
+    *,
+    branch_name: str,
+    create_branch: bool,
+    context: str,
+) -> None:
+    """Roll back a created worktree and its record after a post-create failure."""
+    await cleanup_git_worktree(
+        git_manager,
+        worktree.worktree_path,
+        branch_name,
+        create_branch=create_branch,
+        context=context,
+    )
+    try:
+        await asyncio.to_thread(worktree_storage.delete, worktree.id)
+    except Exception as cleanup_exc:
+        logger.warning(
+            "Failed to delete worktree record after %s: %s",
+            context,
+            cleanup_exc,
+        )
