@@ -597,7 +597,8 @@ primitive for other dependencies and reserve repeated snapshots for bounded
 diagnostics. Cross-session messaging uses `send_message`; explicit `wake=true`
 requests immediate processing, subject to protected interaction states and to an
 operator draft in the target's composer (`skipped: "composer_occupied"`, delivered on
-the next turn instead).
+the next turn instead). An operator comms wake to a terminal whose pane the operator has
+focused is held the same way (`skipped: "pane_focused"`) and dispatched when focus ends.
 
 ### Handoff Boundaries
 

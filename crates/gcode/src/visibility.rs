@@ -7,7 +7,7 @@ use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::models::Symbol;
 
-mod catalog;
+pub(crate) mod catalog;
 pub mod graph;
 
 pub use catalog::{tombstone_count, visible_kinds, visible_tree};

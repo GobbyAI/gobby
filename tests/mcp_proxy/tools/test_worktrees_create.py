@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.services.argument_validation import check_arguments
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
@@ -20,6 +21,14 @@ from gobby.utils.project_context import get_project_context
 from gobby.worktrees.git import WorktreeGitManager
 
 STORED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def stub_index_pin(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    """Keep creation tests off the real gcode binary; pinning has its own tests."""
+    pin = AsyncMock()
+    monkeypatch.setattr(GcodeGateway, "pin_project", pin)
+    return pin
 
 
 @pytest.mark.parametrize("base", [None, "main"])
@@ -103,7 +112,7 @@ def registry(
     )
 
 
-def test_create_worktree_requires_branch_name(registry) -> None:
+def test_create_worktree_requires_branch_name(registry: Any) -> None:
     tool = registry.get_schema("create_worktree")
 
     assert tool is not None
@@ -136,7 +145,9 @@ def test_create_worktree_provider_schema_rejects_qwen(registry: InternalToolRegi
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_success(registry, mock_worktree_storage, mock_git_manager) -> None:
+async def test_create_worktree_success(
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
+) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -206,7 +217,7 @@ async def test_create_worktree_missing_remote_ref_has_no_artifacts(
 
 @pytest.mark.asyncio
 async def test_create_worktree_preserves_project_json_trailing_newline(
-    registry, mock_worktree_storage, mock_git_manager, tmp_path: Path
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock, tmp_path: Path
 ) -> None:
     repo_path = tmp_path / "repo"
     worktree_path = tmp_path / "worktree"
@@ -356,7 +367,7 @@ async def test_create_worktree_actual_git_path_preserves_project_json_bytes_and_
 
 @pytest.mark.asyncio
 async def test_create_worktree_installs_droid_hooks(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
@@ -400,7 +411,7 @@ async def test_create_worktree_installs_droid_hooks(
 
 @pytest.mark.asyncio
 async def test_create_worktree_installs_codex_hooks(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
@@ -443,7 +454,9 @@ async def test_create_worktree_installs_codex_hooks(
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git_manager) -> None:
+async def test_create_worktree_failure(
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
+) -> None:
     mock_git_manager.create_worktree.return_value.success = False
     mock_git_manager.create_worktree.return_value.error = "Git error"
     mock_worktree_storage.get_by_branch.return_value = None
@@ -465,7 +478,10 @@ async def test_create_worktree_failure(registry, mock_worktree_storage, mock_git
     ids=["invalid-format", "unknown-seq-ref"],
 )
 async def test_invalid_task_cleanup_preserves_preexisting_branch(
-    registry, mock_worktree_storage, mock_git_manager, resolution_error: Exception
+    registry: Any,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    resolution_error: Exception,
 ) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
@@ -496,7 +512,7 @@ async def test_invalid_task_cleanup_preserves_preexisting_branch(
 
 @pytest.mark.asyncio
 async def test_database_failure_cleanup_preserves_preexisting_branch(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
@@ -522,7 +538,7 @@ async def test_database_failure_cleanup_preserves_preexisting_branch(
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_existing(registry, mock_worktree_storage) -> None:
+async def test_create_worktree_existing(registry: Any, mock_worktree_storage: MagicMock) -> None:
     existing = Worktree(
         id="wt-123",
         project_id="11111111-1111-4111-8111-111111110001",
@@ -530,8 +546,8 @@ async def test_create_worktree_existing(registry, mock_worktree_storage) -> None
         worktree_path="/tmp/exists",
         base_branch="main",
         status="active",
-        created_at="2024-01-01",
-        updated_at="2024-01-01",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         task_id=None,
         agent_session_id=None,
         merged_at=None,
@@ -548,7 +564,9 @@ async def test_create_worktree_existing(registry, mock_worktree_storage) -> None
 
 
 @pytest.mark.asyncio
-async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktree_storage) -> None:
+async def test_create_worktree_auto_path(
+    registry: Any, mock_git_manager: MagicMock, mock_worktree_storage: MagicMock
+) -> None:
     mock_git_manager.create_worktree.return_value.success = True
     mock_worktree_storage.get_by_branch.return_value = None
     mock_worktree_storage.create.return_value = Worktree(
@@ -581,7 +599,7 @@ async def test_create_worktree_auto_path(registry, mock_git_manager, mock_worktr
 
 @pytest.mark.asyncio
 async def test_create_worktree_explicit_local_branch(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     """Explicit bare branches select their local commit."""
     mock_git_manager.create_worktree.return_value.success = True
@@ -619,7 +637,7 @@ async def test_create_worktree_explicit_local_branch(
 
 @pytest.mark.asyncio
 async def test_create_worktree_omitted_base_keeps_unpushed_head(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     """Omitted bases fork the caller's HEAD commit."""
     mock_git_manager.create_worktree.return_value.success = True

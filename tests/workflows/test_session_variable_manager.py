@@ -943,8 +943,8 @@ def test_release_session_dirty_files_ends_live_interval_and_keeps_task_history(
 
 
 def test_record_edited_files_stamps_the_newest_edit_per_task_path(db: Any, tmp_path: Path) -> None:
-    """release_task_paths compares each stamp with the path's last commit, so the
-    ledger keeps epoch seconds of the newest edit and overwrites it on every edit."""
+    """The claim window reads each stamp to tell a task's own edits from older dirt, so
+    the ledger keeps epoch seconds of the newest edit and overwrites it on every edit."""
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
@@ -1301,3 +1301,68 @@ def test_queue_memory_review_dedupes_and_resets_delivery(db: Any) -> None:
     assert variables["_memory_pending_task_reviews"] == [second]
     assert variables["_memory_review_stop_delivered"] is False
     assert variables["_memory_task_review_records"] == [{"closure_id": "first"}]
+
+
+def test_later_live_claim_takes_a_reconciled_path_from_the_earlier_claim(
+    db: Any, tmp_path: Path
+) -> None:
+    """A path task A edited, git reconciled clean, then the same session's later claim
+    of task B edited again belongs to B's live interval: A's live checkout set drops it
+    and B's holds it, while A's edit history keeps it."""
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.task_claim_state import task_edited_file_set, task_live_checkout_files
+
+    mgr = SessionVariableManager(db)
+    root = str(tmp_path.resolve())
+    mgr.merge_variables(
+        S1, {"claimed_tasks": {"task-a": "#1", "task-b": "#2"}, "active_task_id": "task-a"}
+    )
+    mgr.record_edited_files(S1, ["node_hooks.rs"], checkout_root=root)
+    mgr.release_session_dirty_files(S1, ["node_hooks.rs"], checkout_root=root)
+    mgr.merge_variables(S1, {"active_task_id": "task-b"})
+    mgr.record_edited_files(S1, ["node_hooks.rs"], checkout_root=root)
+
+    variables = mgr.get_variables(S1)
+    assert task_live_checkout_files(variables, "task-a") == {}
+    assert task_live_checkout_files(variables, "task-b") == {root: {"node_hooks.rs"}}
+    assert task_edited_file_set(variables, "task-a") == {"node_hooks.rs"}
+
+
+def test_path_edited_only_under_one_claim_stays_with_that_claim(db: Any, tmp_path: Path) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.task_claim_state import task_live_checkout_files
+
+    mgr = SessionVariableManager(db)
+    root = str(tmp_path.resolve())
+    mgr.merge_variables(
+        S1, {"claimed_tasks": {"task-a": "#1", "task-b": "#2"}, "active_task_id": "task-a"}
+    )
+    mgr.record_edited_files(S1, ["node_hooks.rs"], checkout_root=root)
+    mgr.merge_variables(S1, {"active_task_id": "task-b"})
+    mgr.record_edited_files(S1, ["other.rs"], checkout_root=root)
+
+    variables = mgr.get_variables(S1)
+    assert task_live_checkout_files(variables, "task-a") == {root: {"node_hooks.rs"}}
+    assert task_live_checkout_files(variables, "task-b") == {root: {"other.rs"}}
+
+
+def test_later_live_claim_in_another_checkout_leaves_the_earlier_claim_here(
+    db: Any, tmp_path: Path
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.task_claim_state import task_live_checkout_files
+
+    mgr = SessionVariableManager(db)
+    main = str((tmp_path / "main").resolve())
+    worktree = str((tmp_path / "wt").resolve())
+    mgr.merge_variables(
+        S1, {"claimed_tasks": {"task-a": "#1", "task-b": "#2"}, "active_task_id": "task-a"}
+    )
+    mgr.record_edited_files(S1, ["node_hooks.rs"], checkout_root=main)
+    mgr.release_session_dirty_files(S1, ["node_hooks.rs"], checkout_root=main)
+    mgr.merge_variables(S1, {"active_task_id": "task-b"})
+    mgr.record_edited_files(S1, ["node_hooks.rs"], checkout_root=worktree)
+
+    variables = mgr.get_variables(S1)
+    assert task_live_checkout_files(variables, "task-a") == {main: {"node_hooks.rs"}}
+    assert task_live_checkout_files(variables, "task-b") == {worktree: {"node_hooks.rs"}}

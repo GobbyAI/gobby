@@ -28,6 +28,7 @@ from gobby.events.live_wake import (
     composer_unconfirmed_result,
     handoff_delivery_skip,
     normalize_live_wake_result,
+    pane_focused_result,
     wake_debounced_result,
     wake_failure,
     wake_state_failure,
@@ -109,6 +110,10 @@ class WebChatSessionRegistryProtocol(Protocol):
     async def wake_session(self, session_id: str) -> dict[str, Any]: ...
 
 
+class LeaseFocusRegistry(Protocol):
+    def focus_held(self, terminal_id: str) -> bool: ...
+
+
 @dataclass(frozen=True)
 class NativeWakeTarget:
     session_id: str
@@ -171,6 +176,9 @@ class WakeDispatcher:
             weakref.WeakValueDictionary()
         )
         self._deferred_refreshes: dict[str, asyncio.Task[None]] = {}
+        self._lease_registry: LeaseFocusRegistry | None = None
+        self._focus_holds: dict[str, dict[str, str]] = {}
+        self._focus_releases: set[asyncio.Task[dict[str, Any]]] = set()
         self._composer_retries: dict[str, asyncio.Task[None]] = {}
         self._owner_loop: asyncio.AbstractEventLoop | None = None
 
@@ -211,6 +219,24 @@ class WakeDispatcher:
     ) -> None:
         """Wire the live web-chat registry after server initialization."""
         self._web_chat_session_registry = registry
+
+    def set_lease_registry(self, registry: LeaseFocusRegistry | None) -> None:
+        """Wire the lease registry whose focus reports hold operator comms wakes."""
+        self._lease_registry = registry
+
+    def release_focus_hold(self, terminal_id: str) -> None:
+        """Re-dispatch the comms wakes held while this terminal's pane was focused.
+
+        The lease registry calls this synchronously when the focused holder loses
+        focus, so it only schedules. Each held session gets one dispatch that clears
+        before submitting; a mailbox a hook read meanwhile is left unwoken.
+        """
+        for session_id, priority in self._focus_holds.pop(terminal_id, {}).items():
+            task = asyncio.create_task(
+                self.dispatch_live_wake(session_id, priority=priority, require_unread=True)
+            )
+            self._focus_releases.add(task)
+            task.add_done_callback(self._focus_releases.discard)
 
     def set_terminal_manager(self, manager: LiveTerminalResolver | None) -> None:
         """Wire the terminal row lookup once the composition root has built it."""
@@ -277,6 +303,7 @@ class WakeDispatcher:
         priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = CONTINUE_WAKE_MESSAGE,
+        require_unread: bool = False,
     ) -> dict[str, Any]:
         """Send a live wake signal after durable mailbox storage is complete."""
         self._require_owner_loop()
@@ -286,7 +313,11 @@ class WakeDispatcher:
             self._live_wake_locks[session_id] = lock
         async with lock:
             result = await self._dispatch_live_wake_unlocked(
-                session_id, priority=priority, bypass_debounce=bypass_debounce, prompt=prompt
+                session_id,
+                priority=priority,
+                bypass_debounce=bypass_debounce,
+                prompt=prompt,
+                require_unread=require_unread,
             )
             self._schedule_wake_followup(session_id, result, priority=priority)
             return normalize_live_wake_result(result)
@@ -573,7 +604,9 @@ class WakeDispatcher:
         if session_type == "web_chat":
             if not bypass_debounce and not await self._should_send_live_wake(session_id):
                 return wake_debounced_result(session_id, method="web_chat")
-            result = await self._dispatch_web_chat_wake(session_id, priority=priority)
+            from gobby.events.wake_web_chat import dispatch_web_chat_wake
+
+            result = await dispatch_web_chat_wake(self, session_id, priority=priority)
             if result.get("delivered"):
                 await self._record_live_wake(session_id, utc_now())
             return result
@@ -715,6 +748,7 @@ class WakeDispatcher:
         terminal: Any | None,
         *,
         method: str,
+        priority: str = "normal",
     ) -> tuple[dict[str, Any] | None, bool]:
         """Withhold the wake unless the composer ledger admits typing.
 
@@ -735,6 +769,11 @@ class WakeDispatcher:
         reconciled idle earlier, so a turn that started since then would be
         steered or cancelled by this write.
 
+        An operator comms wake also waits while a focused holder of the terminal
+        is typing into it. The hold is recorded for ``release_focus_hold``, which
+        re-dispatches it. The turn checks above run first, so a running turn is
+        never steered, and the hold does not apply to other wakes.
+
         A gap or interrupt block raises the seat's attention item naming
         ``release_composer``; any other read retires it (``composer_attention``).
         """
@@ -752,7 +791,15 @@ class WakeDispatcher:
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
         pending = await self._run_db(self._ism_manager.get_undelivered_wake_messages, session_id)
-        if any(is_operator_comms_wake(message) for message in pending):
+        comms_pending = any(is_operator_comms_wake(message) for message in pending)
+        if comms_pending and terminal is not None and self._lease_registry is not None:
+            terminal_id = str(terminal.id)
+            if self._lease_registry.focus_held(terminal_id):
+                self._focus_holds.setdefault(terminal_id, {})[session_id] = priority
+                return pane_focused_result(session_id, method=method), False
+            # The pane is unfocused now, so a hold recorded earlier is stale.
+            self._focus_holds.get(terminal_id, {}).pop(session_id, None)
+        if comms_pending:
             # Josh's operator policy: a comms wake replaces leftover composer text.
             # False forces the existing clear-before-submit path, even on an empty ledger.
             return None, False
@@ -798,7 +845,7 @@ class WakeDispatcher:
             if current is not None:
                 session = current
             blocked, confirmed_empty = await self._composer_blocks_wake(
-                session_id, session, terminal, method="terminal"
+                session_id, session, terminal, method="terminal", priority=priority
             )
             if blocked is not None:
                 return blocked
@@ -860,61 +907,6 @@ class WakeDispatcher:
             "session_id": session_id,
             "delivered": True,
             "method": "terminal",
-        }
-
-    async def _dispatch_web_chat_wake(
-        self, session_id: str, *, priority: str = "normal"
-    ) -> dict[str, Any]:
-        if self._web_chat_session_registry is None:
-            return self._web_chat_no_live_result(session_id)
-
-        _session, state_failure = await self._preflight_live_side_effect(
-            session_id, priority=priority
-        )
-        if state_failure is not None:
-            return state_failure
-
-        try:
-            result = await asyncio.wait_for(
-                self._web_chat_session_registry.wake_session(session_id),
-                timeout=LIVE_WAKE_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            logger.warning(
-                "web_chat wake failed for session %s: %s",
-                session_id,
-                exc,
-                exc_info=True,
-            )
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": "web_chat",
-                "error": str(exc),
-                "error_code": "web_chat_wake_failed",
-                "error_message": str(exc),
-            }
-
-        if not isinstance(result, dict):
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": "web_chat",
-                "error_code": "web_chat_wake_failed",
-            }
-        result.setdefault("session_id", session_id)
-        result.setdefault("method", "web_chat")
-        return result
-
-    @staticmethod
-    def _web_chat_no_live_result(session_id: str) -> dict[str, Any]:
-        return {
-            "session_id": session_id,
-            "delivered": False,
-            "method": "web_chat",
-            "error": "no_live_web_chat_session",
-            "error_code": "no_live_web_chat_session",
-            "error_message": f"No live web_chat session found for {session_id}",
         }
 
     async def _should_send_live_wake(self, session_id: str) -> bool:

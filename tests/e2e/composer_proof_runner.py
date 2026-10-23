@@ -101,6 +101,7 @@ def main() -> None:
         priority: str = "normal",
         bypass_debounce: bool = False,
         prompt: str = CONTINUE_WAKE_MESSAGE,
+        require_unread: bool = False,
     ) -> dict[str, Any]:
         if cleanup.quiesced:
             return {"delivered": False, "skipped": "proof_quiesced"}
@@ -112,6 +113,7 @@ def main() -> None:
             priority=priority,
             bypass_debounce=bypass_debounce,
             prompt=prompt,
+            require_unread=require_unread,
         )
 
     from gobby.runner import main as run

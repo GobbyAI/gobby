@@ -191,6 +191,63 @@ def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPa
     assert isinstance(registry.resolve("tmux"), TmuxTerminalRuntime)
 
 
+def _wire_terminals(monkeypatch: pytest.MonkeyPatch, *, front_door: bool) -> MagicMock:
+    """Run the terminal wiring against a mock runner and return that runner."""
+    from gobby.config.terminals import TerminalConfig
+    from gobby.config.tmux import TmuxConfig
+    from gobby.runner_init import terminal_wiring
+
+    for target in (
+        "gobby.storage.terminals.TerminalManager",
+        "gobby.terminals.host_manager.TerminalHostManager",
+        "gobby.storage.agents.LocalAgentRunManager",
+        "gobby.storage.workspaces.WorkspaceManager",
+        "gobby.terminals.composer_lock.bind_composer_coordinator",
+        "gobby.runner_init.terminal_wiring.bind_wake_write_services",
+    ):
+        monkeypatch.setattr(target, MagicMock())
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-1")
+    native = FakeRuntime(backend="native")
+    monkeypatch.setattr(
+        "gobby.terminals.native_runtime.NativeTerminalRuntime",
+        lambda *args, **kwargs: native,
+    )
+    runner = MagicMock()
+    runner.agent_runner = None
+    runner.bootstrap_config.front_door.enabled = front_door
+    runner.bootstrap_config.front_door.routes = {"terminal_ws": "native"} if front_door else {}
+    config = MagicMock()
+    config.tmux = TmuxConfig()
+    config.terminals = TerminalConfig()
+    config.terminal_host = None
+
+    terminal_wiring.init_terminal_wiring(cast(Any, runner), cast(Any, config))
+    return runner
+
+
+def test_terminal_wiring_binds_focus_release_to_the_wake_dispatcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A focus report holds a wake here, and the focus release returns to the dispatcher."""
+    from gobby.terminals.leases import TerminalLeaseRegistry
+
+    runner = _wire_terminals(monkeypatch, front_door=False)
+
+    assert isinstance(runner.lease_registry, TerminalLeaseRegistry)
+    runner.wake_dispatcher.set_lease_registry.assert_called_once_with(runner.lease_registry)
+    assert runner.lease_registry._focus_observer is runner.wake_dispatcher.release_focus_hold
+
+
+def test_front_door_terminal_wiring_binds_no_focus_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gdaemon owns focus on the front door, so the daemon binds neither end."""
+    runner = _wire_terminals(monkeypatch, front_door=True)
+
+    assert runner.lease_registry is None
+    runner.wake_dispatcher.set_lease_registry.assert_not_called()
+
+
 def test_wiring_sweeps_orphans_before_accepting_writes() -> None:
     from gobby.runner_init import terminal_wiring
 

@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.agent_cancellation import (
     terminate_agent_run,
 )
 from gobby.storage.agents import TerminalAction
+from gobby.utils.machine_id import require_machine_id
 from tests.completion_delivery_helpers import DeliveryRegistry, record_removals
 
 pytestmark = pytest.mark.unit
@@ -165,6 +166,7 @@ async def test_terminate_agent_run_commits_requested_outcome_at_terminal_close(
         status="running",
         error=None,
         terminal_reason=None,
+        machine_id=require_machine_id(),
         terminal_id="terminal-123",
         child_session_id=None,
         pid=None,

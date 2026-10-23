@@ -1079,7 +1079,7 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
     assert "foreign.txt" in response.reason
     assert guard_harness.foreign_session.ref in response.reason
     assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
-    assert "gobby-agents.send_message" in response.reason
+    assert "gobby-agents:send_message" in response.reason
     assert "Ask each owner" in response.reason
     assert "approve-dirty-paths" not in response.reason
 
@@ -1299,7 +1299,7 @@ def test_dirty_edit_reason_lists_every_owner_with_commit_guidance() -> None:
     assert "- docs/a.md — session #2, task #7" in reason
     assert "- src/b.py — session #2, task #7" in reason
     assert "- src/c.py — session #3, task #9" in reason
-    assert reason.count("Ask each owner with `gobby-agents.send_message`") == 1
+    assert reason.count("Ask each owner with `gobby-agents:send_message`") == 1
     assert "commit its work" in reason
 
 
@@ -2126,8 +2126,8 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
     assert "foreign.txt" in response.reason
     assert guard_harness.foreign_session.ref in response.reason
     assert f"#{guard_harness.foreign_task.seq_num}" in response.reason
-    assert "gobby-agents.send_message" in response.reason
-    assert "ask each owner with `gobby-agents.send_message` to commit first" in response.reason
+    assert "gobby-agents:send_message" in response.reason
+    assert "ask each owner with `gobby-agents:send_message` to commit first" in response.reason
     assert "git commit --only --" in response.reason
     assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == {
         "foreign.txt",
@@ -3173,3 +3173,17 @@ async def test_foreign_staged_commit_conflict_names_vanished_cwd(
     assert response.reason is not None
     assert f"working directory {vanished} does not exist" in response.reason
     assert "could not verify staged-path ownership" not in response.reason
+
+
+def test_dirty_edit_refusal_names_only_remedies_that_exist() -> None:
+    owner = ForeignPathOwner(
+        path="crates/gdaemon/tests/node_hooks.rs",
+        session_ref="#17405",
+        task_ref="#24582",
+        owner_session_id="foreign-session",
+        owner_task_id="foreign-task",
+    )
+    reason = format_dirty_edit_reason({owner})
+    assert "release_task_paths" not in reason
+    assert "gobby-agents.send_message" not in reason
+    assert "gobby-agents:send_message" in reason

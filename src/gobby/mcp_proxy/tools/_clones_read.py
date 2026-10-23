@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.agents.frozen_workspace import frozen_workspace_refusal
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.remote_workspaces import list_remote, machine_refusal
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.clones import CloneStatus
@@ -56,6 +58,7 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
     def list_clones(
         status: str | None = None,
         limit: int = 50,
+        machine_id: str | None = None,
     ) -> dict[str, Any]:
         """
         List clones with optional filters.
@@ -63,15 +66,30 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
         Args:
             status: Filter by clone status
             limit: Maximum number of results
+            machine_id: Machine whose clones to list. Omitted or this machine lists local
+                rows; another machine lists its rows through the hub.
 
         Returns:
             Dict with list of clones
         """
-        clones = ctx.clone_storage.list_clones(
-            project_id=ctx.project_id,
-            status=status,
-            limit=limit,
-        )
+        refusal = machine_refusal(machine_id)
+        if refusal is not None:
+            return refusal
+        if machine_id is not None and not is_local_machine(machine_id):
+            clones: list[Any] = list_remote(
+                ctx.clone_storage.db,
+                "clone",
+                machine_id,
+                project_id=ctx.project_id,
+                status=status,
+                limit=limit,
+            )
+        else:
+            clones = ctx.clone_storage.list_clones(
+                project_id=ctx.project_id,
+                status=status,
+                limit=limit,
+            )
 
         return {
             "success": True,
@@ -94,6 +112,11 @@ def create_clone_read_registry(ctx: CloneRegistryContext) -> InternalToolRegistr
                     "type": "integer",
                     "description": "Maximum number of results",
                     "default": 50,
+                },
+                "machine_id": {
+                    "type": "string",
+                    "description": "Machine whose clones to list. Omitted or this machine lists "
+                    "local rows; another machine lists its rows through the hub.",
                 },
             },
         },

@@ -192,3 +192,64 @@ pub fn tombstone_count(conn: &mut Client, ctx: &Context) -> usize {
     .and_then(|count| count.try_into().ok())
     .unwrap_or(0)
 }
+
+/// One selector a project serves: its own owned state, or a pin row it inherits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EffectiveSelector {
+    pub(crate) file_path: String,
+    pub(crate) source_project_id: String,
+    pub(crate) content_hash: String,
+    pub(crate) git_blob_id: Option<String>,
+}
+
+/// Non-tombstone selectors `project_id` serves on `machine_id`, in path order. Its own
+/// owned states come first; a pin row only contributes when no owned state shadows it.
+pub(crate) fn effective_selectors(
+    conn: &mut Client,
+    machine_id: &str,
+    project_id: &str,
+) -> anyhow::Result<Vec<EffectiveSelector>> {
+    let machine_id = db::id_param(machine_id)?;
+    let project_id = db::id_param(project_id)?;
+    let rows = conn.query(
+        "SELECT fs.file_path, fs.project_id::text AS source_project_id,
+                fs.content_hash, fs.git_blob_id
+         FROM code_indexed_file_states fs
+         JOIN code_indexed_files f
+           ON f.project_id = fs.project_id
+          AND f.file_path = fs.file_path
+          AND f.content_hash = fs.content_hash
+         WHERE fs.machine_id = $1
+           AND fs.project_id = $2
+           AND f.language != $3
+         UNION ALL
+         SELECT p.file_path, p.source_project_id::text AS source_project_id,
+                p.content_hash, p.git_blob_id
+         FROM code_overlay_pins p
+         JOIN code_indexed_files f
+           ON f.project_id = p.source_project_id
+          AND f.file_path = p.file_path
+          AND f.content_hash = p.content_hash
+         WHERE p.machine_id = $1
+           AND p.overlay_project_id = $2
+           AND f.language != $3
+           AND NOT EXISTS (
+               SELECT 1 FROM code_indexed_file_states shadow
+               WHERE shadow.machine_id = $1
+                 AND shadow.project_id = $2
+                 AND shadow.file_path = p.file_path
+           )
+         ORDER BY file_path",
+        &[&machine_id, &project_id, &TOMBSTONE_LANGUAGE],
+    )?;
+    rows.iter()
+        .map(|row| {
+            Ok(EffectiveSelector {
+                file_path: row.try_get("file_path")?,
+                source_project_id: row.try_get("source_project_id")?,
+                content_hash: row.try_get("content_hash")?,
+                git_blob_id: row.try_get("git_blob_id")?,
+            })
+        })
+        .collect()
+}

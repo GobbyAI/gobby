@@ -95,24 +95,6 @@ def _bundled_definition_path(agents_path: Path, name: str) -> Path:
     return yaml_path
 
 
-def _reconcile_cancelled_agent_run(manager: Any, run_id: str) -> None:
-    """Persist cancellation after a process kill, retrying a transient manager failure."""
-    try:
-        cancelled = manager.cancel(run_id)
-    except Exception:
-        logger.warning(
-            "Failed to cancel agent run '%s'; retrying reconciliation",
-            run_id,
-            exc_info=True,
-        )
-        cancelled = manager.cancel(run_id)
-
-    if cancelled is None:
-        current = manager.get(run_id)
-        if current is not None and current.status in ("running", "pending"):
-            raise RuntimeError(f"Agent run '{run_id}' remained active after cancellation")
-
-
 class CreateAgentDefinitionRequest(BaseModel):
     """Request body for creating an agent definition in the DB.
 
@@ -893,10 +875,17 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         """Cancel a running agent."""
         try:
             from gobby.agents.kill import kill_agent
+            from gobby.agents.kill_outcome import (
+                kill_confirmed,
+                may_cancel_run,
+                reconcile_cancelled_run,
+            )
             from gobby.agents.terminal_delivery import (
                 deliver_existing_terminal_run_in_scope,
                 shielded_terminal_delivery,
             )
+            from gobby.hub.caller_scope import require_machine_owned
+            from gobby.hub.node_client import NodeCommandError
             from gobby.storage.agents import LocalAgentRunManager
 
             db = server.services.database
@@ -904,6 +893,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             run = manager.get(run_id)
             if not run:
                 raise HTTPException(status_code=404, detail=f"Agent run '{run_id}' not found")
+            try:
+                require_machine_owned(run.machine_id)
+            except NodeCommandError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
             if run.status not in ("running", "pending"):
                 raise HTTPException(
                     status_code=400,
@@ -911,24 +904,23 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 )
 
             async def cancel_and_deliver() -> dict[str, Any]:
+                result: dict[str, Any] | None = None
                 try:
                     result = await kill_agent(run, db, signal_name="TERM")
                 finally:
-                    try:
-                        await server.services.run_db(
-                            _reconcile_cancelled_agent_run,
-                            manager,
-                            run_id,
-                        )
-                    finally:
-                        await deliver_existing_terminal_run_in_scope(
-                            db=db,
-                            agent_run_manager=manager,
-                            completion_registry=server.services.completion_registry,
-                            run_id=run_id,
-                            run_db=server.services.run_db,
-                        )
-                return {"status": "success", "result": result}
+                    if may_cancel_run(result, run):
+                        try:
+                            await server.services.run_db(reconcile_cancelled_run, manager, run_id)
+                        finally:
+                            await deliver_existing_terminal_run_in_scope(
+                                db=db,
+                                agent_run_manager=manager,
+                                completion_registry=server.services.completion_registry,
+                                run_id=run_id,
+                                run_db=server.services.run_db,
+                            )
+                confirmed = result is not None and kill_confirmed(result)
+                return {"status": "success" if confirmed else "error", "result": result}
 
             response = await shielded_terminal_delivery(run_id, cancel_and_deliver)
             if response is None:

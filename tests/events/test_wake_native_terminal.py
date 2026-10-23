@@ -12,7 +12,12 @@ from uuid import UUID
 import pytest
 
 from gobby.agents.idle_detector import IdleDetector
-from gobby.events.live_wake import ActivityProbe, TerminalActivity, composer_occupied_result
+from gobby.events.live_wake import (
+    PANE_FOCUSED,
+    ActivityProbe,
+    TerminalActivity,
+    composer_occupied_result,
+)
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.runner_init.wake_activity import probe_terminal_activity
@@ -23,7 +28,7 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite, UnregisteredBackendError
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.detection_test_support import BundledDetectionRegistry
-from tests.events.wake_test_support import PendingWakeLedger
+from tests.events.wake_test_support import PendingWakeLedger, operator_comms_message
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -917,3 +922,67 @@ async def test_spawned_agent_without_a_managed_row_does_not_use_raw_tmux_session
     assert result["delivered"] is False
     assert result["error_code"] == "no_live_wake_channel"
     managed_sender.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_batch_wake_holds_a_focused_recipient_and_sends_the_rest() -> None:
+    held_id = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+    sent_id = "2a1b0639-bb96-56bf-9dfa-e28194dbab4b"
+    session_ids = [held_id, sent_id]
+    sessions = {
+        session_id: FakeSession(
+            id=session_id,
+            terminal_context=NATIVE_TERMINAL_CONTEXT,
+            status="paused",
+        )
+        for session_id in session_ids
+    }
+    session_manager = MagicMock()
+    session_manager.get.side_effect = sessions.get
+    rows = [
+        replace(make_memory_terminal(backend="native"), session_id=session_id)
+        for session_id in session_ids
+    ]
+    store = MemoryTerminalStore()
+    store.rows.update({row.id: row for row in rows})
+    messages = MagicMock()
+    messages.get_undelivered_wake_messages.side_effect = lambda session_id: [
+        operator_comms_message(session_id)
+    ]
+    batch_sender = AsyncMock(
+        return_value=[{"session_id": sent_id, "delivered": True, "method": "terminal"}]
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=session_manager,
+        ism_manager=messages,
+        tmux_sender=AsyncMock(),
+        native_batch_sender=batch_sender,
+        terminal_manager=store,
+        activity_probe=_empty,
+    )
+    held_terminal = str(rows[0].id)
+    registry = TerminalLeaseRegistry()
+    dispatcher.set_lease_registry(registry)
+    record = await registry.attach(held_terminal)
+    await registry.take_control(held_terminal, record.attachment_id)
+    await registry.set_focus(record.attachment_id, True)
+    try:
+        results = await dispatcher.dispatch_live_wakes(session_ids)
+
+        batch_sender.assert_awaited_once()
+        batch_call = batch_sender.await_args
+        assert batch_call is not None
+        targets = batch_call.args[0]
+        assert [target.session_id for target in targets] == [sent_id]
+        assert [result["session_id"] for result in results] == session_ids
+        assert results[0].get("skipped") == PANE_FOCUSED
+        assert results[1]["delivered"] is True
+        assert dispatcher._focus_holds == {held_terminal: {held_id: "normal"}}
+    finally:
+        tasks = [
+            *dispatcher._deferred_refreshes.values(),
+            *dispatcher._composer_retries.values(),
+            *dispatcher._focus_releases,
+        ]
+        for task in tasks:
+            task.cancel()

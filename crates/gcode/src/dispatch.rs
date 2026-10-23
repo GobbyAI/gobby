@@ -177,7 +177,8 @@ fn service_config_selection(
         | Command::Symbols { .. }
         | Command::Kinds { .. }
         | Command::Tree { .. }
-        | Command::RepoOutline { .. } => ServiceConfigSelection::database_only(),
+        | Command::RepoOutline { .. }
+        | Command::Pin => ServiceConfigSelection::database_only(),
         Command::Prune { .. } | Command::RetireFiles { .. } => {
             ServiceConfigSelection::projection_cleanup()
         }
@@ -442,6 +443,7 @@ fn run() -> anyhow::Result<()> {
             format,
         ),
         Command::Repair => commands::repair::run(&ctx, format),
+        Command::Pin => commands::pin::run(&ctx, format),
         Command::Status => {
             ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::status::run(&ctx, format)

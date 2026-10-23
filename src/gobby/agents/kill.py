@@ -17,6 +17,10 @@ from typing import Any, Literal
 import psutil
 
 from gobby.agents.capture import KillOutcome
+from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.node_client import NodeCommandError
+from gobby.hub.remote_cancel import cancel as cancel_remote_run
 from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -395,7 +399,8 @@ async def kill_agent(
 ) -> dict[str, Any]:
     """Kill an agent process using DB records.
 
-    Works from the AgentRun DB model and the managed terminal runtime.
+    Works from the AgentRun DB model and the managed terminal runtime. A run on
+    another machine is cancelled through its node, never by a local PID.
 
     Args:
         run: Agent run DB record.
@@ -408,6 +413,15 @@ async def kill_agent(
     Returns:
         Dict with success status and details.
     """
+    try:
+        require_machine_owned(run.machine_id)
+    except NodeCommandError as exc:
+        return {"success": False, "error": str(exc), "error_code": exc.code}
+    if not is_local_machine(run.machine_id):
+        return await cancel_remote_run(
+            run, db, signal_name=signal_name, close_terminal=close_terminal
+        )
+
     session_id = run.child_session_id
     session_manager = SessionManager(db) if session_id else None
     terminal_close_result: dict[str, Any] | None = None
