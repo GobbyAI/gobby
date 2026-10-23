@@ -162,6 +162,19 @@ export function terminalReleaseControlMessage(
   });
 }
 
+export function terminalFocusMessage(
+  terminalId: string,
+  attachmentId: string,
+  focused: boolean,
+): string {
+  return JSON.stringify({
+    type: "terminal_focus",
+    terminal_id: terminalId,
+    attachment_id: attachmentId,
+    focused,
+  });
+}
+
 /**
  * Input and paste differ only in the verb and the payload field, and a retry
  * has to rebuild the identical frame, so both go through one builder.

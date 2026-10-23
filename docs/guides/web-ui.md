@@ -47,6 +47,13 @@ Project selection comes from the shell. A hub-visible project does not imply
 that the current machine has its checkout; honor checkout-required messages
 before attempting filesystem or source-control operations.
 
+A focused web terminal pane holds operator messages addressed to its seat
+until **Terminal focus hold** seconds pass without input in the pane, or focus
+leaves the pane, after which the daemon clears the composer and delivers. The
+hold survives a window switch to another application. Set the hold to `0` to
+disable the timeout; the hold then ends only when focus leaves the pane. The
+setting is per browser, under Settings → Appearance.
+
 ## Web Chat
 
 Chat combines HTTP session reads with WebSocket delivery. Its main owners are

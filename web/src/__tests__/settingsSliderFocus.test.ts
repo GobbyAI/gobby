@@ -25,6 +25,7 @@ function renderAppearanceSlider(): HTMLElement {
     density: "comfortable",
     tickerDirection: "left",
     tickerSpeed: "normal",
+    focusHoldSeconds: 300,
   };
   const clientSettings: UseSettingsReturn = {
     settings,
@@ -41,6 +42,7 @@ function renderAppearanceSlider(): HTMLElement {
     updateTickerSpeed: vi.fn(),
     updatePlanPendingVariant: vi.fn(),
     updateDensity: vi.fn(),
+    updateFocusHoldSeconds: vi.fn(),
     resetSettings: vi.fn(),
   };
   const context: SettingsSectionContextValue = {
