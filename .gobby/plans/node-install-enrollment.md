@@ -1940,6 +1940,13 @@ none has run yet. Each must hold on `0.5.0` before #24657 closes:
   install mode are rejected for 1.0 and deferred to #24839. Finding NIE-D2-02
   expands 5.1's existing acceptance items; M1 therefore requires fresh adversary
   derivation.
+- 2026-10-23: Consensus between Plan Writer gobby#17373 and Plan Adversary
+  gobby#17379 on the #24838 narrative at e042b658178d512e17baffcf41a9cf0f25d7cb1d.
+  NIE-D2-01 is closed by the Option A sequence: re-sign pinned member checksum
+  assets with the new key, publish the replacement gdaemon release, then reinstall
+  nodes over HTTPS. NIE-D2-02 is closed by the expanded 5.1.1 and 5.1.2 acceptance
+  obligations. No open decisions or other findings remain; M1 stays untouched until
+  the adversary derives it from these consensus bytes.
 
 ## M1 Task Manifest
 `kind: manifest`
