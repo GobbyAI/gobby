@@ -161,3 +161,37 @@ Nothing was selected, no login screen was reached, and no credentials were enter
 **Rule windows — Orchestrator-reported UTC timestamps:** attempt 1 OFF `03:24:18Z`, ON `03:24:35Z`; attempt 2 OFF approximately `03:25Z`, ON `03:27:25Z`. The Orchestrator reports `block-direct-provider-launch` enabled since `03:27:25Z`. These are coordination records from `gobby#17281`, not independently inspected rule-state measurements.
 
 **Conclusion:** this Gobby-managed seat could not complete the cloud probe: the default launch guard blocked it, and the temporary exceptions exposed the TTY requirement and incomplete first-run onboarding. The seat did not reach login, so its authentication state remains untested. The Orchestrator's next step is Josh running the supplied prompt in his own logged-in TTY. No hosted Claude measurement was obtained; documentation-based provider verdicts above remain unchanged.
+
+## Attempt 3 — Josh's logged-in TTY, first-hand cloud result
+
+Josh ran the probe prompt above in his own logged-in terminal on 2026-10-23. The CLI created cloud session `session_014irc2dM89WLaCrMd1Mz18i`. It warned that local 0.5.0 was 39 commits ahead of origin/0.5.0, so the session ran on the pushed tree (`af9d6bad36`) on branch `claude/gobby-cloud-feasibility-jlbsef`. The Orchestrator read the finished result from the session page in Josh's Chrome. `block-direct-provider-launch` stayed enabled, nothing was teleported, and no follow-up message was sent. Source: the cloud session's final turn plus the session page's environment panel. The session also saved its table at `/tmp/claude-0/-home-user-gobby/04fabe7b-bd34-5f4c-b57d-b11c0538c532/scratchpad/gobby-24826-probe.md` inside the VM.
+
+**Observed first-hand by the cloud session:**
+
+| Item | Result |
+|---|---|
+| Cloud host | PID 1 is `/process_api --firecracker-init … --block-local-connections`. Kernel `6.18.44-fc-v153`, hostname `vm`, no DMI data, `systemd-detect-virt` reports `docker`, IP `192.0.2.2`. Runs as root, `HOME=/root`. |
+| OS / CPU | Ubuntu 24.04.5 LTS, x86_64, 4 vCPU (Intel Xeon @ 2.80GHz, hypervisor flag set) |
+| RAM / disk | 15 GiB RAM, no swap. `/` is a 252G device, 8.7G used, 30G available (a per-session allowance) |
+| Uptime | 0 min at first probe. PID 1 started 14:05:51Z. boot_id `3e2bdd58-0d5b-4cfa-af87-15bb7ae7383e` |
+| Repo `.claude/settings.json` | Absent; no `.claude/` directory at all |
+| User-level hooks | `~/.claude/settings*.json` and managed settings absent. `~/.claude/launcher-settings.json` registers only Stop → `~/.claude/stop-hook-git-check.sh` |
+| Hooks seen firing | None during the turn. Stop can fire only at turn end |
+| ghook | Not on PATH; `~/.gobby/bin/ghook` and `~/.gobby` absent |
+| MCP servers | `github`, `claude-code-remote`. No `gobby-*` servers |
+| HEAD github.com | 400, body "Request path could not be canonicalized." with a Claude Code docs link: Anthropic's GitHub egress proxy answered, not GitHub |
+| HEAD pypi.org | 200 |
+| HEAD crates.io | 403, header `via: 1.1 varnish` |
+| HEAD 127.0.0.1:60887/health | `curl: (7) Failed to connect to 127.0.0.1 port 60887 after 0 ms: Couldn't connect to server` (the VM's own loopback) |
+| Markers | `/tmp/gobby-24826-marker.txt` and `/root/gobby-24826-marker.txt`, created 14:07:19Z |
+| Background process | PID 464, `timeout 120 sleep 1000` |
+| Listener | PID 465, `python3 -m http.server` on 127.0.0.1:43443; HTTP 200 at start and from a separate tool call at 14:07:28Z |
+| Timeout | At 14:09:22Z both PIDs were gone and port 43443 refused; markers still present |
+
+**Documentation and inference (not observed):** pypi.org is listed under the proxy's `noProxy`, so it probably went direct. The crates.io 403 is probably crates.io refusing a HEAD without a User-Agent (guess). Home-host route: unknown. Follow-up mechanism: another user message to the same session; scheduled tasks can also wake a session but none was created. Session end: per environment docs, the container is reclaimed after inactivity or session end; no pause or end was observed.
+
+**Deviations reported by the session:** it also created `/tmp/gobby-24826-www/index.html` and `/tmp/gobby-24826-http.log`, made one ~300-byte unauthenticated GET to github.com, and read the proxy's `/__agentproxy/status`. It printed no credentials, settings secrets or environment variables, and committed, pushed and installed nothing.
+
+**Untested:** cross-turn persistence. A follow-up message that rechecks the markers and boot_id would distinguish a resumed VM (same boot_id, markers present) from a fresh one. Sending it is Josh's call.
+
+**What this changes:** the first-hand result confirms the documentation-based Claude verdict. A cloud session starts with no Gobby hooks, binary or MCP server; loopback is the VM's own; egress goes through an Anthropic proxy. Background processes and a loopback listener run within a turn. Running a node there would need an install step and an outbound route to a hub, both still gated on hub-node (memory 29aaa99b).
