@@ -172,7 +172,8 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 """SELECT ar.id FROM agent_runs ar
                 JOIN sessions s ON s.id = ar.child_session_id AND s.agent_run_id = ar.id
                 JOIN sessions owner ON owner.id = %s
-                WHERE ar.child_session_id = %s AND ar.agent_name = 'code-reviewer'
+                WHERE ar.child_session_id = %s
+                  AND ar.agent_name IN ('code-reviewer', 'security-reviewer')
                   AND ar.status = 'running' AND s.project_id = %s
                   AND owner.project_id = s.project_id AND owner.machine_id = s.machine_id
                 LIMIT 1""",
@@ -184,8 +185,9 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 or reviewer is None
             ):
                 return task_error(
-                    "Review assignments require the caller's running code-reviewer seat "
-                    "and an open task claimed on the same project and machine.",
+                    "Review assignments require the caller's running code-reviewer or "
+                    "security-reviewer seat and an open task claimed on the same project "
+                    "and machine.",
                     TaskToolErrorCode.TASK_CLAIM_CONFLICT,
                 )
 
@@ -234,7 +236,7 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 "action": {
                     "type": "string",
                     "description": "Relationship type (worked_on, discovered, mentioned, closed, "
-                    "reviewing). Reviewing replaces the caller code-reviewer seat's assignment.",
+                    "reviewing). Reviewing replaces the caller reviewer seat's assignment.",
                     "default": "worked_on",
                 },
             },

@@ -139,6 +139,85 @@ async fn focus_claims_a_free_pane_in_one_gesture() {
     );
 }
 
+/// Focus reports (`terminal_focus`) sent so far, as their `focused` flags.
+fn focus_reports(mock: &MockDaemon) -> Vec<bool> {
+    websocket_requests(mock, "terminal_focus")
+        .iter()
+        .filter_map(|body| body.get("focused").and_then(Value::as_bool))
+        .collect()
+}
+
+/// Waits up to `SETTLE` for `seen` to reach `count`. It does not fail on its
+/// own, so the assertion after the loop names what the loop actually sent.
+const SETTLE: Duration = Duration::from_secs(3);
+
+async fn settle(mut seen: impl FnMut() -> usize, count: usize) {
+    let _ = timeout(SETTLE, async {
+        while seen() < count {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+}
+
+/// Idle expiry (#24849): a granted take reports the pane focused, the hold
+/// reports it unfocused after `focus_hold_seconds` pass with no activity, and
+/// a keystroke reports it focused again. The lease is kept throughout, so the
+/// take is never repeated and never released.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn idle_expiry_reports_focus_lost_and_activity_restores_it() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = single_terminal_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    chrome.prefs.focus_hold_seconds = 1;
+    let (input_tx, input_rx) = mpsc::channel(256);
+
+    let driver = async {
+        settle(|| focus_reports(&mock).len(), 1).await;
+        // No input for longer than the one-second hold.
+        settle(|| focus_reports(&mock).len(), 2).await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        settle(|| focus_reports(&mock).len(), 3).await;
+        settle(|| websocket_requests(&mock, "terminal_input").len(), 1).await;
+        // Closing the input tears every lease down, so count releases first.
+        let released_while_running = websocket_requests(&mock, "terminal_release_control").len();
+        drop(input_tx);
+        released_while_running
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, released_while_running) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+
+    // A late drop of input can append one more unfocus after the last key, so
+    // only the first three reports are the contract.
+    let reports = focus_reports(&mock);
+    assert!(
+        reports.len() >= 3 && reports[..3] == [true, false, true],
+        "focus is reported, expires after the hold, and returns on activity: {reports:?}"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_take_control").len(),
+        1,
+        "the expiry keeps the grant; focus does not ask again"
+    );
+    assert_eq!(
+        released_while_running, 0,
+        "an idle expiry does not release the lease"
+    );
+}
+
 /// A daemon that refuses the take outright is the exceptional state that keeps
 /// take-back: the pane says who holds it instead of typing into nothing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

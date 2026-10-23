@@ -1,7 +1,5 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Context as _;
@@ -10,9 +8,10 @@ use postgres::Client;
 use crate::config::{Context, ServiceConfigSelection};
 use crate::db;
 use crate::graph::code_graph;
-use crate::index::hasher;
 use crate::index_lock::{IndexLockPolicy, lease_project_lock};
 use crate::vector::code_symbols;
+
+mod history;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ContentGcCandidate {
@@ -114,39 +113,52 @@ pub(super) fn discover_content_gc(
         &[&machine_id, &retention_days, &project_filter],
     )?;
 
-    // Recent-history lookups are one git batch per repository root: every blob
-    // reachable from a commit inside the retention window is hashed once, so
-    // the cost is bounded by that history rather than by the candidate count
-    // (two git subprocesses per candidate path timed out the daemon's prune on
-    // a 4,800-path backlog, #21085).
-    let mut history_cache: HashMap<PathBuf, Option<HashSet<String>>> = HashMap::new();
+    // Recent-history lookups are one git batch per repository root: every
+    // candidate path of a root is checked against that root's history in a
+    // single call, so the cost is bounded by that history rather than by the
+    // candidate count (two git subprocesses per candidate path timed out the
+    // daemon's prune on a 4,800-path backlog, #21085).
+    let mut paths_by_root: HashMap<PathBuf, BTreeSet<String>> = HashMap::new();
+    for row in &rows {
+        let root_path = PathBuf::from(row.try_get::<_, String>("root_path")?);
+        paths_by_root
+            .entry(root_path)
+            .or_default()
+            .insert(row.try_get("file_path")?);
+    }
+    let mut protected_by_root: HashMap<PathBuf, Option<HashSet<(String, String)>>> = HashMap::new();
+    for (root_path, paths) in &paths_by_root {
+        let looked_up = match history::recent_path_hashes(root_path, retention_days, paths) {
+            Ok(protected) => Some(protected),
+            Err(error) => {
+                log::warn!(
+                    "retaining {} code-index paths because recent git history in {} could not be inspected: {error:#}",
+                    paths.len(),
+                    root_path.display(),
+                );
+                None
+            }
+        };
+        protected_by_root.insert(root_path.clone(), looked_up);
+    }
     let mut candidates = Vec::new();
     for row in rows {
         let root_path = PathBuf::from(row.try_get::<_, String>("root_path")?);
-        let content_hash: String = row.try_get("content_hash")?;
-        if !history_cache.contains_key(&root_path) {
-            let looked_up = match recent_content_hashes_in_git_history(&root_path, retention_days) {
-                Ok(hashes) => Some(hashes),
-                Err(error) => {
-                    log::warn!(
-                        "retaining code-index content for project {} because recent git history in {} could not be inspected: {error:#}",
-                        row.try_get::<_, String>("project_id")?,
-                        root_path.display(),
-                    );
-                    None
-                }
-            };
-            history_cache.insert(root_path.clone(), looked_up);
-        }
-        match history_cache.get(&root_path) {
-            Some(Some(hashes)) if !hashes.contains(&content_hash) => {}
-            // Protected by recent git history, or history unavailable: retain.
+        let version = (
+            row.try_get::<_, String>("file_path")?,
+            row.try_get::<_, String>("content_hash")?,
+        );
+        match protected_by_root.get(&root_path) {
+            Some(Some(protected)) if !protected.contains(&version) => {}
+            // Protected by recent git history at this path, or history
+            // unavailable: retain.
             _ => continue,
         }
+        let (file_path, content_hash) = version;
         candidates.push(ContentGcCandidate {
             id: row.try_get("id")?,
             project_id: row.try_get("project_id")?,
-            file_path: row.try_get("file_path")?,
+            file_path,
             content_hash,
             symbol_ids: row.try_get("symbol_ids")?,
             has_graph_facts: row.try_get("has_graph_facts")?,
@@ -383,135 +395,6 @@ pub(super) fn delete_unreferenced_content_row(
         reset_candidate_sync_flags(conn, indexed_file_id)?;
     }
     Ok(deleted > 0)
-}
-
-/// Content hashes of every blob reachable from a commit inside the retention
-/// window, across all refs of the repository at `root_path`.
-///
-/// One `rev-list` plus one filtered `cat-file` batch per root, so the cost is
-/// bounded by the window's history rather than by the number of candidate
-/// paths. `--objects` lists a blob once, under the first path it was reached
-/// through, so protection is by content: recent content anywhere in the
-/// repository is retained, a superset of a per-path rule.
-fn recent_content_hashes_in_git_history(
-    root_path: &Path,
-    retention_days: i32,
-) -> anyhow::Result<HashSet<String>> {
-    let since = format!("{retention_days}.days");
-    let objects = Command::new("git")
-        .arg("-C")
-        .arg(root_path)
-        .args([
-            "rev-list",
-            "--objects",
-            "--filter=object:type=blob",
-            "--all",
-            "--since",
-            &since,
-        ])
-        .output()
-        .with_context(|| format!("run git rev-list in {}", root_path.display()))?;
-    if !objects.status.success() {
-        anyhow::bail!(
-            "git rev-list failed: {}",
-            String::from_utf8_lossy(&objects.stderr).trim()
-        );
-    }
-
-    // Commits are listed bare and root trees with an empty path; both are
-    // skipped. The type filter still lists annotated tags under their tag
-    // name, which the response parser below discards by type. Each request
-    // carries the path whose filters apply when the content is read back.
-    let mut requests = Vec::new();
-    for line in String::from_utf8(objects.stdout)?.lines() {
-        if let Some((object_id, path)) = line.split_once(' ')
-            && !path.is_empty()
-        {
-            requests.push((object_id.to_string(), path.to_string()));
-        }
-    }
-    if requests.is_empty() {
-        return Ok(HashSet::new());
-    }
-
-    let mut child = Command::new("git")
-        .arg("-C")
-        .arg(root_path)
-        .args(["cat-file", "--batch", "--filters"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("start filtered git blob batch in {}", root_path.display()))?;
-    let mut stdin = child.stdin.take().context("open git cat-file stdin")?;
-    let request_input = requests
-        .iter()
-        .map(|(object_id, path)| format!("{object_id} {path}\n"))
-        .collect::<String>();
-    let writer = std::thread::spawn(move || stdin.write_all(request_input.as_bytes()));
-    let stdout = child.stdout.take().context("open git cat-file stdout")?;
-    let mut reader = BufReader::new(stdout);
-    // One response per request line, in order, until the batch ends: a
-    // `<request> missing` line has no body; every other response is
-    // `<oid> <type> <size>` followed by the body and a newline. Only blobs are
-    // hashed; the body of any other type is discarded.
-    let parsed = (|| -> anyhow::Result<HashSet<String>> {
-        let mut hashes = HashSet::new();
-        let mut header = String::new();
-        loop {
-            header.clear();
-            if reader.read_line(&mut header)? == 0 {
-                break;
-            }
-            let fields = header.split_whitespace().collect::<Vec<_>>();
-            if fields.last() == Some(&"missing") {
-                continue;
-            }
-            let [object_id, object_type, size] = fields[..] else {
-                anyhow::bail!("unexpected git cat-file response: {header:?}");
-            };
-            let size = size
-                .parse::<usize>()
-                .with_context(|| format!("parse git object size for {object_id}"))?;
-            let mut body = vec![0; size];
-            reader.read_exact(&mut body)?;
-            let mut delimiter = [0_u8; 1];
-            reader.read_exact(&mut delimiter)?;
-            if delimiter[0] != b'\n' {
-                anyhow::bail!(
-                    "git cat-file object {object_id} lacked a trailing newline delimiter"
-                );
-            }
-            if object_type == "blob" {
-                hashes.insert(hasher::content_hash(&body));
-            }
-        }
-        Ok(hashes)
-    })();
-    let hashes = match parsed {
-        Ok(hashes) => hashes,
-        Err(error) => {
-            drop(reader);
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = writer.join();
-            return Err(error);
-        }
-    };
-    writer
-        .join()
-        .map_err(|_| anyhow::anyhow!("git cat-file input writer panicked"))?
-        .context("write git cat-file batch input")?;
-    let output = child
-        .wait_with_output()
-        .context("wait for git cat-file batch")?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "git cat-file failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(hashes)
 }
 
 #[cfg(test)]

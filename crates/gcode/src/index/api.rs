@@ -9,7 +9,8 @@ pub use calls::upsert_calls;
 
 pub use crate::index::indexer::{
     IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest,
-    UnsupportedFileType, index_files, index_files_for_freshness, project_changed_since,
+    UnsupportedFileType, explicit_file_changed, index_files, index_files_for_freshness,
+    project_changed_since,
 };
 
 use super::checkout_fence;

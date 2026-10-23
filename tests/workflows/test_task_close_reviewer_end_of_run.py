@@ -143,7 +143,8 @@ async def test_reviewer_ends_run_after_verdict_within_step_allowance(
     assert END_OF_RUN_GATES.isdisjoint(active)
     # Every MCP call this end of run makes is named in the review step allowance.
     allowance = _review_step_mcp_allowance(db)
-    assert {"gobby-tasks:submit_close_review", "gobby-agents:end_agent_run"} <= allowance
+    assert "gobby-agents:end_agent_run" in allowance
+    assert "gobby-tasks:submit_close_review" not in allowance
 
     instances = _start_review_step(db, session_id)
     engine = RuleEngine(db)
@@ -161,25 +162,6 @@ async def test_reviewer_ends_run_after_verdict_within_step_allowance(
 
     async def run(event: HookEvent) -> HookResponse:
         return await engine.evaluate(event, session_id=session_id, variables=variables)
-
-    verdict_args = {"review_id": "c1f4c3ba", "verdict": {"status": "valid"}}
-    _assert_allowed(
-        await run(_schema_lookup(session_id, "gobby-tasks", "submit_close_review")),
-        "submit_close_review schema",
-    )
-    _assert_allowed(
-        await run(_call(session_id, "gobby-tasks", "submit_close_review", verdict_args)),
-        "submit_close_review",
-    )
-    await run(
-        _call(
-            session_id,
-            "gobby-tasks",
-            "submit_close_review",
-            verdict_args,
-            {"success": True, "result": {"status": "closed"}},
-        )
-    )
 
     # The reviewer's own enforcement is live: a lifecycle mutation stays denied.
     denied = await run(_call(session_id, "gobby-tasks", "close_task", {"task_id": "#7"}))

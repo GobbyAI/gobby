@@ -35,6 +35,7 @@ from gobby.terminals.runtime import (
     WriteOutcome,
 )
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import require_machine_id
 
 _SOCKET = "/private/tmp/tmux-501/default"
 _FAKE_SERVER_PID = 4242
@@ -47,6 +48,7 @@ def make_memory_terminal(
     backend: Literal["tmux", "native"] = "tmux",
     unresolved_writes: Mapping[str, Any] | None = None,
     session_name: str | None = None,
+    machine_id: str | None = None,
 ) -> Terminal:
     """Build a live Terminal dataclass without touching the database."""
     now = datetime.now(UTC)
@@ -64,7 +66,7 @@ def make_memory_terminal(
         backend=backend,
         ownership="external" if backend == "tmux" else "gobby",
         state="live",
-        machine_id=str(uuid4()),
+        machine_id=machine_id or require_machine_id(),
         project_id=str(uuid4()),
         created_at=now,
         updated_at=now,
@@ -782,6 +784,32 @@ class FakeRuntime:
 
 def uuid_of(terminal: Terminal) -> UUID:
     return UUID(terminal.id)
+
+
+class MachineOwnerRows:
+    """Machines table that names each machine's owner and counts ownership reads."""
+
+    def __init__(self, owners: Mapping[str, str], error: Exception | None = None) -> None:
+        self.owners = dict(owners)
+        self.error = error
+        self.calls = 0
+
+    def fetchone(self, _sql: str, params: tuple[object, ...]) -> dict[str, object] | None:
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        machine_id = str(params[0])
+        owner = self.owners.get(machine_id)
+        if owner is None:
+            return None
+        now = datetime.now(UTC)
+        return {
+            "id": machine_id,
+            "owner_user_id": owner,
+            "first_seen": now,
+            "last_seen": now,
+            "ref": 1,
+        }
 
 
 def runtime_registry(*runtimes: Any) -> TerminalRuntimeRegistry:

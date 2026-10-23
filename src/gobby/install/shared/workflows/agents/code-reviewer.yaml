@@ -299,8 +299,8 @@ step_workflow:
       # the unit. Fields split on single spaces: EVENT and TASK must be the first
       # two and match exactly, and TASK_TITLE and NOTE values are never read as
       # fields. Prose, title words, EVENT=LAND_PENDING and a message that does
-      # not start with the line keep the unit open, as does a bounce whose title
-      # contains ' SHA='.
+      # not start with the line keep the unit open. A bounce whose title contains
+      # ' SHA=' is refused at send, so it never reaches this receiver.
       # Only a stored incoming coordinator withdrawal ends review or verdict.
       # Review-only completion requires its explicit LANDING=NOT_REQUIRED field.
       # Latch the matching action before clearing task/SHA, because handler

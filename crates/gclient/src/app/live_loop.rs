@@ -39,6 +39,7 @@ pub(super) mod arrange;
 mod control;
 mod daemon_ops;
 mod focus_hints;
+mod focus_hold;
 pub(super) mod host_recovery;
 pub(super) mod jobs;
 mod jobs_apply;
@@ -71,6 +72,7 @@ use control::{
     start_live_control, UNCONFIRMED_INPUT,
 };
 use focus_hints::{offer_focus_hints, FocusMemo};
+use focus_hold::{is_activity, FocusHold};
 use jobs::{issue_response, stage_live_geometry, LoopJobs};
 use jobs_apply::apply_job_outcome;
 use modal_input::{route_modal_key, ModalOutcome};
@@ -172,6 +174,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut first_frame_pending = false;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut relist_job: Option<RelistFuture> = None;
+    let mut focus_hold = FocusHold::new(std::time::Instant::now());
     let mut recoveries: FuturesUnordered<RecoveryFuture> = FuturesUnordered::new();
     let mut host_recoveries = HostRecoveries::default();
     // Control replies come back on a channel rather than a single in-flight
@@ -241,6 +244,9 @@ pub async fn run_live_loop<B: Backend>(
                     workspace.latch_exit("terminal input closed");
                     continue;
                 };
+                if is_activity(&event) {
+                    focus_hold.note_activity(std::time::Instant::now());
+                }
                 match route_live_input(workspace, chrome, &mut jobs, &event, &mut prefix_armed).await {
                     Ok(true) => {
                         workspace.latch_exit("quit");
@@ -342,7 +348,8 @@ pub async fn run_live_loop<B: Backend>(
                 match event {
                     Ok(event) => {
                         if let Err(error) =
-                            handle_live_event(workspace, chrome, &mut supervisor, event).await
+                            handle_live_event(workspace, chrome, &mut supervisor, &mut jobs, event)
+                                .await
                         {
                             begin_reconnect(workspace, chrome, &mut supervisor, &daemon, error);
                         }
@@ -548,6 +555,16 @@ pub async fn run_live_loop<B: Backend>(
                 chrome.connection.now = std::time::Instant::now();
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 chrome.expire_toasts(std::time::Instant::now());
+                if let Some(message) = focus_hold.sync(
+                    workspace,
+                    chrome,
+                    std::time::Instant::now(),
+                    chrome.prefs.focus_hold_seconds,
+                ) {
+                    if daemon.notify(message).await.is_err() {
+                        focus_hold.unsent();
+                    }
+                }
                 workspace.submit_expired_detaches(&mut supervisor, Instant::now());
                 // A due attach runs beside the loop; the recoveries branch
                 // above applies it (#22747).

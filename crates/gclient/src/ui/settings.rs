@@ -189,6 +189,9 @@ pub struct ClientPrefs {
     /// Draw Nerd Font symbols (the pane's sandbox lock); `false` spells them
     /// in plain text for a font without them.
     pub nerd_glyphs: bool,
+    /// Seconds without operator activity in a focused pane before gclient
+    /// reports it unfocused; `0` never expires (decision 17).
+    pub focus_hold_seconds: u64,
 }
 
 impl Default for ClientPrefs {
@@ -215,6 +218,7 @@ impl Default for ClientPrefs {
             status_left: vec!["focus".to_string()],
             status_right: Vec::new(),
             nerd_glyphs: true,
+            focus_hold_seconds: 300,
         }
     }
 }

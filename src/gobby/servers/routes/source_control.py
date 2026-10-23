@@ -8,7 +8,11 @@ import subprocess  # nosec B404 # subprocess needed for git operations
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import JSONResponse
 
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.node_client import NodeCommandError, node_command_client
+from gobby.hub.remote_workspaces import list_remote, machine_refusal
 from gobby.servers.routes.source_control_git import (
     _GIT_TTL,
     _STATUS_TTL,
@@ -38,6 +42,7 @@ from gobby.servers.routes.source_control_git import (
 from gobby.servers.routes.source_control_worktrees import (
     create_source_control_worktrees_router,
 )
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -63,6 +68,57 @@ def _require_git_success(result: subprocess.CompletedProcess[str], operation: st
     raise HTTPException(503, f"{operation} unavailable: {detail}")
 
 
+_NULL_GIT: dict[str, Any] = {
+    "current_branch": None,
+    "branch_count": 0,
+    "ahead": None,
+    "behind": None,
+}
+_NODE_STATUS_TIMEOUT_MS = 15_000
+
+
+async def _node_status(
+    server: HTTPServer, machine_id: str, project_id: str | None
+) -> dict[str, Any]:
+    """Status of a node's checkout, answered only while that node is connected."""
+    if project_id is None:
+        raise HTTPException(422, "project_id_required")
+    db = _get_project_manager(server).db
+    checkout = await server.run_db(LocalProjectCheckoutManager(db).get, machine_id, project_id)
+    if checkout is None:
+        raise HTTPException(404, "checkout_unresolved")
+
+    cache_key = f"remote-status:{machine_id}:{project_id}"
+    client = node_command_client()
+    git: dict[str, Any] = _NULL_GIT
+    if not await client.is_connected(machine_id):
+        _delete_cached(cache_key)
+    elif (cached := _get_cached(cache_key, _STATUS_TTL)) is not None:
+        git = cached
+    else:
+        try:
+            reply = await client.send(
+                machine_id,
+                "checkout.status",
+                {"project_id": project_id, "root_path": checkout.root_path},
+                timeout_ms=_NODE_STATUS_TIMEOUT_MS,
+            )
+        except NodeCommandError as exc:
+            logger.debug("Checkout status unavailable on %s: %s", machine_id, exc.code)
+        else:
+            git = {key: reply.get(key, _NULL_GIT[key]) for key in _NULL_GIT}
+            _set_cached(cache_key, git)
+
+    worktrees = await server.run_db(list_remote, db, "worktree", machine_id, project_id=project_id)
+    clones = await server.run_db(list_remote, db, "clone", machine_id, project_id=project_id)
+    return {
+        **git,
+        "worktree_count": len(worktrees),
+        "clone_count": len(clones),
+        "repo_path": checkout.root_path,
+    }
+
+
 def create_source_control_router(server: HTTPServer) -> APIRouter:
     """Create the source control API router."""
     router = APIRouter(prefix="/api/source-control", tags=["source-control"])
@@ -70,9 +126,16 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         create_source_control_worktrees_router(server, validate_git_ref=_validate_git_ref)
     )
 
-    @router.get("/status")
-    async def get_status(project_id: str | None = None) -> dict[str, Any]:
-        """Get source control status overview."""
+    @router.get("/status", response_model=None)
+    async def get_status(
+        project_id: str | None = None, machine_id: str | None = None
+    ) -> dict[str, Any] | JSONResponse:
+        """Get source control status overview for this machine, or for a node's checkout."""
+        refusal = await server.run_db(machine_refusal, machine_id)
+        if refusal is not None:
+            return JSONResponse(status_code=403, content=refusal)
+        if machine_id is not None and not is_local_machine(machine_id):
+            return await _node_status(server, machine_id, project_id)
         repo_path = await server.run_db(_resolve_project, server, project_id)
 
         current_branch = None

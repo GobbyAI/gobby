@@ -302,7 +302,7 @@ impl ContentChunk {
 }
 
 /// Import relationship extracted from AST.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportRelation {
     pub file_path: String,
     pub module_name: String,
@@ -337,7 +337,7 @@ impl CallTargetKind {
 }
 
 /// Call relationship extracted from AST.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallRelation {
     pub caller_symbol_id: String,
     pub callee_symbol_id: Option<String>,
@@ -499,7 +499,7 @@ impl HeritageKind {
 }
 
 /// Inheritance relationship extracted from AST. Orientation is derived → base.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InheritanceRelation {
     pub source_symbol_id: Option<String>,
     pub source_name: String,

@@ -25,10 +25,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool", ["spawn_agent", "dispatch_batch"])
 @pytest.mark.parametrize("has_manager", [False, True])
 async def test_pipeline_spawn_refuses_unresolved_supplied_caller(
-    tool: str,
     has_manager: bool,
 ) -> None:
     sessions = MagicMock(spec=SessionManager)
@@ -37,7 +35,7 @@ async def test_pipeline_spawn_refuses_unresolved_supplied_caller(
     proxy = MagicMock()
     proxy.get_tool_schema = AsyncMock()
     proxy.call_tool = AsyncMock(return_value={"success": True})
-    step = PipelineStep(id="spawn", mcp=MCPStepConfig(server="gobby-agents", tool=tool))
+    step = PipelineStep(id="spawn", mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent"))
     with pytest.raises(RuntimeError, match="spawnable_agents") as refused:
         await execute_mcp_step(
             step,

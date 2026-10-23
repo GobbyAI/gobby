@@ -708,6 +708,369 @@ fn focus_hints(mock: &MockDaemon) -> Vec<Value> {
         .collect()
 }
 
+const WORKSPACE_ID: &str = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const DAEMON_EPOCH: &str = "00000000-0000-4000-8000-000000000000";
+
+fn roster_items(ids: &[&str]) -> Value {
+    let items: Vec<Value> = ids
+        .iter()
+        .map(|id| json!({"terminal_id": id, "backend": "native", "state": "live"}))
+        .collect();
+    json!({
+        "items": items,
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+    })
+}
+
+fn pane_added_event(tab: &str, first: &str, added: &str, terminal: &str, seq: u64) -> Value {
+    json!({
+        "type": "workspace_event",
+        "kind": "pane.added",
+        "workspace_id": WORKSPACE_ID,
+        "project_id": "project-1",
+        "workspace": null,
+        "tabs": [{
+            "id": tab,
+            "workspace_id": WORKSPACE_ID,
+            "ref": 1,
+            "title": null,
+            "project_id": "project-1",
+            "worktree_id": null,
+            "position": 0,
+            "focused_pane_id": first,
+            "layout": {
+                "kind": "split",
+                "axis": "horizontal",
+                "ratio": 0.5,
+                "children": [
+                    {"kind": "pane", "pane_id": first},
+                    {"kind": "pane", "pane_id": added},
+                ],
+            },
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }],
+        "panes": [{
+            "id": added,
+            "tab_id": tab,
+            "ref": 2,
+            "terminal_id": terminal,
+            "owns_terminal": true,
+            "label": null,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }],
+        "daemon_epoch": DAEMON_EPOCH,
+        "seq": seq,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    })
+}
+
+fn pane_removed_event(tab: &str, first: &str, removed: &str, terminal: &str, seq: u64) -> Value {
+    json!({
+        "type": "workspace_event",
+        "kind": "pane.removed",
+        "workspace_id": WORKSPACE_ID,
+        "project_id": "project-1",
+        "workspace": null,
+        "tabs": [{
+            "id": tab,
+            "workspace_id": WORKSPACE_ID,
+            "ref": 1,
+            "title": null,
+            "project_id": "project-1",
+            "worktree_id": null,
+            "position": 0,
+            "focused_pane_id": first,
+            "layout": {"kind": "pane", "pane_id": first},
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }],
+        "panes": [{
+            "id": removed,
+            "tab_id": tab,
+            "ref": 2,
+            "terminal_id": terminal,
+            "owns_terminal": true,
+            "label": null,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }],
+        "daemon_epoch": DAEMON_EPOCH,
+        "seq": seq,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+    })
+}
+
+fn pane_renamed_event(
+    tab: &str,
+    first: &str,
+    pane: &str,
+    terminal: &str,
+    label: &str,
+    seq: u64,
+) -> Value {
+    let mut event = pane_added_event(tab, first, pane, terminal, seq);
+    event["kind"] = json!("pane.renamed");
+    event["tabs"] = json!([]);
+    event["panes"][0]["label"] = json!(label);
+    event
+}
+
+fn terminal_row_requests(mock: &MockDaemon, terminal_id: &str) -> usize {
+    let target = format!("/api/terminals/{terminal_id}");
+    mock.requests()
+        .iter()
+        .filter(|request| request.method == "GET" && request.target == target)
+        .count()
+}
+
+/// A live workspace whose one pane shows `terminal-a`. Returns the workspace,
+/// the daemon tab and that pane, so a test can add a pane for an unserved
+/// terminal to the tab.
+async fn on_demand_workspace(mock: &MockDaemon) -> (Workspace<LiveDaemon>, String, String) {
+    for _ in 0..2 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    let seeded = mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    let (tab_id, panes) = seeded[0].clone();
+    workspace.select_project("project-1");
+    (workspace, tab_id, panes[0].clone())
+}
+
+fn warnings_for(logs: &Arc<Mutex<Vec<u8>>>, terminal_id: &str) -> Vec<String> {
+    let text = String::from_utf8(logs.lock().expect("captured logs").clone()).expect("UTF-8 logs");
+    text.lines()
+        .filter(|line| line.contains("WARN") && line.contains(terminal_id))
+        .map(str::to_owned)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_held_open_unresolved_terminal_job_is_coalesced_and_nonblocking() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, tab_id, first) = on_demand_workspace(&mock).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        let release = mock.enqueue_held(
+            "GET",
+            "/api/terminals/terminal-late",
+            200,
+            json!({"terminal_id": "terminal-late", "backend": "native", "state": "live"}),
+        );
+        mock.send_event_and_wait(pane_added_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            1,
+        ))
+        .await;
+        wait_until("the held row request", || {
+            terminal_row_requests(&mock, "terminal-late") == 1
+        })
+        .await;
+        // The held read leaves frames, ticks and typing running.
+        probe.assert_live("terminal-a", "terminal-a", 'k').await;
+        // A repeat event joins the held open instead of reading the row again.
+        mock.send_event_and_wait(pane_renamed_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            "late",
+            2,
+        ))
+        .await;
+        probe.assert_live("terminal-a", "terminal-a", 'm').await;
+        assert_eq!(
+            terminal_row_requests(&mock, "terminal-late"),
+            1,
+            "the repeat event coalesces onto the held read"
+        );
+        release.notify_one();
+        wait_until("the released terminal attaches", || {
+            websocket_requests(&mock, "terminal_attach")
+                .iter()
+                .any(|request| request.get("terminal_id") == Some(&json!("terminal-late")))
+        })
+        .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        terminal_row_requests(&mock, "terminal-late"),
+        1,
+        "one read opens the terminal"
+    );
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_some(),
+        "the released read installs the terminal's pane"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn an_unresolved_terminal_open_failure_is_logged_with_elapsed_time() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, tab_id, first) = on_demand_workspace(&mock).await;
+    let (backend, _draws, _frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let (_guard, logs) = capture_logs();
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        // No row is served for the terminal, so its open fails.
+        mock.send_event_and_wait(pane_added_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            1,
+        ))
+        .await;
+        wait_until("the failed row request", || {
+            terminal_row_requests(&mock, "terminal-late") == 1
+        })
+        .await;
+        let _ = tokio::time::timeout(LIVENESS_DEADLINE, async {
+            while warnings_for(&logs, "terminal-late").is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let warned = warnings_for(&logs, "terminal-late");
+    assert_eq!(warned.len(), 1, "one WARN per failed open: {warned:?}");
+    for field in [
+        "terminal_id=terminal-late",
+        "generation=",
+        "error_class=",
+        "elapsed_ms=",
+    ] {
+        assert!(
+            warned[0].contains(field),
+            "the WARN carries `{field}`: {}",
+            warned[0]
+        );
+    }
+    assert_eq!(
+        terminal_row_requests(&mock, "terminal-late"),
+        1,
+        "a failed open is not retried"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_read_that_outlives_its_pane_never_installs_or_attaches_the_terminal() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, tab_id, first) = on_demand_workspace(&mock).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        let release = mock.enqueue_held(
+            "GET",
+            "/api/terminals/terminal-late",
+            200,
+            json!({"terminal_id": "terminal-late", "backend": "native", "state": "live"}),
+        );
+        mock.send_event_and_wait(pane_added_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            1,
+        ))
+        .await;
+        wait_until("the held row request", || {
+            terminal_row_requests(&mock, "terminal-late") == 1
+        })
+        .await;
+        // The pane closes while its read is still held.
+        mock.send_event_and_wait(pane_removed_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            2,
+        ))
+        .await;
+        release.notify_one();
+        // The released read lands after its pane is gone; frames keep running.
+        probe.assert_live("terminal-a", "terminal-a", 'k').await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_none(),
+        "a read whose pane closed installs no pane"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_attach")
+            .iter()
+            .all(|request| request.get("terminal_id") != Some(&json!("terminal-late"))),
+        "nothing attaches a terminal its layout no longer places"
+    );
+    mock.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_held_focus_hint_op_never_stalls_frames_or_ticks() {
     let mock = MockDaemon::start("local-token").await;

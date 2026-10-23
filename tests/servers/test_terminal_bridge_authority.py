@@ -15,9 +15,11 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_bridge_shares_lease_and_leaves_external_options_alone() -> None:
     registry = TerminalLeaseRegistry()
-    attach = await registry.attach("term-ext", frame_delivery="proxy")
+    socket = object()
+    attach = await registry.attach("term-ext", frame_delivery="proxy", websocket=socket)
     refused = registry.admit_write(
         "term-ext",
+        websocket=socket,
         attachment_id=attach.attachment_id,
         expected_lease_generation=0,
         seq=1,

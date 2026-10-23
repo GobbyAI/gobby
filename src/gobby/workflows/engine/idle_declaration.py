@@ -81,7 +81,7 @@ def readiness_message_completed(
 
     return any(
         re.fullmatch(
-            r"(?:LANE=\S+ )?EVENT=SEAT_READY (?:RUN=\S+ )?NOTE=idle",
+            r"(?:LANE=\S* )?EVENT=SEAT_READY (?:RUN=\S+ )?NOTE=idle",
             message.content.partition("\n")[0],
         )
         for message in completion_messages(sessions.db, caller_id, "send_message", {}, tool_output)

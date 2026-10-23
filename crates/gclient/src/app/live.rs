@@ -409,10 +409,10 @@ impl Workspace<LiveDaemon> {
             | DaemonEvent::Frame(_)
             | DaemonEvent::AttachHistory(_)
             | DaemonEvent::ScrollOffsetApplied(_) => {}
+            // The live loop opens what this event leaves unresolved as jobs
+            // (`handle_live_event`); `drain_receiver` reconciles inline.
             DaemonEvent::Workspace(event) => {
-                if self.apply_live_workspace_event(&event) {
-                    self.open_unresolved_terminals().await;
-                }
+                self.apply_live_workspace_event(&event);
             }
         }
         Ok(())

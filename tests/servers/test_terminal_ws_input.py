@@ -10,9 +10,11 @@ from types import MethodType
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
+import psycopg
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.websocket import terminal_ws, terminal_ws_write
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.server import WebSocketServer
@@ -22,9 +24,17 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalWriteError, WriteOutcome
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.write_coordinator import WriteCoordinator
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal, runtime_registry
+from tests.terminals.fakes import (
+    MachineOwnerRows,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 TmuxResult = tuple[int, str, str]
+OWNER_USER_ID = "20000000-0000-4000-8000-000000000001"
+OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
+REMOTE_MACHINE = "30000000-0000-4000-8000-000000000003"
 
 
 @dataclass
@@ -105,7 +115,13 @@ class _WebSocket:
         return [message for message in messages if message.get("type") == message_type]
 
 
-async def _server(terminal: Terminal, runtime: Any) -> tuple[WebSocketServer, str]:
+async def _server(
+    terminal: Terminal,
+    runtime: Any,
+    *,
+    owners: MachineOwnerRows | None = None,
+    user_id: str | None = None,
+) -> tuple[WebSocketServer, str, _WebSocket]:
     config = MagicMock()
     config.host = "localhost"
     config.port = 60888
@@ -124,10 +140,20 @@ async def _server(terminal: Terminal, runtime: Any) -> tuple[WebSocketServer, st
         write_coordinator=coordinator,
     )
     attachment_id = "input-attachment"
-    await server._leases().attach(terminal.id, attachment_id=attachment_id)
+    owner = _WebSocket()
+    # The holder is created on the owner's socket inside the owner's bound caller,
+    # as the attach handler does, so only that socket and user can write with it.
+    token = None if owners is None else bind_caller(user_id, owners)
+    try:
+        await server._leases().attach(
+            terminal.id, attachment_id=attachment_id, websocket=owner, terminal=terminal
+        )
+    finally:
+        if token is not None:
+            reset_caller(token)
     result = await server._leases().take_control(terminal.id, attachment_id)
     assert result.granted
-    return server, attachment_id
+    return server, attachment_id, owner
 
 
 def _input_message(
@@ -155,8 +181,8 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
         sessions_for_socket=lambda _socket: cast(TmuxSessionManager, sessions)
     )
     terminal = make_memory_terminal()
-    server, attachment_id = await _server(terminal, runtime)
-    websocket = _WebSocket()
+    server, attachment_id, owner = await _server(terminal, runtime)
+    websocket = owner
 
     for seq, data in enumerate(("\x04", "\x03", "\x1b[A"), start=1):
         await server._handle_terminal_input(
@@ -202,8 +228,8 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
 async def test_single_input_handler_is_bound_and_backend_neutral() -> None:
     assert not hasattr(HandlerMixin, "_handle_terminal_input")
     terminal = make_memory_terminal()
-    server, attachment_id = await _server(terminal, _RecordingRuntime())
-    websocket = _WebSocket()
+    server, attachment_id, owner = await _server(terminal, _RecordingRuntime())
+    websocket = owner
     # Shadow the mixin method on the instance: dispatch must bind TerminalWsMixin
     # explicitly rather than looking the handler up through the instance.
     server.__dict__["_handle_terminal_input"] = AsyncMock(
@@ -240,8 +266,8 @@ async def test_partial_write_reports_indeterminate_on_the_wire() -> None:
         ]
     )
     terminal = make_memory_terminal()
-    server, attachment_id = await _server(terminal, runtime)
-    websocket = _WebSocket()
+    server, attachment_id, owner = await _server(terminal, runtime)
+    websocket = owner
 
     for seq in (1, 2):
         await server._handle_terminal_input(
@@ -270,8 +296,8 @@ async def test_failed_write_completes_ledger_and_admits_next_seq() -> None:
         effects=[TerminalWriteError(stage="none", delivered_bytes=0), Delivered()]
     )
     terminal = make_memory_terminal()
-    server, attachment_id = await _server(terminal, runtime)
-    websocket = _WebSocket()
+    server, attachment_id, owner = await _server(terminal, runtime)
+    websocket = owner
     first = _input_message(terminal, attachment_id, seq=1, data="failed")
 
     await server._handle_terminal_input(websocket, first)
@@ -299,8 +325,8 @@ async def test_failed_write_completes_ledger_and_admits_next_seq() -> None:
 async def test_disconnect_cancellation_closes_ledger_without_replying() -> None:
     runtime = _RecordingRuntime(effects=[asyncio.CancelledError(), Delivered()])
     terminal = make_memory_terminal()
-    server, attachment_id = await _server(terminal, runtime)
-    websocket = _WebSocket()
+    server, attachment_id, owner = await _server(terminal, runtime)
+    websocket = owner
     first = _input_message(terminal, attachment_id, seq=1, data="cancelled")
 
     with pytest.raises(asyncio.CancelledError):
@@ -340,10 +366,10 @@ async def test_operator_writes_route_through_coordinator() -> None:
     for index, kind in enumerate(("input", "paste", "text"), start=1):
         terminal = make_memory_terminal()
         runtime = _PausedRuntime()
-        server, attachment_id = await _server(terminal, runtime)
+        server, attachment_id, owner = await _server(terminal, runtime)
         coordinator_write = AsyncMock(wraps=server.write_coordinator.write)
         server.write_coordinator.write = coordinator_write
-        websocket = _WebSocket()
+        websocket = owner
         data = {
             "terminal_id": terminal.id,
             "attachment_id": attachment_id,
@@ -393,8 +419,8 @@ async def test_input_without_an_attach_client_stays_on_the_runtime() -> None:
     """A native attachment has no tmux client, so raw input still uses the runtime."""
     terminal = make_memory_terminal(backend="native")
     runtime = _RecordingRuntime(backend="native")
-    server, attachment_id = await _server(terminal, runtime)
-    websocket = _WebSocket()
+    server, attachment_id, owner = await _server(terminal, runtime)
+    websocket = owner
 
     await server._handle_terminal_input(
         websocket, _input_message(terminal, attachment_id, seq=1, data="\x1b[<64;13;12M")
@@ -404,10 +430,58 @@ async def test_input_without_an_attach_client_stays_on_the_runtime() -> None:
     assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
 
 
+@pytest.mark.asyncio
+async def test_attach_refuses_a_caller_who_does_not_own_the_machine() -> None:
+    """A bound non-owner is refused at attach, before any lease or proxy starts."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    server, _, _ = await _server(terminal, runtime)
+    start_proxy = AsyncMock(return_value=None)
+    cast(Any, server)._start_proxy_attach = start_proxy
+    websocket = _WebSocket()
+    owners = MachineOwnerRows({terminal.machine_id: "20000000-0000-4000-8000-000000000001"})
+    token = bind_caller("20000000-0000-4000-8000-000000000002", owners)
+    try:
+        await TerminalWsMixin._handle_terminal_attach(
+            server, websocket, {"request_id": "attach-1", "terminal_id": terminal.id}
+        )
+    finally:
+        reset_caller(token)
+
+    attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"] is False
+    assert attach_result["code"] == "machine_not_owned"
+    assert start_proxy.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_attach_reports_unavailable_when_the_ownership_read_fails() -> None:
+    """A failed ownership read refuses the attach with a typed code, not a silent hang."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    server, _, _ = await _server(terminal, runtime)
+    start_proxy = AsyncMock(return_value=None)
+    cast(Any, server)._start_proxy_attach = start_proxy
+    websocket = _WebSocket()
+    owners = MachineOwnerRows({}, error=psycopg.OperationalError("database unavailable"))
+    token = bind_caller("20000000-0000-4000-8000-000000000002", owners)
+    try:
+        await TerminalWsMixin._handle_terminal_attach(
+            server, websocket, {"request_id": "attach-1", "terminal_id": terminal.id}
+        )
+    finally:
+        reset_caller(token)
+
+    attach_result = websocket.messages_of_type("terminal_attach_result")[-1]
+    assert attach_result["success"] is False
+    assert attach_result["code"] == "machine_ownership_unavailable"
+    assert start_proxy.await_count == 0
+
+
 async def test_operator_write_uses_attach_snapshot() -> None:
     terminal = make_memory_terminal(backend="native")
     runtime = _RecordingRuntime(backend="native")
-    server, _ = await _server(terminal, runtime)
+    server, _, _ = await _server(terminal, runtime)
     cast(Any, server)._start_proxy_attach = AsyncMock(return_value=None)
     websocket = _WebSocket()
 
@@ -440,3 +514,124 @@ async def test_operator_write_uses_attach_snapshot() -> None:
     assert awaited is not None
     assert awaited.args[0].terminal is terminal
     assert row_reads.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("routing", ["local", "remote"])
+async def test_non_owner_cannot_write_with_owners_holder_id(routing: str) -> None:
+    """A bound non-owner's write with the owner's holder id is refused before any write."""
+    machine_id = REMOTE_MACHINE if routing == "remote" else None
+    terminal = make_memory_terminal(backend="native", machine_id=machine_id)
+    runtime = _RecordingRuntime(backend="native")
+    owners = MachineOwnerRows({terminal.machine_id: OWNER_USER_ID})
+    server, attachment_id, owner = await _server(
+        terminal, runtime, owners=owners, user_id=OWNER_USER_ID
+    )
+    remote_dispatch = AsyncMock(return_value=Delivered())
+    cast(Any, server.write_coordinator)._dispatch_remote = remote_dispatch
+    foreign = _WebSocket()
+
+    token = bind_caller(OTHER_USER_ID, owners)
+    try:
+        await server._handle_terminal_input(
+            foreign, _input_message(terminal, attachment_id, seq=10**6, data="x")
+        )
+        await server._handle_terminal_paste(
+            foreign,
+            {
+                "terminal_id": terminal.id,
+                "attachment_id": attachment_id,
+                "client_write_seq": 10**6 + 1,
+                "text": "pasted",
+            },
+        )
+    finally:
+        reset_caller(token)
+
+    outcomes = foreign.messages_of_type("terminal_write_outcome")
+    assert [item["outcome"] for item in outcomes] == ["refused", "refused"]
+    assert {item["reason"] for item in outcomes} == {"stale_attachment"}
+    assert runtime.inputs == []
+    assert runtime.pastes == []
+    assert remote_dispatch.await_count == 0
+    record = server._leases().get(attachment_id)
+    assert record is not None
+    assert record.writes == {}
+    assert record.write_high_water == -1
+
+    token = bind_caller(OWNER_USER_ID, owners)
+    try:
+        await server._handle_terminal_input(
+            owner, _input_message(terminal, attachment_id, seq=1, data="a")
+        )
+    finally:
+        reset_caller(token)
+    assert owner.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+    if routing == "remote":
+        assert remote_dispatch.await_count == 1
+    else:
+        assert runtime.inputs == [b"a"]
+
+
+@pytest.mark.asyncio
+async def test_attachment_cannot_be_reused_by_another_connection() -> None:
+    """Another socket of the owner's own user cannot write with the holder id."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    owners = MachineOwnerRows({terminal.machine_id: OWNER_USER_ID})
+    server, attachment_id, _ = await _server(
+        terminal, runtime, owners=owners, user_id=OWNER_USER_ID
+    )
+    second = _WebSocket()
+
+    token = bind_caller(OWNER_USER_ID, owners)
+    try:
+        await server._handle_terminal_input(
+            second, _input_message(terminal, attachment_id, seq=1, data="x")
+        )
+    finally:
+        reset_caller(token)
+
+    outcome = second.messages_of_type("terminal_write_outcome")[-1]
+    assert outcome["outcome"] == "refused"
+    assert outcome["reason"] == "stale_attachment"
+    assert runtime.inputs == []
+
+
+@pytest.mark.asyncio
+async def test_foreign_connection_cannot_write_with_a_leaked_attachment() -> None:
+    """A foreign connection with a leaked holder id can neither write nor take control."""
+    terminal = make_memory_terminal(backend="native")
+    runtime = _RecordingRuntime(backend="native")
+    owners = MachineOwnerRows({terminal.machine_id: OWNER_USER_ID})
+    server, attachment_id, owner = await _server(
+        terminal, runtime, owners=owners, user_id=OWNER_USER_ID
+    )
+    foreign = _WebSocket()
+
+    token = bind_caller(OTHER_USER_ID, owners)
+    try:
+        await server._handle_terminal_input(
+            foreign, _input_message(terminal, attachment_id, seq=10**6, data="x")
+        )
+        await server._handle_terminal_take_control(
+            foreign,
+            {"terminal_id": terminal.id, "attachment_id": attachment_id, "takeover": True},
+        )
+    finally:
+        reset_caller(token)
+
+    assert foreign.messages_of_type("terminal_write_outcome")[-1]["reason"] == "stale_attachment"
+    assert foreign.messages_of_type("terminal_control_result")[-1]["reason"] == "stale_attachment"
+    assert runtime.inputs == []
+    assert server._leases().holder(terminal.id) == attachment_id
+
+    token = bind_caller(OWNER_USER_ID, owners)
+    try:
+        await server._handle_terminal_input(
+            owner, _input_message(terminal, attachment_id, seq=1, data="a")
+        )
+    finally:
+        reset_caller(token)
+    assert owner.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
+    assert runtime.inputs == [b"a"]
