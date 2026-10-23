@@ -650,17 +650,18 @@ Targets:
 - `src/gobby/agents/spawn_cache_policy.py::*` — scope-reason: unsandboxed spawns get the agent sccache directory and its socket
 - `src/gobby/agents/constants.py::*` — scope-reason: create and resolve the unsandboxed sccache directory beside its Cargo home
 - `src/gobby/agents/srt_runtime.py::*` — scope-reason: decide the run-socket grant once and pass it to the sandboxed environment; import the moved settings renderer
-- `src/gobby/agents/srt_settings.py`
+- `src/gobby/agents/srt_settings.py::*` — scope-reason: new module holding the SRT settings renderer moved unchanged from `srt_runtime.py`
 - `tests/agents/test_archivist_sandbox.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
 - `tests/agents/test_external_write_grants.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
 - `tests/agents/test_sandbox_policy.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
 - `tests/agents/test_spawn_executor_providers.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
 - `tests/agents/test_srt_filesystem_integration.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
 - `tests/agents/test_srt_runtime.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
+- `.gobby/plans/research/security-boundaries-22103/probe_credential_paths.py::*` — scope-reason: import `render_srt_settings` from `srt_settings`
 - `tests/agents/test_cargo_target.py::*` — scope-reason: restore the per-checkout expectations parked for the retired shared-target design
 - `tests/integration/test_cargo_target_isolation.py::*` — scope-reason: restore the per-checkout expectations parked for the retired shared-target design
 - `tests/integration/test_project_cargo_cache.py::*` — operation: delete — scope-reason: its parked tests encode the retired shared-target design
-- `tests/agents/test_cargo_environment.py`
+- `tests/agents/test_cargo_environment.py::*` — scope-reason: new acceptance tests for the shared Cargo environment and the trust split
 
 **Research context:** Josh's ruling (via the Orchestrator, October 22) replaces the shared project target with sccache for third-party crates. Josh installed sccache 0.18.0 with Homebrew, so 5.1 has no install step. Per-checkout targets in `cargo_target.py` stay as they are. The parked tests from checkpoint a46cf62c55 change those expectations and must be restored, not adapted. sccache caches only non-incremental compiles. Cargo's debug profile builds workspace members incrementally (sccache README, "Incrementally compiled crates cannot be cached"), so the cache serves registry crates and workspace crates keep incremental builds.
 
@@ -675,7 +676,7 @@ The two launch paths keep the existing trust split between the Cargo homes. Sand
 
 Each sandboxed run that may open Unix sockets in its run tmp starts its own server on `<run tmp>/sccache.sock`. Only SRT launches on macOS that request run sockets get that grant (`srt_runtime.py:787-791`; spawn and resume request it at `spawn_executor_providers.py:191` and `resume_executor.py:363`). Provider-native launches return before the grant, and Linux SRT keeps its socket restrictions, so those runs get blank sccache variables. `prepare_sandbox_launch` computes the grant decision once and passes it to `SandboxRunPaths.environment`, so the environment and the grant cannot disagree. A shared TCP server on `127.0.0.1:4226` is rejected for two reasons. A server started inside one seat's sandbox can't write other seats' targets. A server started outside the sandbox would let any sandboxed seat write through it. Unsandboxed spawns share one server on `~/.gobby/cache/sccache.sock`, beside their cache rather than inside it to keep the path short, so no TCP listener exists. macOS caps socket paths at 103 bytes; when the run socket path is longer, the builder blanks the sccache variables for that run.
 
-`src/gobby/agents/srt_runtime.py` is 952 lines, so 5.1 moves `render_srt_settings`, `_SRT_DEFAULT_WRITE_PATHS` and `_effective_deny_write` unchanged into the new `src/gobby/agents/srt_settings.py` before adding the grant decision. The six tests that import `render_srt_settings` import it from `srt_settings`. #24357 plans the same split; it can drop that step once 5.1 lands.
+`src/gobby/agents/srt_runtime.py` is 952 lines, so 5.1 moves `render_srt_settings`, `_SRT_DEFAULT_WRITE_PATHS` and `_effective_deny_write` unchanged into the new `src/gobby/agents/srt_settings.py` before adding the grant decision. The six tests and the #22103 credential-path probe script that import `render_srt_settings` import it from `srt_settings`. #24357 plans the same split; it can drop that step once 5.1 lands.
 
 Settings go in the launch environment rather than the Cargo-home `config.toml`, because sandboxed runs can write their Cargo home and could rewrite a shared config. The heavy-run slot grant and cap retire with the runbooks; 3.5 removes slot guidance from definitions and procedures. The live project policy keeps cap 6 and `CARGO_BUILD_JOBS=3` until #24797 activates, and 6.1 reconciles them.
 

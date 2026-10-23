@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.agents.cargo_environment import cargo_environment
+
 # CARGO_HOME and CARGO_TARGET_DIR are deliberately absent: Cargo fingerprints
 # embed $CARGO_HOME/registry/src, so a per-run home rebuilds the whole
 # dependency graph on every run (#23194). Runs share the pair below
@@ -79,4 +81,11 @@ class SandboxRunPaths:
         values["OCR_NO_UPDATE"] = "1"
         if self.zig_system_dir is not None:
             values["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(self.zig_system_dir)
+        # The cache stays inside the Cargo home's trust domain. The server socket
+        # needs the launch's run-tmp Unix socket grant, so without it builds run uncached.
+        values.update(
+            cargo_environment(
+                self.cargo_home / "sccache", self.tmp / "sccache.sock" if run_sockets else None
+            )
+        )
         return values

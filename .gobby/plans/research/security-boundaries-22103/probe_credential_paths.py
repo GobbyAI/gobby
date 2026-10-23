@@ -22,7 +22,7 @@ from pathlib import Path
 import yaml
 
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths, web_chat_sandbox_config
-from gobby.agents.srt_runtime import render_srt_settings
+from gobby.agents.srt_settings import render_srt_settings
 
 CANDIDATES = (
     "~/.ssh/id_ed25519",
