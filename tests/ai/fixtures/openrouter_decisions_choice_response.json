@@ -1,0 +1,21 @@
+{
+  "id": "dec_0123456789abcdef",
+  "model": "typesafe/jev-1.13-20260917",
+  "provider": "TypeSafe",
+  "answers": {
+    "triage": {
+      "type": "choice",
+      "choice": "keep",
+      "probabilities": {
+        "keep": 0.8,
+        "drop": 0.2
+      },
+      "confidence": 0.75
+    }
+  },
+  "usage": {
+    "input_tokens": 412,
+    "output_tokens": 3,
+    "cost": 0.00012
+  }
+}

@@ -19,7 +19,6 @@ blocked_tools:
 blocked_mcp_tools:
   - "gobby-worktrees:create_worktree"
   - "gobby-agents:spawn_agent"
-  - "gobby-agents:dispatch_batch"
   - "gobby-agents:kill_agent"
 
 prompts:
@@ -146,7 +145,6 @@ step_workflow:
         - "gobby-tasks:reopen_task"
         - "gobby-tasks:escalate_task"
         - "gobby-agents:spawn_agent"
-        - "gobby-agents:dispatch_batch"
         - "gobby-agents:kill_agent"
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"

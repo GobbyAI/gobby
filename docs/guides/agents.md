@@ -25,8 +25,7 @@ enforces this on pipeline MCP steps. Daemon-internal callers cannot override.
 Spawn scope and seat-spawn restrictions still apply. The direct HTTP route
 requires operator credentials and rejects explicit network for `web_chat`.
 
-Until batch spawning is retired, the operator-only `POST /api/agents/spawn/batch`
-also accepts `network` on each item, with the same inheritance, one-launch
+The operator-only `POST /api/agents/spawn/batch` also accepts `network` on each item, with the same inheritance, one-launch
 lifetime, validation, and `web_chat` refusal as single HTTP spawns.
 
 Agent definitions have explicit `surfaces`:
@@ -34,7 +33,7 @@ Agent definitions have explicit `surfaces`:
 | Surface | Runtime tool | What happens |
 | --- | --- | --- |
 | `persona` | `gobby-agents:apply_persona` or `gobby-agents:apply_agent_definition` | Switches the persona prompt and skills live, or activates the whole definition on the current session. |
-| `spawn` | `gobby-agents:spawn_agent` or `dispatch_batch` | Starts a child session, records an agent run, and optionally creates or reuses isolation. |
+| `spawn` | `gobby-agents:spawn_agent` | Starts a child session, records an agent run, and optionally creates or reuses isolation. |
 
 `apply_persona` is intentionally narrow. It sets prompt-facing persona state,
 skill selection, and reinjection flags; it does not change provider, model,
@@ -469,7 +468,6 @@ messaging, and command coordination.
 Run tools:
 
 - `spawn_agent`
-- `dispatch_batch`
 - `apply_persona`
 - `apply_agent_definition`
 - `get_agent_result`
@@ -585,13 +583,12 @@ question that keeps the child alive, use `message_type="message"`.
 
 Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
 overrides, reasoning fields, runtime limits, parent session, and project path.
-`dispatch_batch` uses the same spawn machinery for multiple task suggestions.
 
 ## Spawn Scope
 
 The bundled `limit-spawnable-agents` rule (tool-hygiene, tagged `default`)
 limits what a spawned agent may spawn. A root session (no agent run, depth 0)
-spawns any agent. A spawned agent's `spawn_agent` and `dispatch_batch` calls
+spawns any agent. A spawned agent's `spawn_agent` calls
 follow the `spawnable_agents` of the installed definition its agent run names.
 Each definition declares one of three things:
 
@@ -601,13 +598,10 @@ Each definition declares one of three things:
 | `[developer]` | Only the named agents |
 | `[]` or omitted | No agent |
 
-`"*"` stands alone; mixing it with names fails validation. Every agent the call
-can start must be allowed, or the whole call is refused:
+`"*"` stands alone; mixing it with names fails validation. The agent the call
+starts must be allowed, or the call is refused:
 
-- An omitted `agent` counts as the tool's default (`default` for `spawn_agent`,
-  `developer` for `dispatch_batch`).
-- A `dispatch_batch` suggestion's own non-blank `agent` replaces the top-level
-  one for that suggestion. `suggestions` must be a list of objects.
+- An omitted `agent` counts as the tool's default (`default`).
 - Every agent in a target's `fallback_agent` chain counts, as `spawn_agent`
   walks it: up to five hops, stopping at a cycle or a missing definition.
 

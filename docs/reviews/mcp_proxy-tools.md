@@ -44,7 +44,7 @@
 
 ### [IMPORTANT] TOCTOU race in per-task spawn dedup — concurrent spawns both pass the gate
 - **Where:** `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py:497-506` (gate) vs run-row insert at `:762`
-- **Failure mode:** `_active_task_spawn_blocker` is a plain SELECT; the `agent_runs` row that would block a second caller is inserted only inside `execute_spawn`, after isolation prep and preflight — seconds-to-minutes window. No unique partial index on active runs per task; MCP spawn path takes no `task_dispatch_mutex`. `dispatch_batch` (`_factory.py:655`) spawns concurrently via `asyncio.gather`.
+- **Failure mode:** `_active_task_spawn_blocker` is a plain SELECT; the `agent_runs` row that would block a second caller is inserted only inside `execute_spawn`, after isolation prep and preflight — seconds-to-minutes window. No unique partial index on active runs per task; MCP spawn path takes no `task_dispatch_mutex`. The batch spawn tool (`_factory.py:655`, retired in #23678) spawned concurrently via `asyncio.gather`.
 - **Why it matters:** Two agents claiming/editing the same task: wasted spend, conflicting commits.
 - **Minimal fix:** Partial unique index on `agent_runs(task_id) WHERE status IN ('pending','running')`; convert the gate to insert-or-detect.
 - **Confidence:** high (mechanism); med (frequency)

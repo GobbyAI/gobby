@@ -1,0 +1,17 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "triage": {
+      "type": "choice",
+      "choice": "keep",
+      "probabilities": {
+        "keep": 0.8,
+        "drop": 0.2
+      },
+      "confidence": 0.75
+    }
+  },
+  "usage": {
+    "input_tokens": 412
+  }
+}

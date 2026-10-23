@@ -143,16 +143,18 @@ async def retry_async[T](
     max_retries: int = 3,
     delay: float = 1.0,
     on_retry: Callable[[int, Exception], None] | None = None,
+    retry_if: Callable[[Exception], bool] | None = None,
 ) -> T:
     """Execute an async operation with retry logic and error classification."""
     if max_retries < 1:
         raise ValueError("max_retries must be at least 1")
 
+    should_retry = retry_if or is_transient_error
     for attempt in range(max_retries):
         try:
             return await operation()
         except Exception as error:
-            if not is_transient_error(error):
+            if not should_retry(error):
                 raise
             if attempt < max_retries - 1:
                 if on_retry:

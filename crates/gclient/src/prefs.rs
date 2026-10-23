@@ -80,6 +80,7 @@ struct UiPrefs {
     sidebar_side: SidebarSide,
     sidebar_pinned: bool,
     nerd_glyphs: bool,
+    focus_hold_seconds: u64,
     project_order: Vec<String>,
     /// Last: TOML emits a sub-table after the plain values.
     project_labels: BTreeMap<String, String>,
@@ -111,6 +112,7 @@ impl From<&ClientPrefs> for UiPrefs {
             sidebar_side: prefs.sidebar_side,
             sidebar_pinned: prefs.sidebar_pinned,
             nerd_glyphs: prefs.nerd_glyphs,
+            focus_hold_seconds: prefs.focus_hold_seconds,
             project_order: prefs.project_order.clone(),
             project_labels: prefs.project_labels.clone(),
         }
@@ -159,6 +161,7 @@ impl From<PrefsFile> for ClientPrefs {
             sidebar_side: ui.sidebar_side,
             sidebar_pinned: ui.sidebar_pinned,
             nerd_glyphs: ui.nerd_glyphs,
+            focus_hold_seconds: ui.focus_hold_seconds,
             project_order: ui.project_order,
             project_labels: ui.project_labels,
             status_left: status.left,

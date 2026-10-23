@@ -63,7 +63,7 @@ Agents are reusable worker definitions. They combine:
 Activate a whole definition on the current session with
 `gobby-agents:apply_agent_definition`, switch its persona prompt and skills live
 with `gobby-agents:apply_persona`, or spawn a child session with
-`gobby-agents:spawn_agent` or `dispatch_batch`. A terminal definition change
+`gobby-agents:spawn_agent`. A terminal definition change
 requires a relaunch; a persona switch keeps the current seat's enforcement.
 See [Agents](./agents.md#definition-activation) for activation and continuity.
 

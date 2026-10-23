@@ -26,6 +26,9 @@ and 18) and states the plan as that adapter.
 
 Task #24253 amended it on 2026-10-13: Josh deferred the OpenAI wire until
 OpenAI's Decisions API reaches general availability (Decision 18, D1).
+On 2026-10-23 Josh kept that wire deferred after OpenAI announced general
+availability on 2026-10-22: D1 now waits for a dated `gpt-6-luna` snapshot
+or a snapshot-identifying response `model` (Decision 18).
 
 This plan adds that path. It mirrors the four parts of the embedding path:
 - a config block, `ai.decisions`;
@@ -719,8 +722,8 @@ The plan also sets:
     - The Graphify parity plan (`.gobby/plans/gcode-graphify-parity-delta.md`)
       is unaffected. It references only #22604's held Jev choice gate and
       chooses no backend.
-18. **OpenAI's Decisions API waits for general availability (Josh,
-    2026-10-12).** Josh chose Request changes on the stamped #24215
+18. **OpenAI's Decisions API waits for snapshot identity (Josh,
+    2026-10-23).** Josh chose Request changes on the stamped #24215
     amendment, through the Orchestrator gobby#15977: "OpenAI has a
     decisions api we should support as part of the Jev plan. It's not
     really a Jev plan but a system one style adapter for multiple
@@ -729,19 +732,19 @@ The plan also sets:
     API reaches general availability (button 381243f3, value
     `openai-decisions:defer-ga`), superseding his pending identity choice
     (button d8eab611). The Orchestrator gave the go on 2026-10-13 under
-    #24253. The wire's design moves unchanged to D1, and this plan ships
-    the three keyed wires.
-    - Trigger: OpenAI announces general availability of `POST
-      /v1/decisions`. The route is in public beta on the evidence below.
-    - Re-checks at general availability, before D1 is planned:
-      1. Identity: whether OpenAI then publishes a dated `gpt-6-luna`
-         snapshot, or a response's `model` reports a resolved version, so
-         Activation Gate item 4 can pass under `response_version`
-         (Decision 10).
-      2. Host: whether the Vercel AI Gateway's `gpt-6-luna-decisions`
-         listing can serve the model. The source is #24253's text and
-         button 381243f3; no Vercel page was retrieved, so the plan states
-         no Vercel fact.
+    #24253. OpenAI announced general availability on 2026-10-22. Josh
+    ruled on 2026-10-23 that GA alone does not satisfy Decision 10, so the
+    wire's design stays in D1 and this plan ships the three keyed wires.
+    - Trigger: OpenAI publishes a dated `gpt-6-luna` snapshot, or a
+      Decisions response's `model` identifies the served snapshot, so
+      Activation Gate item 4 can pass under `response_version`
+      (Decision 10).
+    - Re-check at the identity trigger: Vercel AI Gateway lists
+      `openai/gpt-6-luna-decisions` as a possible host, with release date
+      2026-10-06. Re-check that route and its returned `model` alongside
+      OpenAI's direct route before D1 is planned. Sources retrieved
+      2026-10-23: the [Vercel model listing](https://vercel.com/ai-gateway/models/gpt-6-luna-decisions)
+      and [Vercel Decisions endpoint guide](https://vercel.com/i/what-is-openai-decisions-api).
     - What defers with the wire: the array-shape builder and reader, the
       `refused` outcome (only an OpenAI refusal answer raises it), the
       922,000-token inferred default, the OpenAI contract record and
@@ -749,7 +752,7 @@ The plan also sets:
       and LM Studio's `/v1/decisions`, which only this wire reaches
       (Decision 17). LM Studio's `/v1/systemone`, Kev, OpenRouter's Jev,
       and both Clef forms proceed unchanged.
-    - Sources, retrieved 2026-10-12: the
+    - Original contract sources, retrieved 2026-10-12: the
       [Decisions guide](https://developers.openai.com/api/docs/guides/decisions),
       the [create reference](https://developers.openai.com/api/reference/resources/decisions/methods/create),
       the [`gpt-6-luna` model page](https://developers.openai.com/api/docs/models/gpt-6-luna),
@@ -758,8 +761,9 @@ The plan also sets:
       developers.openai.com was egress-blocked for that seat. The working
       note is `.gobby/plans/research/decision-classifier-openai-24215.md`.
     - What OpenAI documents:
-      - `POST /v1/decisions`, in public beta, with `gpt-6-luna` the only
-        supported model;
+      - `POST /v1/decisions`, generally available since 2026-10-22, with
+        `gpt-6-luna`; the [OpenAI API changelog](https://developers.openai.com/api/docs/changelog)
+        is the GA source, retrieved 2026-10-23;
       - a request of `model`, `input`, and `questions`, where `input` is a
         string or an array of input messages, and each question has
         `type`, `instructions`, and a `name` the response echoes;
@@ -776,13 +780,16 @@ The plan also sets:
       Noul would be sent as `predicate`. Score has no consumer and is not
       built (Decision 7). Gobby would send text state only, as compact
       JSON in `input`, and never images.
-    - Unverified, read from no official page: error statuses and bodies on
+    - The GA changelog raises OpenAI's per-request limit from 200 beta
+      questions to 400 and adds structured `input_json` plus images in
+      question instructions. Gobby's shared 64-question cap and text-only
+      input remain deliberate cross-wire limits (Decisions 7 and 8).
+      Unverified, read from no official page: error statuses and bodies on
       this route, rate limits, the route's own input limit and truncation
       behavior, the scope of `usage.input_tokens`, the question `name`
-      pattern, the maximum question count, and whether a response ever
-      reports a resolved version. Third-party sources disagree on the
-      question maximum, so none is cited, and the plan's 64 stays
-      (Decision 8). The first live capture settles each item.
+      pattern, and whether a response ever reports a dated or otherwise
+      snapshot-identifying model. The first live capture settles each
+      item.
     - Price: the Decisions guide gives a base rate of $0.10 per million
       input tokens for `gpt-6-luna`, with no cache or output charges. The
       model page doubles the input rate above 272K input tokens, and
@@ -799,10 +806,11 @@ The plan also sets:
       undated snapshot, `gpt-6-luna`, and its reference example answers
       with that same name. So Activation Gate item 4 fails twice on the
       documented evidence: no version can be pinned, and the alias check
-      cannot see a resolved version. On that evidence OpenAI would be a
+      cannot see a resolved version. General availability did not change
+      that identity evidence. OpenAI would therefore be a
       `shadow` and evaluation backend, as both Clef forms are under Josh's
-      Decision 16 option A, and no contract is added. Re-check 1 revisits
-      this at general availability.
+      Decision 16 option A, and no contract is added. The D1 trigger
+      revisits this when snapshot identity becomes available.
 
 ## As-Is Facts
 `kind: framing`
@@ -859,6 +867,16 @@ The plan also sets:
 
 - This is a planning task, so it contains no code. The leaves below are the
   implementation, and none executes before Josh approves the plan.
+- **Operator sequencing hold (Josh, 2026-10-23):** do not dispatch P2,
+  P3, P4, or research task #24250 until P1 works. The release evidence is
+  both P1 leaves closed completed with linked commits: #24243/1.1 has its
+  configuration invariants and `decide` status/binding tests passing, and
+  #24244/1.2 has its Choice request/response, transport, ceiling, and
+  cooldown tests passing. The focused proof is
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/ai/test_capability_registry.py tests/ai/test_decisions_service.py tests/llm/test_llm_claude.py -q`.
+  Live reconciliation on 2026-10-23 blocks #24240 (P2), #24241 (P3),
+  #24242 (P4), and #24250 on #24239 (P1). The Orchestrator removes those
+  blockers only after the release evidence is recorded.
 - Line counts on 2026-09-29, against the 1,000-line ceiling:
 
   | File | Lines | Note |
@@ -2179,7 +2197,8 @@ Consumers unchanged:
 - `src/gobby/ai/embedding_switch_runner.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `src/gobby/servers/http.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
-- `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/agents/test_bundled_agent_contract.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/hub/test_remote_workspaces.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/test_merge_integration.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/test_registries.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
 - `tests/mcp_proxy/test_registries_startup.py` — no-edit-reason: it calls `setup_internal_registries` with `config_resolver=lambda: None` and asserts only the startup steps of five named registries; the added `gobby-decisions` registry reads its config per tool call and adds no step those asserts name.
@@ -2298,15 +2317,16 @@ Edits:
   when LM Studio's authentication is on, and the Decision 17 identity
   consequence. behavior: "lms load" in `docs/guides/configuration.md`.
 
-## D1 OpenAI Decisions API wire at general availability (depends: 1.1, 1.2, 2.1, 3.1, 4.1)
+## D1 OpenAI Decisions API wire after snapshot identity (depends: 1.1, 1.2, 2.1, 3.1, 4.1)
 `kind: deferred`
 
 The `openai-decisions` wire for `gpt-6-luna`, as the #24215 revision
-designed it, waits for OpenAI's Decisions API to reach general availability
-(Decision 18). At that trigger the task first runs Decision 18's two
-re-checks: the identity contract (a dated snapshot or a resolved response
-`model`) and the Vercel AI Gateway's `gpt-6-luna-decisions` listing. A plan
-revision then restores the design below into 1.1, 1.2, 2.1, 3.1, and 4.1,
+designed it, remains deferred after OpenAI's 2026-10-22 general-availability
+announcement (Decision 18). It waits until OpenAI publishes a dated snapshot
+or a Decisions response's `model` identifies the served snapshot. At that
+trigger the task re-checks both OpenAI's direct route and Vercel AI Gateway's
+listed `openai/gpt-6-luna-decisions` route. A plan revision then restores the
+design below into 1.1, 1.2, 2.1, 3.1, and 4.1,
 Decisions 1, 2, 5, 8, 9, and 10, and Activation Gate items 2 and 4. The
 design to carry into the task:
 - Config (1.1): `wire_api` adds `openai-decisions`, `_decision_binding`
@@ -2347,11 +2367,13 @@ design to carry into the task:
   its fallback, so no consumer changes. The other answers in a partly
   refused response are dropped, because 3.1 and 3.3 accept one complete
   result or none.
-- Request limits (Decision 8): OpenAI documents the 2-to-255 option range.
-  Its pages give no question-count maximum or `name` pattern, so the live
-  capture confirms that 64 questions and the key pattern pass.
+- Request limits (Decision 8): OpenAI documents the 2-to-255 option range
+  and, at GA, up to 400 questions per request. Gobby keeps the shared
+  64-question cap; the live capture confirms that 64 questions and the key
+  pattern pass.
 - Contract record (1.2): OpenAI's documented contract as retrieved on
-  2026-10-12, with Decision 18's unverified list, the 922,000 default
+  2026-10-12 plus the GA changelog retrieved on 2026-10-23, with Decision
+  18's remaining unverified list, the 922,000 default
   recorded as inferred, the data controls entry with its prompt-caching
   exception, and the base price with its multipliers. It also records LM
   Studio's `/v1/decisions` route with its 0.4.26 Build 4 minimum and the
@@ -2374,7 +2396,7 @@ design to carry into the task:
   OpenAI account terms.
 - Guide (4.1): an OpenAI example with `api_base` `https://api.openai.com`,
   `model` `gpt-6-luna`, a `$secret:` `api_key`, the account's data terms,
-  the `refused` outcome, and the identity consequence that re-check 1
+  the `refused` outcome, and the identity consequence that the D1 trigger
   settles.
 
 Original acceptance:
@@ -2388,8 +2410,8 @@ Original acceptance:
 
 ```yaml
 deferral:
-  task_ref: "TBD-openai-decisions-ga"
-  reason: "needs-planning: Josh deferred the openai-decisions wire (gpt-6-luna) until OpenAI's Decisions API reaches general availability (button 381243f3). At the trigger, re-check the identity contract (a dated snapshot or a resolved response model) and the Vercel AI Gateway gpt-6-luna-decisions listing, then revise the plan. Created at expansion per the plan-coverage contract."
+  task_ref: "#24285"
+  reason: "needs-planning: OpenAI's Decisions API became generally available on 2026-10-22, but Josh kept the openai-decisions wire (gpt-6-luna) deferred on 2026-10-23 until OpenAI publishes a dated snapshot or a response model identifies the served snapshot. At that trigger, re-check Decision 10's identity contract and Vercel AI Gateway's listed openai/gpt-6-luna-decisions route, then revise the plan. Created at expansion per the plan-coverage contract."
   owner: "orchestrator"
   original_acceptance_items:
     - D1.1
@@ -2678,6 +2700,32 @@ available with the configured model. With the server stopped, a
   the evaluation price, the guide, and LM Studio's `/v1/decisions` facts.
   Active scope stays the three keyed wires. Routing of the seven
   deliverables and their heading dependencies is unchanged.
+- 2026-10-23: #24253 follow-up, by Plan Writer gobby#17445. OpenAI's
+  changelog says `POST /v1/decisions` became generally available with
+  `gpt-6-luna` on 2026-10-22. Josh ruled that the wire remains deferred
+  until OpenAI publishes a dated snapshot or a Decisions response's
+  `model` identifies the served snapshot, preserving Decision 10's
+  identity contract. D1 now carries that trigger.
+  - Vercel AI Gateway lists `openai/gpt-6-luna-decisions`, release date
+    2026-10-06, and documents its `/v1/decisions` endpoint as a possible
+    host. D1 re-checks that route and its returned `model` at the identity
+    trigger.
+  - The GA changelog documents up to 400 questions, structured
+    `input_json`, and images in question instructions. D1 retains Gobby's
+    shared 64-question cap and text-only contract; active scope remains
+    the same three keyed wires.
+  - Routing and validation criteria for the seven active deliverables are
+    unchanged. Their descriptions only need the D1 trigger wording updated
+    where they mention the deferred OpenAI or LM Studio
+    `/v1/decisions` wire. M1 requires fresh adversarial derivation because
+    the canonical plan bytes changed.
+- 2026-10-23: Consensus with Plan Adversary gobby#17459 on commit
+  76264a819b0103898338d9967fd7704ca40ff14d. AM24253-01 is resolved by
+  the explicit P2-P4/#24250 hold, concrete P1 release proof, and reconciled
+  live blockers on #24239. AM24253-02 is resolved by naming #24285 as D1's
+  concrete deferral owner. Re-review found no remaining amendment finding;
+  routing and validation criteria for all seven active deliverables remain
+  unchanged.
 
 ## M1 Task Manifest
 `kind: manifest`
