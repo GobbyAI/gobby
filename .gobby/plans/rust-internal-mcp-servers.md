@@ -366,11 +366,15 @@ Consumers unchanged:
   session, project/scope, principal, agent run, machine, intent, and origin into
   a private envelope authenticated by the same loopback secret. The endpoint
   rejects missing, malformed, or contradictory identity fields; reuses
-  `resolve_and_seed_contexts`, `_bind_agent_run_context`, and
-  `_seed_request_principal`; invokes `InternalToolRegistry.call`; and resets all
-  seeded tokens in `finally`. Concurrent requests receive independent contexts.
-  It receives gdaemon's already normalized tool arguments and never independently
-  rewrites `session_id` or `project_id` target inputs.
+  `resolve_and_seed_contexts`; validates the projected agent run with the
+  existing run checks/setter; seeds the validated projected principal directly
+  with `set_request_principal`; invokes `InternalToolRegistry.call`; and resets
+  every token in `finally`. It does not call the public-request
+  `_seed_request_principal` authentication wrapper, which would reinterpret the
+  private front-door request instead of preserving the projected principal.
+  Concurrent requests receive independent contexts. The endpoint receives
+  gdaemon's already normalized tool arguments and never independently rewrites
+  `session_id` or `project_id` target inputs.
 - Strangler order for every family: port/inject the manager; publish the family
   descriptor with committed Python parity fixtures; set its server entry to
   `compare`; clear list/schema/read-only differences and run mutation tests in
@@ -397,7 +401,9 @@ wrapper work rather than an independently shippable outcome.
   requests, resolves only an internal registry, and invokes it without a second
   workflow pass. test: `tests/servers/routes/mcp_endpoints/test_internal_backend.py::test_endpoint_is_secret_bound_and_policy_free`.
 - 2.2.2 - Valid internal context envelopes seed and reset caller, project,
-  principal, and agent-run ContextVars independently across concurrent calls;
+  principal, and agent-run ContextVars independently across concurrent calls.
+  An agent remains that exact agent principal, operator authority exists only
+  when explicitly projected, contradictory run/principal/session data and
   missing or forged envelopes fail closed, and body `session_id` remains tool
   input. test: `tests/servers/routes/mcp_endpoints/test_internal_backend.py::test_context_envelope_isolated_and_reset`.
 - 2.2.3 - One server can be `native` while every absent or `proxy` server still
