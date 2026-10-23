@@ -9,7 +9,8 @@ pub use calls::upsert_calls;
 
 pub use crate::index::indexer::{
     IndexDegradation, IndexDurations, IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest,
-    UnsupportedFileType, index_files, index_files_for_freshness, project_changed_since,
+    UnsupportedFileType, explicit_file_changed_since, index_files, index_files_for_freshness,
+    project_changed_since,
 };
 
 use super::checkout_fence;
@@ -328,14 +329,16 @@ pub fn upsert_project_seed(
                 updated_at=NOW()",
             &[&machine_id, &project_id, &root_path],
         )?,
+        // No `updated_at` bump here: the overlay freshness watermark must
+        // advance only at the successful stats write, so a refresh that fails
+        // after seeding still leaves its changed files for the next read.
         IndexWriteMode::Overlay => conn.execute(
             "INSERT INTO code_indexed_project_states (
                 machine_id, project_id, root_path, total_files, total_symbols,
                 last_indexed_at, index_duration_ms
              ) VALUES ($1,$2,$3,0,0,NULL,0)
              ON CONFLICT(machine_id, project_id) DO UPDATE SET
-                root_path=excluded.root_path,
-                updated_at=NOW()",
+                root_path=excluded.root_path",
             &[&machine_id, &project_id, &root_path],
         )?,
     };

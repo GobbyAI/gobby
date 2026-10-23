@@ -64,6 +64,15 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
+    // Overlay explicit-file reads are served from the index unless the overlay's
+    // last stamp no longer covers the parent or the requested files.
+    if let FreshnessScope::Files(paths) = &scope
+        && matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. })
+        && !overlay_files_need_refresh(ctx, paths)?
+    {
+        return Ok(FreshnessStatus::Checked);
+    }
+
     let _guard = FreshnessGuard::enter();
     match scope {
         FreshnessScope::Project => {
@@ -197,6 +206,67 @@ fn project_last_indexed_at(
     }
 }
 
+/// Read-only gate for explicit files in an overlay checkout. Returns `false`
+/// when the overlay has completed an index, no parent write landed after its
+/// stamp, and every requested file still matches what the overlay recorded.
+fn overlay_files_need_refresh(ctx: &Context, paths: &[PathBuf]) -> anyhow::Result<bool> {
+    let ProjectIndexScope::Overlay {
+        parent_project_id, ..
+    } = &ctx.index_scope
+    else {
+        return Ok(true);
+    };
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let machine_id = db::id_param(&ctx.machine_id)?;
+
+    // Explicit-file refreshes do not advance `last_indexed_at`, so the overlay
+    // watermark is its stamp, which only a successful stats write moves.
+    let has_full_index =
+        project_last_indexed_at(&mut conn, &machine_id, &ctx.project_id)?.is_some();
+    let Some(watermark) = project_stamped_at(&mut conn, &machine_id, &ctx.project_id)? else {
+        return Ok(true);
+    };
+    if !has_full_index {
+        return Ok(true);
+    }
+    let parent_stamp = project_stamped_at(&mut conn, &machine_id, parent_project_id)?;
+    if parent_stamp.is_some_and(|parent| parent > watermark) {
+        return Ok(true);
+    }
+
+    for path in paths {
+        let file = crate::index::normalize_storage_path(path);
+        let indexed = visibility::indexed_file_exists(&mut conn, ctx, &file);
+        if api::explicit_file_changed_since(
+            &ctx.project_root,
+            watermark,
+            &file,
+            indexed,
+            &ctx.indexing.extra_excludes,
+        ) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn project_stamped_at(
+    conn: &mut postgres::Client,
+    machine_id: &uuid::Uuid,
+    project_id: &str,
+) -> anyhow::Result<Option<SystemTime>> {
+    let row = conn.query_opt(
+        "SELECT updated_at
+         FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[machine_id, &db::id_param(project_id)?],
+    )?;
+    match row {
+        Some(row) => Ok(Some(row.try_get::<_, SystemTime>(0)?)),
+        None => Ok(None),
+    }
+}
+
 pub fn ensure_symbol_fresh(ctx: &Context, id: &str) -> anyhow::Result<FreshnessStatus> {
     if std::env::var_os(INFLIGHT_ENV).is_some() {
         return Ok(FreshnessStatus::Checked);
@@ -259,723 +329,5 @@ impl Drop for FreshnessGuard {
 mod bounded_refresh_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::models::CODE_INDEX_UUID_NAMESPACE;
-    use postgres::Client;
-    use std::path::Path;
-
-    fn context_for(root: &Path) -> Context {
-        Context {
-            database_url: "postgresql://localhost/gobby-test".to_string(),
-            project_root: root.to_path_buf(),
-            project_id: "proj".to_string(),
-            quiet: true,
-            falkordb: None,
-            qdrant: None,
-            embedding: None,
-            code_vectors: crate::config::CodeVectorSettings::default(),
-            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
-            runtime_config_capture_degraded: false,
-            indexing: gobby_core::config::IndexingConfig::default(),
-            daemon_url: None,
-            grant_ai: None,
-            index_scope: crate::config::ProjectIndexScope::Single,
-        }
-    }
-
-    fn symbol_hash(source: &[u8], start: usize, end: usize) -> String {
-        hasher::symbol_content_hash(source, start, end).expect("symbol hash")
-    }
-
-    /// Stable uuid project id for a freshness-test label; the hub stores
-    /// project ids as native uuid, so labels cannot be bound directly.
-    fn test_project_id(label: &str) -> String {
-        uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, label.as_bytes()).to_string()
-    }
-
-    fn postgres_test_context(project_id: &str) -> Context {
-        let database_url = crate::test_env::postgres_test_database_url("freshness tests");
-        db::connect_readwrite(&database_url).expect("connect freshness PostgreSQL test database");
-        Context {
-            database_url,
-            project_root: std::path::PathBuf::from("/tmp/gcode-freshness-lock-test"),
-            project_id: project_id.to_string(),
-            quiet: true,
-            falkordb: None,
-            qdrant: None,
-            embedding: None,
-            code_vectors: crate::config::CodeVectorSettings::default(),
-            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
-            runtime_config_capture_degraded: false,
-            indexing: gobby_core::config::IndexingConfig::default(),
-            daemon_url: None,
-            grant_ai: None,
-            index_scope: crate::config::ProjectIndexScope::Single,
-        }
-    }
-
-    fn postgres_context_with_root(project_id: &str, root: &Path) -> Context {
-        let root = root
-            .canonicalize()
-            .expect("canonical freshness test checkout");
-        let database_url = crate::test_env::postgres_test_database_url("freshness tests");
-        let mut conn = db::connect_readwrite(&database_url)
-            .expect("connect freshness PostgreSQL test database");
-        crate::test_env::seed_test_checkout(&mut conn, project_id, &root)
-            .expect("register freshness test checkout");
-        Context {
-            database_url,
-            project_root: root,
-            project_id: project_id.to_string(),
-            quiet: true,
-            falkordb: None,
-            qdrant: None,
-            embedding: None,
-            code_vectors: crate::config::CodeVectorSettings::default(),
-            machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
-            runtime_config_capture_degraded: false,
-            indexing: gobby_core::config::IndexingConfig::default(),
-            daemon_url: None,
-            grant_ai: None,
-            index_scope: crate::config::ProjectIndexScope::Single,
-        }
-    }
-
-    fn hold_project_lock(ctx: &Context) -> Client {
-        let mut conn =
-            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
-        let key = crate::index_lock::project_lock_key(&ctx.project_id);
-        conn.execute("SELECT pg_advisory_lock($1)", &[&key])
-            .expect("hold project advisory lock");
-        conn
-    }
-
-    fn set_mtime(path: &Path, time: SystemTime) {
-        std::fs::File::options()
-            .read(true)
-            .write(true)
-            .open(path)
-            .expect("open file to set mtime")
-            .set_modified(time)
-            .expect("set mtime");
-    }
-
-    fn invalidate_test_project(ctx: &Context) {
-        let mut conn =
-            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
-        crate::index::indexer::invalidate(&mut conn, &ctx.project_id, None)
-            .expect("invalidate test project index");
-    }
-
-    fn full_index(ctx: &Context) {
-        api::index_files(
-            api::IndexRequest {
-                project_root: ctx.project_root.clone(),
-                path_filter: None,
-                explicit_files: Vec::new(),
-                full: true,
-                require_cpp_semantics: false,
-                sync_projections: false,
-            },
-            ctx,
-            api::IndexOptions::default(),
-        )
-        .expect("full index of test project");
-    }
-
-    /// Move a project's recorded `last_indexed_at` into the past so a sibling
-    /// project indexed at NOW() reads as newer, without sleeping in the test.
-    fn backdate_project_index(ctx: &Context, seconds: f64) {
-        let mut conn =
-            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
-        let machine_id =
-            db::id_param(&gobby_core::machine::read_local_machine_id().expect("local machine id"))
-                .expect("machine uuid");
-        let project_id = db::id_param(&ctx.project_id).expect("project uuid");
-        conn.execute(
-            "UPDATE code_indexed_project_states
-                SET last_indexed_at = last_indexed_at - make_interval(secs => $3)
-              WHERE machine_id = $1 AND project_id = $2",
-            &[&machine_id, &project_id, &seconds],
-        )
-        .expect("backdate project index");
-    }
-
-    fn tombstone_count(ctx: &Context) -> usize {
-        let mut conn =
-            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
-        visibility::tombstone_count(&mut conn, ctx)
-    }
-
-    fn visible_symbol_names(ctx: &Context, file_path: &str) -> Vec<String> {
-        let mut conn =
-            db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
-        visibility::visible_symbols_for_file(&mut conn, ctx, file_path)
-            .expect("read visible symbols")
-            .into_iter()
-            .map(|symbol| symbol.name)
-            .collect()
-    }
-
-    #[test]
-    fn busy_warning_names_the_holder_when_one_was_identified() {
-        let named = FreshnessStatus::SkippedBusy(Some("holder: backend pid 4242".to_string()))
-            .busy_warning()
-            .expect("a busy status must produce a warning");
-        assert!(named.contains("index refresh already running"), "{named}");
-        assert!(named.contains("holder: backend pid 4242"), "{named}");
-
-        // An unlooked-up holder must read as plain contention rather than
-        // implying the lookup ran and found nobody.
-        let unnamed = FreshnessStatus::SkippedBusy(None)
-            .busy_warning()
-            .expect("a busy status must produce a warning");
-        assert!(!unnamed.contains("holder"), "{unnamed}");
-
-        assert_eq!(FreshnessStatus::Checked.busy_warning(), None);
-        assert_eq!(
-            FreshnessStatus::Degraded("disk full".to_string()).busy_warning(),
-            None
-        );
-    }
-
-    mod serial_db {
-        use super::*;
-        use std::net::{TcpListener, TcpStream};
-        use std::sync::mpsc;
-        use std::time::Duration;
-
-        #[test]
-        #[serial_test::serial(serial_db)]
-        fn freshness_inflight_env_short_circuits_project_refresh() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let ctx = context_for(tmp.path());
-            unsafe { std::env::set_var(INFLIGHT_ENV, "1") };
-            let result = ensure_fresh(&ctx, FreshnessScope::Project);
-            unsafe { std::env::remove_var(INFLIGHT_ENV) };
-
-            assert_eq!(result.expect("freshness status"), FreshnessStatus::Checked);
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn busy_project_lock_skips_freshness_refresh() {
-            let ctx = postgres_test_context(&test_project_id("gcode-freshness-busy"));
-            let _holder = hold_project_lock(&ctx);
-
-            let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
-
-            assert!(
-                matches!(status, FreshnessStatus::SkippedBusy(_)),
-                "a held project lock must skip the refresh, got {status:?}"
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn file_scope_skips_busy_lock_then_refreshes_after_release() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let root = tmp.path();
-            std::fs::create_dir_all(root.join("src")).expect("create src");
-            let lib = root.join("src/lib.rs");
-            std::fs::write(&lib, b"pub fn stale_name() {}\n").expect("write initial source");
-            let ctx =
-                postgres_context_with_root(&test_project_id("gcode-freshness-file-lock"), root);
-            invalidate_test_project(&ctx);
-            full_index(&ctx);
-            assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["stale_name"]);
-
-            std::fs::write(&lib, b"pub fn fresh_name() {}\n").expect("write dirty source");
-            let holder = hold_project_lock(&ctx);
-            let (done_tx, done_rx) = std::sync::mpsc::channel();
-            let handle = std::thread::spawn(move || {
-                let status = ensure_fresh(
-                    &ctx,
-                    FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
-                );
-                done_tx.send(()).expect("send freshness completion");
-                (status, ctx)
-            });
-
-            // Allow connection/setup latency while keeping the lock held until
-            // freshness finishes. The status proves the busy-lock behavior;
-            // the timeout bounds a regression that waits for this holder.
-            let completed_while_locked = done_rx
-                .recv_timeout(std::time::Duration::from_secs(30))
-                .is_ok();
-            drop(holder);
-            let (status, ctx) = handle.join().expect("freshness thread joins");
-            assert!(matches!(
-                status.expect("file freshness status"),
-                FreshnessStatus::SkippedBusy(_)
-            ));
-            assert!(
-                completed_while_locked,
-                "file-scoped navigation must finish while the project lock is held"
-            );
-            assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["stale_name"]);
-            assert_eq!(
-                ensure_fresh(
-                    &ctx,
-                    FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")])
-                )
-                .expect("refresh after writer releases lock"),
-                FreshnessStatus::Checked
-            );
-            assert_eq!(visible_symbol_names(&ctx, "src/lib.rs"), ["fresh_name"]);
-            invalidate_test_project(&ctx);
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn file_scope_indexes_untracked_path_and_removes_deleted_path() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let root = tmp.path();
-            std::fs::create_dir_all(root.join("src")).expect("create src");
-            let lib = root.join("src/lib.rs");
-            std::fs::write(&lib, b"pub fn indexed_name() {}\n").expect("write indexed source");
-            let ctx = postgres_context_with_root(
-                &test_project_id("gcode-freshness-file-lifecycle"),
-                root,
-            );
-            invalidate_test_project(&ctx);
-            full_index(&ctx);
-
-            let untracked = root.join("src/untracked.rs");
-            std::fs::write(&untracked, b"pub fn newly_requested() {}\n")
-                .expect("write untracked source");
-            let status = ensure_fresh(
-                &ctx,
-                FreshnessScope::Files(vec![PathBuf::from("src/untracked.rs")]),
-            )
-            .expect("untracked file freshness status");
-            assert_eq!(status, FreshnessStatus::Checked);
-            assert_eq!(
-                visible_symbol_names(&ctx, "src/untracked.rs"),
-                ["newly_requested"]
-            );
-
-            std::fs::remove_file(&lib).expect("delete indexed source");
-            let status = ensure_fresh(
-                &ctx,
-                FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
-            )
-            .expect("deleted file freshness status");
-            assert_eq!(status, FreshnessStatus::Checked);
-            assert!(visible_symbol_names(&ctx, "src/lib.rs").is_empty());
-            invalidate_test_project(&ctx);
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn file_scope_refreshes_and_tombstones_worktree_overlay_path() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let parent_root = tmp.path().join("parent");
-            let overlay_root = tmp.path().join("overlay");
-            for root in [&parent_root, &overlay_root] {
-                std::fs::create_dir_all(root.join("src")).expect("create src");
-                std::fs::write(root.join("src/lib.rs"), b"pub fn parent_name() {}\n")
-                    .expect("write source");
-            }
-            let parent_ctx = postgres_context_with_root(
-                &test_project_id("gcode-freshness-file-overlay-parent"),
-                &parent_root,
-            );
-            let mut overlay_ctx = postgres_context_with_root(
-                &test_project_id("gcode-freshness-file-overlay"),
-                &overlay_root,
-            );
-            overlay_ctx.index_scope = ProjectIndexScope::Overlay {
-                overlay_project_id: overlay_ctx.project_id.clone(),
-                overlay_root: overlay_root.clone(),
-                parent_project_id: parent_ctx.project_id.clone(),
-                parent_root: parent_root.clone(),
-            };
-            invalidate_test_project(&parent_ctx);
-            invalidate_test_project(&overlay_ctx);
-            full_index(&parent_ctx);
-            full_index(&overlay_ctx);
-            assert_eq!(
-                visible_symbol_names(&overlay_ctx, "src/lib.rs"),
-                ["parent_name"]
-            );
-
-            let overlay_lib = overlay_root.join("src/lib.rs");
-            std::fs::write(&overlay_lib, b"pub fn overlay_name() {}\n")
-                .expect("write overlay source");
-            let status = ensure_fresh(
-                &overlay_ctx,
-                FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
-            )
-            .expect("overlay file freshness status");
-            assert_eq!(status, FreshnessStatus::Checked);
-            assert_eq!(
-                visible_symbol_names(&overlay_ctx, "src/lib.rs"),
-                ["overlay_name"]
-            );
-
-            std::fs::remove_file(&overlay_lib).expect("delete overlay source");
-            let status = ensure_fresh(
-                &overlay_ctx,
-                FreshnessScope::Files(vec![PathBuf::from("src/lib.rs")]),
-            )
-            .expect("deleted overlay freshness status");
-            assert_eq!(status, FreshnessStatus::Checked);
-            assert!(visible_symbol_names(&overlay_ctx, "src/lib.rs").is_empty());
-            assert_eq!(tombstone_count(&overlay_ctx), 1);
-
-            invalidate_test_project(&overlay_ctx);
-            invalidate_test_project(&parent_ctx);
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn pre_gate_skips_lock_when_unchanged_and_trips_after_a_change() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let root = tmp.path();
-            std::fs::create_dir_all(root.join("src")).expect("create src");
-            let lib = root.join("src/lib.rs");
-            std::fs::write(&lib, b"fn main() {}\n").expect("write lib.rs");
-            std::fs::write(root.join("README.md"), b"# Title\n").expect("write README");
-
-            // Age the files well past the skew margin so a clean index leaves them
-            // unambiguously older than last_indexed_at, regardless of host/hub skew.
-            let aged = SystemTime::now() - std::time::Duration::from_secs(3600);
-            set_mtime(&lib, aged);
-            set_mtime(&root.join("README.md"), aged);
-
-            let ctx = postgres_context_with_root(&test_project_id("gcode-freshness-pregate"), root);
-
-            // Start clean, then index so code_indexed_projects.last_indexed_at = NOW().
-            invalidate_test_project(&ctx);
-            full_index(&ctx);
-
-            // Nothing changed: the pre-gate must skip the advisory lock entirely,
-            // even while another connection holds it, and report Checked. Without
-            // the gate this would force SkippedBusy.
-            let holder = hold_project_lock(&ctx);
-            let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
-            assert_eq!(status, FreshnessStatus::Checked);
-
-            // Touch a tracked file with a future mtime so the gate trips regardless
-            // of skew; with the lock still held it reports SkippedBusy, proving it
-            // took the lock path rather than skipping.
-            set_mtime(
-                &lib,
-                SystemTime::now() + std::time::Duration::from_secs(3600),
-            );
-            let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
-            assert!(
-                matches!(status, FreshnessStatus::SkippedBusy(_)),
-                "the changed file must take the lock path, got {status:?}"
-            );
-            drop(holder);
-
-            invalidate_test_project(&ctx);
-        }
-
-        #[test]
-        #[serial_test::serial(serial_db)]
-        fn symbol_slice_check_uses_stored_byte_range_hash() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let source = b"fn before() {}\nfn target() {}\n";
-            std::fs::write(tmp.path().join("lib.rs"), source).expect("write file");
-            let ctx = context_for(tmp.path());
-            let start = 15;
-            let end = source.len();
-            let sym = Symbol {
-                id: uuid::Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, b"sym").to_string(),
-                project_id: "proj".to_string(),
-                file_path: "lib.rs".to_string(),
-                name: "target".to_string(),
-                qualified_name: "target".to_string(),
-                kind: "function".to_string(),
-                language: "rust".to_string(),
-                byte_start: start,
-                byte_end: end,
-                line_start: 2,
-                line_end: 2,
-                signature: None,
-                docstring: None,
-                parent_symbol_id: None,
-                file_content_hash: crate::index::hasher::content_hash(source),
-                content_hash: symbol_hash(source, start, end),
-                summary: None,
-                created_at: String::new(),
-                updated_at: String::new(),
-            };
-
-            assert!(symbol_slice_is_current(&ctx, &sym));
-
-            std::fs::write(
-                tmp.path().join("lib.rs"),
-                b"// shifted\nfn before() {}\nfn target() {}\n",
-            )
-            .expect("shift file");
-            assert!(!symbol_slice_is_current(&ctx, &sym));
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn overlay_pre_gate_counts_inherited_paths_and_trips_on_parent_reindex_or_edits() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let parent_root = tmp.path().join("parent");
-            let overlay_root = tmp.path().join("overlay");
-            // Age every file well past the skew margin and the back-dating below.
-            let aged = SystemTime::now() - std::time::Duration::from_secs(4 * 3600);
-            for root in [&parent_root, &overlay_root] {
-                std::fs::create_dir_all(root.join("src")).expect("create src");
-                for (rel, body) in [("src/lib.rs", "fn main() {}\n"), ("README.md", "# Title\n")] {
-                    let path = root.join(rel);
-                    std::fs::write(&path, body).expect("write file");
-                    set_mtime(&path, aged);
-                }
-            }
-            // Indexed in the parent only, like a generated vault the worktree
-            // never checks out: the overlay tombstones it and then stays quiet.
-            std::fs::create_dir_all(parent_root.join("generated")).expect("create generated");
-            let generated = parent_root.join("generated/page.md");
-            std::fs::write(&generated, "# generated\n").expect("write generated page");
-            set_mtime(&generated, aged);
-            let parent_ctx = postgres_context_with_root(
-                &test_project_id("gcode-freshness-overlay-parent"),
-                &parent_root,
-            );
-            let mut overlay_ctx = postgres_context_with_root(
-                &test_project_id("gcode-freshness-overlay"),
-                &overlay_root,
-            );
-            overlay_ctx.index_scope = crate::config::ProjectIndexScope::Overlay {
-                overlay_project_id: overlay_ctx.project_id.clone(),
-                overlay_root: overlay_root.clone(),
-                parent_project_id: parent_ctx.project_id.clone(),
-                parent_root: parent_root.clone(),
-            };
-            invalidate_test_project(&parent_ctx);
-            invalidate_test_project(&overlay_ctx);
-            full_index(&parent_ctx);
-            full_index(&overlay_ctx);
-            assert_eq!(tombstone_count(&overlay_ctx), 1);
-
-            // Every worktree path is inherited from the parent and older than
-            // the overlay's index: nothing to refresh, no lock taken.
-            assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-
-            // A parent index newer than the overlay's changes the rows the
-            // overlay inherits; no worktree mtime can show that.
-            backdate_project_index(&overlay_ctx, 3600.0);
-            assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-            full_index(&overlay_ctx);
-            assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-
-            // Deleting an inherited file in the worktree trips the gate; once
-            // the refresh tombstones it, the known-absent path is quiet again.
-            let readme = overlay_root.join("README.md");
-            std::fs::remove_file(&readme).expect("delete README");
-            assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-            let status = ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("refresh");
-            assert_eq!(status, FreshnessStatus::Checked);
-            assert_eq!(tombstone_count(&overlay_ctx), 2);
-            assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-
-            // A tombstoned path that reappears reads as new.
-            std::fs::write(&readme, b"# Back\n").expect("recreate README");
-            assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-
-            invalidate_test_project(&overlay_ctx);
-            invalidate_test_project(&parent_ctx);
-        }
-
-        #[test]
-        #[serial_test::serial(serial_db)]
-        fn refresh_closure_failure_yields_degraded() {
-            // `ensure_fresh` maps an acquired lock whose refresh closure failed
-            // onto Degraded; hub/lock errors never reach this helper because
-            // they stay `Err` from `with_project_lock` / `project_needs_refresh`.
-            let status = freshness_from_lock(IndexLockResult::Acquired(Err(
-                "unreadable project root".to_string(),
-            )));
-            assert_eq!(
-                status,
-                FreshnessStatus::Degraded("unreadable project root".to_string())
-            );
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        fn degraded_detail_keeps_the_sql_cause_of_a_hub_error() {
-            let database_url = crate::test_env::postgres_test_database_url("freshness tests");
-            let mut client = db::connect_readwrite(&database_url).expect("connect hub");
-            let error = client
-                .batch_execute("SELECT 1/0")
-                .expect_err("division by zero fails on the hub");
-
-            let detail = degraded_detail(&anyhow::Error::from(error));
-
-            assert!(detail.contains("division by zero"), "{detail}");
-        }
-
-        /// Forward the first hub connection and answer nothing afterwards.
-        ///
-        /// A freshness refresh connects twice: once for the index locks, then
-        /// once for the indexing pipeline. Silencing every connection after the
-        /// first reproduces #22412 — the pipeline socket is ESTABLISHED and the
-        /// startup handshake is never answered — while the lock connection
-        /// keeps working, which is what put the project advisory lock at risk.
-        fn spawn_silent_after_first_hub_relay(database_url: &str) -> u16 {
-            let upstream = hub_address(database_url);
-            let listener = TcpListener::bind("127.0.0.1:0").expect("bind the hub relay");
-            let port = listener.local_addr().expect("hub relay address").port();
-            std::thread::spawn(move || {
-                let mut forwarded = false;
-                let mut silenced = Vec::new();
-                for stream in listener.incoming() {
-                    let Ok(stream) = stream else { break };
-                    if forwarded {
-                        // Accepted, never answered, and held open so the client
-                        // waits on the handshake instead of reading EOF.
-                        silenced.push(stream);
-                        continue;
-                    }
-                    forwarded = true;
-                    let hub = TcpStream::connect(upstream.as_str())
-                        .expect("hub relay connect to the test hub");
-                    pump(
-                        stream.try_clone().expect("clone the client socket"),
-                        hub.try_clone().expect("clone the hub socket"),
-                    );
-                    pump(hub, stream);
-                }
-            });
-            port
-        }
-
-        fn pump(mut source: TcpStream, mut sink: TcpStream) {
-            std::thread::spawn(move || {
-                let _ = std::io::copy(&mut source, &mut sink);
-                let _ = sink.shutdown(std::net::Shutdown::Write);
-            });
-        }
-
-        /// `host:port` of a `postgresql://user:password@host:port/database` DSN.
-        fn hub_address(database_url: &str) -> String {
-            let (_credentials, rest) = database_url
-                .split_once('@')
-                .expect("the test DSN carries credentials");
-            let (authority, _database) = rest
-                .split_once('/')
-                .expect("the test DSN carries a database name");
-            match authority.split_once(':') {
-                Some(_) => authority.to_string(),
-                None => format!("{authority}:5432"),
-            }
-        }
-
-        /// The same DSN pointed at the relay, with a one-second connect bound.
-        fn relay_database_url(database_url: &str, port: u16) -> String {
-            let (credentials, rest) = database_url
-                .split_once('@')
-                .expect("the test DSN carries credentials");
-            let (_authority, database) = rest
-                .split_once('/')
-                .expect("the test DSN carries a database name");
-            let separator = if database.contains('?') { '&' } else { '?' };
-            format!(
-                "{credentials}@127.0.0.1:{port}/{database}{separator}\
-                 sslmode=disable&connect_timeout=1"
-            )
-        }
-
-        #[test]
-        #[cfg_attr(
-            not(gcode_postgres_tests),
-            ignore = "requires a PostgreSQL test database URL"
-        )]
-        #[serial_test::serial(serial_db)]
-        fn refresh_connect_failure_releases_project_lock() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            std::fs::write(tmp.path().join("lib.rs"), b"pub fn one() {}\n").expect("write source");
-            let ctx = postgres_context_with_root(
-                &test_project_id("gcode-freshness-lock-release"),
-                tmp.path(),
-            );
-            let port = spawn_silent_after_first_hub_relay(&ctx.database_url);
-            let relay_ctx = Context {
-                database_url: relay_database_url(&ctx.database_url, port),
-                ..ctx.clone()
-            };
-            let file = relay_ctx.project_root.join("lib.rs");
-
-            // The refresh must give up on its silenced pipeline connection; a
-            // hang here is the #22412 failure, so it is bounded, not awaited.
-            let (sender, receiver) = mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = sender.send(ensure_fresh(&relay_ctx, FreshnessScope::Files(vec![file])));
-            });
-            let status = receiver
-                .recv_timeout(Duration::from_secs(20))
-                .expect("the refresh must fail closed instead of holding the lock forever")
-                .expect("a failed pipeline connect degrades the refresh");
-
-            match &status {
-                FreshnessStatus::Degraded(message) => assert!(
-                    message.contains("startup handshake"),
-                    "the degraded reason must name the unanswered handshake: {message}"
-                ),
-                other => panic!("a failed pipeline connect must degrade, got {other:?}"),
-            }
-
-            let competitor =
-                index_lock::with_project_lock(&ctx, IndexLockPolicy::brief_freshness_try(), || {
-                    Ok(())
-                })
-                .expect("competitor lock attempt");
-            assert!(
-                matches!(competitor, IndexLockResult::Acquired(())),
-                "the failed refresh must leave the project lock free, got {competitor:?}"
-            );
-        }
-
-        #[test]
-        #[serial_test::serial(serial_db)]
-        fn hub_connect_failure_still_errors() {
-            let tmp = tempfile::tempdir().expect("tempdir");
-            let mut ctx = context_for(tmp.path());
-            ctx.database_url = "postgresql://gobby@/gobby_freshness_unreachable?\
-                host=/tmp/gobby-no-postgres-hub&sslmode=disable"
-                .to_string();
-
-            let error = ensure_fresh(&ctx, FreshnessScope::Project)
-                .expect_err("hub unavailability must fail closed");
-            assert!(!error.to_string().is_empty());
-        }
-    }
-}
+#[path = "freshness/tests.rs"]
+mod tests;

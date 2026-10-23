@@ -171,6 +171,35 @@ pub fn project_changed_since(
     false
 }
 
+/// Returns `true` when one explicitly requested file needs an overlay refresh:
+/// its indexable verdict differs from `indexed`, or it is indexable and was
+/// modified after `watermark` less the skew margin. Reads metadata only.
+pub fn explicit_file_changed_since(
+    project_root: &Path,
+    watermark: SystemTime,
+    file: &str,
+    indexed: bool,
+    extra_excludes: &[String],
+) -> bool {
+    let Ok(root) = project_root.canonicalize() else {
+        return true;
+    };
+    let path = root.join(file);
+    let excludes = effective_excludes(extra_excludes);
+    let indexable = walker::classify_file(&root, &path, &excludes).is_some();
+    if indexable != indexed {
+        return true;
+    }
+    if !indexable {
+        return false;
+    }
+    let threshold = watermark.checked_sub(SKEW_MARGIN).unwrap_or(watermark);
+    match path.metadata().and_then(|meta| meta.modified()) {
+        Ok(modified) => modified > threshold,
+        Err(_) => true,
+    }
+}
+
 /// Whether the inode's last status change (ctime) is at or before `threshold`.
 /// Writes, chmod, renames and a backdated `touch` all advance ctime, and
 /// ordinary tools cannot set it back.
