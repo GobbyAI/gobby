@@ -713,7 +713,7 @@ step_workflow:
         failing proof holds close release; a failure goes to the Orchestrator
         to reopen the task. Activation and close release gates still apply.
         On a bounce, a close blocker you must fix, or a verdict that leaves the
-        task open, report the blocker to your Lane Manager. Read the assigned
+        task open, report the blocker to your Lane Manager. Read an assigned
         reviewer's stored incoming CANDIDATE_VERDICT (VERDICT=BOUNCE) or
         pre-landing EVENT=PROOF_REQUEST with get_inter_session_message to return to
         implementation with shell access. A proof-only return with no new commit:
