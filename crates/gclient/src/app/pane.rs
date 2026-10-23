@@ -509,7 +509,7 @@ impl Pane {
 
     /// Frames arrive on a direct socket and the backend is one gclient can
     /// write to. Whether it may type is [`Pane::direct_input`].
-    fn direct_native(&self) -> bool {
+    pub(super) fn direct_native(&self) -> bool {
         self.transport() == Some(Transport::Direct) && self.backend.is_native()
     }
 
@@ -528,6 +528,14 @@ impl Pane {
         self.control = ControlState::Held;
         self.take_back = false;
         self.host_input_granted = true;
+    }
+
+    /// The host has revoked this pane's grant, so it no longer types there.
+    pub(super) fn drop_host_grant(&mut self) {
+        self.host_input_granted = false;
+        self.control = ControlState::Observe;
+        self.take_back = false;
+        self.clear_pending_input();
     }
 
     /// Type `data` into the host on the frame stream, binding this attachment

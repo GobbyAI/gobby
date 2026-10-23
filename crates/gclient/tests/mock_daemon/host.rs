@@ -9,7 +9,8 @@
 
 #![allow(dead_code)]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use gobby_client::daemon::LiveDaemon;
@@ -19,6 +20,7 @@ use gobby_terminal::protocol::{
     read_message_async, write_message_async, ClientMessage, ServerMessage, MAX_FRAME_SIZE,
 };
 use serde_json::{json, Value};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, watch};
 use tokio::time::{timeout, Duration};
@@ -56,6 +58,9 @@ pub struct DirectHost {
     /// resolved the request to a different terminal does (#23076).
     relocate_attach: Arc<Mutex<Option<String>>>,
     task: tokio::task::JoinHandle<()>,
+    /// Set by [`DirectHost::serve_gterm_control`]; a host without it has no
+    /// control socket, so a grant cannot connect.
+    control: Option<(Arc<ControlShared>, tokio::task::JoinHandle<()>)>,
 }
 
 impl DirectHost {
@@ -130,7 +135,87 @@ impl DirectHost {
             refuse_attach: refuse_attach.clone(),
             relocate_attach: relocate_attach.clone(),
             task,
+            control: None,
         }
+    }
+
+    /// Serve the owner-only `gterm-control.sock` and `gterm-control.token` beside
+    /// the frame socket, as the gterm host does: `hello` authenticates the
+    /// connection, and every verb after it is recorded for
+    /// [`DirectHost::control_requests`] (#24815).
+    pub fn serve_gterm_control(&mut self, token: &str) {
+        let dir = self.socket_dir.path();
+        let socket_path = dir.join("gterm-control.sock");
+        let token_path = dir.join("gterm-control.token");
+        std::fs::write(&token_path, token).expect("write control token");
+        std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600))
+            .expect("token owner-only");
+        let listener = UnixListener::bind(&socket_path).expect("bind control socket");
+        std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))
+            .expect("socket owner-only");
+        let (gate, _) = watch::channel(true);
+        let shared = Arc::new(ControlShared {
+            token: token.to_string(),
+            requests: Mutex::new(Vec::new()),
+            hellos: AtomicUsize::new(0),
+            refuse_grants: AtomicBool::new(false),
+            gate: Arc::new(gate),
+        });
+        let task = tokio::spawn({
+            let shared = Arc::clone(&shared);
+            async move {
+                loop {
+                    let Ok((stream, _)) = listener.accept().await else {
+                        return;
+                    };
+                    tokio::spawn(serve_control(stream, Arc::clone(&shared)));
+                }
+            }
+        });
+        self.control = Some((shared, task));
+    }
+
+    /// Grant and revoke verbs the control socket has received, in order.
+    pub fn control_requests(&self) -> Vec<Value> {
+        self.control_shared()
+            .requests
+            .lock()
+            .expect("control requests")
+            .clone()
+    }
+
+    /// Authenticated `hello`s the control socket has accepted.
+    pub fn control_hellos(&self) -> usize {
+        self.control_shared().hellos.load(Ordering::SeqCst)
+    }
+
+    /// Answer every later `grant_input` with a refusal, as a host whose
+    /// terminal is gone does.
+    pub fn refuse_grants(&self) {
+        self.control_shared()
+            .refuse_grants
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// Hold every control reply before it is written, so a grant stays in
+    /// flight. Release with [`DirectHost::release_control_replies`].
+    pub fn hold_control_replies(&self) -> Arc<watch::Sender<bool>> {
+        let gate = Arc::clone(&self.control_shared().gate);
+        let _ = gate.send_replace(false);
+        gate
+    }
+
+    /// Let held and future control replies answer.
+    pub fn release_control_replies(&self, gate: &watch::Sender<bool>) {
+        let _ = gate.send_replace(true);
+    }
+
+    fn control_shared(&self) -> &ControlShared {
+        &self
+            .control
+            .as_ref()
+            .expect("the host serves a gterm control socket")
+            .0
     }
 
     /// The host's socket path.
@@ -264,6 +349,9 @@ impl DirectHost {
 
     /// Abort the host's accept loop and its socket.
     pub async fn shutdown(self) {
+        if let Some((_, control)) = self.control {
+            control.abort();
+        }
         self.task.abort();
         let _ = self.task.await;
         drop(self.socket_dir);
@@ -278,22 +366,38 @@ pub async fn live_workspace_on_direct_host(
     host: &DirectHost,
     terminal_id: &str,
 ) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+    live_workspace_on_direct_host_terminals(mock, host, &[terminal_id]).await
+}
+
+/// [`live_workspace_on_direct_host`] for several terminals on one host, each
+/// attached over the host's frame socket. Panes come up in roster order.
+pub async fn live_workspace_on_direct_host_terminals(
+    mock: &MockDaemon,
+    host: &DirectHost,
+    terminal_ids: &[&str],
+) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     let home = tempfile::tempdir().expect("gobby home");
     std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n")
         .expect("write API key");
-    mock.serve_direct_attach(host.attach_locator(terminal_id));
+    let items: Vec<Value> = terminal_ids
+        .iter()
+        .map(|terminal_id| {
+            mock.serve_direct_attach(host.attach_locator(terminal_id));
+            json!({
+                "terminal_id": terminal_id,
+                "backend": "native",
+                "state": "live",
+                "attach": host.roster_attach(terminal_id),
+            })
+        })
+        .collect();
     for _ in 0..2 {
         mock.enqueue(
             "GET",
             "/api/terminals?",
             200,
             json!({
-                "items": [{
-                    "terminal_id": terminal_id,
-                    "backend": "native",
-                    "state": "live",
-                    "attach": host.roster_attach(terminal_id),
-                }],
+                "items": items,
                 "next_cursor": null,
                 "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
             }),
@@ -309,14 +413,16 @@ pub async fn live_workspace_on_direct_host(
         .reconcile_subscribe_first()
         .await
         .expect("install the direct attachment");
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("direct pane");
-    assert_eq!(
-        workspace.pane(pane_id).transport(),
-        Some(Transport::Direct),
-        "the roster advertised a host socket, so the attach must be direct"
-    );
+    for terminal_id in terminal_ids {
+        let pane_id = workspace
+            .pane_for_terminal(terminal_id)
+            .expect("direct pane");
+        assert_eq!(
+            workspace.pane(pane_id).transport(),
+            Some(Transport::Direct),
+            "the roster advertised a host socket, so the attach must be direct"
+        );
+    }
     (workspace, home)
 }
 
@@ -426,6 +532,77 @@ async fn serve(
                     Err(broadcast::error::RecvError::Lagged(_)) => return,
                 }
             }
+        }
+    }
+}
+
+/// What the fake control socket shares across its connections.
+struct ControlShared {
+    token: String,
+    requests: Mutex<Vec<Value>>,
+    hellos: AtomicUsize,
+    refuse_grants: AtomicBool,
+    /// `false` holds every reply after its request is recorded.
+    gate: Arc<watch::Sender<bool>>,
+}
+
+/// One NDJSON control connection: `hello` must come first, as gterm requires,
+/// and a verb before it closes the connection. Replies carry the request id.
+async fn serve_control(stream: UnixStream, shared: Arc<ControlShared>) {
+    let (reader, mut writer) = stream.into_split();
+    let mut lines = BufReader::new(reader).lines();
+    let mut authenticated = false;
+    while let Ok(Some(line)) = lines.next_line().await {
+        let Ok(request) = serde_json::from_str::<Value>(&line) else {
+            return;
+        };
+        let id = request.get("id").cloned().unwrap_or(Value::Null);
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let reply = if !authenticated {
+            if method != "hello" {
+                return;
+            }
+            if request.get("control_token").and_then(Value::as_str) != Some(shared.token.as_str()) {
+                json!({"id": id, "ok": false, "error": "invalid_token"})
+            } else {
+                authenticated = true;
+                shared.hellos.fetch_add(1, Ordering::SeqCst);
+                json!({
+                    "id": id,
+                    "ok": true,
+                    "host_epoch": "epoch-1",
+                    "protocol_version": 1,
+                    "capabilities": ["terminal_theme"],
+                })
+            }
+        } else {
+            shared
+                .requests
+                .lock()
+                .expect("control requests")
+                .push(request.clone());
+            let mut gate = shared.gate.subscribe();
+            while !*gate.borrow_and_update() {
+                if gate.changed().await.is_err() {
+                    return;
+                }
+            }
+            match method.as_str() {
+                "grant_input" if shared.refuse_grants.load(Ordering::SeqCst) => {
+                    json!({"id": id, "ok": false, "error": "terminal_gone"})
+                }
+                "grant_input" => json!({"id": id, "ok": true, "granted": true, "previous": null}),
+                _ => json!({"id": id, "ok": true, "revoked": true}),
+            }
+        };
+        let mut out = reply.to_string();
+        out.push('\n');
+        if writer.write_all(out.as_bytes()).await.is_err() {
+            return;
         }
     }
 }

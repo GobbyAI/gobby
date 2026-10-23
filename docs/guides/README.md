@@ -84,7 +84,7 @@ seed empty content; bootstrap and files-home ownership errors require recovery.
 | [code-index.md](code-index.md) | `gcode` indexing, symbol search, and graph navigation |
 | [gcode-user-guide.md](gcode-user-guide.md) | `gcode` search, symbols, dependency graphs, and project management |
 | [ghook-user-guide.md](ghook-user-guide.md) | `ghook` hook dispatch, inbox replay, diagnostics, and troubleshooting |
-| [gclient-user-guide.md](gclient-user-guide.md) | `gclient` terminal workspace: layout, themes, daemon-owned workspaces and refs, keybindings and host/pane keyboard protocols, control leases, mouse, and reconnects |
+| [gclient-user-guide.md](gclient-user-guide.md) | `gclient` terminal workspace: layout, themes, daemon-owned workspaces and refs, keybindings and host/pane keyboard protocols, control leases, mouse, reconnects, and typing or scrolling while the daemon is away |
 
 ## Interfaces & Reference
 
