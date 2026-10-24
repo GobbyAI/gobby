@@ -2,7 +2,6 @@
 
 import re
 
-from gobby.hooks._normalization_env import _ASSIGNMENT
 from gobby.hooks._shell_execution_words import _unwrap, option_word_count
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _python_program
@@ -201,20 +200,8 @@ def _node_stdin_program(argv: list[str]) -> bool:
 def _language_stage(words: list[str]) -> bool:
     """Whether Python or Node consumes stdin as language source, including through ``uv run``."""
     unwrapped = _unwrap(words)
-    if not unwrapped:
-        return False
-    prefix_length = len(words) - len(unwrapped)
-    if prefix_length < 0 or words[prefix_length:] != unwrapped:
-        return False
-    if any(
-        _ASSIGNMENT.match(word) or shell_command_name(word) == "env"
-        for word in words[:prefix_length]
-    ):
-        return False
-    argvs = _uv_run_argvs(shell_command_name(unwrapped[0]), unwrapped[1:])
+    argvs = _uv_run_argvs(shell_command_name(unwrapped[0]), unwrapped[1:]) if unwrapped else None
     programs = argvs or [unwrapped]
-    if any(not argv or "/" in argv[0] for argv in programs):
-        return False
     return any(_python_program(argv)[1] for argv in programs if argv) or all(
         _node_stdin_program(argv) for argv in programs
     )

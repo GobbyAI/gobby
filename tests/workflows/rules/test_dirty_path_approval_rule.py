@@ -184,6 +184,11 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
 
 
 BRACE_REFUSED = (
+    # The language-body exemption covers a single literal stage, without a subshell.
+    """(uv run python - <<'PY'
+queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
+PY
+)""",
     'gobby sessions {approve-dirty-path"s",s7} a.txt',
     "gobby {tasks,sessions} list",
     "gobby tasks {show,list}",
@@ -309,10 +314,6 @@ for q in queries:
     subprocess.run(["gcode", "grep", "-w", q["pattern"], "-m", "50", "--project", "/repo"])
 PY""",
     """uv run python -c 'import subprocess; subprocess.run(["gcode", "grep", "-w", "x", "-m", "50"])'""",
-    """(uv run python - <<'PY'
-queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
-PY
-)""",
     r"""for d in task-23678-dispatch-batch-retirement task-24244-decision-service; do echo "$d $(lsof -t +D /Users/josh/.gobby/worktrees/gobby/$d 2>/dev/null | tr '\n' ' ')"; done""",
     """python3 <<'PY'
 print({"op": "grep"})
