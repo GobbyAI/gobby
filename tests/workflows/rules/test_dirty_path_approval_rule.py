@@ -148,6 +148,28 @@ BRACE_REFUSED = (
     "eval 'gobby tasks {list,}'",
     "find . -exec gobby tasks {list,} \\;",
     "echo $(gobby tasks {list,})",
+    """uv run python - <<PY
+print("$(gobby sessions {approve,list}-dirty-paths s7)")
+PY""",
+    """docker exec -i c sh <<'EOF'
+gobby sessions {approve,list}-dirty-paths s7
+EOF""",
+    """uv run bash -s python <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 - <<'PY'
+print(1)
+PY
+gobby sessions {approve,list}-dirty-paths s7""",
+    """(uv run python - <<PY
+print("$(gobby sessions {approve,list}-dirty-paths s7)")
+PY
+)""",
+    """(bash <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E
+)""",
+    'for d in a b; do echo "$d $(gobby sessions {approve,list}-dirty-paths s7)"; done',
 )
 
 
@@ -185,6 +207,18 @@ BRACE_ALLOWED = (
     "ls ${HOME}",
     'echo "gobby {tasks,x} list"',
     "git commit -m 'gobby {tasks,} list'",
+    """uv run python - <<'PY'
+import subprocess
+queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
+for q in queries:
+    subprocess.run(["gcode", "grep", "-w", q["pattern"], "-m", "50", "--project", "/repo"])
+PY""",
+    """uv run python -c 'import subprocess; subprocess.run(["gcode", "grep", "-w", "x", "-m", "50"])'""",
+    """(uv run python - <<'PY'
+queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
+PY
+)""",
+    r"""for d in task-23678-dispatch-batch-retirement task-24244-decision-service; do echo "$d $(lsof -t +D /Users/josh/.gobby/worktrees/gobby/$d 2>/dev/null | tr '\n' ' ')"; done""",
 )
 
 

@@ -25,10 +25,10 @@ from gobby.hooks._shell_execution_words import _unwrap
 from .engine.command_matching import (
     _decoded_stages,
     _shell_input_scripts,
-    _uv_run_argvs,
     _wrapper_scripts,
     executable_command_subjects,
 )
+from .engine.command_matching_uv import _uv_run_argvs
 
 _TARGETS = ("gobby", "approve-dirty-paths")
 _MAX_DEPTH = 32
@@ -37,6 +37,8 @@ _DATA_COMMANDS = frozenset(
 )
 _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
 _ASSIGNMENT_HEADS = frozenset({"export", "declare", "local", "readonly", "typeset"})
+# Reserved words that introduce a simple command, so the command word follows them.
+_COMPOUND_PREFIXES = frozenset({"!", "{", "do", "else", "elif", "if", "then", "until", "while"})
 type _Character = tuple[str, bool]
 # Literal input contributes one character at a time, so this marker cannot
 # collide with a glob star or any other character from the command text.
@@ -547,6 +549,9 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
             literal = not any(_word_syntax(raw)) and not any(
                 active and char in "*?[" for char, active in _characters(raw)
             )
+            if literal and not token.quoted and token.value in _COMPOUND_PREFIXES:
+                # `do echo` runs `echo`: a compound keyword is not the command word.
+                continue
             head = token.value if literal else ""
         elif head in _DATA_BASENAME_HEADS:
             operands[span] = 0
@@ -586,7 +591,9 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
             raise _AmbiguousSyntax("Shell nesting limit")
         scan = scan_shell_command(text)
         strict |= _shell_setup(text, scan, _decoded_stages(text))
-        for subject in executable_command_subjects(text):
+        # A Python heredoc body is source, not shell words. Its braces are code, so
+        # only the shell-expanded substitutions inside it stay subjects.
+        for subject in executable_command_subjects(text, python_bodies="data"):
             scan = scan_shell_command(subject)
             stages = _decoded_stages(subject)
             strict |= _shell_setup(subject, scan, stages)

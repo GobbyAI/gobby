@@ -56,7 +56,7 @@ from gobby.hooks._normalization_shell import (
     is_shell_output_redirection_token,
     scan_shell_command,
 )
-from gobby.hooks._shell_execution_words import _unwrap, option_word_count
+from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks._shell_syntax import joined_prefix_end
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import (
@@ -74,6 +74,7 @@ from .command_matching_heredoc import (
     classify_heredoc_execution,
     heredoc_free_text,
 )
+from .command_matching_uv import _after_options, _python_stage, _uv_run_argvs
 
 _SUBSTITUTION_OPENING = re.compile(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(")
 # A newline right after one of these continues the same command list.
@@ -143,179 +144,6 @@ _SSH_VALUE_OPTIONS = frozenset(
         "-P",
     }
 )
-# uv 0.12 global options, accepted before the subcommand and after it.
-_UV_GLOBAL_VALUE_OPTIONS = frozenset(
-    {
-        "--cache-dir",
-        "--color",
-        "--allow-insecure-host",
-        "--directory",
-        "--project",
-        "--config-file",
-        "--python-preference",
-        "--preview-features",
-        "--python-fetch",
-    }
-)
-# Every value-taking option `uv run --help` lists.
-_UV_RUN_VALUE_OPTIONS = _UV_GLOBAL_VALUE_OPTIONS | frozenset(
-    {
-        "--extra",
-        "--no-extra",
-        "--group",
-        "--no-group",
-        "--only-group",
-        "--no-editable-package",
-        "--env-file",
-        "-w",
-        "--with",
-        "--with-editable",
-        "--with-requirements",
-        "--package",
-        "--python-platform",
-        "--index",
-        "--default-index",
-        "-i",
-        "--index-url",
-        "--extra-index-url",
-        "-f",
-        "--find-links",
-        "--index-strategy",
-        "--keyring-provider",
-        "-P",
-        "--upgrade-package",
-        "--upgrade-group",
-        "--resolution",
-        "--prerelease",
-        "--prerelease-package",
-        "--fork-strategy",
-        "--exclude-newer",
-        "--exclude-newer-package",
-        "--no-sources-package",
-        "--reinstall-package",
-        "--link-mode",
-        "-C",
-        "--config-setting",
-        "--config-settings-package",
-        "--no-build-isolation-package",
-        "--no-build-package",
-        "--no-binary-package",
-        "--refresh-package",
-        "-p",
-        "--python",
-    }
-)
-# Every value-taking option `uvx --help` (alias `uv tool run`) lists.
-_UV_TOOL_RUN_VALUE_OPTIONS = _UV_GLOBAL_VALUE_OPTIONS | frozenset(
-    {
-        "--from",
-        "-w",
-        "--with",
-        "--with-editable",
-        "--with-requirements",
-        "-c",
-        "--constraints",
-        "-b",
-        "--build-constraints",
-        "--overrides",
-        "--env-file",
-        "--python-platform",
-        "--torch-backend",
-        "--index",
-        "--default-index",
-        "-i",
-        "--index-url",
-        "--extra-index-url",
-        "-f",
-        "--find-links",
-        "--index-strategy",
-        "--keyring-provider",
-        "-P",
-        "--upgrade-package",
-        "--upgrade-group",
-        "--resolution",
-        "--prerelease",
-        "--prerelease-package",
-        "--fork-strategy",
-        "--exclude-newer",
-        "--exclude-newer-package",
-        "--no-sources-package",
-        "--reinstall-package",
-        "--link-mode",
-        "-C",
-        "--config-setting",
-        "--config-settings-package",
-        "--no-build-isolation-package",
-        "--no-build-package",
-        "--no-binary-package",
-        "--refresh-package",
-        "-p",
-        "--python",
-    }
-)
-# A tool command may carry its package's version or extras (`ruff@0.6`, `ruff==0.6`).
-_TOOL_SPEC_SUFFIX = re.compile(r"[@\[<>=!~].*", re.DOTALL)
-
-
-def _uv_run_argvs(name: str, args: list[str]) -> list[list[str]] | None:
-    """The argvs ``uv run``, ``uv tool run`` or ``uvx`` executes; None for other commands.
-
-    ``uv run -m X args`` runs module X as ``python -m X args`` would, so it yields
-    both readings: rules match the module's own command (``pip install``) or the
-    ``python -m`` form.
-    """
-    if name == "uvx":
-        return [_tool_argv(_after_options(args, _UV_TOOL_RUN_VALUE_OPTIONS))]
-    if name != "uv":
-        return None
-    subcommand = _after_options(args, _UV_GLOBAL_VALUE_OPTIONS)
-    if subcommand[:1] == ["run"]:
-        argv = _after_options(subcommand[1:], _UV_RUN_VALUE_OPTIONS)
-        options = subcommand[1 : len(subcommand) - len(argv)]
-        if argv and any(_selects_module(option) for option in options):
-            return [argv, ["python", "-m", *argv]]
-        return [argv]
-    if subcommand[:1] == ["tool"]:
-        tool = _after_options(subcommand[1:], _UV_GLOBAL_VALUE_OPTIONS)
-        if tool[:1] in (["run"], ["uvx"]):
-            return [_tool_argv(_after_options(tool[1:], _UV_TOOL_RUN_VALUE_OPTIONS))]
-    return None
-
-
-def _selects_module(option: str) -> bool:
-    """Whether a ``uv run`` option is ``-m``, alone or in a short cluster (``-qm``)."""
-    if option == "--module":
-        return True
-    if option.startswith("--") or not option.startswith("-"):
-        return False
-    for letter in option[1:]:
-        if letter == "m":
-            return True
-        # A value option takes the rest of the cluster as its value.
-        if "-" + letter in _UV_RUN_VALUE_OPTIONS:
-            return False
-    return False
-
-
-def _tool_argv(words: list[str]) -> list[str]:
-    """Drop a package spec suffix from the tool command uv runs."""
-    if not words:
-        return words
-    return [_TOOL_SPEC_SUFFIX.sub("", words[0]), *words[1:]]
-
-
-def _after_options(
-    words: list[str], value_options: frozenset[str], *, infer_long_options: bool = False
-) -> list[str]:
-    """Drop leading options (and a value option's operand) through ``--``."""
-    index = 0
-    while index < len(words) and words[index].startswith("-"):
-        if words[index] == "--":
-            return words[index + 1 :]
-        index += option_word_count(
-            words[index], value_options, infer_long_options=infer_long_options
-        )
-    return words[index:]
 
 
 def _decoded_stages(subject: str) -> list[list[str]]:
@@ -581,14 +409,22 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
     return "".join(out)
 
 
-def executable_command_subjects(command: str) -> list[str]:
+PythonBodies = Literal["subjects", "data"]
+
+
+def executable_command_subjects(
+    command: str, *, python_bodies: PythonBodies = "subjects"
+) -> list[str]:
     """Return the match subjects of ``command``: one per executable segment.
 
     A command the scanner cannot parse (unclosed quote) or that has no tokens
-    is matched whole, the fail-closed reading.
+    is matched whole, the fail-closed reading. ``python_bodies="data"`` omits a
+    heredoc body that a Python interpreter parses, since Python source is not
+    shell text. Its unquoted substitutions still run in the outer shell, so they
+    remain subjects.
     """
     try:
-        return _subjects(command, 0)
+        return _subjects(command, 0, python_bodies=python_bodies)
     except ValueError:
         # An arm body can remain malformed after its pattern is removed.
         return [command]
@@ -600,6 +436,7 @@ def _subjects(
     *,
     heredoc_source: Literal["shell", "language"] | None = None,
     correlated_subjects: list[str] | None = None,
+    python_bodies: PythonBodies = "subjects",
 ) -> list[str]:
     try:
         scan = scan_shell_command(command)
@@ -632,9 +469,11 @@ def _subjects(
             except ValueError:
                 cursor = match.end()
     if split_substitution and not _runs_substitution_output(scan.tokens):
-        resolved = _resolve_substitutions(command, depth, correlations)
+        resolved = _resolve_substitutions(command, depth, correlations, python_bodies)
         if resolved[0] != command:
-            projected = _subjects(resolved[0], depth, correlated_subjects=correlations)
+            projected = _subjects(
+                resolved[0], depth, correlated_subjects=correlations, python_bodies=python_bodies
+            )
             projected.extend(resolved[1:])
             if correlated_subjects is None:
                 projected.extend(correlations)
@@ -706,6 +545,7 @@ def _subjects(
         for candidate in [text] if arm_text is None else [text, arm_text]:
             group_scan = scan_shell_command(candidate)
             group_spans = dict(zip(map(id, group_scan.tokens), group_scan.spans, strict=True))
+            inner_spans: list[tuple[int, int]] = []
             for stage in _pipeline_stages(group_scan.tokens):
                 head = _command_tokens(stage)
                 if not head or head[0].quoted:
@@ -721,12 +561,20 @@ def _subjects(
                             candidate[opening + 1 : end],
                             depth + 1,
                             correlated_subjects=correlations,
+                            python_bodies=python_bodies,
                         )
                     )
+                    inner_spans.append((opening + 1, end))
+            # In a data run a group contributes only its recursed subjects. The scanner
+            # hides the group's heredocs, so its literal text would re-expose a body.
+            emitted = candidate
+            if python_bodies == "data":
+                for group_start, group_end in reversed(inner_spans):
+                    emitted = emitted[:group_start] + emitted[group_end:]
             if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
-                subjects.append(candidate)
+                subjects.append(emitted)
             else:
-                subjects.extend(_resolve_substitutions(candidate, depth, correlations))
+                subjects.extend(_resolve_substitutions(emitted, depth, correlations, python_bodies))
     owner = 0
     classifications: dict[int, HeredocExecution] = {}
     for heredoc in scan.heredocs:
@@ -738,11 +586,14 @@ def _subjects(
         classification = classifications.get(owner)
         if classification is None:
             tokens = scan.tokens[segment.first : segment.last + 1]
+            stages = [_stage_words(stage) for stage in _pipeline_stages(tokens)]
             classification = classify_heredoc_execution(
-                tokens, raw[owner], [_stage_words(stage) for stage in _pipeline_stages(tokens)]
+                tokens, raw[owner], stages, [_python_stage(words) for words in stages]
             )
             classifications[owner] = classification
-        if classification.may_execute(heredoc, heredoc.opener - segment.first):
+        opener = heredoc.opener - segment.first
+        as_data = python_bodies == "data" and classification.runs_python(opener)
+        if classification.may_execute(heredoc, opener) and not as_data:
             # Each executed body has its own quote context. Joining it to the
             # owner or a sibling lets an interpreter quote hide later commands.
             subjects.extend(
@@ -751,17 +602,27 @@ def _subjects(
                     depth,
                     heredoc_source=classification.source,
                     correlated_subjects=correlations,
+                    python_bodies=python_bodies,
                 )
             )
         elif not heredoc.quoted:
             for span in _substitution_spans(heredoc.text):
-                subjects.extend(_subjects(span, depth + 1, correlated_subjects=correlations))
+                subjects.extend(
+                    _subjects(
+                        span,
+                        depth + 1,
+                        correlated_subjects=correlations,
+                        python_bodies=python_bodies,
+                    )
+                )
     if correlated_subjects is None:
         subjects.extend(correlations)
     return subjects
 
 
-def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) -> list[str]:
+def _resolve_substitutions(
+    subject: str, depth: int, correlations: list[str], python_bodies: PythonBodies
+) -> list[str]:
     """Extract each command substitution into independent executable subjects.
 
     The scanner reads ``"$(cat <<'EOF' … EOF)"`` as one quoted token, so a
@@ -807,7 +668,13 @@ def _resolve_substitutions(subject: str, depth: int, correlations: list[str]) ->
             body = subject[start:end]
             if tick:
                 body = backtick_body(body)
-            bodies = _subjects(body, depth + 1, correlated_subjects=correlations) if body else []
+            bodies = (
+                _subjects(
+                    body, depth + 1, correlated_subjects=correlations, python_bodies=python_bodies
+                )
+                if body
+                else []
+            )
             if not tick and char in "<>":
                 # Keep the process target in its owner: it determines whether a
                 # heredoc is executable. Resolve its body independently too, so
