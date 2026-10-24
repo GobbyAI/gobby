@@ -1,32 +1,4 @@
 use super::*;
-use std::path::PathBuf;
-
-#[test]
-fn visible_project_ids_include_overlay_before_parent() {
-    let ctx = Context {
-        database_url: String::new(),
-        project_root: PathBuf::from("/worktree"),
-        project_id: "overlay".to_string(),
-        quiet: true,
-        falkordb: None,
-        qdrant: None,
-        embedding: None,
-        code_vectors: crate::config::CodeVectorSettings::default(),
-        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
-        runtime_config_capture_degraded: false,
-        indexing: gobby_core::config::IndexingConfig::default(),
-        daemon_url: None,
-        grant_ai: None,
-        index_scope: ProjectIndexScope::Overlay {
-            overlay_project_id: "overlay".to_string(),
-            overlay_root: PathBuf::from("/worktree"),
-            parent_project_id: "parent".to_string(),
-            parent_root: PathBuf::from("/parent"),
-        },
-    };
-
-    assert_eq!(visible_project_ids(&ctx), vec!["overlay", "parent"]);
-}
 
 #[test]
 fn symbols_for_file_sql_qualifies_joined_symbol_columns() {
@@ -52,9 +24,6 @@ fn overlay_symbols_for_files_sql_batches_paths_and_preserves_overlay_shadowing()
     assert!(sql.contains("shadow.file_path = p.file_path"));
     assert!(!sql.contains("cs.file_path = $4"));
 }
-#[path = "pin_fixture.rs"]
-mod pin_fixture;
-
 #[test]
 #[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]
 #[serial_test::serial(serial_db)]

@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.59"
+version = "1.9.61"
 dependencies = [
  "anyhow",
  "chrono",

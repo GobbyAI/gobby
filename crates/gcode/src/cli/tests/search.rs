@@ -1,7 +1,6 @@
 use super::*;
 
-#[path = "../../visibility/pin_fixture.rs"]
-mod pin_fixture;
+use crate::visibility::pin_fixture;
 
 #[test]
 #[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]

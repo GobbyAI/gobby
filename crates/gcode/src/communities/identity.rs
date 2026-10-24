@@ -114,8 +114,8 @@ impl ImportIdentity {
 
 /// An identity and the `(file_path, module_name)` rows it was built from.
 ///
-/// The rows are ordered by source project and then by `(file_path, module_name)`
-/// within each project, which is how [`crate::db::read_active_imports`] returns them.
+/// The rows are ordered by `(file_path, module_name)`, as returned by
+/// [`crate::visibility::catalog::visible_imports`].
 pub(crate) struct ProjectImports {
     pub identity: ImportIdentity,
     // `#[expect]` is wrong here: `cargo clippy --all-targets` compiles the test

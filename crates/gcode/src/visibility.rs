@@ -11,6 +11,9 @@ pub(crate) mod catalog;
 pub mod graph;
 mod selectors;
 
+#[cfg(test)]
+pub(crate) mod pin_fixture;
+
 pub(crate) use selectors::{
     file_selectors_sql, scope_project_id, selector_condition, visible_selectors_sql,
 };
@@ -30,19 +33,6 @@ pub struct VisibleFile {
 
 pub fn is_tombstone_language(language: &str) -> bool {
     language == TOMBSTONE_LANGUAGE
-}
-
-pub fn visible_project_ids(ctx: &Context) -> Vec<String> {
-    match &ctx.index_scope {
-        ProjectIndexScope::Single => {
-            vec![ctx.project_id.clone()]
-        }
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => vec![overlay_project_id.clone(), parent_project_id.clone()],
-    }
 }
 
 pub fn context_for_source_project(ctx: &Context, source_project_id: &str) -> Context {
