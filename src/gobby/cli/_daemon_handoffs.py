@@ -5,7 +5,11 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 
 from gobby.cli.runtime import CliRuntime
-from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked, guard_handoff_shutdown
+from gobby.sessions.handoff_shutdown import (
+    HANDOFF_IN_FLIGHT_MINUTES,
+    HandoffShutdownBlocked,
+    guard_handoff_shutdown,
+)
 from gobby.utils.machine_id import require_machine_id
 
 
@@ -24,7 +28,8 @@ def protect_pending_handoffs(
 
     db = runtime.require_database(apply_migrations=False)
     machine_id = require_machine_id()
-    deadline = time.monotonic() + 600
+    # Even a newly staged marker must be able to age out inside this wait.
+    deadline = time.monotonic() + HANDOFF_IN_FLIGHT_MINUTES * 60
     announced = False
     if logged_stale_markers is None:
         logged_stale_markers = set()

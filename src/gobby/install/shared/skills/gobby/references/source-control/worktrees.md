@@ -27,7 +27,8 @@ task artifacts and current ownership before creating another workspace.
    transitions neither merge nor delete the workspace.
 5. Reuse a prepared worktree with `spawn_agent(worktree_id=...)`; follow the
    [agent isolation](../agents/isolation.md) reference for spawn precedence and
-   recovery. Preserve a reused checkout when a rebase reports conflicts.
+   recovery. Developer reuse merges the base and preserves checkpoint SHAs; associated
+   seats join the existing HEAD. Preserve a reused checkout when a merge reports conflicts.
 
 The Claude worktree-create hook blocks re-entry at a different selected commit.
 Continue in the preserved worktree directly or choose a new worktree name.

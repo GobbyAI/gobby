@@ -1,155 +1,35 @@
 use postgres::Client;
 
 use super::{
-    TOMBSTONE_LANGUAGE, VisibleFile, local_machine_uuid, machine_uuid_or_invisible,
-    project_uuid_or_invisible,
+    TOMBSTONE_LANGUAGE, VisibleFile, machine_uuid_or_invisible, project_uuid_or_invisible,
 };
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 
 pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<String>> {
-    let machine_id = local_machine_uuid()?;
-    let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
-            "SELECT DISTINCT cs.kind
-             FROM code_symbols cs
-             JOIN code_indexed_file_states fs
-               ON fs.project_id = cs.project_id
-              AND fs.file_path = cs.file_path
-              AND fs.content_hash = cs.file_content_hash
-             JOIN code_indexed_files cf
-               ON cf.project_id = fs.project_id
-              AND cf.file_path = fs.file_path
-              AND cf.content_hash = fs.content_hash
-             WHERE fs.machine_id = $1
-               AND cs.project_id = $2
-               AND cf.language != $3
-             ORDER BY cs.kind",
-            &[
-                &machine_id,
-                &db::id_param(&ctx.project_id)?,
-                &TOMBSTONE_LANGUAGE,
-            ],
-        )?,
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => conn.query(
-            "SELECT kind
-             FROM (
-                 SELECT cs.kind
-                 FROM code_symbols cs
-                 JOIN code_indexed_file_states fs
-                   ON fs.project_id = cs.project_id
-                  AND fs.file_path = cs.file_path
-                  AND fs.content_hash = cs.file_content_hash
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = fs.project_id
-                  AND cf.file_path = fs.file_path
-                  AND cf.content_hash = fs.content_hash
-                 WHERE fs.machine_id = $1
-                   AND cs.project_id = $2
-                   AND cf.language != $4
-                 UNION
-                 SELECT cs.kind
-                 FROM code_symbols cs
-                 JOIN code_indexed_file_states fs
-                   ON fs.project_id = cs.project_id
-                  AND fs.file_path = cs.file_path
-                  AND fs.content_hash = cs.file_content_hash
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = fs.project_id
-                  AND cf.file_path = fs.file_path
-                  AND cf.content_hash = fs.content_hash
-                 WHERE fs.machine_id = $1
-                   AND cs.project_id = $3
-                   AND cf.language != $4
-                   AND NOT EXISTS (
-                       SELECT 1 FROM code_indexed_file_states shadow
-                       WHERE shadow.machine_id = $1
-                         AND shadow.project_id = $2
-                         AND shadow.file_path = cs.file_path
-                   )
-             ) visible
-             ORDER BY kind",
-            &[
-                &machine_id,
-                &db::id_param(overlay_project_id)?,
-                &db::id_param(parent_project_id)?,
-                &TOMBSTONE_LANGUAGE,
-            ],
-        )?,
-    };
-
-    rows.iter()
-        .map(|row| Ok(row.try_get::<_, String>("kind")?))
-        .collect()
+    let selectors = super::visible_selectors_sql(ctx, "$1", "$2");
+    let rows = conn.query(
+        &format!("SELECT DISTINCT cs.kind FROM code_symbols cs
+                  JOIN ({selectors}) visible ON visible.project_id = cs.project_id
+                   AND visible.file_path = cs.file_path AND visible.content_hash = cs.file_content_hash
+                  ORDER BY cs.kind"),
+        &[&db::id_param(&ctx.machine_id)?, &db::id_param(super::scope_project_id(ctx))?],
+    )?;
+    rows.iter().map(|row| Ok(row.try_get("kind")?)).collect()
 }
 
 pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<VisibleFile>> {
-    let machine_id = local_machine_uuid()?;
-    let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
-            "SELECT fs.file_path, f.language, f.symbol_count::BIGINT AS symbol_count,
-                    fs.content_hash
-             FROM code_indexed_file_states fs
-             JOIN code_indexed_files f
-               ON f.project_id = fs.project_id
-              AND f.file_path = fs.file_path
-              AND f.content_hash = fs.content_hash
-             WHERE fs.machine_id = $1
-               AND fs.project_id = $2
-               AND f.language != $3
-             ORDER BY fs.file_path",
-            &[
-                &machine_id,
-                &db::id_param(&ctx.project_id)?,
-                &TOMBSTONE_LANGUAGE,
-            ],
-        )?,
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => conn.query(
-            "SELECT ofs.file_path, of.language, of.symbol_count::BIGINT AS symbol_count,
-                    ofs.content_hash
-             FROM code_indexed_file_states ofs
-             JOIN code_indexed_files of
-               ON of.project_id = ofs.project_id
-              AND of.file_path = ofs.file_path
-              AND of.content_hash = ofs.content_hash
-             WHERE ofs.machine_id = $1
-               AND ofs.project_id = $2
-               AND of.language != $4
-             UNION ALL
-             SELECT pfs.file_path, pf.language, pf.symbol_count::BIGINT AS symbol_count,
-                    pfs.content_hash
-             FROM code_indexed_file_states pfs
-             JOIN code_indexed_files pf
-               ON pf.project_id = pfs.project_id
-              AND pf.file_path = pfs.file_path
-              AND pf.content_hash = pfs.content_hash
-             WHERE pfs.machine_id = $1
-               AND pfs.project_id = $3
-               AND pf.language != $4
-               AND NOT EXISTS (
-                   SELECT 1 FROM code_indexed_file_states shadow
-                   WHERE shadow.machine_id = $1
-                     AND shadow.project_id = $2
-                     AND shadow.file_path = pfs.file_path
-               )
-             ORDER BY file_path",
-            &[
-                &machine_id,
-                &db::id_param(overlay_project_id)?,
-                &db::id_param(parent_project_id)?,
-                &TOMBSTONE_LANGUAGE,
-            ],
-        )?,
-    };
-
+    let selectors = super::visible_selectors_sql(ctx, "$1", "$2");
+    let rows = conn.query(
+        &format!(
+            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count, content_hash
+                  FROM ({selectors}) visible ORDER BY file_path"
+        ),
+        &[
+            &db::id_param(&ctx.machine_id)?,
+            &db::id_param(super::scope_project_id(ctx))?,
+        ],
+    )?;
     rows.iter()
         .map(|row| {
             Ok(VisibleFile {
@@ -159,6 +39,28 @@ pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<Visi
                 content_hash: row.try_get("content_hash")?,
             })
         })
+        .collect()
+}
+
+pub(crate) fn visible_imports(
+    conn: &mut Client,
+    ctx: &Context,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let selectors = super::visible_selectors_sql(ctx, "$1", "$2");
+    let rows = conn.query(
+        &format!(
+            "SELECT ci.source_file, ci.target_module FROM code_imports ci
+                  JOIN ({selectors}) visible ON visible.project_id = ci.project_id
+                   AND visible.file_path = ci.source_file AND visible.content_hash = ci.content_hash
+                  ORDER BY ci.source_file, ci.target_module"
+        ),
+        &[
+            &db::id_param(&ctx.machine_id)?,
+            &db::id_param(super::scope_project_id(ctx))?,
+        ],
+    )?;
+    rows.iter()
+        .map(|row| Ok((row.try_get("source_file")?, row.try_get("target_module")?)))
         .collect()
 }
 
@@ -211,36 +113,13 @@ pub(crate) fn effective_selectors(
 ) -> anyhow::Result<Vec<EffectiveSelector>> {
     let machine_id = db::id_param(machine_id)?;
     let project_id = db::id_param(project_id)?;
+    let selectors = super::file_selectors_sql("$1", "$2", true);
     let rows = conn.query(
-        "SELECT fs.file_path, fs.project_id::text AS source_project_id,
-                fs.content_hash, fs.git_blob_id
-         FROM code_indexed_file_states fs
-         JOIN code_indexed_files f
-           ON f.project_id = fs.project_id
-          AND f.file_path = fs.file_path
-          AND f.content_hash = fs.content_hash
-         WHERE fs.machine_id = $1
-           AND fs.project_id = $2
-           AND f.language != $3
-         UNION ALL
-         SELECT p.file_path, p.source_project_id::text AS source_project_id,
-                p.content_hash, p.git_blob_id
-         FROM code_overlay_pins p
-         JOIN code_indexed_files f
-           ON f.project_id = p.source_project_id
-          AND f.file_path = p.file_path
-          AND f.content_hash = p.content_hash
-         WHERE p.machine_id = $1
-           AND p.overlay_project_id = $2
-           AND f.language != $3
-           AND NOT EXISTS (
-               SELECT 1 FROM code_indexed_file_states shadow
-               WHERE shadow.machine_id = $1
-                 AND shadow.project_id = $2
-                 AND shadow.file_path = p.file_path
-           )
-         ORDER BY file_path",
-        &[&machine_id, &project_id, &TOMBSTONE_LANGUAGE],
+        &format!(
+            "SELECT file_path, project_id::text AS source_project_id, content_hash, git_blob_id
+                  FROM ({selectors}) visible ORDER BY file_path"
+        ),
+        &[&machine_id, &project_id],
     )?;
     rows.iter()
         .map(|row| {

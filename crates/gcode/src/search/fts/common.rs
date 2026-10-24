@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use postgres::Client;
 use postgres::types::ToSql;
 
-use crate::config::{Context, ProjectIndexScope};
+use crate::config::Context;
 use crate::db;
 use crate::models::Symbol;
 use crate::visibility;
@@ -86,22 +86,6 @@ pub(super) fn push_id_param(params: &mut Vec<PgParam>, id: &str) -> String {
     }
 }
 
-/// Push a list of project ids for a `= ANY(...)` uuid-array bind, dropping
-/// non-uuid entries (they cannot match any hub row).
-pub(super) fn push_id_list_param(params: &mut Vec<PgParam>, ids: &[String]) -> String {
-    let ids: Vec<uuid::Uuid> = ids
-        .iter()
-        .filter_map(|id| match uuid::Uuid::parse_str(id) {
-            Ok(id) => Some(id),
-            Err(error) => {
-                log::warn!("dropping non-uuid id `{id}` from FTS id list: {error}");
-                None
-            }
-        })
-        .collect();
-    push_param(params, ids)
-}
-
 pub(super) fn param_refs(params: &[PgParam]) -> Vec<&(dyn ToSql + Sync)> {
     params
         .iter()
@@ -136,48 +120,21 @@ pub(super) fn push_visible_project_file_filter(
     hash_column: &str,
     ctx: &Context,
 ) {
-    let tombstone = push_param(params, visibility::TOMBSTONE_LANGUAGE.to_string());
-    conditions.push(format!("{indexed_file_alias}.language != {tombstone}"));
     conditions.push(format!(
         "{indexed_file_alias}.content_hash = {row_alias}.{hash_column}"
     ));
-    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
+    let Some(machine_id) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
         conditions.push("FALSE".to_string());
         return;
     };
     let machine = push_param(params, machine_id);
-    conditions.push(visibility::machine_state_condition(
+    let project = push_id_param(params, visibility::scope_project_id(ctx));
+    let selectors = visibility::visible_selectors_sql(ctx, &machine, &project);
+    conditions.push(visibility::selector_condition(
+        &selectors,
         row_alias,
         hash_column,
-        &machine,
     ));
-
-    match &ctx.index_scope {
-        ProjectIndexScope::Single => {
-            let project = push_id_param(params, &ctx.project_id);
-            conditions.push(format!("{row_alias}.project_id = {project}"));
-        }
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => {
-            let overlay = push_id_param(params, overlay_project_id);
-            let parent = push_id_param(params, parent_project_id);
-            conditions.push(format!(
-                "({row_alias}.project_id = {overlay}
-                  OR (
-                      {row_alias}.project_id = {parent}
-                      AND NOT EXISTS (
-                          SELECT 1 FROM code_indexed_file_states shadow
-                          WHERE shadow.machine_id = {machine}
-                            AND shadow.project_id = {overlay}
-                            AND shadow.file_path = {row_alias}.file_path
-                      )
-                  ))"
-            ));
-        }
-    }
 }
 
 /// Escape LIKE wildcards (`%`, `_`) and the backslash escape char itself.
@@ -348,6 +305,19 @@ pub(super) fn append_unique_symbols(
     }
 }
 
+pub(super) fn push_live_symbol_filter(conditions: &mut Vec<String>, params: &mut Vec<PgParam>) {
+    if let Some(machine_id) = visibility::local_machine_uuid_or_invisible() {
+        let machine = push_param(params, machine_id);
+        conditions.push(visibility::machine_state_condition(
+            "cs",
+            "file_content_hash",
+            &machine,
+        ));
+    } else {
+        conditions.push("FALSE".to_string());
+    }
+}
+
 pub(super) fn query_symbols_by_conditions(
     conn: &mut Client,
     mut conditions: Vec<String>,
@@ -356,15 +326,6 @@ pub(super) fn query_symbols_by_conditions(
     limit: usize,
     order: SymbolOrder,
 ) -> Result<Vec<Symbol>, postgres::Error> {
-    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
-        return Ok(Vec::new());
-    };
-    let machine = push_param(&mut params, machine_id);
-    conditions.push(visibility::machine_state_condition(
-        "cs",
-        "file_content_hash",
-        &machine,
-    ));
     let path_filter_requires_post_filter =
         push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     let query_limit = if path_filter_requires_post_filter {

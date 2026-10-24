@@ -1,14 +1,13 @@
 use postgres::Client;
 use postgres::Row;
 
-use crate::config::{Context, ProjectIndexScope};
+use crate::config::Context;
 use crate::models::ContentSearchHit;
 use crate::visibility;
-use crate::visibility::TOMBSTONE_LANGUAGE;
 
 use super::common::{
-    PgParam, bm25_score_expr, param_refs, push_id_list_param, push_id_param, push_param,
-    push_path_filter, requires_explicit_project_filter, sanitize_pg_search_query, trusted_row_id,
+    PgParam, bm25_score_expr, param_refs, push_id_param, push_param, push_path_filter,
+    requires_explicit_project_filter, sanitize_pg_search_query, trusted_row_id,
 };
 use super::errors::{CONTENT_INDEX, bm25_query_error};
 
@@ -98,9 +97,9 @@ pub fn search_content_visible(
     // the materialized match set. On a managed connection RLS already does that;
     // anywhere else the query has to name the projects itself.
     if requires_explicit_project_filter(&ctx.database_url) {
-        let project_ids = visibility::visible_project_ids(ctx);
-        let placeholder = push_id_list_param(&mut params, &project_ids);
-        conditions.push(format!("c.project_id = ANY({placeholder})"));
+        conditions.push(format!(
+            "c.project_id IN (SELECT project_id FROM ({visible_files_sql}) allowed)"
+        ));
     }
     let limit_placeholder = push_param(&mut params, limit as i64);
     let refs = param_refs(&params);
@@ -114,65 +113,11 @@ pub fn search_content_visible(
 
 fn visible_files_sql(ctx: &Context, params: &mut Vec<PgParam>) -> String {
     let Some(machine_id) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
-        return "SELECT NULL::uuid AS project_id, NULL::text AS file_path,
-                       NULL::text AS content_hash
-                WHERE FALSE"
-            .to_string();
+        return "SELECT NULL::uuid AS project_id, NULL::text AS file_path, NULL::text AS content_hash WHERE FALSE".to_string();
     };
-    let machine_placeholder = push_param(params, machine_id);
-    match &ctx.index_scope {
-        ProjectIndexScope::Single => {
-            let project_placeholder = push_id_param(params, &ctx.project_id);
-            let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
-            format!(
-                "SELECT f.project_id, f.file_path, f.content_hash
-                 FROM code_indexed_file_states fs
-                 JOIN code_indexed_files f
-                   ON f.project_id = fs.project_id
-                  AND f.file_path = fs.file_path
-                  AND f.content_hash = fs.content_hash
-                 WHERE fs.machine_id = {machine_placeholder}
-                   AND fs.project_id = {project_placeholder}
-                   AND f.language != {tombstone_placeholder}"
-            )
-        }
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => {
-            let overlay_placeholder = push_id_param(params, overlay_project_id);
-            let parent_placeholder = push_id_param(params, parent_project_id);
-            let tombstone_placeholder = push_param(params, TOMBSTONE_LANGUAGE.to_string());
-            format!(
-                "SELECT f.project_id, f.file_path, f.content_hash
-                 FROM code_indexed_file_states fs
-                 JOIN code_indexed_files f
-                   ON f.project_id = fs.project_id
-                  AND f.file_path = fs.file_path
-                  AND f.content_hash = fs.content_hash
-                 WHERE fs.machine_id = {machine_placeholder}
-                   AND fs.project_id = {overlay_placeholder}
-                   AND f.language != {tombstone_placeholder}
-                 UNION ALL
-                 SELECT pf.project_id, pf.file_path, pf.content_hash
-                 FROM code_indexed_file_states pfs
-                 JOIN code_indexed_files pf
-                   ON pf.project_id = pfs.project_id
-                  AND pf.file_path = pfs.file_path
-                  AND pf.content_hash = pfs.content_hash
-                 WHERE pfs.machine_id = {machine_placeholder}
-                   AND pfs.project_id = {parent_placeholder}
-                   AND pf.language != {tombstone_placeholder}
-                   AND NOT EXISTS (
-                       SELECT 1 FROM code_indexed_file_states shadow
-                       WHERE shadow.machine_id = {machine_placeholder}
-                         AND shadow.project_id = {overlay_placeholder}
-                         AND shadow.file_path = pfs.file_path
-                   )"
-            )
-        }
-    }
+    let machine = push_param(params, machine_id);
+    let project = push_id_param(params, visibility::scope_project_id(ctx));
+    visibility::visible_selectors_sql(ctx, &machine, &project)
 }
 
 fn content_hits_from_rows(rows: &[Row], query: &str) -> Vec<ContentSearchHit> {
