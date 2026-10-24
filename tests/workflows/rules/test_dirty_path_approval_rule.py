@@ -198,6 +198,11 @@ E""",
     "C=/x/gobby; git bisect run a..$C",
     "git grep --open-files-in-pager {gobby,x} pattern",
     "git log --oneline {gobby,x}",
+    "C=/x/gobby; git -C log bisect run a..$C",
+    "C=/x/gobby; git --namespace show bisect run a..$C",
+    "C=/x/gobby; git -C log rebase -x a..$C HEAD~1",
+    "C=/x/gobby; git --attr-source log bisect run a..$C",
+    "C=/x/gobby; git --git-dir diff submodule foreach a..$C",
 )
 
 
@@ -255,6 +260,7 @@ queries = [{"op": "grep", "pattern": "x"}]
 PY""",
     "C=2894b82caa4be295eae44877b08f302d2d381afb; git log --oneline 0.5.0..$C",
     "git log a..$C",
+    "C=/x/gobby; git -C repo log a..$C",
 )
 
 

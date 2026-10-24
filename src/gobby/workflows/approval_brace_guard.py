@@ -22,6 +22,7 @@ from gobby.hooks._normalization_shell import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 
+from .condition_helpers import _GIT_GLOBAL_FLAGS, _GIT_GLOBAL_VALUE_OPTIONS
 from .engine.command_matching import (
     _decoded_stages,
     _shell_input_scripts,
@@ -547,10 +548,11 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
     head: str | None = None
     redirection_value = False
     git_read_only: bool | None = None
+    git_value_pending = False
     for token, span in zip(scan.tokens, scan.spans, strict=True):
         raw = subject[span[0] : span[1]]
         if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
-            head, redirection_value, git_read_only = None, False, None
+            head, redirection_value, git_read_only, git_value_pending = None, False, None, False
             continue
         if redirection_value:
             redirection_value = False
@@ -572,12 +574,19 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
                 # `do echo` runs `echo`: a compound keyword is not the command word.
                 continue
             head = token.value if literal else ""
-        elif head == "git" and not raw.startswith("-"):
-            # The first operand names the subcommand; a read-only one's later operands are data.
-            if git_read_only is None:
+        elif head == "git":
+            # Global options precede the subcommand; a read-only one's later operands are data.
+            if git_read_only is not None:
+                if git_read_only and not raw.startswith("-"):
+                    operands[span] = 0
+            elif git_value_pending:
+                git_value_pending = False
+            elif token.value in _GIT_GLOBAL_VALUE_OPTIONS:
+                git_value_pending = True
+            elif token.value not in _GIT_GLOBAL_FLAGS and not any(
+                token.value.startswith(f"{option}=") for option in _GIT_GLOBAL_VALUE_OPTIONS
+            ):
                 git_read_only = token.value in _GIT_READ_ONLY_SUBCOMMANDS
-            elif git_read_only:
-                operands[span] = 0
         elif head in _DATA_BASENAME_HEADS:
             operands[span] = 0
     return operands
