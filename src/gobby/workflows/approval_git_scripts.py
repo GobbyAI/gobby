@@ -14,6 +14,7 @@ class _GitShellValues(NamedTuple):
     commands: dict[str, tuple[str, bool]]
     options: dict[str, frozenset[str]]
     config_keys: frozenset[str]
+    config_subsections: dict[tuple[str, str], str]
     config_prefixes: dict[str, str]
     environment: frozenset[str]
 
@@ -50,15 +51,39 @@ _GIT_SHELL_VALUES = _GitShellValues(
             "core.pager",
             "core.editor",
             "core.fsmonitor",
+            "core.askpass",
+            "core.gitproxy",
             "sequence.editor",
             "diff.external",
             "credential.helper",
             "gpg.program",
         }
     ),
+    # Optional shell markers are removed only for keys with that Git convention.
+    config_subsections={
+        ("credential", "helper"): "!",
+        ("diff", "command"): "",
+        ("diff", "textconv"): "",
+        ("difftool", "cmd"): "",
+        ("mergetool", "cmd"): "",
+        ("merge", "driver"): "",
+        ("filter", "clean"): "",
+        ("filter", "smudge"): "",
+        ("filter", "process"): "",
+        ("remote", "uploadpack"): "",
+        ("remote", "receivepack"): "",
+    },
     config_prefixes={"pager.": "", "alias.": "!"},
     environment=frozenset(
-        {"GIT_SSH_COMMAND", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_EXTERNAL_DIFF"}
+        {
+            "GIT_SSH_COMMAND",
+            "GIT_PAGER",
+            "GIT_EDITOR",
+            "GIT_SEQUENCE_EDITOR",
+            "GIT_EXTERNAL_DIFF",
+            "GIT_ASKPASS",
+            "GIT_PROXY_COMMAND",
+        }
     ),
 )
 
@@ -68,8 +93,12 @@ def _config_script(assignment: str) -> str | None:
     if not separator:
         return None
     key = key.lower()
-    if key in _GIT_SHELL_VALUES.config_keys:
-        return value
+    segments = key.split(".")
+    pair = (segments[0], segments[-1])
+    if key in _GIT_SHELL_VALUES.config_keys or (
+        len(segments) >= 3 and pair in _GIT_SHELL_VALUES.config_subsections
+    ):
+        return value.removeprefix(_GIT_SHELL_VALUES.config_subsections.get(pair, ""))
     for prefix, required in _GIT_SHELL_VALUES.config_prefixes.items():
         if key.startswith(prefix) and key != prefix and value.startswith(required):
             return value[len(required) :]
@@ -126,17 +155,31 @@ def _command_scripts(subcommand: str, args: list[str]) -> list[str]:
         word = args[cursor]
         if word == "--":
             break
-        for option in options:
-            if word == option and cursor + 1 < len(args):
+        takes_script = False
+        value: str | None = None
+        if word.startswith("--"):
+            name, separator, attached = word.partition("=")
+            # Ambiguous prefixes stay conservative: only dynamic Gobby values block.
+            takes_script = len(name) > 2 and any(
+                option.startswith("--") and option.startswith(name) for option in options
+            )
+            if takes_script and separator:
+                value = attached
+        elif word.startswith("-"):
+            for offset, letter in enumerate(word[1:], 1):
+                if not letter.isascii() or not letter.isalpha():
+                    break
+                if f"-{letter}" in options:
+                    takes_script = True
+                    if offset + 1 < len(word):
+                        value = word[offset + 1 :].removeprefix("=")
+                    break
+        if takes_script:
+            if value is None and cursor + 1 < len(args):
                 cursor += 1
-                scripts.append(args[cursor])
-                break
-            if word.startswith(option + "="):
-                scripts.append(word[len(option) + 1 :])
-                break
-            if len(option) == 2 and word.startswith(option) and len(word) > 2:
-                scripts.append(word[2:])
-                break
+                value = args[cursor]
+            if value is not None:
+                scripts.append(value)
         cursor += 1
     return scripts
 
