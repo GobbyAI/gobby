@@ -47,6 +47,8 @@ _LANDING_ACTION = re.compile(
 )
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
+_SECURITY_REVIEW_LABEL = "security-review"
+_SECURITY_REVIEW_FACT = "security"
 _RETEST_PROCEDURE = (
     "Send EVENT=LANDED immediately with RETEST=UNAVAILABLE to the closing seat and your Lane "
     "Manager, carrying this landing's receipt and landed_tip and the focused verification "
@@ -428,6 +430,16 @@ async def land_candidate(
                     for receipt in receipts
                 ):
                     blockers.append("review_receipt_missing")
+                security_required = _SECURITY_REVIEW_LABEL in (current_task.labels or [])
+                security_missing = security_required and not any(
+                    receipt.kind == INDEPENDENT_REVIEW_APPROVAL
+                    and receipt.commit_sha == sha
+                    and receipt.facts.get("review") == _SECURITY_REVIEW_FACT
+                    and receipt.author_session_id not in {caller_session_id, *claimants}
+                    for receipt in receipts
+                )
+                if security_missing:
+                    blockers.append("security_review_missing")
                 if not linked:
                     blockers.append("candidate_not_linked")
                 if await _ancestor(main, sha, tip):
@@ -471,6 +483,8 @@ async def land_candidate(
                 missing = sorted(required - granted)
                 if missing:
                     blockers.append("landing_approval_missing")
+                if security_missing:
+                    missing = sorted({*missing, "security"})
                 if shared:
                     blockers.append("base_update_required")
                 refusal = {

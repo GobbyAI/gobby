@@ -84,7 +84,8 @@ def record_close_receipt(
 ) -> tuple[CloseReceipt, bool]:
     """Record a receipt, returning a replay with the same author, kind and commit.
 
-    Landing approvals also match the reason set; changed reasons append a receipt.
+    Landing approvals match the reason set and independent approvals match their review
+    fact; a changed one appends a receipt.
 
     The caller has already verified that ``commit_sha`` names a commit in the
     task's repository. Authority comes from the task row as locked here, so
@@ -146,6 +147,11 @@ def record_close_receipt(
             if existing is not None and (existing.kind, existing.commit_sha) == (kind, sha):
                 if kind == LANDING_APPROVAL and (
                     _landing_approval_reasons(existing.facts) != approval_reasons
+                ):
+                    continue
+                # The review dimension is identity: a Security approval must not replay as plain.
+                if kind == INDEPENDENT_REVIEW_APPROVAL and (
+                    existing.facts.get("review") != bounded_facts.get("review")
                 ):
                     continue
                 return existing, False
