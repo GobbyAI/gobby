@@ -116,6 +116,15 @@ pub fn contract() -> CliContract {
                 positionals: vec![],
                 flags: vec![format_flag()],
                 json_output_keys: vec![],
+                ..CommandContract::new(
+                    "pin",
+                    "Pin the isolation marker's clean ancestor selectors into this overlay before indexing.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
                 ..CommandContract::new("status", "Show project index status.")
             },
             CommandContract {
