@@ -10,7 +10,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from gobby.agents.launcher_session import aget_or_create_launcher_session
@@ -80,6 +81,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     timeout: float | None = None
     extra_write_paths: list[str] | None = None
     write_paths_reason: str | None = None
+    machine: str | None = None
 
 
 class AgentSpawnResponse(BaseModel):
@@ -97,6 +99,8 @@ class AgentSpawnResponse(BaseModel):
     reasoning: dict[str, Any] | None = None
     external_write_grant: dict[str, Any] | None = None
     error: str | None = None
+    error_code: str | None = None
+    stage: str | None = None
 
 
 class BatchSpawnRequest(BaseModel):
@@ -184,7 +188,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/api/agents", tags=["agent-spawn"])
 
     async def _do_spawn(
-        req: AgentSpawnRequest, project_id: str | None = None
+        req: AgentSpawnRequest,
+        project_id: str | None = None,
+        origin_machine_id: str | None = None,
     ) -> AgentSpawnResponse:
         """Execute a single spawn request."""
         if req.web_chat and req.network is not None:
@@ -195,6 +201,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         if req.web_chat and req.extra_write_paths:
             return AgentSpawnResponse(
                 success=False, error="External write grants require a managed agent spawn"
+            )
+        if req.web_chat and req.machine is not None:
+            return AgentSpawnResponse(
+                success=False,
+                error="machine requires a managed agent spawn; web_chat is unsupported",
             )
         task_manager = server.services.task_manager
         if not task_manager:
@@ -302,15 +313,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         if not runner:
             return AgentSpawnResponse(success=False, error="Agent runner unavailable")
 
-        if server.services.session_manager is None:
+        session_manager = server.services.session_manager
+        if session_manager is None:
             return AgentSpawnResponse(success=False, error="Session manager unavailable")
-
-        # Get parent session for spawning
-        parent_session_id = await aget_or_create_launcher_session(
-            server.services.session_manager,
-            effective_project_id,
-            "web_launcher",
-        )
 
         # Load agent definition
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
@@ -353,6 +358,91 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         effective_workflow = req.workflow
         if effective_workflow is None and agent_body and agent_body.workflows.pipeline:
             effective_workflow = agent_body.workflows.pipeline
+
+        from gobby.hub.node_client import NodeCommandError
+        from gobby.hub.remote_spawn import RemoteSpawnRequest
+        from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import resolve_spawn_provider
+        from gobby.mcp_proxy.tools.spawn_agent._remote_routing import (
+            resolve_spawn_route,
+            spawn_refusal,
+            spawn_remote_route,
+        )
+
+        # Check the target and its owner before the launcher session is written. The origin
+        # is the verified front-door machine, never a request field.
+        try:
+            routed = await resolve_spawn_route(
+                task_manager.db,
+                session_manager=session_manager,
+                project_id=effective_project_id,
+                machine=req.machine,
+                origin_machine_id=origin_machine_id,
+                resume_session_id=None,
+            )
+        except NodeCommandError as exc:
+            return AgentSpawnResponse(**spawn_refusal(exc.code, str(exc), exc.stage))
+
+        # Get parent session for spawning
+        parent_session_id = await aget_or_create_launcher_session(
+            session_manager,
+            effective_project_id,
+            "web_launcher",
+        )
+
+        if not routed.local:
+            try:
+                run_provider = resolve_spawn_provider(
+                    explicit_provider=req.provider,
+                    agent_provider=agent_body.provider if agent_body is not None else None,
+                    default_provider=None,
+                )
+            except ValueError as exc:
+                return AgentSpawnResponse(success=False, error=str(exc))
+            remote = await spawn_remote_route(
+                task_manager.db,
+                routed=routed,
+                session_manager=session_manager,
+                task_manager=task_manager,
+                runner=runner,
+                daemon_config=config_snapshot.active,
+                placement=None,
+                completion_registry=server.services.completion_registry,
+                request=RemoteSpawnRequest(
+                    parent_session_id=parent_session_id,
+                    project_id=effective_project_id,
+                    prompt=effective_prompt,
+                    provider=run_provider,
+                    agent_name=req.agent_name,
+                    agent_body=agent_body,
+                    model=req.model,
+                    reasoning_effort=req.reasoning_effort,
+                    reasoning_required=req.reasoning_required,
+                    isolation=req.checkout_mode,
+                    branch_name=req.branch_name,
+                    base_branch=req.base_branch,
+                    timeout_seconds=req.timeout,
+                    initial_variables=initial_variables,
+                    workflow_name=effective_workflow,
+                    task_id=req.task_id,
+                    requested_provider=req.provider,
+                    extra_write_paths=req.extra_write_paths,
+                    write_paths_reason=req.write_paths_reason,
+                ),
+            )
+            if not remote["success"]:
+                return AgentSpawnResponse(**remote)
+            try:
+                await asyncio.to_thread(
+                    task_manager.claim_task, req.task_id, session_id=remote["child_session_id"]
+                )
+            except Exception as e:
+                logger.warning("Failed to update task after spawn: %s", e)
+            _broadcast_task_update(server, req.task_id)
+            return AgentSpawnResponse(
+                success=True,
+                run_id=remote["run_id"],
+                child_session_id=remote["child_session_id"],
+            )
 
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
         from gobby.storage.project_checkouts import require_root
@@ -442,8 +532,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     # -----------------------------------------------------------------------
     # POST /api/agents/spawn
     # -----------------------------------------------------------------------
-    @router.post("/spawn")
-    async def spawn_agent(request: AgentSpawnRequest) -> dict[str, Any]:
+    @router.post("/spawn", response_model=None)
+    async def spawn_agent(
+        request: AgentSpawnRequest, http_request: Request
+    ) -> dict[str, Any] | JSONResponse:
         """Spawn an agent to work on a task."""
         inc_counter("agent_spawns_total")
 
@@ -453,8 +545,12 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             ctx = get_project_context()
             project_id = ctx.get("id") if ctx else None
+            identity = server.auth_service.verified_front_door_identity(http_request)
+            origin_machine_id = identity.machine_id if identity is not None else None
 
-            result = await _do_spawn(request, project_id)
+            result = await _do_spawn(request, project_id, origin_machine_id)
+            if not result.success and result.error_code is not None:
+                return JSONResponse(status_code=400, content=result.model_dump(exclude_none=True))
             if not result.success:
                 raise HTTPException(status_code=400, detail=result.error)
             return result.model_dump(exclude_none=True)

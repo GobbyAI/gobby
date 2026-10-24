@@ -245,6 +245,7 @@ class _AgentRunLifecycleMixin:
         resume_metadata_json: Mapping[str, object] | None = None,
         worktree_id: str | None = None,
         clone_id: str | None = None,
+        machine_id: str | None = None,
     ) -> AgentRun:
         """
         Create a new agent run.
@@ -264,14 +265,15 @@ class _AgentRunLifecycleMixin:
                 Persisted at creation so the prelaunch credential can bind its
                 code-index overlay.
             clone_id: Registered isolation clone the run executes in, if any.
+            machine_id: Machine the run executes on; defaults to this machine.
 
         Returns:
             Created AgentRun.
         """
         if run_id is None:
             run_id = str(uuid.uuid4())
-        machine_id = get_machine_id()
-        if machine_id is None:
+        run_machine_id = machine_id if machine_id is not None else get_machine_id()
+        if run_machine_id is None:
             raise RuntimeError("Local machine identity is required to create an agent run")
 
         self.db.execute(
@@ -292,7 +294,7 @@ class _AgentRunLifecycleMixin:
             """,
             (
                 run_id,
-                machine_id,
+                run_machine_id,
                 parent_session_id,
                 child_session_id,
                 claimed_session_id,

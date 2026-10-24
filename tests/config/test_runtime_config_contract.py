@@ -38,6 +38,9 @@ def test_checked_in_contract_matches_registry() -> None:
 def test_spawn_cap_default_and_minimum() -> None:
     assert DaemonConfig().max_active_agents == 20
     assert DaemonConfig(max_active_agents=1).max_active_agents == 1
+    assert DaemonConfig(max_active_agents=1000).max_active_agents == 1000
+    with pytest.raises(ValidationError, match="max_active_agents"):
+        DaemonConfig(max_active_agents=1001)
     with pytest.raises(ValidationError, match="max_active_agents"):
         DaemonConfig(max_active_agents=0)
 

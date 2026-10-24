@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.team_lifecycle import SeatTarget
+from gobby.hub.machine_routing import RoutedMachine
+from gobby.hub.node_client import NodeCommandError
+from gobby.hub.remote_spawn import RemoteSpawnRequest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.agent_resolver import AgentResolutionError
@@ -24,6 +27,13 @@ from ._provider_resolution import (
     concrete_provider,
     resolve_spawn_provider,
     spawning_session_provider,
+)
+from ._remote_routing import (
+    is_local_target,
+    resolve_spawn_route,
+    session_machine_id,
+    spawn_refusal,
+    spawn_remote_route,
 )
 from ._request import first_string, non_empty_string
 from ._seat_adoption import pipeline_caller, pipeline_invocation_reply
@@ -326,6 +336,7 @@ def create_spawn_agent_registry(
         network: Literal["none", "trusted"] | None = None,
         reserved_run_id: str | None = None,
         placement: dict[str, Any] | None = None,
+        machine: str | None = None,
         lane: str | None = None,
         title: str | None = None,
         seat_context: dict[str, str | None] | None = None,
@@ -379,6 +390,9 @@ def create_spawn_agent_registry(
                 else tiles the tab evenly across the viewport. A viewport too
                 small for either refuses placement without changing the tab.
                 Refusals carry ``placement_error``.
+            machine: Machine that runs the agent. Defaults to the caller's machine; another
+                machine routes the run to its node. Refused with ``machine_not_owned`` unless
+                the caller owns that machine.
             lane: Optional lane label recorded on the agent run and returned as
                 ``lane`` by list_running_agents and list_agent_runs.
             seat_context: Prompt-only launch assignments: lane, lane_epic, worktree
@@ -630,6 +644,81 @@ def create_spawn_agent_registry(
                     "only in an operator-opened pane via apply_agent_definition"
                 ),
             }
+
+        routed: RoutedMachine | None = None
+        if db is not None:
+            try:
+                routed = await resolve_spawn_route(
+                    db,
+                    session_manager=session_manager,
+                    project_id=project_id or "",
+                    machine=machine,
+                    origin_machine_id=session_machine_id(session_manager, caller_session_id),
+                    resume_session_id=resume_session_id,
+                )
+            except NodeCommandError as exc:
+                return spawn_refusal(exc.code, str(exc), exc.stage)
+        elif not is_local_target(
+            session_manager,
+            machine=machine,
+            resume_session_id=resume_session_id,
+            project_id=project_id,
+        ):
+            return spawn_refusal(
+                "routing_unavailable", "The hub database is unavailable for a routed spawn"
+            )
+        if routed is not None and db is not None and not routed.local:
+            if resolved_parent_session_id is None or project_id is None:
+                return {
+                    "success": False,
+                    "error": "A run on another machine needs a parent session and a project",
+                }
+            try:
+                run_provider = resolve_spawn_provider(
+                    explicit_provider=provider,
+                    agent_provider=agent_body.provider if agent_body is not None else None,
+                    default_provider=default_provider,
+                )
+            except ValueError as exc:
+                return {"success": False, "error": str(exc)}
+            return await spawn_remote_route(
+                db,
+                routed=routed,
+                session_manager=session_manager,
+                task_manager=task_manager,
+                runner=runner,
+                daemon_config=config_resolver() if config_resolver is not None else None,
+                placement=placement,
+                completion_registry=completion_registry,
+                request=RemoteSpawnRequest(
+                    parent_session_id=resolved_parent_session_id,
+                    project_id=project_id,
+                    prompt=effective_prompt,
+                    provider=run_provider,
+                    agent_name=agent,
+                    agent_body=agent_body,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                    reasoning_required=reasoning_required,
+                    title=title,
+                    isolation=checkout_mode,
+                    branch_name=branch_name,
+                    base_branch=base_branch,
+                    timeout_seconds=timeout,
+                    initial_variables=initial_variables,
+                    workflow_name=effective_workflow,
+                    task_id=task_id,
+                    resume_session_id=resume_session_id,
+                    caller_session_id=caller_session_id,
+                    requested_provider=provider,
+                    allow_closed_task=allow_closed_task,
+                    extra_write_paths=extra_write_paths,
+                    write_paths_reason=write_paths_reason,
+                    reserved_run_id=reserved_run_id,
+                    lane=(lane or "").strip() or None,
+                    execution_mode=execution_mode,
+                ),
+            )
 
         # Delegate to spawn_agent_impl
         result = await spawn_agent_impl(
