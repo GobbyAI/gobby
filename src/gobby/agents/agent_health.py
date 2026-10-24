@@ -15,8 +15,10 @@ from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.run_completion import bound_task_is_closed
 from gobby.agents.stall_classifier import StallStatus
 from gobby.hooks.events import HookEventType
+from gobby.hub.remote_reconcile import RemoteRunReconciler
 from gobby.sessions.turn_lifecycle import TurnLifecycleState
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
+from gobby.storage.terminals import TerminalManager
 from gobby.terminals.lookup import active_terminal_for_run
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.utils.machine_id import require_machine_id
@@ -78,6 +80,13 @@ class AgentHealthMonitor:
         self._terminal_services = terminal_services
         # Runs whose session-end completion left them active; they fail if still active next pass.
         self._unsettled_completions: set[str] = set()
+        self._remote_reconciler = RemoteRunReconciler(
+            run_manager=agent_run_manager,
+            terminals=TerminalManager(db),
+            cleanup_agent=cleanup_handler.cleanup_agent,
+            dead_reason=self._dead_terminal_reason,
+            run_db=self._run_db,
+        )
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -239,7 +248,13 @@ class AgentHealthMonitor:
                 return None
             return "agent exited after its last turn completed, but its completion did not settle"
         # Blocks on the daemon loop and the terminal-delivery executor.
-        await asyncio.to_thread(coordinator.complete_agent_run, session)
+        if run.machine_id == require_machine_id():
+            await asyncio.to_thread(coordinator.complete_agent_run, session)
+        else:
+            # A node run's turns arrived as forwarded hooks, so count the turns they began.
+            await asyncio.to_thread(
+                coordinator.complete_agent_run, session, attested_turns=lifecycle.generation
+            )
         current = await self._run_db(self._agent_run_manager.get, run.id)
         if (
             current is not None
@@ -395,6 +410,11 @@ class AgentHealthMonitor:
 
             except Exception as e:
                 logger.warning("Error checking agent %s: %s", run.id, e)
+
+        try:
+            cleaned += await self._remote_reconciler.reconcile()
+        except Exception as e:
+            logger.warning("Remote run reconciliation failed: %s", e)
 
         if cleaned > 0:
             logger.info("Cleaned up %s unhealthy agent(s)", cleaned)
