@@ -1160,3 +1160,9 @@ run yet. Each runs after its leaves land, and each must hold before the epic clo
     and each copy rates the pre-perturbation G name against the new members.
   - 3.4.1 now names the `--no-decisions` fallback.
   - V2 is now written as completion gates.
+- 2026-10-24, consensus. Plan Writer gobby#17508 and Plan Adversary gobby#17509 agree on
+  this plan as of d7553d7a44. The adversary re-reviewed those bytes, confirmed that the
+  live plan equals the commit, and reran project-aware base validation, which passed.
+  Findings PA-001 to PA-010 are all resolved, and no blocking finding or governing
+  decision remains open. The adversary accepted the carry arm with no population floor,
+  because the run record counts skips and a zero denominator fails its bar.
