@@ -279,6 +279,61 @@ class TestUiBuildLockSync:
         assert "Build complete" in result.output
 
 
+def _spawn_dev_server(
+    web_dir: Path, commands: list[list[str]], npm_returncode: int = 0
+) -> int | None:
+    """Run spawn_ui_server with npm and the dev server stubbed; record each command in order."""
+    from gobby.cli.utils import spawn_ui_server
+
+    deps = MagicMock()
+    deps.is_port_available.return_value = True
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(cmd)
+        return MagicMock(returncode=npm_returncode, stderr=b"")
+
+    def fake_popen(cmd: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(cmd)
+        process = MagicMock(pid=4242)
+        process.poll.return_value = None
+        return process
+
+    with (
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui.spawn.run", side_effect=fake_run),
+        patch("gobby.cli.utils_ui.subprocess.Popen", side_effect=fake_popen),
+        patch("gobby.cli.utils_ui._write_ui_pid_record"),
+        patch("gobby.cli.utils_ui.time.sleep"),
+    ):
+        return spawn_ui_server("127.0.0.1", 5173, web_dir, web_dir / "ui.log")
+
+
+DEV_SERVER_COMMAND = ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"]
+
+
+class TestSpawnUiServerLockSync:
+    def test_drifted_tree_runs_npm_ci_before_dev_server(self, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        commands: list[list[str]] = []
+
+        assert _spawn_dev_server(tmp_path, commands) == 4242
+        assert commands == [["npm", "ci"], DEV_SERVER_COMMAND]
+
+    def test_in_sync_tree_starts_dev_server_without_install(self, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.5"}})
+        commands: list[list[str]] = []
+
+        assert _spawn_dev_server(tmp_path, commands) == 4242
+        assert commands == [DEV_SERVER_COMMAND]
+
+    def test_failed_npm_ci_stops_before_dev_server(self, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        commands: list[list[str]] = []
+
+        assert _spawn_dev_server(tmp_path, commands, npm_returncode=1) is None
+        assert commands == [["npm", "ci"]]
+
+
 # ---------------------------------------------------------------------------
 # ui start
 # ---------------------------------------------------------------------------
