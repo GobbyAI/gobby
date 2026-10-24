@@ -3,7 +3,8 @@
 Runbooks are fire and forget: once the panes exist and the agents start, the pipeline
 completes. Besides refusing a seat whose agent definition is missing or disabled, the
 guard refuses only an accidental double-fire: the same runbook still launching for the
-same project in the same workspace on the same machine. Seats are told apart by
+same project in the same workspace on the same machine, and for a runbook launched with
+a ``task`` input, for the same task. Seats are told apart by
 ``project#session_ref``, never by pane title, so seats may share a title; runbooks
 enforce no agent slots.
 """
@@ -20,6 +21,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, SessionManager
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
@@ -62,6 +64,7 @@ class RunbookSeatStores:
     definitions: AgentDefinitionManager
     workspaces: WorkspaceManager
     runs: LocalAgentRunManager
+    tasks: LocalTaskManager
 
 
 def check_runbook_seats(
@@ -81,7 +84,8 @@ def check_runbook_seats(
     ``requested`` is the comma-separated seat names; each must be exactly a catalogue
     name. Runbooks requiring session reports set ``require_report_to``; an empty ref refuses
     before storage lookup. Checks run in order: a live execution of the caller's runbook
-    in the same workspace on the same machine, then each seat's agent definition. A storage error, a
+    in the same workspace on the same machine (with a ``task`` input, for the same task),
+    then each seat's agent definition. A storage error, a
     truncated read, or a live sibling whose machine or workspace is unknown refuses with
     its cause.
 
@@ -173,7 +177,12 @@ def _admit(
     workspace_id = _workspace_id(stores.workspaces, workspace)
 
     _refuse_live_siblings(
-        stores, executions, execution, machine_id=session.machine_id, workspace_id=workspace_id
+        stores,
+        executions,
+        execution,
+        project_id=project_id,
+        machine_id=session.machine_id,
+        workspace_id=workspace_id,
     )
     _refuse_unresolved_agents(stores.definitions, project_id, seats)
     live = _live_seats(stores, session, seats) if skip_live_seats else {}
@@ -233,29 +242,62 @@ def _refuse_live_siblings(
     executions: LocalPipelineExecutionManager,
     execution: PipelineExecution,
     *,
+    project_id: str,
     machine_id: str,
     workspace_id: str,
 ) -> None:
     """Refuse when the caller's runbook is still launching in the same place.
 
     ``executions`` is already scoped to the caller's project. A sibling elsewhere,
-    on another machine or in another workspace, never refuses.
+    on another machine or in another workspace, never refuses. With a ``task``
+    input, only a sibling for the same task refuses, so teams for different tasks
+    launch in parallel.
     """
     name = execution.pipeline_name
-    siblings: list[str] = []
+    siblings: list[PipelineExecution] = []
     for status in LIVE_EXECUTION_STATUSES:
         rows = executions.list_executions(status=status, pipeline_name=name, limit=READ_BOUND + 1)
         _refuse_truncated(rows, f"{status.value} '{name}' execution")
         siblings.extend(
-            row.id
+            row
             for row in rows
             if row.id != execution.id
             and _launches_here(
                 stores, executions, row, machine_id=machine_id, workspace_id=workspace_id
             )
         )
+    task = _launch_task(stores.tasks, execution, project_id) if siblings else None
+    if task is not None:
+        siblings = [row for row in siblings if _same_task(stores.tasks, row, project_id, task)]
     if siblings:
-        raise RunbookSeatRefusal(f"another '{name}' execution is live: {', '.join(siblings)}")
+        live = ", ".join(row.id for row in siblings)
+        raise RunbookSeatRefusal(f"another '{name}' execution is live: {live}")
+
+
+def _launch_task(
+    tasks: LocalTaskManager, execution: PipelineExecution, project_id: str
+) -> str | None:
+    """Resolve the execution's ``task`` input to a task id; None without one."""
+    inputs = json.loads(execution.inputs_json or "{}")
+    ref = inputs.get("task") if isinstance(inputs, dict) else None
+    if ref is None:
+        return None
+    try:
+        return tasks.resolve_task_reference(str(ref), project_id)
+    except (TaskNotFoundError, ValueError) as exc:
+        raise RunbookSeatRefusal(
+            f"execution {execution.id} task {ref!r} does not resolve: {exc}"
+        ) from exc
+
+
+def _same_task(
+    tasks: LocalTaskManager, sibling: PipelineExecution, project_id: str, task: str
+) -> bool:
+    """Whether ``sibling`` launches for ``task``; a sibling without a task refuses."""
+    sibling_task = _launch_task(tasks, sibling, project_id)
+    if sibling_task is None:
+        raise RunbookSeatRefusal(f"live execution {sibling.id} has no task input")
+    return sibling_task == task
 
 
 def _launches_here(

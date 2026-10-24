@@ -245,9 +245,9 @@ state inconsistent.
   Keep managed version pins and the gcode maintenance version floor in step.
   Apply this to `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm` only when
   released. Unpublished binaries (`UNPUBLISHED_MANAGED_BINS` in
-  `src/gobby/install/version_pins.py`) rebuild from the checkout on every
-  `gobby install`, so a changed source without a bump keeps the stale installed
-  binary. Workspace promotion records each binary's version and source identity
+  `src/gobby/install/version_pins.py`) go through the checkout build on every
+  `gobby install`; a changed source without a bump is refused promotion, so the
+  installed binary stays stale. Workspace promotion records each binary's version and source identity
   in `.<binary>-release-identity.json`; same-version changed-source promotion is
   refused by the shared promotion guard, including cutover preflight before stop.
   Same-source re-promotion is permitted. Component installs use the same guard.
