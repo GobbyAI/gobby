@@ -25,5 +25,5 @@ def composer_refuses_automation(services: TerminalServices | None, run: AgentRun
     if terminal is None:
         return False
     if not is_local_machine(terminal.machine_id):
-        return remote_composer_state(terminal.id) != "empty"
+        return remote_composer_state(terminal.id, terminal.machine_id) != "empty"
     return read_composer(terminal.id).state not in {"empty", "held"}

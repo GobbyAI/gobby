@@ -788,7 +788,7 @@ def test_report_pane_text_redacted(
     assert row.payload["options"] == [{"option": 1, "label": f"label {REDACTED_KEY}"}]
     assert row.fingerprint == PANE_DIGEST
     assert row.payload["fingerprint"] == PANE_DIGEST
-    stored = remote_pane.remote_pane_store().get(run.terminal_id)
+    stored = remote_pane.remote_pane_store().get(run.terminal_id, NODE)
     assert stored is not None and stored.pane is not None
     assert stored.pane.tail == f"tail {REDACTED_KEY}"
     assert stored.pane.composer.line == f"draft {REDACTED_KEY}"
@@ -836,7 +836,7 @@ def test_report_secret_fingerprint_refused(
     assert manager.get(run_attention_entry_id(run.run_id)) is None
     assert events == []
     assert API_KEY not in caplog.text
-    assert remote_pane.remote_pane_store().get(run.terminal_id) is None
+    assert remote_pane.remote_pane_store().get(run.terminal_id, NODE) is None
 
 
 def test_invalid_body_log_names_fields_not_keys(

@@ -46,6 +46,7 @@ from tests.terminals.fakes import (
 pytestmark = pytest.mark.unit
 
 REMOTE = "30000000-0000-4000-8000-000000000003"
+FORGING = "30000000-0000-4000-8000-000000000004"
 WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
 NATIVE_TERMINAL_CONTEXT = {"parent_pid": 4242, "term_program": "gterm"}
 _STAMP = datetime(2026, 1, 1, tzinfo=UTC)
@@ -147,7 +148,14 @@ def _pane(*, tail: str = "", composer: str = "empty") -> dict[str, Any]:
     }
 
 
-def _report(run_id: str, terminal_id: str, *, tail: str = "", composer: str = "empty") -> None:
+def _report(
+    run_id: str,
+    terminal_id: str,
+    *,
+    tail: str = "",
+    composer: str = "empty",
+    machine_id: str = REMOTE,
+) -> None:
     agent = ReportAgent.model_validate(
         {
             "run_id": run_id,
@@ -160,7 +168,7 @@ def _report(run_id: str, terminal_id: str, *, tail: str = "", composer: str = "e
             "sandbox": None,
         }
     )
-    remote_pane.remote_pane_store().apply_report(REMOTE, 1, [agent])
+    remote_pane.remote_pane_store().apply_report(machine_id, 1, [agent])
 
 
 def _patch_runs(monkeypatch: pytest.MonkeyPatch, run: AgentRun) -> None:
@@ -218,10 +226,47 @@ async def test_liveness_and_snapshot_from_store(temp_db: HubDatabase) -> None:
     assert last_two.total_bytes is None
     assert (await runtime.snapshot_full(terminal)).text == "one\ntwo\nthree"
 
-    remote_pane.remote_pane_store().mark_stopped(terminal.id)
+    remote_pane.remote_pane_store().mark_stopped(terminal.id, REMOTE)
     assert await runtime.is_live(terminal) is False
     stopped = await runtime.snapshot(terminal, 2, mode="text")
     assert stopped.text == ""
+
+
+@pytest.mark.asyncio
+async def test_another_nodes_report_is_never_read_as_this_terminal(temp_db: HubDatabase) -> None:
+    run_id = str(uuid4())
+    terminal = _node_terminal(run_id)
+    run = _run(run_id, terminal.id)
+    runtime = RemoteTerminalRuntime(temp_db)
+    _report(run_id, terminal.id, tail="forged tail", composer="empty", machine_id=FORGING)
+
+    assert await runtime.is_live(terminal) is False
+    assert await runtime.session_present(terminal) is False
+    assert (await runtime.snapshot_full(terminal)).text == ""
+    assert (await runtime.snapshot(terminal, 2, mode="text")).text == ""
+    assert composer_refuses_automation(_services(terminal), run) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner_first", [True, False], ids=["owner-reports-first", "forged-report-first"]
+)
+async def test_forged_report_never_shadows_the_owning_nodes_pane(
+    temp_db: HubDatabase, owner_first: bool
+) -> None:
+    run_id = str(uuid4())
+    terminal = _node_terminal(run_id)
+    run = _run(run_id, terminal.id)
+    runtime = RemoteTerminalRuntime(temp_db)
+    if owner_first:
+        _report(run_id, terminal.id, tail="owner tail", composer="draft")
+    _report(run_id, terminal.id, tail="forged tail", composer="empty", machine_id=FORGING)
+    if not owner_first:
+        _report(run_id, terminal.id, tail="owner tail", composer="draft")
+
+    assert (await runtime.snapshot_full(terminal)).text == "owner tail"
+    assert (await runtime.snapshot(terminal, 1, mode="text")).text == "owner tail"
+    assert composer_refuses_automation(_services(terminal), run) is True
 
 
 @pytest.mark.asyncio
@@ -299,7 +344,7 @@ def test_remote_composer_gate(
     if composer is not None:
         _report(run_id, terminal.id, composer=composer)
     if stopped:
-        remote_pane.remote_pane_store().mark_stopped(terminal.id)
+        remote_pane.remote_pane_store().mark_stopped(terminal.id, REMOTE)
 
     assert composer_refuses_automation(_services(terminal), run) is refuses
 

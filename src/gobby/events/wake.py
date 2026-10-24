@@ -786,7 +786,7 @@ class WakeDispatcher:
         local-only and do not run for it.
         """
         if terminal is not None and not is_local_machine(terminal.machine_id):
-            state = remote_composer_state(str(terminal.id))
+            state = remote_composer_state(str(terminal.id), terminal.machine_id)
             if state == "empty":
                 return None, True
             if state == "draft":
