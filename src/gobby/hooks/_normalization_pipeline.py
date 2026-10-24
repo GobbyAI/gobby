@@ -2,11 +2,13 @@
 
 from pathlib import Path
 
+from gobby.hooks._normalization_base_commands import classify_base_command
 from gobby.hooks._normalization_redirects import has_mutating_output_redirection
-from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_shell import (
     ShellToken,
     has_shell_input_redirection,
+    shell_token_values,
+    strip_output_redirections,
 )
 from gobby.hooks._python_pipeline_classifier import (
     _inline_interpreter_parts,
@@ -55,9 +57,31 @@ def _is_read_only_pipeline_stage(
     if has_shell_input_redirection(tokens) or has_mutating_output_redirection(tokens):
         return False
     cmd = shell_command_name(parts[0])
-    if cmd == "sed":
-        return classify_sed_segment(parts, cwd, raw_parts, base_cwd).kind == "read"
-    return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS or _is_read_only_python_pipeline(parts)
+    if cmd not in _GCODE_PIPELINE_READ_ONLY_FILTERS:
+        return _is_read_only_python_pipeline(parts)
+    command_tokens = tokens[-len(parts) :]
+    plain_tokens = strip_output_redirections(command_tokens)
+    if raw_parts is not None:
+        plain_ids = {id(token) for token in plain_tokens}
+        raw_parts = tuple(
+            raw
+            for token, raw in zip(command_tokens, raw_parts, strict=True)
+            if id(token) in plain_ids
+        )
+    # Only stdin-only filters can skip ordinary command classification. Explicit
+    # file operands retain the same read or mutation semantics at every stage.
+    metadata = classify_base_command(
+        shell_token_values(plain_tokens),
+        cwd,
+        shell_stdin=True,
+        base_cwd=base_cwd,
+        raw_parts=raw_parts,
+    )
+    return (
+        not metadata.paths
+        and not metadata.repo_mutation
+        and (cmd != "sed" or metadata.kind == "read")
+    )
 
 
 def _is_neutral_echo_segment(tokens: list[ShellToken], parts: list[str]) -> bool:

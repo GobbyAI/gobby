@@ -1006,6 +1006,53 @@ def test_one_event_asks_git_once_for_all_its_paths(
     assert len(spawns) == 2
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "true | cat src/long.py",
+        "x | head -50 src/long.py",
+        "true | tail -n 50 src/long.py",
+        "true | sed -n '1,60p' src/long.py",
+        "true | cat src/long.py | cat",
+        "true | head -50 src/long.py | cat",
+        'true | cat "$f"',
+    ],
+)
+def test_downstream_file_read_requires_navigation(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+def test_downstream_output_operand_preserves_mutation(repo: Path) -> None:
+    data = event(repo, "true | sort -o src/output.py")
+
+    assert data.get("canonical_repo_mutation") is True
+    assert "src/output.py" in data["canonical_write_file_paths"]
+
+
+@pytest.mark.parametrize("shell", ["bash", "sh", "zsh"])
+def test_downstream_file_read_after_script_requires_navigation(repo: Path, shell: str) -> None:
+    script = repo.parent / "waitfile.sh"
+    script.write_text('cat "$1"\n')
+
+    assert broad_read_blocked(repo, f"{shell} {script} src/long.py | cat src/long.py")
+    assert not broad_read_blocked(repo, f"{shell} {script} src/long.py | head -50")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cmd | head -50",
+        "cmd | grep foo",
+        "cmd | cat",
+        "cmd | sed -n '1,60p'",
+        "true | cat src/long.py | head -n 10",
+        "true | head -n 10 src/long.py",
+    ],
+)
+def test_stdin_filters_and_bounded_downstream_reads_remain_exempt(repo: Path, command: str) -> None:
+    assert not broad_read_blocked(repo, command)
+
+
 @pytest.mark.parametrize("shell", ["bash", "sh", "zsh"])
 @pytest.mark.parametrize(
     ("body", "invocation"),
