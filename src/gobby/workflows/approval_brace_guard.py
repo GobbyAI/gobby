@@ -3,6 +3,9 @@
 Arbitrary argv launchers make command-position inference unsafe. Match the two
 protected basenames anywhere, retaining quote provenance and ordinary brace data.
 Each alternative carries at most len(target) + 1 offsets, never expanded strings.
+This syntactic guard cannot follow variable values (X="..." sh -c "$X" or
+PAGER="..." <cmd>); managed executions rely on the database's denial of session-table
+access at that boundary.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from gobby.hooks._normalization_shell import (
 from gobby.hooks._shell_execution_words import _unwrap
 from gobby.hooks.provider_launch_guard import _python_name, _python_program
 
+from .approval_git_scripts import git_shell_scripts
 from .condition_helpers import _GIT_GLOBAL_FLAGS, _GIT_GLOBAL_VALUE_OPTIONS
 from .engine.command_matching import (
     _decoded_stages,
@@ -695,12 +699,11 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
             operands[span] = assignment.end()
             continue
         if head is None:
+            if not token.quoted and token.value in _COMPOUND_PREFIXES:
+                continue
             literal = not any(_word_syntax(raw)) and not any(
                 active and char in "*?[" for char, active in _characters(raw)
             )
-            if literal and not token.quoted and token.value in _COMPOUND_PREFIXES:
-                # `do echo` runs `echo`: a compound keyword is not the command word.
-                continue
             head = token.value if literal else ""
         elif head == "git":
             # Global options precede the subcommand; a read-only one's later operands are data.
@@ -760,6 +763,7 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
             stages = _decoded_stages(subject)
             strict |= _shell_setup(subject, scan, stages)
             scripts = _wrapper_scripts(stages)
+            scripts.extend(git_shell_scripts(stages))
             scripts.extend(_shell_input_scripts(subject))
             pending.extend((script, depth + 1) for script in scripts)
             # Correlated subjects retain substitution bodies with spaces.

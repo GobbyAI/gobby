@@ -532,6 +532,108 @@ def test_python_script_argv_is_an_accepted_residual() -> None:
 
 
 @pytest.mark.parametrize(
+    "template",
+    [
+        'git submodule foreach "{body}"',
+        'git submodule --quiet foreach --recursive "{body}"',
+        'git -C /r submodule foreach "{body}"',
+        'git bisect run sh -c "{body}"',
+        'git rebase -x "{body}" HEAD~1',
+        'git rebase --exec "{body}" HEAD~1',
+        'git rebase --exec="{body}" HEAD~1',
+        'git clone -u "{body}" /r',
+        'git clone --upload-pack="{body}" /r',
+        'git fetch --upload-pack "{body}" /r',
+        'git pull --upload-pack="{body}" /r',
+        'git ls-remote --upload-pack="{body}" /r',
+        'git push --receive-pack="{body}" /r',
+        'git push --exec="{body}" /r',
+        'git archive --remote=/r --exec="{body}" HEAD',
+        'git difftool -x "{body}" HEAD',
+        'git difftool --extcmd="{body}" HEAD',
+        'git grep -O"{body}" foo',
+        'git grep --open-files-in-pager="{body}" foo',
+        'git filter-branch --setup "{body}" HEAD',
+        'git filter-branch --env-filter "{body}" HEAD',
+        'git filter-branch --tree-filter "{body}" HEAD',
+        'git filter-branch --index-filter "{body}" HEAD',
+        'git filter-branch --parent-filter "{body}" HEAD',
+        'git filter-branch --msg-filter "{body}" HEAD',
+        'git filter-branch --commit-filter "{body}" HEAD',
+        'git filter-branch --tag-name-filter "{body}" HEAD',
+        'git -c core.sshCommand="{body}" fetch o',
+        'git -c core.pager="{body}" log',
+        'git -c core.editor="{body}" commit',
+        'git -c core.fsmonitor="{body}" status',
+        'git -c sequence.editor="{body}" rebase -i HEAD~1',
+        'git -c diff.external="{body}" diff',
+        'git -c credential.helper="{body}" fetch o',
+        'git -c gpg.program="{body}" commit -S',
+        'git -c pager.log="{body}" log',
+        'git -c alias.x="!{body}" status',
+        'GIT_SSH_COMMAND="{body}" git fetch o',
+        'env GIT_SSH_COMMAND="{body}" git fetch o',
+        'GIT_PAGER="{body}" git log',
+        'env GIT_PAGER="{body}" git log',
+        'GIT_EDITOR="{body}" git commit',
+        'env GIT_EDITOR="{body}" git commit',
+        'GIT_SEQUENCE_EDITOR="{body}" git rebase -i HEAD~1',
+        'env GIT_SEQUENCE_EDITOR="{body}" git rebase -i HEAD~1',
+        'GIT_EXTERNAL_DIFF="{body}" git diff',
+        'env GIT_EXTERNAL_DIFF="{body}" git diff',
+        "bash -c '{body}'",
+        "timeout 5 sh -c '{body}'",
+        "uv run sh -c '{body}'",
+        "find . -exec sh -c '{body}' \\;",
+        "xargs sh -c '{body}'",
+    ],
+)
+def test_git_shell_values_block_dynamic_gobby_slots(template: str) -> None:
+    command = template.format(body="gobby $S approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git rebase -x "echo hi" HEAD~1',
+        'git submodule foreach "git status"',
+        "git fetch -u origin",
+        "git push -u origin main",
+        'git clone -u "git-upload-pack" /r',
+        'git commit -m "gobby $S approve-dirty-paths s7"',
+        'git log --grep="gobby $S approve-dirty-paths s7"',
+        'git -c user.name="gobby $S approve-dirty-paths s7" commit -m x',
+    ],
+)
+def test_git_shell_values_preserve_data_operands(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        '{ echo "a $f"; }',
+        'for f in a; do [ -f "$f" ] && { echo "== $f"; cat "$f"; }; done',
+    ],
+)
+def test_compound_prefix_keeps_data_operands_literal(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ gobby $S approve-dirty-paths s7; }",
+        "{ gobby {sessions,} approve-dirty-paths s7; }",
+        "{ uv run gobby $S approve-dirty-paths s7; }",
+    ],
+)
+def test_compound_prefix_keeps_dynamic_gobby_slots_blocked(command: str) -> None:
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
     "command",
     ["echo gobby sessions list", "git grep gobby", 'git commit -m "gobby sessions list"'],
 )
