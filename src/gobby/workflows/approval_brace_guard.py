@@ -549,6 +549,19 @@ def _stage_slots(words: list[str], raw: list[str], *, strict: bool = False) -> b
             if module[:1] in (["gobby"], ["gobby.cli"]):
                 argv = module
                 name = argv[0]
+        # Unknown heads may launch any later argv word. Only known operand
+        # grammars can safely exclude their arguments from command-slot checks.
+        if (
+            name not in _DATA_BASENAME_HEADS | {"diff", "find", "git", "gobby", "gobby.cli"}
+            and not _python_name(name)
+            and any(
+                _positional_slots(words, raw, index)
+                for index, word in enumerate(words)
+                if word.rsplit("/", 1)[-1] == "gobby"
+                or (word == "gobby.cli" and index > 0 and words[index - 1] == "-m")
+            )
+        ):
+            return True
         index = len(words) - len(argv)
         if index < 0 or argv[1:] != words[index + 1 :]:
             # Split-string wrappers can synthesize argv. Keep their conservative

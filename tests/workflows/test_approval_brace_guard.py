@@ -460,6 +460,36 @@ def test_git_builtin_grep_operand_is_not_a_command_word() -> None:
 
 
 @pytest.mark.parametrize(
+    "launcher",
+    [
+        "caffeinate",
+        "arch -arm64",
+        "/usr/bin/arch -arch arm64",
+        "doas",
+        "ionice -c3",
+        "flock /tmp/approval.lock",
+        "chronic",
+        "pipx run",
+        "poetry run",
+        "rtk",
+        "direnv exec .",
+        "script -q /dev/null",
+        "sandbox-exec -n profile",
+        "taskset 1",
+        "strace -f",
+        "unknown",
+    ],
+)
+@pytest.mark.parametrize("slot", ["$S", "{sessions,}"])
+@pytest.mark.parametrize("context", ["{}", "cat x | {}", "cat <(echo hi) <({})"])
+def test_unknown_launchers_keep_dynamic_gobby_slots_blocked(
+    launcher: str, slot: str, context: str
+) -> None:
+    command = context.format(f"{launcher} gobby {slot} approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
     "command",
     ["echo gobby sessions list", "git grep gobby", 'git commit -m "gobby sessions list"'],
 )
