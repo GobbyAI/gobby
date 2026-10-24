@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import click
+import psycopg
 import pytest
 import yaml
 from click.testing import CliRunner
@@ -37,10 +38,12 @@ from gobby.releases.batch import (
 from gobby.releases.smoke import SmokeResult, active_runs, run_smokes
 from gobby.releases.window import (
     LEASE_TTL,
+    ReleaseWindow,
     ReleaseWindowRefused,
     acquire_window,
     read_window,
     release_window,
+    renew_window,
     window_path,
 )
 from gobby.servers.auth_service import _agent_capability_allows
@@ -55,6 +58,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.release_batch_case import NOW, Clock, Fakes
+from tests.fixtures.review_approvals import grant_step_writes
 
 pytestmark = pytest.mark.unit
 
@@ -162,6 +166,8 @@ async def test_successful_pinned_batch(case: LandingCase) -> None:
         ("restart", "activation"),
         ("smoke", "smokes"),
         ("lease", "lease"),
+        # The lease lapses after activation, while the smokes run.
+        ("late_lease", "lease"),
     ],
 )
 async def test_failed_batch_preserves_baseline(case: LandingCase, failure: str, phase: str) -> None:
@@ -217,11 +223,11 @@ async def test_failed_batch_preserves_baseline(case: LandingCase, failure: str, 
     # The prior success is the baseline the failed batch diffed from, and it stays.
     assert (record.base_sha, record.candidate_sha) == (prior, candidate)
     assert latest_baseline(common) == prior
-    activated = failure in ("build", "restart", "smoke")
+    activated = failure in ("build", "restart", "smoke", "late_lease")
     assert fakes.activations == ([fakes.kind] if activated else [])
     assert _headlines(fakes.announcements) == (["BEFORE", "RELEASE FAILED"] if activated else [])
     # Only the batch's own hold is cleared; a successor's window survives.
-    if failure == "lease":
+    if failure in ("lease", "late_lease"):
         assert fakes.stolen is not None
         assert read_window(common) == fakes.stolen
     else:
@@ -245,6 +251,133 @@ async def test_failed_batch_preserves_baseline(case: LandingCase, failure: str, 
     assert rerun.regression_task == task.id
     reopened = tasks.list_tasks(project_id=case.project_id, label=label, closed=False)
     assert [open_task.id for open_task in reopened] == [task.id]
+
+
+async def test_a_failed_renewal_retries_on_the_next_interval(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    common = case.repo / ".git"
+    owner = case.session("release manager")
+    candidate = case.direct({"src/gobby/tasks/a.py": "A = 2\n"})
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=NOW
+    )
+    calls: list[int] = []
+    failed, retried = asyncio.Event(), asyncio.Event()
+
+    # The batch's first renewal succeeds; the keeper's first one hits a hub blip.
+    async def flaky_renew(db: HubDatabase, **kwargs: Any) -> ReleaseWindow:
+        calls.append(kwargs["generation"])
+        if len(calls) == 2:
+            failed.set()
+            raise psycopg.OperationalError("hub connection reset")
+        if len(calls) == 3:
+            retried.set()
+        return await renew_window(db, **kwargs)
+
+    async def through_the_failed_renewal() -> bool:
+        await failed.wait()
+        try:
+            await asyncio.wait_for(retried.wait(), timeout=5)
+        except TimeoutError:
+            return False
+        return True
+
+    monkeypatch.setattr("gobby.releases.batch.renew_window", flaky_renew)
+    fakes = Fakes(case, Clock(), loop=asyncio.get_running_loop(), during=through_the_failed_renewal)
+
+    record = await run_batch(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=owner,
+        token=lease.token,
+        generation=lease.generation,
+        base_sha=case.base,
+        env=fakes.env(),
+    )
+
+    # One failed renewal is not a lost lease: the keeper renews again and the batch lands.
+    assert fakes.observed is True
+    assert (record.status, record.phase) == ("succeeded", None)
+    assert latest_baseline(common) == candidate
+    assert read_window(common) is None
+
+
+async def test_a_cancelled_batch_releases_its_window_and_records_the_failure(
+    case: LandingCase,
+) -> None:
+    common = case.repo / ".git"
+    owner = case.session("release manager")
+    case.direct({"src/gobby/tasks/a.py": "A = 2\n"})
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=NOW
+    )
+    running: list[asyncio.Task[BatchRecord]] = []
+
+    async def cancel_the_batch() -> None:
+        running[0].cancel()
+
+    fakes = Fakes(case, Clock(), loop=asyncio.get_running_loop(), during=cancel_the_batch)
+    running.append(
+        asyncio.create_task(
+            run_batch(
+                case.db,
+                project_id=case.project_id,
+                owner_session_id=owner,
+                token=lease.token,
+                generation=lease.generation,
+                base_sha=case.base,
+                env=fakes.env(),
+            )
+        )
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await running[0]
+
+    # Cancellation still releases the owned window and finishes the record; it files no
+    # regression task because the candidate did not fail.
+    assert read_window(common) is None
+    [stored] = [json.loads(path.read_text()) for path in records_dir(common).iterdir()]
+    assert (stored["status"], stored["phase"], stored["regression_task"]) == (
+        "failed",
+        "checks",
+        None,
+    )
+    assert any("cancelled" in diagnostic for diagnostic in stored["diagnostics"])
+    assert fakes.announcements == []
+
+
+async def test_a_failed_regression_filing_still_records_the_failure(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    common = case.repo / ".git"
+    owner = case.session("release manager")
+    case.direct({"src/gobby/tasks/a.py": "A = 2\n"})
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=NOW
+    )
+
+    def hub_unavailable(*_args: object) -> str:
+        raise psycopg.OperationalError("hub unavailable")
+
+    monkeypatch.setattr("gobby.releases.batch._regression_task", hub_unavailable)
+
+    record = await run_batch(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=owner,
+        token=lease.token,
+        generation=lease.generation,
+        base_sha=case.base,
+        env=Fakes(case, Clock(), fail="check").env(),
+    )
+
+    assert (record.status, record.phase, record.regression_task) == ("failed", "checks", None)
+    assert any("hub unavailable" in diagnostic for diagnostic in record.diagnostics)
+    assert read_window(common) is None
+    [stored] = [json.loads(path.read_text()) for path in records_dir(common).iterdir()]
+    assert (stored["status"], stored["phase"]) == ("failed", "checks")
 
 
 def test_refusals_before_first_renewal_leave_the_window(
@@ -441,6 +574,7 @@ async def test_release_authority_and_worker_reconnect(
 ) -> None:
     common = case.repo / ".git"
     owner = case.session("release manager")
+    grant_step_writes(case.db, owner, case.project_id, "release-manager", ())
     monkeypatch.chdir(case.repo)
     entry_points = _probe_entry_points(monkeypatch)
     agent: dict[str, str | None] = {"GOBBY_AGENT_RUN_ID": "run-1", "GOBBY_SESSION_ID": owner}

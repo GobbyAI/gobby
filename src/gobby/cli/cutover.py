@@ -301,29 +301,35 @@ def run_cutover(
         raise CutoverError("refusing to promote: daemon stop failed; installed binaries unchanged")
     from gobby.releases.window import agent_activation_refusal
 
+    refusal: str | None = None
     try:
         _require_unchanged_sources(root, sources)
-        # A release batch's lease can lapse while the daemon stops.
-        if refusal := agent_activation_refusal():
-            raise CutoverError(f"refusing to promote: {refusal}")
-        promote_workspace_binary_set(
-            artifacts,
-            bin_dir=bin_dir,
-            workspace_root=root,
-            source_identities=sources,
-            metadata=WorkspacePromotionMetadata(
-                install_method=_INSTALL_METHOD,
-                target=_platform_target(),
-            ),
-        )
-        _verify_restart_target(bin_dir)
+        # A release batch's lease can lapse while the daemon stops. Nothing is promoted
+        # yet, so the unchanged daemon starts again and the cutover is refused.
+        refusal = agent_activation_refusal()
+        if refusal is None:
+            promote_workspace_binary_set(
+                artifacts,
+                bin_dir=bin_dir,
+                workspace_root=root,
+                source_identities=sources,
+                metadata=WorkspacePromotionMetadata(
+                    install_method=_INSTALL_METHOD,
+                    target=_platform_target(),
+                ),
+            )
+            _verify_restart_target(bin_dir)
         start_daemon()
     except Exception as exc:
         # After confirmed shutdown, every failed phase needs operator recovery
         # guidance, including startup errors and identity decoding failures.
+        refused = f"refusing to promote: {refusal}; " if refusal else ""
         raise CutoverError(
-            f"{exc}. The daemon is stopped. After resolving this failure, run `gobby start`."
+            f"{refused}{exc}. The daemon is stopped. After resolving this failure, run "
+            "`gobby start`."
         ) from exc
+    if refusal is not None:
+        raise CutoverError(f"refusing to promote: {refusal}; restarted the unchanged daemon")
     if isinstance(build.client, str):
         return build.client
     try:

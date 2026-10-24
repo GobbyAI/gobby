@@ -109,6 +109,8 @@ class Fakes:
     def _smoke(self, captured: frozenset[str]) -> list[SmokeResult]:
         assert captured == frozenset({"run-before"})
         self.baselines_at_smoke.append(latest_baseline(self.case.repo / ".git"))
+        if self.fail == "late_lease":
+            self._steal()
         return [SmokeResult("health", self.fail != "smoke", "probe")]
 
     def _announce(self, text: str) -> str | None:

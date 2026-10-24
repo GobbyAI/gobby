@@ -10,11 +10,12 @@ candidate is the release baseline.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import subprocess  # nosec B404 # argv-form git through the spawn helper
 import tomllib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -290,7 +291,10 @@ def _prepare(
 
 @dataclass
 class _Keeper:
-    """Renews the lease every ``renew_every`` seconds and records loss instead of raising."""
+    """Renews the lease every ``renew_every`` seconds and records loss instead of raising.
+
+    Only a refusal loses the lease; any other renewal error retries on the next interval.
+    """
 
     db: HubDatabase
     project_id: str
@@ -320,10 +324,11 @@ class _Keeper:
             except ReleaseWindowRefused as refused:
                 self.lost = f"{refused.code}: {refused}"
                 return
-            except Exception as exc:  # A crash here would cancel the batch mid-activation.
-                logger.exception("Release window renewal failed")
-                self.lost = f"renewal failed: {type(exc).__name__}: {exc}"
-                return
+            except Exception:  # A crash here would cancel the batch mid-activation.
+                # Transient: retry next interval. The lease outlives several intervals,
+                # and a renewal that never lands is refused once the lease expires.
+                logger.exception("Release window renewal failed; retrying next interval")
+                continue
             self.generation = renewed.generation
 
 
@@ -349,6 +354,8 @@ class _Batch:
             captured = await self._activate()
             self.phase = "smokes"
             await self._smokes(captured)
+            # A lease lost during the smokes leaves the result unowned: no baseline moves.
+            await asyncio.to_thread(self._prove)
         except _BatchFailed as failed:
             return failed.phase, str(failed)
         except Exception as exc:  # Job boundary: record the failure, release and file it.
@@ -425,6 +432,27 @@ class _Batch:
         except ReleaseWindowRefused as refused:
             self.note(f"window not released: {refused.code}: {refused}")
 
+    async def cancelled(self) -> None:
+        """Close a batch cancelled mid-run; the candidate did not fail, so no task is filed."""
+        self.note(f"release batch cancelled in {self.phase}")
+        self.record = replace(self.record, status="failed", phase=self.phase)
+        await self.release()
+        if self.before_sent:
+            await self.announce(
+                f"RELEASE FAILED: release batch {self.prepared.candidate[:12]} was cancelled "
+                f"in {self.phase}"
+            )
+        await asyncio.to_thread(_write_record, self.path, self.record)
+
+
+async def _to_completion(cleanup: Coroutine[object, object, None]) -> None:
+    """Run ``cleanup`` to its end even when this task is cancelled again meanwhile."""
+    task = asyncio.ensure_future(cleanup)
+    while not task.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.shield(task)
+    task.result()
+
 
 async def run_batch(
     db: HubDatabase,
@@ -440,7 +468,9 @@ async def run_batch(
 
     Raises ``ReleaseBatchRefused`` or ``ReleaseWindowRefused`` before the first renewal,
     leaving the window as it was. Every later failure is recorded, releases the window
-    and files one open regression task per candidate.
+    and files one open regression task per candidate; a filing error is recorded as a
+    diagnostic. A cancelled batch releases the window and records the failure, files no
+    task, then re-raises.
     """
     prepared = await asyncio.to_thread(
         _prepare, db, project_id, owner_session_id, token, generation, base_sha, env
@@ -467,12 +497,16 @@ async def run_batch(
     await asyncio.to_thread(_write_record, path, record)
     keeper = _Keeper(db, project_id, owner_session_id, token, lease.generation, env)
     batch = _Batch(db, project_id, owner_session_id, token, env, prepared, keeper, record, path)
-    async with asyncio.TaskGroup() as group:
-        group.create_task(keeper.run())
-        try:
-            failure = await batch.run()
-        finally:
-            keeper.stopped.set()
+    try:
+        async with asyncio.TaskGroup() as group:
+            group.create_task(keeper.run())
+            try:
+                failure = await batch.run()
+            finally:
+                keeper.stopped.set()
+    except asyncio.CancelledError:
+        await _to_completion(batch.cancelled())
+        raise
     sha = prepared.candidate[:12]
     if failure is None:
         batch.record = replace(batch.record, status="succeeded")
@@ -486,9 +520,14 @@ async def run_batch(
         phase, diagnostic = failure
         batch.note(diagnostic)
         await batch.release()
-        task_ref = await asyncio.to_thread(
-            _regression_task, db, project_id, owner_session_id, batch.record, phase, diagnostic
-        )
+        try:
+            task_ref: str | None = await asyncio.to_thread(
+                _regression_task, db, project_id, owner_session_id, batch.record, phase, diagnostic
+            )
+        except Exception as exc:  # The failure record must survive a hub outage.
+            logger.exception("Release regression task filing failed")
+            batch.note(f"regression task not filed: {type(exc).__name__}: {exc}")
+            task_ref = None
         batch.record = replace(batch.record, status="failed", phase=phase, regression_task=task_ref)
         if batch.before_sent:
             await batch.announce(
