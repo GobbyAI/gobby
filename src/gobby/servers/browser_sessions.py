@@ -112,8 +112,6 @@ BROWSER_WS_MESSAGES = frozenset(
     {
         "ping",
         "heartbeat",
-        "subscribe",
-        "unsubscribe",
         "terminal_list",
         "terminal_attach",
         "terminal_detach",

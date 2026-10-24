@@ -385,7 +385,8 @@ class WebSocketServer(
 
         try:
             # Send welcome message with active conversation IDs
-            active_conversations = list(self._chat_sessions.keys())
+            browser = getattr(websocket, "browser_session", None)
+            active_conversations = [] if browser is not None else list(self._chat_sessions.keys())
             await websocket.send(
                 json_dumps(
                     {
@@ -399,7 +400,8 @@ class WebSocketServer(
             )
 
             # Re-broadcast pending interactions for active conversations
-            await self._rebroadcast_pending_interactions(websocket, active_conversations)
+            if browser is None:
+                await self._rebroadcast_pending_interactions(websocket, active_conversations)
 
             # Message processing loop
             async for message in websocket:
