@@ -8,6 +8,8 @@ use anyhow::{Result, anyhow, bail, ensure};
 use axum::body::Body;
 use axum::http::header::{CACHE_CONTROL, COOKIE};
 use axum::http::{Method, Request, Response, StatusCode};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use common::{
     CONFIG_REVISION, EPOCH, HANDSHAKE_PATH, SECRET, call, claims, daemon_home, database_case,
     family, handshake_request, json_body, pool, unix_now, vector_case,
@@ -129,6 +131,12 @@ async fn interactive_handshake_issues_signed_grant() -> Result<()> {
         let config: tokio_postgres::Config = dsn.parse()?;
         assert_eq!(config.get_user(), Some(role_name.as_str()));
         assert_eq!(config.get_dbname(), Some("gobby_test"));
+        // Python's hub conninfo carries the UTC session timezone, and the issued DSN is
+        // built from it, so the issued session must carry it too.
+        assert_eq!(
+            config.get_options(),
+            Some(format!("-csearch_path={} -ctimezone=UTC", db.schema).as_str())
+        );
 
         // The capabilities are Python's for the same published state, with the
         // issued Postgres grant substituted for the fixture's.
@@ -309,4 +317,112 @@ async fn callerless_handshakes_are_not_claimed() -> Result<()> {
         .body(Body::empty())?;
     assert!(!claims(&family, &unauthenticated.into_parts().0));
     Ok(())
+}
+
+/// A sealed binding opens only under the identity it was sealed for: its config key,
+/// its fingerprint and the deployment token. Any other identity fails closed, and the
+/// response never carries the plaintext.
+#[tokio::test]
+async fn sealed_config_binding_opens_only_for_its_identity() -> Result<()> {
+    database_case(async |db| {
+        let (machine, project) = (Uuid::new_v4(), Uuid::new_v4());
+        let home = daemon_home(machine, &db.url)?;
+        let token = deployment_token(home.path());
+        db.seed_machine(machine).await?;
+        db.seed_project(project).await?;
+        db.seed_deployment(&token).await?;
+        let store = SecretStore::new(pool(&db.url)?, home.path().to_owned());
+        let values = vector_case("falkor_secret_binding_direct")?["values"].clone();
+        let key = "databases.falkordb.password";
+        let sealed = seal_binding(&store, &token, key, "fp-1").await?;
+        db.publish_with_bindings(&token, &values, &binding(key, "fp-1", &sealed))
+            .await?;
+        let family = family(&db.url, home.path())?;
+
+        let grant = issue(&family, machine, project).await?;
+        let mut expected: GrantCapabilities = serde_json::from_value(
+            vector_case("falkor_secret_binding_direct")?["expected"].clone(),
+        )?;
+        expected.postgres = grant.capabilities.postgres.clone();
+        assert_eq!(grant.capabilities, expected);
+
+        let other_key = "databases.qdrant.api_key";
+        let tampered = [
+            ("fingerprint", binding(key, "fp-2", &sealed)),
+            (
+                "config key",
+                binding(
+                    key,
+                    "fp-1",
+                    &seal_binding(&store, &token, other_key, "fp-1").await?,
+                ),
+            ),
+            (
+                "deployment token",
+                binding(
+                    key,
+                    "fp-1",
+                    &seal_binding(&store, "other-deployment-token", key, "fp-1").await?,
+                ),
+            ),
+            (
+                "ciphertext",
+                binding(key, "fp-1", &flip_last_byte(&sealed)?),
+            ),
+        ];
+        for (identity, bindings) in tampered {
+            db.unpublish(&token).await?;
+            db.publish_with_bindings(&token, &values, &bindings).await?;
+            let response = call(
+                &family,
+                handshake_request(&machine.to_string(), &body(machine, project, None)),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{identity}"
+            );
+            assert_eq!(
+                json_body(response).await,
+                json!({"detail": "grant service unavailable"}),
+                "{identity}"
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+async fn seal_binding(
+    store: &SecretStore,
+    token: &str,
+    key: &str,
+    fingerprint: &str,
+) -> Result<String> {
+    let aad = format!("config-binding:{token}:{key}:{fingerprint}");
+    Ok(store.seal(b"falkor-secret", aad.as_bytes()).await?)
+}
+
+fn binding(key: &str, fingerprint: &str, sealed: &str) -> Value {
+    let mut bindings = serde_json::Map::new();
+    bindings.insert(
+        key.to_owned(),
+        json!({
+            "reference": format!("$secret:{key}"),
+            "fingerprint": fingerprint,
+            "sealed": sealed,
+        }),
+    );
+    Value::Object(bindings)
+}
+
+/// Flips the final byte of the sealed token, which is part of the GCM tag.
+fn flip_last_byte(sealed: &str) -> Result<String> {
+    let mut raw = STANDARD.decode(sealed)?;
+    let last = raw
+        .last_mut()
+        .ok_or_else(|| anyhow!("empty sealed token"))?;
+    *last ^= 1;
+    Ok(STANDARD.encode(raw))
 }

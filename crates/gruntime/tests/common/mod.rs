@@ -194,6 +194,17 @@ impl TestDb {
     }
 
     pub async fn publish(&self, token: &str, active_values: &Value) -> Result<()> {
+        self.publish_with_bindings(token, active_values, &json!({}))
+            .await
+    }
+
+    /// Publishes the active state with its bindings, keyed by config key.
+    pub async fn publish_with_bindings(
+        &self,
+        token: &str,
+        active_values: &Value,
+        active_bindings: &Value,
+    ) -> Result<()> {
         let state = json!({
             "desired_values": {},
             "active_values": active_values,
@@ -201,7 +212,7 @@ impl TestDb {
             "pending_restart_keys": [],
             "failed_live_keys": {},
             "desired_bindings": {},
-            "active_bindings": {},
+            "active_bindings": active_bindings,
         });
         self.admin
             .execute(

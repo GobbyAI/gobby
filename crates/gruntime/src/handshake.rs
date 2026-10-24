@@ -21,7 +21,7 @@ use gobby_core::grant::{
     MACHINE_HEADER, PostgresCapability, PrincipalKind, deployment_token, expected_schema_identity,
 };
 use gobby_core::machine::read_machine_id_from_home;
-use gobby_core::postgres_pool::Pool;
+use gobby_core::postgres_pool::{Pool, quote_identifier};
 use gobby_core::schema::auth_schema_for;
 use rand::RngCore;
 use rand::rngs::OsRng;
@@ -266,7 +266,7 @@ async fn issue_principal(
     let auth = auth_schema(&client).await?;
     client
         .execute(
-            &format!("SELECT \"{auth}\".heartbeat_daemon($1::text::uuid, interval '2 minutes')"),
+            &format!("SELECT {auth}.heartbeat_daemon($1::text::uuid, interval '2 minutes')"),
             &[&principal.machine.to_string()],
         )
         .await
@@ -283,7 +283,7 @@ async fn issue_principal(
         .query_one(
             &format!(
                 "SELECT role_name::text, credential_generation, reused \
-                 FROM \"{auth}\".issue_or_reuse_interactive_principal(\
+                 FROM {auth}.issue_or_reuse_interactive_principal(\
                  $1::text, $2::text::uuid, $3::text::uuid, $4::text::uuid, $5, $6::text, $7::text::uuid)"
             ),
             &[
@@ -306,7 +306,7 @@ async fn issue_principal(
         let row = transaction
             .query_one(
                 &format!(
-                    "SELECT ciphertext FROM \"{auth}\".load_interactive_credential_material(\
+                    "SELECT ciphertext FROM {auth}.load_interactive_credential_material(\
                      $1::text, $2::text::uuid, $3::text::uuid, $4::integer)"
                 ),
                 &[&principal.token, &machine, &project, &generation],
@@ -327,7 +327,7 @@ async fn issue_principal(
         let stored: bool = transaction
             .query_one(
                 &format!(
-                    "SELECT \"{auth}\".replace_interactive_credential_material(\
+                    "SELECT {auth}.replace_interactive_credential_material(\
                      $1::text, $2::text::uuid, $3::text::uuid, $4::integer, $5::text, $6::text)"
                 ),
                 &[
@@ -362,7 +362,7 @@ async fn auth_schema(client: &Client) -> Result<String, Response<Body>> {
         .await
         .map_err(|_| credential_failed())?;
     let schema: String = row.try_get(0).map_err(|_| credential_failed())?;
-    Ok(auth_schema_for(&schema).into_owned())
+    quote_identifier(&auth_schema_for(&schema)).map_err(|_| credential_failed())
 }
 
 /// Random 32 bytes, base64url without padding, as Python's `secrets.token_urlsafe(32)`.
@@ -396,6 +396,7 @@ fn interactive_dsn(
             .filter(|(key, _)| key != "user" && key != "password")
             .map(|(key, value)| (key.into_owned(), value.into_owned())),
     );
+    with_utc_session_timezone(&mut parts);
     parts.push(("user".into(), role.into()));
     parts.push(("password".into(), password.into()));
     Ok(parts
@@ -406,6 +407,26 @@ fn interactive_dsn(
         })
         .collect::<Vec<_>>()
         .join(" "))
+}
+
+/// Python's `conninfo_with_utc_session_timezone`: the session options gain
+/// `-ctimezone=UTC` unless a timezone option is already present, matched case-insensitively.
+fn with_utc_session_timezone(parts: &mut Vec<(String, String)>) {
+    let index = parts.iter().position(|(key, _)| key == "options");
+    let options = index.map_or("", |index| parts[index].1.as_str());
+    let lowered = options.to_ascii_lowercase();
+    if lowered.contains("-ctimezone=") || lowered.contains("-c timezone=") {
+        return;
+    }
+    let joined = [options, "-ctimezone=UTC"]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    match index {
+        Some(index) => parts[index].1 = joined,
+        None => parts.push(("options".into(), joined)),
+    }
 }
 
 fn rejection(code: &str, message: &str) -> Response<Body> {
