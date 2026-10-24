@@ -15,7 +15,7 @@
 //! #22722's submit layer (composer verdicts and the held-submit retry records)
 //! stays the single Python implementation above this coordinator.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::future::Future;
 use std::pin::Pin;
@@ -31,6 +31,10 @@ use uuid::Uuid;
 
 use crate::leases::Registry;
 use crate::repository::{self, Backend, RepositoryError, Terminal};
+use crate::write_api::Fence;
+use wake_dispatch::dispatch_wake;
+
+mod wake_dispatch;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -73,7 +77,8 @@ const NAMED_KEYS: &[&str] = &[
     "kpenter",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Origin {
     Operator,
     Automatic,
@@ -92,7 +97,8 @@ impl Origin {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Kind {
     Text,
     Key,
@@ -119,7 +125,7 @@ pub struct Step {
 }
 
 /// The lease an operator write was admitted under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 pub struct LeaseClaim {
     pub attachment_id: Uuid,
     pub generation: u64,
@@ -133,6 +139,8 @@ pub struct WriteRequest {
     pub step: Step,
     pub lease: Option<LeaseClaim>,
     pub idempotency_key: Option<String>,
+    /// Checked before each dispatch; `None` fences nothing.
+    pub fence: Option<Fence>,
 }
 
 /// What a runtime can report for bytes it attempted.
@@ -184,6 +192,8 @@ pub enum Refusal {
     TerminalNotFound(Uuid),
     #[error("lease is no longer current")]
     StaleLease,
+    #[error("the write token was retired before the effect was dispatched")]
+    RetiredToken,
     #[error("no runtime is registered for backend {0:?}")]
     RuntimeUnavailable(Backend),
     #[error("idempotency key was already used with a different payload")]
@@ -276,6 +286,8 @@ pub struct SequenceRequest {
     pub lease: Option<LeaseClaim>,
     pub latch: bool,
     pub steps: Vec<SequenceStep>,
+    /// Checked before each dispatch, so a delay can end the sequence.
+    pub fence: Option<Fence>,
 }
 
 /// `step` is the index of the step that ended the sequence, or `None` when it
@@ -295,6 +307,8 @@ pub struct WakeRequest {
     pub clear_action_key: String,
     pub wake_action_key: String,
     pub operations: Vec<BatchOp>,
+    /// Checked immediately before the batch dispatches.
+    pub fence: Option<Fence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +331,8 @@ struct Prepared {
     index: usize,
     had_latch: bool,
     target: BatchTarget,
+    /// Revalidated before each host submission that names this target.
+    fence: Option<Fence>,
 }
 
 type Phased = (WakeStep, Result<Delivery, WriteFailure>);
@@ -376,6 +392,12 @@ impl Coordinator {
                 fingerprint.as_deref(),
             )
             .await?;
+        }
+        if !request.fence.as_ref().is_none_or(Fence::holds) {
+            if latch {
+                self.clear(request.terminal_id, &request.action_key).await?;
+            }
+            return Err(Refusal::RetiredToken);
         }
         match runtime.write(&terminal, &request.step).await {
             Ok(Delivery::Delivered) => {
@@ -449,6 +471,11 @@ impl Coordinator {
             };
             if let Err(refusal) = self.revalidate(id, request.origin, request.lease).await {
                 return Err(self.stop(id, key, !dispatched, index, refusal).await);
+            }
+            if !request.fence.as_ref().is_none_or(Fence::holds) {
+                return Err(self
+                    .stop(id, key, !dispatched, index, Refusal::RetiredToken)
+                    .await);
             }
             let result = runtime.write(&terminal, step).await;
             let earlier = dispatched;
@@ -603,10 +630,22 @@ impl Coordinator {
                     terminal,
                     operations: request.operations.clone(),
                 },
+                fence: request.fence.clone(),
             });
         }
 
         if let Some(batch) = chosen.and_then(|runtime| runtime.batch()) {
+            if requests
+                .iter()
+                .any(|r| !r.fence.as_ref().is_none_or(Fence::holds))
+            {
+                for p in prepared.iter().filter(|p| !p.had_latch) {
+                    let request = &requests[p.index];
+                    self.clear(request.terminal_id, &request.wake_action_key)
+                        .await?;
+                }
+                return Err(Refusal::RetiredToken);
+            }
             let dispatched = dispatch_wake(batch, &prepared).await;
             for (prepared, (step, outcome)) in prepared.iter().zip(dispatched) {
                 let request = &requests[prepared.index];
@@ -628,6 +667,12 @@ impl Coordinator {
         }
         drop(held);
         Ok(results.into_iter().flatten().collect())
+    }
+
+    /// The lease registry's control state: the holder and its generation.
+    pub async fn control(&self, terminal_id: Uuid) -> (Option<Uuid>, u64) {
+        let view = self.leases.snapshot(terminal_id).await;
+        (view.holder, view.generation)
     }
 
     /// Persist: keep an action latched, replacing only its own entry.
@@ -709,14 +754,14 @@ impl Coordinator {
             .await?)
     }
 
-    async fn require(&self, terminal_id: Uuid) -> Result<Terminal, Refusal> {
+    pub(crate) async fn require(&self, terminal_id: Uuid) -> Result<Terminal, Refusal> {
         self.load(terminal_id)
             .await?
             .ok_or(Refusal::TerminalNotFound(terminal_id))
     }
 
     /// Operator writes must still hold the lease they were admitted under.
-    async fn revalidate(
+    pub(crate) async fn revalidate(
         &self,
         terminal_id: Uuid,
         origin: Origin,
@@ -846,110 +891,4 @@ fn ascii_json_len(encoded: &str) -> usize {
             _ => 12,
         })
         .sum()
-}
-
-/// Two host requests: every prelude, then the Enter of each target whose
-/// prelude was delivered. A transport failure leaves every target uncertain.
-async fn dispatch_wake(batch: &dyn BatchRuntime, prepared: &[Prepared]) -> Vec<Phased> {
-    let mut prelude = Vec::new();
-    let mut enter = Vec::new();
-    let mut has_prelude = HashSet::new();
-    for item in prepared {
-        let target = &item.target;
-        match target.operations.split_last() {
-            Some((last, rest)) if last.kind == Kind::Key && last.payload == "enter" => {
-                enter.push(BatchTarget {
-                    operations: vec![last.clone()],
-                    ..target.clone()
-                });
-                if !rest.is_empty() {
-                    has_prelude.insert(target.result_id.clone());
-                    prelude.push(BatchTarget {
-                        operations: rest.to_vec(),
-                        ..target.clone()
-                    });
-                }
-            }
-            _ => prelude.push(target.clone()),
-        }
-    }
-    let mut by_id: HashMap<String, Phased> = HashMap::new();
-    let mut entered = HashSet::new();
-    // The step a target had reached when its outcome went unknown.
-    let unknown = |entered: &HashSet<String>, item: &Prepared, detail: &str| -> Phased {
-        let step = if entered.contains(&item.target.result_id) {
-            WakeStep::Enter
-        } else {
-            WakeStep::Prelude
-        };
-        (
-            step,
-            Ok(Delivery::Uncertain {
-                detail: detail.into(),
-            }),
-        )
-    };
-    let uncertain = |entered: &HashSet<String>, detail: &str| {
-        prepared
-            .iter()
-            .map(|item| unknown(entered, item, detail))
-            .collect()
-    };
-    if !prelude.is_empty() {
-        match batch.write_batch(prelude).await {
-            Ok(results) => {
-                for result in results {
-                    by_id.insert(result.result_id, (WakeStep::Prelude, result.outcome));
-                }
-            }
-            Err(detail) => return uncertain(&entered, &detail),
-        }
-    }
-    let mut ready: Vec<BatchTarget> = enter
-        .into_iter()
-        .filter(|target| {
-            !has_prelude.contains(&target.result_id)
-                || matches!(
-                    by_id.get(&target.result_id),
-                    Some((_, Ok(Delivery::Delivered)))
-                )
-        })
-        .collect();
-    if let Some(pace) = ready.iter().map(|t| t.operations[0].delay_ms).max() {
-        // Pace before submitting, so a hook read during the text/Enter gap
-        // cannot acknowledge the new prompt.
-        tokio::time::sleep(Duration::from_millis(pace)).await;
-        for target in &mut ready {
-            target.operations[0].delay_ms = 0;
-            entered.insert(target.result_id.clone());
-        }
-        match batch.write_batch(ready).await {
-            Ok(results) => {
-                for mut result in results {
-                    // A refused Enter is still a partial wake once its text
-                    // reached the composer, so the latch stays.
-                    if has_prelude.contains(&result.result_id)
-                        && let Err(failure) = &mut result.outcome
-                        && failure.stage == Stage::None
-                    {
-                        failure.stage = Stage::Partial;
-                    }
-                    by_id.insert(result.result_id, (WakeStep::Enter, result.outcome));
-                }
-            }
-            Err(detail) => return uncertain(&entered, &detail),
-        }
-    }
-    prepared
-        .iter()
-        .map(|item| {
-            by_id.remove(&item.target.result_id).unwrap_or_else(|| {
-                unknown(
-                    &entered,
-                    item,
-                    "native host returned no result for this target",
-                )
-            })
-        })
-        .collect()
 }

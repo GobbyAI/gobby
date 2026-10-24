@@ -31,6 +31,8 @@ pub enum UncertainCause {
     Disconnected,
     Cancelled,
     ChildStopped,
+    /// The admitted work panicked before it settled.
+    Panicked,
 }
 
 /// Evidence that an admitted effect can produce no further effects.
@@ -246,6 +248,16 @@ impl<T> ActionGate<T> {
 
     pub fn queued(&self) -> usize {
         self.queue.len()
+    }
+
+    /// Whether an action hold is in force on the terminal.
+    pub fn is_held(&self) -> bool {
+        self.hold.is_some()
+    }
+
+    /// True when nothing holds, runs, or waits on the terminal.
+    pub fn is_idle(&self) -> bool {
+        self.hold.is_none() && self.in_flight.is_none() && self.queue.is_empty()
     }
 
     fn current(&self, token: HoldToken) -> Result<(), HoldError> {

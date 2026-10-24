@@ -2,8 +2,17 @@
 use std::sync::Arc;
 
 use gobby_core::bootstrap::RouteBackend;
+use gobby_core::postgres_pool::Pool;
 
 use crate::host::{EpochAuthority, HostFailure, HostInfo, HostOptions, HostSupervisor};
+use crate::leases::Registry;
+use crate::native_write::NativeWrite;
+use crate::tmux_write::{SystemTmux, TmuxWrite};
+use crate::write::{Coordinator, Runtime, Runtimes};
+use crate::write_api::{Route, TokenSlot};
+
+/// Lifecycle events buffered before publication faults.
+const LIFECYCLE_CAPACITY: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SupervisorMode {
@@ -71,6 +80,7 @@ impl RouteLatch {
 
 pub struct TerminalFamily {
     supervisor: Option<HostSupervisor>,
+    route: Option<Arc<Route>>,
 }
 
 impl TerminalFamily {
@@ -84,7 +94,38 @@ impl TerminalFamily {
                 SupervisorMode::Owner => Some(HostSupervisor::new(options, authority)),
                 SupervisorMode::Observer => None,
             },
+            route: None,
         }
+    }
+
+    /// Publishes the loopback write route in Owner mode. Its native runtime
+    /// dispatches through `options`, and it admits tokens from `token`.
+    pub fn with_write_route(
+        mut self,
+        options: &HostOptions,
+        pool: Arc<Pool>,
+        token: TokenSlot,
+    ) -> Self {
+        if self.supervisor.is_none() {
+            return self;
+        }
+        let (leases, mut lifecycle) = Registry::new(LIFECYCLE_CAPACITY);
+        // Nothing consumes lifecycle events yet; draining them keeps publication from faulting.
+        tokio::spawn(async move { while lifecycle.recv().await.is_some() {} });
+        let native: Arc<dyn Runtime> = Arc::new(NativeWrite::new(options.clone()));
+        let tmux: Arc<dyn Runtime> = Arc::new(TmuxWrite::new(Arc::new(SystemTmux)));
+        let runtimes = Runtimes {
+            native: Some(native),
+            tmux: Some(tmux),
+        };
+        let coordinator = Coordinator::new(pool, Arc::new(leases), runtimes);
+        self.route = Some(Arc::new(Route::new(Arc::new(coordinator), token)));
+        self
+    }
+
+    /// The write route, present while this family owns the terminals.
+    pub fn route(&self) -> Option<Arc<Route>> {
+        self.route.clone()
     }
 
     pub fn mode(&self) -> SupervisorMode {

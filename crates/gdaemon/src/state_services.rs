@@ -6,6 +6,7 @@ use gobby_core::{
     postgres_pool::{Pool, PoolSettings},
 };
 use gobby_terminals::family::{RouteLatch, SupervisorMode};
+use gobby_terminals::write_api::{Route, TokenSlot};
 use std::{path::Path, sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -16,10 +17,18 @@ pub(crate) struct ActiveServices {
 }
 
 impl ActiveServices {
+    /// The write route, present while these services own the terminals.
+    pub(crate) fn route(&self) -> Option<Arc<Route>> {
+        self.terminals
+            .as_ref()
+            .and_then(gobby_terminals::family::TerminalFamily::route)
+    }
+
     pub(crate) async fn start(
         bootstrap: &HubDatabaseBootstrap,
         terminals: &RouteLatch,
         home: &Path,
+        token: TokenSlot,
     ) -> Result<Self> {
         let mode = terminals.select(crate::front_door::routes::terminal_route(
             &bootstrap.front_door.routes,
@@ -46,9 +55,17 @@ impl ActiveServices {
             let options =
                 gobby_terminals::host::HostOptions::from_pool(&pool, home, machine.clone()).await?;
             if let Some(options) = options {
+                let writes = Pool::build(
+                    url,
+                    PoolSettings {
+                        max_size: 8,
+                        application_name: "gobby-gdaemon-terminal-writes".into(),
+                        acquire_timeout: Duration::from_secs(2),
+                    },
+                )?;
                 let family = gobby_terminals::family::TerminalFamily::new(
                     terminals,
-                    options,
+                    options.clone(),
                     Arc::new(gobby_terminals::host::PostgresEpochAuthority::new(
                         Pool::build(
                             url,
@@ -59,7 +76,8 @@ impl ActiveServices {
                             },
                         )?,
                     )),
-                );
+                )
+                .with_write_route(&options, Arc::new(writes), token);
                 if let Err(error) = family.start().await {
                     eprintln!("gdaemon terminal host: {error}");
                 }
