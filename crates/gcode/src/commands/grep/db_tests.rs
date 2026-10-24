@@ -5,11 +5,11 @@ use super::{GrepContextLine, GrepOptions, grep_repo};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::output::Format;
 
-fn fixture_uuid(key: &str) -> uuid::Uuid {
+pub(crate) fn fixture_uuid(key: &str) -> uuid::Uuid {
     uuid::Uuid::new_v5(&crate::models::CODE_INDEX_UUID_NAMESPACE, key.as_bytes())
 }
 
-fn unique_project_id(prefix: &str) -> String {
+pub(crate) fn unique_project_id(prefix: &str) -> String {
     fixture_uuid(&format!(
         "{prefix}-{}-{}",
         std::process::id(),
@@ -48,7 +48,7 @@ impl Drop for ProjectCleanup {
     }
 }
 
-fn insert_file_version(
+pub(crate) fn insert_file_version(
     conn: &mut Client,
     project_id: &uuid::Uuid,
     file_path: &str,
@@ -66,7 +66,7 @@ fn insert_file_version(
     .expect("insert indexed file version");
 }
 
-fn insert_machine_state(
+pub(crate) fn insert_machine_state(
     conn: &mut Client,
     machine_id: &uuid::Uuid,
     project_id: &uuid::Uuid,
@@ -92,7 +92,7 @@ fn insert_machine_state(
     .expect("insert machine file state");
 }
 
-fn insert_chunk_version(
+pub(crate) fn insert_chunk_version(
     conn: &mut Client,
     project_id: &uuid::Uuid,
     file_path: &str,

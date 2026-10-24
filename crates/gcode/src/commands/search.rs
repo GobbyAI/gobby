@@ -1,14 +1,13 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::Path;
 
 mod output;
 
-use crate::commands::{scope, token_budget};
+use crate::commands::{indexed_paths, scope, token_budget};
 use crate::config::Context;
 use crate::db;
-use crate::models::{SearchResult, SearchWarning, SearchWarningCause, SearchWarningLane, Symbol};
+use crate::models::{SearchWarning, SearchWarningCause, SearchWarningLane, Symbol};
 use crate::output::Format;
 use crate::search::{fts, graph_boost, rrf};
 use crate::vector::code_symbols;
@@ -490,9 +489,11 @@ pub fn search_text(
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| {
-            search_result_matches_filters(&mut conn, ctx, r, options.language, &path_patterns)
+            options.language.is_none_or(|lang| r.language == lang)
+                && path_matches_filters(&path_patterns, &r.file_path)
         })
         .collect();
+    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |r| r.file_path.as_str());
     let total = if has_path_filters {
         all_results.len()
     } else {
@@ -591,9 +592,9 @@ pub fn search_content(
                 .language
                 .is_none_or(|lang| r.language.as_deref() == Some(lang))
                 && path_matches_filters(&path_patterns, &r.file_path)
-                && scope::current_indexed_path_is_valid(&mut conn, ctx, &r.file_path)
         })
         .collect();
+    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |r| r.file_path.as_str());
     let total = if has_path_filters {
         all_results.len()
     } else {
@@ -695,16 +696,18 @@ fn resolve_hybrid_symbols(
         .collect()
 }
 
-fn search_result_matches_filters(
+fn retain_indexed_results<T>(
     conn: &mut postgres::Client,
     ctx: &Context,
-    result: &SearchResult,
-    language: Option<&str>,
-    path_patterns: &[glob::Pattern],
-) -> bool {
-    language.is_none_or(|lang| result.language == lang)
-        && path_matches_filters(path_patterns, &result.file_path)
-        && scope::current_indexed_path_is_valid(conn, ctx, &result.file_path)
+    results: Vec<T>,
+    file_path: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    let file_paths: BTreeSet<String> = results.iter().map(|r| file_path(r).to_string()).collect();
+    let valid = indexed_paths::valid_indexed_paths(conn, ctx, &file_paths);
+    results
+        .into_iter()
+        .filter(|r| valid.contains(file_path(r)))
+        .collect()
 }
 
 fn path_matches_filters(path_patterns: &[glob::Pattern], file_path: &str) -> bool {

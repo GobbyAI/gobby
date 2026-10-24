@@ -1,10 +1,17 @@
 use std::collections::HashMap;
 
-use super::resolve_hybrid_symbols;
+use super::{TextSearchOptions, resolve_hybrid_symbols, search_content, search_text};
+use crate::commands::grep::db_tests::{
+    fixture_uuid, insert_chunk_version, insert_file_version, insert_machine_state,
+    unique_project_id,
+};
 use crate::{
+    commands::indexed_paths,
     config::{CodeVectorSettings, Context, ProjectIndexScope},
     index::api,
     models::{CODE_INDEX_UUID_NAMESPACE, IndexedFile, IndexedProject, Symbol},
+    output::Format,
+    search::fts,
 };
 
 fn indexed_symbol(project_id: &str, file_path: &str) -> Symbol {
@@ -129,4 +136,173 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
 
     assert!(resolved.is_empty());
     Ok(())
+}
+
+const BATCH_FILE_COUNT: usize = 12;
+const BATCH_MARKER: &str = "searchbatchmarker";
+
+fn insert_symbol_version(
+    conn: &mut postgres::Client,
+    project_id: &uuid::Uuid,
+    file_path: &str,
+    name: &str,
+    content_hash: &str,
+) {
+    let id = fixture_uuid(&format!("{project_id}:{file_path}:{name}:{content_hash}"));
+    conn.execute(
+        "INSERT INTO code_symbols
+                (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
+                 byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
+                 file_content_hash, content_hash, summary, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $4, 'function', 'rust', 0, 1, 1, 1, $4, NULL, NULL,
+                     $5, $5, $4, NOW(), NOW())",
+        &[&id, project_id, &file_path, &name, &content_hash],
+    )
+    .expect("insert symbol version");
+}
+
+struct SearchBatchCleanup {
+    database_url: String,
+    project_id: uuid::Uuid,
+}
+
+impl Drop for SearchBatchCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut conn) = gobby_core::postgres::connect_readwrite(&self.database_url) {
+            for sql in [
+                "DELETE FROM code_symbols WHERE project_id = $1",
+                "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+                "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+                "DELETE FROM code_content_chunks WHERE project_id = $1",
+                "DELETE FROM code_indexed_files WHERE project_id = $1",
+                "DELETE FROM code_indexed_projects WHERE id = $1",
+            ] {
+                let _ = conn.execute(sql, &[&self.project_id]);
+            }
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn search_checks_indexed_paths_in_one_batch() {
+    let database_url = crate::test_env::postgres_test_database_url("search PostgreSQL tests");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect search PostgreSQL test database");
+    crate::schema::validate_runtime_schema(&mut conn).expect("search test schema is valid");
+
+    let root = tempfile::tempdir().expect("create temp project root");
+    std::fs::create_dir_all(root.path().join("src")).expect("create src dir");
+    let file_paths: Vec<String> = (0..BATCH_FILE_COUNT)
+        .map(|index| format!("src/file_{index:02}.rs"))
+        .collect();
+    for file_path in &file_paths {
+        std::fs::write(root.path().join(file_path), format!("{BATCH_MARKER}\n"))
+            .expect("write fixture file");
+    }
+
+    let project_id = unique_project_id("search-one-batch");
+    let project_uuid = crate::db::id_param(&project_id).expect("project uuid");
+    let _cleanup = SearchBatchCleanup {
+        database_url: database_url.clone(),
+        project_id: project_uuid,
+    };
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&project_uuid],
+    )
+    .expect("insert project");
+
+    let local_machine = crate::db::id_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    )
+    .expect("local machine uuid");
+    let root_path = root.path().to_string_lossy().to_string();
+    for (index, file_path) in file_paths.iter().enumerate() {
+        let content_hash = format!("hash-{index:02}");
+        insert_file_version(&mut conn, &project_uuid, file_path, &content_hash);
+        insert_machine_state(
+            &mut conn,
+            &local_machine,
+            &project_uuid,
+            &root_path,
+            file_path,
+            &content_hash,
+        );
+        insert_chunk_version(
+            &mut conn,
+            &project_uuid,
+            file_path,
+            BATCH_MARKER,
+            &content_hash,
+        );
+        insert_symbol_version(
+            &mut conn,
+            &project_uuid,
+            file_path,
+            BATCH_MARKER,
+            &content_hash,
+        );
+    }
+
+    let ctx = Context {
+        database_url: database_url.clone(),
+        project_root: root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let options = || TextSearchOptions {
+        limit: 100,
+        offset: 0,
+        language: None,
+        paths: &[],
+        format: Format::Json,
+        token_budget: None,
+        verbose: false,
+    };
+
+    let symbol_hits = fts::search_text_visible(&mut conn, BATCH_MARKER, &ctx, None, &[], 100)
+        .expect("query symbol fixtures");
+    assert_eq!(
+        symbol_hits.len(),
+        BATCH_FILE_COUNT,
+        "fixture must yield one symbol hit per file"
+    );
+    let content_hits = fts::search_content_visible(&mut conn, BATCH_MARKER, &ctx, None, &[], 100)
+        .expect("query content fixtures");
+    assert_eq!(
+        content_hits.len(),
+        BATCH_FILE_COUNT,
+        "fixture must yield one content hit per file"
+    );
+
+    indexed_paths::reset_lookup_count();
+    search_text(&ctx, BATCH_MARKER, options()).expect("search text");
+    assert_eq!(
+        indexed_paths::lookup_count(),
+        1,
+        "search text must check indexed paths with one set-based query, not one per result"
+    );
+
+    indexed_paths::reset_lookup_count();
+    search_content(&ctx, BATCH_MARKER, options()).expect("search content");
+    assert_eq!(
+        indexed_paths::lookup_count(),
+        1,
+        "search content must check indexed paths with one set-based query, not one per result"
+    );
 }
