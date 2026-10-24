@@ -124,7 +124,11 @@ async def _sync_reused_worktree_to_base(
         raise RuntimeError(f"Failed to compare reused worktree with {base_ref}: {detail}")
 
     result = await git_manager.sync_from_main(
-        worktree_path=path, base_branch=base_ref, source_branch=base_sha, strategy="merge"
+        worktree_path=path,
+        base_branch=base_ref,
+        source_branch=base_sha,
+        strategy="merge",
+        env={"GOBBY_MERGE": "1"},
     )
     if not result.success:
         detail = f"{result.message}: {result.error or result.output or ''}"

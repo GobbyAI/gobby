@@ -80,6 +80,25 @@ class WorktreeIsolationHandler(IsolationHandler):
                 )
                 if live_claim:
                     raise RuntimeError(f"Cannot reuse claimed live worktree: {existing.id}")
+                if config.preserve_existing_worktree:
+                    await repair_isolation_environment(
+                        main_repo_path=str(self._git_manager.repo_path),
+                        isolated_path=existing.worktree_path,
+                        provider=config.provider,
+                        phase_timings_ms=config.phase_timings_ms,
+                    )
+                    self._partial_worktrees.pop(state_key, None)
+                    return IsolationContext(
+                        cwd=existing.worktree_path,
+                        branch_name=existing.branch_name,
+                        worktree_id=existing.id,
+                        isolation_type="worktree",
+                        extra={
+                            "main_repo_path": str(self._git_manager.repo_path),
+                            "base_branch": existing.base_branch,
+                            "reused_worktree": True,
+                        },
+                    )
                 sync_result = await worktree_reuse.sync_reused_worktree_to_base(
                     git_manager=self._git_manager,
                     worktree_path=existing.worktree_path,

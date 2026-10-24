@@ -673,6 +673,11 @@ fn cleanup_overlay_visibility_projects(
     let overlay_project_id = crate::db::id_param(overlay_project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
+        "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1
+                                        OR overlay_project_id = $2 OR source_project_id = $2",
+        &[&parent_project_id, &overlay_project_id],
+    )?;
+    tx.execute(
         "DELETE FROM code_indexed_file_states WHERE project_id = $1 OR project_id = $2",
         &[&parent_project_id, &overlay_project_id],
     )?;
@@ -706,6 +711,17 @@ fn seed_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
         crate::visibility::TOMBSTONE_LANGUAGE,
         0,
     );
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         SELECT machine_id, $1, file_path, project_id, content_hash
+         FROM code_indexed_file_states WHERE project_id = $2",
+        &[
+            &fixture_uuid_param(&ids.overlay_project_id),
+            &fixture_uuid_param(&ids.parent_project_id),
+        ],
+    )
+    .expect("pin parent fixture versions");
 
     insert_symbol(
         conn,

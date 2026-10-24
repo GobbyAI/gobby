@@ -320,6 +320,9 @@ def schedule_staged_handoff_on_stop(
     marker = variables.get(PENDING_HANDOFF_VARIABLE)
     if not isinstance(marker, Mapping):
         return False
+    session = session_manager.get(session_id)
+    if session is None or session.session_type != "terminal":
+        return False
     attempt_id = marker.get("attempt_id")
     if not isinstance(attempt_id, str) or not attempt_id:
         _log_skipped_delivery(session_id, attempt_id, "staged marker has no attempt_id")
@@ -458,14 +461,15 @@ def resume_dead_handoff_dispatches(
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
 ) -> int:
-    """Reclaim dispatches another daemon process claimed and died holding."""
+    """Recover staged handoffs the previous daemon never finished dispatching."""
     rows = session_manager.db.fetchall(
         """
         SELECT s.id, v.variables -> 'set_handoff_pending' ->> 'attempt_id' AS attempt_id
           FROM sessions s JOIN session_variables v ON v.session_id = s.id
          WHERE s.machine_id = %s
+           AND s.session_type = 'terminal'
            AND s.status NOT IN ('expired', 'deleted')
-           AND v.variables -> 'set_handoff_pending' ->> 'dispatch_started_at' IS NOT NULL
+           AND jsonb_typeof(v.variables -> 'set_handoff_pending') = 'object'
            AND (v.variables -> 'set_handoff_pending' ->> 'dispatch_owner') IS DISTINCT FROM %s
         """,
         (machine_id, DISPATCH_OWNER),
@@ -473,7 +477,11 @@ def resume_dead_handoff_dispatches(
     resumed = 0
     for row in rows:
         attempt_id = row["attempt_id"]
-        claimed = claim_staged_handoff_delivery(session_manager.db, str(row["id"]), attempt_id)
+        # A crash can precede AFTER_TOOL and its gate/claim, just as Stop recovery
+        # can observe a staged attempt before the provider emits AFTER_TOOL.
+        claimed = claim_staged_handoff_delivery(
+            session_manager.db, str(row["id"]), attempt_id, recover_unarmed_gate=True
+        )
         if claimed is None:
             _log_skipped_delivery(row["id"], attempt_id, "dead dispatch claim changed")
             continue

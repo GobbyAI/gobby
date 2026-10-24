@@ -1,7 +1,7 @@
 use postgres::Client;
 
 use super::GrepOptions;
-use crate::config::{Context, ProjectIndexScope};
+use crate::config::Context;
 use crate::db;
 
 /// The literal every matching line contains, when grep can prefilter on it.
@@ -27,22 +27,19 @@ pub(super) fn literal_files(
     ctx: &Context,
     literal: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let projects = match &ctx.index_scope {
-        ProjectIndexScope::Single => vec![db::id_param(&ctx.project_id)?],
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => vec![
-            db::id_param(overlay_project_id)?,
-            db::id_param(parent_project_id)?,
-        ],
-    };
+    let selectors = crate::visibility::visible_selectors_sql(ctx, "$1", "$2");
     let rows = conn.query(
-        "SELECT DISTINCT file_path
-         FROM code_content_chunks
-         WHERE project_id = ANY($1) AND strpos(content, $2) > 0",
-        &[&projects, &literal],
+        &format!(
+            "SELECT DISTINCT c.file_path FROM code_content_chunks c
+                  JOIN ({selectors}) visible ON visible.project_id = c.project_id
+                   AND visible.file_path = c.file_path AND visible.content_hash = c.content_hash
+                  WHERE strpos(c.content, $3) > 0"
+        ),
+        &[
+            &db::id_param(&ctx.machine_id)?,
+            &db::id_param(crate::visibility::scope_project_id(ctx))?,
+            &literal,
+        ],
     )?;
     let files = rows
         .iter()
