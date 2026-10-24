@@ -171,6 +171,33 @@ pub fn project_changed_since(
     false
 }
 
+/// Returns `true` when one explicitly requested overlay file differs from the
+/// version the overlay serves (`served` is its content hash, `None` when it
+/// serves none). Unlike `project_changed_since`, this hashes that one file.
+pub fn explicit_file_changed(
+    project_root: &Path,
+    file: &str,
+    served: Option<&str>,
+    extra_excludes: &[String],
+) -> bool {
+    let Ok(root) = project_root.canonicalize() else {
+        return true;
+    };
+    let path = root.join(file);
+    let excludes = effective_excludes(extra_excludes);
+    let indexable = walker::classify_file(&root, &path, &excludes).is_some();
+    match served {
+        None => indexable,
+        Some(hash) => {
+            !indexable
+                || crate::index::hasher::file_content_hash(&path)
+                    .ok()
+                    .as_deref()
+                    != Some(hash)
+        }
+    }
+}
+
 /// Whether the inode's last status change (ctime) is at or before `threshold`.
 /// Writes, chmod, renames and a backdated `touch` all advance ctime, and
 /// ordinary tools cannot set it back.

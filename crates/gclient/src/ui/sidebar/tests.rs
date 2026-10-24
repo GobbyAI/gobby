@@ -257,6 +257,85 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
 }
 
 #[test]
+fn pinned_heights_hold_and_the_last_visible_section_absorbs_the_rest() {
+    let area = Rect::new(0, 0, 26, 40);
+    // Derived for one machine, one card and two terminal rows: [3, 3, 17, 17].
+    // Machines pinned to 12 hold; Terminals, last and visible, takes the rest.
+    let layout = sidebar_layout_pinned(area, SidebarSide::Left, 1, 1, 2, [12, 0, 0, 0]);
+    assert_eq!(layout.sections.map(|rect| rect.height), [12, 3, 17, 8]);
+    assert_eq!(
+        layout.sections[1].y, 12,
+        "the cards start under the machines"
+    );
+    assert_eq!(layout.sections[3], Rect::new(0, 32, 25, 8));
+}
+
+#[test]
+fn a_pin_below_the_minimum_clamps_up_to_it() {
+    let area = Rect::new(0, 0, 26, 40);
+    // Agents pinned to one row land at their minimum: a band, one three-line
+    // row and a gap. The bottom section gives up nothing to them; it absorbs.
+    let layout = sidebar_layout_pinned(area, SidebarSide::Left, 1, 1, 2, [0, 0, 1, 0]);
+    assert_eq!(
+        section_min_rows(SidebarSection::Agents),
+        5,
+        "band, three lines, gap"
+    );
+    assert_eq!(layout.sections.map(|rect| rect.height), [3, 3, 5, 29]);
+}
+
+#[test]
+fn pins_never_outgrow_a_short_window() {
+    let area = Rect::new(0, 0, 26, 12);
+    // Machines pinned past the window: its neighbours keep their minimums and
+    // the bottom section takes what is left, so the column fills exactly.
+    let layout = sidebar_layout_pinned(area, SidebarSide::Left, 1, 1, 2, [9, 0, 0, 0]);
+    assert_eq!(layout.sections.map(|rect| rect.height), [3, 3, 5, 1]);
+    assert!(layout.sections.iter().all(|rect| rect.bottom() <= 12));
+}
+
+#[test]
+fn without_pins_the_layout_is_the_derived_one() {
+    let area = Rect::new(0, 0, 26, 40);
+    for (machines, projects, terminals) in [(1, 1, 0), (1, 1, 2), (9, 1, 2), (1, 30, 0)] {
+        assert_eq!(
+            sidebar_layout_pinned(
+                area,
+                SidebarSide::Left,
+                machines,
+                projects,
+                terminals,
+                [0; 4]
+            )
+            .sections,
+            sidebar_layout(area, SidebarSide::Left, machines, projects, terminals).sections,
+        );
+    }
+}
+
+#[test]
+fn each_gap_row_above_a_visible_section_is_a_divider() {
+    let ws = scripted_workspace();
+    let chrome = current_project_chrome();
+    let area = Rect::new(0, 0, 26, 40);
+    let mut terminal = Terminal::new(TestBackend::new(26, 40)).unwrap();
+    let mut hits = SidebarHits::default();
+    terminal
+        .draw(|frame| hits = render_sidebar(frame, area, &ws, &chrome))
+        .unwrap();
+    // The blank row under Machines, Projects and Agents. Terminals has no gap,
+    // it is the last section.
+    assert_eq!(
+        hits.dividers,
+        [
+            Some(Rect::new(0, 2, 25, 1)),
+            Some(Rect::new(0, 5, 25, 1)),
+            Some(Rect::new(0, 22, 25, 1)),
+        ]
+    );
+}
+
+#[test]
 fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     let ws = scripted_workspace();
     let chrome = current_project_chrome();
@@ -285,8 +364,8 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert!(blank(lines[5]), "{:?}", lines[5]);
     assert_eq!(lines[6], " Agents");
     assert_eq!(lines[7], " ⍾ Codex");
-    assert_eq!(lines[8], "   No assigned task");
-    assert_eq!(lines[9], "   gpt-6-sol");
+    assert_eq!(lines[8], "   gpt-6-sol");
+    assert_eq!(lines[9], "   No assigned task");
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals");
     assert_eq!(lines[24], " ○ term-beta      gclient");

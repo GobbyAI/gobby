@@ -1,11 +1,14 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context as _;
 use postgres::Client;
 
+use crate::db::GraphFileFacts;
 use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::{chunker, hasher, languages, parser, walker};
 use crate::models::{CallTargetKind, IndexedFile, ParseResult};
+use crate::vector::code_symbols::vector_text_for_symbol;
 
 use super::IndexTimings;
 use super::selector_blob;
@@ -200,6 +203,7 @@ pub(super) fn write_parsed_file_facts(
     parse_result: &ParseResult,
 ) -> anyhow::Result<FileIndexCounts> {
     let mut timings = IndexTimings::new("facts.file");
+    let before = sink.read_version_facts(project_id, rel, content_hash)?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel, content_hash),
         project_id: project_id.to_string(),
@@ -249,6 +253,9 @@ pub(super) fn write_parsed_file_facts(
         sink.upsert_content_chunks(&chunks)?
     };
 
+    timings.phase("facts.projection_reset");
+    reset_changed_projections(sink, project_id, rel, content_hash, &before, parse_result)?;
+
     Ok(FileIndexCounts {
         file_path: rel.to_string(),
         indexed_files: 1,
@@ -260,6 +267,78 @@ pub(super) fn write_parsed_file_facts(
     })
 }
 
+/// Reset only the sync flags whose projection input this re-parse changed.
+/// A version with no stored facts compares against the parse alone. Otherwise
+/// the version is re-read after the writes and compared with its prior facts.
+fn reset_changed_projections(
+    sink: &mut impl CodeFactSink,
+    project_id: &str,
+    rel: &str,
+    content_hash: &str,
+    before: &GraphFileFacts,
+    parse_result: &ParseResult,
+) -> anyhow::Result<()> {
+    let (vectors, graph) = if before.definitions.is_empty()
+        && before.imports.is_empty()
+        && before.calls.is_empty()
+        && before.inheritance.is_empty()
+    {
+        let vectors = !parse_result.symbols.is_empty();
+        let graph = vectors
+            || !parse_result.imports.is_empty()
+            || !parse_result.calls.is_empty()
+            || !parse_result.inheritance.is_empty();
+        (vectors, graph)
+    } else {
+        let after = sink.read_version_facts(project_id, rel, content_hash)?;
+        (
+            vector_inputs(before) != vector_inputs(&after),
+            graph_inputs_changed(before, &after),
+        )
+    };
+    if vectors || graph {
+        sink.dirty_version_sync(project_id, rel, content_hash, vectors, graph)?;
+    }
+    Ok(())
+}
+
+/// Vector text per symbol id. Upserts keep stored summaries, so the vector
+/// input comes from the stored definitions rather than the parse.
+fn vector_inputs(facts: &GraphFileFacts) -> BTreeMap<&str, String> {
+    facts
+        .definitions
+        .iter()
+        .map(|symbol| (symbol.id.as_str(), vector_text_for_symbol(symbol)))
+        .collect()
+}
+
+/// Whether any graph projection input differs: the import, call and
+/// inheritance rows, or the per-symbol fields the graph projection reads.
+fn graph_inputs_changed(before: &GraphFileFacts, after: &GraphFileFacts) -> bool {
+    before.imports != after.imports
+        || before.calls != after.calls
+        || before.inheritance != after.inheritance
+        || symbol_graph_rows(before) != symbol_graph_rows(after)
+}
+
+fn symbol_graph_rows(facts: &GraphFileFacts) -> Vec<(&str, &str, &str, &str, &str, usize, usize)> {
+    facts
+        .definitions
+        .iter()
+        .map(|symbol| {
+            (
+                symbol.id.as_str(),
+                symbol.name.as_str(),
+                symbol.qualified_name.as_str(),
+                symbol.kind.as_str(),
+                symbol.language.as_str(),
+                symbol.line_start,
+                symbol.line_end,
+            )
+        })
+        .collect()
+}
+
 pub(super) fn write_content_only_file_facts(
     sink: &mut impl CodeFactSink,
     project_id: &str,
@@ -269,6 +348,7 @@ pub(super) fn write_content_only_file_facts(
     byte_size: usize,
     source: &[u8],
 ) -> anyhow::Result<FileIndexCounts> {
+    let before = sink.read_version_facts(project_id, rel, content_hash)?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel, content_hash),
         project_id: project_id.to_string(),
@@ -280,6 +360,10 @@ pub(super) fn write_content_only_file_facts(
         indexed_at: epoch_secs_str(),
     })?;
     sink.delete_file_non_symbol_facts(project_id, rel, content_hash)?;
+    // Symbols are left untouched, so only dropped graph rows change the graph input.
+    if !before.imports.is_empty() || !before.calls.is_empty() || !before.inheritance.is_empty() {
+        sink.dirty_version_sync(project_id, rel, content_hash, false, true)?;
+    }
     let chunks = chunker::chunk_file_content(source, rel, project_id, content_hash, Some(language));
     let chunks_indexed = if chunks.is_empty() {
         0

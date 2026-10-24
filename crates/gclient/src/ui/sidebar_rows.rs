@@ -84,6 +84,9 @@ pub struct SidebarRow {
     /// of the active tab shows its terminal (herdr "active workspace": bold
     /// `text` title on `surface_dim`).
     pub active: bool,
+    /// An agent row's sandbox lock, resolved from its session's sandbox state
+    /// and the nerd-glyph pref; `None` for an unrestricted agent.
+    pub sandbox_mark: Option<&'static str>,
 }
 
 impl SidebarRow {
@@ -439,7 +442,13 @@ pub(crate) fn row_line_with_scrolling<'a>(
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
-                let budget = budget - 2;
+                let mut budget = budget - 2;
+                // The lock sits ahead of the ref and stays put with it.
+                if let Some(mark) = row.sandbox_mark {
+                    spans.push(Span::styled(mark, secondary_style));
+                    spans.push(Span::raw(" "));
+                    budget = budget.saturating_sub(display_width(mark) + 1);
+                }
                 let definition = (row.definition.as_str(), title_style);
                 let pinned = pinned_width(row);
                 if pinned < budget {
@@ -532,7 +541,7 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
             let budget = usize::from(width).saturating_sub(3 + display_width(&nest_prefix(row)));
             let name = overrun(
                 display_width(&row.definition),
-                budget.saturating_sub(pinned_width(row)),
+                budget.saturating_sub(pinned_width(row) + sandbox_width(row)),
             );
             let task = task_line(row).map_or(0, |(lead, title)| {
                 overrun(display_width(&lead) + display_width(&title), budget)
@@ -551,6 +560,11 @@ fn overrun(text_width: usize, window: usize) -> usize {
         return 0;
     }
     text_width.saturating_sub(window)
+}
+
+/// Cells an agent's sandbox lock and the space after it take on line one.
+fn sandbox_width(row: &SidebarRow) -> usize {
+    row.sandbox_mark.map_or(0, |mark| display_width(mark) + 1)
 }
 
 /// Cells an agent's pinned `{ref}: ` takes on line one; zero without a ref.
@@ -691,63 +705,62 @@ fn split_segments(text: &str, segments: &[(&str, Style)]) -> Vec<Span<'static>> 
     spans
 }
 
-/// The fixed task reference and scrolling title, or dim empty-task label,
-/// under an agent definition. A terminal shows its working directory here.
+/// Line two under an agent's title: its model, in the theme's model colour, a
+/// muted hue no state uses (the model-line board, #23416). A terminal shows
+/// its working directory here.
 pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
-    row_second_line_with_travel(row, width, chrome, chrome.view.title_travel)
-}
-
-pub(crate) fn row_second_line_with_travel<'a>(
-    row: &'a SidebarRow,
-    width: u16,
-    chrome: &Chrome,
-    max_travel: usize,
-) -> Line<'a> {
     let indent = 3 + display_width(&nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
     let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
-        RowKind::Agent => {
-            if let Some((lead, title)) = task_line(row) {
-                spans.extend(ticker_spans(
-                    &[
-                        (&lead, Style::default().fg(chrome.palette.text)),
-                        (&title, style),
-                    ],
-                    budget,
-                    chrome.ticker,
-                    max_travel,
-                    chrome.prefs.title_scrolling,
-                ));
-            } else {
-                spans.push(Span::styled(
-                    truncate_end("No assigned task", budget),
-                    style,
-                ));
-            }
-        }
+        RowKind::Agent => spans.push(Span::styled(
+            truncate_end(&row.model_slug, budget),
+            Style::default().fg(chrome.palette.model),
+        )),
         RowKind::Terminal => spans.push(Span::styled(truncate_end(&row.detail, budget), style)),
         _ => return Line::default(),
     }
     Line::from(spans)
 }
 
+/// Line three under an agent's title: the task status, scrolling on the shared
+/// clock past the sidebar's own travel.
 pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
+    row_third_line_with_travel(row, width, chrome, chrome.view.title_travel)
+}
+
+pub(crate) fn row_third_line_with_travel<'a>(
+    row: &'a SidebarRow,
+    width: u16,
+    chrome: &Chrome,
+    max_travel: usize,
+) -> Line<'a> {
     if row.kind != RowKind::Agent {
         return Line::default();
     }
     let indent = 3 + display_width(&nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
-    Line::from(vec![
-        continuation_indent(row, width, &chrome.palette),
-        // The theme's model colour, a muted hue no state uses (the
-        // model-line board, #23416).
-        Span::styled(
-            truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.model),
-        ),
-    ])
+    let style = Style::default().fg(chrome.palette.subtext0);
+    let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
+    if let Some((lead, title)) = task_line(row) {
+        spans.extend(ticker_spans(
+            &[
+                (&lead, Style::default().fg(chrome.palette.text)),
+                (&title, style),
+            ],
+            budget,
+            chrome.ticker,
+            max_travel,
+            chrome.prefs.title_scrolling,
+        ));
+    } else {
+        spans.push(Span::styled(
+            truncate_end("No assigned task", budget),
+            style,
+        ));
+    }
+    Line::from(spans)
 }
 
 /// herdr `resolved_token_spans`, reduced to the glyph + title + trailing

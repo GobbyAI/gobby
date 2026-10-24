@@ -4,9 +4,10 @@
 //!
 //! The sidebar sits on the ground with no fill and no separator
 //! glyph; herdr's edge column stays reserved as the drag lane of a pinned
-//! sidebar. The section rules herdr let the user drag are gone: the
-//! machines take up to `MACHINES_MAX_ROWS`, the projects what their cards
-//! need within the top half, and agents and terminals share the rest.
+//! sidebar. Each section's height is derived from its rows (machines take up
+//! to `MACHINES_MAX_ROWS`, projects what their cards need within the top
+//! half, agents and terminals share the rest) until a divider drag pins it;
+//! pinned heights are kept in `SidebarState::section_heights`.
 
 pub mod agents;
 pub mod machines;
@@ -20,7 +21,7 @@ use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scro
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
-    project_rows, row_line_with_scrolling, row_second_line_with_travel, row_third_line, row_travel,
+    project_rows, row_line_with_scrolling, row_second_line, row_third_line_with_travel, row_travel,
     worktree_glyph_offset, RowKind, SidebarRow,
 };
 use crate::ui::text::{display_width_u16, truncate_end};
@@ -66,6 +67,25 @@ pub struct SidebarHits {
     /// Scrollbar lane beside each section that overflowed, by
     /// `SidebarSection::index`.
     pub scrollbars: [Option<Rect>; 4],
+    /// The gap row under each section that a divider drag can resize, by
+    /// `SidebarSection::index`; `None` where no divider lies.
+    pub dividers: [Option<Rect>; 3],
+}
+
+/// Rows an agent row takes: name, provider-model-effort, task status.
+pub const AGENT_ROW_ROWS: u16 = 3;
+/// Rows a terminal row takes: name, then detail.
+pub const TERMINAL_ROW_ROWS: u16 = 2;
+
+/// The fewest rows a pinned section keeps: its band, one row of content
+/// (an agent's three lines, a terminal's two) and its gap row.
+pub fn section_min_rows(section: SidebarSection) -> u16 {
+    let content = match section {
+        SidebarSection::Machines | SidebarSection::Projects => 1,
+        SidebarSection::Agents => AGENT_ROW_ROWS,
+        SidebarSection::Terminals => TERMINAL_ROW_ROWS,
+    };
+    BAND_ROWS + content + section_gap_rows(section)
 }
 
 /// Where the sidebar's sections go, without the separator column.
@@ -128,6 +148,62 @@ pub fn sidebar_layout(
     layout
 }
 
+/// `sidebar_layout` with each section pinned to its height in `pins` (0 keeps
+/// the derived one). A pinned section holds its height down to its minimum
+/// and up to what the sections below it still need; the last visible section
+/// takes whatever is left, so the column always fills exactly. With no pins
+/// the layout is the derived one.
+pub fn sidebar_layout_pinned(
+    area: Rect,
+    side: SidebarSide,
+    machine_rows: u16,
+    project_rows: u16,
+    terminal_rows: u16,
+    pins: [u16; 4],
+) -> SidebarLayout {
+    let derived = sidebar_layout(area, side, machine_rows, project_rows, terminal_rows);
+    if pins == [0; 4] {
+        return derived;
+    }
+    let heights = derived.sections.map(|rect| rect.height);
+    let visible: Vec<usize> = (0..SidebarSection::ALL.len())
+        .filter(|&index| heights[index] > 0)
+        .collect();
+    let Some(&first) = visible.first() else {
+        return derived;
+    };
+    let mut remaining: u16 = heights.iter().sum();
+    let mut pinned = [0u16; 4];
+    for (position, &index) in visible.iter().enumerate() {
+        let min = section_min_rows(SidebarSection::ALL[index]);
+        let height = if position + 1 == visible.len() {
+            remaining
+        } else {
+            let later: u16 = visible[position + 1..]
+                .iter()
+                .map(|&below| section_min_rows(SidebarSection::ALL[below]))
+                .sum();
+            let want = if pins[index] > 0 {
+                pins[index].max(min)
+            } else {
+                heights[index]
+            };
+            let cap = remaining.saturating_sub(later);
+            want.min(cap).max(min.min(remaining))
+        };
+        pinned[index] = height;
+        remaining -= height;
+    }
+    let column = derived.sections[first];
+    let mut layout = SidebarLayout::default();
+    let mut y = column.y;
+    for (index, height) in pinned.into_iter().enumerate() {
+        layout.sections[index] = Rect::new(column.x, y, column.width, height);
+        y += height;
+    }
+    layout
+}
+
 /// The section rects the sidebar draws into `area` for the workspace as it
 /// stands, for `ViewState::sidebar_section_rects`.
 pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [Rect; 4] {
@@ -139,7 +215,15 @@ pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [
             .sum(),
     );
     let terminals = rows_u16(terminal_rows(ws, chrome).len());
-    sidebar_layout(area, chrome.sidebar.side, machines, projects, terminals).sections
+    sidebar_layout_pinned(
+        area,
+        chrome.sidebar.side,
+        machines,
+        projects,
+        terminals,
+        chrome.sidebar.section_heights,
+    )
+    .sections
 }
 
 fn rows_u16(rows: usize) -> u16 {
@@ -166,17 +250,27 @@ pub fn render_sidebar<W: WorkspaceView>(
     }
     let agents = agent_rows(ws, chrome);
     let terminals = terminal_rows(ws, chrome);
-    let layout = sidebar_layout(
+    let layout = sidebar_layout_pinned(
         area,
         chrome.sidebar.side,
         rows_u16(machines.len()),
         rows_u16(projects.iter().map(|row| usize::from(row.height())).sum()),
         rows_u16(terminals.len()),
+        chrome.sidebar.section_heights,
     );
     machines::render_machines(frame, layout.sections[0], &machines, chrome, &mut hits);
     projects::render_projects(frame, layout.sections[1], &projects, chrome, &mut hits);
     agents::render_agents(frame, layout.sections[2], &agents, chrome, &mut hits);
     terminals::render_terminals(frame, layout.sections[3], &terminals, chrome, &mut hits);
+    // The blank row a section leaves under itself divides it from the section
+    // below, when both are drawn tall enough to trade rows.
+    for index in 0..hits.dividers.len() {
+        let section = layout.sections[index];
+        if section.height >= 3 && layout.sections[index + 1].height > 0 {
+            hits.dividers[index] =
+                Some(Rect::new(section.x, section.bottom() - 1, section.width, 1));
+        }
+    }
     hits
 }
 
@@ -301,16 +395,16 @@ pub(super) fn render_section_rows(
             );
             if height > 1 {
                 frame.render_widget(
-                    Paragraph::new(row_second_line_with_travel(
-                        row, body.width, chrome, max_travel,
-                    ))
-                    .style(row_style),
+                    Paragraph::new(row_second_line(row, body.width, chrome)).style(row_style),
                     Rect::new(body.x, y + 1, body.width, 1),
                 );
             }
             if height > 2 {
                 frame.render_widget(
-                    Paragraph::new(row_third_line(row, body.width, chrome)).style(row_style),
+                    Paragraph::new(row_third_line_with_travel(
+                        row, body.width, chrome, max_travel,
+                    ))
+                    .style(row_style),
                     Rect::new(body.x, y + 2, body.width, 1),
                 );
             }

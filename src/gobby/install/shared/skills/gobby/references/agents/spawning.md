@@ -16,9 +16,9 @@ MCP steps enforce the same boundary. Daemon-internal callers cannot override.
 Spawn scope and seat-spawn policy remain in force. Direct HTTP spawn accepts
 operator credentials only and refuses explicit network for `web_chat`.
 
-Until batch spawning is retired, operator-only `POST /api/agents/spawn/batch`
-accepts `network` per item with the same inheritance, one-launch lifetime,
-validation, and `web_chat` refusal as single HTTP spawns.
+Operator-only `POST /api/agents/spawn/batch` accepts `network` per item with
+the same inheritance, one-launch lifetime, validation, and `web_chat` refusal
+as single HTTP spawns.
 
 Load when authorized work calls for a Gobby-managed worker or batch. Inspect the
 installed spawn-capable definition, assigned task, parent session, and workspace
@@ -35,8 +35,6 @@ result. Task claim, preflight, and launch are separate failure points. A returne
 run is not proof the worker finished. Inspect the result before retrying an
 indeterminate response; avoid duplicate workers for the same task.
 
-`dispatch_batch` sends task suggestions through the same spawn machinery. Inspect
-every item for partial failures instead of retrying the whole batch blindly.
 Use `wait_for_agent` once for a live run and yield; read final evidence on wake.
 The lifecycle reference covers output and cancellation.
 

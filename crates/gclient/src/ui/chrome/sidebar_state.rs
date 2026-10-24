@@ -5,6 +5,7 @@
 
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::SidebarSide;
+use crate::ui::sidebar::section_min_rows;
 use ratatui::layout::Rect;
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -45,6 +46,10 @@ pub struct SidebarState {
     /// one shows the daemon's name. `prefs.toml` keeps them
     /// (`ClientPrefs::project_labels`), mirrored on every rename.
     pub project_labels: BTreeMap<String, String>,
+    /// Rows each section is pinned to, by `SidebarSection::index`; 0 keeps
+    /// the derived height. `prefs.toml` keeps them
+    /// (`ClientPrefs::sidebar_section_heights`), mirrored on every drop.
+    pub section_heights: [u16; 4],
     /// Machine filter of the sessions section, per window: `None` lists the
     /// rows on the local machine, `Some(ALL_MACHINES)` the rows on every
     /// machine, and `Some(machine_id)` those on that machine;
@@ -73,6 +78,7 @@ impl Default for SidebarState {
             project_order: Vec::new(),
             expanded_project: None,
             project_labels: BTreeMap::new(),
+            section_heights: [0; 4],
             machine_filter: None,
             all_projects: true,
             all_sessions: true,
@@ -165,11 +171,52 @@ impl SidebarState {
             SidebarSide::Right => sidebar.x,
         }
     }
+
+    /// Pin the two sections either side of a dragged divider. Their rows
+    /// (`upper_rows` and `lower_rows`, as drawn) trade places: the upper one
+    /// takes `wanted`, clamped so each keeps its minimum, and the lower one
+    /// takes the rest. The other sections keep their pins.
+    pub fn resize_section_pair(
+        &mut self,
+        upper: usize,
+        upper_rows: u16,
+        lower_rows: u16,
+        wanted: u16,
+    ) {
+        let upper_min = section_min_rows(SidebarSection::ALL[upper]);
+        let lower_min = section_min_rows(SidebarSection::ALL[upper + 1]);
+        let total = upper_rows + lower_rows;
+        // A pair too short for both minimums has no split that keeps them,
+        // so the drag leaves the pins as they were.
+        if total < upper_min + lower_min {
+            return;
+        }
+        let upper_height = wanted.clamp(upper_min, total - lower_min);
+        self.section_heights[upper] = upper_height;
+        self.section_heights[upper + 1] = total - upper_height;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dragged_divider_trades_rows_within_its_pair_and_keeps_their_sum() {
+        let mut sidebar = SidebarState::default();
+        // Machines (10 rows) over Projects (8 rows); the divider drags to row 13.
+        sidebar.resize_section_pair(0, 10, 8, 13);
+        assert_eq!(sidebar.section_heights, [13, 5, 0, 0]);
+        // Each side keeps its minimum, so neither section collapses.
+        sidebar.resize_section_pair(0, 10, 8, 40);
+        assert_eq!(sidebar.section_heights, [15, 3, 0, 0]);
+        sidebar.resize_section_pair(0, 10, 8, 0);
+        assert_eq!(sidebar.section_heights, [3, 15, 0, 0]);
+        // Agents (minimum 5) over Terminals (minimum 3) in four rows cannot
+        // keep both minimums, so the drag leaves the pins as they were.
+        sidebar.resize_section_pair(2, 3, 1, 9);
+        assert_eq!(sidebar.section_heights, [3, 15, 0, 0]);
+    }
 
     #[test]
     fn the_dragged_column_becomes_the_edge_on_either_side() {

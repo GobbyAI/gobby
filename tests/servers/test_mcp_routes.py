@@ -58,6 +58,7 @@ from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     SUPPORTED_HOOK_RESPONSE_CAPABILITY,
 )
+from gobby.mcp_proxy.client_manager.tool_inventory import list_tools_from_session
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
@@ -328,6 +329,16 @@ class FakeMCPManager:
         except KeyError as exc:
             raise ValueError(f"Tool not found: {tool_name}") from exc
 
+    async def list_tools(
+        self, server_id: str | None = None, *, project_id: str | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return the id-keyed listing the real manager gives the route: {name: tools}."""
+        config = self.get_server_config(server_id or "")
+        if config is None:
+            raise ValueError(f"Server not found: {server_id}")
+        session = await self.ensure_connected(config.id)
+        return {config.name: await list_tools_from_session(cast(Any, session))}
+
     async def add_server(self, config: Any) -> dict[str, Any]:
         """Add a server configuration."""
         self.put(config)
@@ -496,7 +507,7 @@ class TestListMCPTools:
         assert data["success"] is True
         assert data["tool_count"] == 2
         assert len(data["tools"]) == 2
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_list_tools_records_session_discovery_state(
         self, session_storage: SessionManager
@@ -696,7 +707,7 @@ class TestListMCPTools:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
-        assert "connection failed" in data["error"]
+        assert "Connection failed" in data["error"]
 
     def test_list_tools_external_server_list_tools_failure(
         self, session_storage: SessionManager
@@ -946,7 +957,7 @@ class TestListAllMCPTools:
         assert response.status_code == 200
         data = response.json()
         assert "tools" in data
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_list_all_tools_with_server_filter(self, session_storage: SessionManager) -> None:
         """Test listing tools filtered by server."""
@@ -1485,7 +1496,7 @@ class TestCallMCPTool:
         assert data["error"] == "Tool not found"
         assert data["error_code"] == "TOOL_NOT_FOUND"
         assert "result" not in data
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_call_tool_tool_proxy_success_is_flattened(
         self, session_storage: SessionManager
@@ -1517,7 +1528,7 @@ class TestCallMCPTool:
         assert data["success"] is True
         assert data["items"] == [1, 2, 3]
         assert "result" not in data
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_call_tool_internal_server_success(self, session_storage: SessionManager) -> None:
         """Test calling tool on internal server."""
@@ -1556,7 +1567,7 @@ class TestCallMCPTool:
             "tool": "list_tasks",
             "created_at": "2026-07-03T12:34:00+00:00",
         }
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_call_tool_allows_structured_wait_without_wrapper_protocol_header(
         self, session_storage: SessionManager
@@ -1891,7 +1902,7 @@ class TestCallMCPTool:
         assert data["success"] is False
         assert data["error"] == "Tool call timed out after 0.01 seconds"
         assert data["error_code"] == "CONNECTION_ERROR"
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
         mcp_manager.call_tool.assert_awaited_once_with(
             "slow-server",
             tool_name="slow_tool",

@@ -70,7 +70,7 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert data["success"] is True
         assert data["tools"] == {}
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_list_tools_internal_servers(self, client: TestClient, mock_server: MagicMock) -> None:
         registry = MagicMock()
@@ -755,7 +755,7 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert data["success"] is True
         assert len(data["recommendations"]) == 1
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_recommend_ordinary_response_preserves_handler_shape(
         self, client: TestClient, mock_server: MagicMock
@@ -783,7 +783,7 @@ class TestMCPDiscoveryRoutes:
         assert data["total_results"] == 41
         assert data["available_servers"] == ["alpha", "beta"]
         assert data["provider_metadata"] == {"opaque": True}
-        assert "response_time_ms" in data
+        assert "response_time_ms" not in data
 
     def test_recommend_with_all_params(self, client: TestClient, mock_server: MagicMock) -> None:
         """Pass all optional params to recommend."""

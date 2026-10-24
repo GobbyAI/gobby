@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from gobby.agents.provider_capabilities import agent_run_is_headless
 from gobby.hooks.grok_pending_context import clear_queued_context
+from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.mcp_proxy.tools.sessions._handoff import build_feedback_task_resolver
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _CLI_COMPACT_COMMANDS,
@@ -782,7 +783,9 @@ def register_terminal_tools(
         if terminal_manager is not None and terminal_runtime_registry is not None:
             terminal = terminal_manager.get_live_for_session(session_id)
             if terminal is not None:
-                runtime = terminal_runtime_registry.resolve(terminal.backend)
+                runtime = resolve_terminal_runtime(
+                    terminal_runtime_registry, terminal, terminal_manager.db
+                )
                 snapshot = await runtime.snapshot(terminal, lines)
                 return {
                     "success": True,

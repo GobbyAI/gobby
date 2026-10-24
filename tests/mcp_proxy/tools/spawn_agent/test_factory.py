@@ -301,6 +301,15 @@ class TestCreateSpawnAgentRegistry:
 
         assert registry.get_schema("spawn_agent") is not None
 
+    def test_batch_dispatch_tool_is_retired(self) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        runner = MagicMock()
+        registry = create_spawn_agent_registry(runner)
+
+        assert "dispatch_batch" not in registry
+        assert registry.get_schema("dispatch_batch") is None
+
     def test_spawn_agent_schema_includes_lifecycle_defaults(self, mock_runner: MagicMock) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -478,9 +487,8 @@ class TestSpawnAgentDefaults:
         assert mock_spawn_impl.call_args.kwargs["notify_parent_on_completion"] is False
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("mode", ["single", "batch-default", "batch-item"])
     async def test_spawn_agent_forwards_default_parent_completion_notification(
-        self, mock_runner: MagicMock, mode: str
+        self, mock_runner: MagicMock
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -521,20 +529,7 @@ class TestSpawnAgentDefaults:
                 "extra_write_paths": ["/external/workspace"],
                 "write_paths_reason": "Task authorization",
             }
-            if mode == "single":
-                result = await registry.call("spawn_agent", arguments)
-            else:
-                suggestion: dict[str, Any] = {"ref": "#1", "prompt": "Test prompt"}
-                batch_arguments = {"parent_session_id": "parent-789", "suggestions": [suggestion]}
-                target = batch_arguments if mode == "batch-default" else suggestion
-                target.update(
-                    {
-                        "extra_write_paths": ["/external/workspace"],
-                        "write_paths_reason": "Task authorization",
-                    }
-                )
-                response = await registry.call("dispatch_batch", batch_arguments)
-                result = response["results"][0]
+            result = await registry.call("spawn_agent", arguments)
 
         assert result["success"] is True
         assert result["run_id"] == "run-123"
@@ -792,7 +787,7 @@ class TestSpawnAgentParamOverrides:
     """Tests for tool params overriding agent definition values."""
 
     @pytest.mark.asyncio
-    async def test_dispatch_batch_worker_is_one_shot(self, mock_runner: MagicMock) -> None:
+    async def test_one_shot_spawn_drops_interactive_guidance(self, mock_runner: MagicMock) -> None:
         body = make_agent_definition(
             name="developer",
             provider="claude",
@@ -802,8 +797,7 @@ class TestSpawnAgentParamOverrides:
         request = await self._spawn_request_for(
             mock_runner,
             body,
-            {"suggestions": [{"ref": "#1", "prompt": "Implement the task."}]},
-            tool_name="dispatch_batch",
+            {"execution_mode": "one_shot"},
         )
         assert request.resume_metadata_json["execution_mode"] == "one_shot"
         assert "Remain available between turns" not in request.prompt
@@ -881,7 +875,6 @@ class TestSpawnAgentParamOverrides:
         agent_body: AgentDefinitionBody,
         call_params: dict[str, object],
         *,
-        tool_name: str = "spawn_agent",
         invoke: Callable[[], Awaitable[dict[str, Any]]] | None = None,
     ) -> Any:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -928,15 +921,11 @@ class TestSpawnAgentParamOverrides:
                 status="pending",
             )
 
-            params: dict[str, object] = {"parent_session_id": "parent-789"}
-            if tool_name == "spawn_agent":
-                params["prompt"] = "Test prompt"
+            params: dict[str, object] = {"parent_session_id": "parent-789", "prompt": "Test prompt"}
             params.update(call_params)
             result = (
-                await invoke() if invoke is not None else await registry.call(tool_name, params)
+                await invoke() if invoke is not None else await registry.call("spawn_agent", params)
             )
-            if tool_name == "dispatch_batch":
-                result = result["results"][0]
             await _drain_spawn_background_tasks()
 
             assert result["success"] is True, result

@@ -1,5 +1,6 @@
 """Tests for top-level set_variable / get_variable on GobbyDaemonTools."""
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -81,6 +82,24 @@ async def test_get_variable_delegates_correctly() -> None:
     assert kwargs["scope"] == "step"
     assert result["success"] is True
     assert result["value"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("kwargs", "brief"), [({}, True), ({"brief": False}, False)])
+async def test_get_variable_forwards_brief_to_the_workflow_tool(
+    kwargs: dict[str, Any], brief: bool
+) -> None:
+    sm = MagicMock()
+    sm.db = MagicMock()
+    handler = _make_handler(session_manager=sm)
+
+    with patch(
+        "gobby.mcp_proxy.tools.workflows._variables.get_variable",
+        return_value={"success": True, "names": []},
+    ) as mock_get:
+        await handler.get_variable(session_id="#1", **kwargs)
+
+    assert mock_get.call_args.kwargs["brief"] is brief
 
 
 @pytest.mark.asyncio

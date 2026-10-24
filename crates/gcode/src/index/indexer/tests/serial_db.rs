@@ -1382,3 +1382,101 @@ fn symbol_count(conn: &mut postgres::Client, project_id: &str, rel: &str, symbol
     .try_get(0)
     .expect("decode symbol count")
 }
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn full_reindex_with_changed_symbol_ids_marks_projections_pending() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let project_root = tempfile::tempdir().expect("create project root");
+    let project_id = unique_test_uuid("gcode-full-reindex-ids");
+    let rel = "src/lib.rs";
+    let content = b"pub fn adopted() {}\n";
+    let absolute_path = project_root.path().join(rel);
+    std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
+        .expect("create source directory");
+    std::fs::write(&absolute_path, content).expect("write source file");
+    let content_hash =
+        crate::index::hasher::file_content_hash(&absolute_path).expect("hash source file");
+
+    cleanup_summary_preservation_project(&mut conn, &project_id).expect("pre-clean");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project_id, project_root.path())
+        .expect("seed primary checkout");
+    write_postgres_parsed_file_facts_with_root(
+        &mut conn,
+        &project_id,
+        project_root.path(),
+        rel,
+        &content_hash,
+        content,
+        vec![test_symbol(
+            &project_id,
+            rel,
+            &content_hash,
+            "stale_fn",
+            40,
+            &content_hash,
+        )],
+    );
+    let project_uuid = test_uuid_param(&project_id);
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = TRUE, vector_sync_attempted_at = NOW(),
+             graph_synced = TRUE, graph_sync_attempted_at = NOW()
+         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+        &[&project_uuid, &rel, &content_hash],
+    )
+    .expect("stamp both projections synced");
+
+    let ctx = Context {
+        database_url,
+        project_root: project_root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let outcome = index_files(
+        IndexRequest {
+            project_root: project_root.path().to_path_buf(),
+            path_filter: None,
+            explicit_files: vec![absolute_path],
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("full reindex with changed symbol ids");
+    assert_eq!(outcome.indexed_files, 1);
+
+    let row = conn
+        .query_one(
+            "SELECT vectors_synced, vector_sync_attempted_at IS NULL,
+                    graph_synced, graph_sync_attempted_at IS NULL
+             FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+            &[&project_uuid, &rel, &content_hash],
+        )
+        .expect("load reindexed version flags");
+    assert!(!row.get::<_, bool>(0), "vectors must be pending");
+    assert!(row.get::<_, bool>(1), "vector attempt must be NULL");
+    assert!(!row.get::<_, bool>(2), "graph must be pending");
+    assert!(row.get::<_, bool>(3), "graph attempt must be NULL");
+}

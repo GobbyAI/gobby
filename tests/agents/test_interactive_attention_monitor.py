@@ -134,6 +134,45 @@ async def test_lost_host_skips_remaining_native_snapshots_then_recovers(
 
 
 @pytest.mark.asyncio
+async def test_lost_local_host_still_snapshots_node_native_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    local = SimpleNamespace(id="session-local", source="claude", terminal_context={})
+    node = SimpleNamespace(id="session-node", source="claude", terminal_context={})
+    rows = {
+        local.id: make_memory_terminal(backend="native"),
+        node.id: make_memory_terminal(backend="native", machine_id="node-machine"),
+    }
+    monkeypatch.setattr(
+        "gobby.storage.terminals.TerminalManager.get_live_for_session",
+        lambda _manager, session_id: rows[session_id],
+    )
+    local_runtime = LifecycleRuntime(
+        backend="native", snapshot_error=HostUnavailableError("unavailable")
+    )
+    node_runtime = LifecycleRuntime(backend="native")
+    monkeypatch.setattr(
+        "gobby.agents.interactive_attention_monitor.resolve_terminal_runtime",
+        lambda _registry, row, _db: (
+            node_runtime if row.machine_id == "node-machine" else local_runtime
+        ),
+    )
+    session_manager = Mock(db=Mock())
+    session_manager.list.return_value = [local, node]
+    monitor = _monitor(session_manager, local_runtime)
+    cast(Mock, monitor._attention_manager).list_blocked.return_value = []
+    monkeypatch.setattr(
+        "gobby.agents.interactive_attention_monitor._host_outage_log", ThrottledLogger()
+    )
+
+    with patch.object(monitor, "_sync_interactive_attention", new_callable=AsyncMock):
+        await monitor._check_attention_panes(active_agent_sessions=set())
+
+    assert local_runtime.snapshot_calls == [15]
+    assert node_runtime.snapshot_calls == [15]
+
+
+@pytest.mark.asyncio
 async def test_unexpected_capture_failure_still_reports_each_session(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

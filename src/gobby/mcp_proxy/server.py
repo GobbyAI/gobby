@@ -589,6 +589,7 @@ class GobbyDaemonTools:
             ),
         ],
         scope: Literal["session", "step"] = "session",
+        brief: bool = True,
     ) -> dict[str, Any]:
         """Get a variable (or all variables). Session-scoped by default. Pass scope='step' for the session instance."""
         if not self._session_manager or not self._session_manager.db:
@@ -608,6 +609,7 @@ class GobbyDaemonTools:
             session_id,
             scope=scope,
             instance_manager=instance_manager,
+            brief=brief,
         )
 
     # Hook Extension tools migrated to gobby-plugins internal registry

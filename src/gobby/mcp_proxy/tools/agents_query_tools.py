@@ -567,6 +567,7 @@ def register_agent_query_tools(
         interval = max(0.1, min(interval_value, 30.0))
         deadline = agents.time.monotonic() + timeout
         consecutive_capture_failures = 0
+        from gobby.hub.remote_runtime import resolve_terminal_runtime
         from gobby.storage.terminals import TerminalManager
 
         db = getattr(ctx.runner, "database", None) or getattr(ctx.runner, "db", None)
@@ -587,10 +588,10 @@ def register_agent_query_tools(
                     if terminal_manager is None or not run.terminal_id
                     else terminal_manager.get(run.terminal_id)
                 )
-                if terminal is None:
+                if terminal is None or terminal_manager is None:
                     capture_failed = True
                 else:
-                    runtime = registry.resolve(terminal.backend)
+                    runtime = resolve_terminal_runtime(registry, terminal, terminal_manager.db)
                     snapshot = await runtime.snapshot(terminal, _WAIT_OUTPUT_CAPTURE_LINES)
                     pane_output = snapshot.text
                     capture_failed = pane_output is None
@@ -637,10 +638,10 @@ def register_agent_query_tools(
                         if terminal_manager is None or not run.terminal_id
                         else terminal_manager.get(run.terminal_id)
                     )
-                    if terminal is None:
+                    if terminal is None or terminal_manager is None:
                         pane_exists = False
                     else:
-                        runtime = registry.resolve(terminal.backend)
+                        runtime = resolve_terminal_runtime(registry, terminal, terminal_manager.db)
                         pane_exists = await runtime.is_live(terminal)
                 except asyncio.CancelledError:
                     raise
