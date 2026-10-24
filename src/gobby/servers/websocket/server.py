@@ -366,6 +366,7 @@ class WebSocketServer(
         """
         user_id = websocket.user_id
         client_id = str(uuid4())
+        browser = getattr(websocket, "browser_session", None)
 
         # Register client
         self.clients[websocket] = {
@@ -374,6 +375,11 @@ class WebSocketServer(
             "connected_at": datetime.now(UTC),
             "remote_address": websocket.remote_address,
         }
+        if browser is not None:
+            self.clients[websocket].update(
+                conversation_id=browser.claims.session_id,
+                project_id=browser.claims.project_id,
+            )
 
         logger.debug(
             "Client %s (%s) connected from %s. Total clients: %s",
@@ -385,7 +391,6 @@ class WebSocketServer(
 
         try:
             # Send welcome message with active conversation IDs
-            browser = getattr(websocket, "browser_session", None)
             active_conversations = [] if browser is not None else list(self._chat_sessions.keys())
             await websocket.send(
                 json_dumps(

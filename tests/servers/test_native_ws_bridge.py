@@ -18,6 +18,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import gobby.servers.websocket.native_bridge as native_bridge
+from gobby.agents.sandbox import SandboxConfig
 from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.node_client import NodeCommandError
 from gobby.servers._app_ui import _mount_ws_endpoint
@@ -25,6 +26,13 @@ from gobby.servers.auth_service import AuthService
 from gobby.servers.browser_sessions import BrowserSession
 from gobby.servers.grant_auth import AuthDecision
 from gobby.servers.http import HTTPServer
+from gobby.servers.routes.mcp.hook_hold_open import _maybe_hold_open
+from gobby.servers.websocket.chat._session_launch import (
+    SessionLaunchContext,
+    bind_session_lifecycle,
+    start_hydrated_session,
+)
+from gobby.servers.websocket.chat.runtime_manager import SandboxPolicySnapshot
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.auth import AuthStore
@@ -40,7 +48,9 @@ from gobby.utils.local_token import (
 )
 from gobby.utils.machine_id import get_machine_id
 from tests.fixtures.postgres import TEST_USER_ID, TEST_USER_PASSWORD_HASH
+from tests.servers.routes.test_hold_open_gate import _make_request, _make_session
 from tests.servers.terminal_fakes import MockWebSocket
+from tests.servers.websocket.chat.test_session_launch import _LaunchingDroidSession
 
 pytestmark = pytest.mark.unit
 
@@ -679,3 +689,108 @@ def test_bridge_ready_marks_only_browser_testing_decisions(
             headers=_headers(extra={"Cookie": f"gobby_session={cookie}"}),
         ) as websocket:
             assert websocket.receive_json() == _ready(admitted=True, confined=confined)
+
+
+@pytest.mark.parametrize(
+    "event", ["mode_changed", "plan_pending_approval", "tool_status", "session_restored"]
+)
+def test_browser_without_heartbeat_receives_no_foreign_direct_chat_events(
+    temp_db: HubDatabase,
+    bridge_auth: AuthService,
+    db_executor: DatabaseExecutor,
+    confined_session: BrowserSession,
+    tmp_path: Path,
+    event: str,
+) -> None:
+    browser_cookie = bridge_auth.browser_sessions.create(TEST_USER_ID, confined_session.claims)
+    operator_cookie = AuthStore(temp_db).create_session(TEST_USER_ID)[0]
+    server = _ws_server(bridge_auth, _Publisher(), db_executor)
+    foreign = _LaunchingDroidSession("foreign-conversation", None)
+
+    async def emit(websocket: Any, data: dict[str, Any]) -> None:
+        if event in {"mode_changed", "plan_pending_approval"}:
+            bind_session_lifecycle(server, foreign, foreign.conversation_id)
+            if event == "mode_changed":
+                assert foreign._on_mode_changed is not None
+                await foreign._on_mode_changed("accept_edits", "foreign-mode")
+            else:
+                assert foreign._on_plan_ready is not None
+                await foreign._on_plan_ready("Foreign private plan", {}, "tool-1")
+        elif event == "tool_status":
+            manager = AsyncMock()
+            manager.count_pending.return_value = 0
+            manager.create.return_value = "interaction-1"
+            manager.wait.return_value = {"decision": "deny"}
+            request = _make_request(db=MagicMock(), pending_manager=manager)
+            request.app.state.server.services.websocket_server = server
+            with patch("gobby.storage.sessions.SessionManager") as store:
+                store.return_value.get.return_value = _make_session(
+                    session_id=foreign.conversation_id, session_type="web_chat"
+                )
+                await _maybe_hold_open(
+                    request,
+                    foreign.conversation_id,
+                    "PreToolUse",
+                    {"input_data": {"tool_name": "Bash", "arguments": {"command": "private"}}},
+                    "web_chat",
+                )
+        else:
+            context = SessionLaunchContext(
+                SandboxPolicySnapshot(SandboxConfig(), "test-policy"), str(tmp_path)
+            )
+            await start_hydrated_session(
+                server,
+                foreign,
+                context,
+                session_key=foreign.conversation_id,
+                effective_model=None,
+                persona_selected=False,
+                pending_agent=None,
+                pending_mode=None,
+                agent_name="droid",
+                provider_name="droid",
+                session_manager=None,
+                existing_db_session=None,
+                project_context_changed=False,
+                effective_pid="foreign-project",
+            )
+        await websocket.send(json.dumps({"type": "emission_complete"}))
+
+    server._dispatch_table = {"emit": emit, "ping": server._handle_ping}
+    with (
+        patch.object(bridge_auth, "_managed_capability_is_live", return_value=True),
+        patch.object(server, "_fire_lifecycle", AsyncMock()),
+        patch.object(server, "_cleanup_terminal_client", AsyncMock()),
+        _client(server, bridge_auth, database=temp_db) as client,
+    ):
+        with (
+            client.websocket_connect(
+                "ws://127.0.0.1:43210/_gobby/ws/bridge",
+                headers=_headers(extra={"Cookie": f"gobby_session={browser_cookie}"}),
+            ) as browser,
+            client.websocket_connect(
+                "ws://127.0.0.1:43210/_gobby/ws/bridge",
+                headers=_headers(leg="8", extra={"Cookie": f"gobby_session={operator_cookie}"}),
+            ) as operator,
+        ):
+            assert browser.receive_json()["confined"] is True
+            assert browser.receive_json()["type"] == "connection_established"
+            assert operator.receive_json()["confined"] is False
+            assert operator.receive_json()["type"] == "connection_established"
+            browser_metadata = next(
+                meta
+                for socket, meta in server.clients.items()
+                if socket.browser_session is not None
+            )
+            assert browser_metadata.get("conversation_id") == confined_session.claims.session_id
+            assert browser_metadata.get("project_id") == confined_session.claims.project_id
+            operator.send_json({"type": "emit"})
+            delivered = operator.receive_json()
+            expected_type = "mode_changed" if event == "session_restored" else event
+            assert delivered["type"] == expected_type
+            assert delivered["conversation_id"] == foreign.conversation_id
+            if event == "session_restored":
+                assert delivered["reason"] == "session_restored"
+            assert operator.receive_json()["type"] == "emission_complete"
+            browser.send_json({"type": "ping"})
+            assert browser.receive_json()["type"] == "pong"
