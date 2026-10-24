@@ -21,6 +21,7 @@ use std::process::ExitCode;
 mod action;
 mod args;
 mod cli_config;
+mod daemon_down;
 mod detach;
 mod diagnose;
 mod diagnostics;

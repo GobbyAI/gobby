@@ -31,6 +31,7 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         emit_empty_json();
         return ExitCode::from(2);
     };
+    let cfg = cfg.with_spawned_agent(std::env::var("GOBBY_IS_SPAWNED_AGENT").as_deref() == Ok("1"));
 
     // Daemon-spawned ACP subprocesses (for example grok --acp) set
     // GOBBY_HOOKS_DISABLED=1 to stop their inherited SessionStart hook from
@@ -179,6 +180,15 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                         diagnostics::FailureKind::DirectPostAfterEnqueueFailure,
                         Some(&diagnostic_error),
                     );
+                    if let Some(action) = crate::daemon_down::action(
+                        hook_type,
+                        &cfg,
+                        report
+                            .failure_kind
+                            .unwrap_or(transport::DeliveryFailureKind::Other),
+                    ) {
+                        return Ok(action);
+                    }
                     Ok(action_from_failure(
                         hook_type,
                         &cfg,
@@ -270,6 +280,15 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             // returning a fail-open action, including adapter timeouts.
             if report.is_adapter_timeout() && !is_critical {
                 return emit_exit(continue_action(cfg.source, hook_type));
+            }
+            if let Some(action) = crate::daemon_down::action(
+                hook_type,
+                &cfg,
+                report
+                    .failure_kind
+                    .unwrap_or(transport::DeliveryFailureKind::Other),
+            ) {
+                return emit_exit(action);
             }
             if planned_shutdown::suppress_after_failed_post(
                 hook_type,

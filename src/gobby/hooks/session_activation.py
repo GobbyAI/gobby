@@ -664,4 +664,8 @@ def _session_is_spawned(session: Any) -> bool:
     # it while staying interactive. Spawned children always register with
     # agent_depth >= 1 and the spawn path stamps the is_spawned_agent variable,
     # so row-shape inference reads only the operational fields.
-    return bool(getattr(session, "agent_run_id", None) or getattr(session, "agent_depth", 0))
+    from gobby.agents.constants import is_spawned_agent
+
+    return is_spawned_agent(
+        getattr(session, "agent_run_id", None), getattr(session, "agent_depth", 0)
+    )

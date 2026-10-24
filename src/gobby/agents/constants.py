@@ -53,6 +53,7 @@ GOBBY_PARENT_SESSION_ID = "GOBBY_PARENT_SESSION_ID"
 # Agent run record identifier
 # Links the terminal process back to its agent_runs record
 GOBBY_AGENT_RUN_ID = "GOBBY_AGENT_RUN_ID"
+GOBBY_IS_SPAWNED_AGENT = "GOBBY_IS_SPAWNED_AGENT"
 
 # Run-bound daemon capability; never contains the operator's local CLI token.
 GOBBY_AGENT_API_TOKEN = GOBBY_AGENT_API_TOKEN_ENV
@@ -194,6 +195,11 @@ def ensure_agent_cargo_home_dir(session_id: str) -> str:
     return str(cargo_home)
 
 
+def is_spawned_agent(agent_run_id: str | None, agent_depth: int) -> bool:
+    """Shared spawn identity for the session variable and its hook-local copy."""
+    return bool(agent_run_id or agent_depth)
+
+
 def get_terminal_env_vars(
     session_id: str,
     parent_session_id: str,
@@ -233,6 +239,7 @@ def get_terminal_env_vars(
         "GOBBY_DAEMON_URL": daemon_url(),
         GOBBY_SESSION_ID: session_id,
         GOBBY_AGENT_RUN_ID: agent_run_id,
+        GOBBY_IS_SPAWNED_AGENT: "1" if is_spawned_agent(agent_run_id, agent_depth) else "0",
         GOBBY_PROJECT_ID: project_id,
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
@@ -267,6 +274,7 @@ ALL_TERMINAL_ENV_VARS = [
     GOBBY_SESSION_ID,
     GOBBY_PARENT_SESSION_ID,
     GOBBY_AGENT_RUN_ID,
+    GOBBY_IS_SPAWNED_AGENT,
     GOBBY_AGENT_API_TOKEN,
     GOBBY_WORKFLOW_NAME,
     GOBBY_PROJECT_ID,
