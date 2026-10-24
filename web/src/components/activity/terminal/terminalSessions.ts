@@ -22,13 +22,7 @@ export interface JoinedTerminalSession {
 
 // CLI providers that ship a SourceIcon mark. Matched against the joined Gobby
 // session's source first, then the pane's running command.
-const PROVIDER_COMMANDS = new Set([
-  "claude",
-  "codex",
-  "droid",
-  "grok",
-  "agy",
-]);
+const PROVIDER_COMMANDS = new Set(["claude", "codex", "droid", "grok", "agy"]);
 
 // Commands that mean "nothing interesting is running" — an idle shell titles
 // the pane by its cwd instead.
