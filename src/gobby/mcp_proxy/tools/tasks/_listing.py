@@ -10,7 +10,7 @@ from gobby.mcp_proxy.tools.tasks._formatters import task_discovery_payload
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.close_receipts import list_close_receipts
-from gobby.tasks.state_semantics import TaskState, validate_task_state
+from gobby.tasks.state_semantics import TASK_STATES, TaskState, validate_task_state
 from gobby.utils.datetime import datetime_to_iso
 
 
@@ -343,6 +343,11 @@ def register_task_listing(registry: InternalToolRegistry, ctx: RegistryContext) 
                     "type": "string",
                     "description": "Filter by project name or UUID (e.g., '_personal')",
                     "default": None,
+                },
+                "state": {
+                    "type": "string",
+                    "enum": sorted(TASK_STATES),
+                    "description": "Filter by task state",
                 },
                 "claimed": {"type": "boolean", "description": "Filter by current ownership"},
                 "candidate": {"type": "boolean", "description": "Explicit CANDIDATE event sent"},
