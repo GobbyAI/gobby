@@ -18,8 +18,8 @@ from gobby.worktrees.deletion import probe_missing_worktree_git_state
 logger = logging.getLogger(__name__)
 
 
-class ReusedWorktreeRebaseConflict(RuntimeError):
-    """Raised when a clean reused worktree cannot be rebased without conflicts."""
+class ReusedWorktreeSyncConflict(RuntimeError):
+    """Raised when a clean reused worktree cannot merge its base without conflicts."""
 
     def __init__(
         self,
@@ -51,7 +51,7 @@ async def sync_reused_worktree_to_base(
     base_branch: str | None,
     base_commit_sha: str | None = None,
 ) -> ReusedWorktreeSyncResult:
-    """Rebase a clean reused worktree onto the current local base branch."""
+    """Merge the current local base into a clean worktree, preserving checkpoint SHAs."""
 
     return await _sync_reused_worktree_to_base(
         git_manager,
@@ -123,18 +123,14 @@ async def _sync_reused_worktree_to_base(
         detail = _detail(ancestor)
         raise RuntimeError(f"Failed to compare reused worktree with {base_ref}: {detail}")
 
-    try:
-        result = await _run_git(git_manager, ["rebase", base_sha], cwd=path, timeout=120)
-    except subprocess.TimeoutExpired as exc:
-        abort_detail = await _abort_rebase(git_manager, path)
-        message = f"Timed out rebasing reused worktree onto {base_ref}: {exc}{abort_detail}"
-        raise RuntimeError(message) from exc
-    if result.returncode != 0:
-        abort_detail = await _abort_rebase(git_manager, path)
-        detail = _detail(result)
-        message = f"Failed to rebase reused worktree onto {base_ref}: {detail}{abort_detail}"
-        if _looks_like_rebase_conflict(detail):
-            raise ReusedWorktreeRebaseConflict(
+    result = await git_manager.sync_from_main(
+        worktree_path=path, base_branch=base_ref, source_branch=base_sha, strategy="merge"
+    )
+    if not result.success:
+        detail = f"{result.message}: {result.error or result.output or ''}"
+        message = f"Failed to merge base {base_ref} into reused worktree: {detail}"
+        if "conflict" in detail.lower():
+            raise ReusedWorktreeSyncConflict(
                 message,
                 worktree_path=worktree_path,
                 base_ref=base_ref,
@@ -142,8 +138,8 @@ async def _sync_reused_worktree_to_base(
             )
         raise RuntimeError(message)
 
-    logger.info("Rebased reused worktree %s onto %s", worktree_path, base_ref)
-    return ReusedWorktreeSyncResult("rebased", base_ref, base_sha)
+    logger.info("Merged %s into reused worktree %s", base_ref, worktree_path)
+    return ReusedWorktreeSyncResult("merged", base_ref, base_sha)
 
 
 async def _resolve_base_ref(git_manager: Any, base_branch: str | None) -> tuple[str, str]:
@@ -172,26 +168,6 @@ async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
         raise RuntimeError(
             "Cannot reuse worktree with uncommitted changes; commit, stash, or inspect it first"
         )
-
-
-async def _abort_rebase(git_manager: Any, path: Path) -> str:
-    abort = await _run_git(git_manager, ["rebase", "--abort"], cwd=path, timeout=30)
-    if abort.returncode == 0:
-        return "; rebase aborted"
-    return f"; rebase abort failed: {_detail(abort)}"
-
-
-def _looks_like_rebase_conflict(detail: str) -> bool:
-    normalized = detail.lower()
-    return any(
-        marker in normalized
-        for marker in (
-            "conflict",
-            "could not apply",
-            "fix conflicts and then run",
-            "resolve all conflicts manually",
-        )
-    )
 
 
 async def _run_git(
