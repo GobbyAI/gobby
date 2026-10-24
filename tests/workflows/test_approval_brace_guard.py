@@ -446,13 +446,17 @@ def test_shell_setup_disables_data_narrowing_for_the_whole_text(command: str) ->
         'echo() if true; then "$@"; fi; D=approve-dirty-paths; '
         "echo gobby se$()ssions $D s7 --checkout /repo a.txt",
         "D=approve-dirty-paths; git -c alias.x='!gobby' x se$()ssions $D s7 --checkout /repo a.txt",
-        "git log --grep gobby $X",
+        "D=approve-dirty-paths; git $X gobby sessions $D s7 --checkout /repo a.txt",
     ],
 )
 def test_shadowed_data_and_git_heads_keep_expansion_slot_checks(command: str) -> None:
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+def test_git_builtin_grep_operand_is_not_a_command_word() -> None:
+    assert not approval_command_word_expansion("git log --grep gobby $X")
 
 
 @pytest.mark.parametrize(

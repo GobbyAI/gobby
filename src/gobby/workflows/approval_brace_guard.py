@@ -11,7 +11,11 @@ import fnmatch
 import re
 
 from gobby.hooks._ansi_c import opens_ansi_c_quote
-from gobby.hooks._normalization_compound import command_substitution_bodies, shell_function_bodies
+from gobby.hooks._normalization_compound import (
+    command_substitution_bodies,
+    process_substitution_bodies,
+    shell_function_bodies,
+)
 from gobby.hooks._normalization_env import _ASSIGNMENT
 from gobby.hooks._normalization_shell import (
     ShellScan,
@@ -21,6 +25,7 @@ from gobby.hooks._normalization_shell import (
     scan_shell_command,
 )
 from gobby.hooks._shell_execution_words import _unwrap
+from gobby.hooks.provider_launch_guard import _python_name, _python_program
 
 from .condition_helpers import _GIT_GLOBAL_FLAGS, _GIT_GLOBAL_VALUE_OPTIONS
 from .engine.command_matching import (
@@ -416,9 +421,8 @@ def _slot_hazard(raw: str, *, quoted_expansions: bool = True) -> bool:
 def _command_slots(subject: str, *, strict: bool = False) -> bool:
     """Inspect two CLI positional slots, skipping literal flags and --config.
 
-    Work on token spans rather than a regex grammar. Scanning all argv positions
-    also covers unknown argv launchers without maintaining a wrapper grammar.
-    Quoted prose stays one data word and cannot become CLI positional slots.
+    Work on token spans rather than a regex grammar. Resolve executable wrappers
+    before inspecting CLI slots so another command's operands cannot become heads.
     """
     scan = scan_shell_command(subject)
     words: list[str] = []
@@ -466,44 +470,99 @@ def _git_alias_stage(words: list[str]) -> bool:
     return False
 
 
+def _positional_slots(words: list[str], raw: list[str], index: int) -> bool:
+    cursor = index + 1
+    slots = 0
+    while cursor < len(words) and slots < 2:
+        word = words[cursor]
+        if _slot_hazard(raw[cursor], quoted_expansions=not word.startswith("--config=")):
+            return True
+        if word == "--config" and slots == 0:
+            cursor += 1
+            if cursor < len(words) and _slot_hazard(raw[cursor], quoted_expansions=False):
+                return True
+        elif not word.startswith("-"):
+            slots += 1
+        cursor += 1
+    return False
+
+
 def _stage_slots(words: list[str], raw: list[str], *, strict: bool = False) -> bool:
     if _git_alias_stage(words) and any(_slot_hazard(word) for word in raw):
         return True
-    unwrapped = _unwrap(words)
-    if unwrapped:
-        name = unwrapped[0].rsplit("/", 1)[-1]
-        argvs = _uv_run_argvs(name, unwrapped[1:])
-        heads = [argv[0].rsplit("/", 1)[-1] for argv in argvs or [unwrapped] if argv]
-        if not strict and heads and all(head in _DATA_COMMANDS - {"git"} for head in heads):
-            return False
-    checked_until = 0
-    for index, word in enumerate(words):
-        if index < checked_until:
+    # Shell setup can replace ordinary command heads with argv launchers.
+    if strict and any(
+        _positional_slots(words, raw, index)
+        for index, word in enumerate(words)
+        if word.rsplit("/", 1)[-1] == "gobby"
+        or (word == "gobby.cli" and index > 0 and words[index - 1] == "-m")
+    ):
+        return True
+    pending = [(words, 0)]
+    while pending:
+        argv, depth = pending.pop()
+        if depth > _MAX_DEPTH:
+            raise _AmbiguousSyntax("Execution wrapper nesting limit")
+        argv = _unwrap(argv)
+        if not argv:
             continue
-        name = word.rsplit("/", 1)[-1]
+        name = argv[0].rsplit("/", 1)[-1]
+        if name == "find":
+            # find's action operands execute argv, preserving their raw spelling.
+            pending.extend(
+                (argv[index + 1 :], depth + 1)
+                for index, word in enumerate(argv)
+                if word in {"-exec", "-execdir", "-ok", "-okdir"}
+            )
+        if (
+            name == "git"
+            and len(argv) <= len(words)
+            and argv[1:] == words[len(words) - len(argv) + 1 :]
+        ):
+            cursor = 1
+            while cursor < len(argv):
+                word = argv[cursor]
+                if word in _GIT_GLOBAL_VALUE_OPTIONS:
+                    cursor += 2
+                    continue
+                if word in _GIT_GLOBAL_FLAGS or any(
+                    word.startswith(f"{option}=") for option in _GIT_GLOBAL_VALUE_OPTIONS
+                ):
+                    cursor += 1
+                    continue
+                # An expanded subcommand can select an alias that executes argv.
+                index = len(words) - len(argv) + cursor
+                if _slot_hazard(raw[index]) and any(
+                    _positional_slots(words, raw, start)
+                    for start in range(index + 1, len(words))
+                    if words[start].rsplit("/", 1)[-1] == "gobby"
+                    or (words[start] == "gobby.cli" and words[start - 1] == "-m")
+                ):
+                    return True
+                break
+        wrapped = _uv_run_argvs(name, argv[1:])
+        if wrapped is not None:
+            pending.extend((nested, depth + 1) for nested in wrapped)
+            continue
+        if _python_name(name):
+            module = _python_program(argv)[2]
+            if module[:1] in (["gobby"], ["gobby.cli"]):
+                argv = module
+                name = argv[0]
+        index = len(words) - len(argv)
+        if index < 0 or argv[1:] != words[index + 1 :]:
+            # Split-string wrappers can synthesize argv. Keep their conservative
+            # protection only when they actually resolve to the Gobby CLI.
+            if name in {"gobby", "gobby.cli"} and any(_slot_hazard(word) for word in raw):
+                return True
+            continue
         literal = "".join(
             char for char, active in _characters(raw[index]) if not (active and char in "{}")
         )
         if literal.rsplit("/", 1)[-1] == "gobby" and _slot_hazard(raw[index]):
             return True
-        if name != "gobby" and not (name == "gobby.cli" and index > 0 and words[index - 1] == "-m"):
-            continue
-        cursor = index + 1
-        slots = 0
-        while cursor < len(words) and slots < 2:
-            word = words[cursor]
-            if _slot_hazard(raw[cursor], quoted_expansions=not word.startswith("--config=")):
-                return True
-            if word == "--config" and slots == 0:
-                cursor += 1
-                if cursor < len(words) and _slot_hazard(raw[cursor], quoted_expansions=False):
-                    return True
-            elif not word.startswith("-"):
-                slots += 1
-            cursor += 1
-        # --config values may themselves be named gobby. They are operands of
-        # this invocation, so do not rescan every remaining suffix from them.
-        checked_until = cursor
+        if name in {"gobby", "gobby.cli"} and _positional_slots(words, raw, index):
+            return True
     return False
 
 
@@ -663,13 +722,19 @@ def _approval_spelling(command: object, *, command_slots: bool) -> bool:
                 return True
             config_operands = set() if strict else _config_operands(subject, scan)
             data_operands = {} if strict else _data_operands(subject, scan)
+            owner, _ = process_substitution_bodies(
+                scan.tokens,
+                {id(token): span for token, span in zip(scan.tokens, scan.spans, strict=True)},
+                subject,
+            )
+            owner_ids = {id(token) for token in owner}
             if any(
                 _protected_word(
                     subject[start + data_operands.get((start, end), 0) : end],
                     data_operand=(start, end) in data_operands,
                 )
-                for start, end in scan.spans
-                if (start, end) not in config_operands
+                for token, (start, end) in zip(scan.tokens, scan.spans, strict=True)
+                if id(token) in owner_ids and (start, end) not in config_operands
             ):
                 return True
     except (ValueError, RecursionError):
