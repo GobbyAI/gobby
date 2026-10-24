@@ -862,11 +862,12 @@ Sampling:
   sheet.
 
 Arms. The script runs `CommunityLabeler.label_batch` with an in-memory recording storage,
-so no live row changes, and a text-generation wrapper that memoizes per community, so G
-and J see identical generations. Each sampled community is copied in memory with `label`,
-`label_source` and `labeled_signature` cleared, so every one goes through generation, and
-carry stays `off` in the G and J arms. `prepare --no-decisions` runs D and G only and
-records why. The developer uses it when 3.2's OpenRouter checklist has any unmet item.
+so no live row changes, and a text-generation wrapper that memoizes per community id and
+`member_signature`, so G and J see identical generations. Each sampled community is
+copied in memory with `label`, `label_source` and `labeled_signature` cleared, so every
+one goes through generation, and carry stays `off` in the G and J arms.
+`prepare --no-decisions` runs D and G only and records why. The developer uses it when
+3.2's OpenRouter checklist has any unmet item.
 
 - **D** is the stored `label_deterministic`.
 - **G** runs the gate `off`.
@@ -876,29 +877,53 @@ records why. The developer uses it when 3.2's OpenRouter checklist has any unmet
   full request and response pair. If any J batch logged `evaluated_backend_mismatch` or
   otherwise ran as shadow, the run aborts: the backend changed mid-run.
 - **Sufficiency** runs in shadow over the same 30 communities and records each position.
-- **Carry** samples 30 more communities (15 per corpus) with model-label G names. Odd ones
-  get a mild perturbation (drop 10% of non-representative members). Even ones get a heavy
-  perturbation (replace half the members with members of the next sampled community).
-  Then it runs the carry check in enforce and records kept or regenerated.
+- **Carry** draws no new communities. It reuses the 30 main communities and makes one
+  perturbed in-memory copy of each community whose G arm wrote a model name. The run
+  record counts the communities skipped because G wrote none.
+  - A copy keeps G's written `label`, `label_source="model"`, `label_confidence` and
+    `label_model`, and sets `labeled_signature` to the original `member_signature`. Its
+    own `member_signature` is the original plus the suffix `:carry`, so the G name is
+    stale.
+  - Draw order is the per-corpus sampling order. Copies at odd positions (1st, 3rd, and
+    so on) get a mild perturbation. They drop `max(1, floor(member_count / 10))` members,
+    chosen with seed 22604 from members not in `representatives`. If too few exist, the
+    rest come from the remaining members.
+  - Copies at even positions get a heavy perturbation. They replace
+    `floor(member_count / 2)` members, chosen with the seed, with as many members drawn
+    with the seed from the next community in that corpus's order (the 15th wraps to the
+    1st). The draw skips members the copy already has. If the next community has fewer
+    such members, the copy replaces only that many.
+  - `representatives` keeps the original representatives that remain members, and
+    `member_count` is the new member count.
+  - The carry arm runs with the gate `off`, sufficiency `off`, and carry in enforce with
+    the J arm's evaluated pair. A carry batch that ran as shadow aborts the run, as in J.
+    It records each copy's carry outcome and Noul probability. Names regenerated for
+    copies go in the key file but are not rated.
 
 Outputs:
 
 - One blinded CSV sheet with columns `item_id, members, name, accuracy (0-2),
-  findability (0-2)`. Identical names within one community are deduplicated, and items
-  are shuffled with the seed.
-- A separate key file mapping `item_id` to corpus, community, arm and decision fields.
+  findability (0-2)`. Each main community gives one item per distinct name among its D,
+  G and J names, with the original members. Each carry copy gives exactly one item: the
+  pre-perturbation G name against the post-perturbation members, whether the copy was
+  kept or regenerated. A carry item is never merged with a main item. Items are shuffled
+  with the seed, giving at most 120.
+- A separate key file mapping `item_id` to corpus, community, arm (`D`, `G`, `J` or
+  `carry`) and decision fields: the recorded `label_confidence`, plus the perturbation,
+  carry outcome and Noul probability for a carry item.
 - A run record with outcome-event counts and decision usage.
 
 `uv run python scripts/community_label_study.py score --sheet PATH --key PATH --capture
 PATH` reads Josh's completed sheet and computes:
 
-- every Q1.6 bar, plus the carry and sufficiency bars (3.4);
+- every Q1.6 bar, plus the carry and sufficiency bars, with the values under "Bars and
+  ship rules" below;
 - the decision cost: the sum of `estimated_tokens x (4 / measured chars-per-token) x
   (usage.cost / usage.input_tokens)`, with both ratios taken from the OpenRouter capture.
 
 It writes the results section of `label-quality.md`, including the ship configuration
-that 3.4's rules select. A sheet with an empty or out-of-range rating exits nonzero and
-names the item.
+those rules select. A sheet with an empty or out-of-range rating exits nonzero and names
+the item.
 
 Metric definitions. Every metric is a total function, and an undefined value fails its
 bar.
@@ -918,19 +943,47 @@ bar.
   - Precision is TP divided by predicted positives.
   - Recall is TP divided by actual positives.
   - A zero denominator fails the bar.
-- Confidence separation: the mean of `probabilities["generated"]` over admitted
-  communities, minus the same mean over rejected ones. On a rejection, the chosen option's
-  confidence measures confidence in the rejection, so it says nothing about the generated
-  name. An empty admitted or rejected set fails the bar.
+- Confidence separation: the mean recorded `label_confidence`, which is the Choice
+  `confidence` that 2.1 writes on both paths, over the J arm's `gate_admitted`
+  communities, minus the same mean over its `gate_rejected` ones. An empty admitted or
+  rejected set fails the bar.
 - Schema-rejection rate: `schema_rejected` outcomes divided by the 30 generation attempts
   in the G arm, which shares its generations with J.
-- Carry population: carry communities with a `kept` or `regenerated` outcome. A positive
-  is the old name rated `a = 2` against the new members. The predicted positive is `kept`.
-  Zero denominators fail the bar.
+- Carry population: carry copies with a `kept` or `regenerated` outcome. A positive is
+  the copy's item, the old name against the new members, rated `a = 2`. The predicted
+  positive is `kept`. Zero denominators fail the bar.
 - Sufficiency population: the 30 main communities with a Score answer. A positive is
   `t(D) >= t(G)`. The predicted positive is `position >= min_score`. Zero denominators fail
   the bar.
 - Cost: the formula above, summed over every decision request in the run.
+
+Bars and ship rules. `score` applies these exact values, and 3.4 reports them:
+
+- Gate bars (Q1.6):
+  - lift of at least 0.3 mean accuracy and 0.5 mean findability;
+  - J regression on at most 1 of 30 communities;
+  - gate precision >= 0.85 and recall >= 0.60;
+  - confidence separation >= 0.15;
+  - schema-rejection rate <= 10%;
+  - decision cost <= $0.05.
+- Carry bars: precision >= 0.85 and recall >= 0.60.
+- Sufficiency bars: precision >= 0.85 and recall >= 0.60.
+
+Ship rules, in order:
+
+1. If G regresses on at most 1 of 30 communities, the gate ships `off`.
+2. Otherwise, if J passes every gate bar, `ai.decisions.community_label` ships
+   `mode: enforce` with the study's `evaluated_model` and `evaluated_backend`.
+3. Otherwise D ships, and this branch is terminal (D5). The config is
+   `code_index.community_label.enabled: false`, and `ai.decisions.community_label`,
+   `community_label_carry` and `community_label_sufficiency` all ship `mode: off`.
+
+Under rule 1 or rule 2 only, `community_label_carry` and `community_label_sufficiency`
+each ship `mode: enforce` with the same evaluated pair if they pass their own bars, and
+`mode: off` otherwise.
+
+A `--no-decisions` run has no J, carry or sufficiency data, so rule 2 is unreachable and
+every consumer ships `mode: off`. Rule 1 or rule 3 then decides `enabled`.
 
 **Research context:**
 
@@ -950,8 +1003,8 @@ has no independent use, so splitting them would add a file contract with no new 
 **Acceptance:**
 
 - 3.3.1 - `prepare` draws 15 size-stratified communities per corpus with seed 22604 and refuses with counts when either corpus has fewer than 15 eligible. test: `tests/scripts/test_community_label_study.py::test_prepare_stratifies_and_refuses_short_corpus`.
-- 3.3.2 - G and J share memoized generations, J runs in effective enforce, and a J batch that ran as shadow aborts the run; no live row changes. test: `tests/scripts/test_community_label_study.py::test_arms_share_generations_and_abort_on_shadow`.
-- 3.3.3 - The sheet is blinded and deduplicated, the key file is separate, and the carry sample perturbs memberships as specified. test: `tests/scripts/test_community_label_study.py::test_sheet_is_blinded_and_key_is_separate`.
+- 3.3.2 - G and J share memoized generations, J and carry run in effective enforce, and a J or carry batch that ran as shadow aborts the run; no live row changes. test: `tests/scripts/test_community_label_study.py::test_arms_share_generations_and_abort_on_shadow`.
+- 3.3.3 - The sheet is blinded and deduplicated, and the key file is separate. Carry reuses the 30 main communities, with the seeded mild and heavy perturbations at odd and even positions. Each carry copy contributes one item, the pre-perturbation G name against the post-perturbation members, for both kept and regenerated outcomes. test: `tests/scripts/test_community_label_study.py::test_sheet_is_blinded_and_key_is_separate`.
 - 3.3.4 - `score` computes every bar and the decision cost from the sheet, key and capture, fails a bar on any undefined metric (zero denominators, empty admitted or rejected sets), and rejects an incomplete sheet. test: `tests/scripts/test_community_label_study.py::test_score_computes_bars_and_rejects_incomplete_sheet`.
 - 3.3.5 - With an alias request model and a dated response model, the J arm runs in effective enforce, and a backend identity change mid-run aborts it. test: `tests/scripts/test_community_label_study.py::test_j_arm_enforces_with_alias_request_and_aborts_on_backend_change`.
 - 3.3.6 - `score` emits the complete ship configuration for each branch: gate `off` (rule 1), gate `enforce` (rule 2), and D5 with `enabled: false` and every consumer `off`, including under `--no-decisions`. test: `tests/scripts/test_community_label_study.py::test_ship_configuration_follows_each_branch`.
@@ -981,7 +1034,8 @@ Gate bars (Q1.6). A positive is G total >= D total:
 - J regresses below D on at most 1 of 30 communities (5%);
 - gate precision >= 0.85 and recall >= 0.60, with `gate_admitted` as the predicted
   positive;
-- mean confidence separation (admitted minus rejected) >= 0.15;
+- mean confidence separation of the recorded `label_confidence` (admitted minus rejected)
+  >= 0.15;
 - schema-rejection rate <= 10% from the outcome counts;
 - decision cost <= $0.05.
 
@@ -1019,7 +1073,7 @@ J, carry and sufficiency have no data, so rule 2 is unreachable and every consum
 
 **Acceptance:**
 
-- 3.4.1 - The Q1.6 label-quality study ran with arms D, G, and J, and `label-quality.md` records the metrics against every bar, the carry and sufficiency bars, and the ship decision the live config follows. behavior: "ship" in `docs/evidence/community-labels-2026-09/label-quality.md`.
+- 3.4.1 - The Q1.6 label-quality study ran with arms D, G, and J, or with D and G alone under `prepare --no-decisions` when 3.2's OpenRouter checklist has an unmet item, and `label-quality.md` records the metrics against every bar, the carry and sufficiency bars, and the ship decision the live config follows. behavior: "ship" in `docs/evidence/community-labels-2026-09/label-quality.md`.
 
 ### 3.5 Box consumer evidence (depends: 3.2, #24248) [category: docs]
 `kind: deliverable`
@@ -1054,19 +1108,23 @@ Triage and stays open.
 ## V2 End-to-end verification
 `kind: verification`
 
-- Run `uv run gobby plans validate .gobby/plans/community-label-decisions.md -p
-  /Users/josh/Projects/gobby` on every revision.
-- Implementation runs the named tests with the isolated `DATABASE_URL` and
-  `GOBBY_TEST_PROTECT=1`: `tests/ai/test_decisions_service.py`,
-  `tests/code_index/test_community_labeler.py`, `tests/config/test_decisions_config.py`,
-  `tests/config/test_runtime_loop_consumers.py`, the HTTP contract tests, and
-  `tests/scripts/`. Then `uv run ruff check src/ scripts/`, `uv run ruff format --check
-  src/ scripts/`, `uv run mypy src/`, and the test-types audit for touched tests.
+These are completion gates for the implementation. Except for plan validation, none has
+run yet. Each runs after its leaves land, and each must hold before the epic closes.
+
+- Plan validation is the only planning-time check: `uv run gobby plans validate
+  .gobby/plans/community-label-decisions.md -p /Users/josh/Projects/gobby` must pass on
+  every revision.
+- The named tests must pass with the isolated `DATABASE_URL` and `GOBBY_TEST_PROTECT=1`:
+  `tests/ai/test_decisions_service.py`, `tests/code_index/test_community_labeler.py`,
+  `tests/config/test_decisions_config.py`, `tests/config/test_runtime_loop_consumers.py`,
+  the HTTP contract tests, and `tests/scripts/`. `uv run ruff check src/ scripts/`,
+  `uv run ruff format --check src/ scripts/`, `uv run mypy src/` and the test-types
+  audit for touched tests must then pass too.
 - After P2 lands and the Orchestrator restarts the daemon, a maintenance pass with every
   consumer `off` must log 6.2's outcomes unchanged.
-- P3 closes on Josh's runs: both captures, the study, his rating and the ship
+- P3 must not close before Josh's runs: both captures, the study, his rating and the ship
   configuration he applies.
-- Never run the full suite.
+- The full suite must not be run.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1090,3 +1148,14 @@ Triage and stays open.
   - New leaf 3.5, which waits on #24248 for Box's consumer evidence.
   - Removed the overclaimed contract clause from 2.2.3 and 2.3.3, and added the
     lifecycle test consumers to 2.1's unchanged inventory.
+- 2026-10-24, Plan Writer gobby#17508, revision for Plan Adversary findings PA-008 to
+  PA-010:
+  - PA-008, under the Orchestrator's ruling: confidence separation again measures the
+    recorded Choice `label_confidence` over admitted and rejected communities, as Q1.6
+    and #22604 require.
+  - PA-009: 3.3 now carries the exact bars and ship rules, including the evaluated pair
+    and `--no-decisions`.
+  - PA-010: the carry arm reuses the 30 main communities as seeded, perturbed copies,
+    and each copy rates the pre-perturbation G name against the new members.
+  - 3.4.1 now names the `--no-decisions` fallback.
+  - V2 is now written as completion gates.
