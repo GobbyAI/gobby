@@ -482,7 +482,7 @@ class TestParallelTaskProcessing:
                 tool_name="close_task",
                 arguments={
                     "task_id": task_id,
-                    "reason": "already_implemented",
+                    "reason": "moot",
                     "changes_summary": "Task completed - no additional changes needed",
                     "preview": True,
                     "response_detail": "diagnostic",
