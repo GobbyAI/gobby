@@ -50,8 +50,8 @@ const OVERLAY_SCOPE_SQL: &str = "SELECT ofs.file_path
             AND shadow.file_path = pfs.file_path
       )";
 
-/// Candidate paths grep may return: indexed on the context machine and still
-/// present in the project checkout. Issues one set-based query per call.
+/// Candidate paths from grep and search results: indexed on the context machine
+/// and still present in the project checkout. Issues one set-based query per call.
 pub(super) fn valid_indexed_paths(
     conn: &mut Client,
     ctx: &Context,

@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use super::{TextSearchOptions, resolve_hybrid_symbols, search_content, search_text};
+use super::{
+    SearchOptions, TextSearchOptions, resolve_hybrid_symbols, search, search_content,
+    search_symbol, search_text,
+};
 use crate::commands::grep::db_tests::{
     fixture_uuid, insert_chunk_version, insert_file_version, insert_machine_state,
     unique_project_id,
@@ -183,13 +186,14 @@ impl Drop for SearchBatchCleanup {
     }
 }
 
-#[test]
-#[cfg_attr(
-    not(gcode_postgres_tests),
-    ignore = "requires the PostgreSQL test database"
-)]
-#[serial_test::serial(serial_db)]
-fn search_checks_indexed_paths_in_one_batch() {
+struct SearchBatchFixture {
+    _cleanup: SearchBatchCleanup,
+    conn: postgres::Client,
+    ctx: Context,
+    _root: tempfile::TempDir,
+}
+
+fn seed_search_batch(project_tag: &str) -> SearchBatchFixture {
     let database_url = crate::test_env::postgres_test_database_url("search PostgreSQL tests");
     let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
         .expect("connect search PostgreSQL test database");
@@ -205,9 +209,9 @@ fn search_checks_indexed_paths_in_one_batch() {
             .expect("write fixture file");
     }
 
-    let project_id = unique_project_id("search-one-batch");
+    let project_id = unique_project_id(project_tag);
     let project_uuid = crate::db::id_param(&project_id).expect("project uuid");
-    let _cleanup = SearchBatchCleanup {
+    let cleanup = SearchBatchCleanup {
         database_url: database_url.clone(),
         project_id: project_uuid,
     };
@@ -265,6 +269,27 @@ fn search_checks_indexed_paths_in_one_batch() {
         grant_ai: None,
         index_scope: ProjectIndexScope::Single,
     };
+    SearchBatchFixture {
+        _cleanup: cleanup,
+        conn,
+        ctx,
+        _root: root,
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn search_checks_indexed_paths_in_one_batch() {
+    let SearchBatchFixture {
+        _cleanup,
+        mut conn,
+        ctx,
+        _root,
+    } = seed_search_batch("search-one-batch");
     let options = || TextSearchOptions {
         limit: 100,
         offset: 0,
@@ -305,4 +330,63 @@ fn search_checks_indexed_paths_in_one_batch() {
         1,
         "search content must check indexed paths with one set-based query, not one per result"
     );
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn symbol_search_checks_indexed_paths_in_one_batch() {
+    let SearchBatchFixture {
+        _cleanup,
+        mut conn,
+        ctx,
+        _root,
+    } = seed_search_batch("symbol-search-one-batch");
+    let exact_hits = fts::search_symbols_exact_first_visible(
+        &mut conn,
+        BATCH_MARKER,
+        &ctx,
+        None,
+        None,
+        &[],
+        100,
+    )
+    .expect("query symbol fixtures");
+    assert_eq!(
+        exact_hits.len(),
+        BATCH_FILE_COUNT,
+        "fixture must yield one exact symbol hit per file"
+    );
+
+    let search_options = |with_graph: bool| SearchOptions {
+        limit: 100,
+        offset: 0,
+        kind: None,
+        language: None,
+        paths: &[],
+        format: Format::Json,
+        with_graph,
+        token_budget: None,
+        verbose: false,
+    };
+    for with_graph in [false, true] {
+        indexed_paths::reset_lookup_count();
+        search(&ctx, BATCH_MARKER, search_options(with_graph)).expect("search");
+        assert_eq!(
+            indexed_paths::lookup_count(),
+            1,
+            "search (with_graph={with_graph}) must check indexed paths with one set-based query, not one per symbol"
+        );
+
+        indexed_paths::reset_lookup_count();
+        search_symbol(&ctx, BATCH_MARKER, search_options(with_graph)).expect("search symbol");
+        assert_eq!(
+            indexed_paths::lookup_count(),
+            1,
+            "search symbol (with_graph={with_graph}) must check indexed paths with one set-based query, not one per symbol"
+        );
+    }
 }

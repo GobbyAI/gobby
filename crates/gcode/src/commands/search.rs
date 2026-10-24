@@ -287,16 +287,10 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     let all_results: Vec<_> = exact_results
         .into_iter()
         .filter(|s| {
-            symbol_matches_filters(
-                &mut conn,
-                ctx,
-                s,
-                options.kind,
-                options.language,
-                &path_patterns,
-            )
+            symbol_matches_local_filters(ctx, s, options.kind, options.language, &path_patterns)
         })
         .collect();
+    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |s| s.file_path.as_str());
     let total = all_results.len();
     let results: Vec<_> = all_results
         .into_iter()
@@ -395,11 +389,13 @@ fn search_symbol_with_graph(
         };
 
         if let Some(s) = sym
-            && symbol_matches_filters(conn, ctx, &s, options.kind, options.language, path_patterns)
+            && symbol_matches_local_filters(ctx, &s, options.kind, options.language, path_patterns)
         {
             all_resolved.push((s, *rrf_score, source_names.clone()));
         }
     }
+    let mut all_resolved =
+        retain_indexed_results(conn, ctx, all_resolved, |r| r.0.file_path.as_str());
 
     all_resolved.sort_by(|a, b| {
         exact_tier(query, &a.0)
@@ -652,18 +648,6 @@ fn final_rank_score(query: &str, symbol: &Symbol, rrf_score: f64) -> f64 {
     exact_tier_score(query, symbol) + rrf_score
 }
 
-fn symbol_matches_filters(
-    conn: &mut postgres::Client,
-    ctx: &Context,
-    symbol: &Symbol,
-    kind: Option<&str>,
-    language: Option<&str>,
-    path_patterns: &[glob::Pattern],
-) -> bool {
-    symbol_matches_local_filters(ctx, symbol, kind, language, path_patterns)
-        && visibility::indexed_file_exists(conn, ctx, &symbol.file_path)
-}
-
 fn symbol_matches_local_filters(
     ctx: &Context,
     symbol: &Symbol,
@@ -686,14 +670,15 @@ fn resolve_hybrid_symbols(
     language: Option<&str>,
     path_patterns: &[glob::Pattern],
 ) -> Vec<(Symbol, f64, Vec<String>)> {
-    merged
+    let resolved: Vec<_> = merged
         .iter()
         .filter_map(|(symbol_id, score, sources)| {
             let symbol = symbol_cache.get(symbol_id)?.clone();
-            symbol_matches_filters(conn, ctx, &symbol, kind, language, path_patterns)
+            symbol_matches_local_filters(ctx, &symbol, kind, language, path_patterns)
                 .then(|| (symbol, *score, sources.clone()))
         })
-        .collect()
+        .collect();
+    retain_indexed_results(conn, ctx, resolved, |r| r.0.file_path.as_str())
 }
 
 fn retain_indexed_results<T>(
