@@ -1166,3 +1166,297 @@ run yet. Each runs after its leaves land, and each must hold before the epic clo
   Findings PA-001 to PA-010 are all resolved, and no blocking finding or governing
   decision remains open. The adversary accepted the carry arm with no population floor,
   because the run record counts skips and a zero denominator fails its bar.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: '`DecisionService.noul` and the request estimate'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `noul` posts per-proposition questions on every wire,
+    parses the three documented-schema Noul fixtures, and returns probabilities by
+    key under the same ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/wire-contracts.md`.
+    test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
+
+    1.1.2: A Noul answer with the wrong `type`, a missing or non-finite `noul`, a
+    value outside [0,1], or a missing key raises `DecisionsUnavailable` with reason
+    `parse`. test: `tests/ai/test_decisions_service.py::test_noul_rejects_malformed_answers_as_parse`.
+
+    1.1.3: `estimate_request_tokens` returns the estimate the `oversize` guard uses
+    for the same state and questions, for Choice and Noul. test: `tests/ai/test_decisions_service.py::test_estimate_request_tokens_matches_oversize_guard`.
+
+    1.1.4: The wire note labels the instructions, description, Noul-shape and option-count
+    rules as Gobby policy over current upstream, with dated sources. behavior: "Gobby
+    policy" in `docs/evidence/decisions/wire-contracts.md`.'
+  labels:
+  - covers:community-label-decisions:1.1:1.1.1
+  - covers:community-label-decisions:1.1:1.1.2
+  - covers:community-label-decisions:1.1:1.1.3
+  - covers:community-label-decisions:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: '`DecisionService.score`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `score` posts ordered levels on every wire, parses
+    the three Score fixtures, and returns score, probabilities and confidence by key
+    under the shared ceiling and cooldown. test: `tests/ai/test_decisions_service.py::test_score_returns_weighted_levels_by_key`.
+
+    1.2.2: A missing `legend`, `probabilities` or `confidence`, a key set other than
+    `"0"` to `"n-1"`, a probability sum outside tolerance, a score outside [0, n-1],
+    or a score inconsistent with the probability-weighted index raises `parse`. Fewer
+    than 2 or more than 10 levels is rejected before dialing. test: `tests/ai/test_decisions_service.py::test_score_rejects_malformed_answers_as_parse`.
+
+    1.2.3: The wire note pins the Score profile with its retrieval date and the per-backend
+    differences. behavior: "score" in `docs/evidence/decisions/wire-contracts.md`.'
+  labels:
+  - covers:community-label-decisions:1.2:1.2.1
+  - covers:community-label-decisions:1.2:1.2.2
+  - covers:community-label-decisions:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: '`DecisionService.box`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `box` sends the image as an inline `image_url` part
+    on `openrouter-decisions` and as a referenced `assets` entry with the danger-zone
+    header on `systemone`, refuses `workers-ai` before dialing, and returns edges
+    and confidence by key from both fixtures. test: `tests/ai/test_decisions_service.py::test_box_returns_edges_by_key_per_wire_transport`.
+
+    1.3.2: A non-PNG/JPEG payload, an oversized image or request, or dimensions outside
+    the documented limits raise `invalid_request` before dialing and leave the cooldown
+    closed. test: `tests/ai/test_decisions_service.py::test_box_rejects_invalid_images_before_dialing`.
+
+    1.3.3: Edges outside [0,1], `left >= right`, `top >= bottom`, a missing or null
+    `confidence`, or a wrong `type` raise `parse`. test: `tests/ai/test_decisions_service.py::test_box_rejects_malformed_answers_as_parse`.
+
+    1.3.4: The wire note pins the Box profile, both transports, the image limits and
+    the unsupported wires with the retrieval date. behavior: "box" in `docs/evidence/decisions/wire-contracts.md`.'
+  labels:
+  - covers:community-label-decisions:1.3:1.3.1
+  - covers:community-label-decisions:1.3:1.3.2
+  - covers:community-label-decisions:1.3:1.3.3
+  - covers:community-label-decisions:1.3:1.3.4
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Choice gate on generated names
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '2.1.1: A `generated` choice at or above the threshold writes
+    the model label with confidence and model; anything else writes the deterministic
+    label with confidence, model, and signature stamped; transport failure stamps
+    the attempt only. test: `tests/code_index/test_community_labeler.py::test_gate_admits_at_threshold_and_rejects_below`.
+
+    2.1.2: The outcome event''s discriminator admits exactly nine values, the five
+    from 6.2 plus `gate_admitted`, `gate_rejected`, `transport_failed`, and `write_superseded`,
+    where `write_superseded` stamps no field, and the exhaustiveness test covers all
+    nine. test: `tests/code_index/test_community_labeler.py::test_gate_outcomes_extend_the_discriminator_to_nine`.
+
+    2.1.3: Requests carry at most 64 questions and stay within `max_input_tokens`
+    by `estimate_request_tokens`, and a batch larger than one request is split across
+    sequential requests. test: `tests/code_index/test_community_labeler.py::test_gate_batches_fit_the_request_ceiling`.
+
+    2.1.4: `enforce` without a matching `evaluated_model` and `evaluated_backend`
+    runs as shadow, writes 6.2''s result, warns once per cooldown window, and a mode
+    change takes effect on the next batch. test: `tests/code_index/test_community_labeler.py::test_enforce_without_matching_evaluation_runs_as_shadow`.
+
+    2.1.5: Startup constructs the labeler with a resolver that reads `ai.decisions`
+    from the live runtime capture on each call. test: `tests/config/test_runtime_loop_consumers.py::test_community_labeler_reads_live_decisions_config`.
+
+    2.1.6: With the gate `off`, or with the decisions config unset, the labeler sends
+    no decision request and writes 6.2''s result. test: `tests/code_index/test_community_labeler.py::test_gate_off_makes_no_decision_request`.'
+  labels:
+  - covers:community-label-decisions:2.1:2.1.1
+  - covers:community-label-decisions:2.1:2.1.2
+  - covers:community-label-decisions:2.1:2.1.3
+  - covers:community-label-decisions:2.1:2.1.4
+  - covers:community-label-decisions:2.1:2.1.5
+  - covers:community-label-decisions:2.1:2.1.6
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Noul carry check for stale model names
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: In enforce, a stale model name whose Noul probability
+    is at or above `min_probability` keeps its label, source, confidence and model,
+    gets the current signature, and skips generation. test: `tests/code_index/test_community_labeler.py::test_carry_keeps_name_above_threshold_without_generation`.
+
+    2.2.2: A probability below the threshold, shadow mode, an unavailable decision,
+    or a name that fails re-sanitization sends the row through generation and the
+    gate, and the carry event records the outcome. test: `tests/code_index/test_community_labeler.py::test_carry_below_threshold_or_shadow_regenerates`.
+
+    2.2.3: `ai.decisions.community_label_carry` defaults to mode `off` with `min_probability`
+    0.5. test: `tests/config/test_decisions_config.py::test_decisions_config_invariants`.
+
+    2.2.4: With the gate `off` and carry in enforce, the carry check still keeps or
+    regenerates stale names, and the gate sends no request. test: `tests/code_index/test_community_labeler.py::test_carry_runs_with_gate_off`.'
+  labels:
+  - covers:community-label-decisions:2.2:2.2.1
+  - covers:community-label-decisions:2.2:2.2.2
+  - covers:community-label-decisions:2.2:2.2.3
+  - covers:community-label-decisions:2.2:2.2.4
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Score sufficiency check for deterministic names
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '2.2'
+  validation_criteria: '2.3.1: In enforce, a deterministic name whose Score position
+    is at or above `min_score` is written with the response model and signature, and
+    generation is skipped. test: `tests/code_index/test_community_labeler.py::test_sufficient_deterministic_label_skips_generation`.
+
+    2.3.2: A position below the threshold, shadow mode, or an unavailable decision
+    sends the row to generation, and the sufficiency event records the outcome and
+    position. test: `tests/code_index/test_community_labeler.py::test_insufficient_or_shadow_score_generates`.
+
+    2.3.3: `ai.decisions.community_label_sufficiency` defaults to mode `off` with
+    `min_score` 0.5 and rejects values outside [0,1]. test: `tests/config/test_decisions_config.py::test_score_consumer_bounds_min_score`.
+
+    2.3.4: Sufficiency in enforce runs with the gate and carry `off`, and with all
+    three stages `off` a batch sends no HTTP request. test: `tests/code_index/test_community_labeler.py::test_sufficiency_runs_alone_and_all_off_sends_nothing`.'
+  labels:
+  - covers:community-label-decisions:2.3:2.3.1
+  - covers:community-label-decisions:2.3:2.3.2
+  - covers:community-label-decisions:2.3:2.3.3
+  - covers:community-label-decisions:2.3:2.3.4
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Community-label decision docs
+  category: docs
+  task_type: chore
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `docs/guides/llm-features.md` documents `code_index.community_label`
+    and the decisions gate, with the carry and sufficiency checks, their keys, defaults
+    and events. behavior: "community_label" in `docs/guides/llm-features.md`.'
+  labels:
+  - covers:community-label-decisions:2.4:2.4.1
+  tdd: false
+  source_section: '2.4'
+  assigned_agent: tech-writer
+- title: Live capture script
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '3.1.1: One run writes a dated capture section with identity,
+    a result or finding for each of Choice, Noul, Score and Box, the token ratio,
+    both limit probes, the alias check and usage. test: `tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe`.
+
+    3.1.2: The resolved key and image bytes never appear in the written section, and
+    the live config is never read. test: `tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image`.'
+  labels:
+  - covers:community-label-decisions:3.1:3.1.1
+  - covers:community-label-decisions:3.1:3.1.2
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Live captures per wire
+  category: docs
+  task_type: chore
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: The OpenRouter capture records identity, all four shapes,
+    both probes, the alias check, `canonical_slug`, the privacy flags and the item-4
+    checklist. behavior: "canonical_slug" in `docs/evidence/decisions/openrouter-decisions-live.md`.
+
+    3.2.2: The LM Studio capture records the model id, the card identity result, all
+    four shapes, both probes and the item-4 checklist. behavior: "item 4" in `docs/evidence/decisions/systemone-live.md`.
+
+    3.2.3: The wire note''s unverified table reflects both captures. behavior: "captured"
+    in `docs/evidence/decisions/wire-contracts.md`.'
+  labels:
+  - covers:community-label-decisions:3.2:3.2.1
+  - covers:community-label-decisions:3.2:3.2.2
+  - covers:community-label-decisions:3.2:3.2.3
+  tdd: false
+  source_section: '3.2'
+  assigned_agent: tech-writer
+- title: Label-quality study tooling
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  - '3.1'
+  validation_criteria: '3.3.1: `prepare` draws 15 size-stratified communities per
+    corpus with seed 22604 and refuses with counts when either corpus has fewer than
+    15 eligible. test: `tests/scripts/test_community_label_study.py::test_prepare_stratifies_and_refuses_short_corpus`.
+
+    3.3.2: G and J share memoized generations, J and carry run in effective enforce,
+    and a J or carry batch that ran as shadow aborts the run; no live row changes.
+    test: `tests/scripts/test_community_label_study.py::test_arms_share_generations_and_abort_on_shadow`.
+
+    3.3.3: The sheet is blinded and deduplicated, and the key file is separate. Carry
+    reuses the 30 main communities, with the seeded mild and heavy perturbations at
+    odd and even positions. Each carry copy contributes one item, the pre-perturbation
+    G name against the post-perturbation members, for both kept and regenerated outcomes.
+    test: `tests/scripts/test_community_label_study.py::test_sheet_is_blinded_and_key_is_separate`.
+
+    3.3.4: `score` computes every bar and the decision cost from the sheet, key and
+    capture, fails a bar on any undefined metric (zero denominators, empty admitted
+    or rejected sets), and rejects an incomplete sheet. test: `tests/scripts/test_community_label_study.py::test_score_computes_bars_and_rejects_incomplete_sheet`.
+
+    3.3.5: With an alias request model and a dated response model, the J arm runs
+    in effective enforce, and a backend identity change mid-run aborts it. test: `tests/scripts/test_community_label_study.py::test_j_arm_enforces_with_alias_request_and_aborts_on_backend_change`.
+
+    3.3.6: `score` emits the complete ship configuration for each branch: gate `off`
+    (rule 1), gate `enforce` (rule 2), and D5 with `enabled: false` and every consumer
+    `off`, including under `--no-decisions`. test: `tests/scripts/test_community_label_study.py::test_ship_configuration_follows_each_branch`.'
+  labels:
+  - covers:community-label-decisions:3.3:3.3.1
+  - covers:community-label-decisions:3.3:3.3.2
+  - covers:community-label-decisions:3.3:3.3.3
+  - covers:community-label-decisions:3.3:3.3.4
+  - covers:community-label-decisions:3.3:3.3.5
+  - covers:community-label-decisions:3.3:3.3.6
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Label-quality report and ship decision
+  category: docs
+  task_type: chore
+  depends_on:
+  - '3.2'
+  - '3.3'
+  validation_criteria: '3.4.1: The Q1.6 label-quality study ran with arms D, G, and
+    J, or with D and G alone under `prepare --no-decisions` when 3.2''s OpenRouter
+    checklist has an unmet item, and `label-quality.md` records the metrics against
+    every bar, the carry and sufficiency bars, and the ship decision the live config
+    follows. behavior: "ship" in `docs/evidence/community-labels-2026-09/label-quality.md`.'
+  labels:
+  - covers:community-label-decisions:3.4:3.4.1
+  tdd: false
+  source_section: '3.4'
+  assigned_agent: tech-writer
+- title: Box consumer evidence
+  category: docs
+  task_type: chore
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.5.1: The wire note names a product consumer and its live-path
+    test for each of Choice, Noul, Score and Box, including #24248''s Box round trip
+    and commit. behavior: "test_evaluate_round_trips_every_decision_shape" in `docs/evidence/decisions/wire-contracts.md`.'
+  labels:
+  - covers:community-label-decisions:3.5:3.5.1
+  tdd: false
+  source_section: '3.5'
+  assigned_agent: tech-writer
+```
