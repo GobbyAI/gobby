@@ -83,6 +83,9 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
+    "agents/srt_monitor.py::_node_executable": (
+        "own process group to kill launcher descendants after the bounded Node identity probe"
+    ),
     "agents/srt_monitor.py::_start_monitor": (
         "private readiness pass_fds and own session to survive daemon restarts; "
         "once per immutable runner identity, not per execution or recovery"
