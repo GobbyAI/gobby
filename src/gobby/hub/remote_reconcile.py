@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from gobby.agents.recovery_state import is_recovery_protected
-from gobby.config.terminals import TerminalConfig
 from gobby.hub import node_reports
 from gobby.hub.node_client import NodeCommandError, node_command_client
 from gobby.hub.node_commands import ReportAgent, ReportBody, ReportExit, StoppedResult
@@ -35,12 +34,14 @@ class RemoteRunReconciler:
         cleanup_agent: Any,
         dead_reason: Any,
         run_db: Any,
+        in_doubt_seconds: float,
     ) -> None:
         self._run_manager = run_manager
         self._terminals = terminals
         self._cleanup_agent = cleanup_agent
         self._dead_reason = dead_reason
         self._run_db = run_db
+        self._in_doubt_seconds = in_doubt_seconds
         # Per machine: terminal rows absent from the last report, and runs swept as orphaned.
         self._absent: dict[str, set[_Key]] = {}
         self._swept: dict[str, set[str]] = {}
@@ -63,6 +64,7 @@ class RemoteRunReconciler:
 
         rows = await self._run_db(self._terminals.list_reconcilable_by_machine, machine_id)
         rows = [row for row in rows if row.agent_run_id is not None]
+        rows = await self._unprotected(rows)
         host_epoch = str(report.host_epoch)
         accepted = set(report.accepted)
         by_key: dict[_Key, Terminal] = {(row.agent_run_id, row.id): row for row in rows}
@@ -92,6 +94,14 @@ class RemoteRunReconciler:
         cleaned += await self._sweep_runs(machine_id)
         return cleaned
 
+    async def _unprotected(self, rows: list[Terminal]) -> list[Terminal]:
+        kept: list[Terminal] = []
+        for row in rows:
+            run = await self._run_db(self._run_manager.get, row.agent_run_id)
+            if run is None or not is_recovery_protected(run):
+                kept.append(row)
+        return kept
+
     async def _settle_exit(self, machine_id: str, report: ReportExit) -> int:
         # A launched exit waits for a second report like an absent row; dead_reason decides.
         if report.launched:
@@ -105,6 +115,8 @@ class RemoteRunReconciler:
         ):
             return 0
         run = await self._run_db(self._run_manager.get, report.run_id)
+        if run is not None and is_recovery_protected(run):
+            return 0
         settle = self._terminals.fail_pending if row.state == "pending" else None
         await self._run_db(settle or self._terminals.mark_exited, row.id)
         if run is None:
@@ -134,7 +146,18 @@ class RemoteRunReconciler:
                 return 0
             return await self._fence_spawn(machine_id, row)
         await self._run_db(self._terminals.mark_exited, row.id)
-        run = await self._run_db(self._run_manager.get, row.agent_run_id)
+        return await self._settle_dead(row.agent_run_id)
+
+    async def _fence_spawn(self, machine_id: str, row: Terminal) -> int:
+        if not await self._spawn_stopped(machine_id, row):
+            return 0
+        await self._run_db(self._terminals.fail_pending, row.id)
+        return await self._settle_dead(row.agent_run_id)
+
+    async def _settle_dead(self, run_id: str | None) -> int:
+        if run_id is None:
+            return 0
+        run = await self._run_db(self._run_manager.get, run_id)
         if run is None or run.status in TERMINAL_AGENT_RUN_STATUSES:
             return 0
         reason = await self._dead_reason(run)
@@ -142,17 +165,6 @@ class RemoteRunReconciler:
             return 0
         await self._cleanup_agent(run, terminal_payload=reason)
         return 1
-
-    async def _fence_spawn(self, machine_id: str, row: Terminal) -> int:
-        if not await self._spawn_stopped(machine_id, row):
-            return 0
-        await self._run_db(self._terminals.fail_pending, row.id)
-        run = await self._run_db(self._run_manager.get, row.agent_run_id)
-        if run is None:
-            return 0
-        return await self._cleanup_if_active(
-            run, f"remote spawn on {machine_id} did not start before its deadline"
-        )
 
     async def _spawn_stopped(self, machine_id: str, row: Terminal) -> bool:
         payload = {
@@ -216,7 +228,6 @@ class RemoteRunReconciler:
         await self._cleanup_agent(run, terminal_payload=payload)
         return 1
 
-    @staticmethod
-    def _in_doubt(row: Terminal) -> bool:
-        deadline = timedelta(seconds=TerminalConfig().spawn_in_doubt_seconds)
+    def _in_doubt(self, row: Terminal) -> bool:
+        deadline = timedelta(seconds=self._in_doubt_seconds)
         return row.attempt_started_at < datetime.now(UTC) - deadline

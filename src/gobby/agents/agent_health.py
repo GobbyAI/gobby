@@ -14,6 +14,7 @@ from gobby.agents.kill import inspect_agent_process_identity, pid_matches_agent_
 from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.run_completion import bound_task_is_closed
 from gobby.agents.stall_classifier import StallStatus
+from gobby.config.terminals import TerminalConfig
 from gobby.hooks.events import HookEventType
 from gobby.hub.remote_reconcile import RemoteRunReconciler
 from gobby.sessions.turn_lifecycle import TurnLifecycleState
@@ -67,8 +68,10 @@ class AgentHealthMonitor:
         checkpoint_agent_work: Callable[[AgentRun], Awaitable[None]] | None = None,
         terminal_services: Any | None = None,
         get_session_coordinator: Callable[[], SessionCoordinator | None] | None = None,
+        terminal_config: TerminalConfig | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
+        self._terminal_config = terminal_config or TerminalConfig()
         self._db = db
         self._get_session_manager = get_session_manager
         self._get_session_coordinator = get_session_coordinator
@@ -86,6 +89,7 @@ class AgentHealthMonitor:
             cleanup_agent=cleanup_handler.cleanup_agent,
             dead_reason=self._dead_terminal_reason,
             run_db=self._run_db,
+            in_doubt_seconds=self._terminal_config.spawn_in_doubt_seconds,
         )
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
