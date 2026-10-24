@@ -70,7 +70,7 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
     steps = (
         "1. Finish the task",
         "2. Run focused validation after the final edit",
-        "3. Commit only task-owned paths",
+        "3. Stage only task paths and commit",
         "4. Call `close_task(",
         "5. Repair every failed gate",
         "6. After closing",

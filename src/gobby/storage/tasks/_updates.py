@@ -87,11 +87,11 @@ def update_task(
     closed_at: MaybeUnset[str | None] = UNSET,
     closed_in_session_id: MaybeUnset[str | None] = UNSET,
     closed_commit_sha: MaybeUnset[str | None] = UNSET,
-    validation_status: MaybeUnset[str | None] = UNSET,
-    validation_feedback: MaybeUnset[str | None] = UNSET,
+    review_status: MaybeUnset[str | None] = UNSET,
+    review_feedback: MaybeUnset[str | None] = UNSET,
     category: MaybeUnset[str | None] = UNSET,
     validation_criteria: MaybeUnset[str | None] = UNSET,
-    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    review_fail_count: MaybeUnset[int | None] = UNSET,
     merge_in_progress: MaybeUnset[bool] = UNSET,
     blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
@@ -102,6 +102,7 @@ def update_task(
     additional_skills: MaybeUnset[list[str] | None] = UNSET,
     start_date: MaybeUnset[str | None] = UNSET,
     due_date: MaybeUnset[str | None] = UNSET,
+    review_epoch: MaybeUnset[int] = UNSET,
     _require_escalated: bool = False,
 ) -> bool:
     """Internal storage primitive for task field updates.
@@ -148,21 +149,24 @@ def update_task(
     if parent_task_id is not UNSET:
         updates.append("parent_task_id = %s")
         params.append(parent_task_id)
-    if validation_status is not UNSET:
-        updates.append("validation_status = %s")
-        params.append(validation_status)
-    if validation_feedback is not UNSET:
-        updates.append("validation_feedback = %s")
-        params.append(validation_feedback)
+    if review_status is not UNSET:
+        updates.append("review_status = %s")
+        params.append(review_status)
+    if review_feedback is not UNSET:
+        updates.append("review_feedback = %s")
+        params.append(review_feedback)
     if category is not UNSET:
         updates.append("category = %s")
         params.append(validate_category(cast(str | None, category)))
     if validation_criteria is not UNSET:
         updates.append("validation_criteria = %s")
         params.append(validation_criteria)
-    if validation_fail_count is not UNSET:
-        updates.append("validation_fail_count = %s")
-        params.append(validation_fail_count)
+    if review_fail_count is not UNSET:
+        updates.append("review_fail_count = %s")
+        params.append(review_fail_count)
+    if review_epoch is not UNSET:
+        updates.append("review_epoch = %s")
+        params.append(review_epoch)
     if merge_in_progress is not UNSET:
         if merge_in_progress is None:
             raise ValueError("merge_in_progress cannot be None")
@@ -282,11 +286,11 @@ def update_task_metadata(
     closed_at: MaybeUnset[str | None] = UNSET,
     closed_in_session_id: MaybeUnset[str | None] = UNSET,
     closed_commit_sha: MaybeUnset[str | None] = UNSET,
-    validation_status: MaybeUnset[str | None] = UNSET,
-    validation_feedback: MaybeUnset[str | None] = UNSET,
+    review_status: MaybeUnset[str | None] = UNSET,
+    review_feedback: MaybeUnset[str | None] = UNSET,
     category: MaybeUnset[str | None] = UNSET,
     validation_criteria: MaybeUnset[str | None] = UNSET,
-    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    review_fail_count: MaybeUnset[int | None] = UNSET,
     merge_in_progress: MaybeUnset[bool] = UNSET,
     blocked_by_merge: MaybeUnset[bool] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
@@ -349,11 +353,11 @@ def update_task_metadata(
         closed_at=closed_at,
         closed_in_session_id=closed_in_session_id,
         closed_commit_sha=closed_commit_sha,
-        validation_status=validation_status,
-        validation_feedback=validation_feedback,
+        review_status=review_status,
+        review_feedback=review_feedback,
         category=category,
         validation_criteria=validation_criteria,
-        validation_fail_count=validation_fail_count,
+        review_fail_count=review_fail_count,
         merge_in_progress=merge_in_progress,
         blocked_by_merge=blocked_by_merge,
         escalated_at=escalated_at,

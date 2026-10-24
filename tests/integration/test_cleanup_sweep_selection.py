@@ -38,7 +38,9 @@ def test_cleanup_requires_closed_linked_task(
         validation_criteria="Only closed unclaimed task isolation is eligible",
     )
     if task_state == "closed":
-        temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+        temp_db.execute(
+            "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+        )
     manager = LocalWorktreeManager(temp_db) if kind == "worktree" else LocalCloneManager(temp_db)
     workspace = manager.create(project_id, "expired", f"/tmp/{kind}/expired", task_id=task.id)
     manager.update(workspace.id, status="merged", cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))
@@ -67,7 +69,9 @@ def test_cleanup_lock_rechecks_claims_and_blocks_reopen_until_release(
     task = LocalTaskManager(temp_db).create_task(
         project_id, "Closed cleanup task", validation_criteria="Claims cannot race cleanup"
     )
-    temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    temp_db.execute(
+        "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+    )
     manager = LocalWorktreeManager(temp_db) if kind == "worktree" else LocalCloneManager(temp_db)
     workspace = manager.create(project_id, "expired", f"/tmp/{kind}/expired", task_id=task.id)
     manager.update(workspace.id, status="merged", cleanup_after=datetime(2020, 1, 1, tzinfo=UTC))
@@ -96,7 +100,9 @@ def test_cleanup_lock_rechecks_claims_and_blocks_reopen_until_release(
 
     with manager.lock_for_cleanup(workspace.id) as locked:
         assert locked is None
-    temp_db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    temp_db.execute(
+        "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+    )
     assert manager.claim(workspace.id, session.id) is not None
     with manager.lock_for_cleanup(workspace.id) as locked:
         assert locked is None

@@ -25,6 +25,7 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._queries import task_read_snapshot
+from gobby.tasks.state_semantics import TaskState
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -222,6 +223,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         project_id: str | None = Query(None, description="Filter by project ID"),
         claimed: bool | None = Query(None, description="Filter by whether the task is claimed"),
         closed: bool | None = Query(None, description="Filter by canonical closed state"),
+        state: TaskState | None = Query(None, description="Filter by canonical task state"),
         priority: int | None = Query(None, description="Filter by priority"),
         task_type: str | None = Query(None, description="Filter by task type"),
         label: str | None = Query(None, description="Filter by label"),
@@ -247,6 +249,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
                 "task_type": task_type,
                 "claimed": claimed,
                 "closed": closed,
+                "state": state,
                 "label": label,
                 "parent_task_id": parent_task_id,
                 "title_like": search,

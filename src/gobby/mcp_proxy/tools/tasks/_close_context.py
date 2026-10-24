@@ -1,17 +1,18 @@
-"""Task edit ownership shared by close evaluation and finalization."""
+"""Task edit ownership and step records shared by close evaluation and finalization."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.step_records import StepRequirements, task_step_requirements
 from gobby.workflows.commit_guard import (
     DirtyEditOwnershipInspectionError,
     foreign_owned_dirty_paths_async,
@@ -36,6 +37,14 @@ class CloseAttributionLookupError(Exception):
 class CloseAttributionSnapshot:
     clean_checkouts: dict[str, frozenset[str]]
     complete: bool
+
+
+async def step_requirements(
+    ctx: RegistryContext, task: Task, commit_shas: Sequence[str]
+) -> StepRequirements:
+    """Judge step records against the close's prospective commits, as final close will."""
+    prospective = replace(task, commits=list(commit_shas))
+    return await asyncio.to_thread(task_step_requirements, ctx.task_manager.db, prospective)
 
 
 def children(ctx: RegistryContext, task_id: str) -> list[Task]:

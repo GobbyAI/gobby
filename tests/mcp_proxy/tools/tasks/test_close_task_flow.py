@@ -17,10 +17,11 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_close as _commit_close
-from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
+from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CLOSE_GATE_ORDER, CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
 from gobby.storage.tasks import Task, TaskHasOpenChildrenError
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
+from gobby.tasks.step_records import StepRequirements
 from gobby.workflows.state_manager import SessionVariableManager
 
 
@@ -36,7 +37,7 @@ def _task(*, criteria: str | None = "Focused tests pass.") -> Task:
         updated_at=datetime(2026, 7, 27, 12, tzinfo=UTC),
         claimed_by_session_id="00000000-0000-4000-8000-000000000301",
         validation_criteria=criteria,
-        validation_fail_count=0,
+        review_fail_count=0,
     )
 
 
@@ -67,17 +68,17 @@ def _ready_evaluation(task: Task) -> CloseEvaluation:
         checklist=CloseChecklist(
             tuple(
                 CloseGateResult(index, name, "passed", "Passed.")
-                for index, name in enumerate(
-                    (
-                        "children_closed",
-                        "linked_commits",
-                        "uncommitted_task_edits",
-                        "integration_ancestry",
-                    ),
-                    start=1,
-                )
+                for index, name in CLOSE_GATE_ORDER
             )
         ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_step_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These fakes have no project checkout; step-record policy has its own tests."""
+    monkeypatch.setattr(
+        lifecycle, "step_requirements", AsyncMock(return_value=StepRequirements((), ()))
     )
 
 
@@ -114,7 +115,7 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
     evaluation = await lifecycle._evaluate_close(
         ctx,
         task_id=task.id,
-        reason="obsolete",
+        reason="moot",
         commit_sha=None,
         project_path="/repo",
         closing_session_id="session",
@@ -155,7 +156,7 @@ async def test_finalization_rechecks_state_before_writing(
         fresh.already_closed = True
     monkeypatch.setattr(lifecycle, "_evaluate_close", AsyncMock(return_value=fresh))
     result = await _commit_close(
-        ctx, evaluation, reason="completed", changes_summary="Done", commit_sha=None
+        ctx, evaluation, reason="done", changes_summary="Done", commit_sha=None
     )
     manager = cast(MagicMock, ctx.task_manager)
     manager.close_task.assert_not_called()
@@ -182,7 +183,7 @@ async def test_a_child_created_during_the_close_window_asks_for_a_retry(
     cleanup = MagicMock()
     monkeypatch.setattr(close_finalization, "_cleanup_closed_claim", cleanup)
     result = await _commit_close(
-        ctx, evaluation, reason="completed", changes_summary="Done", commit_sha=None
+        ctx, evaluation, reason="done", changes_summary="Done", commit_sha=None
     )
     assert result["error"] == "close_state_changed"
     assert "Late child" in result["message"]
@@ -235,7 +236,7 @@ async def test_finalization_storage_and_cleanup_stay_off_the_event_loop(
     result = await _commit_close(
         ctx,
         evaluation,
-        reason="completed",
+        reason="done",
         changes_summary="Done",
         commit_sha="abc1234" if link_commit else None,
     )
@@ -339,7 +340,7 @@ async def test_closing_schedules_the_parent_and_ancestor_broadcasts() -> None:
                 ctx,
                 _ready_evaluation(task),
                 changes_summary="Implemented the task changes.",
-                reason="completed",
+                reason="done",
                 commit_sha=None,
             )
     finally:
@@ -394,7 +395,7 @@ def _memory_review_close_context(
             task,
             claimed_by_session_id=None,
             closed_at=datetime(2026, 9, 13, tzinfo=UTC),
-            closed_reason="completed",
+            closed_reason="done",
             commits=["abc1234"],
         )
         manager.get_task.return_value = closed
@@ -418,7 +419,7 @@ async def test_commit_close_queues_review_on_interactive_claimer(
     result = await _commit_close(
         ctx,
         evaluation,
-        reason="completed",
+        reason="done",
         changes_summary="Fixed routing.",
         commit_sha="abc1234",
     )
@@ -442,7 +443,7 @@ async def test_commit_close_queues_review_on_nearest_interactive_ancestor(
     result = await _commit_close(
         ctx,
         evaluation,
-        reason="completed",
+        reason="done",
         changes_summary="Fixed routing.",
         commit_sha="abc1234",
     )
@@ -464,7 +465,7 @@ async def test_memory_review_queue_failure_preserves_committed_close(
     result = await _commit_close(
         ctx,
         evaluation,
-        reason="completed",
+        reason="done",
         changes_summary="Fixed routing.",
         commit_sha="abc1234",
     )
@@ -489,7 +490,7 @@ async def test_memory_review_skips_lineage_without_interactive_session(
     result = await _commit_close(
         ctx,
         evaluation,
-        reason="completed",
+        reason="done",
         changes_summary="Fixed routing.",
         commit_sha="abc1234",
     )

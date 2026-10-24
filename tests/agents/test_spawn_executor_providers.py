@@ -20,7 +20,8 @@ from gobby.agents.spawn_executor_providers import (
     prepare_grok_spawn,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError, render_srt_settings
+from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
+from gobby.agents.srt_settings import render_srt_settings
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
     CheckoutSentinelRejectedError,

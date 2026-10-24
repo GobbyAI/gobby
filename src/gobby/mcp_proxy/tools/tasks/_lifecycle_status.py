@@ -6,6 +6,7 @@ Handles reopen, escalate, and de_escalate tool registrations.
 import logging
 from typing import Any
 
+from gobby.agents.team_communications import triage_or_operator
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -18,6 +19,7 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.tasks.state_semantics import (
     get_claimed_session_id,
     projected_task_state,
@@ -304,6 +306,19 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
                 projected_state,
             )
 
+        if task.review_fail_count >= REVIEW_REJECTION_LIMIT:
+            # Resetting an exhausted review starts a new epoch: an audited Triage or operator act.
+            try:
+                caller = ctx.resolve_session_id(session_id)
+            except ValueError:
+                caller = None
+            if caller is None or not triage_or_operator(ctx.task_manager.db, caller):
+                return task_error(
+                    f"Task {task_id} exhausted its review epoch; only Triage or the operator "
+                    "resets it.",
+                    TaskToolErrorCode.REVIEW_RESET_FORBIDDEN,
+                )
+
         try:
             updated = ctx.task_manager.de_escalate_task(
                 resolved_id,
@@ -341,7 +356,10 @@ def register_de_escalate_task(registry: InternalToolRegistry, ctx: RegistryConte
 
     registry.register(
         name="de_escalate_task",
-        description="Return an escalated task to ready after human intervention resolves the issue.",
+        description=(
+            "Return an escalated task to ready after human intervention resolves the issue. "
+            "Only Triage or the operator resets a task whose review epoch is exhausted."
+        ),
         input_schema={
             "type": "object",
             "properties": {

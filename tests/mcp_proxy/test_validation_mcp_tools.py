@@ -32,7 +32,7 @@ def _task_like(
     is_escalated: bool = False,
     escalated_at: str | None = None,
     escalation_reason: str | None = None,
-    validation_fail_count: int = 0,
+    review_fail_count: int = 0,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         id=task_id,
@@ -51,7 +51,7 @@ def _task_like(
         escalated_at=escalated_at,
         escalation_reason=escalation_reason,
         is_escalated=is_escalated,
-        validation_fail_count=validation_fail_count,
+        review_fail_count=review_fail_count,
         seq_num=None,
     )
 
@@ -73,7 +73,7 @@ class Task(SimpleNamespace):
         kwargs.setdefault("delegated_by_session_id", None)
         kwargs.setdefault("escalated_at", None)
         kwargs.setdefault("escalation_reason", None)
-        kwargs.setdefault("validation_fail_count", 0)
+        kwargs.setdefault("review_fail_count", 0)
         kwargs.setdefault("seq_num", None)
         super().__init__(**kwargs)
 

@@ -479,7 +479,7 @@ Target: `docs/other.md::*` — scope-reason: rewrites the page
                 id="other-owner",
                 labels=[other_label],
                 closed_at="2026-10-07T03:00:00+00:00" if late_owner_closed else None,
-                closed_reason="completed" if late_owner_closed else None,
+                closed_reason="done" if late_owner_closed else None,
                 commits=[],
             ),
         ]
@@ -511,7 +511,7 @@ def test_validate_helper_pages_all_agent_completion_owners(
         task_record(
             id="late-owner",
             closed_at="2026-10-07T03:00:00+00:00" if late_owner_closed else None,
-            closed_reason="duplicate" if late_owner_closed else None,
+            closed_reason="superseded" if late_owner_closed else None,
             commits=[],
         )
     )

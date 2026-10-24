@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
@@ -21,10 +20,6 @@ from gobby.workflows.engine.seat_messages import (
 pytestmark = pytest.mark.unit
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
-LANDED_CANONICAL = (
-    "SHA BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
-    "PROJECT_SYNC_REQUIRED PROVENANCE RETEST TASK_TITLE NOTE"
-)
 
 
 def _parse(text: str) -> dict[str, str] | None:
@@ -43,14 +38,6 @@ def _parse(text: str) -> dict[str, str] | None:
         f"EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA.upper()}",
         f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned",
         f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} VERDICT=BOUNCE TASK_TITLE=Seat NOTE=HIGH",
-        (
-            f"EVENT=LANDED TASK=#7 SHA={SHA} TASK_TITLE=Seat proofs BRANCH=b RECEIPT=r "
-            "MODE=merge LANDED_TIP=t ACTIVATION=none PROJECT_SYNC_REQUIRED=false "
-            "PROVENANCE=p RETEST=PASS NOTE=landed"
-        ),
-        f"EVENT=LANDED TASK=#7 SHA={SHA} RECEIPT=r TASK_TITLE=Seat BRANCH=b NOTE=x",
-        f"EVENT=ALREADY_LANDED TASK=#7 SHA={SHA} TASK_TITLE=Seat RECEIPT=r LANDED_BY_SESSION_ID=s NOTE=",
-        f"EVENT=REVIEW_COMPLETE TASK=#7 SHA={SHA} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=",
     ],
 )
 def test_consumed_well_formed_envelopes_parse(line: str) -> None:
@@ -68,15 +55,6 @@ def test_candidate_sha_is_normalized_to_lowercase() -> None:
     assert fields["COMMIT"] == SHA
 
 
-def test_landed_retest_and_note_are_read() -> None:
-    fields = _parse(f"EVENT=LANDED TASK=#7 SHA={SHA} RETEST=PASS NOTE=landed twice")
-
-    assert fields is not None
-    assert fields["RETEST"] == "PASS"
-    assert fields["SHA"] == SHA
-    assert fields["NOTE"] == "landed twice"
-
-
 def test_candidate_run_with_whitespace_names_run() -> None:
     with pytest.raises(CandidateMessageError) as caught:
         _parse(f"EVENT=CANDIDATE TASK=#7 RUN=green pass WT=tree COMMIT={SHA}")
@@ -84,15 +62,6 @@ def test_candidate_run_with_whitespace_names_run() -> None:
     assert caught.value.field == "RUN"
     assert caught.value.canonical == "TASK_TITLE RUN WT COMMIT NOTE"
     assert "TASK_TITLE RUN WT COMMIT NOTE" in str(caught.value)
-
-
-def test_landed_with_title_before_sha_names_sha() -> None:
-    with pytest.raises(CandidateMessageError) as caught:
-        _parse(f"EVENT=LANDED TASK=#7 TASK_TITLE=Seat proofs SHA={SHA} RECEIPT=r NOTE=x")
-
-    assert caught.value.field == "SHA"
-    assert caught.value.canonical == LANDED_CANONICAL
-    assert LANDED_CANONICAL in str(caught.value)
 
 
 @pytest.mark.parametrize(
@@ -103,14 +72,11 @@ def test_landed_with_title_before_sha_names_sha() -> None:
         (f"EVENT=CANDIDATE TASK=#7 WT=tree COMMIT={SHA}", "RUN"),
         (f"EVENT=CANDIDATE RUN=run WT=tree COMMIT={SHA}", "TASK"),
         (f"EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA} TASK=#8", "TASK"),
-        ("EVENT=LANDED TASK=#7 RECEIPT=r NOTE=x", "SHA"),
-        (f"EVENT=LANDED TASK=#7 SHA={SHA} BOGUS=1 NOTE=x", "BOGUS"),
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} TASK_TITLE=t VERDICT=BOUNCE", "VERDICT"),
         (f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} VERDICT=BOUNCE SHA={SHA}", "SHA"),
-        (f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA}ab RETEST=PASS", "SHA"),
-        ("EVENT=PROOF_RESULT TASK=#7 RETEST=PASS NOTE=green", "SHA"),
         ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA"),
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it now", "SHA"),
         (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
     ],
 )
@@ -146,32 +112,27 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
         f"EVENT=LAND_PENDING TASK=#7 SHA={SHA} TASK_TITLE=t NOTE=receipt_pending",
         f"Prose EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA}",
         "plain message with no protocol line",
-        # Retired park/resume grammar is not validated at send time.
+        # Park and resume lines are checked by candidate_event, not this grammar.
         f"EVENT=CANDIDATE_RESUMED TASK=#7 SHA={SHA} TASK_TITLE=t extra words",
+        # Retired review-only completion is not consumed.
+        f"EVENT=REVIEW_COMPLETE TASK=#7 SHA={SHA} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=",
+        # Retired landing reports are not consumed.
+        f"EVENT=LANDED TASK=#7 TASK_TITLE=Seat proofs SHA={SHA} RECEIPT=r NOTE=x",
+        f"EVENT=ALREADY_LANDED TASK=#7 SHA={SHA} RECEIPT=r LANDED_BY_SESSION_ID=s NOTE=",
+        # A retired proof result rides a resent CANDIDATE's NOTE instead.
+        f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA}ab RETEST=PASS NOTE=green",
     ],
 )
 def test_lines_without_a_consumed_event_are_unaffected(line: str) -> None:
     assert _parse(line) is None
 
 
-@pytest.mark.parametrize(
-    "line",
-    [
-        f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=prove it now",
-        f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA} RETEST=PASS NOTE=green",
-    ],
-)
-def test_well_formed_proof_envelopes_parse(line: str) -> None:
-    fields = _parse(line)
+def test_well_formed_proof_request_parses() -> None:
+    fields = _parse(f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=prove it now")
 
     assert fields is not None
     assert fields["SHA"] == SHA
     assert fields["TASK"] == "#7"
-
-
-TEMPLATE = Path(__file__).resolve().parents[2] / (
-    "src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md"
-)
 
 
 @dataclass
@@ -197,59 +158,6 @@ class _Tasks:
 
     def get_task(self, task_id: str) -> str:
         return task_id
-
-
-def _landing_templates() -> dict[str, str]:
-    text = TEMPLATE.read_text(encoding="utf-8")
-    lines = re.findall(r"`(EVENT=(?:LAND_PENDING|ALREADY_LANDED|LANDED) [^`]*)`", text)
-    return {line.split(" ", 1)[0].removeprefix("EVENT="): line for line in lines}
-
-
-def _filled(line: str) -> str:
-    """Give each empty template value a sample, keeping the template's field order."""
-    tokens = []
-    for token in line.split(" "):
-        key, separator, value = token.partition("=")
-        if not separator:
-            tokens.append(token)
-            continue
-        if key == "TASK":
-            value = "#7"
-        elif key == "SHA":
-            value = SHA
-        else:
-            value = value.split("|", 1)[0] or f"{key.lower()}-value"
-        tokens.append(f"{key}={value}")
-    return " ".join(tokens)
-
-
-def test_landing_templates_cover_every_landing_event() -> None:
-    assert set(_landing_templates()) == {"LAND_PENDING", "ALREADY_LANDED", "LANDED"}
-
-
-@pytest.mark.parametrize("event", ["LAND_PENDING", "ALREADY_LANDED", "LANDED"])
-def test_landing_templates_put_title_just_before_note(event: str) -> None:
-    keys = [token.partition("=")[0] for token in _landing_templates()[event].split(" ")]
-
-    assert keys[-2:] == ["TASK_TITLE", "NOTE"]
-
-
-@pytest.mark.parametrize("event", ["ALREADY_LANDED", "LANDED"])
-def test_landing_template_examples_read_every_field(
-    event: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.workflows.engine import seat_messages
-
-    filled = _filled(_landing_templates()[event])
-    monkeypatch.setattr(seat_messages, "SessionManager", _Sessions)
-    monkeypatch.setattr(seat_messages, "LocalTaskManager", _Tasks)
-
-    message = cast(InterSessionMessage, _Message(filled))
-    parsed = candidate_event(MagicMock(), message)
-
-    assert parsed is not None
-    assert {token.partition("=")[0] for token in filled.split(" ")} <= set(parsed.fields)
-    assert parsed.sha == SHA
 
 
 @pytest.mark.parametrize("prefix", ["LANE= ", "LANE=2 "])

@@ -431,7 +431,7 @@ async def test_dispatched_seat_handlers_match_resolved_assigned_task(
 
 
 @pytest.mark.parametrize("use_ref", [False, True])
-async def test_implement_already_implemented_close_reaches_checklist(
+async def test_implement_no_work_close_preview_reaches_checklist(
     seats: _Seats, tmp_path: Path, use_ref: bool
 ) -> None:
     """No candidate is needed to request a no-work close of the assigned claim."""
@@ -450,7 +450,7 @@ async def test_implement_already_implemented_close_reaches_checklist(
             "close_task",
             {
                 "task_id": seats.ref if use_ref else seats.task_id,
-                "reason": "already_implemented",
+                "reason": "moot",
                 "project_path": str(tmp_path),
                 "preview": True,
                 "response_detail": "diagnostic",
@@ -459,21 +459,17 @@ async def test_implement_already_implemented_close_reaches_checklist(
             enforce_workflow=True,
         )
 
-    # Step enforcement admits the no-work close. The checklist then accepts the
-    # canonical already_implemented disposition at linked_commits, with no commit.
+    # No-work preview reaches the mechanical checklist without launching a reviewer.
     assert result["preview"] is True
     assert result["can_close"] is True
     assert result["closed"] is False
-    gates = {gate["name"]: gate for gate in result["gates"]}
-    assert gates["linked_commits"]["status"] == "passed"
-    assert gates["linked_commits"]["details"] == {"commit_shas": []}
-    assert all(gate["status"] != "failed" for gate in result["gates"])
+    assert all(gate["passed"] for gate in result["gates"])
     assert _instance_state(seats.db, seats.former) == before
     assert LocalTaskManager(seats.db).get_task(seats.task_id).closed_at is None
 
 
 @pytest.mark.parametrize("use_ref", [False, True])
-async def test_bounced_candidate_cannot_close_as_already_implemented(
+async def test_bounced_candidate_cannot_close_as_no_work(
     seats: _Seats, tmp_path: Path, use_ref: bool
 ) -> None:
     """A bounce after a sent candidate returns to rework, not the no-work close."""
@@ -493,7 +489,7 @@ async def test_bounced_candidate_cannot_close_as_already_implemented(
             "close_task",
             {
                 "task_id": seats.ref if use_ref else seats.task_id,
-                "reason": "already_implemented",
+                "reason": "moot",
                 "project_path": str(tmp_path),
                 "preview": True,
             },
@@ -522,7 +518,7 @@ async def test_implement_no_work_close_releases_binding(
             _after_tool(
                 seats.former,
                 "close_task",
-                {"task_id": task_ref, "reason": "already_implemented"},
+                {"task_id": task_ref, "reason": "moot"},
                 {"closed": False, "error": "close_review_required"},
             ),
             seats.former,
@@ -539,7 +535,7 @@ async def test_implement_no_work_close_releases_binding(
         event = _after_tool(
             seats.former,
             "close_task",
-            {"task_id": task_ref, "reason": "already_implemented", "preview": False},
+            {"task_id": task_ref, "reason": "moot", "preview": False},
             {"closed": True},
         )
     # Feed the completion result through the real handler/transition engine.
@@ -564,12 +560,12 @@ async def test_implement_no_work_close_releases_binding(
     ("assigned", "reason"),
     [
         (True, None),
-        (True, "completed"),
-        (True, "obsolete"),
+        (True, "done"),
+        (True, "moot"),
         (False, None),
-        (False, "completed"),
-        (False, "obsolete"),
-        (False, "already_implemented"),
+        (False, "done"),
+        (False, "moot"),
+        (False, "superseded"),
     ],
 )
 async def test_implement_close_blocks_unsubmitted_work_and_other_tasks(
@@ -691,10 +687,10 @@ async def test_reclaimed_handoff_keeps_its_close_rights(seats: _Seats, has_commi
 
 
 @pytest.mark.parametrize("close_step", ["implement", "submit"])
-async def test_reclaim_before_de_escalation_keeps_the_reviewed_close(
+async def test_reclaim_before_de_escalation_keeps_close_invariants(
     seats: _Seats, tmp_path: Path, close_step: str
 ) -> None:
-    """A seat reclaiming its handed-off task still de-escalates it and reaches review (#24610)."""
+    """Reclaiming a handed-off task preserves close authority, not an evidence bypass."""
     tasks = LocalTaskManager(seats.db)
     project_id = tasks.get_task(seats.task_id).project_id
     _init_git_repo(tmp_path / "repo")
@@ -741,19 +737,8 @@ async def test_reclaim_before_de_escalation_keeps_the_reviewed_close(
     result = await call(
         "close_task", {"task_id": seats.ref, "changes_summary": "Landed and released."}
     )
-    # Step enforcement admits the released close. The deterministic checklist then stops
-    # at linked_commits: this scenario has no commit and no no-work reason.
-    assert result["error"] == "linked_commits"
-    assert result["blocking_reasons"] == [
-        {
-            "item": 2,
-            "name": "linked_commits",
-            "status": "failed",
-            "passed": False,
-            "message": "Link a commit or supply an explicit no-work close reason.",
-            "details": {"commit_shas": []},
-        }
-    ]
+    assert [gate["name"] for gate in result["blocking_reasons"]] == ["linked_commits"]
+    assert result["closed"] is False
     assert tasks.get_task(seats.task_id).validation_override_reason is None
 
 
@@ -794,51 +779,6 @@ def test_claim_step_refuses_escalation(seats: _Seats, use_ref: bool) -> None:
     assert "escalate_task' is not allowed in the 'claim' step" in str(response.reason)
 
 
-async def test_claim_step_can_wait_after_handoff_close_requires_review(seats: _Seats) -> None:
-    _seat(seats, seats.former, "claim", bound=False)
-    instances = AgentStepInstanceManager(seats.db)
-    instance = instances.get_for_session(seats.former)
-    assert instance is not None
-    instance.variables["_developer_handoff_tasks"] = [seats.task_id]
-    instances.save(instance)
-    engine = RuleEngine(seats.db)
-    reviewer_run_id = "31000000-0000-4000-8000-000000000001"
-    close_completion = _after_tool(
-        seats.former,
-        "close_task",
-        {"task_id": seats.ref},
-        {
-            "closed": False,
-            "error": "close_review_required",
-            "reviewer_run_id": reviewer_run_id,
-        },
-    )
-    assert (
-        engine._check_step_tool_enforcement(
-            replace(close_completion, event_type=HookEventType.BEFORE_TOOL), seats.former, {}
-        )
-        is None
-    )
-    await engine._process_step_after_tool(close_completion, seats.former, {})
-    assert _current_step(seats.db, seats.former) == "claim"
-    wait_event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=seats.former,
-        source=SessionSource.CLAUDE,
-        timestamp=datetime.now(UTC),
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-agents",
-                "tool_name": "wait_for_agent",
-                "arguments": {"run_id": reviewer_run_id},
-            },
-        },
-        metadata={},
-    )
-    assert engine._check_step_tool_enforcement(wait_event, seats.former, {}) is None
-
-
 @pytest.mark.parametrize("active_step", ["implement", "submit"])
 @pytest.mark.parametrize("reviewer_closes", [False, True])
 @pytest.mark.parametrize(
@@ -853,7 +793,7 @@ async def test_handoff_close_preserves_next_task_binding(
     handoff_step: str,
     use_ref: bool,
 ) -> None:
-    """Exercise real MCP gates and close storage without a live criteria reviewer."""
+    """Closing a no-work parent through real MCP gates preserves the next task binding."""
     tasks = LocalTaskManager(seats.db)
     project_id = tasks.get_task(seats.task_id).project_id
     # A structural parent uses the actual close checklist without spawning a reviewer.
@@ -867,7 +807,7 @@ async def test_handoff_close_preserves_next_task_binding(
     seats = replace(seats, task_id=handed_off.id, ref=f"#{handed_off.seq_num}")
     LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
-    tasks.close_task(child.id, reason="completed")
+    tasks.close_task(child.id, reason="done")
     _seat(seats, seats.former, handoff_step)
     proxy = _task_proxy(seats, full_hooks=True)
     engine = RuleEngine(seats.db)
@@ -948,8 +888,8 @@ async def test_handoff_close_preserves_next_task_binding(
     assert _instance_state(seats.db, seats.former) == before
     assert not tasks.get_task(seats.task_id).is_escalated
     if reviewer_closes:
-        # Automatic review closes out of band; the developer observes its verdict.
-        tasks.close_task(seats.task_id, reason="completed")
+        # Another authorized session closes out of band; the developer observes it.
+        tasks.close_task(seats.task_id, reason="moot")
         observed = await call("get_task", {"task_id": task_ref})
         assert observed["state"]["is_closed"] is True
     else:
@@ -957,11 +897,7 @@ async def test_handoff_close_preserves_next_task_binding(
         # so the canonical no-work disposition satisfies linked_commits (#23341).
         result = await call(
             "close_task",
-            {
-                "task_id": task_ref,
-                "reason": "already_implemented",
-                "changes_summary": "All children finished.",
-            },
+            {"task_id": task_ref, "reason": "moot", "changes_summary": "All children finished."},
         )
         assert result["closed"] is True, result
     assert tasks.get_task(seats.task_id).closed_at is not None
@@ -1111,10 +1047,15 @@ async def test_moved_claim_returns_former_owner_to_claim_and_binds_successor(
     assert _current_step(seats.db, seats.successor) == "route_skills"
 
 
-def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(seats: _Seats) -> None:
+def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(
+    seats: _Seats, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
     _seat(seats, seats.former, "implement")
-    LocalTaskManager(seats.db).close_task(seats.task_id, reason="completed", force=True)
+    tasks.close_task(seats.task_id, reason="done", force=True)
 
     variables = SessionVariableManager(seats.db).get_variables(seats.former)
     reconcile_claimed_tasks(variables, seats.former, LocalTaskManager(seats.db))
@@ -1277,7 +1218,7 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     history = tasks.create_task(
         project_id, "Historical binding", validation_criteria="The historical task is closed."
     )
-    tasks.close_task(history.id, reason="completed", force=True)
+    tasks.close_task(history.id, reason="done", force=True)
     active = tasks.create_task(
         project_id, "Active claimed task", validation_criteria="The active claim can be handed off."
     )
@@ -1285,7 +1226,7 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
     claim_task(seats.db, seats.task_id, seats.former)
     _seat(seats, seats.former, "implement")
     if closed_bound:
-        tasks.close_task(seats.task_id, reason="completed", force=True)
+        tasks.close_task(seats.task_id, reason="done", force=True)
     claim_task(seats.db, active.id, seats.former)
     tasks.link_commit(active.id, COMMIT)
     variables = SessionVariableManager(seats.db)
@@ -1406,9 +1347,11 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
 
 @pytest.mark.parametrize("active_state", ["missing", "foreign", "closed", "same-ref"])
 def test_unusable_or_equivalent_active_claim_keeps_binding(
-    seats: _Seats, active_state: str
+    seats: _Seats, active_state: str, tmp_path: Path
 ) -> None:
     tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
     _seat(seats, seats.former, "implement")
     variables = SessionVariableManager(seats.db)
@@ -1420,14 +1363,14 @@ def test_unusable_or_equivalent_active_claim_keeps_binding(
         instances.save(instance)
     else:
         other = tasks.create_task(
-            tasks.get_task(seats.task_id).project_id,
+            project_id,
             "Unusable target",
             validation_criteria="The unusable target leaves the binding intact.",
         )
         if active_state == "foreign":
             claim_task(seats.db, other.id, seats.successor)
         elif active_state == "closed":
-            tasks.close_task(other.id, reason="completed", force=True)
+            tasks.close_task(other.id, reason="done", force=True)
         projection = {seats.task_id: seats.ref}
         if active_state != "missing":
             projection[other.id] = f"#{other.seq_num}"

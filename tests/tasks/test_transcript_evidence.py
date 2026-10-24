@@ -3599,9 +3599,7 @@ def _chunked_transfer_transcript(tmp_path: Path, filler_runs: int) -> Path:
     return transcript
 
 
-def _derivation_args(
-    transcript: Path, tmp_path: Path
-) -> tuple[Session, datetime, Any, None, str]:
+def _derivation_args(transcript: Path, tmp_path: Path) -> tuple[Session, datetime, Any, None, str]:
     return (
         _session("claude", transcript),
         BASE_TIME,

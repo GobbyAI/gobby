@@ -328,10 +328,11 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commands pass; the daemon's bin freshness loop promotes release archives
     # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
     ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
-    # check_runbook_seats is a sync tool, so InternalToolRegistry.call runs it
-    # through asyncio.to_thread (tests/agents/test_team_launch_inputs.py
-    # test_check_runbook_seats_git_runs_off_the_event_loop).
-    ("src/gobby/agents/team_launch_inputs.py", "resolve_team_launch_inputs"),
+    # Reached only from Click commands: `gobby release batch` runs run_batch, and the
+    # stop, start, restart and cutover commands run agent_activation_refusal
+    # (test_cli_only_git_boundaries_are_reached_only_from_cli below).
+    ("src/gobby/releases/batch.py", "_git"),
+    ("src/gobby/releases/window.py", "sync_git_common_dir"),
     # Canonical shell normalization runs off the loop: HookManager and the rule
     # engine offload it, chat _fire_lifecycle and Codex approvals use
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py
@@ -371,11 +372,14 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {
-    # Sync registry tools run through InternalToolRegistry.call's worker
-    # (test_coordinator_claim_release.test_claim_release_dirty_git_runs_off_the_event_loop).
+    # Only release_task_claim and hand_off_task_claim call it. Both are sync tools, so
+    # InternalToolRegistry.call runs them through asyncio.to_thread
+    # (tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py
+    # test_release_dirty_check_runs_off_the_event_loop and tests/agents/test_team_review_loop.py
+    # test_hand_off_dirty_check_runs_off_the_event_loop).
     (
         "src/gobby/mcp_proxy/tools/tasks/_claim_release.py",
-        "register_release_task_claim.release_task_claim",
+        "_uncommitted_refusal",
         "task_dirty_paths",
     ),
     ("src/gobby/skills/loader.py", "SkillLoader.load_from_github", "clone_skill_repo"),
@@ -397,14 +401,6 @@ _ALLOWED_SYNC_FACADE_CALLERS = {
     (
         "src/gobby/workflows/task_dirty_state.py",
         "has_committable_edits",
-        "task_dirty_paths",
-    ),
-    # release_task_claim is a sync tool, so InternalToolRegistry.call runs it through
-    # asyncio.to_thread (tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py
-    # test_release_dirty_check_runs_off_the_event_loop).
-    (
-        "src/gobby/mcp_proxy/tools/tasks/_claim_release.py",
-        "register_release_task_claim.release_task_claim",
         "task_dirty_paths",
     ),
     # Daemon startup runs the refusal through asyncio.to_thread before any bundled
@@ -488,12 +484,27 @@ def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
     # test_types/cli.py calls (src/gobby/cli/test_types.py mounts it).
     assert _modules_referencing("_git_python_files") == {"src/gobby/test_types/suppressions.py"}
     assert _modules_referencing("scan_suppressions") == {"src/gobby/test_types/cli.py"}
-    # workspace_source_identity runs from cutover, or from check_binary_release
-    # given a workspace_root. Only preflight_binary_promotions supplies one; the
-    # daemon's release path (_stage_and_promote) passes None.
+    # workspace_source_identity runs from cutover, from release batch's activation
+    # choice, or from check_binary_release given a workspace_root. Only
+    # preflight_binary_promotions supplies one; the daemon's release path
+    # (_stage_and_promote) passes None.
     assert _modules_referencing("workspace_source_identity") == {
         "src/gobby/cli/cutover.py",
+        "src/gobby/cli/release.py",
         "src/gobby/install/bin_release_identity.py",
+    }
+    # batch._git runs inside run_batch, which only the `gobby release batch` command
+    # calls; sync_git_common_dir's other caller, agent_activation_refusal, runs only
+    # from the stop, start, restart and cutover commands.
+    assert _modules_referencing("run_batch") == {"src/gobby/cli/release.py"}
+    assert _modules_referencing("sync_git_common_dir") == {
+        "src/gobby/releases/batch.py",
+        "src/gobby/releases/window.py",
+    }
+    assert _modules_referencing("agent_activation_refusal") == {
+        "src/gobby/cli/cutover.py",
+        "src/gobby/cli/daemon_lifecycle.py",
+        "src/gobby/cli/daemon_start.py",
     }
     assert _modules_referencing("check_binary_release") == {
         "src/gobby/install/bin_freshness_promotion.py"

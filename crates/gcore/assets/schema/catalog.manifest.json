@@ -4349,79 +4349,79 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.agent_run_id",
+      "name": "task_close_review_history.agent_run_id",
       "definition": "uuid|uuid|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.caller_session_id",
+      "name": "task_close_review_history.caller_session_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.close_arguments",
+      "name": "task_close_review_history.close_arguments",
       "definition": "jsonb|jsonb|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.completed_at",
+      "name": "task_close_review_history.completed_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.created_at",
+      "name": "task_close_review_history.created_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "task_close_reviews.delivered_at",
+      "name": "task_close_review_history.delivered_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.diff_sha",
+      "name": "task_close_review_history.diff_sha",
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.error",
+      "name": "task_close_review_history.error",
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.evidence_fingerprint",
+      "name": "task_close_review_history.evidence_fingerprint",
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.id",
+      "name": "task_close_review_history.id",
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.launched_at",
+      "name": "task_close_review_history.launched_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.result_payload",
+      "name": "task_close_review_history.result_payload",
       "definition": "jsonb|jsonb|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.review_fingerprint",
+      "name": "task_close_review_history.review_fingerprint",
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.stable_facts",
+      "name": "task_close_review_history.stable_facts",
       "definition": "jsonb|jsonb|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.status",
+      "name": "task_close_review_history.status",
       "definition": "text|text|NO|'launching'::text|NEVER"
     },
     {
-      "name": "task_close_reviews.task_id",
+      "name": "task_close_review_history.task_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.task_ref",
+      "name": "task_close_review_history.task_ref",
       "definition": "text|text|NO||NEVER"
     },
     {
-      "name": "task_close_reviews.test_bodies_sha",
+      "name": "task_close_review_history.test_bodies_sha",
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "task_close_reviews.updated_at",
+      "name": "task_close_review_history.updated_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
@@ -4701,6 +4701,14 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "tasks.follow_up_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "tasks.hold_state",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "tasks.id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -4737,6 +4745,22 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "tasks.review_epoch",
+      "definition": "integer|int4|NO|1|NEVER"
+    },
+    {
+      "name": "tasks.review_fail_count",
+      "definition": "integer|int4|NO|0|NEVER"
+    },
+    {
+      "name": "tasks.review_feedback",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "tasks.review_status",
+      "definition": "text|text|NO|'pending'::text|NEVER"
+    },
+    {
       "name": "tasks.seq_num",
       "definition": "integer|int4|YES||NEVER"
     },
@@ -4746,7 +4770,7 @@
     },
     {
       "name": "tasks.state_bucket",
-      "definition": "text|text|NO|'ready'::text|NEVER"
+      "definition": "text|text|NO|'open'::text|NEVER"
     },
     {
       "name": "tasks.task_type",
@@ -4765,19 +4789,7 @@
       "definition": "text|text|YES||NEVER"
     },
     {
-      "name": "tasks.validation_fail_count",
-      "definition": "integer|int4|YES|0|NEVER"
-    },
-    {
-      "name": "tasks.validation_feedback",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "tasks.validation_override_reason",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "tasks.validation_status",
       "definition": "text|text|YES||NEVER"
     },
     {
@@ -6999,31 +7011,31 @@
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE"
     },
     {
-      "name": "task_close_reviews.task_close_reviews_close_arguments_check",
+      "name": "task_close_review_history.task_close_review_history_close_arguments_check",
       "definition": "CHECK (jsonb_typeof(close_arguments) = 'object'::text)"
     },
     {
-      "name": "task_close_reviews.task_close_reviews_diff_sha_valid",
-      "definition": "CHECK (diff_sha IS NULL OR diff_sha ~ '^[0-9a-f]{64}$'::text)"
-    },
-    {
-      "name": "task_close_reviews.task_close_reviews_pkey",
+      "name": "task_close_review_history.task_close_review_history_pkey",
       "definition": "PRIMARY KEY (id)"
     },
     {
-      "name": "task_close_reviews.task_close_reviews_result_payload_check",
+      "name": "task_close_review_history.task_close_review_history_result_payload_check",
       "definition": "CHECK (result_payload IS NULL OR jsonb_typeof(result_payload) = 'object'::text)"
     },
     {
-      "name": "task_close_reviews.task_close_reviews_stable_facts_object",
-      "definition": "CHECK (stable_facts IS NULL OR jsonb_typeof(stable_facts) = 'object'::text)"
-    },
-    {
-      "name": "task_close_reviews.task_close_reviews_status_check",
+      "name": "task_close_review_history.task_close_review_history_status_check",
       "definition": "CHECK (status = ANY (ARRAY['queued'::text, 'launching'::text, 'running'::text, 'finalizing'::text, 'closed'::text, 'invalid'::text, 'external_pending'::text, 'stale'::text, 'error'::text]))"
     },
     {
-      "name": "task_close_reviews.task_close_reviews_test_bodies_sha_valid",
+      "name": "task_close_review_history.task_close_reviews_diff_sha_valid",
+      "definition": "CHECK (diff_sha IS NULL OR diff_sha ~ '^[0-9a-f]{64}$'::text)"
+    },
+    {
+      "name": "task_close_review_history.task_close_reviews_stable_facts_object",
+      "definition": "CHECK (stable_facts IS NULL OR jsonb_typeof(stable_facts) = 'object'::text)"
+    },
+    {
+      "name": "task_close_review_history.task_close_reviews_test_bodies_sha_valid",
       "definition": "CHECK (test_bodies_sha IS NULL OR test_bodies_sha ~ '^[0-9a-f]{64}$'::text)"
     },
     {
@@ -7115,8 +7127,16 @@
       "definition": "FOREIGN KEY (closed_in_session_id) REFERENCES sessions(id) DEFERRABLE"
     },
     {
+      "name": "tasks.tasks_closed_reason_check",
+      "definition": "CHECK (closed_at IS NULL OR closed_reason IS NOT NULL AND (closed_reason = ANY (ARRAY['done'::text, 'moot'::text, 'superseded'::text, 'wont_do'::text])))"
+    },
+    {
       "name": "tasks.tasks_created_in_session_id_fkey",
       "definition": "FOREIGN KEY (created_in_session_id) REFERENCES sessions(id) DEFERRABLE"
+    },
+    {
+      "name": "tasks.tasks_deferred_follow_up_check",
+      "definition": "CHECK (hold_state IS DISTINCT FROM 'deferred'::text OR follow_up_at IS NOT NULL)"
     },
     {
       "name": "tasks.tasks_delegated_by_session_id_fkey",
@@ -7125,6 +7145,10 @@
     {
       "name": "tasks.tasks_delegated_to_session_id_fkey",
       "definition": "FOREIGN KEY (delegated_to_session_id) REFERENCES sessions(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "tasks.tasks_hold_state_check",
+      "definition": "CHECK (hold_state IS NULL OR (hold_state = ANY (ARRAY['needs_human'::text, 'deferred'::text])))"
     },
     {
       "name": "tasks.tasks_implementation_domain_check",
@@ -7155,12 +7179,20 @@
       "definition": "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL) NOT VALID"
     },
     {
-      "name": "tasks.tasks_state_bucket_check",
-      "definition": "CHECK (state_bucket = ANY (ARRAY['ready'::text, 'closed'::text, 'escalated'::text]))"
+      "name": "tasks.tasks_review_epoch_check",
+      "definition": "CHECK (review_epoch > 0)"
     },
     {
-      "name": "tasks.tasks_validation_status_check",
-      "definition": "CHECK (validation_status = ANY (ARRAY['pending'::text, 'valid'::text, 'invalid'::text, 'error'::text]))"
+      "name": "tasks.tasks_review_fail_count_check",
+      "definition": "CHECK (review_fail_count >= 0)"
+    },
+    {
+      "name": "tasks.tasks_review_status_check",
+      "definition": "CHECK (review_status = ANY (ARRAY['pending'::text, 'valid'::text, 'invalid'::text, 'error'::text]))"
+    },
+    {
+      "name": "tasks.tasks_state_bucket_check",
+      "definition": "CHECK (state_bucket = ANY (ARRAY['open'::text, 'in_progress'::text, 'needs_human'::text, 'escalated'::text, 'deferred'::text, 'closed'::text]))"
     },
     {
       "name": "terminal_host_epochs.terminal_host_epochs_check",
@@ -7634,7 +7666,7 @@
     },
     {
       "name": "$schema.compute_task_state_bucket(p_task_id uuid)",
-      "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nELSE 'ready'\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
+      "definition": "CREATE OR REPLACE FUNCTION $schema.compute_task_state_bucket(p_task_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE\nAS $function$\nSELECT CASE\nWHEN t.closed_at IS NOT NULL THEN 'closed'\nWHEN t.escalated_at IS NOT NULL OR COALESCE(t.is_escalated, FALSE) IS TRUE THEN 'escalated'\nWHEN t.hold_state IS NOT NULL THEN t.hold_state\nWHEN COALESCE(t.labels, '[]'::jsonb) @> '[\"awaiting-human-review\"]'::jsonb\nTHEN 'needs_human'\nWHEN t.claimed_by_session_id IS NOT NULL THEN 'in_progress'\nELSE 'open'\nEND\nFROM tasks t\nWHERE t.id = p_task_id\n$function$"
     },
     {
       "name": "$schema.coordination_message_committed()",
@@ -8779,8 +8811,8 @@
       "definition": "CREATE INDEX idx_task_claim_intervals_task ON $schema.task_claim_intervals USING btree (task_id, claimed_at)"
     },
     {
-      "name": "idx_task_close_reviews_recovery",
-      "definition": "CREATE INDEX idx_task_close_reviews_recovery ON $schema.task_close_reviews USING btree (status, delivered_at, updated_at)"
+      "name": "idx_task_close_review_history_status",
+      "definition": "CREATE INDEX idx_task_close_review_history_status ON $schema.task_close_review_history USING btree (status, delivered_at, updated_at)"
     },
     {
       "name": "idx_task_comments_created",
@@ -9231,8 +9263,8 @@
       "definition": "CREATE UNIQUE INDEX task_claim_intervals_pkey ON $schema.task_claim_intervals USING btree (id)"
     },
     {
-      "name": "task_close_reviews_pkey",
-      "definition": "CREATE UNIQUE INDEX task_close_reviews_pkey ON $schema.task_close_reviews USING btree (id)"
+      "name": "task_close_review_history_pkey",
+      "definition": "CREATE UNIQUE INDEX task_close_review_history_pkey ON $schema.task_close_review_history USING btree (id)"
     },
     {
       "name": "task_comments_pkey",
@@ -9371,12 +9403,8 @@
       "definition": "CREATE UNIQUE INDEX uq_session_var_defs_live_name ON $schema.session_variable_defaults USING btree (name, project_id) NULLS NOT DISTINCT WHERE (deleted_at IS NULL)"
     },
     {
-      "name": "uq_task_close_reviews_active_task",
-      "definition": "CREATE UNIQUE INDEX uq_task_close_reviews_active_task ON $schema.task_close_reviews USING btree (task_id) WHERE (status = ANY (ARRAY['queued'::text, 'launching'::text, 'running'::text, 'finalizing'::text]))"
-    },
-    {
-      "name": "uq_task_close_reviews_agent_run",
-      "definition": "CREATE UNIQUE INDEX uq_task_close_reviews_agent_run ON $schema.task_close_reviews USING btree (agent_run_id) WHERE (agent_run_id IS NOT NULL)"
+      "name": "uq_task_close_review_history_agent_run",
+      "definition": "CREATE UNIQUE INDEX uq_task_close_review_history_agent_run ON $schema.task_close_review_history USING btree (agent_run_id) WHERE (agent_run_id IS NOT NULL)"
     },
     {
       "name": "users_email_lower_key",
@@ -9470,7 +9498,7 @@
     },
     {
       "name": "tasks.tasks_state_bucket_au",
-      "definition": "CREATE TRIGGER tasks_state_bucket_au AFTER UPDATE OF closed_at, escalated_at, is_escalated ON tasks FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_task()"
+      "definition": "CREATE TRIGGER tasks_state_bucket_au AFTER UPDATE OF closed_at, escalated_at, is_escalated, claimed_by_session_id, hold_state, labels ON tasks FOR EACH ROW EXECUTE FUNCTION refresh_task_state_bucket_from_task()"
     }
   ]
 }

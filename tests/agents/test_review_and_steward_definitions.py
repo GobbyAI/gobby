@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 STANDING_SEATS = ("security-reviewer", "design-reviewer", "debugger", "recovery-steward")
 NEW_SEATS = (*STANDING_SEATS, "reporter")
-# Copy of the write-tool block in lane-manager.yaml.
+# The write-tool block every read-only seat shares.
 WRITE_BLOCKED_TOOLS = frozenset(
     {
         "Edit",
@@ -75,10 +75,10 @@ def _copied_sections(name: str) -> dict[str, str]:
     return {heading: flat(_section(prompt, heading)) for heading in COPIED_HEADINGS}
 
 
-def _reporter_procedure() -> str:
+def _reporter_procedure(name: str = "reporter") -> str:
     return (
         get_bundled_agents_path().parents[1]
-        / "skills/gobby/references/agents/procedures/reporter.md"
+        / f"skills/gobby/references/agents/procedures/{name}.md"
     ).read_text()
 
 
@@ -146,7 +146,7 @@ def test_seats_send_to_their_targets_and_never_kill_agents(name: str, targets: l
 
 
 @pytest.mark.parametrize("name", STANDING_SEATS)
-def test_standing_seats_block_edit_and_write_tools_like_lane_manager(name: str) -> None:
+def test_standing_seats_block_edit_and_write_tools(name: str) -> None:
     assert set(_load(name).blocked_tools) == WRITE_BLOCKED_TOOLS
 
 
@@ -211,18 +211,20 @@ def test_security_reviewer_bounces_on_exploit_paths_and_never_fixes() -> None:
 
 
 def test_security_reviewer_records_its_approval_and_never_lands() -> None:
-    prompt = flat(_raw("security-reviewer")["prompts"]["agent"])
+    raw = _raw("security-reviewer")
+    prompt = flat(raw["prompts"]["agent"])
 
+    assert raw["task_step_writes"] == ["review"]
     for phrase in (
-        'record_close_receipt(task_id=<candidate task>, kind="independent_review_approval"',
-        'facts={"review": "security"}',
+        'record_review_step(task_id=<candidate task>, status="approved"',
+        "only approvals",
         "running security-reviewer seat",
         "Never call land_commit",
     ):
         assert phrase in prompt, phrase
 
 
-def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_author_lane() -> None:
+def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_dev_manager() -> None:
     prompt = flat(_raw("security-reviewer")["prompts"]["agent"])
     verdict = prompt[prompt.index("- Verdict.") : prompt.index("- Never fix what you review")]
 
@@ -231,8 +233,10 @@ def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_author
         "`EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA=<full 40-hex> VERDICT=LAND|BOUNCE "
         "TASK_TITLE= NOTE=`" in verdict
     )
-    for recipient in ("author lane", "Code Reviewer", "Orchestrator", "Lane Manager"):
+    for recipient in ("author", "Code Reviewer", "Dev Manager"):
         assert recipient in verdict, recipient
+    # Only the Assistant and Triage reach the Orchestrator.
+    assert "Orchestrator" not in verdict
 
 
 def test_security_reviewer_grok_resolution_preserves_seat_authority(temp_db: HubDatabase) -> None:
@@ -298,7 +302,7 @@ def test_recovery_steward_resumes_idle_composers_with_literal_keystrokes() -> No
 
 
 def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
-    prompt = flat(_reporter_procedure())
+    prompt = flat(_reporter_procedure() + "\n" + _reporter_procedure("reporter-full-report"))
 
     for phrase in (
         "gobby-agents:list_running_agents",

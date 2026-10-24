@@ -626,8 +626,9 @@ class TestAgentWorkflowCompletion:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("coverage_passed", [True, False])
-    async def test_expansion_qa_saved_report_and_parent_handoff_terminalize_workflow(
-        self, db: HubDatabase, coverage_passed: bool
+    @pytest.mark.parametrize("handoff_target", ["parent", "session"])
+    async def test_expansion_qa_saved_report_and_handoff_terminalize_workflow(
+        self, db: HubDatabase, coverage_passed: bool, handoff_target: str
     ) -> None:
         instance_manager = _register_expansion_qa_workflow(db)
         runner = MagicMock()
@@ -729,25 +730,30 @@ class TestAgentWorkflowCompletion:
         assert "qa_check -> handoff" in (save_response.context or "")
         runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
 
+        # A project broadcast is no handoff.
         await engine.evaluate(
             _after_tool_event(
                 mcp_server="gobby-agents",
                 mcp_tool="send_message",
-                tool_arguments={"target": "session", "target_id": "#2", "content": "FYI"},
+                tool_arguments={"target": "project", "content": "FYI"},
+                tool_output={"success": True},
             ),
             session_id=AGENT_SESSION_ID,
             variables=variables,
         )
-        await engine.evaluate(
-            _after_tool_event(
-                mcp_server="gobby-agents",
-                mcp_tool="send_message",
-                tool_arguments={"target": "parent", "content": "QA report"},
-                tool_output={"success": False, "error": "Handoff delivery failed"},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
+        # Triage by session, or the planning team that spawned the seat; a failed send stays.
+        triage = {"target": "session", "target_id": "#2"}
+        for target in (triage, {"target": "parent"}):
+            await engine.evaluate(
+                _after_tool_event(
+                    mcp_server="gobby-agents",
+                    mcp_tool="send_message",
+                    tool_arguments={**target, "content": "QA report"},
+                    tool_output={"success": False, "error": "Handoff delivery failed"},
+                ),
+                session_id=AGENT_SESSION_ID,
+                variables=variables,
+            )
         instance = instance_manager.get_for_session(AGENT_SESSION_ID)
         assert instance is not None
         assert instance.current_step == "handoff"
@@ -758,7 +764,10 @@ class TestAgentWorkflowCompletion:
             _after_tool_event(
                 mcp_server="gobby-agents",
                 mcp_tool="send_message",
-                tool_arguments={"target": "parent", "content": "Saved QA report and next steps"},
+                tool_arguments={
+                    **(triage if handoff_target == "session" else {"target": "parent"}),
+                    "content": "Saved QA report and next steps",
+                },
                 tool_output={"success": True},
             ),
             session_id=AGENT_SESSION_ID,

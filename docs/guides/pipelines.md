@@ -430,7 +430,7 @@ Orchestrator seat; the Assistant seat launches only while the Orchestrator is
 down. Every other agent seat is blocked from `run_pipeline`, the exposed
 `pipeline:<name>` tools and a shell `gobby pipelines run` by the
 `seat-no-pipeline-launch` and `seat-no-pipeline-cli` rules, and sends the
-request to the Orchestrator.
+request to Triage.
 
 **Restart.** On daemon startup, an opted-in running execution resumes from the
 definition snapshot taken at launch, so a sync during the restart cannot change

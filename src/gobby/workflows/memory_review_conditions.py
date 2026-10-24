@@ -46,8 +46,8 @@ def classify_memory_review_close(
     if task is None:
         return None
 
-    reason = str(getattr(task, "closed_reason", None) or reason or "completed")
-    if reason.casefold() != "completed":
+    reason = str(getattr(task, "closed_reason", None) or reason or "done")
+    if reason != "done":
         return None
     if str(getattr(task, "task_type", "")).casefold() == "epic":
         return None

@@ -31,11 +31,17 @@ from gobby.utils.dependency_requirements import (
 )
 from gobby.utils.dev import worktree_daemon_refusal
 from gobby.utils.env import is_test_protect_enabled
+from gobby.utils.local_token import AGENT_IDENTITY_ENV_NAMES
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.status import format_startup_summary
 
 from .daemon import _services_start
-from .daemon_lifecycle import STARTUP_READINESS_TIMEOUT_SECONDS, _step, _wait_for_daemon_health
+from .daemon_lifecycle import (
+    START_AFTER_OWN_STOP,
+    STARTUP_READINESS_TIMEOUT_SECONDS,
+    _step,
+    _wait_for_daemon_health,
+)
 from .installers.service import get_service_status, service_start
 from .ui_mode import resolve_ui_mode
 from .utils import (
@@ -244,6 +250,9 @@ def _launch_direct_runner(
     env["GOBBY_SERVICE_LAUNCH"] = "1"
     env["GOBBY_BACKEND_COMMAND"] = json.dumps(backend_command)
     env.pop("GOBBY_SINGLETON_LOCK_FD", None)
+    # The daemon hands its environment to every terminal it opens.
+    for name in AGENT_IDENTITY_ENV_NAMES:
+        env.pop(name, None)
     popen_kwargs: dict[str, Any] = {
         "stdout": None,
         "stderr": None,
@@ -329,6 +338,7 @@ def _launch_direct_runner(
 def start(ctx: click.Context, verbose: bool) -> None:
     """Start the Gobby daemon."""
     from gobby.cli.runtime import get_cli_runtime
+    from gobby.releases.window import agent_activation_refusal
     from gobby.runner_pid_file import (
         PidFileClaim,
         adopt_inherited_claim,
@@ -336,6 +346,10 @@ def start(ctx: click.Context, verbose: bool) -> None:
         convert_held_claim_to_reservation,
     )
     from gobby.storage.schema_divergence import binary_set_apply_refusal
+
+    if not ctx.meta.get(START_AFTER_OWN_STOP) and (refusal := agent_activation_refusal()):
+        _step(f"Refusing to start: {refusal}", error=True)
+        sys.exit(1)
 
     if refusal := worktree_daemon_refusal():
         _step(refusal, error=True)

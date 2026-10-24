@@ -9,7 +9,10 @@ import uuid
 import pytest
 
 from gobby.mcp_proxy.tools.hub import create_hub_registry
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import insert_isolated_machine
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration
@@ -25,8 +28,9 @@ PROJECT_BACKEND = _test_uuid("project-backend")
 
 
 @pytest.fixture
-def multi_project_hub(hub_db):
+def multi_project_hub(hub_db, tmp_path):
     """Create a hub database with data from multiple projects."""
+    machine_id = insert_isolated_machine(hub_db, require_machine_id())
     # Insert data for two projects
     for i, (project_name, project_id) in enumerate(
         [("project-frontend", PROJECT_FRONTEND), ("project-backend", PROJECT_BACKEND)]
@@ -39,13 +43,17 @@ def multi_project_hub(hub_db):
         """,
             (project_id, project_name.replace("-", " ").title()),
         )
+        # Closing a task reads its project's policy from the primary checkout.
+        root = tmp_path / project_name
+        root.mkdir()
+        LocalProjectCheckoutManager(hub_db).register(machine_id, project_id, str(root.resolve()))
 
         task_manager = LocalTaskManager(hub_db)
         # Insert tasks for this project
         for j, (state, task_type) in enumerate(
             [
-                ("ready", "task"),
-                ("ready", "feature"),
+                ("open", "task"),
+                ("open", "feature"),
                 ("closed", "bug"),
             ]
         ):
@@ -149,8 +157,8 @@ class TestHubQueryIntegration:
         tool = registry.get_tool("list_cross_project_tasks")
         assert tool is not None
 
-        # Filter for ready tasks only
-        result = asyncio.run(tool(state="ready"))
+        # Filter for open tasks only
+        result = asyncio.run(tool(state="open"))
 
         assert result["success"] is True
         assert result["count"] == 4  # 2 open tasks per project
@@ -223,8 +231,8 @@ class TestHubQueryIntegration:
 
         # 6 total tasks (3 per project)
         assert stats["tasks"]["total"] == 6
-        # State breakdown: 4 ready, 2 closed
-        assert stats["tasks"]["by_state"]["ready"] == 4
+        # State breakdown: 4 open, 2 closed
+        assert stats["tasks"]["by_state"]["open"] == 4
         assert stats["tasks"]["by_state"]["closed"] == 2
 
         # 4 total sessions (2 per project)

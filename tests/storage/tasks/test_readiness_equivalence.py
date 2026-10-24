@@ -33,7 +33,8 @@ def test_awaiting_human_review_label_parks_task_until_removed(
         candidate.id for candidate in manager.list_blocked_tasks(project_id=sample_project["id"])
     }
     assert task.id not in ready_ids
-    assert task.id in blocked_ids
+    assert task.id not in blocked_ids
+    assert [item.id for item in manager.list_tasks(state="needs_human")] == [task.id]
 
     update_task(temp_db, task.id, labels=["llm-reviewed", "human-reviewed"])
 
@@ -43,7 +44,7 @@ def test_awaiting_human_review_label_parks_task_until_removed(
     assert task.id in ready_ids
 
 
-def test_blocked_projection_includes_escalated_and_external_blockers(
+def test_blocked_projection_excludes_escalated_and_child_completion_blockers(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -84,6 +85,7 @@ def test_blocked_projection_includes_escalated_and_external_blockers(
 
     blocked_ids = {task.id for task in manager.list_blocked_tasks(project_id=sample_project["id"])}
 
-    assert {blocked.id, escalated.id} <= blocked_ids
+    assert blocked_ids == {blocked.id}
+    assert [item.id for item in manager.list_tasks(state="escalated")] == [escalated.id]
     assert parent.id not in blocked_ids
     assert manager.count_blocked_tasks(project_id=sample_project["id"]) == len(blocked_ids)

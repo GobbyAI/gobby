@@ -247,13 +247,13 @@ class TestRunPipeline:
 
         mock_pipeline = MagicMock()
         mock_server.services.workflow_loader.load_pipeline = AsyncMock(return_value=mock_pipeline)
-        error = "Step 'inbox-manager' failed: Unsupported spawn provider: pipeline"
+        error = "Step 'triage' failed: Unsupported spawn provider: pipeline"
         executor = mock_server.services.get_pipeline_executor.return_value
         executor.execute = AsyncMock(side_effect=PipelineStepError(error))
 
         response = client.post(
             "/api/pipelines/run",
-            json={"name": "team-coordination", "project_id": "proj-1"},
+            json={"name": "support", "project_id": "proj-1"},
         )
 
         assert response.status_code == 422

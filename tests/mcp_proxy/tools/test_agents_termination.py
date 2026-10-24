@@ -361,7 +361,7 @@ async def test_cooperative_completion_persists_final_closed_task_details(
         result_prefix=stale_result,
     )
     assert seeded is not None
-    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task.id, reason="done", closed_commit_sha="abc123")
     closed_task = task_manager.get_task(task.id)
     assert closed_task.closed_at is not None
 

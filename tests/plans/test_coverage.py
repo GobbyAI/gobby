@@ -7,13 +7,13 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.plans._task_store import coerce_task_record
 from gobby.plans.coverage import (
     CoverageStatus,
     EvidenceKind,
     MissingScopeError,
     StaleHashError,
     TaskTreeSource,
-    _coerce_task_record,
     _plan_node_hash,
     evaluate,
 )
@@ -107,12 +107,12 @@ def test_exports_a4_public_api() -> None:
                 "is_closed": False,
                 "is_escalated": False,
                 "is_claimed": True,
-                "claimed_by_session_id": "session",
+                "owner_session_id": "session",
             },
-            "ready",
+            "in_progress",
         ),
-        ({"is_closed": False, "is_escalated": False}, "ready"),
-        ("ready", "ready"),
+        ({"is_closed": False, "is_escalated": False}, "open"),
+        ("open", "open"),
         (None, "unknown"),
         ({"is_closed": "true", "is_escalated": False}, "unknown"),
         ({"is_closed": False, "is_escalated": 0}, "unknown"),
@@ -123,7 +123,7 @@ def test_exports_a4_public_api() -> None:
         "closed",
         "escalated",
         "claimed",
-        "ready",
+        "open",
         "string",
         "none",
         "invalid-closed",
@@ -133,13 +133,13 @@ def test_exports_a4_public_api() -> None:
     ],
 )
 def test_coerce_task_record_reads_serialized_state(raw_state: object, expected: str) -> None:
-    record = _coerce_task_record({"ref": "#1", "state": raw_state})
+    record = coerce_task_record({"ref": "#1", "state": raw_state})
 
     assert record.state == expected
 
 
 def test_coerce_task_record_missing_state_is_unknown() -> None:
-    assert _coerce_task_record({"ref": "#1"}).state == "unknown"
+    assert coerce_task_record({"ref": "#1"}).state == "unknown"
 
 
 def test_closed_serialized_task_record_rejects_deferral(tmp_path: Path) -> None:
@@ -173,12 +173,12 @@ def test_closed_serialized_task_record_rejects_deferral(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("closed_reason", "expected"),
     [
-        ("completed", CoverageStatus.deferred),
-        ("already_implemented", CoverageStatus.deferred),
-        ("wont_fix", CoverageStatus.invalid),
-        ("duplicate", CoverageStatus.invalid),
+        ("done", CoverageStatus.deferred),
+        ("moot", CoverageStatus.invalid),
+        ("wont_do", CoverageStatus.invalid),
+        ("superseded", CoverageStatus.invalid),
     ],
-    ids=["completed", "already-implemented", "wont-fix", "duplicate"],
+    ids=["done", "moot", "wont-do", "superseded"],
 )
 def test_task_record_carries_close_reason_into_deferral_validation(
     tmp_path: Path, closed_reason: str, expected: CoverageStatus
@@ -250,7 +250,7 @@ def test_evaluate_reports_covered_missing_invalid_and_deferred() -> None:
             {
                 "ref": "#200",
                 "path_cache": "1.200",
-                "state": "ready",
+                "state": "open",
                 "labels": ["deferred-from:plan:A2"],
                 "validation_criteria": "Follow-up task owns src/deferred.py.",
             },
@@ -289,7 +289,7 @@ def test_evaluate_resolves_placeholder_deferral_through_provenance_label() -> No
             {
                 "ref": "#200",
                 "path_cache": "1.200",
-                "state": "ready",
+                "state": "open",
                 "labels": ["deferred-from:plan:A2"],
                 "validation_criteria": "Follow-up task owns src/deferred.py.",
             },
@@ -356,8 +356,8 @@ def test_evaluate_surfaces_invalid_covers_labels_without_cross_plan_leakage() ->
     [
         (None, (), CoverageStatus.invalid),
         ("closed", ("deferred-from:plan:A1",), CoverageStatus.invalid),
-        ("ready", (), CoverageStatus.invalid),
-        ("ready", ("deferred-from:plan:A1",), CoverageStatus.deferred),
+        ("open", (), CoverageStatus.invalid),
+        ("open", ("deferred-from:plan:A1",), CoverageStatus.deferred),
     ],
     ids=["missing-task", "closed-task", "missing-provenance", "valid-open-task"],
 )
@@ -768,7 +768,7 @@ def test_invalid_deferral_row_carries_validator_detail(tmp_path: Path) -> None:
             {
                 "ref": "#999",
                 "path_cache": "1.999",
-                "state": "ready",
+                "state": "open",
                 "labels": [],
                 "validation_criteria": "Follow-up owns A1.1.",
             },

@@ -166,10 +166,10 @@ async def _drain_spawn_background_tasks() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("seat", ["code-reviewer", "researcher", "lane-manager"])
+@pytest.mark.parametrize("seat", ["dev-manager", "test-writer", "code-reviewer"])
 @pytest.mark.parametrize("dirty", [False, True], ids=["clean", "dirty"])
 @pytest.mark.parametrize("resumed", [False, True], ids=["fresh", "resumed"])
-async def test_team_lane_observer_preserves_candidate_checkout(
+async def test_devteam_observer_preserves_candidate_checkout(
     temp_db: HubDatabase,
     tmp_path: Path,
     mock_runner: MagicMock,
@@ -214,17 +214,17 @@ async def test_team_lane_observer_preserves_candidate_checkout(
         tracked.read_text(),
     )
     storage = LocalWorktreeManager(temp_db)
-    tree = storage.create(checkout.project.id, "lane-candidate", str(candidate))
+    storage.create(checkout.project.id, "lane-candidate", str(candidate))
     definition = PipelineDefinition.model_validate(
         yaml.safe_load(
             (
                 Path(__file__).resolve().parents[4]
-                / "src/gobby/install/shared/workflows/pipelines/team-lane.yaml"
+                / "src/gobby/install/shared/workflows/pipelines/devteam.yaml"
             ).read_text()
         )
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(lane="3", seats=seat)
+    inputs.update(task="24797", seats=seat, report_to="gobby#1")
     step = next(step for step in definition.steps if step.id == seat)
     assert step.mcp is not None and step.mcp.arguments is not None
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
@@ -236,16 +236,15 @@ async def test_team_lane_observer_preserves_candidate_checkout(
             ),
             "invocation_id": "observer-test",
             "steps": {
-                "guard": {
+                "guard": {"output": {"workspace_id": "test-workspace"}},
+                "admit": {
                     "output": {
-                        "worktree": tree.id,
+                        "branch": "lane-candidate",
                         "project_path": str(candidate),
-                        "report_to": "gobby#1",
-                        "lane_pane": "test-pane",
-                        "lane_columns": 160,
-                        "lane_rows": 100,
+                        "task_id": None,
+                        "team": {"team_id": "team-1"},
                     }
-                }
+                },
             },
         },
         drop_none=True,
@@ -258,7 +257,9 @@ async def test_team_lane_observer_preserves_candidate_checkout(
         arguments.pop("project_path")
         arguments.pop("checkout_mode")
         arguments["resume_session_id"] = "gobby#123"
-        mock_runner.run_storage.get.return_value = SimpleNamespace(worktree_id=None, clone_id=None)
+        mock_runner.run_storage.get.return_value = SimpleNamespace(
+            worktree_id=None, clone_id=None, resume_metadata_json={}
+        )
     target = SimpleNamespace(
         id="resumed-seat",
         status="expired",

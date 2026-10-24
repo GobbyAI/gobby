@@ -10,7 +10,8 @@ from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_gate import resolve_resume_sandbox
 from gobby.agents.spawn_executor_providers import _prepare_provider_sandbox
 from gobby.agents.spawn_models import SpawnRequest
-from gobby.agents.srt_runtime import SandboxLaunch, render_srt_settings
+from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.agents.srt_settings import render_srt_settings
 from tests.agents.prepared_spawn import prepared_spawn
 
 pytestmark = pytest.mark.unit

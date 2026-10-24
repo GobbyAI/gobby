@@ -11,9 +11,11 @@ import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.hooks.tool_error_tracker import extract_target_key
-from gobby.workflows.safe_evaluator import (
+from gobby.workflows.assistant_response_matching import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
+)
+from gobby.workflows.safe_evaluator import (
     LazyBool,
     SafeExpressionEvaluator,
     build_condition_helpers,

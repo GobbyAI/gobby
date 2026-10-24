@@ -342,7 +342,7 @@ def test_coverage_failures_report_deferral_validator_detail(
                 {
                     "ref": "#999",
                     "path_cache": f"{_ROOT_REF}.999",
-                    "state": "ready",
+                    "state": "open",
                     "labels": [],
                     "validation_criteria": "Follow-up owns A1.1.",
                 },

@@ -7,14 +7,20 @@ from datetime import datetime
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._automation import has_hold_label
-from gobby.storage.tasks._models import TaskHasOpenChildrenError, TaskStaleStateError
+from gobby.storage.tasks._models import (
+    Task,
+    TaskHasOpenChildrenError,
+    TaskStaleStateError,
+    TaskStepRecordsMissingError,
+)
 from gobby.tasks.criteria_text import normalized_validation_criteria
+from gobby.tasks.state_semantics import validate_task_close_reason
 from gobby.utils.datetime import utc_now
 
 _LEGACY_VALIDATION_CRITERIA = (
     "Legacy task: validation criteria were not recorded before they became required."
 )
-_TERMINAL_PARENT_CLOSE_REASONS = frozenset({"completed", "obsolete"})
+_TERMINAL_PARENT_CLOSE_REASONS = frozenset({"done", "moot"})
 
 
 def _session_exists(
@@ -31,7 +37,7 @@ def _close_task_in_txn(
     conn: Transaction,
     task_id: str,
     *,
-    db: HubDatabase | None = None,
+    db: HubDatabase,
     reason: str | None = None,
     commit_sha: str | None = None,
     closed_at: datetime | str | None = None,
@@ -41,24 +47,33 @@ def _close_task_in_txn(
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
 ) -> None:
-    """Close a task inside the caller's already-open transaction."""
+    """Close a task inside the caller's already-open transaction.
 
+    ``force`` skips only the open-children check; required step records always apply.
+    """
+    reason = validate_task_close_reason("done" if reason is None else reason)
+
+    # Hold this row before counting children or reading step records. Creation takes
+    # the same lock on the parent it is attaching to, so the two serialize here;
+    # without it the count runs before the UPDATE acquires any lock, and a child
+    # inserted in that window survives its parent's close (#22570). Step writers take
+    # it too, so the records checked here are the ones the close commits against.
+    row = conn.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
     if not force:
-        # Hold this row before counting children. Creation takes the same lock on
-        # the parent it is attaching to, so the two serialize here; without it the
-        # count runs before the UPDATE acquires any lock, and a child inserted in
-        # that window survives its parent's close (#22570). _close_eligible_ancestors
-        # already locks an ancestor this way before its own open-child probe.
-        conn.execute("SELECT 1 FROM tasks WHERE id = %s FOR UPDATE", (task_id,))
         open_children = conn.execute(
             "SELECT id, title FROM tasks WHERE parent_task_id = %s AND closed_at IS NULL",
             (task_id,),
         ).fetchall()
         if open_children:
-            listed = [f"{child['id']} ({child['title']})" for child in open_children[:3]]
-            if len(open_children) > 3:
-                listed.append(f"and {len(open_children) - 3} more")
+            listed = [f"{child['id']} ({child['title']})" for child in open_children]
             raise TaskHasOpenChildrenError(task_id, listed)
+    if row is not None and row["closed_at"] is None:
+        # step_records imports this package, so it loads at call time.
+        from gobby.tasks.step_records import task_step_requirements
+
+        missing = task_step_requirements(db, Task.from_row(row)).missing
+        if missing:
+            raise TaskStepRecordsMissingError(task_id, missing)
 
     now = closed_at or utc_now()
     persisted_session_id = (
@@ -130,7 +145,7 @@ def _close_eligible_ancestors(
     conn: Transaction,
     task_id: str,
     *,
-    db: HubDatabase | None,
+    db: HubDatabase,
     reason: str | None,
     closed_at: datetime | str,
     closed_in_session_id: str | None,
@@ -156,7 +171,7 @@ def close_eligible_parent_chain(
     conn: Transaction,
     parent_id: str | None,
     *,
-    db: HubDatabase | None,
+    db: HubDatabase,
     reason: str | None,
     closed_at: datetime | str,
     closed_in_session_id: str | None,
@@ -167,17 +182,10 @@ def close_eligible_parent_chain(
     A child's close enters at its parent; a reparent enters at the old parent, which
     may have just lost its last open child (#23384).
     """
-    close_reason = reason or "completed"
+    close_reason = validate_task_close_reason("done" if reason is None else reason)
     while parent_id:
         parent = conn.execute(
-            """
-            SELECT id, seq_num, title, task_type, project_id, closed_at, parent_task_id,
-                   claimed_by_session_id, labels, validation_criteria
-              FROM tasks
-             WHERE id = %s
-             FOR UPDATE
-            """,
-            (parent_id,),
+            "SELECT * FROM tasks WHERE id = %s FOR UPDATE", (parent_id,)
         ).fetchone()
         if parent is None or parent["closed_at"] is not None:
             return
@@ -187,13 +195,18 @@ def close_eligible_parent_chain(
             # Closing it here skips every gate and drops the claim — found-work
             # child #21046 took its worked parent #20969 and epic #20964 that way.
             return
-        if has_hold_label(parent) or (
-            parent["task_type"] != "epic"
-            and normalized_validation_criteria(parent["validation_criteria"]) is not None
+        if (
+            has_hold_label(parent)
+            or parent["hold_state"] is not None
+            or (
+                parent["task_type"] != "epic"
+                and normalized_validation_criteria(parent["validation_criteria"]) is not None
+            )
         ):
-            # A hold label or parent-owned criteria are this parent's own close
-            # gates: an open owner decision, a clean window to wait for, a plan
-            # still to be written, or acceptance evidence nobody has verified.
+            # A hold label or state (needs_human, deferred) or parent-owned criteria
+            # are this parent's own close gates: an open owner decision, a clean
+            # window or follow-up date to wait for, a plan still to be written, or
+            # acceptance evidence nobody has verified.
             # Auto-closing on the last child (#22421) removed such parents from
             # open lists while that work was unresolved; they close through the
             # gates that check it.
@@ -209,6 +222,16 @@ def close_eligible_parent_chain(
             (parent_id,),
         ).fetchone()
         if open_child is not None:
+            return
+        # step_records imports this package, so it loads at call time.
+        from gobby.tasks.step_records import task_step_requirements
+
+        # A parent whose policy requires step records closes through its own gates;
+        # the child's close must not fail on the parent's missing records.
+        try:
+            if task_step_requirements(db, Task.from_row(parent)).missing:
+                return
+        except ValueError:
             return
         _close_task_in_txn(
             conn,

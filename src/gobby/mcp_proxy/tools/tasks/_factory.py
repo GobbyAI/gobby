@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
+from gobby.mcp_proxy.tools.tasks._step_records import create_step_record_registry
 from gobby.storage.tasks import LocalTaskManager
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ def create_task_registry(
     # Create the main registry
     registry = InternalToolRegistry(
         name="gobby-tasks",
-        description="Task management - CRUD, dependencies, backup and restore",
+        description="Task management - CRUD, dependencies and backup",
     )
 
     # Merge CRUD tools
@@ -89,7 +90,7 @@ def create_task_registry(
     # Merge core affected files tools (update_observed_files only; rest in gobby-tasks-ops)
     registry.merge_from(create_core_affected_files_registry(ctx))
 
-    # Merge explicit JSONL backup and restore tools.
+    # Merge the explicit JSONL backup tool; restore is the operator's CLI only.
     registry.merge_from(create_backup_registry(ctx))
 
     # Merge commit linking tools.
@@ -105,5 +106,8 @@ def create_task_registry(
             session_manager=ctx.session_manager,
         )
     )
+
+    # Merge role-owned task step record tools.
+    registry.merge_from(create_step_record_registry(ctx))
 
     return registry

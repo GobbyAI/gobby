@@ -13,6 +13,7 @@ import json
 import subprocess
 import threading
 import uuid
+from dataclasses import fields
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ import yaml
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.agents.team_lifecycle import ADMISSION_STEP, TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -40,23 +42,22 @@ from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_audit import WorkflowAuditManager
-from gobby.tasks.close_receipts import record_close_receipt
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import PipelineDefinition, PipelineStep, RuleDefinitionBody
 from gobby.workflows.engine import seat_transitions
 from gobby.workflows.engine._offload import ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.step_instances import (
     AgentStepInstance,
     AgentStepInstanceManager,
@@ -66,6 +67,7 @@ from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
     patch_local_machine_id,
 )
+from tests.fixtures.review_approvals import approve_review
 
 pytestmark = pytest.mark.unit
 
@@ -91,6 +93,7 @@ AGENTS_DIR = get_bundled_agents_path()
 OWNER_ID = "55555555-5555-4555-8555-555555555555"
 COORDINATOR_ID = "66666666-6666-4666-8666-666666666666"
 PEER_ID = "77777777-7777-4777-8777-777777777777"
+AUTHORITY_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 SHA = "a" * 40
 REPLACEMENT_SHA = "b" * 40
 WAIT = ("gobby-agents", "wait_for_coordination")
@@ -150,7 +153,18 @@ class SeatRun:
             definition_json=json.dumps(definition),
             enabled=True,
         )
-        AgentDefinitionManager(db).create("orchestrator", {}, project_id=project_id)
+        # The coordinator's review grant lets negative cases store its approvals.
+        AgentDefinitionManager(db).create(
+            "orchestrator",
+            {
+                "name": "orchestrator",
+                "version": "1.0",
+                "prompts": {"agent": "Coordinate the seat protocol."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "task_step_writes": ["review"],
+            },
+            project_id=project_id,
+        )
         self.instances.save(
             AgentStepInstance(
                 id=str(uuid.uuid4()),
@@ -263,22 +277,14 @@ class SeatRun:
             f"LANE=1 EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={sha} NOTE=ready"
         )
 
-    async def approve(
-        self,
-        task: Task,
-        sha: str = SHA,
-        kind: str = "independent_review_approval",
-        author: str = SESSION_ID,
-    ) -> None:
+    def record_approval(self, task: Task, sha: str = SHA, author: str = SESSION_ID) -> None:
+        """Store the author's review LAND of the newly linked tip."""
         SessionTaskManager(self.db).link_task(SESSION_ID, task.id, "reviewing")
-        record_close_receipt(
-            self.db,
-            task=task,
-            author_session_id=author,
-            kind=kind,
-            commit_sha=sha,
-            facts={"reason": "restart"} if kind == "landing_approval" else {},
-        )
+        LocalTaskManager(self.db).link_commit(task.id, sha)
+        approve_review(self.db, task_id=task.id, reviewer_session_id=author, commit_sha=sha)
+
+    async def approve(self, task: Task, sha: str = SHA, author: str = SESSION_ID) -> None:
+        self.record_approval(task, sha, author)
         await self.call(
             "gobby-tasks",
             "get_task",
@@ -339,7 +345,7 @@ async def _code_reviewer(run: SeatRun) -> None:
         assert run.vars["candidate_task"] == task.id
         await run.approve(task)
         assert run.step == "verdict"
-        await run.send(f"EVENT=LANDED TASK={task.id} SHA={SHA} NOTE=landed")
+        await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=LAND NOTE=ok")
         assert run.step == "await"
         assert run.vars["candidate_received"] is False
         assert run.vars["candidate_sha"] is None
@@ -355,152 +361,58 @@ async def test_loop_seats_reset_between_units(temp_db: HubDatabase, name: str) -
     assert run.step == ("claim" if name == "developer" else "await")
 
 
-@pytest.mark.parametrize("trigger", ["get_task", "record_close_receipt"])
+@pytest.mark.parametrize("trigger", ["get_task", "record_review_step"])
 @pytest.mark.parametrize(
-    "kind,author,sha,ready",
+    "author,sha,ready",
     [
-        ("independent_review_approval", SESSION_ID, SHA, True),
-        ("independent_review_approval", PEER_ID, SHA, False),
-        ("independent_review_approval", COORDINATOR_ID, SHA, False),
-        ("independent_review_approval", SESSION_ID, REPLACEMENT_SHA, False),
-        ("landing_approval", COORDINATOR_ID, SHA, False),
+        (SESSION_ID, SHA, True),
+        (PEER_ID, SHA, False),
+        (COORDINATOR_ID, SHA, False),
+        (SESSION_ID, REPLACEMENT_SHA, False),
     ],
 )
-async def test_reviewer_own_review_receipt_controls_land_admission(
-    temp_db: HubDatabase, trigger: str, kind: str, author: str, sha: str, ready: bool
+async def test_reviewer_own_review_record_controls_verdict_readiness(
+    temp_db: HubDatabase, trigger: str, author: str, sha: str, ready: bool
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     await run.intake(task)
-    SessionTaskManager(temp_db).link_task(SESSION_ID, task.id, "reviewing")
-    receipt, _ = record_close_receipt(
-        temp_db,
-        task=task,
-        author_session_id=author,
-        kind=kind,
-        commit_sha=sha,
-        facts={"reason": "restart"} if kind == "landing_approval" else {},
-    )
+    run.record_approval(task, sha, author)
     await run.call(
         "gobby-tasks",
         trigger,
-        {"task_id": task.id, "kind": kind, "commit_sha": sha},
-        {"success": True, "receipt": {"id": receipt.id}},
+        {"task_id": task.id, "status": "approved", "commit_sha": sha},
+        {"success": True},
     )
     assert run.step == ("verdict" if ready else "review")
-    assert (
-        await run.admits("gobby-tasks-ops", "land_commit", {"task_id": task.id, "commit_sha": SHA})
-        is ready
-    )
-
-
-@pytest.mark.parametrize(
-    "event", ["CANDIDATE_RESUMED", "LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"]
-)
-async def test_reviewer_resume_and_clear_follow_own_review_receipt(
-    temp_db: HubDatabase, event: str
-) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task()
-    await run.intake(task)
-    SessionTaskManager(temp_db).link_task(SESSION_ID, task.id, "reviewing")
-    record_close_receipt(
-        temp_db,
-        task=task,
-        author_session_id=SESSION_ID,
-        kind="independent_review_approval",
-        commit_sha=SHA,
-    )
-    if event == "CANDIDATE_RESUMED":
-        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
-        assert run.step == "await"
-    else:
-        # Exercise the completion guard independently of the readiness transition.
-        instance = run.instances.get_for_session(SESSION_ID)
-        assert instance is not None
-        instance.current_step = "verdict"
-        instance.variables["verdict_ready"] = True
-        run.instances.save(instance)
-    suffix = " VERDICT=LAND LANDING=NOT_REQUIRED" if event == "REVIEW_COMPLETE" else ""
-    await run.send(f"EVENT={event} TASK={task.id} SHA={SHA}{suffix}")
-    assert run.step == ("verdict" if event == "CANDIDATE_RESUMED" else "await")
-    assert run.vars["candidate_received"] is (event == "CANDIDATE_RESUMED")
-
-
-@pytest.mark.parametrize(
-    "kind,sha,author,ready",
-    [
-        ("independent_review_approval", SHA, SESSION_ID, True),
-        ("independent_review_approval", REPLACEMENT_SHA, SESSION_ID, False),
-        ("independent_review_approval", SHA, COORDINATOR_ID, False),
-        ("landing_approval", SHA, COORDINATOR_ID, False),
-    ],
-)
-async def test_land_phase_requires_exact_stored_own_review_approval(
-    temp_db: HubDatabase, kind: str, sha: str, author: str, ready: bool
-) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task()
-    await run.intake(task)
-    await run.approve(task, sha, kind, author)
-    assert run.step == ("verdict" if ready else "review")
-    assert (
-        await run.admits(
-            "gobby-tasks-ops",
-            "land_commit",
-            {
-                "task_id": f"#{task.seq_num}",
-                "commit_sha": SHA,
-            },
-        )
-        is ready
-    )
+    # The verdict is the reviewer's whole output; the Orchestrator lands it.
     assert not await run.admits(
-        "gobby-tasks-ops",
-        "land_commit",
-        {
-            "task_id": task.id,
-            "commit_sha": REPLACEMENT_SHA,
-        },
+        "gobby-tasks-ops", "land_commit", {"task_id": task.id, "commit_sha": SHA}
     )
 
 
-async def test_stale_verdict_snapshot_cannot_bypass_own_review_approval(
-    temp_db: HubDatabase,
+@pytest.mark.parametrize(
+    ("author", "sha", "clears"),
+    [(SESSION_ID, SHA, True), (PEER_ID, SHA, False), (SESSION_ID, REPLACEMENT_SHA, False)],
+)
+async def test_reviewer_land_verdict_clears_only_with_own_review_record(
+    temp_db: HubDatabase, author: str, sha: str, clears: bool
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
-    task, other = run.task(), run.task()
+    task = run.task()
     await run.intake(task)
+    run.record_approval(task, sha, author)
+    # A stale verdict flag cannot stand in for the stored approval.
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
-    # A persisted pre-upgrade verdict flag cannot authorize a landing.
     instance.current_step = "verdict"
     instance.variables["verdict_ready"] = True
     run.instances.save(instance)
-    call = {"task_id": task.id, "commit_sha": SHA}
-    assert not await run.admits("gobby-tasks-ops", "land_commit", call)
-    record_close_receipt(
-        run.db,
-        task=task,
-        author_session_id=COORDINATOR_ID,
-        kind="independent_review_approval",
-        commit_sha=SHA,
-    )
-    assert not await run.admits("gobby-tasks-ops", "land_commit", call)
-    await run.approve(task)
-    assert await run.admits("gobby-tasks-ops", "land_commit", call)
-    assert not await run.admits(
-        "gobby-tasks-ops",
-        "land_commit",
-        {
-            "task_id": other.id,
-            "commit_sha": SHA,
-        },
-    )
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=LAND")
+    assert run.step == ("await" if clears else "verdict")
+    assert run.vars["candidate_received"] is not clears
 
 
 @pytest.mark.parametrize("forgery", ["outgoing", "self", "missing-row", "wrong-owner", "short-sha"])
@@ -550,51 +462,62 @@ async def test_replacement_requires_fresh_approval_and_does_not_take_other_task(
     assert run.step == "verdict"
 
 
-@pytest.mark.parametrize("event", ["CANDIDATE_VERDICT", "CANDIDATE_PARKED"])
-async def test_bounce_and_park_use_current_unit_durable_outgoing_message(
+async def test_bounce_uses_current_unit_durable_outgoing_message(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={REPLACEMENT_SHA} VERDICT=BOUNCE")
+    assert run.step == "review"
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE", SESSION_ID)
+    assert run.step == "review"
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE")
+    assert run.step == "await"
+    assert "parked_candidates" not in run.vars
+
+
+@pytest.mark.parametrize("event", ["CANDIDATE_PARKED", "CANDIDATE_RESUMED"])
+async def test_retired_park_and_resume_events_leave_the_unit_alone(
     temp_db: HubDatabase, event: str
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     await run.intake(task)
-    detail = "VERDICT=BOUNCE" if event == "CANDIDATE_VERDICT" else "REASON=approval"
-    await run.send(f"EVENT={event} TASK={task.id} SHA={REPLACEMENT_SHA} {detail}")
-    assert run.step == "review"
-    await run.send(f"EVENT={event} TASK={task.id} SHA={SHA} {detail}", SESSION_ID)
-    assert run.step == "review"
-    await run.send(f"EVENT={event} TASK={task.id} SHA={SHA} {detail}")
-    assert run.step == "await"
-    assert run.vars["parked_candidates"] == (
-        [{"task": task.id, "sha": SHA}] if event == "CANDIDATE_PARKED" else []
-    )
+    await run.approve(task)
+    before = run.vars
+    await run.send(f"EVENT={event} TASK={task.id} SHA={SHA} REASON=approval")
+    assert run.step == "verdict"
+    assert run.vars == before
 
 
-async def test_park_review_next_resume_and_withdraw_exact_unit(
+async def test_peer_park_leaves_the_unit_alone(temp_db: HubDatabase) -> None:
+    """A peer reviewer's retired CANDIDATE_PARKED cannot park this seat's unit."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task)
+    before = run.vars
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval", PEER_ID)
+    assert run.step == "verdict"
+    assert run.vars == before
+
+
+async def test_coordinator_withdraws_only_the_exact_unit(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
-    first, second = run.task(), run.task()
-    await run.intake(first)
-    await run.approve(first)
-    await run.send(f"EVENT=CANDIDATE_PARKED TASK={first.id} SHA={SHA} REASON=approval")
-    assert run.step == "await"
-    await run.intake(second)
-    await run.approve(second)
-    assert not any(
-        row["session_id"] == SESSION_ID and row["action"] == "reviewing"
-        for row in SessionTaskManager(temp_db).get_task_sessions(first.id)
-    )
-    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={second.id} SHA={SHA} VERDICT=BOUNCE")
-    assert run.step == "await"
-    await run.send(f"EVENT=CANDIDATE_RESUMED TASK={first.id} SHA={SHA}")
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task)
+    wrong_sha = f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={REPLACEMENT_SHA}"
+    await run.incoming(wrong_sha, COORDINATOR_ID)
     assert run.step == "verdict"
-    assert run.vars["parked_candidates"] == []
-    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={first.id} SHA={REPLACEMENT_SHA}")
-    assert run.step == "verdict"
-    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={first.id} SHA={SHA}", COORDINATOR_ID)
+    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={SHA}", COORDINATOR_ID)
     assert run.step == "await"
 
 
@@ -821,32 +744,8 @@ async def test_developer_proof_return_rearms_candidate_latch(
     assert not await run.admits(
         "gobby-tasks",
         "close_task",
-        {"task_id": task.id, "reason": "already_implemented"},
+        {"task_id": task.id, "reason": "moot"},
     )
-
-
-async def test_reviewer_routes_landed_retest_to_closing_seat(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task()
-    await run.intake(task)
-    await run.approve(task, SHA, "independent_review_approval", SESSION_ID)
-    assert run.step == "verdict"
-    await run.send(
-        f"EVENT=LANDED TASK={task.id} SHA={SHA} RETEST=UNAVAILABLE NOTE=closer owns retest",
-        OWNER_ID,
-    )
-    assert run.step == "await"
-    source = (
-        AGENTS_DIR.parents[1] / "skills/gobby/references/agents/procedures/code-reviewer.md"
-    ).read_text()
-    retest = next(line for line in source.splitlines() if "- Retest." in line)
-    assert "Send EVENT=LANDED immediately" in retest
-    assert "RETEST=UNAVAILABLE" in retest
-    assert "wait for" not in retest
-    assert "main checkout" not in retest
-    landed = next(line for line in source.splitlines() if "- Landed." in line)
-    assert "wait for" not in landed
 
 
 async def test_developer_landed_retest_unlocks_shell_without_proof_result(
@@ -854,10 +753,6 @@ async def test_developer_landed_retest_unlocks_shell_without_proof_result(
 ) -> None:
     run, task, sha, _ = linked_developer
     assert not await run.admits_native("Bash", {"command": "git status"})
-    await run.incoming(
-        f"EVENT=LANDED TASK={task.id} SHA={sha} RETEST=UNAVAILABLE NOTE=closer owns retest",
-        PEER_ID,
-    )
     assert run.step == "submit"
     handoff = {"task_id": task.id, "reason": f"Handed off: reviewer LAND at {sha}; retest"}
     await run.call("gobby-tasks", "escalate_task", handoff)
@@ -933,50 +828,91 @@ async def test_developer_refuses_unsubmitted_commit_close(
     assert not await run.admits("gobby-tasks", "close_task", arguments)
 
 
-def test_developer_submit_releases_only_after_reviewer_landed() -> None:
+def test_developer_submit_leaves_landing_and_close_to_the_dev_manager() -> None:
     source = " ".join((AGENTS_DIR / "developer.yaml").read_text().split())
-    assert (
-        "Once the reviewer has sent EVENT=LANDED and only activation or the closing seat's "
-        "landed retest remains"
-    ) in source
-    assert "candidate <= HEAD <= integration tip" in source
-    assert "A `Landed #N` notice alone keeps you at submit" in source
-    assert "resend the unchanged CANDIDATE to your Lane Manager only" in source
-    assert "Once the candidate has landed" not in source
+    assert "Your Dev Manager lands the approved SHA and closes the task" in source
+    assert "resend the unchanged CANDIDATE to your Dev Manager only" in source
+    # Landing receipts, activation relays and landed-retest proofs are retired.
+    for retired in ("EVENT=LANDED", "EVENT=PROOF_RESULT", "Release Manager GO", "Lane Manager"):
+        assert retired not in source, retired
+
+
+def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
+    """A runbook session whose admission step recorded team ``team_id`` for ``task``."""
+    runbook = PipelineDefinition(
+        name="team-runbook", steps=[PipelineStep(id=ADMISSION_STEP, exec="true")]
+    )
+    executions = LocalPipelineExecutionManager(db, PROJECT_ID)
+    execution = executions.create_execution(
+        runbook.name,
+        json.dumps({"task": task.id}),
+        definition_json=runbook.model_dump_json(),
+        project_id=PROJECT_ID,
+    )
+    step = executions.create_step_execution(execution.id, ADMISSION_STEP)
+    team = {item.name: f"{team_id}-{item.name}" for item in fields(TeamBinding)}
+    team.update(team_id=team_id, task_id=task.id, project_id=PROJECT_ID)
+    executions.update_step_execution(step.id, output_json=json.dumps({"team": team}))
+    session = SessionManager(db).register(
+        external_id=f"pipeline-{execution.id}",
+        machine_id=AUTHORITY_MACHINE_ID,
+        source="pipeline",
+        project_id=PROJECT_ID,
+    )
+    return session.id
 
 
 @pytest.fixture
 async def reviewer_authorities(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[SeatRun, Task, dict[str, str]]:
-    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
-    definitions = AgentDefinitionManager(temp_db)
-    definitions.create("lane-manager", {}, project_id=PROJECT_ID)
+    other_task = run.task()
+    # The binding test reads the closing grant from the installed definition.
+    AgentDefinitionManager(temp_db).create(
+        "dev-manager",
+        {
+            "name": "dev-manager",
+            "version": "1.0",
+            "prompts": {"agent": "Manage the team."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "task_step_writes": ["closing"],
+        },
+        project_id=PROJECT_ID,
+    )
+    teams = {
+        "own": _team_runbook(temp_db, task, "team-own"),
+        "other": _team_runbook(temp_db, other_task, "team-other"),
+    }
     actors = {
         "author": OWNER_ID,
         "reviewer": SESSION_ID,
         "orchestrator": COORDINATOR_ID,
         "other_reviewer": PEER_ID,
     }
-    for name in ("own_lm", "other_lm", "unbound_lm"):
+    # The own and unbound managers sit in the reviewer's team; only the own one has a
+    # running run bound to the task. The other manager runs another task's team.
+    for name, team in (("own_dm", "own"), ("other_dm", "other"), ("unbound_dm", "own")):
         actor_session = run.sessions.register(
             external_id=name,
             source="codex",
             project_id=PROJECT_ID,
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id=AUTHORITY_MACHINE_ID,
+            parent_session_id=teams[team],
         )
         actors[name] = actor_session.id
-        SessionVariableManager(temp_db).set_variable(
-            actor_session.id, "_agent_type", "lane-manager"
-        )
+        SessionVariableManager(temp_db).set_variable(actor_session.id, "_agent_type", "dev-manager")
+    temp_db.execute(
+        "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (teams["own"], SESSION_ID)
+    )
     runs = LocalAgentRunManager(temp_db)
-    for actor, role, lane in (
-        (SESSION_ID, "code-reviewer", "1"),
-        (actors["own_lm"], "lane-manager", "1"),
-        (actors["other_lm"], "lane-manager", "2"),
+    for actor, role, bound in (
+        (SESSION_ID, "code-reviewer", None),
+        (actors["own_dm"], "dev-manager", task.id),
+        (actors["other_dm"], "dev-manager", other_task.id),
     ):
         record = runs.create(
             parent_session_id=COORDINATOR_ID,
@@ -984,7 +920,7 @@ async def reviewer_authorities(
             prompt="Seat authority fixture",
             agent_name=role,
             child_session_id=actor,
-            resume_metadata_json={"lane": lane},
+            task_id=bound,
         )
         runs.start(record.id)
         temp_db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (record.id, actor))
@@ -995,61 +931,42 @@ async def reviewer_authorities(
     return run, task, actors
 
 
-@pytest.mark.parametrize("phase", ["active", "parked"])
-@pytest.mark.parametrize("kind", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED"])
 @pytest.mark.parametrize(
     "actor",
-    ["author", "reviewer", "orchestrator", "own_lm", "other_lm", "other_reviewer", "unbound_lm"],
+    ["author", "reviewer", "orchestrator", "own_dm", "other_dm", "other_reviewer", "unbound_dm"],
 )
-async def test_reviewer_withdraw_resume_requires_own_unit_authority(
-    reviewer_authorities: tuple[SeatRun, Task, dict[str, str]], phase: str, kind: str, actor: str
+async def test_reviewer_withdrawal_requires_own_unit_authority(
+    reviewer_authorities: tuple[SeatRun, Task, dict[str, str]], actor: str
 ) -> None:
     run, task, actors = reviewer_authorities
-    if phase == "parked":
-        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
-        assert run.step == "await"
     before, step = run.vars, run.step
-    line = f"EVENT={kind} TASK={task.id} SHA={SHA}"
+    line = f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={SHA}"
     if actor == "reviewer":
         await run.send(line)
     else:
         await run.incoming(line, actors[actor])
-    authorized = actor in {"reviewer", "orchestrator", "own_lm"}
-    changes_unit = kind == "CANDIDATE_WITHDRAWN" or phase == "parked"
-    if not authorized or not changes_unit:
-        assert run.vars == before
-        assert run.step == step
-    elif kind == "CANDIDATE_WITHDRAWN":
+    if actor in {"reviewer", "orchestrator", "own_dm"}:
         assert run.step == "await"
         assert run.vars["candidate_received"] is False
-        assert run.vars["parked_candidates"] == []
+        assert "parked_candidates" not in run.vars
     else:
-        assert run.step == "review"
-        assert run.vars["candidate_task"] == task.id
-        assert run.vars["candidate_sha"] == SHA
-        assert run.vars["parked_candidates"] == []
+        assert run.vars == before
+        assert run.step == step
 
 
-@pytest.mark.parametrize("phase", ["active", "parked"])
-@pytest.mark.parametrize("kind", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED"])
 @pytest.mark.parametrize("mismatch", ["task", "sha"])
-@pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_lm"])
-async def test_reviewer_withdraw_resume_refuses_another_unit(
+@pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_dm"])
+async def test_reviewer_withdrawal_refuses_another_unit(
     reviewer_authorities: tuple[SeatRun, Task, dict[str, str]],
-    phase: str,
-    kind: str,
     mismatch: str,
     actor: str,
 ) -> None:
     run, task, actors = reviewer_authorities
-    if phase == "parked":
-        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval")
-        assert run.step == "await"
     before, step = run.vars, run.step
     other = run.task()
     task_id = other.id if mismatch == "task" else task.id
     sha = REPLACEMENT_SHA if mismatch == "sha" else SHA
-    line = f"EVENT={kind} TASK={task_id} SHA={sha}"
+    line = f"EVENT=CANDIDATE_WITHDRAWN TASK={task_id} SHA={sha}"
     if actor == "reviewer":
         await run.send(line)
     else:
@@ -1064,8 +981,12 @@ async def test_monitor_windows_complete_from_durable_reports(
 ) -> None:
     run = SeatRun(temp_db, name)
     SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    # Monitors report to Triage; a report to the Orchestrator completes nothing.
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "orchestrator")
     await run.load(*run.vars["required_skills"])
-    assert run.step == "tick"
+    await run.send("Systems nominal | sample window", COORDINATOR_ID)
+    assert run.step == "tick" and run.vars["tick_window"] is None
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
     for _ in range(2):
         await run.send("Systems nominal | sample window", COORDINATOR_ID)
         if name == "metrics-monitor":
@@ -1088,6 +1009,17 @@ async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDa
     await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={REPLACEMENT_SHA} NOTE=invalid")
     assert run.step == "stamp"
     await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=unresolved")
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
+
+
+async def test_plan_adversary_consensus_line_may_precede_more_lines(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA}\nNOTE=approved\nEvidence follows.")
+    assert run.step == "stamp"
+    assert run.vars["consensus_sha"] == SHA
+    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}\nRe-review needed.")
     assert run.step == "review"
     assert run.vars["consensus"] is False
 
@@ -1441,53 +1373,6 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     assert run.step == idle_step
 
 
-@pytest.mark.parametrize(
-    "kind, sha, author, recovered",
-    [
-        ("landing", SHA, SESSION_ID, True),
-        ("landing", REPLACEMENT_SHA, SESSION_ID, False),
-        ("landing", SHA, PEER_ID, False),
-        ("activation", SHA, COORDINATOR_ID, False),
-        (None, SHA, SESSION_ID, False),
-    ],
-)
-async def test_reviewer_completed_landing_recovers_stale_verdict(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    kind: str | None,
-    sha: str,
-    author: str,
-    recovered: bool,
-) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task()
-    await run.intake(task)
-    await run.approve(task)
-    assert run.step == "verdict"
-    if kind is not None:
-        record_close_receipt(
-            temp_db,
-            task=task,
-            author_session_id=author,
-            kind=kind,
-            commit_sha=sha,
-            facts={"landed_tip": "c" * 40, "mode": "merge", "provenance": "recorded"},
-        )
-    # This is the persisted split observed in reviewer 16865 after its landing:
-    # the session copies were cleared while the workflow instance stayed bound.
-    run.session_vars.update(
-        candidate_task=None, candidate_sha=None, candidate_received=False, verdict_ready=False
-    )
-    handler = _reviewer_stop_handler(run)
-    stopped = await handler.evaluate_async(_reviewer_stop_event(tmp_path))
-    assert run.step == ("await" if recovered else "verdict")
-    assert run.vars["candidate_received"] is not recovered
-    assert run.vars["candidate_task"] == (None if recovered else task.id)
-    # Recovery still requires an actual readiness send before an idle stop.
-    assert stopped.decision == "block"
-
-
 @pytest.mark.parametrize("step", ["await", "review"])
 async def test_reviewer_registered_coordination_wait_allows_stop_with_external_session_id(
     temp_db: HubDatabase, tmp_path: Path, step: str
@@ -1612,7 +1497,7 @@ async def test_candidate_latch_survives_native_reset_and_blocks_already_implemen
         "close_task",
         {
             "task_id": task.id,
-            "reason": "already_implemented",
+            "reason": "moot",
         },
     )
     assert run.vars["candidate_sent"] is True
@@ -1626,32 +1511,23 @@ async def test_candidate_latch_survives_native_reset_and_blocks_already_implemen
         "close_task",
         {
             "task_id": task.id,
-            "reason": "already_implemented",
+            "reason": "moot",
         },
     )
     assert run.vars["candidate_sent"] is True
 
 
 @pytest.mark.parametrize("alias", ["hash", "number", "uuid"])
-async def test_task_reads_accept_aliases_and_replacement_clears_only_same_task_park(
-    temp_db: HubDatabase, alias: str
-) -> None:
+async def test_task_reads_and_replacement_accept_aliases(temp_db: HubDatabase, alias: str) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
-    first, second = run.task(), run.task()
-    for task in (first, second):
-        await run.intake(task)
-        await run.send(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=base_update")
-    ref = {"hash": f"#{first.seq_num}", "number": str(first.seq_num), "uuid": first.id}[alias]
+    task = run.task()
+    await run.intake(task)
+    ref = {"hash": f"#{task.seq_num}", "number": str(task.seq_num), "uuid": task.id}[alias]
     await run.incoming(f"EVENT=CANDIDATE TASK={ref} RUN=run WT=tree COMMIT={REPLACEMENT_SHA}")
-    assert run.vars["parked_candidates"] == [{"task": second.id, "sha": SHA}]
-    record_close_receipt(
-        run.db,
-        task=first,
-        author_session_id=SESSION_ID,
-        kind="independent_review_approval",
-        commit_sha=REPLACEMENT_SHA,
-    )
+    assert (run.vars["candidate_task"], run.vars["candidate_sha"]) == (task.id, REPLACEMENT_SHA)
+    assert "parked_candidates" not in run.vars
+    run.record_approval(task, REPLACEMENT_SHA)
     await run.call("gobby-tasks", "get_task", {"task_id": ref})
     assert run.step == "verdict"
 
@@ -1912,20 +1788,17 @@ async def test_older_unread_candidate_cannot_replace_newer_active_intake(
     assert run.vars["candidate_sha"] == REPLACEMENT_SHA
 
 
-@pytest.mark.parametrize("event", ["LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"])
-async def test_review_completion_accepts_bounded_metadata_and_requires_approval(
-    temp_db: HubDatabase, event: str
+async def test_land_verdict_accepts_bounded_metadata_and_requires_approval(
+    temp_db: HubDatabase,
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
     await run.intake(task)
-    details = (
-        "VERDICT=LAND LANDING=NOT_REQUIRED"
-        if event == "REVIEW_COMPLETE"
-        else f"RECEIPT=receipt BRANCH=integration LANDED_TIP={SHA} RETEST=PASS"
+    line = (
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=LAND "
+        "TASK_TITLE=Bounded title NOTE=finished"
     )
-    line = f"EVENT={event} TASK={task.id} SHA={SHA} {details} NOTE=finished"
     await run.send(line)
     assert run.step == "review"
     await run.approve(task)
@@ -1934,33 +1807,8 @@ async def test_review_completion_accepts_bounded_metadata_and_requires_approval(
     assert run.vars["candidate_task"] is None
 
 
-async def test_landing_recovery_clears_session_candidate(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "code-reviewer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task()
-    await run.intake(task)
-    await run.approve(task)
-    session_vars = SessionVariableManager(temp_db)
-    session_vars.merge_variables(SESSION_ID, run.vars)
-    record_close_receipt(
-        temp_db, task=task, author_session_id=SESSION_ID, kind="landing", commit_sha=SHA
-    )
-
-    context = get_active_step_workflow_context(temp_db, SESSION_ID)
-
-    assert context is not None
-    assert run.step == "await"
-    stored = session_vars.get_variables(SESSION_ID)
-    assert {key: stored[key] for key in _CANDIDATE_DEFAULTS} == _CANDIDATE_DEFAULTS
-    replacement = run.task()
-    await run.intake(replacement, REPLACEMENT_SHA)
-    assert run.step == "review"
-    assert run.vars["candidate_task"] == replacement.id
-
-
-@pytest.mark.parametrize("event", ["LANDED", "ALREADY_LANDED", "CANDIDATE_WITHDRAWN"])
-async def test_completion_repairs_unbound_stale_session_candidate(
-    temp_db: HubDatabase, event: str, monkeypatch: pytest.MonkeyPatch
+async def test_withdrawal_repairs_unbound_stale_session_candidate(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
     run = SeatRun(temp_db, "code-reviewer")
@@ -1969,27 +1817,22 @@ async def test_completion_repairs_unbound_stale_session_candidate(
     await run.intake(task)
     await run.approve(task)
     stale = dict(run.vars)
-    record_close_receipt(
-        temp_db, task=task, author_session_id=SESSION_ID, kind="landing", commit_sha=SHA
-    )
-    assert get_active_step_workflow_context(temp_db, SESSION_ID) is not None
-    assert run.step == "await"
-    # Reproduce a copy left behind by an older daemon, after instance recovery.
+    # Reproduce a copy left behind by an older daemon: the instance is unbound,
+    # the session copy still names the candidate.
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    instance.variables.update(_CANDIDATE_DEFAULTS)
+    instance.current_step = "await"
+    run.instances.save(instance)
     session_vars = SessionVariableManager(temp_db)
     session_vars.merge_variables(SESSION_ID, stale)
     run.session_vars.update(stale)
-    line = f"EVENT={event} TASK={task.id} SHA={SHA}"
-    if event == "CANDIDATE_WITHDRAWN":
-        await run.incoming(line, sender=COORDINATOR_ID)
-    else:
-        await run.send(line)
+    line = f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={SHA}"
+    await run.incoming(line, sender=COORDINATOR_ID)
     assert {key: run.session_vars[key] for key in _CANDIDATE_DEFAULTS} == _CANDIDATE_DEFAULTS
     # Persist as WorkflowHookHandler does and verify an idempotent second delivery.
     session_vars.merge_variables(SESSION_ID, run.session_vars)
-    if event == "CANDIDATE_WITHDRAWN":
-        await run.incoming(line, sender=COORDINATOR_ID)
-    else:
-        await run.send(line)
+    await run.incoming(line, sender=COORDINATOR_ID)
     stored = session_vars.get_variables(SESSION_ID)
     assert {key: stored[key] for key in _CANDIDATE_DEFAULTS} == _CANDIDATE_DEFAULTS
     replacement = run.task()
@@ -2121,6 +1964,8 @@ async def test_candidate_send_stores_and_queues_for_reviewer(
     [
         ("CANDIDATE", SHA),
         ("EVENT=CANDIDATE_WITHDRAWN", "bad"),
+        ("EVENT=CANDIDATE_WITHDRAWN", "a" * 10),
+        ("EVENT=CANDIDATE_WITHDRAWN", "z" * 40),
         ("EVENT=CANDIDATE_RESUMED", "a" * 10),
         ("EVENT=CANDIDATE_PARKED", "z" * 40),
     ],

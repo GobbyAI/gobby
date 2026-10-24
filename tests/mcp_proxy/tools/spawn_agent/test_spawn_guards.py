@@ -214,7 +214,7 @@ async def test_seeded_spawn_caller_scope(
 
 
 @pytest.mark.asyncio
-async def test_bundled_developer_can_admit_only_its_close_reviewer(
+async def test_bundled_developer_admits_no_spawns(
     monkeypatch: pytest.MonkeyPatch, spawn_caller: _SpawnCaller
 ) -> None:
     monkeypatch.setattr(
@@ -225,18 +225,14 @@ async def test_bundled_developer_can_admit_only_its_close_reviewer(
     row = manager.get_by_name("scope-caller", project_id=spawn_caller.child.project_id)
     assert row is not None
     manager.update(row.id, definition_json={**definition, "name": "scope-caller"})
-    _scope_definition(
-        spawn_caller.sessions.db, spawn_caller.child.project_id, "task-close-reviewer", []
-    )
+    _scope_definition(spawn_caller.sessions.db, spawn_caller.child.project_id, "code-reviewer", [])
     with session_context_for_test(spawn_caller.child.id):
-        admitted = await _spawn_guards.enforce_spawn_caller(
-            spawn_caller.sessions, "task-close-reviewer", spawn_caller.child.project_id
-        )
-        assert admitted == spawn_caller.child.id
-        with pytest.raises(ValueError, match="spawnable_agents"):
-            await _spawn_guards.enforce_spawn_caller(
-                spawn_caller.sessions, "scope-target", spawn_caller.child.project_id
-            )
+        # A DevTeam's runbook places its reviewer; the developer spawns nothing.
+        for target in ("code-reviewer", "scope-target"):
+            with pytest.raises(ValueError, match="spawnable_agents"):
+                await _spawn_guards.enforce_spawn_caller(
+                    spawn_caller.sessions, target, spawn_caller.child.project_id
+                )
 
 
 @pytest.mark.asyncio

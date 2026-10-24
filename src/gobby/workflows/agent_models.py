@@ -170,6 +170,10 @@ class AgentDefinitionBody(BaseModel):
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False
     communications_admin: StrictBool = False
+    task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
+        default_factory=list,
+        description="Task step records this definition may write through dedicated tools.",
+    )
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")

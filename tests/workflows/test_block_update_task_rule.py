@@ -27,7 +27,7 @@ SESSION_ID = "33333333-3333-4333-8333-333333333333"
 TASK_UUID = "44444444-4444-4444-8444-444444444444"
 TASK_REF = "#7"
 TASK_EDITORS = ("orchestrator", "assistant")
-BLOCKED_DEFINITIONS = ("default", "developer", "code-reviewer", "researcher", "lane-manager")
+BLOCKED_DEFINITIONS = ("default", "developer", "code-reviewer", "researcher", "dev-manager")
 
 
 @pytest.fixture

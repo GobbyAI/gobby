@@ -169,7 +169,7 @@ class TestSequentialReviewLoopE2E:
             tool_name="close_task",
             arguments={
                 "task_id": subtask_ids[0],
-                "reason": "obsolete",
+                "reason": "moot",
                 "changes_summary": f"Subtask superseded by {replacement_ref}; no changes needed",
             },
         )
@@ -201,7 +201,7 @@ class TestSequentialReviewLoopE2E:
             tool_name="close_task",
             arguments={
                 "task_id": subtask_ids[1],
-                "reason": "obsolete",
+                "reason": "moot",
                 "changes_summary": f"Subtask superseded by {replacement_ref}; no changes needed",
             },
         )
@@ -237,7 +237,7 @@ class TestSequentialReviewLoopE2E:
             tool_name="close_task",
             arguments={
                 "task_id": epic_id,
-                "reason": "obsolete",
+                "reason": "moot",
                 "changes_summary": f"Epic superseded by {replacement_ref}; all children closed",
             },
         )
@@ -382,7 +382,7 @@ class TestSequentialReviewLoopE2E:
             tool_name="close_task",
             arguments={
                 "task_id": subtask1_id,
-                "reason": "obsolete",
+                "reason": "moot",
                 "changes_summary": f"Subtask superseded by {replacement_ref}; no changes needed",
             },
         )
@@ -555,8 +555,8 @@ class TestNoWorkCloseE2E:
                 tool_name="close_task",
                 arguments={
                     "task_id": task_id,
-                    "reason": "obsolete",
-                    "changes_summary": "Task obsolete - skipped",
+                    "reason": "moot",
+                    "changes_summary": "Task moot - skipped",
                     "preview": True,
                 },
             )
@@ -571,8 +571,8 @@ class TestNoWorkCloseE2E:
             tool_name="close_task",
             arguments={
                 "task_id": task_id,
-                "reason": "obsolete",
-                "changes_summary": "No changes needed; obsolete work.",
+                "reason": "moot",
+                "changes_summary": "No changes needed; moot work.",
             },
         )
         result = unwrap_result(raw_result)

@@ -927,7 +927,7 @@ async def test_validate_plan_resolves_completed_section_targets(
         validation_criteria="Source target exists.",
     )
     if completed:
-        manager.close_task(task.id, reason="completed")
+        manager.close_task(task.id, reason="done")
     registry = create_plan_registry(temp_db)
     token = set_project_context({"id": project_id, "project_path": str(tmp_path)})
     try:

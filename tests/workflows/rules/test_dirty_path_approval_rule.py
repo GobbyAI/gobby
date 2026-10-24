@@ -22,6 +22,67 @@ EXPANSION_RULE = "block-gobby-cli-expansion"
 BOUNDED_RULE = "block-gobby-command-word-expansion"
 SESSION_ID = "55555555-5555-4555-8555-555555555555"
 GOBBY_PROJECT_ID = "d45545c5-ded5-4335-b115-0245752edacf"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "cd /Users/josh/Projects/gobby && for i in $(seq 1 20); do "
+            "out=$(uv run gobby restart 2>&1); printf '%s\\n' \"$out\"; done",
+            id="restart-substitution-loop",
+        ),
+        pytest.param(
+            "cd /Users/josh/Projects/gobby && "
+            "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do "
+            'if uv run gobby restart 2>&1 | grep -q "Refusing to restart"; '
+            'then echo "try $i refused"; sleep 30; else break; fi; done',
+            id="restart-echo-variable-loop",
+        ),
+        pytest.param(
+            """uv run python - <<'PY'
+import ast
+from pathlib import Path
+spec = {"path": "src/gobby/tasks/_lifecycle_close_tool.py"}
+names = {node.id for node in ast.walk(ast.parse("x = 1")) if isinstance(node, ast.Name)}
+print({"spec": spec, "names": names})
+PY""",
+            id="python-ast-heredoc",
+        ),
+        pytest.param(
+            """node --input-type=module <<'JS'
+const theme = "dark";
+await page.route("**/api/tasks", route => route.fulfill({ json: { tasks: [] } }));
+await page.evaluate(theme => localStorage.setItem("gobby-theme", theme), theme);
+await page.screenshot({ path: `probe-${theme}.png` });
+JS""",
+            id="node-playwright-heredoc",
+        ),
+        pytest.param(
+            "cd /Users/josh/Projects/gobby && "
+            'for p in a b; do git show X:uv.lock | grep "$p"; done',
+            id="gobby-path-loop",
+        ),
+        pytest.param(
+            'cat /Users/josh/Projects/gobby/.gobby/plans/"$PLAN"',
+            id="gobby-path-variable",
+        ),
+    ],
+)
+async def test_reported_non_approval_commands_stay_allowed(
+    temp_db: HubDatabase, command: str
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
+    )
+    response = await RuleEngine(temp_db).evaluate(
+        _bash_event(command), session_id=SESSION_ID, variables={}
+    )
+    assert response.decision == "allow", response.reason
+
+
 # Every launcher, wrapper and global-option spelling that reaches the CLI.
 INVOCATIONS = (
     'gobby sessions {approve-dirty-path"s",s7} a.txt',
@@ -123,6 +184,11 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
 
 
 BRACE_REFUSED = (
+    # The language-body exemption covers a single literal stage, without a subshell.
+    """(uv run python - <<'PY'
+queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
+PY
+)""",
     'gobby sessions {approve-dirty-path"s",s7} a.txt',
     "gobby {tasks,sessions} list",
     "gobby tasks {show,list}",
@@ -248,10 +314,6 @@ for q in queries:
     subprocess.run(["gcode", "grep", "-w", q["pattern"], "-m", "50", "--project", "/repo"])
 PY""",
     """uv run python -c 'import subprocess; subprocess.run(["gcode", "grep", "-w", "x", "-m", "50"])'""",
-    """(uv run python - <<'PY'
-queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
-PY
-)""",
     r"""for d in task-23678-dispatch-batch-retirement task-24244-decision-service; do echo "$d $(lsof -t +D /Users/josh/.gobby/worktrees/gobby/$d 2>/dev/null | tr '\n' ' ')"; done""",
     """python3 <<'PY'
 print({"op": "grep"})

@@ -36,7 +36,11 @@ _RESET_ANSI = "\033[0m"
 
 # Projected task state -> single-letter code (O/E/C)
 _STATE_LETTER: dict[str, str] = {
-    "ready": "O",
+    "open": "O",
+    "in_progress": "I",
+    "blocked": "B",
+    "needs_human": "H",
+    "deferred": "D",
     "escalated": "E",
     "closed": "C",
 }

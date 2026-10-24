@@ -26,7 +26,7 @@ rules:
     effects:
       - type: block
         reason: >-
-          Consume the pending handoff with gobby-sessions:get_handoff() before loading
+          Call gobby-sessions:get_handoff() to consume the pending handoff before loading
           skills or starting work. This pull is required even during a restart or cutover
           hold; keep other held work paused. Schema discovery, pending memory recall and
           coordination remain available.

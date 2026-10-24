@@ -1,0 +1,177 @@
+"""Single-use team admission: one task, one task-titled tree, bound to the admitting execution."""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.session_context import session_context_for_test
+from tests.fixtures.landing_case import make_landing_case
+from tests.fixtures.team_case import (
+    SLUG,
+    TITLE,
+    TeamWorld,
+    execution_id,
+    git_in,
+    make_team_world,
+)
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def world(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> TeamWorld:
+    return make_team_world(
+        make_landing_case(temp_db, sample_project, tmp_path), tmp_path, monkeypatch
+    )
+
+
+async def test_idempotent_team_admission(world: TeamWorld) -> None:
+    task = world.case.task(TITLE)
+    first, second = world.child(task), world.child(task)
+
+    results = await asyncio.gather(
+        world.admit(first, task), world.admit(second, task), return_exceptions=True
+    )
+
+    teams = [result for result in results if isinstance(result, TeamBinding)]
+    refusals = [result for result in results if isinstance(result, TeamAdmissionRefused)]
+    assert (len(teams), len(refusals)) == (1, 1), results
+    team = teams[0]
+    assert refusals[0].code == "team_exists"
+    winner, loser = (first, second) if team.team_id == execution_id(first) else (second, first)
+    assert team.team_id == execution_id(winner)
+
+    branch = f"task-{task.seq_num}-{SLUG}"
+    assert (team.task_id, team.project_id, team.branch, team.base_branch) == (
+        task.id,
+        world.case.project_id,
+        branch,
+        "trunk",
+    )
+    assert Path(team.worktree_path).name == branch
+    assert git_in(team.worktree_path, "branch", "--show-current") == branch
+    assert world.task_branches() == [branch]
+    assert world.tree_ids() == [team.worktree_id]
+
+    # A duplicate launch from the admitted execution returns the same team and tree.
+    assert await world.admit(winner, task) == team
+    with session_context_for_test(winner.id):
+        reply = await world.tools.call("admit_team", {"task": f"#{task.seq_num}"})
+    assert reply == {
+        "success": True,
+        "team": asdict(team),
+        "task_id": task.id,
+        "branch": branch,
+        "worktree": team.worktree_id,
+        "project_path": team.worktree_path,
+    }
+    # The refused execution stays refused, and nothing new was created.
+    with pytest.raises(TeamAdmissionRefused) as again:
+        await world.admit(loser, task)
+    assert again.value.code == "team_exists"
+    assert world.admit_step_output(loser) == {}
+    assert world.task_branches() == [branch]
+    assert world.tree_ids() == [team.worktree_id]
+
+
+async def test_replacement_stays_in_admitted_team(world: TeamWorld) -> None:
+    task = world.case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    tree = Path(team.worktree_path)
+    (tree / "work.txt").write_text("committed by the developer\n")
+    git_in(tree, "add", "work.txt")
+    git_in(tree, "commit", "-m", "developer work")
+    head = git_in(tree, "rev-parse", "HEAD")
+    (tree / "draft.txt").write_text("uncommitted draft\n")
+
+    # Partial launch: the admission recorded its team and made the tree, then the step died
+    # before the binding was complete. The re-run admit step adopts the same tree.
+    intent = {
+        key: value
+        for key, value in asdict(team).items()
+        if key not in ("worktree_id", "worktree_path")
+    }
+    world.rewrite_admit_output(original, {"team": intent})
+    assert await world.admit(original, task) == team
+
+    # The admitting execution finishes; a replacement execution rejoins the same team.
+    world.finish(original)
+    replacement = world.child(task)
+    assert await world.admit(replacement, task, team_id=team.team_id) == team
+    assert world.admit_step_output(replacement)["team"] == asdict(team)
+
+    reply = await world.spawn(replacement, worktree_id=team.worktree_id, checkout_mode="none")
+    assert reply["success"] is True, reply
+    assert [launch["worktree_id"] for launch in world.launches] == [team.worktree_id]
+
+    # Existing work in the team tree is untouched by recovery and replacement.
+    assert git_in(tree, "rev-parse", "HEAD") == head
+    assert (tree / "draft.txt").read_text() == "uncommitted draft\n"
+    assert world.tree_ids() == [team.worktree_id]
+    assert world.task_branches() == [team.branch]
+
+
+async def test_team_binding_cannot_drift(world: TeamWorld, tmp_path: Path) -> None:
+    task, other = world.case.task(TITLE), world.case.task("Another task")
+    owner = world.child(task)
+    team = await world.admit(owner, task)
+    elsewhere = LocalWorktreeManager(world.case.db).create(
+        world.case.project_id,
+        branch_name="elsewhere",
+        worktree_path=str(tmp_path / "elsewhere"),
+        base_branch="trunk",
+        task_id=other.id,
+    )
+
+    # Admission cannot rebind the team to another task or team.
+    stranger, duplicate = world.child(other), world.child(task)
+    attempts: list[tuple[Callable[[], Awaitable[TeamBinding]], str]] = [
+        (lambda: world.admit(owner, other), "team_binding_drift"),
+        (lambda: world.admit(owner, task, team_id=execution_id(stranger)), "team_binding_drift"),
+        (lambda: world.admit(stranger, other, team_id=team.team_id), "team_task_mismatch"),
+        (lambda: world.admit(duplicate, task, team_id="not-a-team"), "team_missing"),
+        (lambda: world.admit(duplicate, task), "team_exists"),
+    ]
+    for attempt, code in attempts:
+        with pytest.raises(TeamAdmissionRefused) as refused:
+            await attempt()
+        assert refused.value.code == code
+
+    # Seat spawns cannot leave the admitted tree or carry another task.
+    spawns: list[tuple[dict[str, Any], str]] = [
+        ({"checkout_mode": "worktree"}, "team_tree_fixed"),
+        ({"worktree_id": team.worktree_id, "branch_name": "task-new"}, "team_tree_fixed"),
+        ({"worktree_id": team.worktree_id, "base_branch": "trunk"}, "team_tree_fixed"),
+        ({"clone_id": "clone"}, "team_tree_fixed"),
+        ({"worktree_id": elsewhere.id}, "team_tree_mismatch"),
+        ({"project_path": str(world.case.repo)}, "team_tree_mismatch"),
+        ({}, "team_tree_required"),
+        ({"worktree_id": team.worktree_id, "task_id": other.id}, "team_task_mismatch"),
+        ({"reserved_run_id": None, "checkout_mode": "worktree"}, "team_tree_fixed"),
+    ]
+    for target, code in spawns:
+        reply = await world.spawn(owner, **target)
+        assert (reply["success"], reply.get("error_code")) == (False, code), target
+    assert world.launches == []
+
+    allowed = await world.spawn(owner, worktree_id=team.worktree_id, task_id=f"#{task.seq_num}")
+    assert allowed["success"] is True, allowed
+    joined = await world.spawn(owner, project_path=team.worktree_path)
+    assert joined["success"] is True, joined
+    assert world.task_branches() == [team.branch]
+    assert sorted(world.tree_ids()) == sorted([team.worktree_id, elsewhere.id])

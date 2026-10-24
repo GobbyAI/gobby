@@ -95,7 +95,12 @@ how the system behaves so you can work with it instead of being surprised by it.
     sessions keep the durable message queued without daemon input.
     Use one targetless `project` send for repository coordination and `global` for
     machine-local coordination across projects, which includes every daemon restart
-    or cutover announcement.
+    or cutover announcement. Only the Assistant and Triage message the Orchestrator
+    (the daemon and the operator's own terminal are exempt); every other seat
+    reports to Triage or its Dev Manager. A direct send to the
+    Orchestrator is refused with `message_recipient_not_allowed`, and fanout
+    withholds it. Triage's sends to the Orchestrator stay queued unless it sets
+    `wake=true`.
 13. A denied call is about that call, never a standing policy. Approval prompts
     do not always name the tool being invoked, so a rejection can mean "not that,
     not now" or simply a misread. Adjust and continue. If you decide to stop

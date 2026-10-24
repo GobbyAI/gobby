@@ -31,7 +31,7 @@ def task_record(**overrides: Any) -> dict[str, Any]:
         "updated_at": "2026-10-07T02:00:00+00:00",
         "closed_at": "2026-10-07T03:00:00+00:00",
         "labels": [LABEL],
-        "closed_reason": "completed",
+        "closed_reason": "done",
         "commits": ["abc1234"],
         "seq_num": 7,
     }
@@ -115,7 +115,7 @@ def test_lookup_rebuilds_full_owner_records_and_fetches_each_once() -> None:
     assert first == second
     [task] = first
     assert (task.id, task.project_id, task.labels) == ("task-1", "project-1", [LABEL])
-    assert (task.closed_reason, task.commits, task.seq_num) == ("completed", ["abc1234"], 7)
+    assert (task.closed_reason, task.commits, task.seq_num) == ("done", ["abc1234"], 7)
     assert task.closed_at == datetime(2026, 10, 7, 3, tzinfo=UTC)
     assert client.calls == [
         (

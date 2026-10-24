@@ -51,7 +51,6 @@ CONTENT_TYPE_DIRS: dict[str, str] = {
     "skills": "skills",
     "prompts": "prompts",
     "workflows/rules": "rules",
-    "rules": "rules",
     "workflows/agents": "agents",
     "workflows/variables": "variables",
     "workflows/pipelines": "pipelines",
@@ -63,7 +62,6 @@ _GIT_PROTECTED_PATHS: tuple[str, ...] = (
     "skills",
     "prompts",
     "workflows",
-    "rules",
     "mcp",
     "detection",
 )
@@ -392,7 +390,7 @@ def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
     if not parts or any(part in {".", ".."} for part in parts):
         return None
 
-    if parts[0] in {"skills", "prompts", "rules", "mcp", "detection"}:
+    if parts[0] in {"skills", "prompts", "mcp", "detection"}:
         return CONTENT_TYPE_DIRS[parts[0]]
 
     if parts[0] == "workflows":

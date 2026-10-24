@@ -164,6 +164,17 @@ def shared_agent_cargo_home_dir() -> Path:
     return agent_home_cache_root() / "cargo-home"
 
 
+def ensure_agent_sccache_dir() -> Path:
+    """Create and return the sccache directory every unsandboxed spawned agent shares.
+
+    Creating it also creates its parent, where the shared server's socket lives;
+    sccache refuses to start when the socket's directory is missing.
+    """
+    sccache_dir = agent_home_cache_root() / "sccache"
+    sccache_dir.mkdir(parents=True, exist_ok=True)
+    return sccache_dir
+
+
 def sandbox_agent_cache_dir() -> Path:
     """Return the cache root that sandboxed runs share and nothing else builds from.
 

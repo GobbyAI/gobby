@@ -1,6 +1,7 @@
 """Bounded protected-name recognition, independent of launcher position."""
 
 import time
+from collections.abc import Callable
 
 import pytest
 
@@ -11,6 +12,199 @@ from gobby.workflows.approval_brace_guard import (
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize("delimiter", ["'JS'", '"JS"'])
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "node",
+        "nodejs",
+        "node --input-type=module",
+        "node --input-type=commonjs",
+        "cd /repo/gobby && node --input-type=module",
+        "cd '/repo/gobby checkout' && node --input-type=module",
+    ],
+)
+def test_node_heredoc_source_is_not_shell_command_words(
+    guard: Callable[[str], bool], launcher: str, delimiter: str
+) -> None:
+    command = (
+        launcher
+        + """ <<'JS'
+const theme = "dark";
+const example = "gobby sessions approve-dirty-paths";
+await page.route("**/api/tasks", route => route.fulfill({ json: { tasks: [] } }));
+await page.evaluate(theme => localStorage.setItem("gobby-theme", theme), theme);
+const payload = { key: `gobby-${theme}` };
+JS"""
+    )
+    assert not guard(command.replace("<<'JS'", f"<<{delimiter}"))
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node <<JS\n$(gobby sessions approve-dirty-{paths,files})\nJS",
+        "node <<JS\n`gobby sessions approve-dirty-{paths,files}`\nJS",
+        "alias unrelated=true; node <<JS\n$(gobby sessions approve-dirty-{paths,files})\nJS",
+        "node <<'JS' | sh\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "node > >(sh) <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "unknown <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "sh <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "node <<'JS'\ngobby sessions approve-dirty-{paths,files}",
+        "node <<'JS'\nconst payload = {};\nJS\ngobby sessions approve-dirty-{paths,files}",
+    ],
+)
+def test_node_heredoc_exemption_keeps_shell_execution_refused(
+    guard: Callable[[str], bool], command: str
+) -> None:
+    assert guard(command)
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "uv run -m node",
+        "node(){ sh; }; node",
+        "alias node=sh; node",
+        "node shell-runner.js",
+        "node --require ./shell-loader.js",
+        *[
+            pytest.param(
+                template.format(interpreter=interpreter, variable=variable, value=value),
+                id=f"identity-{name}-{interpreter}",
+            )
+            for interpreter, variable, value in (
+                ("node", "NODE_OPTIONS", "--require=./e.js"),
+                ("python3", "PYTHONPATH", "/tmp/x"),
+            )
+            for name, template in (
+                ("symlink-path", "ln -s /bin/sh {interpreter} && ./{interpreter}"),
+                ("relative-path", "./{interpreter}"),
+                ("absolute-path", "/tmp/x/{interpreter}"),
+                ("path-assignment", "PATH=/tmp/x {interpreter}"),
+                ("env-path", "env PATH=/tmp/x {interpreter}"),
+                ("export-path", "export PATH=.:$PATH; {interpreter}"),
+                ("uv-path", "uv run ./{interpreter}"),
+                ("option-assignment", "{variable}={value} {interpreter}"),
+                ("env-options", "env {variable}={value} {interpreter}"),
+                ("export-options", "export {variable}={value}; {interpreter}"),
+                ("symlink-bare", "ln -s /bin/sh {interpreter} && {interpreter}"),
+                ("copy-bare", "cp /bin/sh {interpreter}; {interpreter}"),
+                ("move-bare", "mv shell {interpreter}; {interpreter}"),
+                ("install-bare", "install /bin/sh {interpreter}; {interpreter}"),
+                ("redirect-bare", "cat shell > {interpreter}; {interpreter}"),
+                ("stage-assignment", "MODE=probe {interpreter}"),
+                ("stage-env", "env MODE=probe {interpreter}"),
+            )
+        ],
+        pytest.param("env NODE_OPTIONS=--import=./e.mjs node", id="identity-node-import"),
+        pytest.param("export PYTHONSTARTUP=./e.py; node", id="identity-cross-language-environment"),
+    ],
+)
+def test_node_name_requires_an_unshadowed_interpreter(
+    guard: Callable[[str], bool], launcher: str
+) -> None:
+    assert guard(launcher + " <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS")
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize("interpreter", ["node", "python3 -"])
+@pytest.mark.parametrize(
+    "template",
+    [
+        "for PATH in /tmp/x:$PATH; do PROGRAM\ndone",
+        "select PATH in /tmp/x:$PATH; do PROGRAM\ndone",
+        "read PATH <<< /tmp/x; PROGRAM",
+        "readarray -t PATH; PROGRAM",
+        "mapfile -t PATH; PROGRAM",
+        "getopts p PATH; PROGRAM",
+        "printf -v PATH %s /tmp/x; PROGRAM",
+        "declare -n p=PATH; p=/tmp/x; PROGRAM",
+        "typeset -n p=PATH; p=/tmp/x; PROGRAM",
+        "local -n p=PATH; p=/tmp/x; PROGRAM",
+        'v=PA; export "${v}TH=/tmp/x"; PROGRAM',
+        "v=PA; declare -x ${v}TH=/tmp/x; PROGRAM",
+        "PATH[0]=/tmp/x; PROGRAM",
+        "unset PATH; PROGRAM",
+        ": ${PATH:=/tmp/x}; PROGRAM",
+        ": ${PATH=/tmp/x}; PROGRAM",
+        "uv run --with ./evil.whl PROGRAM",
+        "uv run --with-editable ./evil PROGRAM",
+        "uv run --with-requirements ./evil.txt PROGRAM",
+        "uv run --find-links ./evil PROGRAM",
+        "uvx --from ./evil PROGRAM",
+        "uv tool run --with ./evil.whl PROGRAM",
+        "uv tool run --from ./evil PROGRAM",
+        "uv pip install ./evil && uv run PROGRAM",
+        "tee ~/.local/bin/node </dev/null && PROGRAM",
+        "curl -so ~/.local/bin/node URL && PROGRAM",
+        "wget -O ~/.local/bin/node URL && PROGRAM",
+        "dd if=/bin/sh of=/tmp/x/node && PROGRAM",
+        "rsync /bin/sh ~/.local/bin/node && PROGRAM",
+        "tee ~/.local/bin/python3 </dev/null && PROGRAM",
+        "cd ~/.local/bin && tee node </dev/null && cd - && PROGRAM",
+        "which node && PROGRAM",
+        "cd $ROOT && PROGRAM",
+        pytest.param("cd - && PROGRAM", id="cd-previous-directory"),
+        pytest.param("cd -- && PROGRAM", id="cd-home-directory"),
+        pytest.param("cd /tmp '&&' PROGRAM", id="quoted-cd-separator"),
+        "PROGRAM\necho done",
+        "PROGRAM\n# trailing comment",
+    ],
+)
+def test_language_heredoc_requires_whole_command_allowlist(
+    guard: Callable[[str], bool], interpreter: str, template: str
+) -> None:
+    program = interpreter + " <<'JS'\ngobby sessions approve-dirty-{paths,files} x\nJS"
+    assert guard(template.replace("PROGRAM", program))
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "uv run node",
+        "uv run --with ./e node",
+        "uv run --directory /tmp/x node",
+        "uv run -- node",
+        "uvx node",
+        "uvx --from ./e node",
+        "uv tool run --from ./e node",
+        "uvx --from ./e python -",
+        "uv run --with python-dotenv python -",
+        "node --input-type module -",
+        "node --input-type=commonjs -",
+        "nodejs --",
+    ],
+)
+def test_language_heredoc_rejects_non_allowlisted_launchers(
+    guard: Callable[[str], bool], launcher: str
+) -> None:
+    assert guard(launcher + " <<'JS'\ngobby sessions approve-dirty-{paths,files} x\nJS")
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize("delimiter", ["'PY'", '"PY"'])
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "python",
+        "python3 -",
+        "uv run python -",
+        "uv run python3 -",
+        "cd /repo/gobby && uv run python -",
+    ],
+)
+def test_python_heredoc_source_allowlisted_shapes(
+    guard: Callable[[str], bool], delimiter: str, launcher: str
+) -> None:
+    command = launcher + f" <<{delimiter}\n" + 'spec = {"example": "gobby", "items": {1, 2}}\nPY'
+    assert not guard(command)
 
 
 @pytest.mark.parametrize(

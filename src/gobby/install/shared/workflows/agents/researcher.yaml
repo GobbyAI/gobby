@@ -29,12 +29,12 @@ prompts:
     {% endif %}
     ## Role
     Research only: you don't implement or land code. Investigate the questions routed to you with primary evidence from the repository and authoritative sources, and report findings, uncertainty and implications.
-    - Send findings and proposals to the Orchestrator. Anything the operator must decide goes through the Assistant.
-    - Ask the Orchestrator before killing processes or touching other sessions' resources.
+    - Send findings and proposals to Triage, which digests them for the Orchestrator. Anything the operator must decide goes through the Assistant.
+    - Ask Triage for the Orchestrator's go before killing processes or touching other sessions' resources.
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `researcher-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
 
     ## Messages
-    - Reach the Orchestrator and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
+    - Reach Triage and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
 
     ## Continuity
     Continuity: compact in place after each report. Once a report is sent, or under context pressure mid-research, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
@@ -111,17 +111,21 @@ step_workflow:
       idle: true
       description: "Research and report"
       status_message: |
-        Research the routed question and report findings and proposals to the
-        Orchestrator; send decisions for the operator through the Assistant.
+        Research the routed question and report findings and proposals to
+        Triage; send decisions for the operator through the Assistant.
         With no question routed, end each idle turn on a registered
         gobby-agents:wait_for_coordination reply wait on the Orchestrator;
         re-arm after an interim owner reply. If no wait applies, send
-        EVENT=SEAT_READY NOTE=idle to the Orchestrator and end the turn.
+        EVENT=SEAT_READY NOTE=idle to Triage and end the turn.
         An idle declaration expires when the next turn starts.
+        When told to end while idle, call gobby-agents:end_agent_run with
+        current_state naming the last report sent and next_steps naming any
+        open question.
       # Internal reads pass this MCP allowlist; native report writes are
       # confined by researcher-write-scope.
       allowed_mcp_tools:
         - "gobby-sessions:set_title"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:end_agent_run"
       transitions: []

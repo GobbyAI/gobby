@@ -1,4 +1,4 @@
-"""Task-close preconditions and the shared four-invariant evaluation."""
+"""Task-close preconditions and the shared close-gate evaluation."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from gobby.mcp_proxy.tools.tasks._close_context import (
     CloseAttributionLookupError,
     capture_attribution,
     children,
+    step_requirements,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
@@ -135,6 +136,10 @@ async def _evaluate_close(
     except (LandingGitError, CheckoutNotFoundError, ValueError):
         target = None
     integration_ref = f"refs/heads/{target[1]}" if target else None
+    try:
+        steps = await step_requirements(ctx, task, commits)
+    except ValueError as exc:
+        return evaluation.refuse("step_records_unavailable", str(exc))
     evaluation.checklist = await evaluate_close_invariants(
         open_children=[child.id for child in child_tasks if not is_task_closed(child)],
         commit_shas=commits,
@@ -142,6 +147,8 @@ async def _evaluate_close(
         attributed_checkouts=attribution.clean_checkouts,
         integration_repo_path=str(target[0]) if target else None,
         integration_ref=integration_ref,
+        required_steps=steps.required,
+        missing_steps=steps.missing,
         attribution_complete=attribution.complete,
     )
     return evaluation
