@@ -12,6 +12,9 @@ use serde_json::Value;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+#[path = "contract/daemon_down.rs"]
+mod daemon_down;
+
 const VALID_STDIN: &str = r#"{"session_id":"test-session","transcript_path":"/tmp/test.jsonl"}"#;
 
 #[test]
@@ -108,6 +111,7 @@ fn malformed_stdin_ignores_closed_stdout_pipe() -> TestResult {
         .env("GOBBY_HOME", gobby_home.path())
         .env("GOBBY_DAEMON_URL", daemon_url)
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
@@ -1038,6 +1042,7 @@ fn detached_noncritical_action_ignores_closed_stdout_pipe() -> TestResult {
         .env("GOBBY_HOME", gobby_home.path())
         .env("GOBBY_DAEMON_URL", daemon_url)
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
@@ -2065,6 +2070,7 @@ fn run_diagnose_with_dirs(
         .env("GOBBY_HOME", gobby_home)
         .env("GOBBY_DAEMON_URL", daemon_url)
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
@@ -2117,6 +2123,7 @@ fn run_ghook_with_closed_stdout(
         .env_remove("GOBBY_PORT")
         .env_remove("GOBBY_DAEMON_PORT")
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
         .env_remove("GOBBY_PROJECT_ID")
         .env_remove("GOBBY_SESSION_ID")
         .env_remove("GOBBY_AGENT_RUN_ID")
@@ -2161,6 +2168,7 @@ fn run_ghook_with_dirs_and_args(
         .env_remove("GOBBY_PORT")
         .env_remove("GOBBY_DAEMON_PORT")
         .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
         .env_remove("GOBBY_PROJECT_ID")
         .env_remove("GOBBY_SESSION_ID")
         .env_remove("GOBBY_AGENT_RUN_ID")
