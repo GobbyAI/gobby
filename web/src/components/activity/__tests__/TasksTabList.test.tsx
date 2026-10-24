@@ -153,7 +153,7 @@ describe("TasksTabList keyboard navigation", () => {
       );
 
       expect(
-        screen.getByRole("treeitem", { name: /Broken task: Ready/ }),
+        screen.getByRole("treeitem", { name: /Broken task: Open/ }),
       ).toBeTruthy();
       expect(warn).toHaveBeenCalledWith(
         "Failed to derive task row state",

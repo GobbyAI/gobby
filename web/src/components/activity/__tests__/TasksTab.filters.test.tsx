@@ -131,7 +131,7 @@ describe("TasksTab — filters", () => {
         String(url).includes("/api/stages/registry"),
       ),
     ).toBe(false);
-    expect(screen.getByLabelText("Ready")).toBeChecked();
+    expect(screen.getByLabelText("Open")).toBeChecked();
     expect(screen.getByLabelText("In Progress")).toBeChecked();
     expect(screen.getByText("Closed")).toBeTruthy();
   });
