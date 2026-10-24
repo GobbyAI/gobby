@@ -21,6 +21,7 @@ import {
   TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
   TERMINAL_WS_SAFE_INTEGER_MAX,
 } from "../terminalWsFragments";
+import { terminalFocusMessage } from "../tmuxSessionMessages";
 import { TMUX_REQUEST_TIMEOUT_MS, useTmuxSessions } from "../useTmuxSessions";
 import { TerminalTab } from "../../components/activity/terminal/TerminalTab";
 import type {
@@ -165,7 +166,7 @@ describe("useTmuxSessions", () => {
   it("replays every canonical terminal WS fixture from the manifest", () => {
     const manifest = readGoldenManifest();
     expect(Object.keys(manifest)).toEqual(["fixtures"]);
-    expect(manifest.fixtures).toHaveLength(43);
+    expect(manifest.fixtures).toHaveLength(44);
     expect(manifest.fixtures).not.toContain("manifest.json");
     expect(
       readdirSync(GOLDEN_DIR)
@@ -193,6 +194,19 @@ describe("useTmuxSessions", () => {
       ]),
     );
     mount.unmount();
+  });
+
+  it("builds the terminal_focus frame the golden corpus pins", () => {
+    const focus = readGoldenMessage("focus.json");
+    expect(
+      JSON.parse(
+        terminalFocusMessage(
+          String(focus.terminal_id),
+          String(focus.attachment_id),
+          focus.focused === true,
+        ),
+      ),
+    ).toEqual(focus);
   });
 
   it("scopes every listing to the project picker and relists when it changes", () => {
