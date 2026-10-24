@@ -263,3 +263,11 @@ def test_candidate_lane_prefix_is_read_by_the_receiver(
 
     assert parsed is not None
     assert parsed.sha == SHA
+
+
+@pytest.mark.parametrize("event", ["CANDIDATE_UPDATE", "CANDIDATE_VERDICT_EXTRA", "CANDIDATE_"])
+def test_unknown_candidate_event_is_rejected_by_receiver(event: str) -> None:
+    message = cast(InterSessionMessage, _Message(f"EVENT={event} TASK=#7 COMMIT={SHA}"))
+
+    with pytest.raises(CandidateMessageError, match="expected EVENT=CANDIDATE TASK="):
+        candidate_event(MagicMock(), message)

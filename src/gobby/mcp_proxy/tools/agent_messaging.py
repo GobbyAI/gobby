@@ -13,7 +13,7 @@ import logging
 from collections.abc import Callable, Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.storage.inter_session_messages import normalize_message_direction
+from gobby.storage.inter_session_messages import InterSessionMessage, normalize_message_direction
 from gobby.storage.sessions import system_session_id
 from gobby.utils.datetime import utc_now
 
@@ -177,7 +177,12 @@ def add_messaging_tools(
             if not content:
                 return {"success": False, "error": "content is required."}
 
-            from gobby.workflows.engine.seat_messages import CandidateMessageError, envelope_fields
+            from gobby.workflows.engine.seat_messages import (
+                _CANDIDATE_GRAMMAR,
+                CandidateMessageError,
+                candidate_event,
+                envelope_fields,
+            )
 
             try:
                 envelope_fields(content)
@@ -188,6 +193,12 @@ def add_messaging_tools(
                     "error_code": "protocol_line_rejected",
                     "field": exc.field,
                     "canonical_order": exc.canonical,
+                    **(
+                        {"candidate_binding_error": _CANDIDATE_GRAMMAR}
+                        if exc.event == "CANDIDATE"
+                        and (target or "").strip().lower() in {"session", "agent"}
+                        else {}
+                    ),
                 }
 
             if target is None or not target.strip():
@@ -281,6 +292,27 @@ def add_messaging_tools(
             if normalized_target == "session":
                 assert target_id is not None
                 resolved_target_id = _resolve(target_id)
+
+            if normalized_target in {"session", "agent"}:
+                resolution = mailbox.resolve_target(
+                    from_session_id=from_id,
+                    target=normalized_target,
+                    target_id=resolved_target_id,
+                    project_id=project_id,
+                )
+                for recipient_id in resolution.recipient_session_ids:
+                    pending = InterSessionMessage(
+                        id="",
+                        from_session=from_id,
+                        to_session=recipient_id,
+                        content=content,
+                        priority=priority,
+                        sent_at=utc_now(),
+                    )
+                    try:
+                        candidate_event(db, pending)
+                    except CandidateMessageError as exc:
+                        return {"success": False, "candidate_binding_error": str(exc)}
 
             # A direct recipient can be woken once; implicit fanout wakes can
             # multiply across a project or machine and feed coordination loops.

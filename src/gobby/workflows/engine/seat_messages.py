@@ -247,7 +247,11 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     """
     line = message.content.partition("\n")[0]
     is_candidate = re.match(r"^(?:LANE=\S*\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
-    candidate_intent = re.match(r"^(?:LANE=\S*\s+)?(?:EVENT=)?CANDIDATE\b", line)
+    candidate_intent = re.match(
+        r"^(?:LANE=\S*\s+)?(?:EVENT=)?CANDIDATE"
+        r"(?!(?:_VERDICT|_RESUMED|_PARKED|_WITHDRAWN)(?:\s|$))(?:\b|_)",
+        line,
+    )
     if candidate_intent and not is_candidate:
         raise CandidateMessageError(_CANDIDATE_GRAMMAR)
     try:

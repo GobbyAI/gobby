@@ -10,6 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.workflows.engine.seat_messages import _CANDIDATE_GRAMMAR
 
 pytestmark = pytest.mark.unit
 
@@ -67,7 +68,14 @@ def message_manager() -> MagicMock:
 
 
 @pytest.fixture
-def registry(session_manager: MagicMock, message_manager: MagicMock) -> InternalToolRegistry:
+def registry(
+    session_manager: MagicMock, message_manager: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> InternalToolRegistry:
+    monkeypatch.setattr(
+        "gobby.workflows.engine.seat_messages.SessionManager",
+        MagicMock(return_value=session_manager),
+    )
+    monkeypatch.setattr("gobby.workflows.engine.seat_messages.LocalTaskManager", MagicMock())
     registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
     add_messaging_tools(
         registry=registry,
@@ -142,6 +150,47 @@ async def test_well_formed_candidate_sends_unchanged(
     assert result["success"] is True
     message_manager.create_message.assert_called_once()
     assert _stored_content(message_manager) == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["", "LANE=1 ", "LANE= "])
+@pytest.mark.parametrize("event", ["CANDIDATE_UPDATE", "CANDIDATE_VERDICT_EXTRA", "CANDIDATE_"])
+async def test_unknown_candidate_event_reports_binding_error_without_storing(
+    prefix: str, event: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(registry, f"{prefix}EVENT={event} TASK=#7 COMMIT={SHA}")
+
+    assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
+    assert result["success"] is False
+    message_manager.create_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "event", ["CANDIDATE_VERDICT", "CANDIDATE_RESUMED", "CANDIDATE_PARKED", "CANDIDATE_WITHDRAWN"]
+)
+async def test_known_candidate_events_send_unchanged(
+    event: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    verdict = " VERDICT=LAND" if event == "CANDIDATE_VERDICT" else ""
+    content = f"EVENT={event} TASK=#7 SHA={SHA}{verdict} NOTE=unchanged"
+
+    result = await _send(registry, content)
+
+    assert result["success"] is True
+    assert "candidate_binding_error" not in result
+    assert _stored_content(message_manager) == content
+
+
+@pytest.mark.asyncio
+async def test_malformed_candidate_reports_binding_error_without_storing(
+    registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(registry, f"EVENT=CANDIDATE TASK=#7 COMMIT={SHA}")
+
+    assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
+    assert result["success"] is False
+    message_manager.create_message.assert_not_called()
 
 
 @pytest.mark.asyncio
