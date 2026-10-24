@@ -301,13 +301,13 @@ def run_cutover(
         raise CutoverError("refusing to promote: daemon stop failed; installed binaries unchanged")
     from gobby.releases.window import agent_activation_refusal
 
-    refusal: str | None = None
+    lease_refusal: str | None = None
     try:
         _require_unchanged_sources(root, sources)
         # A release batch's lease can lapse while the daemon stops. Nothing is promoted
         # yet, so the unchanged daemon starts again and the cutover is refused.
-        refusal = agent_activation_refusal()
-        if refusal is None:
+        lease_refusal = agent_activation_refusal()
+        if lease_refusal is None:
             promote_workspace_binary_set(
                 artifacts,
                 bin_dir=bin_dir,
@@ -323,13 +323,13 @@ def run_cutover(
     except Exception as exc:
         # After confirmed shutdown, every failed phase needs operator recovery
         # guidance, including startup errors and identity decoding failures.
-        refused = f"refusing to promote: {refusal}; " if refusal else ""
+        refused = f"refusing to promote: {lease_refusal}; " if lease_refusal else ""
         raise CutoverError(
             f"{refused}{exc}. The daemon is stopped. After resolving this failure, run "
             "`gobby start`."
         ) from exc
-    if refusal is not None:
-        raise CutoverError(f"refusing to promote: {refusal}; restarted the unchanged daemon")
+    if lease_refusal is not None:
+        raise CutoverError(f"refusing to promote: {lease_refusal}; restarted the unchanged daemon")
     if isinstance(build.client, str):
         return build.client
     try:
