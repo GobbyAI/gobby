@@ -17,6 +17,7 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.node_client import NodeCommandError
+from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.servers.routes.attention_roster import (
     _load_roster_entries,
     _model_display_names,
@@ -681,7 +682,7 @@ async def _resolve_attention_pane(
     if state.session_id is not None and manager is not None and registry is not None:
         row = manager.get_live_for_session(state.session_id)
         if row is not None:
-            runtime = registry.resolve(row.backend)
+            runtime = resolve_terminal_runtime(registry, row, manager.db)
 
             async def capture_session_pane() -> str | None:
                 snapshot = await runtime.snapshot(row, 15)
@@ -703,7 +704,7 @@ async def _resolve_attention_pane(
     row = manager.get(run.terminal_id)
     if row is None:
         return None
-    runtime = registry.resolve(row.backend)
+    runtime = resolve_terminal_runtime(registry, row, manager.db)
 
     async def capture_run_pane() -> str | None:
         snapshot = await runtime.snapshot(row, 15)

@@ -15,6 +15,7 @@ from gobby.agents.capture import terminate_managed_runtime_async
 from gobby.agents.watchdog.composer_gate import composer_refuses_automation
 from gobby.events.live_wake import composer_occupied_result
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, NativeWakeTarget, WakeDispatcher
+from gobby.events.wake_batch import dispatch_live_wakes
 from gobby.hub import remote_cancel, remote_pane, remote_runtime, remote_terminal
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.node_commands import ReportAgent
@@ -32,6 +33,7 @@ from gobby.terminals.runtime import (
     TerminalWriteError,
 )
 from gobby.terminals.services import TerminalServices
+from gobby.terminals.termination import kill_terminal
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator, WriteRequest
 from tests.agents.test_capture import FakeCaptureStorage
 from tests.terminals.fakes import (
@@ -375,13 +377,8 @@ async def test_wake_to_node_terminal_writes_through_the_node(
                 "terminal_id": terminal.id,
                 "kind": "text",
                 "data": CONTINUE_WAKE_MESSAGE,
-                "submit": False,
+                "submit": True,
             },
-        ),
-        (
-            REMOTE,
-            "terminal.write",
-            {"terminal_id": terminal.id, "kind": "key", "data": "enter", "submit": False},
         ),
     ]
     batch.assert_not_awaited()
@@ -433,7 +430,7 @@ async def test_one_failed_node_wake_does_not_fail_the_others(
     failing_id, delivered_id = str(uuid4()), str(uuid4())
     monkeypatch.setattr(
         "gobby.runner_init.orchestration.wake_write_services",
-        lambda: (None, _ScriptedCoordinator(failing_id)),
+        lambda: (MemoryTerminalStore(), _ScriptedCoordinator(failing_id)),
     )
     targets = [
         NativeWakeTarget(
@@ -448,3 +445,96 @@ async def test_one_failed_node_wake_does_not_fail_the_others(
 
     assert [result["delivered"] for result in results] == [False, True]
     assert results[0]["error_code"] == "remote_wake_failed"
+
+
+def _submitted_wake(terminal_id: str) -> tuple[str, str, dict[str, Any]]:
+    return (
+        REMOTE,
+        "terminal.write",
+        {
+            "terminal_id": terminal_id,
+            "kind": "text",
+            "data": CONTINUE_WAKE_MESSAGE,
+            "submit": True,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_node_wake_is_one_submitted_write(
+    temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    terminal = replace(_node_terminal(), session_id=WAKE_SESSION_ID)
+    store = MemoryTerminalStore(terminal, db=temp_db)
+    native = FakeRuntime(backend="native")
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration.wake_write_services",
+        lambda: (store, _coordinator(store, native)),
+    )
+    _report(str(uuid4()), terminal.id, composer="empty")
+    batch = AsyncMock(return_value=[])
+
+    [result] = await dispatch_live_wakes(
+        _wake_dispatcher(store, batch), [WAKE_SESSION_ID], priority="normal"
+    )
+
+    assert result["delivered"] is True
+    assert node.sent == [_submitted_wake(terminal.id)]
+    batch.assert_not_awaited()
+    assert native.write_log == []
+
+
+@pytest.mark.asyncio
+async def test_batch_wake_to_node_terminal_settles_an_earlier_latch(
+    temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = replace(_node_terminal(), session_id=WAKE_SESSION_ID)
+    terminal = replace(
+        base, unresolved_writes={f"wake:{base.id}": {"at": "2026-10-23T22:00:00+00:00"}}
+    )
+    store = MemoryTerminalStore(terminal, db=temp_db)
+    native = FakeRuntime(backend="native")
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration.wake_write_services",
+        lambda: (store, _coordinator(store, native)),
+    )
+    _report(str(uuid4()), terminal.id, composer="empty")
+    batch = AsyncMock(return_value=[])
+
+    [result] = await dispatch_live_wakes(
+        _wake_dispatcher(store, batch), [WAKE_SESSION_ID], priority="normal"
+    )
+
+    assert result["delivered"] is True
+    assert node.sent == [_submitted_wake(terminal.id)]
+    batch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kill_terminal_on_node_row_goes_through_node(
+    temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = str(uuid4())
+    terminal = _node_terminal(run_id)
+    _patch_runs(monkeypatch, _run(run_id, terminal.id))
+    _report(run_id, terminal.id, tail="final line")
+    node.replies = [{"stopped": True}]
+    store = MemoryTerminalStore(terminal, db=temp_db)
+    local = FakeRuntime(backend="native")
+
+    exited = await kill_terminal(store, runtime_registry(local), terminal, grace_seconds=0)
+
+    assert node.sent == [
+        (
+            REMOTE,
+            "agent.cancel",
+            {
+                "run_id": run_id,
+                "terminal_id": terminal.id,
+                "signal": "TERM",
+                "close_terminal": True,
+            },
+        ),
+    ]
+    assert not local.terminate_started.is_set()
+    assert exited is not None

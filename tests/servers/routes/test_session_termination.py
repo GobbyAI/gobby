@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 
 def test_expire_session_marks_tracked_terminal_exited_before_reply() -> None:
     session_id = "session-1"
-    terminal = SimpleNamespace(id="terminal-1", backend="tmux", state="live")
+    terminal = SimpleNamespace(id="terminal-1", backend="tmux", state="live", machine_id=None)
     session = SimpleNamespace(id=session_id, status="active", terminal_context=None)
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = terminal
@@ -60,7 +60,7 @@ def test_expire_session_marks_tracked_terminal_exited_before_reply() -> None:
 
 def test_expire_session_does_not_fall_back_after_tracked_terminal_failure() -> None:
     session_id = "session-1"
-    terminal = SimpleNamespace(id="terminal-1", backend="tmux", state="live")
+    terminal = SimpleNamespace(id="terminal-1", backend="tmux", state="live", machine_id=None)
     session = SimpleNamespace(
         id=session_id,
         status="active",

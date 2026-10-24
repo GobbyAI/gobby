@@ -96,7 +96,7 @@ async def _send_remote_wake(targets: list[NativeWakeTarget]) -> list[dict[str, A
     from gobby.events.wake import CONTINUE_WAKE_MESSAGE
     from gobby.terminals.write_coordinator import WriteRequest
 
-    _, coordinator = wake_write_services()
+    manager, coordinator = wake_write_services()
     submit_marks: dict[str, datetime] = {}
 
     def record_submit(result_id: str) -> None:
@@ -113,6 +113,11 @@ async def _send_remote_wake(targets: list[NativeWakeTarget]) -> list[dict[str, A
             submit=True,
         )
         try:
+            terminal = manager.get(target.terminal_id)
+            if terminal is not None and not target.drain:
+                # The gate passed this wake on an empty composer, so an earlier
+                # wake's latch is settled first. Left latched, it suppresses this one.
+                await _settle_earlier_wake(coordinator, terminal, request.action_key)
             outcome = await coordinator.write(
                 request, on_dispatch=partial(record_submit, target.session_id)
             )
@@ -199,13 +204,14 @@ async def _send_tmux_session_wake(
     cli_source: str | None = None,
 ) -> datetime | None:
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
+    from gobby.hub.machine_routing import is_local_machine
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
     submitted_at: datetime | None = None
 
     def record_step(step: WriteRequest) -> None:
         nonlocal submitted_at
-        if step.kind == "key" and step.payload == "enter":
+        if step.submit or (step.kind == "key" and step.payload == "enter"):
             submitted_at = utc_now()
 
     manager, coordinator = wake_write_services()
@@ -241,15 +247,18 @@ async def _send_tmux_session_wake(
             )
         else:
             literal_text = message.rstrip("\n")
+            local = is_local_machine(terminal.machine_id)
             if composer_confirmed_empty:
                 # The dispatcher holds this same composer lock across the fresh
                 # empty probe and this call. Settle without deleting late input.
                 await _settle_earlier_wake(coordinator, terminal, action_key)
             elif clear_before_submit:
                 await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
-                if literal_text:
+                if literal_text and local:
                     steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
-            if literal_text:
+            if not local:
+                # A node terminal's wake is one submitted write: the node sends the
+                # text and its submit together, with no enter key to follow.
                 steps.append(
                     WriteRequest(
                         terminal_id=terminal.id,
@@ -257,18 +266,30 @@ async def _send_tmux_session_wake(
                         origin="automatic",
                         kind="text",
                         payload=literal_text,
+                        submit=True,
                     )
                 )
-                steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
-            steps.append(
-                WriteRequest(
-                    terminal_id=terminal.id,
-                    action_key=action_key,
-                    origin="automatic",
-                    kind="key",
-                    payload="enter",
+            else:
+                if literal_text:
+                    steps.append(
+                        WriteRequest(
+                            terminal_id=terminal.id,
+                            action_key=action_key,
+                            origin="automatic",
+                            kind="text",
+                            payload=literal_text,
+                        )
+                    )
+                    steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+                steps.append(
+                    WriteRequest(
+                        terminal_id=terminal.id,
+                        action_key=action_key,
+                        origin="automatic",
+                        kind="key",
+                        payload="enter",
+                    )
                 )
-            )
         await _deliver_wake_action(
             coordinator,
             terminal.id,

@@ -18,6 +18,7 @@ from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector, plain_text
+from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.terminals.composer_ledger import (
     composer_drain_keys,
     read_composer,
@@ -152,7 +153,8 @@ def live_runtime_pane(
     terminal = terminal_manager.get_live_for_session(session_id)
     if terminal is None:
         return None
-    return RuntimePaneIO(terminal_runtime_registry.resolve(terminal.backend), terminal)
+    runtime = resolve_terminal_runtime(terminal_runtime_registry, terminal, terminal_manager.db)
+    return RuntimePaneIO(runtime, terminal)
 
 
 def context_runtime_pane(
@@ -186,7 +188,8 @@ def context_runtime_pane(
     bound = getattr(terminal, "session_id", None)
     if bound not in {None, getattr(session, "id", None)}:
         return None
-    return RuntimePaneIO(terminal_runtime_registry.resolve(terminal.backend), terminal)
+    runtime = resolve_terminal_runtime(terminal_runtime_registry, terminal, terminal_manager.db)
+    return RuntimePaneIO(runtime, terminal)
 
 
 class RuntimePaneIO:

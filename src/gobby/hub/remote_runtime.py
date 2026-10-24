@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Literal
 
 from gobby.hub import remote_cancel
+from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.remote_pane import RemotePane, remote_pane_store
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.terminals.runtime import SnapshotResult, TerminalWriteError
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
         PreparedSpawn,
         SnapshotMode,
         TerminalHandle,
+        TerminalRuntime,
+        TerminalRuntimeRegistry,
         TerminalSpawnRequest,
         WriteOutcome,
     )
@@ -44,6 +47,15 @@ def remote_composer_state(terminal_id: str) -> str:
     if entry is None or entry.pane is None:
         return "unknown"
     return entry.pane.composer.state
+
+
+def resolve_terminal_runtime(
+    registry: TerminalRuntimeRegistry, terminal: Terminal, db: HubDatabase
+) -> TerminalRuntime:
+    """The runtime that serves a terminal row; a row on another machine never reaches a local host."""
+    if not is_local_machine(terminal.machine_id):
+        return RemoteTerminalRuntime(db)
+    return registry.resolve(terminal.backend)
 
 
 class RemoteTerminalRuntime:

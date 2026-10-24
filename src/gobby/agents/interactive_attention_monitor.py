@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
@@ -197,9 +199,11 @@ class InteractiveAttentionMonitor:
                 if row is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
-                if row.backend == "native" and native_unavailable:
+                local_native = row.backend == "native" and is_local_machine(row.machine_id)
+                if local_native and native_unavailable:
                     continue
-                snapshot = await self._registry.resolve(row.backend).snapshot(row, 15)
+                runtime = resolve_terminal_runtime(self._registry, row, self._session_manager.db)
+                snapshot = await runtime.snapshot(row, 15)
                 pane_output = snapshot.text
                 if (
                     pane_output is not None
