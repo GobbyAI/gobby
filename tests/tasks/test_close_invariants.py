@@ -375,6 +375,57 @@ def _set_close_policy(db: HubDatabase, project_id: str, policy: dict[str, Any]) 
     marker.write_text(json.dumps({**data, "task_close_policy": policy}), encoding="utf-8")
 
 
+def test_last_child_close_leaves_a_parent_without_records_open(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    from gobby.tasks.step_records import StepSubmission, TaskStep, record_task_step
+    from tests.storage.tasks.test_legacy_validation_criteria_close import _make_legacy
+    from tests.tasks.test_step_records import _Seats
+
+    project_id = sample_project["id"]
+    manager = LocalTaskManager(temp_db)
+    _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
+    seats = _Seats(temp_db, project_id)
+    writers: dict[TaskStep, str] = {
+        "implementation": seats.add("policy-developer", ["implementation"]),
+        "closing": seats.add("policy-closer", ["closing"]),
+    }
+    # A legacy row with no criteria and no hold: only its own missing records keep it open.
+    parent = manager.create_task(
+        project_id, "Unrecorded parent", category="research", validation_criteria="Legacy."
+    )
+    _make_legacy(temp_db, parent.id)
+    child = manager.create_task(
+        project_id,
+        "Last child",
+        category="research",
+        parent_task_id=parent.id,
+        validation_criteria="Moot.",
+    )
+    for step, session_id in writers.items():
+        record_task_step(
+            temp_db,
+            task_id=child.id,
+            session_id=session_id,
+            step=step,
+            submission=StepSubmission(
+                status="approved",
+                epoch=1,
+                round_number=1,
+                feedback=f"The {step} step is approved.",
+                commit_sha=None,
+                disposition="moot",
+            ),
+        )
+    closed_ancestors: list[str] = []
+
+    closed = manager.close_task(child.id, reason="moot", closed_ancestors=closed_ancestors)
+
+    assert closed.closed_at is not None
+    assert closed_ancestors == []
+    assert manager.get_task(parent.id).closed_at is None
+
+
 @pytest.mark.asyncio
 async def test_required_step_records_follow_project_policy(
     temp_db: HubDatabase, sample_project: dict[str, Any]

@@ -18,6 +18,7 @@ import yaml
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
@@ -599,10 +600,12 @@ class TestProviderResolution:
         runner = _make_runner()
         runner.run_storage.get_by_session.return_value = None
         sessions = MagicMock()
+        # A grant applies only on the asserting session's machine, the launch machine here.
         sessions.get.return_value = SimpleNamespace(
             id="caller",
             agent_run_id=None,
             parent_session_id=None,
+            machine_id=require_machine_id(),
         )
 
         with (

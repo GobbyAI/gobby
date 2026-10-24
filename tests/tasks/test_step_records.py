@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -22,6 +23,7 @@ from gobby.tasks.step_records import (
     record_task_step,
 )
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
@@ -272,3 +274,71 @@ def test_three_rejections_and_audited_reset(
     _approved, created = _step(temp_db, task, reviewer, "review", "approved", epoch=2)
     assert created
     assert manager.get_task(task.id).review_status == "valid"
+
+
+@pytest.mark.parametrize("authority", ["triage", "operator"])
+async def test_only_triage_or_the_operator_resets_an_exhausted_review(
+    temp_db: HubDatabase, task: Task, team: dict[str, str], seats: _Seats, authority: str
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    registry = create_task_registry(manager)
+    for round_number in (1, 2, 3):
+        _step(temp_db, task, team["reviewer"], "review", "rejected", round_number)
+    assert manager.get_task(task.id).claimed_by_session_id is None
+
+    async def de_escalate(session_id: str) -> dict[str, Any]:
+        with session_context_for_test(session_id):
+            result: dict[str, Any] = await registry.call(
+                "de_escalate_task", {"task_id": task.id, "reason": "Try another round"}
+            )
+        return result
+
+    # The exhausted task is unclaimed, so no claim stands between a seat and the reset.
+    for seat in ("developer", "reviewer", "closer"):
+        refused = await de_escalate(team[seat])
+        assert refused.get("error_code") == "REVIEW_RESET_FORBIDDEN", (seat, refused)
+    held = manager.get_task(task.id)
+    assert held.is_escalated
+    assert (held.review_epoch, held.review_fail_count) == (1, 3)
+
+    if authority == "triage":
+        resetter = seats.add("triage", [])
+    else:
+        # The operator's own terminal: a root session with no agent run and no seat role.
+        resetter = str(uuid4())
+        temp_db.execute(
+            """
+            INSERT INTO sessions (id, external_id, machine_id, source, project_id, status)
+            VALUES (%s, %s, %s, 'claude', %s, 'active')
+            """,
+            (resetter, f"operator-{resetter}", require_machine_id(), task.project_id),
+        )
+    reset = await de_escalate(resetter)
+    assert "error" not in reset, reset
+    after = manager.get_task(task.id)
+    assert not after.is_escalated
+    assert (after.review_epoch, after.review_fail_count) == (2, 0)
+
+
+def test_reopen_never_strands_an_exhausted_review(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    for round_number in (1, 2, 3):
+        _step(temp_db, task, team["reviewer"], "review", "rejected", round_number)
+
+    # Reopen is no reset: clearing the escalation would leave three rejections standing
+    # and the task with no path back to review.
+    with pytest.raises(ValueError, match="audited reset"):
+        manager.reopen_task(task.id, reason="Try again")
+    held = manager.get_task(task.id)
+    assert held.is_escalated and held.escalation_reason == _EXHAUSTED
+
+    # Closing resolves the escalation; reopening restores it so Triage can still reset it.
+    manager.close_task(task.id, reason="wont_do", force=True)
+    reopened = manager.reopen_task(task.id, reason="Scope returned")
+    assert reopened.closed_at is None
+    assert reopened.is_escalated and reopened.escalation_reason == _EXHAUSTED
+    assert (reopened.review_epoch, reopened.review_fail_count) == (1, 3)
+    reset = manager.de_escalate_task(task.id, "Triage: new approach")
+    assert (reset.review_epoch, reset.review_fail_count) == (2, 0)

@@ -185,14 +185,7 @@ def close_eligible_parent_chain(
     close_reason = validate_task_close_reason("done" if reason is None else reason)
     while parent_id:
         parent = conn.execute(
-            """
-            SELECT id, seq_num, title, task_type, project_id, closed_at, parent_task_id,
-                   claimed_by_session_id, labels, validation_criteria
-              FROM tasks
-             WHERE id = %s
-             FOR UPDATE
-            """,
-            (parent_id,),
+            "SELECT * FROM tasks WHERE id = %s FOR UPDATE", (parent_id,)
         ).fetchone()
         if parent is None or parent["closed_at"] is not None:
             return
@@ -202,13 +195,18 @@ def close_eligible_parent_chain(
             # Closing it here skips every gate and drops the claim — found-work
             # child #21046 took its worked parent #20969 and epic #20964 that way.
             return
-        if has_hold_label(parent) or (
-            parent["task_type"] != "epic"
-            and normalized_validation_criteria(parent["validation_criteria"]) is not None
+        if (
+            has_hold_label(parent)
+            or parent["hold_state"] is not None
+            or (
+                parent["task_type"] != "epic"
+                and normalized_validation_criteria(parent["validation_criteria"]) is not None
+            )
         ):
-            # A hold label or parent-owned criteria are this parent's own close
-            # gates: an open owner decision, a clean window to wait for, a plan
-            # still to be written, or acceptance evidence nobody has verified.
+            # A hold label or state (needs_human, deferred) or parent-owned criteria
+            # are this parent's own close gates: an open owner decision, a clean
+            # window or follow-up date to wait for, a plan still to be written, or
+            # acceptance evidence nobody has verified.
             # Auto-closing on the last child (#22421) removed such parents from
             # open lists while that work was unresolved; they close through the
             # gates that check it.
@@ -224,6 +222,16 @@ def close_eligible_parent_chain(
             (parent_id,),
         ).fetchone()
         if open_child is not None:
+            return
+        # step_records imports this package, so it loads at call time.
+        from gobby.tasks.step_records import task_step_requirements
+
+        # A parent whose policy requires step records closes through its own gates;
+        # the child's close must not fail on the parent's missing records.
+        try:
+            if task_step_requirements(db, Task.from_row(parent)).missing:
+                return
+        except ValueError:
             return
         _close_task_in_txn(
             conn,

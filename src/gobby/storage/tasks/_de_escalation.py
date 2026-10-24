@@ -9,6 +9,7 @@ from gobby.storage.tasks._updates import update_task
 
 # The third rejection in one review epoch escalates; only an audited reset reopens review.
 REVIEW_REJECTION_LIMIT = 3
+REVIEW_EXHAUSTED = "Three independent review rejections in the current epoch"
 
 
 def de_escalate_task(

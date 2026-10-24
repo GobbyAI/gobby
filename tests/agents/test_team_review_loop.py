@@ -351,6 +351,33 @@ async def test_claim_handoff_is_scoped_and_atomic(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_hand_off_keeps_the_closer_and_the_reviewer_eligible(world: TeamWorld) -> None:
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    team = await team_in_review(world)
+    task_id = team.task.id
+    closer = seat(world, team.runbook, "closer")
+    grant_step_writes(db, closer, world.case.project_id, "fixture-closer", ("closing",))
+    # A former claimant never lands, so the seats that close the task never take its claim.
+    refused = await hand_off(tools, team.manager, team.task, team.developer, team.manager)
+    assert refused.get("error_code") == "closer_claim_forbidden", refused
+    refused = await hand_off(tools, team.manager, team.task, team.developer, closer)
+    assert refused.get("error_code") == "closer_claim_forbidden", refused
+    # A former claimant never reviews, so the epoch's reviewer takes the claim only at the
+    # second rejection and stays free to review the fix after the first.
+    submit(db, team.sol, task_id, "review", "rejected", 1, team.candidate)
+    refused = await hand_off(tools, team.manager, team.task, team.developer, team.sol)
+    assert refused.get("error_code") == "reviewer_claim_early", refused
+    fix = commit(db, team.binding, "scroll_fix.py")
+    submit(db, team.developer, task_id, "implementation", "approved", 2, fix)
+    submit(db, team.sol, task_id, "review", "rejected", 2, fix)
+    moved = await hand_off(tools, team.manager, team.task, team.developer, team.sol)
+    assert moved.get("success") is True, moved
+    assert tasks.get_task(task_id).claimed_by_session_id == team.sol
+
+
+@pytest.mark.asyncio
 async def test_hand_off_dirty_check_runs_off_the_event_loop(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -427,11 +454,10 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     db = world.case.db
     tasks = LocalTaskManager(db)
     task_tools = create_task_registry(tasks)
-    # A reviewer handed the claim before the second rejection gains no implementation step.
+    # A reviewer holding the claim before the second rejection gains no implementation step.
     early = await team_in_review(world, "Hand the claim over too early")
     submit(db, early.sol, early.task.id, "review", "rejected", 1, early.candidate)
-    moved = await hand_off(task_tools, early.manager, early.task, early.developer, early.sol)
-    assert moved.get("success") is True, moved
+    tasks.claim_task(early.task.id, early.sol, force=True)
     with pytest.raises(StepRecordError, match="cannot write the implementation step"):
         submit(db, early.sol, early.task.id, "implementation", "approved", 2, early.candidate)
     # A fresh reviewer joins a named team, and only at the second rejection.

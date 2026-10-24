@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +114,29 @@ def _open(manager: LocalTaskManager, task_id: str) -> bool:
     task = manager.get_task(task_id)
     assert task is not None
     return task.closed_at is None
+
+
+def _hold(temp_db: HubDatabase, task_id: str, hold: str) -> None:
+    follow_up = datetime(2030, 1, 1, tzinfo=UTC) if hold == "deferred" else None
+    temp_db.execute(
+        "UPDATE tasks SET hold_state = %s, follow_up_at = %s WHERE id = %s",
+        (hold, follow_up, task_id),
+    )
+
+
+@pytest.mark.parametrize("hold", ["needs_human", "deferred"])
+def test_held_parent_survives_its_last_child(
+    temp_db: HubDatabase, tmp_path: Path, hold: str
+) -> None:
+    """A needs_human or deferred hold is the parent's own open decision."""
+    manager, project_id = _manager(temp_db, tmp_path)
+    parent = _create(manager, project_id, "Held epic", task_type="epic")
+    child = _create(manager, project_id, "Last child", parent_task_id=parent.id)
+    _hold(temp_db, parent.id, hold)
+
+    manager.close_task(child.id)
+
+    assert _open(manager, parent.id)
 
 
 def test_claimed_parent_survives_its_last_child(temp_db: HubDatabase, tmp_path: Path) -> None:
@@ -238,7 +262,7 @@ def test_reparent_that_empties_the_old_parent_closes_it(
     assert _open(manager, moved.id)
 
 
-@pytest.mark.parametrize("guard", ["open_sibling", "hold_label", "claimed"])
+@pytest.mark.parametrize("guard", ["open_sibling", "hold_label", "hold_state", "claimed"])
 def test_reparent_keeps_a_guarded_old_parent_open(
     temp_db: HubDatabase, tmp_path: Path, guard: str
 ) -> None:
@@ -250,6 +274,8 @@ def test_reparent_keeps_a_guarded_old_parent_open(
     new_parent = _create(manager, project_id, "New epic", task_type="epic")
     if guard == "open_sibling":
         _create(manager, project_id, "Open sibling", parent_task_id=old_parent.id)
+    if guard == "hold_state":
+        _hold(temp_db, old_parent.id, "needs_human")
     if guard == "claimed":
         owner = SessionManager(temp_db).register(
             external_id="owner-session",

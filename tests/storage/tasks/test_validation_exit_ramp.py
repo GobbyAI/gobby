@@ -81,12 +81,13 @@ def test_manual_escalation_reopen_preserves_historical_review_fail_count(
         "Manual reopen",
         validation_criteria="Test task completion is observable.",
     )
-    manager.update_task(task.id, review_fail_count=4)
+    # Below the rejection limit; an exhausted epoch reopens only through the audited reset.
+    manager.update_task(task.id, review_fail_count=2)
     manager.escalate_task(task.id, reason="manual review")
 
     reopened = manager.reopen_task(task.id, reason="review resolved")
 
-    assert reopened.review_fail_count == 4
+    assert reopened.review_fail_count == 2
     assert reopened.is_escalated is False
 
 

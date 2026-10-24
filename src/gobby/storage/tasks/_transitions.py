@@ -12,6 +12,7 @@ from gobby.storage.hub.protocol import (
     SessionVariableTransfer,
 )
 from gobby.storage.tasks._close import _close_task_in_txn
+from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._models import (
     UNSET,
@@ -389,6 +390,13 @@ def reopen_task(
     has_ownership_metadata = bool(task.claimed_by_session_id)
     if not is_task_closed(task) and not task.is_escalated and not has_ownership_metadata:
         raise ValueError(f"Task {_task_ref(task, task_id)} is already open")
+    # Three rejections stand until the audited reset, so a reopen keeps them escalated.
+    exhausted = task.review_fail_count >= REVIEW_REJECTION_LIMIT
+    if exhausted and task.is_escalated and not is_task_closed(task):
+        raise ValueError(
+            f"Task {_task_ref(task, task_id)} exhausted its review epoch; only the audited "
+            "reset (de_escalate_task by Triage or the operator) reopens review."
+        )
 
     description = task.description
     if reason:
@@ -404,8 +412,8 @@ def reopen_task(
         closed_at=None,
         closed_in_session_id=None,
         closed_commit_sha=None,
-        escalated_at=None,
-        escalation_reason=None,
+        escalated_at=utc_now() if exhausted else None,
+        escalation_reason=REVIEW_EXHAUSTED if exhausted else None,
     )
     _reopen_closed_ancestors(db, task_id)
     withdraw_memory_reviews(db, task_id)

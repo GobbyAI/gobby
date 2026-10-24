@@ -25,7 +25,7 @@ from gobby.storage.project_checkouts import (
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
+from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._transitions import release_task_claim
 from gobby.storage.tasks._updates import update_task
 from gobby.tasks.lifecycle_access import (
@@ -46,7 +46,6 @@ TASK_STEPS: tuple[TaskStep, ...] = ("test", "implementation", "review", "closing
 _TERMINAL = frozenset({"approved", "rejected"})
 # Test evidence may precede implementation; these steps attest the task tip.
 _TIP_BOUND: frozenset[TaskStep] = frozenset({"implementation", "review", "closing"})
-_REVIEW_EXHAUSTED = "Three independent review rejections in the current epoch"
 
 
 class StepRecordError(ValueError):
@@ -267,15 +266,20 @@ def _rejected_reviews(records: list[TaskStepRecord], epoch: int) -> list[TaskSte
     ]
 
 
+def fixer_round(records: list[TaskStepRecord], epoch: int) -> bool:
+    """The epoch stands at its second rejection, when a rejecting reviewer fixes the work."""
+    rejected = {record.round_number for record in _rejected_reviews(records, epoch)}
+    return len(rejected) == REVIEW_REJECTION_LIMIT - 1
+
+
 def _review_fixer(
     task: Task, session_id: str, step: TaskStep, records: list[TaskStepRecord]
 ) -> bool:
     """The claimant that rejected a review this epoch fixes the work after the second rejection."""
     if step != "implementation" or task.claimed_by_session_id != session_id:
         return False
-    rejected = _rejected_reviews(records, task.review_epoch)
-    return len({record.round_number for record in rejected}) == REVIEW_REJECTION_LIMIT - 1 and any(
-        record.session_id == session_id for record in rejected
+    return fixer_round(records, task.review_epoch) and any(
+        record.session_id == session_id for record in _rejected_reviews(records, task.review_epoch)
     )
 
 
@@ -439,7 +443,7 @@ def record_task_step(
                     review_feedback=submission.feedback,
                     review_fail_count=count,
                     escalated_at=now,
-                    escalation_reason=_REVIEW_EXHAUSTED,
+                    escalation_reason=REVIEW_EXHAUSTED,
                 )
             else:
                 update_task(

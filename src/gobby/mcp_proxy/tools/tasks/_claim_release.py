@@ -8,11 +8,16 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import AgentTaskClaimMutation, SessionVariableTransfer
+from gobby.storage.hub.protocol import (
+    AgentTaskClaimMutation,
+    HubDatabase,
+    SessionVariableTransfer,
+)
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
+from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
 from gobby.workflows.task_dirty_state import task_dirty_paths
@@ -167,6 +172,35 @@ def _bound_dev_manager(ctx: RegistryContext, caller: Session, task_id: str) -> b
     )
 
 
+def _recipient_refusal(
+    db: HubDatabase, caller_id: str, recipient: Session, task_id: str, epoch: int
+) -> dict[str, str] | None:
+    """Refuse a move that disqualifies the seat the review sequence needs next.
+
+    A former claimant never lands or reviews the task, so the seats that close it never
+    take its claim, and the epoch's reviewer takes it only at the second rejection.
+    """
+    definition = session_agent_definition(db, recipient)
+    if recipient.id == caller_id or (
+        definition is not None and "closing" in definition[0].task_step_writes
+    ):
+        return {
+            "error": "The seat that closes the task cannot hold its claim",
+            "error_code": "closer_claim_forbidden",
+        }
+    records = list_task_step_records(db, task_id)
+    reviewed = any(
+        record.step == "review" and record.epoch == epoch and record.session_id == recipient.id
+        for record in records
+    )
+    if reviewed and not fixer_round(records, epoch):
+        return {
+            "error": "A reviewer of this epoch takes the claim only at the second rejection",
+            "error_code": "reviewer_claim_early",
+        }
+    return None
+
+
 def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     def hand_off_task_claim(
         task_id: str, holder_session_ref: str, recipient_session_ref: str, reason: str
@@ -214,7 +248,7 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
             # dirty-file check and the move commit as one transfer.
             with db.transaction_immediate(AgentTaskClaimMutation(recipient.id)) as conn:
                 row = conn.execute(
-                    "SELECT claimed_by_session_id, project_id, closed_at FROM tasks "
+                    "SELECT claimed_by_session_id, project_id, closed_at, review_epoch FROM tasks "
                     "WHERE id = %s FOR UPDATE",
                     (resolved_id,),
                 ).fetchone()
@@ -222,6 +256,11 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                     return {"error": "Task not found", "error_code": "task_not_found"}
                 if row["closed_at"] is not None or str(row["claimed_by_session_id"]) != holder.id:
                     return dict(_STALE_HOLDER)
+                refusal = _recipient_refusal(
+                    db, caller.id, recipient, resolved_id, int(row["review_epoch"])
+                )
+                if refusal is not None:
+                    return refusal
                 sessions = {recipient.id}
                 sessions.add(holder.id)
                 conn.acquire_additional_lock(SessionVariableTransfer(tuple(sessions)))
@@ -256,7 +295,9 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
         description=(
             "The task's Dev Manager: move the task claim from its holder to another seat of the "
             "same team. The holder must still own the task and have no uncommitted "
-            "task-attributed files; the transfer is atomic and recorded with the reason."
+            "task-attributed files; the transfer is atomic and recorded with the reason. A seat "
+            "that closes the task never takes its claim, and a reviewer of the current epoch "
+            "takes it only at the second rejection."
         ),
         input_schema={
             "type": "object",

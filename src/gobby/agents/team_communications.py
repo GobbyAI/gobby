@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 
 ORCHESTRATOR = "orchestrator"
@@ -30,24 +30,35 @@ class RecipientPolicy:
     queued: bool  # Triage to the Orchestrator: an omitted wake stays queued
 
 
+_SEATS = (
+    "SELECT s.id, s.agent_run_id, s.agent_depth, v.variables ->> '_agent_type' AS role "
+    "FROM sessions s LEFT JOIN session_variables v ON v.session_id = s.id "
+)
+
+
+def operator_terminal(row: Row) -> bool:
+    """The operator's own terminal is no seat: no agent run, no depth and no seat role."""
+    return not row["agent_run_id"] and not row["agent_depth"] and row["role"] in (None, "default")
+
+
+def triage_or_operator(db: HubDatabase, session_id: str) -> bool:
+    """Triage or the operator's own terminal; an unknown session fails closed."""
+    row = db.fetchone(_SEATS + "WHERE s.id = %s::uuid", (session_id,))
+    return row is not None and (row["role"] == TRIAGE or operator_terminal(row))
+
+
 def recipient_policy(
     db: HubDatabase, sender_id: str, recipient_ids: Sequence[str]
 ) -> RecipientPolicy:
     if sender_id == system_session_id():
         return RecipientPolicy(frozenset(), queued=False)
-    rows = db.fetchall(
-        "SELECT s.id, s.agent_run_id, s.agent_depth, v.variables ->> '_agent_type' AS role "
-        "FROM sessions s LEFT JOIN session_variables v ON v.session_id = s.id "
-        "WHERE s.id = ANY(%s::uuid[])",
-        ([sender_id, *recipient_ids],),
-    )
+    rows = db.fetchall(_SEATS + "WHERE s.id = ANY(%s::uuid[])", ([sender_id, *recipient_ids],))
     roles = {str(row["id"]): row["role"] for row in rows}
     orchestrators = frozenset(r for r in recipient_ids if roles.get(r) == ORCHESTRATOR)
     sender = next((row for row in rows if str(row["id"]) == sender_id), None)
     role = sender["role"] if sender else None
-    # The operator's own terminal is no seat; an unknown sender fails closed.
-    bare = sender is not None and not sender["agent_run_id"] and not sender["agent_depth"]
-    if role in ORCHESTRATOR_SENDERS or (bare and role in (None, "default")):
+    # An unknown sender fails closed.
+    if role in ORCHESTRATOR_SENDERS or (sender is not None and operator_terminal(sender)):
         return RecipientPolicy(frozenset(), queued=role == TRIAGE and bool(orchestrators))
     return RecipientPolicy(orchestrators, queued=False)
 
