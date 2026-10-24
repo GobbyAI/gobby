@@ -94,6 +94,7 @@ class _LifecycleManager:
     def __init__(self, row: _Row) -> None:
         self.row = row
         self.exited = False
+        self.db = MagicMock(spec=HubDatabase)
 
     def get(self, terminal_id: str) -> _Row | None:
         return self.row if terminal_id == self.row.id else None
@@ -321,6 +322,7 @@ async def test_direct_lifecycle_fallbacks_are_ordered() -> None:
 async def test_create_and_kill_publish_ordered_lifecycle_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
     server = _server()
     row = _Row()
     manager = _LifecycleManager(row)

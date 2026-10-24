@@ -1,8 +1,17 @@
 name: chrome-devtools
-description: Chrome DevTools MCP for browser debugging and automation
-version: 1
+description: Loopback-only Chrome DevTools MCP with a fresh browser profile
+version: 2
 enabled: true
 transport: stdio
 command: npx
-args: ["-y", "chrome-devtools-mcp@0.21.0", "--no-usage-statistics"]
-runtime_hook: chrome_executable_path
+args:
+  - "-y"
+  - "chrome-devtools-mcp@0.21.0"
+  - "--no-usage-statistics"
+  - "--no-performance-crux"
+  - "--isolated"
+  - "--proxy-server=http://127.0.0.1:9"
+  - "--chrome-arg=--proxy-bypass-list=<-loopback>;127.0.0.1;[::1];localhost"
+  - "--chrome-arg=--disable-quic"
+  - "--chrome-arg=--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
+runtime_hook: loopback_browser

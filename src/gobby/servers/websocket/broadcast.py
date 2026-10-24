@@ -85,6 +85,17 @@ class BroadcastMixin:
         if subs is None:
             return False
 
+        if getattr(websocket, "browser_session", None) is not None:
+            for sub in subs:
+                sub_type, separator, params = sub.partition(":")
+                if not separator or sub_type != message.get("type"):
+                    continue
+                key, separator, value = params.partition("=")
+                field = message.get(key)
+                if separator and isinstance(field, str) and field == value:
+                    return True
+            return False
+
         # Global wildcard subscription
         if "*" in subs:
             return True

@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from gobby.config.ui import effective_ui_host, is_loopback_bind_host
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
+from gobby.servers.routes.browser_sign_in import create_browser_sign_in_router
 from gobby.storage.auth import AuthStore
 
 if TYPE_CHECKING:
@@ -130,6 +131,7 @@ def login_lockout_response(retry_after: int) -> JSONResponse:
 def create_auth_router(server: "HTTPServer", login_rate_limiter: LoginRateLimiter) -> APIRouter:
     """Create the authentication API router."""
     router = APIRouter(prefix="/api/auth", tags=["auth"])
+    router.include_router(create_browser_sign_in_router(server))
 
     @router.post("/login")
     async def login(req: LoginRequest, request: Request) -> JSONResponse:
@@ -180,6 +182,7 @@ def create_auth_router(server: "HTTPServer", login_rate_limiter: LoginRateLimite
         """Clear session cookie and delete session."""
         token = request.cookies.get(COOKIE_NAME)
         if token:
+            server.auth_service.browser_sessions.revoke(token)
             auth_store = _get_auth_store(server)
             await server.run_db(auth_store.delete_session, token)
 

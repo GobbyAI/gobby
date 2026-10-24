@@ -5,7 +5,6 @@ use postgres::Client;
 use crate::cli_error::CliError;
 use crate::config::Context;
 use crate::db;
-use crate::visibility;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectMatch {
@@ -230,15 +229,6 @@ fn path_exists_under_root(root: &Path, file_path: &str) -> bool {
         return false;
     };
     abs.starts_with(root)
-}
-
-pub(crate) fn current_indexed_path_is_valid(
-    conn: &mut Client,
-    ctx: &Context,
-    file_path: &str,
-) -> bool {
-    visibility::indexed_file_exists(conn, ctx, file_path)
-        && path_exists_in_current_project(ctx, file_path)
 }
 
 pub(crate) fn other_project_for_path(

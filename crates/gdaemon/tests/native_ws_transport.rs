@@ -868,6 +868,50 @@ async fn bridge_readiness_is_one_time_and_entry_specific() {
 }
 
 #[tokio::test]
+async fn bridge_ready_confines_browser_and_defaults_to_operator() {
+    let mut h = Harness::start().await;
+    let generation = h.bind().await;
+    let ready = json!({
+        "type": "bridge_ready", "version": 1, "generation": generation,
+        "admitted": true, "confined": true,
+    });
+    let (stream, head, rest, mut browser_leg) = h
+        .open(BROWSER, &[], Some(Message::text(ready.to_string())))
+        .await;
+    let mut browser = Public::upgraded(stream, head, rest).await;
+    // ready_frame omits confined: legacy/operator admission defaults to false.
+    let (mut operator, mut operator_leg) = h.admit(BROWSER, &[]).await;
+    wait_connections(&h.broker, 2).await;
+    let subscribe = json!({"type": "subscribe", "events": ["*"]}).to_string();
+    browser.send(Message::text(subscribe.clone())).await;
+    let refusal: Value = serde_json::from_str(&browser.text("browser refusal").await).unwrap();
+    assert_eq!(refusal["type"], "error");
+    assert_eq!(refusal["message"], "Browser message refused");
+    operator.send(Message::text(subscribe)).await;
+    let ack: Value = serde_json::from_str(&operator.text("operator subscribe").await).unwrap();
+    assert_eq!(ack["type"], "subscribe_success");
+
+    let workspace = json!({"type": "workspace_event", "workspace_id": "X"});
+    let foreign = json!({"type": "workspace_event", "workspace_id": "Y"});
+    let ungated = json!({"type": "config_event"});
+    h.publish(json!([
+        subscribe_op(browser_leg.id(), &["workspace_event:workspace_id=X"]),
+        publish_op(&workspace),
+        publish_op(&foreign),
+        publish_op(&ungated),
+    ]))
+    .await;
+    assert_eq!(
+        frames_before_marker(&mut browser, &mut browser_leg, "confined events").await,
+        texts(&[&workspace]),
+    );
+    assert_eq!(
+        frames_before_marker(&mut operator, &mut operator_leg, "operator events").await,
+        texts(&[&workspace, &foreign, &ungated]),
+    );
+}
+
+#[tokio::test]
 async fn bind_and_publish_admit_only_the_current_pair() {
     let mut h = Harness::start().await;
 

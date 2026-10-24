@@ -170,8 +170,8 @@ async def test_message_dispatch_pins_one_runtime_bundle() -> None:
 
     server._dispatch_table = {"test": handler}
 
-    await server._handle_message(MagicMock(), '{"type":"test"}')
-    await server._handle_message(MagicMock(), '{"type":"test"}')
+    await server._handle_message(MagicMock(browser_session=None), '{"type":"test"}')
+    await server._handle_message(MagicMock(browser_session=None), '{"type":"test"}')
 
     assert observed == [False, False, True, True]
     assert runtime.capture_count == 2
@@ -232,7 +232,7 @@ async def test_slow_handler_is_logged_with_its_message_type(
 
     server._dispatch_table = {"slow_kind": handler}
     with caplog.at_level(logging.WARNING, logger="gobby.servers.websocket.server"):
-        await server._handle_message(MagicMock(), '{"type":"slow_kind"}')
+        await server._handle_message(MagicMock(browser_session=None), '{"type":"slow_kind"}')
 
     assert handled == [{"type": "slow_kind"}]
     warnings = [

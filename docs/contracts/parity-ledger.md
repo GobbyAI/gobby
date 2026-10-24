@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1113. Unclassified: 0.
+Public surfaces and evidence gates: 1116. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -337,6 +337,7 @@ Public surfaces and evidence gates: 1113. Unclassified: 0.
 | `CLI gobby ui expose` | proxied | Python handler `ui_expose` at `src/gobby/cli/ui.py:107`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui install-deps` | proxied | Python handler `install_deps` at `src/gobby/cli/ui.py:308`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui restart` | proxied | Python handler `ui_restart` at `src/gobby/cli/ui.py:193`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
+| `CLI gobby ui sign-in-link` | proxied | Python `src/gobby/cli/ui.py::sign_in_link`; blocked on native Rust CLI dispatcher. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in. |
 | `CLI gobby ui start` | proxied | Python handler `ui_start` at `src/gobby/cli/ui.py:137`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui status` | proxied | Python handler `ui_status` at `src/gobby/cli/ui.py:201`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
 | `CLI gobby ui stop` | proxied | Python handler `ui_stop` at `src/gobby/cli/ui.py:177`. Blocked on #21590 Web UI static serving family and #21571 Operator verbs: port UI lifecycle/exposure/build commands to the Rust client and daemon. |
@@ -409,6 +410,7 @@ Public surfaces and evidence gates: 1113. Unclassified: 0.
 | `HTTP GET /api/agents/runs/{run_id}/name` | proxied | Python `src/gobby/servers/routes/agents.py::get_agent_run_name`; Rust blocker: implement native agent definition CRUD and run lifecycle/query HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP GET /api/attention/roster` | proxied | Python `src/gobby/servers/routes/attention.py::roster`; Rust blocker: implement native attention roster projection, episode identity checks and metadata/seen/respond HTTP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. |
 | `HTTP GET /api/auth/keys` | proxied | Python `src/gobby/servers/routes/api_keys.py::create_api_keys_router.<locals>.list_keys (line 173)`; blocked on native Rust handler for `HTTP GET /api/auth/keys`. Owner: #21568 Remaining route families. #21555 API keys/node registration and #23271 key issuance delivered the Stage 1 key boundary; CRUD still executes in Python. |
+| `HTTP GET /api/auth/sign-in` | proxied | Python `src/gobby/servers/routes/browser_sign_in.py::create_browser_sign_in_router.<locals>.consume`; blocked on native Rust handler. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in. |
 | `HTTP GET /api/auth/status` | proxied | Python `src/gobby/servers/routes/auth.py::create_auth_router.<locals>.auth_status (line 190)`; blocked on native Rust handler for `HTTP GET /api/auth/status`. Owner: #21568 Remaining route families. |
 | `HTTP GET /api/chat/attachments/limits` | proxied | Python handler `create_chat_attachments_router.<locals>.get_attachment_limits` at `src/gobby/servers/routes/chat_attachments.py:270`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
 | `HTTP GET /api/chat/attachments/{attachment_id}/content` | proxied | Python handler `create_chat_attachments_router.<locals>.get_attachment_content` at `src/gobby/servers/routes/chat_attachments.py:319`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
@@ -572,6 +574,7 @@ Public surfaces and evidence gates: 1113. Unclassified: 0.
 | `HTTP POST /api/auth/keys/bootstrap` | proxied | Python `src/gobby/servers/routes/api_keys.py::create_api_keys_router.<locals>.bootstrap_key (line 120)`; blocked on native Rust handler for `HTTP POST /api/auth/keys/bootstrap`. Owner: #21568 Remaining route families. #21555 API keys/node registration and #23271 key issuance delivered the Stage 1 key boundary; CRUD still executes in Python. |
 | `HTTP POST /api/auth/login` | proxied | Python `src/gobby/servers/routes/auth.py::create_auth_router.<locals>.login (line 134)`; blocked on native Rust handler for `HTTP POST /api/auth/login`. Owner: #21568 Remaining route families. |
 | `HTTP POST /api/auth/logout` | proxied | Python `src/gobby/servers/routes/auth.py::create_auth_router.<locals>.logout (line 178)`; blocked on native Rust handler for `HTTP POST /api/auth/logout`. Owner: #21568 Remaining route families. |
+| `HTTP POST /api/auth/sign-in-link` | proxied | Python `src/gobby/servers/routes/browser_sign_in.py::create_browser_sign_in_router.<locals>.mint`; blocked on native Rust handler. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in. |
 | `HTTP POST /api/chat/attachments` | proxied | Python handler `create_chat_attachments_router.<locals>.upload_attachment` at `src/gobby/servers/routes/chat_attachments.py:275`. Blocked on #21592 WS chat family and #21585 Files/projects: port chat attachment upload, validation, content and deletion services. |
 | `HTTP POST /api/code-index/graph/clear` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:351 (create_code_index_router.<locals>.clear_graph)`. |
 | `HTTP POST /api/code-index/graph/rebuild` | proxied | Blocked on #21586 Code-index orchestration: port the Python HTTP orchestration and response/error contract around gcode to a Rust route family; registered Python handler `src/gobby/servers/routes/code_index.py:377 (create_code_index_router.<locals>.rebuild_graph)`. |

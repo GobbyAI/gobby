@@ -25,7 +25,9 @@ class AuthStore:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
-    def create_session(self, user_id: str, remember_me: bool = False) -> tuple[str, datetime]:
+    def create_session(
+        self, user_id: str, remember_me: bool = False, *, duration: timedelta | None = None
+    ) -> tuple[str, datetime]:
         """Create a new auth session.
 
         Returns:
@@ -34,7 +36,7 @@ class AuthStore:
         token = os.urandom(32).hex()
         session_id = str(uuid.uuid4())
         normalized_user_id = str(uuid.UUID(user_id.strip()))
-        duration = REMEMBER_ME_DURATION if remember_me else SESSION_DURATION
+        duration = duration or (REMEMBER_ME_DURATION if remember_me else SESSION_DURATION)
         expires_at = datetime.now(UTC) + duration
 
         self.db.execute(

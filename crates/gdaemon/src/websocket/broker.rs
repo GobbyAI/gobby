@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
-use super::subscriptions::{EntryMode, Inbound, SubscriptionState};
+use super::subscriptions::{EntryMode, Inbound, SubscriptionState, parse_control};
 
 /// Pending batches one connection may hold behind its in-flight batch.
 pub const MAX_QUEUED_BATCHES: usize = 16;
@@ -249,6 +249,7 @@ impl Link {
 }
 
 struct Entry {
+    confined: bool,
     state: SubscriptionState,
     link: Arc<Link>,
 }
@@ -295,6 +296,7 @@ impl BroadcastBroker {
         &self,
         id: ConnectionId,
         entry: EntryMode,
+        confined: bool,
         sink: S,
         cleanup: impl FnOnce() + Send + 'static,
     ) -> Result<Registration, AlreadyRegistered>
@@ -309,6 +311,7 @@ impl BroadcastBroker {
             hash_map::Entry::Occupied(_) => return Err(AlreadyRegistered),
             hash_map::Entry::Vacant(vacant) => {
                 vacant.insert(Entry {
+                    confined,
                     state: SubscriptionState::new(entry),
                     link: Arc::clone(&registration.link),
                 });
@@ -325,6 +328,13 @@ impl BroadcastBroker {
     pub fn receive<'a>(&self, registration: &Registration, text: &'a str) -> Option<&'a str> {
         let mut entries = self.entries();
         let entry = owned(&mut entries, registration)?;
+        if entry.confined && matches!(parse_control(text), Ok(Some(_))) {
+            let refusal = Utf8Bytes::from_static(
+                r#"{"type": "error", "message": "Browser message refused"}"#,
+            );
+            deliver(&mut entries, registration, &Batch::single(refusal));
+            return None;
+        }
         let reply = match entry.state.apply_subscription_request(text) {
             Inbound::Application(frame) => return Some(frame),
             Inbound::Ack(ack) => Utf8Bytes::from(ack),
@@ -341,7 +351,14 @@ impl BroadcastBroker {
         let mut entries = self.entries();
         let overflowed: Vec<ConnectionId> = entries
             .iter()
-            .filter(|(_, entry)| entry.state.matches_broadcast(filter) && !entry.link.push(batch))
+            .filter(|(_, entry)| {
+                let selected = if entry.confined {
+                    entry.state.matches_confined(filter)
+                } else {
+                    entry.state.matches_broadcast(filter)
+                };
+                selected && !entry.link.push(batch)
+            })
             .map(|(id, _)| *id)
             .collect();
         for id in overflowed {

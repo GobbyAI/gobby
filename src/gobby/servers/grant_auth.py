@@ -18,6 +18,7 @@ from gobby.runtime_grants import (
 )
 from gobby.runtime_grants.schema import BrokerOperation, GrantBundle, GrantPrincipal
 from gobby.runtime_grants.service import ConfigCapture
+from gobby.servers.browser_sessions import BrowserSession
 from gobby.utils.local_token import AgentApiTokenClaims
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ class AuthDecision:
     machine_id: str | None = None
     key_id: str | None = None
     break_glass: bool = False
+    browser_session: BrowserSession | None = None
 
 
 class GrantPresenter(Protocol):

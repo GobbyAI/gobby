@@ -16,7 +16,7 @@ from gobby.mcp_proxy.bundled import (
 
 pytestmark = pytest.mark.unit
 
-_PLAYWRIGHT_ARGS = ["-y", "@playwright/mcp@latest"]
+_PLAYWRIGHT_ARGS = ["-y", "@playwright/mcp@0.0.68"]
 
 
 def _touch(path: Path) -> Path:
@@ -47,8 +47,32 @@ def test_bundled_playwright_template_uses_chrome_executable_hook() -> None:
 
     template = load_template_file(get_bundled_templates_path() / "playwright.yaml")
 
-    assert list(template.args) == _PLAYWRIGHT_ARGS
-    assert template.runtime_hook == CHROME_EXECUTABLE_PATH_HOOK
+    assert "@playwright/mcp@0.0.68" in template.args
+    assert template.runtime_hook == "loopback_browser"
+    assert "--proxy-bypass=<-loopback>,127.0.0.1,[::1],localhost" in template.args
+
+
+@pytest.mark.parametrize("browser", ["playwright", "chrome-devtools"])
+@pytest.mark.parametrize("existing_config", [False, True])
+def test_loopback_browser_config_is_authoritative(browser: str, existing_config: bool) -> None:
+    args = ["-y", f"{browser}-mcp@1.0.0"]
+    if existing_config:
+        args.append("--config=untrusted.json")
+    if browser == "playwright":
+        args[1] = "@playwright/mcp@0.0.68"
+    with patch.object(
+        bundled, "resolve_chrome_devtools_executable_path", return_value="/tmp/chrome"
+    ):
+        resolved = resolve_runtime_stdio_args("loopback_browser", args)
+    assert any("/tmp/chrome" in arg for arg in resolved)
+    configs = [arg for arg in resolved if arg.startswith("--config=")]
+    if browser == "playwright":
+        assert len(configs) == 1
+        config = Path(configs[0].split("=", 1)[1])
+        assert config.name == "browser-loopback.json"
+        assert config.is_file()
+    else:
+        assert configs == (["--config=untrusted.json"] if existing_config else [])
 
 
 def test_resolve_runtime_stdio_args_injects_bundled_chromium_for_playwright() -> None:

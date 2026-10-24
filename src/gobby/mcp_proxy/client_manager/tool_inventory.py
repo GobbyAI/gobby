@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from mcp import ClientSession
 
+from gobby.mcp_proxy.browser_policy import filter_browser_tools
 from gobby.mcp_proxy.client_manager.server_registry import truncate_tool_brief, visible_configs
 from gobby.mcp_proxy.connection_cleanup import describe_exception, discard_connection
 from gobby.mcp_proxy.models import MCPError
@@ -66,7 +67,7 @@ async def list_tools(
         for config in visible_configs(manager, project_id):
             cached = manager._tool_schema_cache.get(config.id)
             if cached is not None:
-                results[config.name] = cached
+                results[config.name] = filter_browser_tools(config, cached)
                 continue
             try:
                 results[config.name] = await manager._list_tools_for_server(config.id)
@@ -162,6 +163,7 @@ async def list_tools_for_server(
 
     if server_id in manager.health:
         manager.health[server_id].record_success()
+    tool_list = filter_browser_tools(config, tool_list)
     await asyncio.to_thread(manager.cache_discovered_tools, server_id, tool_list)
     return tool_list
 
@@ -235,6 +237,7 @@ async def retry_list_tools_after_failure(
 
     if server_id in manager.health:
         manager.health[server_id].record_success()
+    tool_list = filter_browser_tools(config, tool_list)
     await asyncio.to_thread(manager.cache_discovered_tools, server_id, tool_list)
     return tool_list
 
@@ -272,6 +275,7 @@ def cache_discovered_tools(
     tools: list[dict[str, Any]],
 ) -> None:
     """Cache discovered full tool schemas and update config summaries."""
+    tools = filter_browser_tools(manager._configs.get(server_id), tools)
     tools = [_clean_tool_metadata(tool) for tool in tools]
     if (
         manager._tool_schema_cache.get(server_id) == tools
@@ -322,6 +326,7 @@ async def get_tool_info(
         server_tools = await manager._list_tools_for_server(server_id)
         manager._tool_schema_cache[server_id] = server_tools
 
+    server_tools = filter_browser_tools(manager._configs.get(server_id), server_tools)
     for tool in server_tools:
         if not isinstance(tool, dict):
             continue

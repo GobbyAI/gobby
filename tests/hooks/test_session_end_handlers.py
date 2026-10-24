@@ -772,6 +772,7 @@ class TestSessionEndHandling:
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = "run-456"
+        mock_session.machine_id = "local-machine"
         mock_session.status = status
         mock_session.terminal_context = None
         mock_dependencies["session_storage"].get.return_value = mock_session
@@ -780,7 +781,11 @@ class TestSessionEndHandling:
             id="term-1", ownership="gobby", agent_run_id="run-456"
         )
 
-        handlers = EventHandlers(**mock_dependencies, terminal_manager=terminals)
+        handlers = EventHandlers(
+            **mock_dependencies,
+            terminal_manager=terminals,
+            get_machine_id=lambda: "local-machine",
+        )
         event = make_event(
             HookEventType.SESSION_END,
             session_id="ext-123",

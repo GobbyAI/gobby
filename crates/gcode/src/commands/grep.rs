@@ -6,12 +6,12 @@ use serde::Serialize;
 
 mod content_prefilter;
 mod grep_matcher;
-mod indexed_paths;
 
 #[cfg(test)]
 #[path = "grep/db_tests.rs"]
-mod db_tests;
+pub(crate) mod db_tests;
 
+use crate::commands::indexed_paths;
 use crate::commands::token_budget;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
