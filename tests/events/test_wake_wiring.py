@@ -43,8 +43,12 @@ def _has_column(db: HubDatabase, table: str, column: str) -> bool:
 
 
 def _managed_terminal() -> MagicMock:
+    from gobby.utils.machine_id import require_machine_id
+
     manager = MagicMock()
-    manager.resolve_live_for_session.return_value = MagicMock(id="terminal-1")
+    manager.resolve_live_for_session.return_value = MagicMock(
+        id="terminal-1", machine_id=require_machine_id()
+    )
     return manager
 
 
