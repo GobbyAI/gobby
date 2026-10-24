@@ -7,6 +7,33 @@ use gobby_core::schema::{SchemaIdentityContract, SchemaRunner};
 
 const DATABASE_URL_ENV: &str = "GOBBY_TEST_POSTGRES_URL";
 
+#[test]
+fn data_preflight_cli_preserves_initialized_schema_version() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_data_preflight_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url)?;
+    SchemaRunner::new(&mut admin, &scratch.name)?.apply()?;
+    let before = SchemaRunner::new(&mut admin, &scratch.name)?.current_version()?;
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "preflight", "--schema", &scratch.name])
+        .env("GOBBY_DATABASE_URL", &database_url)
+        .output()?;
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains("preflight:"), "{stdout}");
+    assert_eq!(
+        SchemaRunner::new(&mut admin, &scratch.name)?.current_version()?,
+        before
+    );
+    Ok(())
+}
+
 struct ScratchSchema {
     database_url: String,
     name: String,
