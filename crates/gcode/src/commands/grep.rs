@@ -5,12 +5,13 @@ use postgres::types::ToSql;
 use serde::Serialize;
 
 mod grep_matcher;
+mod indexed_paths;
 
 #[cfg(test)]
 #[path = "grep/db_tests.rs"]
 mod db_tests;
 
-use crate::commands::{scope, token_budget};
+use crate::commands::token_budget;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
 use crate::output::{self, Format};
@@ -371,7 +372,11 @@ fn load_indexed_chunks(
             conn.query(&sql, &params)?
         }
     };
-    let mut valid_paths = BTreeMap::<String, bool>::new();
+    let file_paths = rows
+        .iter()
+        .map(|row| row.try_get::<_, String>("file_path"))
+        .collect::<Result<BTreeSet<String>, _>>()?;
+    let valid_paths = indexed_paths::valid_indexed_paths(conn, ctx, &file_paths);
     let mut truncated = false;
     for row in rows {
         if chunks.len() >= GREP_SQL_SAFETY_LIMIT as usize {
@@ -379,15 +384,7 @@ fn load_indexed_chunks(
             break;
         }
         let file_path: String = row.try_get("file_path")?;
-        let is_valid = match valid_paths.get(&file_path) {
-            Some(is_valid) => *is_valid,
-            None => {
-                let is_valid = scope::current_indexed_path_is_valid(conn, ctx, &file_path);
-                valid_paths.insert(file_path.clone(), is_valid);
-                is_valid
-            }
-        };
-        if !is_valid {
+        if !valid_paths.contains(&file_path) {
             continue;
         }
         let line_start = i64_to_usize(row.try_get("line_start")?, "line_start")?;
