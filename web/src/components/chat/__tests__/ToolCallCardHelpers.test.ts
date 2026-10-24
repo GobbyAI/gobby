@@ -346,7 +346,10 @@ describe("extractResultContent", () => {
 
   it("unwraps flat MCP failures that carry an error", () => {
     const result = {
-      content: { success: false, error: "Tool call timed out after 30 seconds" },
+      content: {
+        success: false,
+        error: "Tool call timed out after 30 seconds",
+      },
       kind: "json",
       truncated: false,
     };

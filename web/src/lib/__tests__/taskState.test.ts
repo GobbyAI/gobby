@@ -10,7 +10,10 @@ import {
 describe("taskState helpers", () => {
   it("exposes only claim-based display states", () => {
     expect(Object.keys(TASK_STATE_COLORS).sort()).toEqual([
-      "blocked", "closed", "in_progress", "ready",
+      "blocked",
+      "closed",
+      "in_progress",
+      "ready",
     ]);
     expect(TASK_STATE_COLORS.ready).not.toBe(TASK_STATE_COLORS.in_progress);
   });
@@ -65,9 +68,16 @@ describe("taskState helpers", () => {
     });
     const blockedTask = { state: { is_escalated: true, is_blocked: true } };
     expect(matchesTaskStateFilter({}, "ready")).toBe(true);
-    expect(matchesTaskStateFilter({ claimed_by_session_id: "sess-1" }, "in_progress")).toBe(true);
+    expect(
+      matchesTaskStateFilter(
+        { claimed_by_session_id: "sess-1" },
+        "in_progress",
+      ),
+    ).toBe(true);
     expect(matchesTaskStateFilter(blockedTask, "blocked")).toBe(true);
     expect(matchesTaskStateFilter(blockedTask, "escalated")).toBe(true);
-    expect(matchesTaskStateFilter({ closed_at: "2026-04-12T00:00:00Z" }, "closed")).toBe(true);
+    expect(
+      matchesTaskStateFilter({ closed_at: "2026-04-12T00:00:00Z" }, "closed"),
+    ).toBe(true);
   });
 });

@@ -411,10 +411,9 @@ export const TasksTab = memo(function TasksTab({
       .catch((err) => {
         if (err.name !== "AbortError") setTaskDependencies(null);
       });
-    fetch(
-      `${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200`,
-      { signal: controllerSubtasks.signal },
-    )
+    fetch(`${baseUrl}/api/tasks?parent_task_id=${selectedTaskId}&limit=200`, {
+      signal: controllerSubtasks.signal,
+    })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) =>
         setTaskSubtasks(

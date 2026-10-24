@@ -7,11 +7,7 @@ import {
   type StatusKind,
 } from "../components/activity/ActivityRowStatusDot";
 
-export type TaskDisplayState =
-  | "ready"
-  | "in_progress"
-  | "blocked"
-  | "closed";
+export type TaskDisplayState = "ready" | "in_progress" | "blocked" | "closed";
 
 /**
  * Friendly, human-readable owner-session identity resolved by the backend
@@ -71,15 +67,14 @@ export const TASK_STATE_ORDER: TaskDisplayState[] = [
   "closed",
 ];
 
-export const TASK_STATE_LABELS: Record<TaskDisplayState, string> =
-  {
-    ready: "Ready",
-    in_progress: "In Progress",
+export const TASK_STATE_LABELS: Record<TaskDisplayState, string> = {
+  ready: "Ready",
+  in_progress: "In Progress",
 
-    blocked: "Blocked",
+  blocked: "Blocked",
 
-    closed: "Closed",
-  };
+  closed: "Closed",
+};
 
 export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
   ready: "var(--color-info)",
