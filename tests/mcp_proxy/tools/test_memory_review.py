@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,9 +18,11 @@ from gobby.mcp_proxy.tools.memory_write import derive_memory_create_provenance
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import Memory, MemoryType
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import insert_isolated_machine
 
 pytestmark = pytest.mark.unit
 
@@ -582,9 +585,14 @@ def _tiers(result: dict[str, Any]) -> list[tuple[str, str]]:
 
 @pytest.fixture
 async def review_world(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
 ) -> AsyncIterator[_ReviewWorld]:
     project_id = str(sample_project["id"])
+    # Closing reads the project's step-record policy from the pinned machine's checkout.
+    root = tmp_path / "review-checkout"
+    root.mkdir()
+    machine_id = insert_isolated_machine(temp_db, LOCAL_MACHINE_ID)
+    LocalProjectCheckoutManager(temp_db).register(machine_id, project_id, str(root.resolve()))
     memories = MemoryManager(temp_db, MemoryConfig())
     search = AsyncMock(return_value=[])
     with (

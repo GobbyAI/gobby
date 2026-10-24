@@ -576,6 +576,7 @@ async def test_release_authority_and_worker_reconnect(
     owner = case.session("release manager")
     grant_step_writes(case.db, owner, case.project_id, "release-manager", ())
     monkeypatch.chdir(case.repo)
+    case.lend_hub(monkeypatch)
     entry_points = _probe_entry_points(monkeypatch)
     agent: dict[str, str | None] = {"GOBBY_AGENT_RUN_ID": "run-1", "GOBBY_SESSION_ID": owner}
     operator: dict[str, str | None] = dict.fromkeys(

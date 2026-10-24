@@ -17,11 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gobby.config.tasks import TaskClosePolicyConfig, load_project_task_close_policy
 from gobby.storage.hub.protocol import HubDatabase, Transaction
-from gobby.storage.project_checkouts import (
-    CheckoutNotFoundError,
-    CheckoutSentinelRejectedError,
-    require_root,
-)
+from gobby.storage.project_checkouts import require_root
+from gobby.storage.projects import CHECKOUT_FREE_PROJECT_IDS
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
@@ -242,12 +239,12 @@ def required_task_steps(
 
 
 def _project_close_policy(db: HubDatabase, project_id: str) -> TaskClosePolicyConfig:
-    # The primary checkout owns the policy, so a candidate worktree cannot relax it.
-    try:
-        root = require_root(db, project_id, require_machine_id())
-    except (CheckoutNotFoundError, CheckoutSentinelRejectedError):
+    # A checkout-free project such as _personal has no policy file to read.
+    if project_id in CHECKOUT_FREE_PROJECT_IDS:
         return TaskClosePolicyConfig()
-    return load_project_task_close_policy(root)
+    # The primary checkout owns the policy, so a candidate worktree cannot relax it.
+    # Without that checkout the policy is unknown, and the ValueError refuses the close.
+    return load_project_task_close_policy(require_root(db, project_id, require_machine_id()))
 
 
 def task_step_requirements(db: HubDatabase, task: Task) -> StepRequirements:

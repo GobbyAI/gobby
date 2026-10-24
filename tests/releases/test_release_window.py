@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -30,6 +31,7 @@ from gobby.releases.window import (
     ReleaseWindowUnreadable,
     acquire_window,
     admissions_closed,
+    agent_activation_refusal,
     read_window,
     release_window,
     renew_window,
@@ -44,6 +46,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.local_token import GOBBY_RELEASE_TOKEN_ENV
 from gobby.utils.session_context import get_current_session_id, session_context_for_test
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import LandingCase, make_landing_case
@@ -565,3 +568,72 @@ async def test_remote_fresh_trees_wait_for_the_window(
     fresh = await remote_spawn_with("worktree")
     assert fresh["success"] is True, fresh
     assert node.send.await_count == 2
+
+
+async def test_lease_expiring_past_one_ttl_is_not_live(case: LandingCase) -> None:
+    """A hand-written lease cannot hold admissions and landings past one TTL."""
+    common = case.repo / ".git"
+    owner = case.session("release owner")
+    successor = case.session("successor")
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=NOW
+    )
+    # The lease is a plain file any shell can write.
+    path = window_path(common)
+    forged = json.loads(path.read_text(encoding="utf-8"))
+    forged["expires_at"] = (NOW + LEASE_TTL + timedelta(minutes=1)).isoformat()
+    path.write_text(json.dumps(forged), encoding="utf-8")
+
+    assert admissions_closed(read_window(common), NOW) is False
+    with pytest.raises(ReleaseWindowRefused) as stale:
+        require_window_owner(common, owner_session_id=owner, token=lease.token, now=NOW)
+    assert stale.value.code == "release_window_stale"
+    taken = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=successor, now=NOW
+    )
+    assert taken.generation == lease.generation + 1
+
+
+async def test_cli_activation_needs_the_release_manager_lease(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The CLI fence checks the lease owner's seat, as the activation route does."""
+    manager = case.session("release manager")
+    grant_step_writes(case.db, manager, case.project_id, "release-manager", ())
+    developer = case.session("developer")
+    grant_step_writes(case.db, developer, case.project_id, "developer", ())
+    monkeypatch.chdir(case.repo)
+    opened = case.lend_hub(monkeypatch)
+    now = datetime.now(UTC)
+    forged = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=developer, now=now
+    )
+    monkeypatch.setenv(GOBBY_RELEASE_TOKEN_ENV, forged.token)
+    monkeypatch.setenv("GOBBY_SESSION_ID", developer)
+
+    refusal = agent_activation_refusal()
+
+    assert refusal is not None and refusal.startswith("release_window_forbidden"), refusal
+    await release_window(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=developer,
+        token=forged.token,
+        generation=forged.generation,
+        now=now,
+    )
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=manager, now=now
+    )
+    monkeypatch.setenv(GOBBY_RELEASE_TOKEN_ENV, lease.token)
+    monkeypatch.setenv("GOBBY_SESSION_ID", manager)
+    assert agent_activation_refusal() is None
+    # A fence only reads: it never migrates a hub the stopped daemon just released.
+    assert opened == [{"apply_migrations": False}] * 2
+
+    def unreadable_hub(**_options: object) -> HubDatabase:
+        raise RuntimeError("PostgreSQL hub database is not configured")
+
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", unreadable_hub)
+    refusal = agent_activation_refusal()
+    assert refusal is not None and refusal.startswith("release_window_forbidden"), refusal

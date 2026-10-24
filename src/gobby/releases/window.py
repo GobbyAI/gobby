@@ -50,6 +50,7 @@ _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _TOKEN_BYTES = 16
 _COMMON_DIR_ARGS = ("rev-parse", "--path-format=absolute", "--git-common-dir")
 _UNREADABLE_MESSAGE = "release window state is unreadable; delete release-window.json to recover"
+_FORBIDDEN = "release_window_forbidden: only the Release Manager's lease activates the daemon"
 
 
 @dataclass(frozen=True)
@@ -69,8 +70,11 @@ class ReleaseWindow:
     generation: int
 
     def active(self, now: datetime) -> bool:
-        """Return True while ``now`` is strictly before ``expires_at``."""
-        return now < self.expires_at
+        """Return True while ``now`` is before ``expires_at``, at most one TTL ahead.
+
+        Any shell can write the lease file, so a longer expiry is never live.
+        """
+        return now < self.expires_at <= now + LEASE_TTL
 
 
 @dataclass(frozen=True)
@@ -288,16 +292,28 @@ def agent_activation_refusal() -> str | None:
                 "the daemon only through `gobby release batch`"
             )
         return None
+    owner = os.environ.get("GOBBY_SESSION_ID", "").strip()
     try:
         require_window_owner(
             sync_git_common_dir(Path.cwd()),
-            owner_session_id=os.environ.get("GOBBY_SESSION_ID", "").strip(),
+            owner_session_id=owner,
             token=token,
             now=datetime.now(UTC),
         )
     except ReleaseWindowRefused as refused:
         return f"{refused.code}: {refused}"
-    return None
+    # Imported here so only a token-bearing caller opens the hub.
+    from gobby.storage.hub.runtime import runtime_hub_database
+
+    try:
+        # Read only: start and a mid-cutover recheck run while no daemon serves the
+        # hub, and a fence must never migrate it.
+        with runtime_hub_database(apply_migrations=False) as db:
+            allowed = _release_seat(db, owner)
+    except Exception as exc:
+        # Fail closed: an unverifiable seat never activates the daemon.
+        return f"{_FORBIDDEN}; the release seat is unreadable: {exc}"
+    return None if allowed else _FORBIDDEN
 
 
 async def route_activation_refusal(
@@ -317,7 +333,7 @@ async def route_activation_refusal(
         return f"{refused.code}: {refused}"
     # The lease is an unsigned file any shell can write, so its owner must hold a release seat.
     if not await asyncio.to_thread(_release_seat, db, session_id):
-        return "release_window_forbidden: only the Release Manager's lease activates the daemon"
+        return _FORBIDDEN
     return None
 
 

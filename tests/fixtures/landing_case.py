@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+import pytest
 
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -200,6 +204,18 @@ class LandingCase:
             self.orchestrator_session = self.session("orchestrator")
             grant_orchestrator(self.db, self.orchestrator_session, self.project_id)
         return self.orchestrator_session
+
+    def lend_hub(self, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+        """Serve this hub to code that opens the runtime hub; record each open's options."""
+        opened: list[dict[str, object]] = []
+
+        @contextmanager
+        def lent(*_args: object, **options: object) -> Iterator[HubDatabase]:
+            opened.append(options)
+            yield self.db
+
+        monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", lent)
+        return opened
 
     async def land(self, task: Task, sha: str, caller: str | None = None) -> LandingResult:
         session = caller or self.manager_for(task)

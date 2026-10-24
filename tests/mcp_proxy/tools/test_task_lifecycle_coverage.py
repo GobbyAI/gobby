@@ -79,7 +79,7 @@ def _make_task(
 
 
 @pytest.fixture(autouse=True)
-def _stub_project_manager() -> Iterator[None]:
+def _stub_project_manager(tmp_path: Path) -> Iterator[None]:
     """Resolve the test checkout during repo-path resolution.
 
     RegistryContext.__post_init__ builds a real LocalProjectManager over the
@@ -117,6 +117,9 @@ def _stub_project_manager() -> Iterator[None]:
             "gobby.storage.project_checkouts.require_root",
             return_value=TEST_REPO_PATH,
         ),
+        # Close reads its step-record policy from the primary checkout; an empty
+        # checkout carries the default policy.
+        patch("gobby.tasks.step_records.require_root", return_value=str(tmp_path)),
         patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
             return_value=_checkout_session_manager(),

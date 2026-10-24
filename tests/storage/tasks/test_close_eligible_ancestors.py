@@ -9,13 +9,13 @@ from typing import Any
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._automation import HOLD_LABELS
 from gobby.storage.tasks._close import close_eligible_parent_chain
 from gobby.storage.tasks._transitions import claim_task
 from gobby.utils.machine_id import get_machine_id
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -89,11 +89,12 @@ def test_force_close_auto_closes_parent_without_open_siblings(
     assert not _open(manager, grand.id)
 
 
-def _manager(temp_db: HubDatabase, _tmp_path: Path) -> tuple[LocalTaskManager, str]:
-    project = LocalProjectManager(temp_db).create(
-        name="ancestor-close",
+def _manager(temp_db: HubDatabase, tmp_path: Path) -> tuple[LocalTaskManager, str]:
+    # Close reads the step-record policy from the project's primary checkout.
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "ancestor-close", name="ancestor-close", machine_id=get_machine_id()
     )
-    return LocalTaskManager(temp_db), project.id
+    return LocalTaskManager(temp_db), isolated.project.id
 
 
 def _create(

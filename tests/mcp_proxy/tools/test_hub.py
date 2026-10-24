@@ -10,7 +10,10 @@ import asyncio
 import pytest
 
 from gobby.mcp_proxy.tools.hub import create_hub_registry
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
+from tests.fixtures.isolated_checkout import insert_isolated_machine
 
 pytestmark = pytest.mark.unit
 
@@ -36,7 +39,7 @@ def hub_registry(temp_hub_db):
 
 
 @pytest.fixture
-def populated_hub_db(temp_hub_db):
+def populated_hub_db(temp_hub_db, tmp_path):
     """Create a hub database with test data."""
     db = temp_hub_db
 
@@ -55,6 +58,9 @@ def populated_hub_db(temp_hub_db):
         """,
         (PROJECT_BETA, "Project Beta"),
     )
+    # Closing Task 2 reads Alpha's step-record policy from its primary checkout.
+    machine_id = insert_isolated_machine(db, require_machine_id())
+    LocalProjectCheckoutManager(db).register(machine_id, PROJECT_ALPHA, str(tmp_path.resolve()))
 
     task_manager = LocalTaskManager(db)
     task_manager.create_task(

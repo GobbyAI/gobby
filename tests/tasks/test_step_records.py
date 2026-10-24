@@ -11,6 +11,8 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import CheckoutNotFoundError
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.step_records import (
     StepRecordError,
@@ -21,6 +23,7 @@ from gobby.tasks.step_records import (
     approved_task_step,
     list_task_step_records,
     record_task_step,
+    task_step_requirements,
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
@@ -342,3 +345,42 @@ def test_reopen_never_strands_an_exhausted_review(
     assert (reopened.review_epoch, reopened.review_fail_count) == (1, 3)
     reset = manager.de_escalate_task(task.id, "Triage: new approach")
     assert (reset.review_epoch, reset.review_fail_count) == (2, 0)
+
+
+def test_unreadable_checkout_refuses_close_instead_of_dropping_step_records(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the primary checkout the close policy is unknown, so close fails closed."""
+    manager = LocalTaskManager(temp_db)
+    work = manager.create_task(
+        sample_project["id"],
+        "Policy unreadable",
+        category="code",
+        validation_criteria="Close needs its step records.",
+    )
+
+    def unreadable(*_args: object) -> str:
+        raise CheckoutNotFoundError("primary checkout is unavailable")
+
+    monkeypatch.setattr("gobby.tasks.step_records.require_root", unreadable)
+
+    with pytest.raises(CheckoutNotFoundError):
+        task_step_requirements(temp_db, work)
+    with pytest.raises(CheckoutNotFoundError):
+        manager.close_task(work.id)
+    assert manager.get_task(work.id).closed_at is None
+
+
+def test_checkout_free_project_closes_under_the_default_policy(temp_db: HubDatabase) -> None:
+    """The personal project can never own a checkout, so its tasks use the default policy."""
+    LocalProjectManager(temp_db).ensure_exists(PERSONAL_PROJECT_ID, "_personal")
+    manager = LocalTaskManager(temp_db)
+    chore = manager.create_task(
+        PERSONAL_PROJECT_ID, "Personal chore", category="code", validation_criteria="Done."
+    )
+
+    assert task_step_requirements(temp_db, chore).required == ()
+    manager.close_task(chore.id)
+    assert manager.get_task(chore.id).closed_at is not None

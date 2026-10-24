@@ -35,11 +35,13 @@ from gobby.sessions.processor_lifecycle import SessionFlushResult
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER, SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
+from gobby.utils.machine_id import require_machine_id
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.agent_definitions import make_agent_definition
-from tests.fixtures.isolated_checkout import patch_local_machine_id
+from tests.fixtures.isolated_checkout import insert_isolated_machine, patch_local_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -1122,11 +1124,17 @@ class TestAgentRunCompletion:
     def test_complete_agent_run_completes_closed_task_and_refreshes_result(
         self,
         temp_db: HubDatabase,
+        tmp_path: Path,
     ) -> None:
         """A closed bound task wins over stale workflow and handoff state."""
         _create_session_row(temp_db, PARENT_SESSION_ID)
         _create_session_row(temp_db, CHILD_SESSION_ID)
         _install_step_workflow(temp_db, CHILD_SESSION_ID, "resolve_conflicts")
+        # Closing reads the project's step-record policy from its primary checkout.
+        machine_id = insert_isolated_machine(temp_db, require_machine_id())
+        LocalProjectCheckoutManager(temp_db).register(
+            machine_id, PROJECT_ID, str(tmp_path.resolve())
+        )
 
         task_manager = LocalTaskManager(temp_db)
         task = task_manager.create_task(
@@ -1139,7 +1147,7 @@ class TestAgentRunCompletion:
         )
         task_manager.close_task(
             task.id,
-            reason="Done",
+            reason="done",
             closed_in_session_id=CHILD_SESSION_ID,
             closed_commit_sha="abc1234",
         )

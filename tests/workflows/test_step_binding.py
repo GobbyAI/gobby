@@ -1047,10 +1047,15 @@ async def test_moved_claim_returns_former_owner_to_claim_and_binds_successor(
     assert _current_step(seats.db, seats.successor) == "route_skills"
 
 
-def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(seats: _Seats) -> None:
+def test_closed_task_returns_owner_to_claim_once_its_claim_is_pruned(
+    seats: _Seats, tmp_path: Path
+) -> None:
+    tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
     _seat(seats, seats.former, "implement")
-    LocalTaskManager(seats.db).close_task(seats.task_id, reason="done", force=True)
+    tasks.close_task(seats.task_id, reason="done", force=True)
 
     variables = SessionVariableManager(seats.db).get_variables(seats.former)
     reconcile_claimed_tasks(variables, seats.former, LocalTaskManager(seats.db))
@@ -1342,9 +1347,11 @@ async def test_active_claim_rebinds_parked_or_closed_step_task(
 
 @pytest.mark.parametrize("active_state", ["missing", "foreign", "closed", "same-ref"])
 def test_unusable_or_equivalent_active_claim_keeps_binding(
-    seats: _Seats, active_state: str
+    seats: _Seats, active_state: str, tmp_path: Path
 ) -> None:
     tasks = LocalTaskManager(seats.db)
+    project_id = tasks.get_task(seats.task_id).project_id
+    LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
     _seat(seats, seats.former, "implement")
     variables = SessionVariableManager(seats.db)
@@ -1356,7 +1363,7 @@ def test_unusable_or_equivalent_active_claim_keeps_binding(
         instances.save(instance)
     else:
         other = tasks.create_task(
-            tasks.get_task(seats.task_id).project_id,
+            project_id,
             "Unusable target",
             validation_criteria="The unusable target leaves the binding intact.",
         )
