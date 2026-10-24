@@ -12,6 +12,18 @@ from gobby.terminal_context import terminal_context_has_tmux_target
 class SessionEndMixin(EventHandlersBase):
     """Mixin for handling SESSION_END events."""
 
+    def _attested_turns(self, session_id: str) -> int:
+        """Turns the forwarded prompt submits of a node session began."""
+        lifecycle = getattr(self, "_turn_lifecycle", None)
+        if lifecycle is None:
+            return 0
+        try:
+            generation = lifecycle.get(session_id).generation
+        except Exception as e:
+            self.logger.warning("Failed to read turn generation for %s: %s", session_id, e)
+            return 0
+        return generation if isinstance(generation, int) else 0
+
     def handle_session_end(self, event: HookEvent) -> HookResponse:
         """Handle SESSION_END event."""
         from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -128,7 +140,12 @@ class SessionEndMixin(EventHandlersBase):
             and self._session_coordinator
         ):
             try:
-                self._session_coordinator.complete_agent_run(session)
+                if session.machine_id != self._get_machine_id():
+                    self._session_coordinator.complete_agent_run(
+                        session, attested_turns=self._attested_turns(session.id)
+                    )
+                else:
+                    self._session_coordinator.complete_agent_run(session)
             except Exception as e:
                 self.logger.warning("Failed to complete agent run: %s", e)
 

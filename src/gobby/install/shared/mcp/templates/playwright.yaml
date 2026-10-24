@@ -1,8 +1,18 @@
 name: playwright
-description: Playwright MCP for browser automation and inspection
-version: 1
+description: Loopback-only Playwright MCP with a fresh browser profile
+version: 2
 enabled: true
 transport: stdio
 command: npx
-args: ["-y", "@playwright/mcp@latest"]
-runtime_hook: chrome_executable_path
+env:
+  # Playwright otherwise appends <-loopback>, overriding the explicit bypasses.
+  PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK: "1"
+args:
+  - "-y"
+  - "@playwright/mcp@0.0.68"
+  - "--isolated"
+  - "--block-service-workers"
+  - "--proxy-server=http://127.0.0.1:9"
+  - "--proxy-bypass=<-loopback>,127.0.0.1,[::1],localhost"
+  - "--allowed-origins=127.0.0.1:*;localhost:*;[::1]:*"
+runtime_hook: loopback_browser

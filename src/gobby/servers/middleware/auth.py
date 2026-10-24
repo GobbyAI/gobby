@@ -5,7 +5,9 @@ Only login, health, startup readiness, signature-verified webhooks, and static
 browser assets are public. Other browser routes reach the SPA login shell.
 """
 
+import json
 import logging
+from email.message import Message
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -15,8 +17,11 @@ from starlette.responses import Response
 
 from gobby.hub.caller_scope import bind_decision, reset_caller
 from gobby.servers.auth_service import request_path
+from gobby.servers.browser_sessions import PREFIX as BROWSER_COOKIE_PREFIX
+from gobby.servers.browser_sessions import browser_selectors_match
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
+from gobby.utils.project_context import reset_project_context, set_project_context
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -72,8 +77,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request_path(request)
 
-        if path in _PUBLIC_PATHS or any(
-            _matches_path_prefix(path, prefix) for prefix in _PUBLIC_PREFIXES
+        if path == "/api/auth/sign-in":
+            # The exchange consumes an independently authorized one-time link.
+            return await call_next(request)
+        browser_cookie = request.cookies.get("gobby_session", "").startswith(BROWSER_COOKIE_PREFIX)
+        if not browser_cookie and path == "/api/auth/logout":
+            return await call_next(request)
+        if not browser_cookie and (
+            path in _PUBLIC_PATHS
+            or any(_matches_path_prefix(path, prefix) for prefix in _PUBLIC_PREFIXES)
         ):
             return await call_next(request)
 
@@ -91,6 +103,42 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         auth_service = self.server.auth_service
         decision = await self.server.run_db(auth_service.authenticate, request)
+        project_token = None
+        if decision.allowed and decision.browser_session is not None:
+            claims = decision.browser_session.claims
+            project_id = claims.project_id
+            selectors = [
+                value
+                for key, value in request.query_params.multi_items()
+                if key in {"project_id", "projectId"}
+            ]
+            selectors.extend(request.headers.getlist("x-gobby-project-id"))
+            selectors.extend(request.headers.getlist("x-gobby-caller-project-id"))
+            project_path = path.removeprefix("/api/projects/").split("/", 1)[0]
+            if path.startswith("/api/projects/") and project_path not in {"init", "register"}:
+                selectors.append(project_path)
+            if any(
+                value != claims.session_id
+                for value in request.headers.getlist("x-gobby-session-id")
+            ):
+                return JSONResponse(status_code=403, content={"error": "Browser session mismatch"})
+            raw_body = await request.body()
+            if raw_body:
+                media = Message()
+                media["content-type"] = request.headers.get("content-type", "")
+                subtype = media.get_content_subtype()
+                if media.get_content_maintype() != "application" or not (
+                    subtype == "json" or subtype.endswith("+json")
+                ):
+                    return JSONResponse(status_code=403, content={"error": "Browser body refused"})
+                try:
+                    body = json.loads(raw_body)
+                except (ValueError, UnicodeError, RecursionError):
+                    return JSONResponse(status_code=403, content={"error": "Browser body refused"})
+                if not isinstance(body, dict) or not browser_selectors_match(body, project_id):
+                    return JSONResponse(status_code=403, content={"error": "Browser body refused"})
+            if any(value != project_id for value in selectors):
+                return JSONResponse(status_code=403, content={"error": "Browser project mismatch"})
         if decision.allowed:
             try:
                 database = require_hub_database(getattr(services, "database", None))
@@ -100,10 +148,27 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     content={"error": exc.detail},
                 )
             token = bind_decision(decision, database)
+            if decision.browser_session is not None:
+                project_token = set_project_context(
+                    {"id": decision.browser_session.claims.project_id}
+                )
             try:
                 return await call_next(request)
             finally:
                 reset_caller(token)
+                if project_token is not None:
+                    reset_project_context(project_token)
+
+        if (
+            browser_cookie
+            and request.method == "POST"
+            and path == "/api/auth/logout"
+            and decision.code == "session_invalid"
+        ):
+            # Invalid or expired cookies may only discard their stale authority.
+            return await call_next(request)
+        if browser_cookie and path == "/api/auth/status":
+            return JSONResponse(content={"authenticated": False})
 
         if path.startswith(_PROTECTED_PREFIXES):
             code = decision.code

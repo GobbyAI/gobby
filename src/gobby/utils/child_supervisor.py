@@ -11,19 +11,27 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 import psutil
 
 
-def supervised_argv(argv: list[str]) -> list[str]:
+def supervised_argv(argv: list[str], *, stop_file: Path | None = None) -> list[str]:
     """Run ``argv`` under this supervisor; ``-P`` keeps the child's cwd off ``sys.path``."""
-    return [sys.executable, "-P", "-m", "gobby.utils.child_supervisor", *argv]
+    control = [f"--stop-file={stop_file}"] if stop_file is not None else []
+    return [sys.executable, "-P", "-m", "gobby.utils.child_supervisor", *control, *argv]
 
 
 def main() -> int:
     if len(sys.argv) < 2:
         return 2
 
+    argv = sys.argv[1:]
+    stop_file = None
+    if argv[0].startswith("--stop-file="):
+        stop_file = Path(argv.pop(0).split("=", 1)[1])
+    if not argv:
+        return 2
     parent_pid = os.getppid()
     stop_requested = threading.Event()
 
@@ -32,11 +40,15 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    child = subprocess.Popen(sys.argv[1:])
+    owns_process_group = stop_file is not None and os.name == "posix"
+    child = subprocess.Popen(argv, start_new_session=owns_process_group)
     process = psutil.Process(child.pid)
     owned: dict[int, psutil.Process] = {}
     try:
         while child.poll() is None and not stop_requested.is_set() and os.getppid() == parent_pid:
+            if stop_file is not None and not stop_file.exists():
+                stop_requested.set()
+                break
             try:
                 owned.update(
                     {descendant.pid: descendant for descendant in process.children(recursive=True)}
@@ -52,12 +64,22 @@ def main() -> int:
         except psutil.NoSuchProcess:
             pass
         targets = [*owned.values(), process]
+        if owns_process_group:
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         for target in targets:
             try:
                 target.terminate()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
         _, alive = psutil.wait_procs(targets, timeout=2)
+        if owns_process_group:
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         for target in alive:
             try:
                 target.kill()

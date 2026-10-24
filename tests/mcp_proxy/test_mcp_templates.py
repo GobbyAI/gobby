@@ -299,18 +299,24 @@ def test_bundled_template_definitions_match_legacy_contracts() -> None:
 
     playwright = _expand(templates["playwright"], {})
     assert playwright.config.command == "npx"
-    assert playwright.config.args == ["-y", "@playwright/mcp@latest"]
-    assert playwright.config.runtime_hook == "chrome_executable_path"
+    assert playwright.config.args is not None
+    assert playwright.config.args[:2] == ["-y", "@playwright/mcp@0.0.68"]
+    assert "--isolated" in playwright.config.args
+    assert "--proxy-server=http://127.0.0.1:9" in playwright.config.args
+    assert playwright.config.runtime_hook == "loopback_browser"
     assert playwright.template_values == {}
 
     chrome = _expand(templates["chrome-devtools"], {})
     assert chrome.config.command == "npx"
-    assert chrome.config.args == [
+    assert chrome.config.args is not None
+    assert chrome.config.args[:3] == [
         "-y",
         "chrome-devtools-mcp@0.21.0",
         "--no-usage-statistics",
     ]
-    assert chrome.config.runtime_hook == "chrome_executable_path"
+    assert "--isolated" in chrome.config.args
+    assert "--proxy-server=http://127.0.0.1:9" in chrome.config.args
+    assert chrome.config.runtime_hook == "loopback_browser"
     assert chrome.template_values == {}
 
 

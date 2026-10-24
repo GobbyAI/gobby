@@ -93,6 +93,16 @@ impl Client {
 }
 
 fn connect(broker: &BroadcastBroker, id: u64, entry: EntryMode, stall: bool) -> Client {
+    connect_scoped(broker, id, entry, stall, false)
+}
+
+fn connect_scoped(
+    broker: &BroadcastBroker,
+    id: u64,
+    entry: EntryMode,
+    stall: bool,
+    confined: bool,
+) -> Client {
     let (tx, rx) = unbounded_channel();
     let cleanups = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&cleanups);
@@ -102,7 +112,7 @@ fn connect(broker: &BroadcastBroker, id: u64, entry: EntryMode, stall: bool) -> 
         stalled: false,
     };
     let registration = broker
-        .register(ConnectionId::new(id), entry, sink, move || {
+        .register(ConnectionId::new(id), entry, confined, sink, move || {
             counter.fetch_add(1, Ordering::SeqCst);
         })
         .expect("register a fresh connection");
@@ -157,6 +167,84 @@ fn assert_reply(actual: &str, expected: &Value, context: &str) {
         }
         other => panic!("{context}: unsupported reply {other}"),
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn confined_broker_refuses_subscription_controls_without_state_change() {
+    let broker = BroadcastBroker::default();
+    let mut browser = connect_scoped(&broker, 1, EntryMode::Browser, false, true);
+    let mut operator = connect(&broker, 2, EntryMode::Browser, false);
+    let selector = "workspace_event:workspace_id=X";
+    broker.add_subscriptions(browser.registration.id(), vec![selector.into()]);
+    for control in ["subscribe", "unsubscribe"] {
+        let request = json!({"type": control, "events": ["*"]}).to_string();
+        assert_eq!(broker.receive(&browser.registration, &request), None);
+        let frames = browser.drain().await;
+        let replies = texts(&frames);
+        assert_eq!(replies.len(), 1);
+        let response: Value = serde_json::from_str(replies[0]).unwrap();
+        assert_eq!(response["type"], "error", "{control}");
+        assert_eq!(response["message"], "Browser message refused");
+        let selected = json!({"type": "workspace_event", "workspace_id": "X"});
+        let foreign = json!({"type": "workspace_event", "workspace_id": "Y"});
+        broker.publish(&foreign, &batch(&["foreign"]));
+        broker.publish(&selected, &batch(&["selected"]));
+        assert_eq!(
+            texts(&browser.drain().await),
+            vec!["selected"],
+            "{control} changed state"
+        );
+    }
+    let request = r#"{"type":"subscribe","events":["*"]}"#;
+    assert_eq!(broker.receive(&operator.registration, request), None);
+    let frames = operator.drain().await;
+    // Earlier broadcast deliveries can precede the acknowledgement on this operator.
+    let response: Value = serde_json::from_str(texts(&frames).last().unwrap()).unwrap();
+    assert_eq!(response["type"], "subscribe_success");
+    let application = r#"{"type":"terminal_attach","terminal_id":"T"}"#;
+    assert_eq!(
+        broker.receive(&browser.registration, application),
+        Some(application)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn confined_broker_delivers_only_exact_server_subscriptions() {
+    let broker = BroadcastBroker::default();
+    let mut browser = connect_scoped(&broker, 1, EntryMode::Browser, false, true);
+    let mut operator = connect(&broker, 2, EntryMode::Browser, false);
+    let request = r#"{"type":"subscribe","events":["*"]}"#;
+    broker.receive(&operator.registration, request);
+    operator.drain().await;
+    broker.add_subscriptions(
+        browser.registration.id(),
+        vec![
+            "workspace_event:workspace_id=X".into(),
+            "session_event".into(),
+            "PreToolUse".into(),
+        ],
+    );
+    let messages = [
+        json!({"type": "workspace_event", "workspace_id": "X"}),
+        json!({"type": "workspace_event", "workspace_id": "Y"}),
+        json!({"type": "workspace_event", "workspace_id": 1}),
+        json!({"type": "task_event"}),
+        json!({"type": "config_event"}),
+        json!({"type": "terminal_output"}),
+        json!({"type": "session_event"}),
+        json!({"type": "hook_event", "event_type": "PreToolUse"}),
+    ];
+    for (index, message) in messages.iter().enumerate() {
+        broker.publish(message, &batch(&[&index.to_string()]));
+    }
+    assert_eq!(texts(&browser.drain().await), vec!["0"]);
+    assert_eq!(
+        texts(&operator.drain().await),
+        vec!["0", "1", "2", "3", "4", "5", "6", "7"]
+    );
+    broker.add_subscriptions(browser.registration.id(), vec!["*".into()]);
+    broker.publish(&messages[1], &batch(&["wildcard must not widen"]));
+    assert!(browser.drain().await.is_empty());
 }
 
 /// Replays every corpus case whose clients arrive through a public entry
@@ -376,6 +464,7 @@ async fn retirement_is_once_and_reconnect_is_fresh() {
             .register(
                 direct.registration.id(),
                 EntryMode::Direct,
+                false,
                 duplicate,
                 || {}
             )

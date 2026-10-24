@@ -222,7 +222,13 @@ def mount_native_bridge(app: FastAPI, server: HTTPServer) -> None:
             await adapter.close(code=1008)
             return
         try:
-            await adapter.send(_ready(context.generation, admitted=True))
+            await adapter.send(
+                _ready(
+                    context.generation,
+                    admitted=True,
+                    confined=decision is not None and decision.browser_session is not None,
+                )
+            )
             database = None if decision is None else require_hub_database(server.services.database)
             await websocket_server.handle_connection(adapter, decision, database=database)
         except Exception:

@@ -8,6 +8,8 @@ agents use their authorized domain MCP tools.
 1. For the browser, open the daemon's installed UI origin or the configured dev
    UI endpoint. Sign in with the canonical account. The HTTP-only
    `gobby_session` cookie authorizes browser API calls and the `/ws` proxy.
+   For password-free local browser proofs, `gobby ui sign-in-link` uses an
+   existing operator or managed-run credential to mint a one-time loopback URL.
 2. The current web shell centers on Chat, its Activity panel, and the Settings
    overlay. Use current controls; retired `#dashboard`, `#projects`, and
    `#traces` navigation is not a supported diagnostic route.

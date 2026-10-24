@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import threading
+import time
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,11 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hub.caller_scope import bind_caller, reset_caller
+from gobby.servers.browser_sessions import BrowserSession
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.utils.local_token import AgentApiTokenClaims
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending
@@ -120,6 +123,36 @@ async def test_list_with_a_project_keeps_that_project_and_unscoped_terminals(
         page = await listed(server, {"request_id": "init", "project_id": sample_project["id"]})
 
     assert {item["terminal_id"] for item in page["items"]} == {mine.id, shared.id}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confined", [True, False])
+async def test_confined_terminal_list_excludes_global_project(
+    server: WebSocketServer,
+    manager: TerminalManager,
+    sample_project: dict[str, Any],
+    project_manager: LocalProjectManager,
+    confined: bool,
+) -> None:
+    unscoped = project_manager.create(name="unscoped")
+    mine = seed_pane(manager, sample_project["id"], "%1", "mine")
+    shared = seed_pane(manager, unscoped.id, "%2", "shared")
+    socket = MockWebSocket()
+    claims = AgentApiTokenClaims(
+        "bound-session",
+        sample_project["id"],
+        LOCAL_MACHINE_ID,
+        1,
+        int(time.time()) + 3600,
+        agent_run_id="run",
+    )
+    vars(socket)["browser_session"] = (
+        BrowserSession(OWNER_USER_ID, claims, time.time() + 3600) if confined else None
+    )
+    with patch("gobby.servers.websocket.terminal_ws.GLOBAL_PROJECT_ID", unscoped.id):
+        await server._handle_terminal_list(socket, {"project_id": sample_project["id"]})
+    expected = {mine.id} if confined else {mine.id, shared.id}
+    assert {item["terminal_id"] for item in socket.last_message()["items"]} == expected
 
 
 @pytest.mark.asyncio

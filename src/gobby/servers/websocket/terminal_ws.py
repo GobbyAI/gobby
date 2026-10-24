@@ -394,7 +394,12 @@ class TerminalWsMixin(TerminalWriteMixin):
                 encode_page([], None, snapshot=snapshot, envelope=envelope),
             )
             return
-        project_id = data.get("project_id") or self._project_id(websocket)
+        browser = getattr(websocket, "browser_session", None)
+        project_id = (
+            browser.claims.project_id
+            if browser is not None
+            else data.get("project_id") or self._project_id(websocket)
+        )
         if not isinstance(project_id, str):
             project_id = None
         limit = data.get("limit", TERMINAL_LIST_DEFAULT_PAGE_SIZE)
@@ -418,9 +423,12 @@ class TerminalWsMixin(TerminalWriteMixin):
             )
             return
         # A slow page query runs off the loop so it does not delay other clients.
+        project_ids = None if project_id is None else [project_id]
+        if browser is None and project_ids is not None:
+            project_ids.append(GLOBAL_PROJECT_ID)
         items, has_more = await asyncio.to_thread(
             manager.list_page,
-            None if project_id is None else [project_id, GLOBAL_PROJECT_ID],
+            project_ids,
             machine_id=machine_id,
             states=states,
             cursor_created_at=cursor_created_at,

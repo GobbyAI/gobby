@@ -81,7 +81,7 @@ pub enum Inbound<'a> {
     Application(&'a str),
 }
 
-enum Control {
+pub(super) enum Control {
     Subscribe,
     Unsubscribe,
 }
@@ -163,14 +163,7 @@ impl SubscriptionState {
         if subs.contains(msg_type) {
             return true;
         }
-        // Parametric selector "type:key=value", split at the first ':' and then
-        // the first '='; only a string field equals the value.
-        let selected = subs.iter().any(|sub| {
-            sub.split_once(':')
-                .filter(|(sub_type, _)| *sub_type == msg_type)
-                .and_then(|(_, params)| params.split_once('='))
-                .is_some_and(|(key, value)| message.get(key).and_then(Value::as_str) == Some(value))
-        });
+        let selected = self.matches_confined(message);
         // hook_event also matches by subtype: a non-empty string event_type.
         selected
             || (msg_type == "hook_event"
@@ -179,11 +172,27 @@ impl SubscriptionState {
                     .and_then(Value::as_str)
                     .is_some_and(|event_type| !event_type.is_empty() && subs.contains(event_type)))
     }
+    /// Browser-testing connections receive only server-granted exact selectors.
+    pub fn matches_confined(&self, message: &Value) -> bool {
+        let Self::Initialized(subs) = self else {
+            return false;
+        };
+        let Some(msg_type) = message.get("type").and_then(Value::as_str) else {
+            return false;
+        };
+        // Split at the first ':' and '='; only a matching string field selects.
+        subs.iter().any(|sub| {
+            sub.split_once(':')
+                .filter(|(sub_type, _)| *sub_type == msg_type)
+                .and_then(|(_, params)| params.split_once('='))
+                .is_some_and(|(key, value)| message.get(key).and_then(Value::as_str) == Some(value))
+        })
+    }
 }
 
 /// `Ok(None)` is an application frame. Values other than `type` and `events`
 /// are skipped without being materialized.
-fn parse_control(text: &str) -> Result<Option<(Control, Vec<String>)>, &'static str> {
+pub(super) fn parse_control(text: &str) -> Result<Option<(Control, Vec<String>)>, &'static str> {
     let fields: BTreeMap<String, &RawValue> = serde_json::from_str(text).map_err(|error| {
         if error.is_data() {
             NOT_OBJECT

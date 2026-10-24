@@ -52,6 +52,9 @@ async def call_tool(
     logger: logging.Logger,
 ) -> Any:
     """Call a tool on a downstream MCP server with tracing and metrics."""
+    from gobby.mcp_proxy.browser_policy import enforce_browser_call
+
+    enforce_browser_call(manager._configs.get(server_id), tool_name, arguments or {})
     start_time = time.perf_counter()
     success = False
     server_config = manager._configs.get(server_id)

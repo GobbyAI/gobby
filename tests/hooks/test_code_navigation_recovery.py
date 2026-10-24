@@ -1006,6 +1006,51 @@ def test_one_event_asks_git_once_for_all_its_paths(
     assert len(spawns) == 2
 
 
+@pytest.mark.parametrize("shell", ["bash", "sh", "zsh"])
+@pytest.mark.parametrize(
+    ("body", "invocation"),
+    [
+        ("cat {repo}/src/long.py\n", "{shell} {script}"),
+        ('cat "$1"\n', "{shell} {script} src/long.py"),
+        (
+            'f={repo}/src/long.py\nuntil [ -s "$f" ]; do sleep 1; done\ncat "$f"\n',
+            "{shell} {script}",
+        ),
+        ('cat "$f"\n', "for f in src/long.py; do {shell} {script}; done"),
+    ],
+    ids=["literal", "positional", "wait-loop", "outer-binding"],
+)
+def test_script_execution_does_not_require_source_navigation(
+    repo: Path, shell: str, body: str, invocation: str
+) -> None:
+    script = repo.parent / "waitfile.sh"
+    script.write_text(body.format(repo=repo))
+    command = invocation.format(shell=shell, script=script)
+
+    assert not broad_read_blocked(repo, command)
+    assert broad_read_blocked(repo, f"{command}; cat src/long.py")
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["cat src/long.py", "sed -n '1,60p' src/long.py", "bash -c 'cat src/long.py'"],
+)
+def test_direct_source_read_still_requires_navigation(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize("code", ["invalid_path_scope", "not_indexed"])
+def test_refused_outline_opens_only_requested_read(repo: Path, code: str) -> None:
+    variables = turn(
+        repo,
+        "gcode outline src/long.py",
+        f'{{"error":"{code}","message":"path outside index"}}',
+    )
+
+    assert not broad_read_blocked(repo, "cat src/long.py", variables)
+    assert broad_read_blocked(repo, "cat src/other.py", variables)
+
+
 def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
     # A path inside a submodule stops `check-ignore --stdin` with exit 128,
     # dropping the answers for every path after it in the batch.

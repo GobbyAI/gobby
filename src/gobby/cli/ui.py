@@ -104,6 +104,19 @@ def ui() -> None:
     pass
 
 
+@ui.command("sign-in-link")
+def sign_in_link() -> None:
+    """Print a one-time loopback browser sign-in URL (valid for 120 seconds)."""
+    from gobby.utils.daemon_client import DaemonClient
+
+    response = DaemonClient().call_http_api("/api/auth/sign-in-link")
+    if response.status_code != 200:
+        raise click.ClickException(
+            "Sign-in link refused; use an operator or live managed credential"
+        )
+    click.echo(response.json()["url"])
+
+
 @ui.command("expose")
 def ui_expose() -> None:
     """Expose the web UI to this machine's Tailscale network."""

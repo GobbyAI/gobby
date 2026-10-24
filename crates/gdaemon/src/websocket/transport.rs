@@ -119,6 +119,8 @@ struct Ready {
     version: u64,
     generation: String,
     admitted: bool,
+    #[serde(default)]
+    confined: bool,
     status: Option<u16>,
     body: Option<String>,
     close_code: Option<u16>,
@@ -246,7 +248,10 @@ impl NativeWs {
             return self.unavailable_for(entry, response, upgrade);
         };
         if ready.admitted {
-            tokio::spawn(self.clone().attach(upgrade, leg, entry, id, captured));
+            tokio::spawn(
+                self.clone()
+                    .attach(upgrade, leg, entry, id, captured, ready.confined),
+            );
             return response;
         }
         match entry {
@@ -564,6 +569,7 @@ impl NativeWs {
         entry: EntryMode,
         id: ConnectionId,
         captured: Captured,
+        confined: bool,
     ) {
         let Ok(upgraded) = upgrade.await else {
             return;
@@ -586,9 +592,13 @@ impl NativeWs {
                 .filter(|binding| binding.generation == captured.generation)
             {
                 Some(binding) => {
-                    let Ok(registration) = self.inner.broker.register(id, entry, sink, move || {
-                        let _ = done_tx.send(());
-                    }) else {
+                    let Ok(registration) =
+                        self.inner
+                            .broker
+                            .register(id, entry, confined, sink, move || {
+                                let _ = done_tx.send(());
+                            })
+                    else {
                         return;
                     };
                     binding.legs.insert(
