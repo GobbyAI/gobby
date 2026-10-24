@@ -66,38 +66,3 @@ def test_build_spawn_response_reports_reused_worktree() -> None:
 
     assert response["reuse_outcome"] == "reused"
     assert response["reused_worktree"] is True
-
-
-def test_build_spawn_response_reports_fresh_after_conflict() -> None:
-    conflict = "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted"
-    response = build_spawn_response(
-        run_id="run-123",
-        spawn_result=SimpleNamespace(
-            child_session_id="child-123",
-            status="running",
-            pid=123,
-            message="spawned",
-        ),
-        effective_checkout_mode="worktree",
-        isolation_ctx=SimpleNamespace(
-            branch_name="branch-retry-deadbeef",
-            worktree_id="wt-fresh",
-            clone_id=None,
-            cwd=Path("/tmp/fresh-worktree"),
-            extra={
-                "reused_worktree_rebase_conflict": conflict,
-                "reused_worktree_id": "wt-old",
-                "reused_worktree_path": "/tmp/old-worktree",
-            },
-        ),
-        base_commit_sha="abc123",
-        terminal=SimpleNamespace(id="terminal-123", backend="tmux"),
-        code_index_preflight_warning=None,
-        reasoning=None,
-    )
-
-    assert response["reuse_outcome"] == "fresh_after_conflict"
-    assert response["reused_worktree_rebase_conflict"] == conflict
-    assert response["reused_worktree_id"] == "wt-old"
-    assert response["reused_worktree_path"] == "/tmp/old-worktree"
-    assert response["branch_name"] == "branch-retry-deadbeef"

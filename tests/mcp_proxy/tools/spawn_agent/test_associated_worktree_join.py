@@ -22,10 +22,11 @@ def git(path: Path, *args: str) -> str:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("reuse", ["explicit", "branch"])
 @pytest.mark.parametrize("role", ["code-reviewer", "test-writer"])
 @pytest.mark.parametrize("state", ["behind", "diverged", "conflict"])
 async def test_associated_spawn_preserves_developer_head(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str, state: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str, state: str, reuse: str
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
@@ -51,6 +52,8 @@ async def test_associated_spawn_preserves_developer_head(
     storage.get.return_value = SimpleNamespace(
         id="worktree", worktree_path=str(child), branch_name="candidate", base_branch="main"
     )
+    storage.get_by_branch.return_value = storage.get.return_value
+    storage.is_claimed_by_live_session.return_value = False
     runner = MagicMock()
     runner.can_spawn.return_value = (True, "ok", 0)
     runner.run_storage.has_active_run_for_task.return_value = False
@@ -66,6 +69,7 @@ async def test_associated_spawn_preserves_developer_head(
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment", repair
     )
+    monkeypatch.setattr("gobby.agents.isolation_worktree.repair_isolation_environment", repair)
     prepare = MagicMock(side_effect=RuntimeError("stopped after isolation"))
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn", prepare
@@ -82,7 +86,9 @@ async def test_associated_spawn_preserves_developer_head(
         agent_body=body,
         parent_session_id="parent",
         provider="codex",
-        worktree_id="worktree",
+        worktree_id="worktree" if reuse == "explicit" else None,
+        checkout_mode="worktree",
+        branch_name="candidate",
         worktree_storage=storage,
         git_manager=WorktreeGitManager(source),
         base_branch="main",

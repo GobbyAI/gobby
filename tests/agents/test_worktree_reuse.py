@@ -374,3 +374,31 @@ async def test_sync_reused_worktree_aborts_timed_out_merge(tmp_path: Path) -> No
         )
 
     assert git.calls[-1] == (["merge", "--abort"], worktree, 30)
+
+
+@pytest.mark.integration
+async def test_reuse_merge_sets_gobby_merge_environment(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Merge Test")
+    _git(tmp_path, "commit", "--allow-empty", "-m", "initial")
+    _git(tmp_path, "checkout", "-b", "candidate")
+    (tmp_path / "candidate.txt").write_text("candidate")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "candidate")
+    _git(tmp_path, "checkout", "main")
+    (tmp_path / "base.txt").write_text("base")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    _git(tmp_path, "checkout", "candidate")
+    hook = tmp_path / ".git" / "hooks" / "pre-merge-commit"
+    hook.write_text('#!/bin/sh\ntest "$GOBBY_MERGE" = "1"\n')
+    hook.chmod(0o755)
+
+    result = await sync_reused_worktree_to_base(
+        git_manager=WorktreeGitManager(tmp_path), worktree_path=str(tmp_path), base_branch="main"
+    )
+
+    assert result.status == "merged"
+    assert _git(tmp_path, "rev-parse", "HEAD^2").stdout.strip() == base
