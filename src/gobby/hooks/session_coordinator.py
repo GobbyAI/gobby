@@ -467,7 +467,7 @@ class SessionCoordinator:
             )
         return finish_followups(updated or manager.get(run_id))
 
-    def complete_agent_run(self, session: Any) -> None:
+    def complete_agent_run(self, session: Any, *, attested_turns: int = 0) -> None:
         """
         Complete an agent run when its terminal-mode session ends.
 
@@ -607,6 +607,8 @@ class SessionCoordinator:
                         e,
                         exc_info=True,
                     )
+
+            turns_used = max(turns_used, attested_turns)
 
             task_close_result = closed_task_result(
                 self._task_manager, self.logger, agent_run, result

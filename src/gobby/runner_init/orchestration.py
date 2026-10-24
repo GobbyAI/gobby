@@ -599,6 +599,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             attention_manager=runner.attention_manager,
             attention_metadata_store=runner.attention_metadata_store,
             terminal_services=runner.terminal_services,
+            terminal_config=config.terminals,
         )
     except Exception:
         mark_service_degraded(runner, "agent_lifecycle_monitor")
