@@ -27,7 +27,7 @@ Josh approved implementing the complete redesign, including finishing removal of
 9. Release Manager runs a roughly two-hour batch from the last successful release SHA to a pinned integration SHA. Its owned lease expires after ten minutes and renews at least every sixty seconds. During the window, landings and NEW DevTeam admissions wait. Existing teams continue work, testing, review and recovery; replacement seats within an admitted team remain allowed. No worker drain, quiet-fleet requirement, parking, heavy grants or new resource caps. The runbooks retire the heavy-run slot grant and cap, and no seat guidance or runbook asks for a slot (Josh via the Orchestrator, October 22). The one retained limit is a per-process Cargo job count of 4, which 5.1's launch environment sets centrally instead of per-seat instructions.
 10. A release validates affected packages and relevant lint/type/build checks, then promotes coherent binaries, restarts and runs fixed smokes. Global announcements, schema preflight, version/source identity checks and new-inode promotion remain. A lost lease invalidates activation; a stale owner cannot renew or clear a successor's lease. Both holds lift on release or expiry. Failure leaves the successful baseline unchanged and creates a regression task for a new DevTeam after the window; source tasks remain closed.
 11. Cargo uses one project-ID-scoped target named `cargo-target-<project_name>` and consistent `CARGO_HOME` across supported agent, sandbox, release and project-shell entry points. Deleting a task worktree never deletes the shared cache. Do not edit global shell dotfiles. Wider host-performance research remains owned by #23902.
-12. Rename/rewrite `lane-manager.yaml` to `dev-manager.yaml` and `inbox-manager.yaml` to `triage.yaml`; add `test-writer.yaml`; rewrite `release-manager.yaml`. Josh's October 21 ruling supersedes the original deletion list: any agent used in runbooks stays. Keep `log-monitor.yaml`, `metrics-monitor.yaml`, `recovery-steward.yaml`, `task-close-reviewer.yaml`, and `expansion-qa.yaml`. Repurpose expansion QA for runbook-spawned post-expansion tree, dependency and plan-consistency checks. Keep `researcher.yaml`, `security-reviewer.yaml`, and `consolidator.yaml` for standalone use. Keep GitHub `triage-agent` distinct from fleet Triage and preserve current planning roles. Old manager names receive no compatibility aliases; any other runbook-used definition proposed for deletion goes to the Orchestrator first.
+12. Rename/rewrite `lane-manager.yaml` to `dev-manager.yaml` and `inbox-manager.yaml` to `triage.yaml`; add `test-writer.yaml`; rewrite `release-manager.yaml`. Josh's October 21 ruling supersedes the original deletion list: any agent used in runbooks stays. Keep `log-monitor.yaml`, `metrics-monitor.yaml`, `recovery-steward.yaml`, and `expansion-qa.yaml`. Josh's October 23 ruling deletes `task-close-reviewer.yaml` and its procedure, because `close_task` has no close-review gate. Repurpose expansion QA for runbook-spawned post-expansion tree, dependency and plan-consistency checks. Keep `researcher.yaml`, `security-reviewer.yaml`, and `consolidator.yaml` for standalone use. Keep GitHub `triage-agent` distinct from fleet Triage and preserve current planning roles. Old manager names receive no compatibility aliases; any other runbook-used definition proposed for deletion goes to the Orchestrator first.
 13. One complete pilot, then a small concurrent cohort, proves the lifecycle and release success/failure cases before old runbooks retire. No push is authorized by this plan. Operator-owned uncommitted work remains untouched.
 14. The October 22 Orchestrator ruling reconciles Decisions 3–6 with Josh's generic close design (memory 3cb34179): test, implementation, review and closing are role-owned step records with pending/in_progress/approved/rejected status. Dedicated writer tools enforce role ownership. Project configuration and task type determine required records, and close checks their approval mechanically. Section 2.3 verdict recording writes the review step; the Dev Manager writes closing. Retain rejection history and independent exact-SHA approval without a second verdict authority. The per-epic DevTeam addendum remains outside #24797.
 
@@ -36,7 +36,7 @@ Josh approved implementing the complete redesign, including finishing removal of
 
 The existing `.gobby/plans/remove-gobby-build.md` and epic #23341 remain authoritative for their existing leaves. Do not duplicate or re-expand them under this plan. Finish #23850 (external dispatch drivers/callers), #23851 (build/dispatch packages), #23852–#23856 (stage-only agents and tools), #23857/#23858/#24062 (consumers and storage), #23859/#23860 (guidance) and #23861 (schema drop) under their current ownership. Preserve already-landed P1 and sections 2.1–2.3.
 
-The prerequisite epic #23341 and all of #24317 closed on October 22 at `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`. Its absorbed #24799 delivered sections 1.1–1.4. The build drop uses migration 472, and migration 473 retires its stored configuration. Sections 2.1 onward execute under #24797 alone, without expansion or per-leaf claims, as Josh explicitly directed. Preserve task-close-reviewer and all other protected definitions under the later operator ruling. Numeric allocation remains mechanical: verify all refs and the live schema immediately before writing. #24812 took migration 474 on October 22 and #24816 took 475 on October 23, so this plan's migrations are 476 (review state) and 477 (task states).
+The prerequisite epic #23341 and all of #24317 closed on October 22 at `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`. Its absorbed #24799 delivered sections 1.1–1.4. The build drop uses migration 472, and migration 473 retires its stored configuration. Sections 2.1 onward execute under #24797 alone, without expansion or per-leaf claims, as Josh explicitly directed. Preserve the protected definitions under the later operator rulings; Josh's October 23 ruling removed task-close-reviewer from that set. Numeric allocation remains mechanical: verify all refs and the live schema immediately before writing. #24812 took migration 474 on October 22 and #24816 took 475 on October 23, so this plan's migrations are 476 (review state) and 477 (task states).
 
 To avoid a cycle, #23861 waits on this plan's 1.4, while 1.1–1.4 wait only on the needed code/storage removals, not #23861 or epic #23341. Sections 2.1 onward that need the schema wait on #23861. Task #23817 remains open for human-review routing, deferred follow-up behavior and their UI; the approved seven-state values and minimum invariants belong here. Verify #23433's snapshot-only worktree indexing delivery before changing its status. Do not adopt #23902 or create competing performance work.
 
@@ -58,7 +58,7 @@ Sections 1.1–1.4 were completed under #24799 within #23341's first landing. Th
 
 - 1.1 delivered the shared four-invariant close/preview evaluator, atomic finalization and idempotent close.
 - 1.2 removed retained-RED write enforcement and transcript-based TDD close gates while keeping tests-first reviewer guidance.
-- 1.3 retired automatic close-review launch/recovery and retained immutable historical review access. The task-close-reviewer definition remains protected by the later operator ruling.
+- 1.3 retired automatic close-review launch/recovery and retained immutable historical review access. Section 3.5 deletes the task-close-reviewer definition under Josh's October 23 ruling.
 - 1.4 removed close-only evidence evaluators while preserving found-work and general transcript consumers.
 
 Delivery evidence: `0911dcc603` and its linked correction commits; final #23341 tip `2fcc25043ec9c6cd3e8fb3ea3fc5bd4a76e23c0a`; schema-473 activation receipt `5dcd7e32`. The final 20-module acceptance run passed 276 tests. The complete child/criteria and exact-command record is `.gobby/session-context/17257-landing1-candidate.md`, supplemented by the #23341 close summary and its independent landing receipts.
@@ -288,7 +288,6 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`
 - `src/gobby/install/shared/skills/gobby/references/tasks/backups.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
-- `src/gobby/install/shared/skills/gobby/references/agents/procedures/task-close-reviewer.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/orchestrator.md`
 - `docs/guides/tasks.md`
 - `docs/design/task-authority-audit.md`
@@ -361,12 +360,9 @@ Targets:
 - `src/gobby/workflows/step_context.py::*` — scope-reason: stop calling the deleted recovery
 - `src/gobby/install/shared/workflows/agents/code-reviewer.yaml::*` — scope-reason: verdict-only reviewer
 - `src/gobby/install/shared/workflows/agents/developer.yaml::*` — scope-reason: wait on the lander's EVENT=LANDED
-- `src/gobby/install/shared/workflows/agents/inbox-manager.yaml::*` — scope-reason: lander wording
 - `src/gobby/install/shared/workflows/agents/release-manager.yaml::*` — scope-reason: no activation receipt; Orchestrator lands
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/orchestrator.md`
-- `src/gobby/install/shared/skills/gobby/references/agents/procedures/lane-manager.md`
-- `src/gobby/install/shared/skills/gobby/references/agents/procedures/task-close-reviewer.md`
 - `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`
 - `src/gobby/install/shared/skills/gobby/references/tasks/implementation.md`
 - `src/gobby/install/shared/skills/gobby/references/tasks/creation.md`
@@ -383,7 +379,6 @@ Targets:
 - `tests/mcp_proxy/tools/test_tasks_list_coverage.py::*` — scope-reason: drop the retired tools from coverage
 - `tests/servers/routes/test_tasks_routes.py::*` — scope-reason: landing-only receipt fixtures
 - `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: retired tools absent from enforcement lists
-- `tests/workflows/test_team_runbooks.py::*` — scope-reason: runbook admission no longer names record_close_receipt
 - `tests/agents/test_review_observation_seat_definitions.py::*` — scope-reason: verdict-only reviewer
 - `tests/agents/test_coordination_seat_definitions.py::*` — scope-reason: Orchestrator lander, no parked candidates
 - `tests/workflows/test_seat_step_loops.py::*` — scope-reason: reviewer loop ends at its verdict
@@ -406,7 +401,6 @@ Targets:
 
 Targets:
 - `src/gobby/agents/runbook_seats.py::*` — scope-reason: validate task-bound team invocation and seat reuse within that team
-- `src/gobby/agents/team_launch_inputs.py::*` — scope-reason: replace lane input inference with task/team binding
 - `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::*` — scope-reason: expose task/team preparation and idempotent admission
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: validate durable team identity at every seat spawn
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: bind one task branch and worktree to team creation
@@ -515,10 +509,10 @@ Targets:
 - `src/gobby/install/shared/workflows/pipelines/admin.yaml`
 - `src/gobby/install/shared/workflows/pipelines/devteam.yaml::*` — scope-reason: 3.2 creates the runbook; complete and test its seat catalogue and retire `team-lane`
 - `src/gobby/install/shared/workflows/agents/lane-manager.yaml::*` — operation: delete — scope-reason: rename and rewrite the complete definition as dev-manager
-- `src/gobby/install/shared/workflows/agents/dev-manager.yaml`
+- `src/gobby/install/shared/workflows/agents/dev-manager.yaml::*` — scope-reason: the complete renamed Dev Manager definition
 - `src/gobby/install/shared/workflows/agents/inbox-manager.yaml::*` — operation: delete — scope-reason: rename and rewrite the complete definition as triage
-- `src/gobby/install/shared/workflows/agents/triage.yaml`
-- `src/gobby/install/shared/workflows/agents/test-writer.yaml`
+- `src/gobby/install/shared/workflows/agents/triage.yaml::*` — scope-reason: the complete renamed Triage definition
+- `src/gobby/install/shared/workflows/agents/test-writer.yaml::*` — scope-reason: the complete new Test Writer definition
 - `src/gobby/install/shared/workflows/agents/developer.yaml::*` — scope-reason: replace lane, close relay and heavy-run slot instructions throughout the definition
 - `src/gobby/install/shared/workflows/agents/code-reviewer.yaml::*` — scope-reason: enforce the independent review and security contract throughout the definition
 - `src/gobby/install/shared/workflows/agents/release-manager.yaml::*` — scope-reason: replace old release and heavy-run slot grants with the complete batch release role
@@ -533,9 +527,12 @@ Targets:
 - `tests/agents/test_reporter_sources.py::*` — scope-reason: reporter sources carry no heavy-slot pattern
 - `tests/agents/test_coordination_seat_definitions.py::*` — scope-reason: coordination definitions carry no heavy-slot text
 - `src/gobby/install/shared/workflows/agents/orchestrator.yaml::*` — scope-reason: replace lane staffing and direct seat messaging instructions
-- `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — scope-reason: retain the runbook role and replace its retired automatic-close tool instructions
+- `src/gobby/install/shared/workflows/agents/task-close-reviewer.yaml::*` — operation: delete — scope-reason: Josh's October 23 ruling retires the role, because `close_task` has no close-review gate
 - `src/gobby/install/shared/workflows/agents/expansion-qa.yaml::*` — scope-reason: repurpose the retained agent for runbook-spawned tree and dependency checks
 - `src/gobby/install/shared/rules/build/build-agent-safety.yaml::*` — operation: delete — scope-reason: retire build-only safety rules after build removal
+- `src/gobby/agents/team_launch_inputs.py::*` — operation: delete — scope-reason: the team-lane input inference has no caller once team-lane is gone
+- `tests/agents/test_team_launch_inputs.py::*` — operation: delete — scope-reason: tests of the deleted lane input inference
+- `tests/workflows/test_team_runbooks.py::*` — operation: delete — scope-reason: tests of the retired team-lane and team-coordination runbooks
 - `src/gobby/install/shared/workflows/rules/roles/inject-seat-common.yaml::*` — scope-reason: seat catalogue names dev-manager, triage and test-writer instead of the retired managers
 - `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml::*` — scope-reason: seat catalogues and the manager spawn exemption keyed on the `team_manager` definition variable
 - `src/gobby/install/shared/workflows/rules/roles/seat-no-ask-user-question.yaml::*` — scope-reason: seat catalogue names the renamed seats
@@ -543,15 +540,15 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/dev-manager.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/triage.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md`
-- `src/gobby/install/shared/skills/gobby/references/agents/procedures/task-close-reviewer.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/procedures/task-close-reviewer.md::*` — operation: delete — scope-reason: the retired role's complete procedure
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/orchestrator.md`
 - `src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md`
 - `src/gobby/install/shared/AGENTS.md`
 - `AGENTS.md`
 - `docs/guides/runbooks.md`
-- `tests/workflows/test_devteam_runbooks.py`
+- `tests/workflows/test_devteam_runbooks.py::*` — scope-reason: the complete DevTeam and Admin runbook acceptance module
 
-**Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Retain log-monitor, metrics-monitor, recovery-steward, task-close-reviewer and expansion-qa under Josh's overriding ruling. Expansion QA checks the expanded tree against its plan and fixes dependency or consistency errors when spawned by the Orchestrator or planning team. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text. Retire the build-specific `build-agent-block-full-pytest` rule and its obsolete template while preserving the general no-full-pytest policy. Remove every lane-manager and inbox-manager reference, including the inline seat catalogues in the `rules/roles` rules (found by #24810's writer). The lane-manager seat-spawn exemption becomes a definition variable, `team_manager: true`, which dev-manager.yaml sets (Josh via the Orchestrator, October 22). This section also deletes the `team-lane` lane inference that 3.1 left beside the task path. Heavy-run slots retire with the runbooks (Josh via the Orchestrator, October 22). No definition, procedure or reporter source keeps slot grants, slot requests, the heavy-run cap or per-seat `CARGO_BUILD_JOBS` text; 5.1's launch environment carries the job limit. `dev-manager.yaml` lists 3.6's gclient operations reference in the `_seat_references` variable from 3.6, because the manager places its team's panes.
+**Research context:** Existing pipelines explicitly launch lane/coordination seats; the current model has no Test Writer and uses lane-based release/close procedures. Replace those launch contracts with task-bound `devteam` and five-seat `admin`. Rename managers directly, rewriting identity, authority and procedures at the destination; then retire the old registry names and source files. Retain log-monitor, metrics-monitor, recovery-steward and expansion-qa under Josh's overriding ruling. Josh's October 23 ruling deletes task-close-reviewer, its procedure, its configuration keys and its `role_launch_defaults` entry, because `close_task` has no close-review gate. Expansion QA checks the expanded tree against its plan and fixes dependency or consistency errors when spawned by the Orchestrator or planning team. Researcher, security-reviewer, consolidator, triage-agent and current planning definitions remain usable. Fold security review checks from the standalone security-reviewer into Code Reviewer without deleting that standalone role. Skill and rule catalogs/reference audits must match the resulting files. Keep generic templates portable; apply Gobby-specific integration branch/model defaults and live role routing through project policy. Remove lane limits, grants, quiet-worker requirements and old receipt relay text. Retire the build-specific `build-agent-block-full-pytest` rule and its obsolete template while preserving the general no-full-pytest policy. Remove every lane-manager and inbox-manager reference, including the inline seat catalogues in the `rules/roles` rules (found by #24810's writer). The lane-manager seat-spawn exemption becomes a definition variable, `team_manager: true`, which dev-manager.yaml sets (Josh via the Orchestrator, October 22). This section also deletes the `team-lane` lane inference that 3.1 left beside the task path. Sections 2.3, 2.4 and 3.1 edited the lane-manager and task-close-reviewer procedures, `inbox-manager.yaml`, `team_launch_inputs.py` and `test_team_runbooks.py`; the deletions here supersede those edits, so only this section targets those files. Heavy-run slots retire with the runbooks (Josh via the Orchestrator, October 22). No definition, procedure or reporter source keeps slot grants, slot requests, the heavy-run cap or per-seat `CARGO_BUILD_JOBS` text; 5.1's launch environment carries the job limit. `dev-manager.yaml` lists 3.6's gclient operations reference in the `_seat_references` variable from 3.6, because the manager places its team's panes.
 
 The definitions grant only their role's step writer: Test Writer gets `record_test_step`, Developer gets `record_implementation_step`, Code Reviewer gets `record_review_step`, and Dev Manager gets `record_closing_step`. The Orchestrator keeps the four writers section 2.3 granted, for repair only after other avenues are exhausted. A manager-authorized reviewer-to-fixer transition grants implementation authority for that task and removes review approval authority. Procedures require approved records before landing/close; the reviewer record supplies the exact-SHA stamp and the manager's closing record confirms the summary and final checks.
 
@@ -563,7 +560,7 @@ The Release Manager definition and procedure replace the old "never restarts" wo
 
 **Acceptance:**
 - 3.5.1 - Admin launches exactly Assistant/Orchestrator/Archivist/Release Manager/Triage; DevTeam launches the four approved roles in one prepared task tree. test: `tests/workflows/test_devteam_runbooks.py::test_runbook_seat_catalogues`.
-- 3.5.2 - Old manager source/installed identities are absent; log-monitor, metrics-monitor, recovery-steward, task-close-reviewer, expansion-qa, the three standalone roles, triage-agent and planning roles remain callable. Expansion QA is runbook-spawnable for post-expansion checks. test: `tests/workflows/test_devteam_runbooks.py::test_agent_retirement_and_retention`.
+- 3.5.2 - Old manager and task-close-reviewer source/installed identities are absent; log-monitor, metrics-monitor, recovery-steward, expansion-qa, the three standalone roles, triage-agent and planning roles remain callable. Expansion QA is runbook-spawnable for post-expansion checks. test: `tests/workflows/test_devteam_runbooks.py::test_agent_retirement_and_retention`.
 - 3.5.3 - Procedures enforce review/security, claim handoff, summary-before-close, teardown, the release-window contract and Triage's five-minute queued digest without lane/activation/TDD-proof relays; monitors and DevTeam seats report to Triage. test: `tests/workflows/test_devteam_runbooks.py::test_procedures_match_runtime_authority`.
 - 3.5.4 - No bundled definition, procedure or reporter source mentions heavy-run slots, the heavy-run cap or per-seat `CARGO_BUILD_JOBS`. test: `tests/workflows/test_devteam_runbooks.py::test_no_heavy_run_slot_guidance`.
 
@@ -646,10 +643,10 @@ Targets:
 `[category: code]`
 
 Targets:
-- `src/gobby/releases/batch.py`
-- `src/gobby/releases/smoke.py`
+- `src/gobby/releases/batch.py::*` — scope-reason: the complete new batch runner
+- `src/gobby/releases/smoke.py::*` — scope-reason: the complete new smoke module
 - `src/gobby/releases/window.py::*` — scope-reason: the token fence and agent activation refusal shared by every activation entry point
-- `src/gobby/cli/release.py`
+- `src/gobby/cli/release.py::*` — scope-reason: the complete new release command group
 - `src/gobby/cli/__init__.py::*` — scope-reason: register the release command group
 - `src/gobby/cli/cutover.py::*` — scope-reason: refuse out-of-batch agent cutover and recheck the lease before promotion
 - `src/gobby/cli/daemon_lifecycle.py::*` — scope-reason: refuse out-of-batch agent stop and restart with one call per entry point
@@ -659,7 +656,7 @@ Targets:
 - `src/gobby/utils/local_token.py::*` — scope-reason: forward the release token header beside the managed identity headers
 - `src/gobby/install/bin_release_identity.py::*` — scope-reason: expose the crate closure for affected-crate check plans
 - `src/gobby/install/shared/workflows/rules/worker-safety/no-daemon-management.yaml::*` — scope-reason: include cutover in the spawned-agent daemon management block
-- `tests/releases/test_release_batch.py`
+- `tests/releases/test_release_batch.py::*` — scope-reason: the complete batch acceptance module
 
 **Research context:** `run_cutover` already provides schema preflight, coherent new-inode promotion and source/version guards; reuse it unchanged. An MCP batch tool would die with the daemon it restarts, so a batch is one long-running CLI process, `gobby release batch --token <t> --generation <g> [--base-sha <sha>]`, which the Release Manager runs in the background from the main checkout after acquiring the window. PostgreSQL runs independently of the daemon, so the batch's lease keeper renews through the hub database every `RENEW_INTERVAL`, including while the daemon is down. Every synchronous step (checks, cutover, stop, restart) runs in a worker thread so the keeper keeps renewing through a long build. The Release Manager does not renew over MCP while a batch runs; the batch's first renewal proves the generation it was given.
 
@@ -746,8 +743,12 @@ Settings go in the launch environment rather than the Cargo-home `config.toml`, 
 `[category: test]`
 
 Targets:
-- `tests/e2e/test_devteam_lifecycle.py`
-- `tests/e2e/test_runbook_release_cohort.py`
+- `tests/e2e/test_devteam_lifecycle.py::*` — scope-reason: the complete new single-task lifecycle module
+- `tests/e2e/test_runbook_release_cohort.py::*` — scope-reason: the complete new release cohort module
+- `tests/fixtures/team_teardown_case.py::*` — scope-reason: the complete new module of team and teardown helpers that the teardown and lifecycle tests share
+- `tests/fixtures/release_batch_case.py::*` — scope-reason: the complete new module of batch fakes that the batch and cohort tests share, with the in-window probe hook
+- `tests/agents/test_team_teardown.py::*` — scope-reason: import the moved teardown helpers
+- `tests/releases/test_release_batch.py::*` — scope-reason: import the moved batch fakes
 - `docs/guides/runbooks.md`
 - `.gobby/plans/research/runbook-redesign-pilot-results.md`
 
@@ -768,6 +769,8 @@ Targets:
 October 22 reconciliation: #23341, #24799 and #24317 are closed. Sections 1.1–1.4 are delivered and schema 473 is active. Orchestrator #17281 authorized #24797 as the sole claim for sections 2.1 onward and one independent landing review for that completed work. The plan remains deliberately unexpanded by operator choice. The retained-agent ruling supersedes Decision 12 and section 3.5's former deletion list. The per-epic DevTeam variant #24796 remains a later addendum. TDD enforcement stays off through this cohort's landing; focused behavior tests and independent review remain required. The historical execution entry below describes the earlier state, not current completion.
 
 Section 2.1 checkpoint, October 22: migration 474, the review-prefixed storage/API/UI contract, backup epoch validation, historical archive adapter, and planned module extractions are implemented in 901ba9788c. Isolated upgrade/catalog and 102 native grant/schema tests passed; the daemon identity contract passed separately. The changed Python tests produced 601 passes and two stale expectations, both corrected and covered by an 87-test rerun. The post-extraction storage run passed 154 tests; task-detail UI passed 16 tests. Full source mypy, TypeScript, ESLint, scoped Ruff/format, Rust format/Clippy, changed-test quality/type ratchets and the Python suppression ratchet passed. The close-error child count defect found by this run is fixed in the shared exception formatting. Independent checkpoint review covered all 64 files with no outstanding findings. Section 2.2 is in progress under the October 22 seven-state ruling. Later sections and live activation remain pending; this is not the final #24797 landing candidate.
+
+Section 6.1 isolated evidence, October 23: `tests/e2e/test_devteam_lifecycle.py::test_complete_single_task_team` and `tests/e2e/test_runbook_release_cohort.py::test_concurrent_release_cohort` pass, with the teardown and release-batch tests, in a 16-test scoped run. Both use fixture seat grants and a fixture close policy rather than the shipped definitions, per Josh's ruling against tests tied to mutable agent definitions. Neither found a product defect, and neither has a RED, because both cover behavior delivered in sections 2.1 to 4.2. `docs/guides/runbooks.md` gains a "During a release" subsection: no guide said how a release window affects DevTeam launches and landings. The pilot report `.gobby/plans/research/runbook-redesign-pilot-results.md` records this evidence, the project-policy blob hashes and the pending activation steps. 6.1.3 stays open until the Orchestrator's live activation (sync, the policy row, the memory supersession and the live cohort) is recorded there.
 
 Observed execution on October 21: Josh waived test-first write ordering for #23850, relayed by Assistant #15976 and applied by Orchestrator #17281. The session projection refreshed and production writes succeeded. Implementation and focused verification are underway in the existing task worktree. Passing checks include maintenance, cron scheduling, messaging, stage transitions and terminal cleanup; final validation, commit, review and landing remain pending. The earlier worktree-root authorization defect remains tracked as #24779. This narrative is still a draft without M1 or expansion; it does not claim that the broader redesign has shipped. The Orchestrator owns installs, restarts and pushes.
 

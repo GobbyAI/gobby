@@ -7,7 +7,7 @@ import itertools
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,12 +27,8 @@ from gobby.cli import daemon_lifecycle, daemon_start
 from gobby.cli.release import release
 from gobby.cli.runtime import CliRuntime
 from gobby.releases.batch import (
-    ActivationFailed,
-    ActivationKind,
-    BatchEnvironment,
     BatchRecord,
     Check,
-    CheckResult,
     ReleaseBatchRefused,
     latest_baseline,
     records_dir,
@@ -41,7 +37,6 @@ from gobby.releases.batch import (
 from gobby.releases.smoke import SmokeResult, active_runs, run_smokes
 from gobby.releases.window import (
     LEASE_TTL,
-    ReleaseWindow,
     ReleaseWindowRefused,
     acquire_window,
     read_window,
@@ -59,20 +54,11 @@ from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.landing_case import LandingCase, make_landing_case
+from tests.fixtures.release_batch_case import NOW, Clock, Fakes
 
 pytestmark = pytest.mark.unit
 
-NOW = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 RELEASE_TOKEN_HEADER = "X-Gobby-Release-Token"
-# ``frontend_lint`` is deliberately unconfigured: the plan omits it.
-CONFIGURED = {
-    "lint": "lint-cmd",
-    "format": "format-cmd",
-    "type_check": "type-cmd",
-    "cargo_fmt": "fmt-cmd",
-    "ts_check": "ts-cmd",
-    "frontend_tests": "web-test-cmd",
-}
 
 
 def _crate(name: str, dependencies: str = "") -> str:
@@ -99,79 +85,6 @@ WORKSPACE = {
 @pytest.fixture
 def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -> LandingCase:
     return make_landing_case(temp_db, sample_project, tmp_path)
-
-
-@dataclass
-class Clock:
-    now: datetime = NOW
-
-    def __call__(self) -> datetime:
-        return self.now
-
-
-@dataclass
-class Fakes:
-    """Injected batch ports that record what the batch asked them to do."""
-
-    case: LandingCase
-    clock: Clock
-    fail: str | None = None
-    kind: ActivationKind = "cutover"
-    loop: asyncio.AbstractEventLoop | None = None
-    successor: str | None = None
-    checks: list[tuple[str, str]] = field(default_factory=list)
-    activations: list[str] = field(default_factory=list)
-    announcements: list[str] = field(default_factory=list)
-    baselines_at_smoke: list[str | None] = field(default_factory=list)
-    stolen: ReleaseWindow | None = None
-
-    def env(self) -> BatchEnvironment:
-        return BatchEnvironment(
-            command=CONFIGURED.get,
-            run_check=self._run_check,
-            activation_kind=lambda: self.kind,
-            activate=self._activate,
-            capture=lambda: frozenset({"run-before"}),
-            smoke=self._smoke,
-            announce=self._announce,
-            clock=self.clock,
-            renew_every=0.01,
-        )
-
-    def _run_check(self, check: Check) -> CheckResult:
-        self.checks.append((check.name, self.case.git("rev-parse", "HEAD")))
-        if self.fail == "lease" and self.stolen is None:
-            self._steal()
-        failed = self.fail == "check" and check.name == "lint"
-        return CheckResult(check.name, check.command, not failed, "lint failed" if failed else "")
-
-    def _steal(self) -> None:
-        """A successor takes the window after this batch's lease expires."""
-        held = read_window(self.case.repo / ".git")
-        assert isinstance(held, ReleaseWindow)
-        assert self.loop is not None and self.successor is not None
-        self.clock.now = held.expires_at + timedelta(seconds=1)
-        stolen = acquire_window(
-            self.case.db,
-            project_id=self.case.project_id,
-            owner_session_id=self.successor,
-            now=self.clock.now,
-        )
-        self.stolen = asyncio.run_coroutine_threadsafe(stolen, self.loop).result(timeout=30)
-
-    def _activate(self, kind: ActivationKind) -> None:
-        self.activations.append(kind)
-        if self.fail in ("build", "restart"):
-            raise ActivationFailed(f"{self.fail} failed")
-
-    def _smoke(self, captured: frozenset[str]) -> list[SmokeResult]:
-        assert captured == frozenset({"run-before"})
-        self.baselines_at_smoke.append(latest_baseline(self.case.repo / ".git"))
-        return [SmokeResult("health", self.fail != "smoke", "probe")]
-
-    def _announce(self, text: str) -> str | None:
-        self.announcements.append(text)
-        return None
 
 
 def _headlines(announcements: list[str]) -> list[str]:

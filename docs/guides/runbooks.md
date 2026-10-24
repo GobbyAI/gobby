@@ -105,6 +105,20 @@ ends the team: the daemon stops its seats and removes its worktree.
 A replacement execution for a running team passes `team_id`, the admitting
 execution id, with the same task.
 
+### During a release
+
+While the Release Manager holds a release window, `admit_team` refuses a new
+team with `release_window_active`, and a landing returns the same blocker
+without escalating. Relaunch the team, or land again, after the window ends.
+Teams admitted before the window keep working: their seats join the team tree,
+and a replacement execution with `team_id` rejoins it. Unreadable window state
+refuses both with `release_window_unreadable`.
+
+The window ends when the release batch finishes, or ten minutes after its last
+renewal. A failed batch leaves its source tasks closed and files one open task
+labelled `release-regression-<first 12 characters of the candidate SHA>`. Launch
+a DevTeam for it after the window ends.
+
 ### Fresh reviewer
 
 After the second rejection the Dev Manager reports
