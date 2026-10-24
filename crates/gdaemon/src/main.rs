@@ -48,6 +48,10 @@ enum SchemaCommand {
         #[arg(long)]
         schema: Option<String>,
     },
+    Preflight {
+        #[arg(long)]
+        schema: Option<String>,
+    },
     SweepTestSchemas {
         #[arg(long, default_value_t = 1)]
         age_hours: u64,
@@ -76,7 +80,10 @@ fn main() -> Result<()> {
         } => apply_schema(schema.as_deref()),
         Command::Schema {
             command: SchemaCommand::Plan { schema },
-        } => plan_schema(schema.as_deref()),
+        } => inspect_schema(schema.as_deref(), false),
+        Command::Schema {
+            command: SchemaCommand::Preflight { schema },
+        } => inspect_schema(schema.as_deref(), true),
         Command::Schema {
             command: SchemaCommand::Verify,
         } => verify_schema(),
@@ -187,13 +194,13 @@ fn apply_schema(schema: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Report what `schema apply` would do against this database, writing nothing.
+/// Report pending work, optionally proving it inside a rolled-back transaction.
 ///
 /// Mirrors `apply_schema`'s connection handling only. It never calls
 /// `verify_database_identity` and never calls `SchemaRunner::verify`: both bail
 /// exactly when the database head differs from the embedded head, which is the
 /// normal state of every migration-owing restart and of every cutover.
-fn plan_schema(schema: Option<&str>) -> Result<()> {
+fn inspect_schema(schema: Option<&str>, data_preflight: bool) -> Result<()> {
     if let Some(schema) = schema {
         validate_schema_name(schema)?;
     }
@@ -212,7 +219,12 @@ fn plan_schema(schema: Option<&str>) -> Result<()> {
             .context("PostgreSQL connection has no current schema")?,
     };
     validate_schema_name(&schema)?;
-    let report = SchemaRunner::new(&mut client, &schema)?.plan()?;
+    let mut runner = SchemaRunner::new(&mut client, &schema)?;
+    let (action, report) = if data_preflight {
+        ("preflight", runner.preflight()?)
+    } else {
+        ("plan", runner.plan()?)
+    };
     let versions = report
         .pending_versions
         .iter()
@@ -220,7 +232,7 @@ fn plan_schema(schema: Option<&str>) -> Result<()> {
         .collect::<Vec<_>>()
         .join(", ");
     println!(
-        "schema {schema} plan: database v{}, code v{}, baseline_pending={}, \
+        "schema {schema} {action}: database v{}, code v{}, baseline_pending={}, \
          pending_migrations={} [{versions}]",
         report.database_head,
         report.code_head,

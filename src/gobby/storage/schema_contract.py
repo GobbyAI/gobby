@@ -189,6 +189,17 @@ def plan_schema(database_url: str, *, gdaemon: Path | None = None) -> str:
     )
 
 
+def preflight_schema(database_url: str, *, gdaemon: Path | None = None) -> str:
+    """Run rollback-only migration proof using the selected schema authority."""
+    return _run_gdaemon(
+        database_url,
+        ["schema", "preflight"],
+        action="schema preflight",
+        binary=gdaemon,
+        remedy="Fix the schema inputs or the hub before restarting",
+    )
+
+
 def _cluster_id(connection: psycopg.Connection[tuple[object, ...]]) -> str:
     row = connection.execute("SELECT system_identifier::text FROM pg_control_system()").fetchone()
     if row is None or not isinstance(row[0], str):

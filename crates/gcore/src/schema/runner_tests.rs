@@ -51,6 +51,193 @@ static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCT
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+fn preflight_migrations(sql: &'static str) -> &'static [EmbeddedMigration] {
+    let checksum = Box::leak(super::assets::sha256_hex(sql.as_bytes()).into_boxed_str());
+    Box::leak(Box::new([EmbeddedMigration {
+        version: 421,
+        filename: "421_data_preflight_probe.sql",
+        checksum,
+        sql,
+    }]))
+}
+
+#[test]
+fn data_preflight_refuses_transaction_control_before_any_execution() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+    let migrations = preflight_migrations(
+        "CREATE TABLE preflight_partial (id int);\n/* transaction escape */ COMMIT;",
+    );
+    let mut runner = SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?;
+    let error = runner
+        .preflight()
+        .expect_err("COMMIT must never escape the proof transaction")
+        .to_string();
+    assert!(error.contains("421_data_preflight_probe.sql"), "{error}");
+    assert!(error.contains("transaction control"), "{error}");
+    assert!(error.contains("COMMIT"), "{error}");
+    assert_eq!(runner.current_version()?, BASELINE_VERSION);
+    assert_eq!(
+        client
+            .query_one("SELECT to_regclass('preflight_partial')::text", &[])?
+            .get::<_, Option<String>>(0),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn data_preflight_detects_legacy_row_and_rolls_back_every_statement() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+    client.batch_execute("CREATE TABLE legacy_preflight (criteria text, touched bool DEFAULT false);
+        INSERT INTO legacy_preflight(criteria) VALUES ('');
+        ALTER TABLE legacy_preflight ADD CONSTRAINT criteria_required CHECK (criteria <> '') NOT VALID;")?;
+    let migrations = preflight_migrations(
+        "CREATE TABLE preflight_partial (id int);
+        UPDATE legacy_preflight SET touched = true;",
+    );
+    let mut runner = SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?;
+    assert_eq!(runner.plan()?.pending_versions, vec![421]);
+    let error = runner
+        .preflight()
+        .expect_err("legacy row must fail the pending UPDATE")
+        .to_string();
+    assert!(error.contains("421_data_preflight_probe.sql"), "{error}");
+    assert!(error.contains("UPDATE legacy_preflight"), "{error}");
+    assert!(error.contains("criteria_required"), "{error}");
+    assert_eq!(runner.current_version()?, BASELINE_VERSION);
+    assert_eq!(runner.plan()?.pending_versions, vec![421]);
+    let row = client.query_one(
+        "SELECT criteria, touched, to_regclass('preflight_partial')::text FROM legacy_preflight",
+        &[],
+    )?;
+    assert_eq!(row.get::<_, String>(0), "");
+    assert!(!row.get::<_, bool>(1));
+    assert_eq!(row.get::<_, Option<String>>(2), None);
+    Ok(())
+}
+
+#[test]
+fn data_preflight_restores_initial_constraint_modes_between_migrations() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+    client.batch_execute(
+        "CREATE TABLE preflight_parent (id int PRIMARY KEY);
+         CREATE TABLE preflight_child (id int REFERENCES preflight_parent(id)
+             DEFERRABLE INITIALLY DEFERRED);",
+    )?;
+    let first = &preflight_migrations("SELECT 1;")[0];
+    let second = &preflight_migrations(
+        "INSERT INTO preflight_child VALUES (1); INSERT INTO preflight_parent VALUES (1);",
+    )[0];
+    let migrations = Box::leak(Box::new([
+        EmbeddedMigration {
+            version: 421,
+            filename: first.filename,
+            checksum: first.checksum,
+            sql: first.sql,
+        },
+        EmbeddedMigration {
+            version: 422,
+            filename: "422_deferred_probe.sql",
+            checksum: second.checksum,
+            sql: second.sql,
+        },
+    ]));
+    let mut runner = SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?;
+    assert_eq!(runner.preflight()?.pending_versions, vec![421, 422]);
+    assert_eq!(runner.current_version()?, BASELINE_VERSION);
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM preflight_child", &[])?
+            .get::<_, i64>(0),
+        0
+    );
+    SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?.apply()?;
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM preflight_child", &[])?
+            .get::<_, i64>(0),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn data_preflight_success_rolls_back_schema_data_and_receipts() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+    client.batch_execute(
+        "CREATE TABLE preflight_data (value int); INSERT INTO preflight_data VALUES (1);",
+    )?;
+    let migrations = preflight_migrations(
+        "CREATE TABLE preflight_partial (id int);
+        UPDATE preflight_data SET value = 2;",
+    );
+    let mut runner = SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?;
+    let report = runner.preflight()?;
+    assert_eq!(report.pending_versions, vec![421]);
+    assert_eq!(runner.current_version()?, BASELINE_VERSION);
+    assert_eq!(runner.plan()?.pending_versions, vec![421]);
+    let row = client.query_one(
+        "SELECT value, to_regclass('preflight_partial')::text FROM preflight_data",
+        &[],
+    )?;
+    assert_eq!(row.get::<_, i32>(0), 1);
+    assert_eq!(row.get::<_, Option<String>>(1), None);
+    Ok(())
+}
+
+#[test]
+fn data_preflight_refuses_non_transactional_migrations_without_execution() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+    let migrations = preflight_migrations(
+        "-- gobby:non-transactional\nCREATE TABLE preflight_partial (id int);",
+    );
+    let mut runner = SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?;
+    let error = runner
+        .preflight()
+        .expect_err("cannot rollback-prove non-transactional SQL")
+        .to_string();
+    assert!(error.contains("421_data_preflight_probe.sql"), "{error}");
+    assert!(error.contains("non-transactional"), "{error}");
+    assert_eq!(runner.current_version()?, BASELINE_VERSION);
+    assert_eq!(
+        client
+            .query_one("SELECT to_regclass('preflight_partial')::text", &[])?
+            .get::<_, Option<String>>(0),
+        None
+    );
+    Ok(())
+}
+
 const PRIOR_BASELINE_VERSION: i32 = 419;
 const PRIOR_BASELINE_CHECKSUM: &str =
     "a361cb10d591e82aeb0e1ce04eb09e64e468ef571dcd3ae492eccb16cbb4ce81";
