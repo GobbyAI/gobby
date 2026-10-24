@@ -446,13 +446,89 @@ def test_shell_setup_disables_data_narrowing_for_the_whole_text(command: str) ->
         'echo() if true; then "$@"; fi; D=approve-dirty-paths; '
         "echo gobby se$()ssions $D s7 --checkout /repo a.txt",
         "D=approve-dirty-paths; git -c alias.x='!gobby' x se$()ssions $D s7 --checkout /repo a.txt",
-        "git log --grep gobby $X",
+        "D=approve-dirty-paths; git $X gobby sessions $D s7 --checkout /repo a.txt",
     ],
 )
 def test_shadowed_data_and_git_heads_keep_expansion_slot_checks(command: str) -> None:
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+def test_git_builtin_grep_operand_is_not_a_command_word() -> None:
+    assert not approval_command_word_expansion("git log --grep gobby $X")
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "caffeinate",
+        "arch -arm64",
+        "/usr/bin/arch -arch arm64",
+        "doas",
+        "ionice -c3",
+        "flock /tmp/approval.lock",
+        "chronic",
+        "pipx run",
+        "poetry run",
+        "rtk",
+        "direnv exec .",
+        "script -q /dev/null",
+        "sandbox-exec -n profile",
+        "taskset 1",
+        "strace -f",
+        "unknown",
+    ],
+)
+@pytest.mark.parametrize("slot", ["$S", "{sessions,}"])
+@pytest.mark.parametrize("context", ["{}", "cat x | {}", "cat <(echo hi) <({})"])
+def test_unknown_launchers_keep_dynamic_gobby_slots_blocked(
+    launcher: str, slot: str, context: str
+) -> None:
+    command = context.format(f"{launcher} gobby {slot} approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "git bisect run",
+        "git -C /r bisect run",
+        "git submodule foreach",
+        "git submodule foreach --recursive",
+        "git x",
+        "git -C /r x",
+        "python3 -m uv run",
+        "python3 -m pipx run",
+        "uv run python -m pipx run",
+    ],
+)
+@pytest.mark.parametrize("slot", ["$S", "{sessions,}"])
+@pytest.mark.parametrize("context", ["{}", "cat x | {}", "cat <(echo hi) <({})"])
+def test_git_and_python_module_launchers_keep_dynamic_gobby_slots_blocked(
+    launcher: str, slot: str, context: str
+) -> None:
+    command = context.format(f"{launcher} gobby {slot} approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git log --grep gobby $X",
+        "git show gobby $X",
+        "git -C /repo/gobby log --grep gobby $X",
+        'git add src/gobby "$F"',
+        'git checkout gobby "$B"',
+    ],
+)
+def test_git_builtin_operands_are_not_gobby_command_slots(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+def test_python_script_argv_is_an_accepted_residual() -> None:
+    # Orchestrator ruling: script/-c argv cannot bound arbitrary Python execution.
+    assert not approval_command_word_expansion("python3 l.py gobby $S approve-dirty-paths s7")
 
 
 @pytest.mark.parametrize(
