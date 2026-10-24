@@ -22,8 +22,6 @@ from gobby.agents.isolation import (
     provider_mcp_config_error,
     repair_isolation_environment,
 )
-from gobby.agents.provider_rotation import model_for_provider
-from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.resume_placement import placement_snapshot
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import PreparedSpawn, prepare_terminal_spawn
@@ -52,10 +50,15 @@ from ._failure_cleanup import (
     cleanup_failed_spawn,
 )
 from ._isolation_prepare import prepare_spawn_isolation, requested_base_branch
+from ._launch_settings import (
+    LaunchRefused,
+    resolve_launch_model,
+    resume_launch_defaults,
+    standing_seat_suffix,
+)
 from ._placement import preflight_placement, run_placed_spawn, task_active_refusal
 from ._provider_resolution import (
     concrete_provider,
-    incompatible_spawn_model_provider_after_recollect,
     missing_provider_for_supplied_model,
     resolve_spawn_provider,
     spawning_session_provider,
@@ -69,10 +72,7 @@ from ._resume import (
     resumed_seat_plan,
 )
 from ._run_lifetime import resolve_run_lifetime
-from ._runtime import (
-    _normalize_optional_model,
-    build_spawn_context,
-)
+from ._runtime import build_spawn_context
 from ._sandbox_gate import resolve_spawn_sandbox
 from ._spawn_guards import (
     TaskSpawnLease,
@@ -162,9 +162,9 @@ async def spawn_agent_impl(
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
-        provider = resume_target.source
-        model = _normalize_optional_model(model) or _normalize_optional_model(resume_target.model)
-        reasoning_effort = reasoning_effort or resume_target.reasoning_effort
+        provider, model, reasoning_effort = resume_launch_defaults(
+            resume_target, model=model, reasoning_effort=reasoning_effort
+        )
         if checkout_mode is None and not worktree_id and not clone_id:
             # A resumed seat returns to the checkout its last run worked in.
             worktree_id, clone_id = await asyncio.to_thread(
@@ -184,10 +184,7 @@ async def spawn_agent_impl(
                 checkout_mode = "none"
     try:
         run_lifetime = resolve_run_lifetime(
-            agent_body,
-            "interactive"
-            if resume_target is not None and execution_mode is None
-            else execution_mode,
+            agent_body, execution_mode, resumed=resume_target is not None
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
@@ -264,56 +261,20 @@ async def spawn_agent_impl(
             agy_record = await ensure_agy_support()
         if not agy_record.supported:
             return {"success": False, "error": agy_support_refusal(agy_record)}
-    effective_model = _normalize_optional_model(model)
-    if effective_model is None and agent_body:
-        agent_model = _normalize_optional_model(agent_body.model)
-        if agent_model is not None:
-            # The agent names one model, but the provider it lands on need not be
-            # the one that model belongs to: the spawn may override the provider,
-            # and `provider: inherit` follows the spawning session. Resolve the
-            # target provider's model at the same tier rather than leaving the
-            # model unset for that CLI's configured default to fill in.
-            effective_model = model_for_provider(
-                target_provider=effective_provider,
-                declared_model=agent_model,
-            )
-            if effective_model is None:
-                return {
-                    "success": False,
-                    "error": (
-                        f"Agent {agent_body.name!r} declares model {agent_model!r}, which "
-                        f"belongs to another provider and has no {effective_provider} "
-                        f"equivalent. Pass an explicit model for {effective_provider} "
-                        "instead of leaving it to the provider's default."
-                    ),
-                }
-    pair_error = await incompatible_spawn_model_provider_after_recollect(
-        provider=effective_provider,
-        model=effective_model,
-    )
-    if pair_error is not None:
-        return pair_error.to_response()
+    try:
+        launch = await resolve_launch_model(
+            provider=effective_provider,
+            model=model,
+            agent_body=agent_body,
+            reasoning_effort=reasoning_effort,
+            reasoning_required=reasoning_required,
+        )
+    except LaunchRefused as exc:
+        return exc.response
+    effective_model = launch.model
+    reasoning = launch.reasoning
     is_local_run = False
 
-    requested_reasoning_effort = reasoning_effort
-    if requested_reasoning_effort is None and agent_body:
-        requested_reasoning_effort = agent_body.reasoning_effort
-    effective_reasoning_required = reasoning_required
-    if effective_reasoning_required is None and agent_body:
-        effective_reasoning_required = agent_body.reasoning_required
-
-    reasoning = resolve_spawn_reasoning(
-        provider=effective_provider,
-        model=effective_model,
-        requested_effort=requested_reasoning_effort,
-        reasoning_required=effective_reasoning_required,
-    )
-    if reasoning.reasoning_required and reasoning.effective_effort is None:
-        return {
-            "success": False,
-            "error": reasoning.message or "Requested reasoning is not supported",
-            "reasoning": reasoning.to_dict(),
-        }
     effective_api_base: str | None = None
     effective_api_token: str | None = None
     if agent_body:
@@ -645,12 +606,7 @@ async def spawn_agent_impl(
         task_category=task_category,
     )
     enhanced_prompt = context_handler.build_context_prompt(prompt, isolation_ctx)
-    if run_lifetime.execution_mode == "interactive":
-        enhanced_prompt += (
-            "\n\nThis is an interactive standing seat. Remain available between turns and tasks. "
-            "An idle prompt, completed task, or finished runbook does not end this seat. "
-            "Call gobby-agents:end_agent_run only when explicitly directed to end the seat."
-        )
+    enhanced_prompt += standing_seat_suffix(run_lifetime)
 
     run_id = reserved_run_id or str(uuid.uuid4())
     prepared_spawn = None

@@ -8,6 +8,8 @@ ends in one owned state: failed and settled, or in doubt with its rows kept.
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -32,6 +34,7 @@ from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_spawn import RemoteSpawnRequest, spawn_remote_agent
 from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
+from gobby.mcp_proxy.tools.spawn_agent._remote_routing import spawn_remote_route
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -42,6 +45,7 @@ from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.servers.conftest import (
@@ -1209,6 +1213,306 @@ async def test_spawn_needs_owned_machine(
     assert node.send.await_count == 3
 
 
+async def test_remote_write_grant_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    tmp_path: Path,
+) -> None:
+    """Refused whether or not the caller holds a recorded grant for the same path."""
+    release = tmp_path / "release"
+    release.mkdir()
+    before = _row_counts(temp_db)
+
+    refused = await spawn_remote_route(
+        temp_db,
+        routed=_routed(remote_machine),
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+        runner=runner,
+        daemon_config=DaemonConfig(),
+        placement=None,
+        request=_request(
+            remote_parent,
+            sample_project["id"],
+            extra_write_paths=[str(release)],
+            write_paths_reason="release",
+        ),
+    )
+
+    assert refused["success"] is False
+    assert refused["error_code"] == "remote_write_grant_unsupported"
+    assert refused["stage"] == "none"
+    assert _row_counts(temp_db) == before
+    node.send.assert_not_awaited()
+
+
+async def test_http_remote_write_grant_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    task = LocalTaskManager(temp_db).create_task(
+        title="HTTP write grant",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Refused before rows.",
+    )
+    body = {
+        "task_id": task.id,
+        "prompt": "x",
+        "machine": remote_machine,
+        "provider": "claude",
+        "extra_write_paths": [str(release)],
+        "write_paths_reason": "release",
+    }
+    before = _row_counts(temp_db)
+
+    with _owner_http_client(temp_db, TEST_USER_ID, runner) as client:
+        refused = client.post("/api/agents/spawn", json=body)
+
+    assert refused.status_code == 400
+    assert refused.json()["error_code"] == "remote_write_grant_unsupported"
+    after = _row_counts(temp_db)
+    assert (after["agent_runs"], after["terminals"]) == (before["agent_runs"], before["terminals"])
+    node.send.assert_not_awaited()
+
+
+async def test_machine_count_failure_releases_lease(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        title="Count fails",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Next spawn is admitted.",
+    )
+
+    def _broken_count(self: TerminalManager, machine_id: str) -> list[Any]:
+        raise RuntimeError("terminal read broke")
+
+    monkeypatch.setattr(TerminalManager, "list_reconcilable_by_machine", _broken_count)
+    before = _row_counts(temp_db)
+
+    with pytest.raises(RuntimeError, match="terminal read broke"):
+        await spawn_remote_agent(
+            temp_db,
+            routed=_routed(remote_machine),
+            request=_request(remote_parent, sample_project["id"], task_id=task.id),
+            lease=TaskSpawnLease(db=temp_db, task_id=task.id),
+            daemon_config=DaemonConfig(),
+            runner=runner,
+            session_manager=sessions,
+        )
+
+    assert _row_counts(temp_db) == before
+    node.send.assert_not_awaited()
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()
+
+
+async def test_cancel_waiting_for_machine_lock_releases_lease(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        title="Cancelled on the lock",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Next spawn is admitted.",
+    )
+    waiting = asyncio.Event()
+
+    class _HeldLock:
+        async def __aenter__(self) -> None:
+            waiting.set()
+            await asyncio.Event().wait()
+
+        async def __aexit__(self, *exc_info: object) -> None:
+            return None
+
+    monkeypatch.setattr(remote_spawn, "_machine_lock", lambda _machine_id: _HeldLock())
+    before = _row_counts(temp_db)
+    spawn = asyncio.create_task(
+        spawn_remote_agent(
+            temp_db,
+            routed=_routed(remote_machine),
+            request=_request(remote_parent, sample_project["id"], task_id=task.id),
+            lease=TaskSpawnLease(db=temp_db, task_id=task.id),
+            daemon_config=DaemonConfig(),
+            runner=runner,
+            session_manager=sessions,
+        )
+    )
+    await waiting.wait()
+    spawn.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await spawn
+
+    assert _row_counts(temp_db) == before
+    node.send.assert_not_awaited()
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()
+
+
+async def test_cancel_during_prepare_settles_rows_before_release(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        title="Cancelled during prepare",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Next spawn is admitted.",
+    )
+    run_id = str(uuid4())
+    started = threading.Event()
+    finish = threading.Event()
+    real_prepare = spawn_module.prepare_terminal_spawn
+
+    def _slow_prepare(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        finish.wait()
+        return real_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(remote_spawn, "prepare_terminal_spawn", _slow_prepare)
+    spawn = asyncio.create_task(
+        spawn_remote_agent(
+            temp_db,
+            routed=_routed(remote_machine),
+            request=_request(
+                remote_parent, sample_project["id"], task_id=task.id, reserved_run_id=run_id
+            ),
+            lease=TaskSpawnLease(db=temp_db, task_id=task.id),
+            daemon_config=DaemonConfig(),
+            runner=runner,
+            session_manager=sessions,
+        )
+    )
+    await asyncio.to_thread(started.wait)
+    spawn.cancel()
+    finish.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await spawn
+
+    assert _state(temp_db, "agent_runs", run_id) == "cancelled"
+    node.send.assert_not_awaited()
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()
+
+
+async def test_node_client_unavailable_settles_run(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        title="Node client unavailable",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Next spawn is admitted.",
+    )
+    run_id = str(uuid4())
+
+    def _unavailable() -> Any:
+        raise RuntimeError("bootstrap unreadable")
+
+    monkeypatch.setattr(remote_spawn, "node_command_client", _unavailable)
+
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(
+            remote_parent, sample_project["id"], task_id=task.id, reserved_run_id=run_id
+        ),
+        lease=TaskSpawnLease(db=temp_db, task_id=task.id),
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "spawn_failed"
+    assert result["stage"] == "none"
+    assert _state(temp_db, "agent_runs", run_id) == "cancelled"
+    assert _state(temp_db, "terminals", run_id) == "exited"
+    node.send.assert_not_awaited()
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()
+
+
+async def test_unexpected_send_error_is_in_doubt(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    sessions: ChildSessionManager,
+) -> None:
+    node.send.side_effect = RuntimeError("socket reset mid-send")
+    lease = _lease()
+
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(remote_parent, sample_project["id"]),
+        lease=lease,
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "spawn_in_doubt"
+    assert result["stage"] is None
+    (_, _, payload), _ = node.send.await_args
+    run_id = payload["run_id"]
+    assert result["run_id"] == run_id
+    assert _state(temp_db, "agent_runs", run_id) == "pending"
+    assert _state(temp_db, "terminals", run_id) == "pending"
+    lease.attach.assert_called_once_with(run_id)
+    lease.release_unattached.assert_not_called()
+
+
 async def test_database_free_routing_refuses_remote_target(
     local_parent: str,
     remote_parent: str,
@@ -1237,3 +1541,110 @@ async def test_database_free_routing_refuses_remote_target(
     assert by_machine["error_code"] == "routing_unavailable"
     assert by_resume["error_code"] == "routing_unavailable"
     impl.assert_not_awaited()
+
+
+async def test_remote_interactive_definition_launches_interactive(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+) -> None:
+    """The definition's run lifetime, model and effort reach the node, not the raw request."""
+    body = make_agent_definition(
+        name="developer",
+        prompts={"agent": "Review the branch"},
+        model="claude-opus-4-7",
+        execution_mode="interactive",
+        reasoning_effort="high",
+    )
+
+    result = await spawn_remote_route(
+        temp_db,
+        routed=_routed(remote_machine),
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+        runner=runner,
+        daemon_config=DaemonConfig(),
+        placement=None,
+        request=_request(remote_parent, sample_project["id"], agent_body=body),
+    )
+
+    assert result["success"] is True
+    (_, command, payload), _ = node.send.await_args
+    assert command == "agent.spawn"
+    assert payload["execution_mode"] == "interactive"
+    assert payload["model"] == "claude-opus-4-7"
+    assert payload["reasoning_effort"] == "high"
+    assert "This is an interactive standing seat." in payload["prompt"]
+    row = temp_db.fetchone(
+        "SELECT resume_metadata_json FROM agent_runs WHERE id = %s", (result["run_id"],)
+    )
+    assert row is not None
+    assert json.loads(row["resume_metadata_json"])["execution_mode"] == "interactive"
+
+
+async def test_remote_resume_defaults_from_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+) -> None:
+    """A resumed seat launches with its session's model and effort when the caller names neither."""
+    node_session = _insert_session(temp_db, sample_project["id"], remote_machine, status="expired")
+    temp_db.execute(
+        "UPDATE sessions SET model = %s, reasoning_effort = %s WHERE id = %s",
+        ("claude-opus-4-7", "high", node_session),
+    )
+
+    result = await spawn_remote_route(
+        temp_db,
+        routed=_routed(remote_machine),
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+        runner=runner,
+        daemon_config=DaemonConfig(),
+        placement=None,
+        request=_request(remote_parent, sample_project["id"], resume_session_id=node_session),
+    )
+
+    assert result["success"] is True
+    (_, _, payload), _ = node.send.await_args
+    assert payload["resume_session_id"] == f"remote-spawn-{node_session}"
+    assert payload["model"] == "claude-opus-4-7"
+    assert payload["reasoning_effort"] == "high"
+    assert payload["execution_mode"] == "interactive"
+
+
+async def test_remote_foreign_model_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+) -> None:
+    """A definition model with no equivalent on the target provider refuses before any row."""
+    before = _row_counts(temp_db)
+    body = make_agent_definition(
+        name="developer", prompts={"agent": "Review the branch"}, model="opus"
+    )
+
+    refused = await spawn_remote_route(
+        temp_db,
+        routed=_routed(remote_machine),
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+        runner=runner,
+        daemon_config=DaemonConfig(),
+        placement=None,
+        request=_request(remote_parent, sample_project["id"], provider="grok", agent_body=body),
+    )
+
+    assert refused["success"] is False
+    assert refused["stage"] == "none"
+    assert _row_counts(temp_db) == before
+    node.send.assert_not_awaited()

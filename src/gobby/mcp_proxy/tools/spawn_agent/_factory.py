@@ -706,6 +706,7 @@ def create_spawn_agent_registry(
                     write_paths_reason=write_paths_reason,
                     reserved_run_id=reserved_run_id,
                     lane=(lane or "").strip() or None,
+                    execution_mode=execution_mode,
                 ),
             )
 

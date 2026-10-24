@@ -18,7 +18,12 @@ class RunLifetime:
 def resolve_run_lifetime(
     agent_body: AgentDefinitionBody | None,
     execution_mode: Literal["one_shot", "interactive"] | None,
+    *,
+    resumed: bool = False,
 ) -> RunLifetime:
+    if execution_mode is None and resumed:
+        # A resumed seat is a standing seat unless the spawn names a mode.
+        execution_mode = "interactive"
     effective_mode = (
         execution_mode
         if execution_mode is not None

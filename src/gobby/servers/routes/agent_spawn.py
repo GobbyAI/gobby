@@ -425,6 +425,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                     workflow_name=effective_workflow,
                     task_id=req.task_id,
                     requested_provider=req.provider,
+                    extra_write_paths=req.extra_write_paths,
+                    write_paths_reason=req.write_paths_reason,
                 ),
             )
             if not remote["success"]:

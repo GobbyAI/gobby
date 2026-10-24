@@ -18,9 +18,8 @@ import asyncio
 import functools
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
-from gobby.agents.external_write_grants import GRANT_KEY, apply_write_grant
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox_network import definition_sandbox_config
 from gobby.agents.session import ChildSessionManager
@@ -72,7 +71,6 @@ class RemoteSpawnRequest:
     task_id: str | None = None
     claimed_session_id: str | None = None
     task_category: str | None = None
-    write_grant: dict[str, Any] | None = None
     resume_session_id: str | None = None
     caller_session_id: str | None = None
     requested_provider: str | None = None
@@ -81,6 +79,8 @@ class RemoteSpawnRequest:
     write_paths_reason: str | None = None
     reserved_run_id: str | None = None
     lane: str | None = None
+    execution_mode: Literal["one_shot", "interactive"] | None = None
+    idle_ttl_seconds: int | None = None
 
 
 def _machine_lock(machine_id: str) -> asyncio.Lock:
@@ -103,8 +103,10 @@ def _resume_metadata(
 ) -> dict[str, Any]:
     """The run's durable launch metadata, as the local path records it."""
     metadata: dict[str, Any] = {}
-    if request.write_grant is not None:
-        metadata[GRANT_KEY] = request.write_grant
+    if request.execution_mode is not None:
+        metadata["execution_mode"] = request.execution_mode
+    if request.idle_ttl_seconds is not None:
+        metadata["idle_ttl_seconds"] = request.idle_ttl_seconds
     if request.allow_closed_task:
         metadata["allow_closed_task"] = True
     lane = (request.lane or "").strip() or resumed_seat_lane(resume_target, run_storage)
@@ -181,8 +183,6 @@ async def spawn_remote_agent(
     if not ok:
         return _refusal("spawn_refused", reason)
     sandbox = definition_sandbox_config(daemon_config, request.agent_body)
-    if request.write_grant is not None:
-        sandbox = apply_write_grant(sandbox, request.write_grant)
     if not sandbox.enabled or sandbox.backend != "srt":
         return _refusal("sandbox_required", "A remote run needs the enabled srt sandbox")
 
@@ -216,154 +216,178 @@ async def spawn_remote_agent(
         if conflict is not None:
             return conflict
 
-    async with _machine_lock(routed.machine_id):
-        active = len(terminals.list_reconcilable_by_machine(routed.machine_id))
-        if active >= configured_max_active_agents():
-            _release(lease)
-            return _refusal("machine_cap_reached", f"{routed.machine_id} is at its agent limit")
-        shared: dict[str, Any] = {
-            "parent_session_id": request.parent_session_id,
-            "project_id": request.project_id,
-            "source": provider,
-            "workflow_name": request.workflow_name,
-            "agent_name": request.agent_name,
-            "initial_variables": request.initial_variables,
-            "git_branch": branch,
-            "prompt": request.prompt,
-            "model": endpoint.model,
-            "is_local": endpoint.is_local,
-            "max_agent_depth": request.max_agent_depth,
-            "agent_run_id": run_id,
-            "task_id": request.task_id,
-            "claimed_session_id": request.claimed_session_id,
-            "timeout_seconds": request.timeout_seconds,
-            "sandbox_enabled": sandbox.enabled,
-            "requested_reasoning_effort": reasoning.requested_effort,
-            "effective_reasoning_effort": reasoning.effective_effort,
-            "reasoning_required": reasoning.reasoning_required,
-            "reasoning_status": reasoning.status,
-            "reasoning_message": reasoning.message,
-            "resume_metadata_json": metadata,
-            "worktree_id": None,
-            "clone_id": None,
-            "workspace_path": routed.checkout_root,
-            "routed_machine_id": routed.machine_id,
-        }
-        if resume_target is None:
-            prepare = functools.partial(
-                prepare_terminal_spawn, session_manager, machine_id=routed.machine_id, **shared
-            )
-        else:
-            prepare = functools.partial(
-                prepare_terminal_resume,
-                session_manager,
-                existing_session_id=resume_target.id,
-                original_run_id=resume_target.agent_run_id,
-                relaunch=True,
-                paused_seat_not_live=resume_target.status == "paused",
-                **shared,
-            )
-        try:
-            prepared: PreparedSpawn = await asyncio.to_thread(prepare)
-        except Exception as exc:
-            _release(lease)
-            return _refusal("prepare_failed", str(exc))
-
-        child_session_id = prepared.session_id
-        try:
-            terminals.create_pending(
-                terminal_id=terminal_id,
-                project_id=request.project_id,
-                backend="native",
-                ownership="gobby",
-                spawn_key=f"remote:{run_id}",
-                machine_id=routed.machine_id,
-                session_id=child_session_id,
-                agent_run_id=run_id,
-            )
-        except Exception as exc:
-            return await _settle_unlaunched(
-                db,
-                runner=runner,
-                lease=lease,
-                terminal_id=terminal_id,
-                run_id=run_id,
-                child_session_id=child_session_id,
-                error=str(exc),
-                code="spawn_failed",
-                completion_registry=completion_registry,
-                task_manager=task_manager,
-            )
-        attach_error = lease.attach(run_id) if lease is not None else None
-        if attach_error is not None:
-            return await _settle_unlaunched(
-                db,
-                runner=runner,
-                lease=lease,
-                terminal_id=terminal_id,
-                run_id=run_id,
-                child_session_id=child_session_id,
-                error=attach_error,
-                code="spawn_mutex_failed",
-                completion_registry=completion_registry,
-                task_manager=task_manager,
-            )
-        try:
-            run = runner.run_storage.get(run_id)
-            if run is None:
-                raise RuntimeError(f"agent run {run_id} was not recorded")
-            payload = build_spawn_payload(
-                db,
-                run=run,
-                request={
-                    "prompt": request.prompt,
-                    "project_id": request.project_id,
-                    "project_path": routed.checkout_root,
-                    "terminal_id": terminal_id,
-                    "initial_variables": request.initial_variables,
-                    "agent_depth": prepared.agent_depth,
-                    "max_agent_depth": request.max_agent_depth,
-                    "title": request.title,
-                    "timeout": request.timeout_seconds,
-                    "droid_mode": "exec",
-                    "agent_lookup_name": request.agent_name,
-                    "agent_body": request.agent_body,
-                    "checkout_mode": request.isolation,
-                    "branch_name": branch,
-                    "base_branch": request.base_branch,
-                },
-                endpoint=endpoint,
-                reasoning=reasoning,
-                sandbox_config=sandbox,
-                resume_metadata=metadata,
-                code_index_mode=code_index_preflight_mode(
-                    checkout_mode=request.isolation
-                    or (
-                        request.agent_body.checkout_mode if request.agent_body is not None else None
+    try:
+        async with _machine_lock(routed.machine_id):
+            active = len(terminals.list_reconcilable_by_machine(routed.machine_id))
+            if active >= configured_max_active_agents():
+                _release(lease)
+                return _refusal("machine_cap_reached", f"{routed.machine_id} is at its agent limit")
+            shared: dict[str, Any] = {
+                "parent_session_id": request.parent_session_id,
+                "project_id": request.project_id,
+                "source": provider,
+                "workflow_name": request.workflow_name,
+                "agent_name": request.agent_name,
+                "initial_variables": request.initial_variables,
+                "git_branch": branch,
+                "prompt": request.prompt,
+                "model": endpoint.model,
+                "is_local": endpoint.is_local,
+                "max_agent_depth": request.max_agent_depth,
+                "agent_run_id": run_id,
+                "task_id": request.task_id,
+                "claimed_session_id": request.claimed_session_id,
+                "timeout_seconds": request.timeout_seconds,
+                "sandbox_enabled": sandbox.enabled,
+                "requested_reasoning_effort": reasoning.requested_effort,
+                "effective_reasoning_effort": reasoning.effective_effort,
+                "reasoning_required": reasoning.reasoning_required,
+                "reasoning_status": reasoning.status,
+                "reasoning_message": reasoning.message,
+                "resume_metadata_json": metadata,
+                "worktree_id": None,
+                "clone_id": None,
+                "workspace_path": routed.checkout_root,
+                "routed_machine_id": routed.machine_id,
+            }
+            if resume_target is None:
+                prepare = functools.partial(
+                    prepare_terminal_spawn, session_manager, machine_id=routed.machine_id, **shared
+                )
+            else:
+                prepare = functools.partial(
+                    prepare_terminal_resume,
+                    session_manager,
+                    existing_session_id=resume_target.id,
+                    original_run_id=resume_target.agent_run_id,
+                    relaunch=True,
+                    paused_seat_not_live=resume_target.status == "paused",
+                    **shared,
+                )
+            prep_task = asyncio.ensure_future(asyncio.to_thread(prepare))
+            try:
+                prepared: PreparedSpawn = await asyncio.shield(prep_task)
+            except asyncio.CancelledError:
+                # The thread cannot be stopped. Let it finish, then settle the rows it left.
+                await asyncio.wait({prep_task})
+                if not prep_task.cancelled() and prep_task.exception() is None:
+                    await _settle_unlaunched(
+                        db,
+                        runner=runner,
+                        lease=lease,
+                        terminal_id=terminal_id,
+                        run_id=run_id,
+                        child_session_id=prep_task.result().session_id,
+                        error="spawn cancelled",
+                        code="spawn_cancelled",
+                        completion_registry=completion_registry,
+                        task_manager=task_manager,
                     )
-                    or "none",
-                    task_category=request.task_category,
-                ),
-                tmux_config=daemon_config.tmux,
-            )
-        except Exception as exc:
-            return await _settle_unlaunched(
-                db,
-                runner=runner,
-                lease=lease,
-                terminal_id=terminal_id,
-                run_id=run_id,
-                child_session_id=child_session_id,
-                error=str(exc),
-                code="spawn_failed",
-                completion_registry=completion_registry,
-                task_manager=task_manager,
-            )
+                raise
+            except Exception as exc:
+                _release(lease)
+                return _refusal("prepare_failed", str(exc))
+
+            child_session_id = prepared.session_id
+            try:
+                terminals.create_pending(
+                    terminal_id=terminal_id,
+                    project_id=request.project_id,
+                    backend="native",
+                    ownership="gobby",
+                    spawn_key=f"remote:{run_id}",
+                    machine_id=routed.machine_id,
+                    session_id=child_session_id,
+                    agent_run_id=run_id,
+                )
+            except Exception as exc:
+                return await _settle_unlaunched(
+                    db,
+                    runner=runner,
+                    lease=lease,
+                    terminal_id=terminal_id,
+                    run_id=run_id,
+                    child_session_id=child_session_id,
+                    error=str(exc),
+                    code="spawn_failed",
+                    completion_registry=completion_registry,
+                    task_manager=task_manager,
+                )
+            attach_error = lease.attach(run_id) if lease is not None else None
+            if attach_error is not None:
+                return await _settle_unlaunched(
+                    db,
+                    runner=runner,
+                    lease=lease,
+                    terminal_id=terminal_id,
+                    run_id=run_id,
+                    child_session_id=child_session_id,
+                    error=attach_error,
+                    code="spawn_mutex_failed",
+                    completion_registry=completion_registry,
+                    task_manager=task_manager,
+                )
+            try:
+                run = runner.run_storage.get(run_id)
+                if run is None:
+                    raise RuntimeError(f"agent run {run_id} was not recorded")
+                payload = build_spawn_payload(
+                    db,
+                    run=run,
+                    request={
+                        "prompt": request.prompt,
+                        "project_id": request.project_id,
+                        "project_path": routed.checkout_root,
+                        "terminal_id": terminal_id,
+                        "initial_variables": request.initial_variables,
+                        "agent_depth": prepared.agent_depth,
+                        "max_agent_depth": request.max_agent_depth,
+                        "title": request.title,
+                        "timeout": request.timeout_seconds,
+                        "droid_mode": "exec",
+                        "agent_lookup_name": request.agent_name,
+                        "agent_body": request.agent_body,
+                        "checkout_mode": request.isolation,
+                        "branch_name": branch,
+                        "base_branch": request.base_branch,
+                    },
+                    endpoint=endpoint,
+                    reasoning=reasoning,
+                    sandbox_config=sandbox,
+                    resume_metadata=metadata,
+                    code_index_mode=code_index_preflight_mode(
+                        checkout_mode=request.isolation
+                        or (
+                            request.agent_body.checkout_mode
+                            if request.agent_body is not None
+                            else None
+                        )
+                        or "none",
+                        task_category=request.task_category,
+                    ),
+                    tmux_config=daemon_config.tmux,
+                )
+                client = node_command_client()
+            except Exception as exc:
+                return await _settle_unlaunched(
+                    db,
+                    runner=runner,
+                    lease=lease,
+                    terminal_id=terminal_id,
+                    run_id=run_id,
+                    child_session_id=child_session_id,
+                    error=str(exc),
+                    code="spawn_failed",
+                    completion_registry=completion_registry,
+                    task_manager=task_manager,
+                )
+    except BaseException:
+        # Cancelled or failed before any run owned the lease: nothing was sent, so release it.
+        _release(lease)
+        raise
 
     try:
-        await node_command_client().send(
-            routed.machine_id, "agent.spawn", payload.model_dump(mode="json")
-        )
+        await client.send(routed.machine_id, "agent.spawn", payload.model_dump(mode="json"))
     except NodeCommandError as exc:
         if exc.stage == "none":
             return await _settle_unlaunched(
@@ -383,6 +407,16 @@ async def spawn_remote_agent(
             "error_code": "spawn_in_doubt",
             "error": str(exc),
             "stage": exc.stage,
+            "run_id": run_id,
+            "terminal_id": terminal_id,
+        }
+    except Exception as exc:
+        # The command may have reached the node, so the rows and the lease stay.
+        return {
+            "success": False,
+            "error_code": "spawn_in_doubt",
+            "error": str(exc),
+            "stage": None,
             "run_id": run_id,
             "terminal_id": terminal_id,
         }
