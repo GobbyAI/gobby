@@ -14,6 +14,7 @@ from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _find_has_mutation_predicate,
     _search_command_paths,
+    _shell_positional_args_after,
 )
 from gobby.hooks._normalization_sed import classify_sed_segment
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
@@ -139,7 +140,15 @@ def classify_base_command(
         cmd = "cat"
 
     if cmd in {"cat", "head", "tail", "bat", "nl", "less"}:
-        positional = _shell_positional_args(parts)
+        if cmd in {"head", "tail"}:
+            option_args = {"-n", "-c", "--lines", "--bytes"}
+            if cmd == "tail":
+                option_args.update(
+                    {"-b", "-s", "--sleep-interval", "--pid", "--max-unchanged-stats"}
+                )
+            positional = _shell_positional_args_after(parts, 1, option_args=option_args)
+        else:
+            positional = _shell_positional_args(parts)
         paths = _rebase_navigation_shell_paths(
             [
                 candidate

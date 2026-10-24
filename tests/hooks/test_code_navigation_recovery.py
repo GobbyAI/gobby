@@ -1042,6 +1042,19 @@ def test_downstream_file_read_after_script_requires_navigation(repo: Path, shell
     "command",
     [
         "cmd | head -50",
+        'cmd | head -n "$n"',
+        'cmd | tail -n +"$k"',
+        'cmd | head -c "$n"',
+        "git log --oneline | head -n ${N:-20}",
+        'cmd | head -"$n"',
+        'cmd | tail --lines "$n"',
+        'cmd | head --bytes "$n"',
+        'cmd | head -n "$n" | cat',
+        'cmd | tail -s "$seconds"',
+        'cmd | tail --pid "$pid"',
+        'cmd | tail -b "$blocks"',
+        'cmd | tail --sleep-interval "$interval"',
+        'cmd | tail --max-unchanged-stats "$unchanged"',
         "cmd | grep foo",
         "cmd | cat",
         "cmd | sed -n '1,60p'",
@@ -1051,6 +1064,18 @@ def test_downstream_file_read_after_script_requires_navigation(repo: Path, shell
 )
 def test_stdin_filters_and_bounded_downstream_reads_remain_exempt(repo: Path, command: str) -> None:
     assert not broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ['head -n "$n"', 'tail -n +"$k"', 'head -c "$n"', 'tail --bytes "$n"'],
+)
+def test_dynamic_count_options_do_not_widen_file_scope(repo: Path, command: str) -> None:
+    source = repo / "src/long.py"
+    data = event(repo, f"{command} {source}")
+
+    assert data["canonical_code_navigation_segments"][0]["canonical_file_paths"] == [str(source)]
+    assert navigation_requires_index(data, {}, "read", broad_only=True)
 
 
 @pytest.mark.parametrize("shell", ["bash", "sh", "zsh"])
