@@ -273,8 +273,9 @@ step_workflow:
       # that SHA. A peer reviewer's BOUNCE leaves the unit open. Fields split on single
       # spaces: EVENT and TASK must be the first two and match exactly, and
       # TASK_TITLE and NOTE values are never read as fields. Prose, title words
-      # and a message that does not start with the line keep the unit open, as
-      # does a verdict whose title contains ' SHA='.
+      # and a message that does not start with the line keep the unit open. A
+      # verdict whose title contains ' SHA=' is refused at send, so it never
+      # reaches this receiver.
       # Only a stored incoming coordinator withdrawal ends review or verdict.
       # Latch the matching action before clearing task/SHA, because handler
       # conditions and values observe each preceding handler's updates.

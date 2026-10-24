@@ -187,9 +187,9 @@
 - **Confidence:** high.
 
 ### [IMPORTANT] The agent-slot cap is dispatcher-advisory only, and even there it's check-then-act
-- **Where:** Cap checked only at `dispatch/dispatcher.py:169-178`; `spawn_agent_impl` never consults it; `dispatch_batch` fans out with unbounded `asyncio.gather` (`_factory.py:655`); concurrent heartbeat entry points (`build/dispatch_tick.py:36`, `scheduler/executor.py:325`, `system_automation.py:310`) share no lock, and the pending row that makes a spawn "count" is inserted deep inside the action.
-- **Failure mode:** MCP/batch spawns blow past `max_active_agents` entirely; overlapping heartbeats can collectively overshoot it. (CLAUDE.md frames the cap as dispatcher-owned, so the MCP gap is arguably by design — but `dispatch_batch` is dispatch tooling and unbounded.)
-- **Minimal fix:** Re-check the cap under a short lease inside `spawn_agent_impl`; bound `dispatch_batch` with a semaphore; serialize heartbeats with an `asyncio.Lock`.
+- **Where:** Cap checked only at `dispatch/dispatcher.py:169-178`; `spawn_agent_impl` never consults it; the batch spawn tool (retired in #23678) fanned out with unbounded `asyncio.gather` (`_factory.py:655`); concurrent heartbeat entry points (`build/dispatch_tick.py:36`, `scheduler/executor.py:325`, `system_automation.py:310`) share no lock, and the pending row that makes a spawn "count" is inserted deep inside the action.
+- **Failure mode:** MCP/batch spawns blow past `max_active_agents` entirely; overlapping heartbeats can collectively overshoot it. (CLAUDE.md frames the cap as dispatcher-owned, so the MCP gap is arguably by design — but the batch spawn tool, retired in #23678, was dispatch tooling and unbounded.)
+- **Minimal fix:** Re-check the cap under a short lease inside `spawn_agent_impl`; bound the batch spawn tool with a semaphore (moot once #23678 removed it); serialize heartbeats with an `asyncio.Lock`.
 - **Confidence:** high (omission); med (overshoot frequency).
 
 ### [IMPORTANT] Duplicate-spawn race for the same task on non-dispatcher surfaces

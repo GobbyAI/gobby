@@ -36,7 +36,7 @@ use gobby_client::ui::sidebar::{
     section_metrics, section_rects, sidebar_layout, terminal_rows, SidebarHits, ALL_MACHINES,
 };
 use gobby_client::ui::sidebar_rows::{
-    fitted_spans, project_rows, row_line, row_second_line, RowKind, SidebarRow,
+    fitted_spans, project_rows, row_line, row_third_line, RowKind, SidebarRow,
 };
 use gobby_client::ui::status::state_dot;
 use gobby_client::ui::text::display_width;
@@ -341,8 +341,8 @@ fn line_text(row: &SidebarRow, width: u16, chrome: &Chrome) -> String {
     spans_text(&row_line(row, width, chrome, 0).spans)
 }
 
-fn second_text(row: &SidebarRow, width: u16, chrome: &Chrome) -> String {
-    spans_text(&row_second_line(row, width, chrome).spans)
+fn third_text(row: &SidebarRow, width: u16, chrome: &Chrome) -> String {
+    spans_text(&row_third_line(row, width, chrome).spans)
 }
 
 fn plain_row(label: &str, state: RowState, tokens: &[&str]) -> SidebarRow {
@@ -378,12 +378,14 @@ parity_tests! {
 
             let first = row_str(&terminal, body.y, 25);
             let second = row_str(&terminal, body.y + 1, 25);
+            let third = row_str(&terminal, body.y + 2, 25);
             assert_eq!(first, format!(" {} pi", dot(RowState::Working)));
-            assert_eq!(second, "   No assigned task");
+            assert_eq!(third, "   No assigned task");
             // herdr: `!contains("working")`; gclient's working glyph is the
-            // whole indicator, so neither line carries the word.
+            // whole indicator, so no line carries the word.
             assert!(!first.contains("working"));
             assert!(!second.contains("working"));
+            assert!(!third.contains("working"));
 
             let workspace_x = find_symbol_x(&terminal, body.y, body.width, "p");
             let workspace_style = style_at(&terminal, workspace_x, body.y);
@@ -392,8 +394,8 @@ parity_tests! {
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(workspace_style.bg, Some(p.selection));
 
-            let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
-            let agent_style = style_at(&terminal, agent_x, body.y + 1);
+            let agent_x = find_symbol_x(&terminal, body.y + 2, body.width, "N");
+            let agent_style = style_at(&terminal, agent_x, body.y + 2);
             // Secondary text is subtext0 on every ground (#23280 Option B),
             // inked for the selection fill the active row sits on (#23416).
             assert_eq!(agent_style.fg, Some(p.selection_ink.ink(p.subtext0)));
@@ -948,38 +950,38 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} pi", dot(RowState::Working)));
             assert_eq!(text.matches('·').count(), 0);
-            assert_eq!(second_text(&row, 60, &chrome), "   No assigned task");
+            assert_eq!(third_text(&row, 60, &chrome), "   No assigned task");
         }
 
         fn state_text_and_arbitrary_values_are_independent_tokens() {
             // herdr: `[state_text, $summary]` resolve independently; the
             // state text (only a needs-you row carries one) stays on the
-            // first line and the value is a second-line token.
+            // first line and the value is a third-line token.
             let chrome = chrome();
             let row = plain_row("repo", RowState::Attention, &["reviewing auth"]);
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Attention)));
-            assert_eq!(second_text(&row, 60, &chrome), "   Working task 1 reviewing auth");
+            assert_eq!(third_text(&row, 60, &chrome), "   Working task 1 reviewing auth");
             let working = plain_row("repo", RowState::Working, &["reviewing auth"]);
             assert_eq!(
                 line_text(&working, 60, &chrome),
                 format!(" {} repo", dot(RowState::Working))
             );
-            assert_eq!(second_text(&working, 60, &chrome), "   Working task 1 reviewing auth");
+            assert_eq!(third_text(&working, 60, &chrome), "   Working task 1 reviewing auth");
         }
 
         fn terminal_title_builtins_are_distinct_from_custom_tokens() {
             // herdr: raw title `⠋ raw title`, stripped `raw title`, custom
             // `custom title`; gclient's title is the row label and the custom
-            // value is a second-line token.
+            // value is a third-line token.
             let chrome = chrome();
             let row = plain_row("raw title", RowState::Working, &["custom title"]);
 
             let text = line_text(&row, 60, &chrome);
             assert!(!text.contains('⠋'));
             assert_eq!(text, format!(" {} raw title", dot(RowState::Working)));
-            assert_eq!(second_text(&row, 60, &chrome), "   Working task 1 custom title");
+            assert_eq!(third_text(&row, 60, &chrome), "   Working task 1 custom title");
         }
 
         fn known_agent_override_replaces_default_rows() {
@@ -1009,7 +1011,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} feature", dot(RowState::Idle)));
             assert!(!text.contains("worktree/feature") && !text.contains('↑'));
-            assert_eq!(second_text(&row, 60, &chrome), "   No assigned task");
+            assert_eq!(third_text(&row, 60, &chrome), "   No assigned task");
         }
 
         fn workspace_custom_token_can_replace_git_specific_details() {
@@ -1019,9 +1021,9 @@ parity_tests! {
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Idle)));
-            let second = second_text(&row, 60, &chrome);
-            assert_eq!(second, "   Working task 1 2 changes");
-            assert!(!second.contains('↑') && !second.contains('↓'));
+            let third = third_text(&row, 60, &chrome);
+            assert_eq!(third, "   Working task 1 2 changes");
+            assert!(!third.contains('↑') && !third.contains('↓'));
         }
     }
 }
@@ -1189,8 +1191,8 @@ fn agent_rows_follow_project_and_machine_filter() {
     chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
     assert_eq!(labels(&board, &chrome), ["alpha", "alpha-remote"]);
     let rows = agent_rows(&board, &chrome);
-    assert_eq!(second_text(&rows[0], 40, &chrome), "   No assigned task");
-    assert_eq!(second_text(&rows[1], 40, &chrome), "   No assigned task");
+    assert_eq!(third_text(&rows[0], 40, &chrome), "   No assigned task");
+    assert_eq!(third_text(&rows[1], 40, &chrome), "   No assigned task");
 
     // The `all` scope adds the other projects' rows under dim group rows,
     // in project order; the group rows are no hits.

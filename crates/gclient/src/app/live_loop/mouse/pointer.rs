@@ -146,7 +146,11 @@ pub(super) fn down<W: WorkspaceView>(
             );
             MouseOutcome::Handled
         }
-        Hit::MenuBarEmpty | Hit::TabBarEmpty | Hit::Empty | Hit::SidebarEmpty
+        Hit::MenuBarEmpty
+        | Hit::TabBarEmpty
+        | Hit::Empty
+        | Hit::SidebarEmpty
+        | Hit::SidebarSectionDivider { .. }
             if button == MouseButton::Right =>
         {
             open_menu(
@@ -262,6 +266,7 @@ pub(super) fn down<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
+        Hit::SidebarSectionDivider { index } => super::sidebar_divider::press(chrome, index),
         Hit::SidebarScrollbar { section, row } => {
             let Some(track) = scrollbar_track(chrome, section) else {
                 return MouseOutcome::Ignore;
@@ -400,6 +405,11 @@ pub(super) fn drag<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
+        Some(MouseGesture::SidebarSectionDrag { index, top, rows }) => {
+            let (index, top, rows) = (*index, *top, *rows);
+            super::sidebar_divider::drag(chrome, index, top, rows, mouse.row);
+            MouseOutcome::Handled
+        }
         Some(MouseGesture::SidebarScrollbarDrag {
             section,
             grab_offset,
@@ -528,6 +538,11 @@ pub(super) fn up<W: WorkspaceView>(
         }
         Some(MouseGesture::SidebarDrag) => {
             chrome.prefs.sidebar_width = chrome.sidebar.width;
+            persist_prefs(ws.gobby_home(), chrome);
+            MouseOutcome::Handled
+        }
+        Some(MouseGesture::SidebarSectionDrag { .. }) => {
+            chrome.prefs.sidebar_section_heights = chrome.sidebar.section_heights;
             persist_prefs(ws.gobby_home(), chrome);
             MouseOutcome::Handled
         }

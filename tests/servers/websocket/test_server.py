@@ -14,16 +14,25 @@ from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
+from gobby.servers.websocket.message_classes import _off_loop_chain_key
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import (
     SLOW_WEBSOCKET_HANDLER_SECONDS,
     WebSocketServer,
-    _off_loop_chain_key,
     websockets_logger,
 )
 from gobby.terminals.leases import TerminalLeaseRegistry
+from tests.terminals.fakes import MachineOwnerRows
 
 pytestmark = pytest.mark.unit
+
+
+LOCAL_MACHINE_ID = "55555555-5555-4555-8555-555555555555"
+
+
+def _owned_machines() -> MachineOwnerRows:
+    """Machines table where the test socket's user owns the attach rows' machine."""
+    return MachineOwnerRows({LOCAL_MACHINE_ID: "user-1"})
 
 
 def test_workspace_op_chain_ignores_terminal_id() -> None:
@@ -182,7 +191,7 @@ async def test_start_passes_warning_level_websockets_logger() -> None:
         mcp_manager=MagicMock(),
         auth_callback=AsyncMock(return_value="test-user"),
     )
-    server._cleanup_idle_sessions = AsyncMock()
+    object.__setattr__(server, "_cleanup_idle_sessions", AsyncMock())
     # Start publishes lifecycle events, so the server needs its lease registry first.
     server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
 
@@ -637,7 +646,9 @@ async def test_terminal_input_for_the_same_attachment_waits_for_attach() -> None
         auth_callback=AsyncMock(return_value="test-user"),
     )
     _quiet_disconnect(server)
-    row = SimpleNamespace(id="term-1", backend="native", rows=24, cols=80, state="live")
+    row = SimpleNamespace(
+        id="term-1", backend="native", rows=24, cols=80, state="live", machine_id=LOCAL_MACHINE_ID
+    )
     server.terminal_manager = SimpleNamespace(
         get=lambda terminal_id: row if terminal_id == row.id else None
     )
@@ -665,7 +676,7 @@ async def test_terminal_input_for_the_same_attachment_waits_for_attach() -> None
             }
         )
     )
-    connection = asyncio.create_task(server.handle_connection(socket))
+    connection = asyncio.create_task(server.handle_connection(socket, database=_owned_machines()))
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
         socket.inject(
@@ -715,7 +726,9 @@ async def test_disconnect_during_attach_closes_the_proxy_frame() -> None:
         auth_callback=AsyncMock(return_value="test-user"),
     )
     _quiet_disconnect(server)
-    row = SimpleNamespace(id="term-1", backend="native", rows=24, cols=80, state="live")
+    row = SimpleNamespace(
+        id="term-1", backend="native", rows=24, cols=80, state="live", machine_id=LOCAL_MACHINE_ID
+    )
     server.terminal_manager = SimpleNamespace(
         get=lambda terminal_id: row if terminal_id == row.id else None
     )
@@ -764,7 +777,7 @@ async def test_disconnect_during_attach_closes_the_proxy_frame() -> None:
         ],
         hold_open=True,
     )
-    connection = asyncio.create_task(server.handle_connection(socket))
+    connection = asyncio.create_task(server.handle_connection(socket, database=_owned_machines()))
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
         socket.close()
@@ -923,8 +936,12 @@ async def test_input_for_another_terminal_runs_during_attach() -> None:
         auth_callback=AsyncMock(return_value="test-user"),
     )
     _quiet_disconnect(server)
-    row_a = SimpleNamespace(id="term-a", backend="native", rows=24, cols=80, state="live")
-    row_b = SimpleNamespace(id="term-b", backend="native", rows=24, cols=80, state="live")
+    row_a = SimpleNamespace(
+        id="term-a", backend="native", rows=24, cols=80, state="live", machine_id=LOCAL_MACHINE_ID
+    )
+    row_b = SimpleNamespace(
+        id="term-b", backend="native", rows=24, cols=80, state="live", machine_id=LOCAL_MACHINE_ID
+    )
     rows = {row_a.id: row_a, row_b.id: row_b}
     server.terminal_manager = SimpleNamespace(get=lambda terminal_id: rows.get(terminal_id))
     server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
@@ -953,7 +970,7 @@ async def test_input_for_another_terminal_runs_during_attach() -> None:
             }
         )
     )
-    connection = asyncio.create_task(server.handle_connection(socket))
+    connection = asyncio.create_task(server.handle_connection(socket, database=_owned_machines()))
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
         socket.inject(
@@ -989,7 +1006,9 @@ async def test_release_for_the_attaching_terminal_waits() -> None:
         auth_callback=AsyncMock(return_value="test-user"),
     )
     _quiet_disconnect(server)
-    row = SimpleNamespace(id="term-a", backend="native", rows=24, cols=80, state="live")
+    row = SimpleNamespace(
+        id="term-a", backend="native", rows=24, cols=80, state="live", machine_id=LOCAL_MACHINE_ID
+    )
     server.terminal_manager = SimpleNamespace(
         get=lambda terminal_id: row if terminal_id == row.id else None
     )
@@ -1020,7 +1039,7 @@ async def test_release_for_the_attaching_terminal_waits() -> None:
             }
         )
     )
-    connection = asyncio.create_task(server.handle_connection(socket))
+    connection = asyncio.create_task(server.handle_connection(socket, database=_owned_machines()))
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
         socket.inject(

@@ -1,21 +1,21 @@
 use super::*;
+use std::path::Path;
+use std::process::Command;
 
-#[test]
-fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
-    let repo = tempfile::tempdir()?;
-    let hooks = tempfile::tempdir()?;
-    std::fs::write(repo.path().join("tracked.txt"), "retained\n")?;
-    for args in [vec!["init"], vec!["add", "tracked.txt"]] {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(repo.path())
-            .args(args)
-            .status()?;
-        assert!(status.success());
-    }
+use crate::index::hasher;
+
+// Commits every change under `root` with a fixed identity and no hooks.
+fn commit_fixture(root: &Path) {
     let status = Command::new("git")
         .arg("-C")
-        .arg(repo.path())
+        .arg(root)
+        .args(["add", "-A"])
+        .status()
+        .expect("run git add");
+    assert!(status.success());
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(root)
         .args([
             "-c",
             "user.name=Gcode Test",
@@ -24,36 +24,15 @@ fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
             "-c",
             "commit.gpgsign=false",
             "-c",
-        ])
-        .arg(format!("core.hooksPath={}", hooks.path().display()))
-        .args(["commit", "-m", "seed"])
-        .status()?;
-    assert!(status.success());
-    // An annotated tag is listed by `rev-list --objects` under its tag name
-    // even with the blob type filter; the batch reader must discard it.
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(repo.path())
-        .args([
-            "-c",
-            "user.name=Gcode Test",
-            "-c",
-            "user.email=gcode@example.invalid",
-            "-c",
-            "tag.gpgsign=false",
-            "tag",
-            "-a",
-            "v1",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-q",
             "-m",
-            "annotated",
+            "seed",
         ])
-        .status()?;
+        .status()
+        .expect("run git commit");
     assert!(status.success());
-
-    let hashes = recent_content_hashes_in_git_history(repo.path(), 17)?;
-    assert!(hashes.contains(&hasher::content_hash(b"retained\n")));
-    assert!(!hashes.contains(&hasher::content_hash(b"different\n")));
-    Ok(())
 }
 
 mod serial_db {
@@ -62,6 +41,117 @@ mod serial_db {
 
     use super::*;
     use crate::index::api;
+
+    fn candidate_versions(database_url: &str, project_id: &str) -> Vec<(String, String)> {
+        discover_content_gc(database_url, 17, Some(project_id))
+            .expect("discover GC candidates")
+            .into_iter()
+            .map(|candidate| (candidate.file_path, candidate.content_hash))
+            .collect()
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn recent_history_protects_only_the_path_it_holds() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-path-history");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        std::fs::create_dir_all(root.path().join("src")).expect("create history directory");
+        std::fs::write(root.path().join("src/lib.rs"), "retained\n").expect("write history file");
+        commit_fixture(root.path());
+        seed_project(&mut conn, &project_id, root.path());
+        seed_primary_checkout(&mut conn, &project_id, root.path());
+        let retained = hasher::content_hash(b"retained\n");
+        // Identical bytes at src/lib.rs, which history holds, and at
+        // src/moved.rs, which history never held.
+        seed_content_version(&mut conn, &project_id, "src/lib.rs", &retained, 60, true);
+        seed_content_version(&mut conn, &project_id, "src/moved.rs", &retained, 60, true);
+
+        assert_eq!(
+            candidate_versions(&database_url, &project_id),
+            vec![("src/moved.rs".to_string(), retained)],
+            "history protects a version only at the path where it holds it",
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn history_failure_retains_root_candidates() {
+        let (mut conn, database_url) = connect_test_db();
+        let failing_id = unique_test_project_id("gcode-gc-history-failure");
+        let readable_id = unique_test_project_id("gcode-gc-history-readable");
+        cleanup_project(&mut conn, &failing_id).expect("pre-clean failing project rows");
+        cleanup_project(&mut conn, &readable_id).expect("pre-clean readable project rows");
+        let _failing_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: failing_id.clone(),
+        };
+        let _readable_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: readable_id.clone(),
+        };
+        // Git cannot read history for a root that does not exist.
+        let scratch = tempfile::tempdir().expect("create scratch directory");
+        let missing_root = scratch.path().join("missing-root");
+        seed_project(&mut conn, &failing_id, &missing_root);
+        seed_primary_checkout(&mut conn, &failing_id, &missing_root);
+        seed_content_version(
+            &mut conn,
+            &failing_id,
+            "src/lib.rs",
+            "gc-hash-lib",
+            60,
+            true,
+        );
+        seed_content_version(
+            &mut conn,
+            &failing_id,
+            "src/main.rs",
+            "gc-hash-main",
+            60,
+            true,
+        );
+        // Readable history that lacks these paths leaves the candidate eligible, so the
+        // empty result for the failing root comes from retention, not from discovery.
+        let readable_root = git_init_root();
+        std::fs::write(readable_root.path().join("other.txt"), "other\n")
+            .expect("write unrelated file");
+        commit_fixture(readable_root.path());
+        seed_project(&mut conn, &readable_id, readable_root.path());
+        seed_primary_checkout(&mut conn, &readable_id, readable_root.path());
+        seed_content_version(
+            &mut conn,
+            &readable_id,
+            "src/lib.rs",
+            "gc-hash-lib",
+            60,
+            true,
+        );
+
+        assert_eq!(
+            candidate_hashes(&database_url, &readable_id),
+            vec!["gc-hash-lib".to_string()],
+            "readable history without these paths leaves the candidate eligible",
+        );
+        assert_eq!(
+            candidate_hashes(&database_url, &failing_id),
+            Vec::<String>::new(),
+            "unreadable history retains every candidate of its root",
+        );
+    }
 
     #[test]
     #[cfg_attr(

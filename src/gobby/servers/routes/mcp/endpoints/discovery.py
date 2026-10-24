@@ -239,7 +239,6 @@ async def list_all_mcp_tools(
     Returns:
         Dict of server names to tool lists
     """
-    start_time = time.perf_counter()
 
     try:
         from gobby.mcp_proxy.services.server_resolution import resolve_server
@@ -321,18 +320,14 @@ async def list_all_mcp_tools(
                         tool["success_rate"] = None
                         tool["avg_latency_ms"] = None
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-
         return {
             "success": True,
             "tools": tools_by_server,
-            "response_time_ms": response_time_ms,
         }
 
     except Exception as e:
         logger.exception("List MCP tools error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def recommend_mcp_tools(
@@ -355,18 +350,15 @@ async def recommend_mcp_tools(
     Returns:
         List of tool recommendations
     """
-    start_time = time.perf_counter()
 
     try:
         try:
             body = await request.json()
         except json.JSONDecodeError as err:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "Malformed JSON",
                 "message": str(err),
-                "response_time_ms": response_time_ms,
             }
 
         task_description = body.get("task_description")
@@ -387,12 +379,10 @@ async def recommend_mcp_tools(
         try:
             project_id = server.resolve_project_id(None, cwd)
         except ValueError as e:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": str(e),
                 "task": task_description,
-                "response_time_ms": response_time_ms,
             }
 
         # Use tools handler if available
@@ -405,8 +395,6 @@ async def recommend_mcp_tools(
                 min_similarity=min_similarity,
                 project_id=project_id,
             )
-            response_time_ms = (time.perf_counter() - start_time) * 1000
-            result["response_time_ms"] = response_time_ms
             return result
 
         # Fallback: no tools handler
@@ -414,15 +402,13 @@ async def recommend_mcp_tools(
             "success": False,
             "error": "Tools handler not initialized",
             "recommendations": [],
-            "response_time_ms": (time.perf_counter() - start_time) * 1000,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Recommend tools error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def search_mcp_tools(
@@ -444,18 +430,15 @@ async def search_mcp_tools(
     Returns:
         List of matching tools with similarity scores
     """
-    start_time = time.perf_counter()
 
     try:
         try:
             body = await request.json()
         except json.JSONDecodeError as err:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "Malformed JSON",
                 "message": str(err),
-                "response_time_ms": response_time_ms,
             }
 
         query = body.get("query")
@@ -474,12 +457,10 @@ async def search_mcp_tools(
         try:
             project_id = server.resolve_project_id(None, cwd)
         except ValueError as e:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": str(e),
                 "query": query,
-                "response_time_ms": response_time_ms,
             }
 
         # Use semantic search directly if available
@@ -517,7 +498,6 @@ async def search_mcp_tools(
                     _background_tasks.add(task)
                     task.add_done_callback(_background_tasks.discard)
                     # Return early indicating embeddings are being generated
-                    response_time_ms = (time.perf_counter() - start_time) * 1000
                     return {
                         "success": True,
                         "embeddings_generating": True,
@@ -525,7 +505,6 @@ async def search_mcp_tools(
                         "results": [],
                         "total_results": 0,
                         "message": "Embeddings are being generated. Please retry in a few seconds.",
-                        "response_time_ms": response_time_ms,
                     }
 
                 results = await semantic_search.search_tools(
@@ -536,22 +515,18 @@ async def search_mcp_tools(
                     server_filter=server_filter,
                 )
                 visible_results = [result.to_dict() for result in results]
-                response_time_ms = (time.perf_counter() - start_time) * 1000
                 return {
                     "success": True,
                     "query": query,
                     "results": visible_results,
                     "total_results": len(visible_results),
-                    "response_time_ms": response_time_ms,
                 }
             except Exception as e:
                 logger.error("Semantic search failed: %s", e)
-                response_time_ms = (time.perf_counter() - start_time) * 1000
                 return {
                     "success": False,
                     "error": str(e),
                     "query": query,
-                    "response_time_ms": response_time_ms,
                 }
 
         # Fallback: no semantic search
@@ -559,15 +534,13 @@ async def search_mcp_tools(
             "success": False,
             "error": "Semantic search not configured",
             "results": [],
-            "response_time_ms": (time.perf_counter() - start_time) * 1000,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Search tools error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 __all__ = [

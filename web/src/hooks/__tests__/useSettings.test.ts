@@ -11,6 +11,7 @@ import {
 } from "../../lib/tickerClock";
 import {
   cacheBustedIconHref,
+  readFocusHoldSeconds,
   resolveReadingDirection,
   useSettings,
 } from "../useSettings";
@@ -268,6 +269,82 @@ describe("useSettings", () => {
     const body = JSON.parse((patchCall?.[1]?.body as string) ?? "{}");
     expect(body.values.ui_settings).not.toHaveProperty("density");
     expect(body.values.ui_settings).toHaveProperty("theme");
+  });
+
+  it("focusHoldSecondsDefaultsPersistsLocallyAndReads", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) => {
+        return new Response(
+          JSON.stringify(
+            init?.method === "PATCH"
+              ? {
+                  committed: true,
+                  revision: 2,
+                  changed_keys: [],
+                  apply_status: "applied",
+                  pending_restart_keys: [],
+                  failed_live_keys: {},
+                }
+              : {
+                  revision: 1,
+                  desired: { ui_settings: {} },
+                  active: { ui_settings: {} },
+                  secret_set: {},
+                  pending_restart_keys: [],
+                  failed_live_keys: {},
+                },
+          ),
+          { status: 200 },
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useSettings());
+    expect(result.current.settings.focusHoldSeconds).toBe(300);
+    expect(readFocusHoldSeconds()).toBe(300);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    fetchMock.mockClear();
+
+    act(() => {
+      result.current.updateFocusHoldSeconds(45);
+    });
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem("gobby-settings") ?? "{}");
+      expect(stored.focusHoldSeconds).toBe(45);
+    });
+    expect(readFocusHoldSeconds()).toBe(45);
+
+    const patchCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === "/api/config/values" && init?.method === "PATCH",
+    );
+    expect(patchCall).toBeDefined();
+    const body = JSON.parse((patchCall?.[1]?.body as string) ?? "{}");
+    expect(body.values.ui_settings).not.toHaveProperty("focusHoldSeconds");
+
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({ focusHoldSeconds: 2.7 }),
+    );
+    expect(readFocusHoldSeconds()).toBe(2);
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({ focusHoldSeconds: 0 }),
+    );
+    expect(readFocusHoldSeconds()).toBe(0);
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({ focusHoldSeconds: -3 }),
+    );
+    expect(readFocusHoldSeconds()).toBe(300);
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({ focusHoldSeconds: "soon" }),
+    );
+    expect(readFocusHoldSeconds()).toBe(300);
+    const { result: reloaded } = renderHook(() => useSettings());
+    expect(reloaded.current.settings.focusHoldSeconds).toBe(300);
   });
 
   it("defaults row-title scrolling on, leftward, at the normal pace", () => {

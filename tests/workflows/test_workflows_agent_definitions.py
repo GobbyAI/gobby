@@ -382,12 +382,13 @@ def test_tdd_discipline_skills_are_bundled() -> None:
 
     assert "test judgment" in discipline.lower()
     assert "test-driven-development" in discipline
-    assert "inspect its expected assertion failure" in tdd
-    assert "smallest complete change that makes the failing test pass" in tdd
-    assert "Refactor, then rerun the relevant validation" in tdd
-    assert "test-quality audit" in tdd
-    assert "A missing baseline means current findings are new" in tdd
-    assert "For unsupported languages, use focused native validation" in tdd
+    assert "expected assertion failure" in tdd.lower()
+    assert "smallest complete change" in tdd.lower()
+    assert "refactor, then rerun" in tdd.lower()
+    assert "test-quality audit" in tdd.lower()
+    assert "it does not waive the check" in tdd.lower()
+    assert "for unsupported languages, use focused native validation" in tdd.lower()
+    assert "uv run gobby test-types audit" in tdd
     assert "a missing baseline counts current findings as new" in discipline.lower()
     assert "unsupported" in discipline.lower()
     assert "language warnings with focused native validation" in discipline

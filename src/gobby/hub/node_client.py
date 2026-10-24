@@ -103,6 +103,13 @@ class NodeCommandClient:
             ) from exc
         return set(nodes.machine_ids)
 
+    async def is_connected(self, machine_id: str) -> bool:
+        """Whether the node is connected now; an unreadable channel is never connected."""
+        try:
+            return machine_id in await self.connected_machine_ids()
+        except NodeCommandError:
+            return False
+
 
 @lru_cache(maxsize=1)
 def node_command_client() -> NodeCommandClient:

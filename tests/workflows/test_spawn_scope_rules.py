@@ -60,13 +60,10 @@ def _spawn_event(
     caller_id: str,
     tool_name: str,
     agent: str | None,
-    suggestions: object = None,
     **extra: Any,
 ) -> HookEvent:
     """The before_tool event the MCP proxy builds for one spawn dispatch."""
     arguments: dict[str, Any] = {"prompt": "work"}
-    if tool_name == "dispatch_batch":
-        arguments = {"suggestions": [{"task_id": "#1"}] if suggestions is None else suggestions}
     if agent is not None:
         arguments["agent"] = agent
     arguments.update(extra)
@@ -241,7 +238,7 @@ class TestLimitSpawnableAgents:
             "chain-both": spawned("spawn-scope-chain-both"),
         }
 
-    def test_rule_syncs_enabled_blocking_both_spawn_tools(self, temp_db: HubDatabase) -> None:
+    def test_rule_syncs_enabled_blocking_spawn_agent(self, temp_db: HubDatabase) -> None:
         sync_bundled_rules(temp_db, get_bundled_rules_path())
 
         row = RuleDefinitionManager(temp_db).get_by_name(LIMIT_SPAWNABLE_AGENTS)
@@ -249,7 +246,7 @@ class TestLimitSpawnableAgents:
         assert row.enabled is True
         effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
         assert effect.type == "block"
-        assert effect.mcp_tools == ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
+        assert effect.mcp_tools == ["gobby-agents:spawn_agent"]
         assert effect.reason is not None
         assert "spawnable_agents" in effect.reason
 
@@ -262,12 +259,11 @@ class TestLimitSpawnableAgents:
             ("lister", "spawn_agent", "spawn-scope-worker", "allow"),
             ("lister", "spawn_agent", "spawn-scope-other", "block"),
             ("lister", "spawn_agent", None, "block"),
-            ("lister", "dispatch_batch", "spawn-scope-worker", "allow"),
-            ("lister", "dispatch_batch", None, "block"),
             ("anyone", "spawn_agent", "spawn-scope-other", "allow"),
-            ("anyone", "dispatch_batch", None, "allow"),
             ("root", "spawn_agent", "spawn-scope-other", "allow"),
-            ("root", "dispatch_batch", None, "allow"),
+            # Rules check requested names; admission checks the resolved project's chain.
+            ("chain-lister", "spawn_agent", "spawn-scope-chained", "allow"),
+            ("chain-both", "spawn_agent", "spawn-scope-chained", "allow"),
         ],
     )
     async def test_spawned_callers_spawn_only_listed_agents(
@@ -292,61 +288,6 @@ class TestLimitSpawnableAgents:
             assert response.reason is not None
             assert LIMIT_SPAWNABLE_AGENTS in response.reason
             assert "spawnable_agents" in response.reason
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("caller", "tool_name", "agent", "suggestions", "expected_decision"),
-        [
-            # A suggestion's own agent overrides the top-level one.
-            ("lister", "dispatch_batch", "spawn-scope-worker", [{"agent": "default"}], "block"),
-            ("lister", "dispatch_batch", None, [{"agent": "spawn-scope-worker"}], "allow"),
-            ("lister", "dispatch_batch", "spawn-scope-worker", [{"agent": "  "}], "allow"),
-            (
-                "lister",
-                "dispatch_batch",
-                None,
-                [{"agent": "spawn-scope-worker"}, {"agent": "spawn-scope-other"}],
-                "block",
-            ),
-            ("lister", "dispatch_batch", "spawn-scope-worker", "#1", "block"),
-            ("lister", "dispatch_batch", "spawn-scope-worker", ["#1"], "block"),
-            # Rules check requested names; admission checks the resolved project's chain.
-            ("chain-lister", "spawn_agent", "spawn-scope-chained", None, "allow"),
-            ("chain-both", "spawn_agent", "spawn-scope-chained", None, "allow"),
-            (
-                "chain-lister",
-                "dispatch_batch",
-                None,
-                [{"agent": "spawn-scope-chained"}],
-                "allow",
-            ),
-            ("chain-both", "dispatch_batch", "spawn-scope-chained", [{}], "allow"),
-        ],
-    )
-    async def test_every_requested_spawn_target_must_be_listed(
-        self,
-        temp_db: HubDatabase,
-        session_manager: SessionManager,
-        callers: dict[str, Session],
-        caller: str,
-        tool_name: str,
-        agent: str | None,
-        suggestions: object,
-        expected_decision: str,
-    ) -> None:
-        _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS)
-        caller_id = callers[caller].id
-
-        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
-            _spawn_event(caller_id, tool_name, agent, suggestions),
-            session_id=caller_id,
-            variables={},
-        )
-
-        assert response.decision == expected_decision
-        if expected_decision == "block":
-            assert response.reason is not None
-            assert LIMIT_SPAWNABLE_AGENTS in response.reason
 
     @pytest.mark.asyncio
     async def test_disabling_the_rule_lets_a_listless_agent_spawn(

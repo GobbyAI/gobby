@@ -17,6 +17,7 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.app_context import ServiceContainer
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.attention import (
     AttentionAnswer,
@@ -25,7 +26,9 @@ from gobby.servers.routes.attention import (
 )
 from gobby.storage.attention import AttentionState, AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.terminals.fakes import MachineOwnerRows
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
@@ -33,8 +36,26 @@ pytestmark = pytest.mark.unit
 APPROVAL_PROMPT = (
     "Tool call needs your approval.\n1. Allow / 2. Cancel\nPress Enter to approve this command\n"
 )
+TEST_USER_ID = "20000000-0000-4000-8000-000000000001"
+OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 
 AttentionInjector = Callable[[AttentionPane, AttentionAnswer], Awaitable[None]]
+
+
+class _BindCaller:
+    """ASGI wrapper that binds one caller around each request it serves."""
+
+    def __init__(self, app: Any, user_id: str, database: Any) -> None:
+        self.app = app
+        self.user_id = user_id
+        self.database = database
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        token = bind_caller(self.user_id, self.database)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            reset_caller(token)
 
 
 def _manager(
@@ -338,6 +359,42 @@ def test_respond_routes_through_coordinator_with_cas(
         "attention_id": replacement[0].attention_id,
         "fingerprint": replacement[0].fingerprint,
     }
+    assert coordinator_write.await_count == 1
+    assert runtime.write_log == [("text", "1\n")]
+
+    owned = replacement[0]
+    before = manager.get(owned.entry_id)
+    assert before is not None
+    transitions: list[dict[str, Any]] = []
+    previous_transition_async = manager.transition_async
+
+    async def record_transition(
+        database_runner: Callable[..., Awaitable[Any]],
+        entry_id: str,
+        **kwargs: Any,
+    ) -> Any:
+        transitions.append(kwargs)
+        return await previous_transition_async(database_runner, entry_id, **kwargs)
+
+    monkeypatch.setattr(manager, "transition_async", record_transition)
+    machines = MachineOwnerRows({require_machine_id(): TEST_USER_ID})
+    with TestClient(_BindCaller(app, OTHER_USER_ID, machines)) as other_client:
+        denied = other_client.post(
+            f"/api/attention/{owned.entry_id}/respond",
+            json=_request(owned, {"option": 1}),
+        )
+
+    after = manager.get(owned.entry_id)
+    assert after is not None
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == {"code": "machine_not_owned"}
+    assert (after.attention_id, after.state, after.payload, after.seen_at) == (
+        before.attention_id,
+        before.state,
+        before.payload,
+        before.seen_at,
+    )
+    assert transitions == []
     assert coordinator_write.await_count == 1
     assert runtime.write_log == [("text", "1\n")]
 

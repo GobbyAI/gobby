@@ -863,12 +863,12 @@ fn agent_rows_golden() {
         .iter()
         .position(|row| row.contains("#123: backend-developer-work"))
         .expect("agent definition row");
+    assert!(rows[agent + 1].contains("gpt-5"), "{:?}", rows[agent + 1]);
     assert!(
-        rows[agent + 1].contains("Working task 123 Implement"),
+        rows[agent + 2].contains("Working task 123 Implement"),
         "{:?}",
-        rows[agent + 1]
+        rows[agent + 2]
     );
-    assert!(rows[agent + 2].contains("gpt-5"));
     let terminal = rows
         .iter()
         .position(|row| row.contains("○ nvim"))
@@ -886,7 +886,7 @@ fn agent_rows_golden() {
     assert!(!rendered.contains("term-bare"), "pane ID is not row copy");
     let slug_style = rendered
         .lines()
-        .find(|line| line.starts_with(&format!("{:02} :", agent + 2)))
+        .find(|line| line.starts_with(&format!("{:02} :", agent + 1)))
         .expect("model slug style");
     // The model takes the theme's model colour, never dimmed (#23416).
     assert!(slug_style.contains("model/panel_bg*5"), "{slug_style}");
@@ -973,7 +973,7 @@ fn projects_agents_golden() {
         "an attention row carries its state glyph: {:?}",
         rows[entry]
     );
-    assert!(rows[entry + 1].contains("No assigned task"));
+    assert!(rows[entry + 2].contains("No assigned task"));
     assert!(
         !rendered.contains("[«]") && !rendered.contains("[Menu]"),
         "no footer or menu band remains\n{rendered}"

@@ -435,10 +435,6 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py::checkpoint_agent_worktree`; Rust blocker: implement native task-owned agent worktree checkpoint MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
-  "MCP gobby-agents:dispatch_batch": {
-    "status": "proxied",
-    "note": "Python `src/gobby/mcp_proxy/tools/spawn_agent/_dispatch_batch.py::dispatch_batch`; Rust blocker: implement native batch dependency/conflict admission and launch MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
-  },
   "MCP gobby-agents:end_agent_run": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::end_agent_run`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."

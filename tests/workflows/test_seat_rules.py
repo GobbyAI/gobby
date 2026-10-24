@@ -207,12 +207,11 @@ PIPELINE_LAUNCHES = (
 @pytest.mark.asyncio
 async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
     for seat in (DEVELOPER, PLAN_WRITER, PLAN_ENHANCER):
-        for tool in ("spawn_agent", "dispatch_batch"):
-            blocked = await _decide(
-                engine, _proxy_call("gobby-agents", tool, {"agent": "developer"}), seat
-            )
-            assert blocked.decision == "block", (seat, tool)
-            assert "Seats do not spawn agents" in (blocked.reason or "")
+        blocked = await _decide(
+            engine, _proxy_call("gobby-agents", "spawn_agent", {"agent": "developer"}), seat
+        )
+        assert blocked.decision == "block", seat
+        assert "Seats do not spawn agents" in (blocked.reason or "")
 
     shell_spawn = _shell("gobby agents spawn developer --task '#1'")
     for seat in (DEVELOPER, ASSISTANT, ORCHESTRATOR, PLAN_WRITER, PLAN_ENHANCER):
@@ -261,13 +260,9 @@ TEAM_MANAGER = {"_agent_type": "dev-manager", "team_manager": True}
 async def test_orchestrator_and_assistant_spawn_fresh_sessions(
     engine: RuleEngine, seat: dict[str, Any]
 ) -> None:
-    for tool, arguments in (
-        ("spawn_agent", {"agent": "developer"}),
-        ("spawn_agent", RESUME),
-        ("dispatch_batch", RESUME),
-    ):
-        allowed = await _decide(engine, _proxy_call("gobby-agents", tool, arguments), seat)
-        assert allowed.decision == "allow", (tool, arguments)
+    for arguments in ({"agent": "developer"}, RESUME):
+        allowed = await _decide(engine, _proxy_call("gobby-agents", "spawn_agent", arguments), seat)
+        assert allowed.decision == "allow", arguments
 
 
 @pytest.mark.asyncio
@@ -278,12 +273,10 @@ async def test_a_team_manager_resumes_an_existing_session(engine: RuleEngine) ->
     new_spawn = await _decide(
         engine, _proxy_call("gobby-agents", "spawn_agent", {"agent": "developer"}), seat
     )
-    batch = await _decide(engine, _proxy_call("gobby-agents", "dispatch_batch", RESUME), seat)
 
     assert resumed.decision == "allow"
-    for refused in (new_spawn, batch):
-        assert refused.decision == "block"
-        assert "resume_session_id" in (refused.reason or "")
+    assert new_spawn.decision == "block"
+    assert "resume_session_id" in (new_spawn.reason or "")
 
 
 @pytest.mark.asyncio
@@ -681,9 +674,8 @@ async def test_plan_writer_cannot_spawn_plan_enhancer_taskless_old(harness: _Pro
     writer = harness.session("writer", PLAN_WRITER, claim=harness.task("plan"))
 
     assert await harness.provider_hook(writer) == "block"
-    for tool in ("spawn_agent", "dispatch_batch"):
-        refused = await harness.call(writer, "gobby-agents", tool, dict(ENHANCER_CALL))
-        assert refused is not None and "[seat-no-spawn]" in refused["error"], tool
+    refused = await harness.call(writer, "gobby-agents", "spawn_agent", dict(ENHANCER_CALL))
+    assert refused is not None and "[seat-no-spawn]" in refused["error"]
 
 
 @pytest.mark.asyncio
@@ -702,7 +694,6 @@ async def test_persona_name_alone_matches_no_seat_rule(harness: _ProxyHarness) -
     assert shell.decision == "allow"
     for server, tool, arguments in (
         ("gobby-agents", "spawn_agent", {"agent": "developer"}),
-        ("gobby-agents", "dispatch_batch", dict(ENHANCER_CALL)),
         ("gobby-workflows", "run_pipeline", {"name": "nightly"}),
         ("gobby-agents", "spawn_agent", dict(ENHANCER_CALL)),
     ):

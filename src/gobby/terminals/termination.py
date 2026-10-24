@@ -11,6 +11,7 @@ from gobby.terminals.actor_scope import ActorScopeError, resolve_actor_scope
 from gobby.terminals.in_doubt import in_doubt_spawns
 
 if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
     from gobby.storage.terminals import Terminal
     from gobby.terminals.runtime import TerminalRuntimeRegistry
@@ -41,6 +42,8 @@ class TerminalKillUnprovenError(RuntimeError):
 
 class TerminalStore(Protocol):
     """The terminal manager operations termination needs."""
+
+    db: HubDatabase
 
     def get(self, terminal_id: str) -> Terminal | None: ...
 
@@ -89,7 +92,9 @@ async def kill_terminal(
     grace_seconds: float = 1.0,
 ) -> Terminal | None:
     """Terminate one tracked row and mark it exited only once the kill is proven."""
+    # Local import: remote_runtime -> remote_cancel imports this module at load time.
     from gobby.agents.capture import backend_session_present
+    from gobby.hub.remote_runtime import resolve_terminal_runtime
 
     async with terminals.settle_lock(terminal.id):
         if in_doubt_spawns.holds(terminal.id):
@@ -97,7 +102,7 @@ async def kill_terminal(
         current = await asyncio.to_thread(terminals.get, terminal.id)
         if current is None or current.state == "exited":
             return None
-        runtime = registry.resolve(current.backend)
+        runtime = resolve_terminal_runtime(registry, current, terminals.db)
         await runtime.terminate(current, grace_seconds)
         if await backend_session_present(runtime, current):
             raise TerminalKillUnprovenError(

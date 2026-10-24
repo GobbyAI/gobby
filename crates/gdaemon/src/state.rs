@@ -14,10 +14,10 @@ use crate::{
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::{HubDatabaseBootstrap, RouteBackend, RunMode};
 use gobby_core::postgres_pool::Pool;
-use gobby_terminals::write_api::TokenSlot;
+use gobby_terminals::write_api::{Route, TokenSlot};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, PoisonError, RwLock},
     time::Duration,
 };
 use tokio::sync::{Mutex, watch};
@@ -85,7 +85,12 @@ pub struct RuntimeState {
     pub backend: watch::Receiver<BackendStatus>,
     /// The supervisor's write token slot, which native WebSocket binds present.
     pub write_token: TokenSlot,
+    /// The terminal write route's services, published while the native runtime runs.
+    pub terminal_route: TerminalRouteSlot,
 }
+
+/// Holds the terminal route when this runtime owns a native terminal backend.
+pub type TerminalRouteSlot = Arc<RwLock<Option<Arc<Route>>>>;
 
 impl RuntimeState {
     pub fn prepare(
@@ -128,6 +133,7 @@ impl RuntimeState {
             lease_state,
             backend: supervisor.subscribe(),
             write_token,
+            terminal_route: Default::default(),
         });
         Ok(Some((state, supervisor)))
     }
@@ -164,12 +170,25 @@ impl RuntimeState {
                     continue;
                 }
             }
-            let services =
-                crate::state_services::ActiveServices::start(&bootstrap, &terminals, &home).await?;
+            let services = crate::state_services::ActiveServices::start(
+                &bootstrap,
+                &terminals,
+                &home,
+                self.write_token.clone(),
+            )
+            .await?;
+            *self
+                .terminal_route
+                .write()
+                .unwrap_or_else(PoisonError::into_inner) = services.route();
             let outcome = supervisor.run(shutdown.clone()).await;
             let drain = outcome
                 .as_ref()
                 .is_ok_and(|outcome| outcome.drains_terminals());
+            *self
+                .terminal_route
+                .write()
+                .unwrap_or_else(PoisonError::into_inner) = None;
             services.stop(drain).await?;
             match outcome? {
                 SupervisorExit::Stopped | SupervisorExit::StopTerminals => return Ok(()),

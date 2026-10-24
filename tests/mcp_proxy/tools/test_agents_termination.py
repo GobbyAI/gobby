@@ -163,7 +163,7 @@ async def test_self_termination_reaps_sandbox_run_roots(
         return SimpleNamespace(success=True, error=None, error_code=None)
 
     terminal_manager = MagicMock()
-    terminal_manager.get.return_value = SimpleNamespace(backend="tmux")
+    terminal_manager.get.return_value = SimpleNamespace(backend="tmux", machine_id=None)
     with (
         patch(
             "gobby.mcp_proxy.tools.agents._kill_agent_process",

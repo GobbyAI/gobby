@@ -2294,7 +2294,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         run.status = "running"
         runner = MagicMock()
         runner.terminal_runtime_registry.resolve.side_effect = UnregisteredBackendError("tmux")
-        terminal = MagicMock(id=run.terminal_id, backend="tmux", state="live")
+        terminal = MagicMock(id=run.terminal_id, backend="tmux", state="live", machine_id=None)
 
         with (
             patch(

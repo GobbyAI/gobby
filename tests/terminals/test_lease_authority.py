@@ -18,11 +18,13 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_write_fingerprint_distinguishes_kind_payload_boundaries() -> None:
     registry = TerminalLeaseRegistry()
-    holder = await registry.attach("term-1", frame_delivery="direct")
+    socket = object()
+    holder = await registry.attach("term-1", frame_delivery="direct", websocket=socket)
     control = await registry.take_control("term-1", holder.attachment_id, takeover=False)
     assert control.granted is True
     original = registry.admit_write(
         "term-1",
+        websocket=socket,
         attachment_id=holder.attachment_id,
         expected_lease_generation=control.lease_generation,
         seq=0,
@@ -33,6 +35,7 @@ async def test_write_fingerprint_distinguishes_kind_payload_boundaries() -> None
     registry.complete_write(holder.attachment_id, 0, "delivered", None)
     conflict = registry.admit_write(
         "term-1",
+        websocket=socket,
         attachment_id=holder.attachment_id,
         expected_lease_generation=control.lease_generation,
         seq=0,
@@ -43,6 +46,7 @@ async def test_write_fingerprint_distinguishes_kind_payload_boundaries() -> None
     assert conflict.reason == "write_seq_conflict"
     replay = registry.admit_write(
         "term-1",
+        websocket=socket,
         attachment_id=holder.attachment_id,
         expected_lease_generation=control.lease_generation,
         seq=0,

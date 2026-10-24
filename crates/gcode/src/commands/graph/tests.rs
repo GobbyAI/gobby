@@ -1,6 +1,8 @@
 use super::lifecycle::{
-    GRAPH_SYNC_CONTRACT_EXIT_CODE, GraphSyncContractError, format_success_text, has_no_graph_facts,
+    GRAPH_SYNC_CONTRACT_EXIT_CODE, GraphFileSyncOutcome, GraphSyncContractError,
+    complete_graph_sync, format_success_text, has_no_graph_facts,
     skipped_missing_indexed_file_payload, skipped_no_graph_facts_payload,
+    skipped_superseded_payload,
 };
 use super::payload::format_report_text;
 use super::reads::{
@@ -366,6 +368,228 @@ fn no_graph_facts_skip_payload_is_terminal_success_shape() {
             "summary": "skipped graph sync for docs/generated.json: no graph facts",
         })
     );
+}
+
+#[test]
+fn superseded_skip_payload_is_terminal_success_shape() {
+    let ctx = make_ctx_no_falkordb();
+    let skipped = skipped_superseded_payload(&ctx, "src/lib.rs");
+
+    assert_eq!(
+        skipped,
+        json!({
+            "success": true,
+            "project_id": "test-project",
+            "file_path": "src/lib.rs",
+            "status": "skipped",
+            "reason": "sync_superseded",
+            "synced_files": 0,
+            "synced_symbols": 0,
+            "skipped_files": 1,
+            "failed_files": 0,
+            "relationships_written": 0,
+            "degraded": false,
+            "error": null,
+            "summary": "skipped graph sync for src/lib.rs: superseded by a newer index",
+        })
+    );
+}
+
+mod serial_db {
+    use super::*;
+    use crate::db;
+    use crate::index::api;
+    use crate::models::{CODE_INDEX_UUID_NAMESPACE, IndexedFile, IndexedProject};
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn graph_completion_reports_superseded_after_state_moves() {
+        let (mut conn, project_id, _cleanup) = seeded_file("gcode-graph-completion", "hash-a");
+        let old = db::mark_graph_sync_attempted(&mut conn, &project_id, "src/lib.rs")
+            .expect("attempt hash-a")
+            .expect("live row");
+        assert_eq!(old.content_hash, "hash-a");
+
+        upsert_content_version(&mut conn, &project_id, "hash-b");
+        point_file_state(&mut conn, &project_id, "hash-b");
+
+        let superseded = complete_graph_sync(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            &old,
+            GraphFileSyncOutcome::Synced {
+                relationships_written: 3,
+                symbols_synced: 2,
+            },
+        )
+        .expect("complete superseded attempt");
+        assert!(
+            matches!(superseded, GraphFileSyncOutcome::SkippedSuperseded),
+            "completing a superseded attempt must report SkippedSuperseded"
+        );
+        assert_eq!(
+            graph_sync_flags(&mut conn, &project_id, "hash-b"),
+            (false, true),
+            "superseded completion must leave the current row unsynced with no attempt"
+        );
+
+        let current = db::mark_graph_sync_attempted(&mut conn, &project_id, "src/lib.rs")
+            .expect("attempt hash-b")
+            .expect("live row");
+        let completed = complete_graph_sync(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            &current,
+            GraphFileSyncOutcome::SkippedNoGraphFacts,
+        )
+        .expect("complete current attempt");
+        assert!(
+            matches!(completed, GraphFileSyncOutcome::SkippedNoGraphFacts),
+            "completing the current attempt must return the given outcome"
+        );
+        assert_eq!(
+            graph_sync_flags(&mut conn, &project_id, "hash-b"),
+            (true, false),
+            "completing the current attempt must mark the row synced"
+        );
+    }
+
+    fn seeded_file(prefix: &str, hash: &str) -> (postgres::Client, String, ProjectCleanup) {
+        let database_url = crate::test_env::postgres_test_database_url("graph completion tests");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let project_id = unique_id(prefix);
+        cleanup_project(&mut conn, &project_id).expect("pre-clean");
+        let cleanup = ProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
+        api::upsert_project_stats(
+            &mut conn,
+            &machine_id,
+            &IndexedProject {
+                id: project_id.clone(),
+                root_path: format!("/nonexistent/{project_id}"),
+                total_files: 1,
+                total_symbols: 0,
+                last_indexed_at: String::new(),
+                index_duration_ms: 0,
+                total_eligible_files: None,
+                indexer_version: None,
+            },
+            api::IndexWriteMode::Overlay,
+            true,
+        )
+        .expect("seed project");
+        upsert_content_version(&mut conn, &project_id, hash);
+        point_file_state(&mut conn, &project_id, hash);
+        (conn, project_id, cleanup)
+    }
+
+    fn upsert_content_version(conn: &mut postgres::Client, project_id: &str, hash: &str) {
+        api::upsert_file(
+            conn,
+            &IndexedFile {
+                id: IndexedFile::make_id(project_id, "src/lib.rs", hash),
+                project_id: project_id.to_string(),
+                file_path: "src/lib.rs".to_string(),
+                language: "rust".to_string(),
+                content_hash: hash.to_string(),
+                symbol_count: 0,
+                byte_size: 16,
+                indexed_at: String::new(),
+            },
+        )
+        .expect("upsert content version");
+    }
+
+    fn point_file_state(conn: &mut postgres::Client, project_id: &str, hash: &str) {
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("machine");
+        api::file_state::upsert_file_state(
+            conn,
+            &machine_id,
+            &IndexedFile {
+                id: IndexedFile::make_id(project_id, "src/lib.rs", hash),
+                project_id: project_id.to_string(),
+                file_path: "src/lib.rs".to_string(),
+                language: "rust".to_string(),
+                content_hash: hash.to_string(),
+                symbol_count: 0,
+                byte_size: 16,
+                indexed_at: String::new(),
+            },
+            Path::new("/nonexistent/graph-completion"),
+            api::IndexWriteMode::Overlay,
+        )
+        .expect("point file state");
+    }
+
+    fn graph_sync_flags(conn: &mut postgres::Client, project_id: &str, hash: &str) -> (bool, bool) {
+        let project_uuid = db::id_param(project_id).expect("uuid");
+        let row = conn
+            .query_one(
+                "SELECT graph_synced, graph_sync_attempted_at IS NULL
+                 FROM code_indexed_files
+                 WHERE project_id = $1 AND file_path = 'src/lib.rs' AND content_hash = $2",
+                &[&project_uuid, &hash],
+            )
+            .expect("load flags");
+        (row.get(0), row.get(1))
+    }
+
+    fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
+        let project_id = db::id_param(project_id)?;
+        conn.execute(
+            "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM code_indexed_files WHERE project_id = $1",
+            &[&project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM code_indexed_projects WHERE id = $1",
+            &[&project_id],
+        )?;
+        Ok(())
+    }
+
+    fn unique_id(prefix: &str) -> String {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("epoch")
+            .as_nanos();
+        uuid::Uuid::new_v5(
+            &CODE_INDEX_UUID_NAMESPACE,
+            format!("{prefix}-{}-{nanos}", std::process::id()).as_bytes(),
+        )
+        .to_string()
+    }
+
+    struct ProjectCleanup {
+        database_url: String,
+        project_id: String,
+    }
+
+    impl Drop for ProjectCleanup {
+        fn drop(&mut self) {
+            if let Ok(mut conn) = db::connect_readwrite(&self.database_url) {
+                let _ = cleanup_project(&mut conn, &self.project_id);
+            }
+        }
+    }
 }
 
 #[test]

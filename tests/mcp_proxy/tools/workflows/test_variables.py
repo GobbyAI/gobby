@@ -346,7 +346,49 @@ class TestGetVariableScoped:
         )
 
         assert result["success"] is True
+        assert result["names"] == ["a", "b"]
+        assert "variables" not in result
+
+    def test_get_all_variables_with_step_scope_keeps_the_map_when_not_brief(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+        instance = make_step_instance(
+            "uuid-session-1",
+            agent_name="dev",
+            current_step="work",
+            variables={"a": 1, "b": 2},
+        )
+        mocks = _make_mocks(instance=instance)
+
+        result = get_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name=None,
+            session_id="#1",
+            scope="step",
+            instance_manager=mocks["instance_manager"],
+            brief=False,
+        )
+
+        assert result["success"] is True
         assert result["variables"] == {"a": 1, "b": 2}
+
+    def test_get_all_variables_with_session_scope_returns_sorted_names(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import get_variable
+
+        mocks = _make_mocks(session_variables={"flag": True, "counter": 42})
+
+        result = get_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name=None,
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result["success"] is True
+        assert result["names"] == ["counter", "flag"]
+        assert "variables" not in result
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -40,6 +40,7 @@ pub const GOLDEN_NAMES: &[&str] = &[
     "paste.json",
     "take_control.json",
     "release_control.json",
+    "focus.json",
     "control_result.json",
     "lease_lost.json",
     "attachment_finalized.json",

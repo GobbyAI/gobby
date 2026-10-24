@@ -730,6 +730,7 @@ class TestRegisterTerminalTools:
             project_id="proj-1",
             agent_run_id=None,
             session_id=None,
+            machine_id=None,
         )
         session = MagicMock(
             id="session-1",

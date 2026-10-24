@@ -122,6 +122,23 @@ fn hit_test_covers_split_live_layout() {
             assert_eq!(at(view, x, rect.y), Hit::SidebarEmpty, "{section:?} band");
         }
     }
+    // Each drawn divider is its section's gap row, and the drag claims it
+    // ahead of any row or band near it.
+    assert!(
+        view.sidebar_section_divider_hit_areas
+            .iter()
+            .any(Option::is_some),
+        "a divider is drawn"
+    );
+    for (index, gap) in view.sidebar_section_divider_hit_areas.iter().enumerate() {
+        if let Some(gap) = gap {
+            assert_eq!(
+                at(view, gap.x, gap.y),
+                Hit::SidebarSectionDivider { index },
+                "divider {index}"
+            );
+        }
+    }
     let (id, rect) = view.machine_hit_areas.first().expect("machine row");
     assert_eq!(at(view, rect.x, rect.y), Hit::Machine(id.clone()));
     let (id, rect) = view.project_hit_areas.first().expect("project card");

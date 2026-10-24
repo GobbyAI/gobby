@@ -214,9 +214,10 @@ def _reviewer_message(
         return {}
     if kind != "CANDIDATE_VERDICT":
         return {}
-    if fields.get("VERDICT") == "BOUNCE":
+    # A peer's BOUNCE leaves the unit open; only this seat's own verdict ends it.
+    if fields.get("VERDICT") == "BOUNCE" and event.message.from_session == session_id:
         return _clear_candidate()
-    # The Orchestrator lands an approved LAND, so the reviewer's unit ends at the verdict.
+    # The Dev Manager lands an approved LAND, so the reviewer's unit ends at the verdict.
     if (
         not incoming
         and fields.get("VERDICT") == "LAND"

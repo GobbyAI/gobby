@@ -18,7 +18,6 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.agent_resolver import AgentResolutionError
 from gobby.workflows.definitions import AgentDefinitionBody
 
-from ._dispatch_batch import register_dispatch_batch
 from ._implementation import spawn_agent_impl
 from ._network_override import apply_network_override, validate_network_override
 from ._provider_resolution import (
@@ -688,7 +687,5 @@ def create_spawn_agent_registry(
         )
 
         return result
-
-    register_dispatch_batch(registry, spawn_agent=spawn_agent, task_manager=task_manager)
 
     return registry

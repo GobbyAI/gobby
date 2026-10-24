@@ -68,6 +68,11 @@ pub enum Hit {
     GroupToggle(String),
     /// The `│` column between sidebar and content.
     SidebarDivider,
+    /// The blank row under a sidebar section, which drags its height against
+    /// the section below; `index` is the section above, `SidebarSection::index`.
+    SidebarSectionDivider {
+        index: usize,
+    },
     SidebarEmpty,
     /// Scrollbar lane beside a sidebar list; `row` is the screen row.
     SidebarScrollbar {
@@ -219,6 +224,15 @@ fn tab_bar_hit(view: &ViewState, at: Position) -> Hit {
 fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     if view.sidebar_divider_x == Some(at.x) {
         return Hit::SidebarDivider;
+    }
+    // A section divider is a blank row no row or lane covers, so it is tested
+    // before them without stealing a click from one.
+    if let Some(index) = view
+        .sidebar_section_divider_hit_areas
+        .iter()
+        .position(|divider| divider.is_some_and(|rect| rect.contains(at)))
+    {
+        return Hit::SidebarSectionDivider { index };
     }
     if let Some(section) = SidebarSection::ALL.into_iter().find(|section| {
         view.sidebar_scrollbar_hit_areas[section.index()].is_some_and(|lane| lane.contains(at))

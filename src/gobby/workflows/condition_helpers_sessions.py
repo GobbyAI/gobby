@@ -109,28 +109,8 @@ def send_message_target_allowed(
     return (target or "parent") in body.send_message_targets
 
 
-# The ``agent`` defaults of the gobby-agents spawn tools, for calls that omit it.
-_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "developer"}
 # spawn_agent walks at most this many fallback_agent hops (spawn_agent/_factory.py).
 _FALLBACK_CHAIN_MAX_HOPS = 5
-
-
-def _spawn_targets(tool_name: str, agent: Any, suggestions: Any) -> list[str]:
-    """The agent each spawn of the call starts, before any fallback.
-
-    A dispatch_batch suggestion's own non-blank ``agent`` overrides the
-    top-level one, as dispatch_batch resolves it.
-    """
-    requested = agent or _SPAWN_TOOL_DEFAULT_AGENT[tool_name]
-    if tool_name != "dispatch_batch":
-        return [requested]
-    if not isinstance(suggestions, list) or not all(isinstance(s, dict) for s in suggestions):
-        raise ValueError("dispatch_batch suggestions must be a list of objects")
-    targets: list[str] = []
-    for suggestion in suggestions:
-        own = suggestion.get("agent")
-        targets.append(own.strip() if isinstance(own, str) and own.strip() else requested)
-    return targets
 
 
 def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
@@ -262,7 +242,6 @@ def spawn_target_allowed(
     caller_ref: Any,
     tool_name: Any,
     agent: Any,
-    suggestions: Any = None,
     resume_session_id: Any = None,
     *,
     target_project_id: str | None = None,
@@ -283,22 +262,20 @@ def spawn_target_allowed(
     caller, agent_name = _spawn_caller(session_manager, caller_ref)
     if agent_name is None:
         return True
-    if tool_name == "spawn_agent" and _manager_resumes_own_seat(
-        session_manager, caller, agent_name, agent, resume_session_id
-    ):
+    if tool_name != "spawn_agent":
+        raise ValueError(f"spawn target scope does not cover tool {tool_name!r}")
+    if _manager_resumes_own_seat(session_manager, caller, agent_name, agent, resume_session_id):
         return True
     body = resolve_agent(agent_name, session_manager.db, project_id=caller.project_id)
     if body is None:
         raise ValueError(f"Agent definition {agent_name!r} not found")
-    return all(
-        body.may_spawn(name)
-        for target in _spawn_targets(tool_name, agent, suggestions)
-        for name in (
-            [target]
-            if target_project_id is None
-            else _fallback_chain(target, session_manager.db, target_project_id)
-        )
+    target = agent or "default"
+    names = (
+        [target]
+        if target_project_id is None
+        else _fallback_chain(target, session_manager.db, target_project_id)
     )
+    return all(body.may_spawn(name) for name in names)
 
 
 # Spawned definitions that may choose a spawn's network profile; a root session always may.
@@ -342,9 +319,8 @@ def session_condition_helpers(
         "spawn_target_allowed": lambda caller_ref,
         tool_name,
         agent,
-        suggestions=None,
         resume_session_id=None: spawn_target_allowed(
-            session_manager, caller_ref, tool_name, agent, suggestions, resume_session_id
+            session_manager, caller_ref, tool_name, agent, resume_session_id
         ),
         "network_override_allowed": lambda caller_ref: network_override_allowed(
             session_manager, caller_ref

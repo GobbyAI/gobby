@@ -8,6 +8,8 @@ pub mod health;
 pub mod proxy;
 pub mod relay;
 pub mod routes;
+#[cfg(unix)]
+pub mod terminal_api;
 pub mod tls;
 pub mod ws;
 
@@ -158,6 +160,11 @@ impl FrontDoor {
         let mut state = state;
         #[cfg(unix)]
         if let Some(runtime) = &state.runtime {
+            if request.method() == axum::http::Method::POST
+                && request.uri().path() == terminal_api::PATH
+            {
+                return terminal_api::handle(runtime, peer, request).await;
+            }
             if crate::lease::admin_api::is_route(request.uri().path()) {
                 if let Err(response) = state.auth.authenticate(request.headers_mut()).await {
                     return *response;

@@ -627,7 +627,7 @@
     },
     {
       "name": "get_variable",
-      "description": "\nGet session-scoped variable(s). Top-level shortcut \u2014 no progressive discovery needed.\n\nArgs:\n    session_id: Session ID (accepts #N, N, UUID, or prefix)\n    name: Variable name (omit to get all variables)\n\nReturns:\n    Dict with variable value(s)\n",
+      "description": "\nGet session-scoped variable(s). Top-level shortcut \u2014 no progressive discovery needed.\n\nArgs:\n    session_id: Session ID (accepts #N, N, UUID, or prefix)\n    name: Variable name (omit to list variable names)\n    brief: Without name, return sorted names only; False returns the full map\n\nReturns:\n    Dict with variable value(s)\n",
       "inputSchema": {
         "properties": {
           "session_id": {
@@ -644,6 +644,11 @@
               }
             ],
             "title": "Name"
+          },
+          "brief": {
+            "default": true,
+            "title": "Brief",
+            "type": "boolean"
           }
         },
         "required": [

@@ -28,7 +28,7 @@ rules:
       )
     effects:
       - type: block
-        mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
+        mcp_tools: ["gobby-agents:spawn_agent"]
         reason: >-
           Seats do not spawn agents. The Assistant and the Orchestrator spawn seats,
           and a team manager may only resume an existing seat of its team with

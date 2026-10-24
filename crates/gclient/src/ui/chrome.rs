@@ -240,6 +240,9 @@ pub struct ViewState {
     pub sidebar_section_rects: [Rect; 4],
     /// Scrollbar lane beside each section, by `SidebarSection::index`.
     pub sidebar_scrollbar_hit_areas: [Option<Rect>; 4],
+    /// The gap row a section-height drag grabs, by the section above it
+    /// (`SidebarSection::index`); `None` where no divider lies.
+    pub sidebar_section_divider_hit_areas: [Option<Rect>; 3],
     /// The focused pane's metadata while it offers take-control (Read-only,
     /// Uncertain): on its edge, or leading the status line when the edge
     /// has no room for it.
@@ -294,6 +297,7 @@ impl ViewState {
         self.agent_hit_areas = sidebar.agents;
         self.machine_hit_areas = sidebar.machines;
         self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
+        self.sidebar_section_divider_hit_areas = sidebar.dividers;
         self.control_indicator_hit_area = control_indicator;
         self.status_count_hit_area = status_count;
         self.toast_hit_area = toast;
@@ -467,6 +471,7 @@ impl Chrome {
         self.sidebar.width = prefs.sidebar_width;
         self.sidebar.side = prefs.sidebar_side;
         self.sidebar.pinned = prefs.sidebar_pinned;
+        self.sidebar.section_heights = prefs.sidebar_section_heights;
         self.sidebar.project_order = prefs.project_order.clone();
         self.sidebar.project_labels = prefs.project_labels.clone();
         self.prefs = prefs;

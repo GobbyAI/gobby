@@ -491,6 +491,20 @@ async def test_retired_park_and_resume_events_leave_the_unit_alone(
     assert run.vars == before
 
 
+async def test_peer_park_leaves_the_unit_alone(temp_db: HubDatabase) -> None:
+    """A peer reviewer's retired CANDIDATE_PARKED cannot park this seat's unit."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    await run.approve(task)
+    before = run.vars
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(f"EVENT=CANDIDATE_PARKED TASK={task.id} SHA={SHA} REASON=approval", PEER_ID)
+    assert run.step == "verdict"
+    assert run.vars == before
+
+
 async def test_coordinator_withdraws_only_the_exact_unit(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -629,8 +643,8 @@ async def test_developer_returns_to_implement_on_security_bounce_envelope(
     assert run.vars["implementation_complete"] is False
 
 
-async def test_security_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) -> None:
-    """An incoming Security BOUNCE for the reviewed unit ends the Code Reviewer's unit (#24890)."""
+async def test_peer_bounce_keeps_the_code_reviewer_in_review(temp_db: HubDatabase) -> None:
+    """A peer's BOUNCE leaves the Code Reviewer in review until it sends its own verdict (#24903)."""
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
@@ -642,6 +656,20 @@ async def test_security_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabas
         "TASK_TITLE=security NOTE=exploit path",
         PEER_ID,
     )
+    assert run.step == "review"
+    assert run.vars["candidate_received"] is True
+    assert run.vars["candidate_sha"] == SHA
+
+
+async def test_own_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) -> None:
+    """Only the Code Reviewer's own BOUNCE ends its unit and moves it to await (#24903)."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    assert run.vars["candidate_received"] is True
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE NOTE=HIGH")
+    assert run.step == "await"
     assert run.vars["candidate_received"] is False
     assert run.vars["candidate_sha"] is None
 
@@ -725,10 +753,6 @@ async def test_developer_landed_retest_unlocks_shell_without_proof_result(
 ) -> None:
     run, task, sha, _ = linked_developer
     assert not await run.admits_native("Bash", {"command": "git status"})
-    await run.incoming(
-        f"EVENT=LANDED TASK={task.id} SHA={sha} RETEST=UNAVAILABLE NOTE=closer owns retest",
-        PEER_ID,
-    )
     assert run.step == "submit"
     handoff = {"task_id": task.id, "reason": f"Handed off: reviewer LAND at {sha}; retest"}
     await run.call("gobby-tasks", "escalate_task", handoff)
@@ -1285,6 +1309,7 @@ def _reviewer_stop_event(cwd: Path) -> HookEvent:
     [
         ("EVENT=SEAT_READY NOTE=idle", True),
         ("LANE=3 EVENT=SEAT_READY NOTE=idle", True),
+        ("LANE= EVENT=SEAT_READY NOTE=idle", True),
         ("LANE=3 EVENT=SEAT_READY RUN=gobby#16009 NOTE=idle", True),
         ("EVENT=SEAT_READY RUN=gobby#16009 NOTE=idle", True),
         ("LANE=3 EVENT=OTHER NOTE=idle", False),
@@ -1314,7 +1339,6 @@ async def test_reviewer_call_tool_readiness_allows_stop_with_external_session_id
     wire = _process_tool_proxy_result(
         {"target": "session", "message_ids": [message.id], "delivery_status": "sent"},
         *SEND,
-        1.0,
     )
     output: dict[str, Any] = wire
     if envelope == "content":
@@ -1425,7 +1449,7 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
     with session_context_for_test(SESSION_ID):
         wait = await registry.call(WAIT[1], arguments)
     assert wait["outcome"] == "waiting"
-    wire = _process_tool_proxy_result(wait, *WAIT, 1.0)
+    wire = _process_tool_proxy_result(wait, *WAIT)
     completion = ClaudeCodeAdapter().translate_to_hook_event(
         {
             "hook_type": "post-tool-use",
@@ -1525,7 +1549,7 @@ async def test_developer_rejected_link_commit_stays_in_implement(
     assert run.step == "implement"
 
     def delivered(result: dict[str, Any]) -> dict[str, Any]:
-        wire = _process_tool_proxy_result(result, "gobby-tasks", "link_commit", 1.0)
+        wire = _process_tool_proxy_result(result, "gobby-tasks", "link_commit")
         if envelope == "content":
             return {"isError": False, "content": [{"type": "text", "text": json.dumps(wire)}]}
         if envelope == "structured":

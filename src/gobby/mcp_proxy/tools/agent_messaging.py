@@ -180,6 +180,19 @@ def add_messaging_tools(
             if not content:
                 return {"success": False, "error": "content is required."}
 
+            from gobby.workflows.engine.seat_messages import CandidateMessageError, envelope_fields
+
+            try:
+                envelope_fields(content)
+            except CandidateMessageError as exc:
+                return {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": "protocol_line_rejected",
+                    "field": exc.field,
+                    "canonical_order": exc.canonical,
+                }
+
             if target is None or not target.strip():
                 preview_from_id = _resolve(from_session)
                 preview_sess = session_manager.get(preview_from_id)
@@ -380,8 +393,6 @@ def add_messaging_tools(
                 brief_response["failed_ws_broadcasts"] = failed_ws_broadcasts
             if wake_failures:
                 brief_response["wake_failures"] = wake_failures
-            if wake_declines:
-                brief_response["wake_declines"] = wake_declines
             return brief_response
 
         except ValueError as e:
