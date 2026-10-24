@@ -29,6 +29,7 @@ from gobby.tasks.close_receipts import (
     INDEPENDENT_REVIEW_APPROVAL,
     LANDING,
     LANDING_APPROVAL,
+    CloseReceiptError,
     list_close_receipts,
     record_close_receipt,
 )
@@ -51,6 +52,7 @@ class LandingCase:
     claimant: str
     reviewer: str
     delegator: str
+    security: str
     base: str
 
     def git(self, *args: str, env: dict[str, str] | None = None) -> str:
@@ -81,12 +83,13 @@ class LandingCase:
         self.git("switch", "trunk")
         return sha
 
-    def task(self, title: str = "Reviewed candidate") -> Task:
+    def task(self, title: str = "Reviewed candidate", labels: list[str] | None = None) -> Task:
         task = LocalTaskManager(self.db).create_task(
             self.project_id,
             title,
             created_in_session_id=self.creator,
             claimed_by_session_id=self.claimant,
+            labels=labels,
             validation_criteria="Land the reviewed SHA.",
         )
         self.db.execute(
@@ -97,13 +100,20 @@ class LandingCase:
     def link(self, task: Task, sha: str) -> None:
         self.db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
 
-    def approve(self, task: Task, sha: str, author: str | None = None) -> None:
+    def approve(
+        self,
+        task: Task,
+        sha: str,
+        author: str | None = None,
+        facts: dict[str, str] | None = None,
+    ) -> None:
         record_close_receipt(
             self.db,
             task=task,
             author_session_id=author or self.reviewer,
             kind=INDEPENDENT_REVIEW_APPROVAL,
             commit_sha=sha,
+            facts=facts,
         )
 
     def reviewed(self, sha: str, title: str = "Reviewed candidate") -> Task:
@@ -135,7 +145,7 @@ def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -
     repo = tmp_path / "main"
     repo.mkdir()
     identities: list[str] = []
-    for index, role in enumerate(("creator", "claimant", "reviewer", "delegator")):
+    for index, role in enumerate(("creator", "claimant", "reviewer", "delegator", "security")):
         session_id = str(uuid4())
         temp_db.execute(
             """
@@ -153,9 +163,17 @@ def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -
             ),
         )
         identities.append(session_id)
-    creator, claimant, reviewer, delegator = identities
+    creator, claimant, reviewer, delegator, security = identities
+    temp_db.execute(
+        """
+        INSERT INTO agent_runs (id, parent_session_id, child_session_id, machine_id, status,
+                                provider, prompt, agent_name)
+        VALUES (%s, %s, %s, %s, 'running', 'claude', 'seat', 'security-reviewer')
+        """,
+        (str(uuid4()), creator, security, require_machine_id()),
+    )
     fixture = LandingCase(
-        temp_db, repo, sample_project["id"], creator, claimant, reviewer, delegator, ""
+        temp_db, repo, sample_project["id"], creator, claimant, reviewer, delegator, security, ""
     )
     fixture.git("init", "--initial-branch=trunk")
     fixture.git("config", "user.name", "Landing test")
@@ -364,6 +382,71 @@ async def test_reports_every_missing_approval_at_once(case: LandingCase) -> None
             commit_sha=sha,
             facts={"reason": reason},
         )
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_security_required_task_refuses_code_only_approval(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["error"] == "security_review_missing"
+    assert refused["missing_approvals"] == ["security"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_security_required_task_lands_with_code_and_security_approvals(
+    case: LandingCase,
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.approve(task, sha, author=case.security, facts={"review": "security"})
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_security_approval_on_another_sha_does_not_satisfy(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    other = case.candidate("other", {"docs/other.md": "other candidate"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.approve(task, other, author=case.security, facts={"review": "security"})
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["missing_approvals"] == ["security"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_security_approval_from_a_non_security_seat_is_refused(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    for seat in (case.reviewer, case.creator):
+        with pytest.raises(CloseReceiptError, match="security-reviewer"):
+            case.approve(task, sha, author=seat, facts={"review": "security"})
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["missing_approvals"] == ["security"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_security_facts_recorded_after_plain_approval_still_satisfy(
+    case: LandingCase,
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.approve(task, sha, author=case.security)
+    case.approve(task, sha, author=case.security, facts={"review": "security"})
     landed = await case.land(task, sha)
     assert landed["landed"] is True
     assert case.git("rev-parse", "trunk") == sha
