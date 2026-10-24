@@ -565,3 +565,54 @@ async fn health_pidfile_io_keeps_post_adoption_type() {
     supervisor.stop().await;
     assert!(host.alive(), "health identity loss must preserve the host");
 }
+#[tokio::test]
+async fn socket_path_preflight_checks_byte_limit_before_starting() {
+    let limit = if cfg!(any(target_os = "linux", target_os = "android")) {
+        107
+    } else {
+        103
+    };
+    let filename = "gterm-control.sock";
+    let directory_len = limit - filename.len() - 1;
+    let options = HostOptions {
+        socket_dir: std::path::PathBuf::from("x".repeat(directory_len)),
+        binary_path: std::path::PathBuf::from("/missing-gterm-for-socket-path-test"),
+        ..HostOptions::default()
+    };
+    let at_limit = HostSupervisor::new(options.clone(), Arc::new(Rows(Vec::new())));
+    assert!(matches!(
+        at_limit.start().await,
+        Err(HostFailure::GtermMissing)
+    ));
+    at_limit.stop().await;
+
+    let options = HostOptions {
+        socket_dir: std::path::PathBuf::from(format!("{}é", "x".repeat(directory_len - 1))),
+        ..options
+    };
+    let path = options.socket_dir.join(filename);
+    let over_limit = HostSupervisor::new(options, Arc::new(Rows(Vec::new())));
+    let message = over_limit
+        .start()
+        .await
+        .expect_err("invalid socket path")
+        .to_string();
+    assert!(
+        !over_limit.retry_armed(),
+        "invalid configuration must not start a supervisor"
+    );
+    assert!(matches!(
+        &*over_limit.subscribe().borrow(),
+        gobby_terminals::host::HostStatus::Unavailable(HostFailure::PreAdoptionIo(_))
+    ));
+    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert!(
+        message.contains(&format!("{} bytes", limit + 1)),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("limit {limit} bytes")),
+        "{message}"
+    );
+    assert!(message.contains("terminal_host.socket_dir"), "{message}");
+}

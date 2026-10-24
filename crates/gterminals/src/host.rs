@@ -366,6 +366,12 @@ impl HostSupervisor {
             if self.inner.stopped.load(Ordering::Acquire) {
                 return Err(HostFailure::Stopped);
             }
+            if let Err(error) = check_socket_paths(&self.inner.options.socket_dir) {
+                self.inner
+                    .status
+                    .send_replace(HostStatus::Unavailable(error.clone()));
+                return Err(error);
+            }
             if task.is_none() {
                 self.inner.retry_armed.store(true, Ordering::Release);
                 *task = Some(tokio::spawn(supervise(self.inner.clone())));
@@ -662,6 +668,27 @@ async fn health(
             adopted,
         },
     ))
+}
+
+fn check_socket_paths(socket_dir: &std::path::Path) -> Result<(), HostFailure> {
+    // Supported Unix pathname sockets reserve a byte for the terminating NUL.
+    let limit = if cfg!(any(target_os = "linux", target_os = "android")) {
+        107
+    } else {
+        103
+    };
+    for name in ["gterm-control.sock", "gterm-frames.sock"] {
+        let path = socket_dir.join(name);
+        std::os::unix::net::SocketAddr::from_pathname(&path).map_err(|error| {
+            HostFailure::PreAdoptionIo(format!(
+                "invalid gterm socket path {} ({} bytes; AF_UNIX sun_path limit {limit} bytes): \
+                 {error}; set terminal_host.socket_dir to a shorter directory",
+                path.display(),
+                path.as_os_str().as_encoded_bytes().len(),
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 async fn spawn(inner: &Inner) -> Result<Child, HostFailure> {

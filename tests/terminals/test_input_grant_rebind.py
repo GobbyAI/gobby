@@ -136,7 +136,7 @@ async def test_durable_holder_transition_clears_on_rebind_and_revokes_on_record_
 @pytest.mark.parametrize("replacement", [None, "new-attachment"])
 @pytest.mark.parametrize("first_revoke_fails", [False, True])
 async def test_reconcile_bounds_unbound_handoff_without_revoking_a_replacement(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     replacement: str | None,
@@ -152,7 +152,7 @@ async def test_reconcile_bounds_unbound_handoff_without_revoking_a_replacement(
         input_grants={"ht-1": "old-attachment"},
     )
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), health_interval_seconds=3600),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), health_interval_seconds=3600),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
     )
@@ -187,7 +187,7 @@ async def test_reconcile_bounds_unbound_handoff_without_revoking_a_replacement(
 
 @pytest.mark.asyncio
 async def test_health_loop_wakes_for_handoff_deadline(
-    tmp_path: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
+    short_socket_dir: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     terminals = TerminalManager(temp_db)
     row = _native_row(terminals, sample_project["id"])
@@ -199,7 +199,7 @@ async def test_health_loop_wakes_for_handoff_deadline(
         input_grants={"ht-1": "old-attachment"},
     )
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), health_interval_seconds=3600),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), health_interval_seconds=3600),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
     )
@@ -228,7 +228,7 @@ async def test_health_loop_wakes_for_handoff_deadline(
 
 @pytest.mark.asyncio
 async def test_old_epoch_handoff_never_revokes_the_replacement_host(
-    tmp_path: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
+    short_socket_dir: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     terminals = TerminalManager(temp_db)
     row = _native_row(terminals, sample_project["id"])
@@ -237,7 +237,7 @@ async def test_old_epoch_handoff_never_revokes_the_replacement_host(
         host_epoch="new-epoch", authed=True, input_grants={"ht-1": "new-attachment"}
     )
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path)),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir)),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
     )
@@ -253,7 +253,7 @@ async def test_old_epoch_handoff_never_revokes_the_replacement_host(
 
 @pytest.mark.asyncio
 async def test_inventory_failure_does_not_delay_guarded_expiry(
-    tmp_path: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
+    short_socket_dir: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     terminals = TerminalManager(temp_db)
     row = _native_row(terminals, sample_project["id"])
@@ -262,7 +262,7 @@ async def test_inventory_failure_does_not_delay_guarded_expiry(
         host_epoch="handoff-epoch", authed=True, input_grants={"ht-1": "old-attachment"}
     )
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path)),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir)),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
     )
