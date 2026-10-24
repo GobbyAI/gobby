@@ -22,6 +22,7 @@ from gobby.storage.schema_contract import (
     SchemaContractError,
     expected_schema_identity,
     plan_schema,
+    preflight_schema,
     verify_catalog_test_cluster,
 )
 from gobby.sync.integrity import dirty_bundled_content_refusal
@@ -48,8 +49,8 @@ def restart_start_refusal(
 
     ``gdaemon=None`` proves the installed set, which is what ``restart`` will start.
     A candidate path proves an unpromoted build, which is what ``cutover`` is about to
-    promote. In installed mode, an unreadable hub URL skips the schema plan and leaves
-    the start unproven, following ``schema_apply_refusal``'s unreadable-URL convention.
+    promote. An unreadable hub URL refuses the operation because data migrations
+    cannot be proven without the hub.
     Candidate mode also proves the isolated test cluster is reachable before
     cutover runs catalog freshness, and refuses an unreadable hub URL.
     """
@@ -98,10 +99,10 @@ def restart_start_refusal(
     if url is None:
         if gdaemon is not None:
             return "Candidate catalog preflight requires a readable hub URL; refusing cutover"
-        logger.debug("Restart preflight skipped the schema plan: no readable hub URL")
-        return None
+        return "Schema data preflight requires a readable hub URL; refusing restart"
     try:
         plan_schema(url, gdaemon=gdaemon)
+        preflight_schema(url, gdaemon=gdaemon)
         if gdaemon is not None:
             verify_catalog_test_cluster(url)
     except SchemaContractError as exc:

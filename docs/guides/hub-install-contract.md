@@ -31,9 +31,9 @@ staged files through new inodes, and writes the installed identity pin only
 after the complete set promotes. See
 [the cutover command](cli-commands.md#gobby-cutover).
 
-`gdaemon schema plan` is the read-only dry run both `gobby restart` and
-`gobby cutover` use to prove the start half before stopping or promoting
-anything. It performs the same lineage validation and pending-migration
+`gdaemon schema plan` is the read-only lineage check both `gobby restart` and
+`gobby cutover` use before stopping or promoting anything. It performs the same
+lineage validation and pending-migration
 resolution `gdaemon schema apply` performs, but creates no schema, writes no
 receipts, and never takes the apply advisory lock. It deliberately does not
 verify the database identity: a database head behind the embedded head is the
@@ -43,6 +43,17 @@ one line:
 ```text
 schema gobby plan: database v437, code v438, baseline_pending=false, pending_migrations=1 [438]
 ```
+
+Both commands also run `gdaemon schema preflight` against the hub's current
+data, using the candidate executable for cutover. It executes pending
+transactional migrations and their receipts in one transaction, checks deferred
+constraints, and always rolls back. A failure names the migration, statement,
+and PostgreSQL error; nothing is stopped or promoted. Successful and failed
+proofs preserve rows, schema, and schema version. Pending migrations may consume
+sequence values without committing data; normal PostgreSQL sequence gaps can
+therefore remain. Non-transactional or transaction-control migrations and a
+pending baseline are refused because this proof cannot safely execute them. Initialize a fresh
+hub through the normal install/start path before using restart or cutover.
 
 Cutover additionally refuses to build from uncommitted schema inputs
 (`crates/gcore/assets/schema`, `crates/gcore/src/schema`, and the identity pin)

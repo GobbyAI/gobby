@@ -116,6 +116,9 @@ constraint-dependencies = [
     "pillow>=13.0.0",
     # h2 <4.4.1 has PYSEC-2026-3628 / CVE-2026-71554 (duplicate Host header).
     "h2>=4.4.1",
+    # brotli <1.2.1 and filelock <4.2.1 carry October 2026 security advisories.
+    "brotli>=1.2.1",
+    "filelock>=4.2.1",
     # torch <2.8.0 has GHSA-887c-mr87-cxwp; see override-dependencies below.
     "torch>=2.8.0",
 ]
@@ -136,7 +139,7 @@ override-dependencies = [
     "torchaudio==2.11.0",
     # The exercised Gobby voice paths do not use the removed pkg_resources API.
     # Force the security-fixed release over stale transitive pins.
-    "setuptools>=83.0.0",
+    "setuptools>=84.1.0",
     # chatterbox-tts==0.1.7 pins vulnerable voice-stack transitive versions.
     "onnx>=1.22.0",
     "transformers>=5.3.0",
@@ -156,7 +159,7 @@ override-dependencies = [
 
 [build-system]
 requires = [
-    "setuptools>=83.0.0", # Provides PEP 660 editable-install hooks.
+    "setuptools>=84.1.0", # Security floor; provides PEP 660 editable-install hooks.
     "wheel",
 ]
 build-backend = "build_backend"

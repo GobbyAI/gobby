@@ -2,20 +2,23 @@
 //!
 //! `gobby restart` and `gobby cutover` are stop-then-start with no way back, so
 //! both must prove the start half before anything is stopped or promoted. `plan`
-//! answers "would `schema apply` succeed against this database right now" using
-//! the same lineage validation and pending resolution `apply` performs. It never
-//! creates the schema and never takes the apply advisory lock, so it is safe to
+//! lists the work using the same lineage validation and pending resolution
+//! `apply` performs. Data-dependent failures need the rollback-only `preflight`.
+//! `plan` never creates the schema or takes the apply advisory lock, so it is safe to
 //! run against a live hub and fails closed if it observes a mid-apply state.
 
 use std::collections::BTreeSet;
 
 use postgres::Client;
 
+use crate::schema::sql_splitter::leading_keyword;
+
 use super::{
     BASELINE_CHECKSUM, BASELINE_VERSION, BaselineState, EmbeddedMigration, PRIOR_RECEIPT_CHECKSUMS,
-    SchemaError, SchemaRunner, baseline_filename, classify_baseline_state, has_directive,
-    is_prior_baseline_receipt, latest_version, qualified_name, read_schema_head, require_pg_search,
-    set_search_path, verify_adopted_columns, verify_embedded_assets,
+    SchemaError, SchemaRunner, acquire_apply_lock, baseline_filename, classify_baseline_state,
+    has_directive, insert_receipt, is_prior_baseline_receipt, latest_version, qualified_name,
+    read_schema_head, release_apply_lock, render_sql_for_schema, require_pg_search,
+    set_search_path, split_sql_statements, verify_adopted_columns, verify_embedded_assets,
 };
 
 /// What one `SchemaRunner::apply` would do against the current database.
@@ -28,6 +31,121 @@ pub struct PlanReport {
 }
 
 impl SchemaRunner<'_> {
+    /// Prove pending migrations against current rows, then roll everything back.
+    ///
+    /// Uses apply's lock, pending resolution, SQL rendering and receipt writes.
+    /// Rows, schema and receipts are unchanged; PostgreSQL sequence values may
+    /// be consumed even though no data commits. Non-transactional migrations,
+    /// transaction control and baseline initialization are refused.
+    pub fn preflight(&mut self) -> Result<PlanReport, SchemaError> {
+        acquire_apply_lock(self.client)?;
+        let result = self.preflight_locked();
+        let unlock = release_apply_lock(self.client);
+        match result {
+            Err(error) => {
+                let _ = unlock;
+                Err(error)
+            }
+            Ok(report) => {
+                unlock?;
+                Ok(report)
+            }
+        }
+    }
+
+    fn preflight_locked(&mut self) -> Result<PlanReport, SchemaError> {
+        let report = self.plan()?;
+        if report.baseline_pending {
+            return Err(SchemaError::Unsupported(format!(
+                "baseline@{BASELINE_VERSION} is pending; initialize the hub before restart or cutover"
+            )));
+        }
+        let pending = resolve_pending_migrations(self.client, &self.schema, self.migrations)?;
+        for migration in &pending {
+            if has_directive(migration.sql, "-- gobby:non-transactional") {
+                return Err(SchemaError::Unsupported(format!(
+                    "migration {} is non-transactional and cannot be rollback-proven",
+                    migration.filename
+                )));
+            }
+            for statement in split_sql_statements(migration.sql)? {
+                let keyword = leading_keyword(&statement)?.to_ascii_uppercase();
+                if [
+                    "BEGIN", "START", "COMMIT", "END", "ROLLBACK", "ABORT", "PREPARE",
+                ]
+                .contains(&keyword.as_str())
+                {
+                    return Err(SchemaError::Unsupported(format!(
+                        "migration {} contains transaction control and cannot be rollback-proven: {statement}",
+                        migration.filename
+                    )));
+                }
+            }
+        }
+        let receipt_table = qualified_name(&self.schema, "schema_migrations")?;
+        let mut transaction = self.client.transaction()?;
+        let proof = (|| -> Result<(), SchemaError> {
+            // A proof should refuse promptly instead of waiting on the running
+            // daemon's rows or retaining DDL locks for an unbounded statement.
+            transaction.batch_execute(
+                "SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '60s'",
+            )?;
+            for migration in pending {
+                for statement in
+                    split_sql_statements(&render_sql_for_schema(migration.sql, &self.schema))?
+                {
+                    transaction
+                        .batch_execute(&statement)
+                        .map_err(|source| migration_failure(migration, &statement, source))?;
+                }
+                insert_receipt(&mut transaction, &receipt_table, migration).map_err(|source| {
+                    migration_failure(migration, "INSERT schema_migrations receipt", source)
+                })?;
+                // Apply commits each migration. Force its deferred checks before
+                // a successor could hide a failure that commit would encounter.
+                transaction
+                    .batch_execute("SET CONSTRAINTS ALL IMMEDIATE")
+                    .map_err(|source| {
+                        migration_failure(migration, "SET CONSTRAINTS ALL IMMEDIATE", source)
+                    })?;
+                // A new apply transaction restores INITIALLY DEFERRED modes.
+                // Restore only those defaults; deferring every constraint would
+                // hide failures from INITIALLY IMMEDIATE constraints.
+                let defaults = transaction
+                    .query(
+                        "SELECT format('%I.%I', n.nspname, c.conname), bool_and(c.condeferred)
+                         FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+                         WHERE c.condeferrable GROUP BY n.nspname, c.conname
+                         HAVING bool_or(c.condeferred)",
+                        &[],
+                    )
+                    .map_err(|source| {
+                        migration_failure(migration, "read initial constraint modes", source)
+                    })?;
+                for default in defaults {
+                    let constraint: String = default.get(0);
+                    if !default.get::<_, bool>(1) {
+                        return Err(SchemaError::Unsupported(format!(
+                            "migration {} has ambiguous initial modes for constraint {constraint}",
+                            migration.filename
+                        )));
+                    }
+                    let statement = format!("SET CONSTRAINTS {constraint} DEFERRED");
+                    transaction
+                        .batch_execute(&statement)
+                        .map_err(|source| migration_failure(migration, &statement, source))?;
+                }
+            }
+            Ok(())
+        })();
+        // Explicitly roll back on both paths, preserving the migration error if
+        // the connection has also failed. Transaction's Drop is the final guard.
+        let rollback = transaction.rollback();
+        proof?;
+        rollback?;
+        Ok(report)
+    }
+
     /// Validate the database lineage exactly as `apply` does, writing nothing.
     ///
     /// Returns the current database head and a lineage that is never
@@ -86,6 +204,23 @@ impl SchemaRunner<'_> {
             baseline_pending: false,
             pending_versions: pending.iter().map(|migration| migration.version).collect(),
         })
+    }
+}
+
+fn migration_failure(
+    migration: &EmbeddedMigration,
+    statement: &str,
+    source: postgres::Error,
+) -> SchemaError {
+    let detail = source
+        .as_db_error()
+        .map_or_else(|| source.to_string(), ToString::to_string);
+    SchemaError::Migration {
+        version: migration.version,
+        filename: migration.filename,
+        statement: statement.to_owned(),
+        detail,
+        source,
     }
 }
 
