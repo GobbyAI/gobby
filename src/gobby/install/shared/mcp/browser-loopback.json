@@ -1,0 +1,10 @@
+{
+  "browser": {
+    "launchOptions": {
+      "args": [
+        "--disable-quic",
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
+      ]
+    }
+  }
+}

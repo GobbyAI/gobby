@@ -81,6 +81,7 @@ def request_path(request: HTTPConnection) -> str:
 # identity is taken from that grant principal, not from caller headers.
 # Operator mutation and configuration routes stay excluded.
 _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
+    _AgentRoute("POST", "/api/auth/sign-in-link", True),
     # MCP proxy discovery and execution.
     _AgentRoute("GET", "/api/mcp/servers", True),
     _AgentRoute("GET", "/api/mcp/status", True),

@@ -158,6 +158,15 @@ def _inject_chrome_executable_path(args: list[str]) -> list[str]:
     return runtime_args
 
 
+def _loopback_browser_args(args: list[str]) -> list[str]:
+    runtime_args = _inject_chrome_executable_path(args)
+    if any(arg.startswith("@playwright/mcp@") for arg in args):
+        config = Path(__file__).parents[1] / "install/shared/mcp/browser-loopback.json"
+        runtime_args = _strip_flag_args(runtime_args, "--config")
+        runtime_args.append(f"--config={config}")
+    return runtime_args
+
+
 def _strip_flag_args(args: list[str], flag: str) -> list[str]:
     """Remove --flag value and --flag=value forms from args."""
     stripped: list[str] = []
@@ -187,5 +196,6 @@ def _first_existing_path(candidates: Iterable[str | None]) -> str | None:
 
 
 _RUNTIME_STDIO_HOOKS = {
+    "loopback_browser": _loopback_browser_args,
     CHROME_EXECUTABLE_PATH_HOOK: _inject_chrome_executable_path,
 }

@@ -86,7 +86,7 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
             expanded_env.setdefault("npm_config_prefer_offline", "true")
 
         command = self.config.command
-        if self.config.runtime_hook == "chrome_executable_path":
+        if self.config.runtime_hook in {"chrome_executable_path", "loopback_browser"}:
             command, *expanded_args = supervised_argv([command, *expanded_args])
 
         params = StdioServerParameters(

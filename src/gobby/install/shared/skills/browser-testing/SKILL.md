@@ -18,6 +18,41 @@ and `chrome-devtools` are **templates**. Instantiate them before use
 progressive discovery (`list_tools("playwright")`,
 `list_tools("chrome-devtools")`). See `gobby:references/mcp-servers/templates.md`.
 
+## Local sign-in without a password
+
+Use the bundled, locked-down browser instances for local Gobby proofs. They
+launch a fresh isolated profile and permit HTTP(S) requests only to literal
+`127.0.0.1`, `[::1]`, or `localhost`, including temporary daemon and Vite ports.
+External navigation, redirects and subresources fail through a dead proxy;
+Playwright's origin allow-list is an additional check, not the security boundary.
+Do not attach to an existing Chrome instance or reuse a user's profile.
+
+1. Start the isolated test daemon and Vite server with temporary state/ports and
+   the test hub database. Never run acceptance mutations against the live daemon.
+2. Point the CLI's normal daemon configuration at that loopback daemon. Run
+   `gobby ui sign-in-link`. The CLI uses its existing operator credential or the
+   managed run's private credential and identity headers. Never request, type,
+   store or transmit an operator password.
+3. Open the returned URL using `browser_navigate` (Playwright) or `navigate_page`
+   (Chrome DevTools). The server consumes the link and redirects to `/`, setting
+   a normal HttpOnly session cookie. Verify an authenticated page or
+   `/api/auth/status` before testing.
+4. The link expires after 120 seconds and works once, on its exact loopback
+   origin. Mint another if it expires. The browser session expires after one
+   hour; `/api/auth/logout` revokes it immediately. Close the browser after the
+   proof. A new MCP process starts with no prior cookies or local storage.
+
+Treat the URL as a short-lived credential: pass it only as a browser tool input,
+never a Chrome process argument, repository file, screenshot, or saved trace.
+The exchange renders no page or JavaScript containing the token. Audit records
+identify the verified minting key or managed session/run without token bytes.
+
+After landing template changes, activation needs a bundled template sync,
+`refresh_template_instances`, and reconnecting both MCP instances with
+`gobby mcp-proxy refresh --server <instance>`. A template DB update alone leaves
+an already-connected process unchanged. Coordinate activation with the
+Orchestrator; new runtime hooks require the landed Python code as well.
+
 ## Tool Routing
 
 Pick one path per job; never drive the same page with both at once.
