@@ -940,31 +940,40 @@ def test_lost_active_claim_keeps_previous_handoffs(seats: _Seats) -> None:
 
 @pytest.mark.parametrize(
     ("bounced", "switch_task", "keeps_latch"),
-    [(False, False, True), (True, False, False), (False, True, False)],
+    [(False, False, False), (True, False, False), (False, True, False)],
     ids=["same-unbounced-candidate", "bounced-candidate", "switched-task"],
 )
-async def test_release_then_reclaim_keeps_latch_only_for_the_same_unbounced_candidate(
+@pytest.mark.parametrize("release", ["release_task_claim", "escalate_task"])
+@pytest.mark.parametrize("observe_loss", [True, False], ids=["observed", "immediate"])
+async def test_release_then_reclaim_requires_fresh_link_commit(
     seats: _Seats,
     tmp_path: Path,
     bounced: bool,
     switch_task: bool,
     keeps_latch: bool,
+    release: str,
+    observe_loss: bool,
 ) -> None:
-    """An Orchestrator release of a candidate is neither a bounce nor a switch (#24890)."""
+    """A new claim requires a fresh link even for the same candidate (#24940)."""
     tasks = LocalTaskManager(seats.db)
     project_id = tasks.get_task(seats.task_id).project_id
     LocalProjectCheckoutManager(seats.db).register(MACHINE_ID, project_id, str(tmp_path))
     claim_task(seats.db, seats.task_id, seats.former)
+    tasks.link_commit(seats.task_id, COMMIT)
     _seat(seats, seats.former, "submit")
     instances = AgentStepInstanceManager(seats.db)
     instance = instances.get_for_session(seats.former)
     assert instance is not None
     instance.variables.update(candidate_sent=True, implementation_complete=True, bounced=bounced)
     instances.save(instance)
-    _release(seats)
+    if release == "release_task_claim":
+        _release(seats)
+    else:
+        tasks.escalate_task(seats.task_id, reason="Superseded candidate")
 
-    context = get_active_step_workflow_context(seats.db, seats.former, {})
-    assert context is not None and context.current_step == "claim"
+    if observe_loss:
+        context = get_active_step_workflow_context(seats.db, seats.former, {})
+        assert context is not None and context.current_step == "claim"
 
     claimed = tasks.get_task(seats.task_id)
     if switch_task:
@@ -988,11 +997,14 @@ async def test_release_then_reclaim_keeps_latch_only_for_the_same_unbounced_cand
     assert state["assigned_task_id"] == claimed.id
     assert state["candidate_sent"] is keeps_latch
     assert state["implementation_complete"] is keeps_latch
-    if not keeps_latch:
-        return
-
     await RuleEngine(seats.db)._process_step_after_tool(
         _after_tool(seats.former, "get_task", {"task_id": claimed.id}, {"id": claimed.id}),
+        seats.former,
+        SessionVariableManager(seats.db).get_variables(seats.former),
+    )
+    assert _instance_state(seats.db, seats.former)[0] == "implement"
+    await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(seats.former, "link_commit", {"task_id": claimed.id, "commit_sha": COMMIT}, {}),
         seats.former,
         SessionVariableManager(seats.db).get_variables(seats.former),
     )
