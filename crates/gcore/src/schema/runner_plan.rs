@@ -108,6 +108,33 @@ impl SchemaRunner<'_> {
                     .map_err(|source| {
                         migration_failure(migration, "SET CONSTRAINTS ALL IMMEDIATE", source)
                     })?;
+                // A new apply transaction restores INITIALLY DEFERRED modes.
+                // Restore only those defaults; deferring every constraint would
+                // hide failures from INITIALLY IMMEDIATE constraints.
+                let defaults = transaction
+                    .query(
+                        "SELECT format('%I.%I', n.nspname, c.conname), bool_and(c.condeferred)
+                         FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+                         WHERE c.condeferrable GROUP BY n.nspname, c.conname
+                         HAVING bool_or(c.condeferred)",
+                        &[],
+                    )
+                    .map_err(|source| {
+                        migration_failure(migration, "read initial constraint modes", source)
+                    })?;
+                for default in defaults {
+                    let constraint: String = default.get(0);
+                    if !default.get::<_, bool>(1) {
+                        return Err(SchemaError::Unsupported(format!(
+                            "migration {} has ambiguous initial modes for constraint {constraint}",
+                            migration.filename
+                        )));
+                    }
+                    let statement = format!("SET CONSTRAINTS {constraint} DEFERRED");
+                    transaction
+                        .batch_execute(&statement)
+                        .map_err(|source| migration_failure(migration, &statement, source))?;
+                }
             }
             Ok(())
         })();

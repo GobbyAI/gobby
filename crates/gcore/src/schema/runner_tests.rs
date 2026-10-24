@@ -129,6 +129,57 @@ fn data_preflight_detects_legacy_row_and_rolls_back_every_statement() -> anyhow:
 }
 
 #[test]
+fn data_preflight_restores_initial_constraint_modes_between_migrations() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
+    client.batch_execute(
+        "CREATE TABLE preflight_parent (id int PRIMARY KEY);
+         CREATE TABLE preflight_child (id int REFERENCES preflight_parent(id)
+             DEFERRABLE INITIALLY DEFERRED);",
+    )?;
+    let first = &preflight_migrations("SELECT 1;")[0];
+    let second = &preflight_migrations(
+        "INSERT INTO preflight_child VALUES (1); INSERT INTO preflight_parent VALUES (1);",
+    )[0];
+    let migrations = Box::leak(Box::new([
+        EmbeddedMigration {
+            version: 421,
+            filename: first.filename,
+            checksum: first.checksum,
+            sql: first.sql,
+        },
+        EmbeddedMigration {
+            version: 422,
+            filename: "422_deferred_probe.sql",
+            checksum: second.checksum,
+            sql: second.sql,
+        },
+    ]));
+    let mut runner = SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?;
+    assert_eq!(runner.preflight()?.pending_versions, vec![421, 422]);
+    assert_eq!(runner.current_version()?, BASELINE_VERSION);
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM preflight_child", &[])?
+            .get::<_, i64>(0),
+        0
+    );
+    SchemaRunner::with_migrations_for_test(&mut client, "public", migrations)?.apply()?;
+    assert_eq!(
+        client
+            .query_one("SELECT count(*) FROM preflight_child", &[])?
+            .get::<_, i64>(0),
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn data_preflight_success_rolls_back_schema_data_and_receipts() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
