@@ -27,6 +27,7 @@ import pytest
 
 from gobby.agents import srt_monitor
 from gobby.utils.dependency_requirements import SRT_RELEASE
+from tests.agents.srt_probe import ready_node_probes
 from tests.srt_fixture_helpers import write_srt_parser_fixture
 
 pytestmark = pytest.mark.unit
@@ -593,6 +594,7 @@ from dataclasses import replace
 from pathlib import Path
 from gobby.agents import srt_monitor, srt_runtime
 from gobby.runner_lifecycle_processes import _reap_remaining_child_processes
+from tests.agents.srt_probe import ready_node_probes
 logging.basicConfig(level=logging.INFO, stream=sys.stderr, format='%(message)s')
 root, node, runner = (Path(arg) for arg in sys.argv[1:4])
 mode, preserve = sys.argv[4], sys.argv[5] == '1'
@@ -624,11 +626,12 @@ async def main() -> None:
         else:
             del srt_monitor._child_started[broker.pid]
         (directory / f'v-{srt_monitor.SRT_RELEASE.runner_sha256[:12]}.owner.json').unlink()
-        await _reap_remaining_child_processes(
-            preserve_agents=True,
-            preserved_agent_pids=set(),
-            preserve_srt_monitor=preserve,
-        )
+        with ready_node_probes():
+            await _reap_remaining_child_processes(
+                preserve_agents=True,
+                preserved_agent_pids=set(),
+                preserve_srt_monitor=preserve,
+            )
         noise.wait(timeout=5)
         print(f'broker pid={broker.pid} alive={broker.poll() is None} noise reaped={noise.poll() is not None}')
     finally:
@@ -990,20 +993,17 @@ def test_verified_monitor_paths_refuses_invalid_node_probe(
         + ", String(process.pid));"
         + program
     )
-    launcher.write_text(
-        "#!/bin/sh\nexec "
-        + shlex.quote(str(harness.node))
-        + " --eval "
-        + shlex.quote(program)
-        + "\n"
-    )
+    launcher.write_text("#!/bin/sh\nexec " + shlex.quote(str(harness.node)) + ' "$@"\n')
     launcher.chmod(0o755)
     if failure == "missing":
         launcher.unlink()
     monkeypatch.setattr("gobby.agents.srt_monitor.shutil.which", lambda _name: str(launcher))
     monkeypatch.setattr("gobby.agents.srt_runtime.srt_install_root", lambda: harness.root)
 
-    assert srt_monitor.verified_monitor_paths() is None
+    if failure == "timeout":
+        monkeypatch.setattr(srt_monitor, "_PROBE_TIMEOUT_SECONDS", 0)
+    with ready_node_probes(program=program):
+        assert srt_monitor.verified_monitor_paths() is None
     assert pid_file.exists() is (failure != "missing")
     assert not pid_file.exists() or not psutil.pid_exists(int(pid_file.read_text()))
 
