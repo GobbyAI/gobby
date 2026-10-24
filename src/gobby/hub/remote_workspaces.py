@@ -79,6 +79,8 @@ async def expire_remote_workspaces(
                 logger.debug("Skipped expired remote %s %s: %s", kind, row.id, result)
         except NodeCommandError as exc:
             logger.debug("Skipped expired remote %s %s: %s", kind, row.id, exc)
+        except Exception:
+            logger.exception("Failed to clean up expired remote %s %s", kind, row.id)
 
 
 def _expired_remote_rows(db: HubDatabase) -> list[tuple[WorkspaceKind, Workspace]]:
@@ -139,10 +141,13 @@ def list_remote(
     project_id: str | None = None,
     status: str | None = None,
     agent_session_id: str | None = None,
-    limit: int | None = None,
+    limit: int | None = 50,
 ) -> list[Any]:
     conditions = ["machine_id = %s"]
     params: list[Any] = [machine_id]
+    if kind == "clone":
+        conditions.append("status != %s")
+        params.append("cleanup")
     if project_id:
         conditions.append("project_id = %s")
         params.append(project_id)
