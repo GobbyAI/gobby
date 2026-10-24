@@ -1,9 +1,11 @@
 """Password-free sessions require verified credentials and one-time links."""
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 from urllib.parse import urlsplit
 
 import pytest
@@ -11,6 +13,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.servers.http import HTTPServer
 from gobby.storage.auth import AuthStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -43,6 +46,7 @@ def sign_in_server(hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> HTTP
         front_door_secret=TEST_FRONT_DOOR_SECRET,
     )
     server.app.router.lifespan_context = FastAPI().router.lifespan_context
+    server.app.state.server = server
     return server
 
 
@@ -298,6 +302,109 @@ def test_managed_browser_can_replace_its_cookie_with_a_new_link(
         assert client.get(first, follow_redirects=False).status_code == 303
         assert client.get(second, follow_redirects=False).status_code == 303
         assert client.get("/api/auth/status").json() == {"authenticated": True}
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body"),
+    [
+        ("application/vnd.gobby+json", b'{"project_id":"foreign"}'),
+        ("APPLICATION/JSON; charset=utf-8", b'{"project_id":"foreign"}'),
+        (None, b'{"project_id":"foreign"}'),
+        ("text/plain", b'{"project_id":"foreign"}'),
+        ("application/json", b"{"),
+        ("application/json", b"\xff"),
+        ("application/json", b"[]"),
+        ("application/json", b"null"),
+        ("application/json", b"42"),
+        ("application/json", b'{"items":[{"projectId":"foreign"}]}'),
+    ],
+)
+def test_managed_browser_checks_every_get_body(
+    sign_in_server: HTTPServer,
+    managed_headers: dict[str, str],
+    content_type: str | None,
+    body: bytes,
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        headers = {} if content_type is None else {"Content-Type": content_type}
+        assert client.request("GET", "/api/tasks", content=body, headers=headers).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["application/json", "application/vnd.gobby+json", "APPLICATION/JSON; charset=utf-8"],
+)
+def test_managed_browser_allows_own_project_get_body(
+    sign_in_server: HTTPServer, managed_headers: dict[str, str], content_type: str
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        body = {"nested": [{"projectId": managed_headers["X-Gobby-Project-Id"]}]}
+        assert (
+            client.request(
+                "GET",
+                "/api/tasks",
+                content=json.dumps(body),
+                headers={"Content-Type": content_type},
+            ).status_code
+            == 200
+        )
+
+
+def test_managed_browser_checks_logout_before_revocation(
+    sign_in_server: HTTPServer, managed_headers: dict[str, str]
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        assert client.post("/api/auth/logout", json={"projectId": "foreign"}).status_code == 403
+        assert client.get("/api/auth/status").json()["authenticated"] is True
+        assert client.post("/api/auth/logout").status_code == 200
+        assert client.post("/api/auth/logout").status_code == 200
+
+
+def test_managed_browser_cannot_create_foreign_task_or_mcp_process(
+    sign_in_server: HTTPServer, hub_db: HubDatabase, managed_headers: dict[str, str]
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+
+    foreign = LocalProjectManager(hub_db).create("foreign-browser-project")
+    manager = MCPClientManager(server_configs=[])
+    sign_in_server.services.mcp_manager = manager
+    with (
+        TestClient(
+            sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+        ) as client,
+        patch.object(manager, "add_server", new=AsyncMock()) as add_server,
+    ):
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        assert (
+            client.post(
+                "/api/tasks", json={"title": "foreign task", "project_id": foreign.id}
+            ).status_code
+            == 403
+        )
+        response = client.post(
+            "/api/mcp/servers",
+            json={
+                "name": "manual-browser",
+                "transport": "stdio",
+                "command": "must-never-execute",
+                "project_id": managed_headers["X-Gobby-Project-Id"],
+            },
+        )
+        assert response.status_code == 403, response.text
+        add_server.assert_not_called()
 
 
 @pytest.mark.parametrize(

@@ -5,8 +5,58 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.browser_policy import enforce_browser_call, filter_browser_tools
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
+
+FILE_ARGUMENTS = [
+    ("get_network_request", "requestFilePath"),
+    ("get_network_request", "responseFilePath"),
+    ("take_screenshot", "filePath"),
+    ("take_snapshot", "filePath"),
+    ("performance_start_trace", "filePath"),
+    ("performance_stop_trace", "filePath"),
+    ("screencast_start", "path"),
+    ("browser_take_screenshot", "filename"),
+    ("browser_pdf_save", "filename"),
+]
+
+
+@pytest.mark.parametrize(("tool", "argument"), FILE_ARGUMENTS)
+def test_browser_refuses_host_file_arguments(
+    browser_manager: MCPClientManager, tool: str, argument: str
+) -> None:
+    config = browser_manager.server_configs[0]
+    with pytest.raises(ValueError, match="Loopback browser"):
+        enforce_browser_call(config, tool, {argument: "/tmp/host-output"})
+    enforce_browser_call(config, tool, {})
+
+
+@pytest.mark.parametrize(("tool", "argument"), FILE_ARGUMENTS)
+def test_browser_schema_drops_host_file_arguments(
+    browser_manager: MCPClientManager, tool: str, argument: str
+) -> None:
+    config = browser_manager.server_configs[0]
+    original: dict[str, Any] = {
+        "name": tool,
+        "inputSchema": {
+            "type": "object",
+            "properties": {argument: {"type": "string"}, "safe": {"type": "boolean"}},
+            "required": [argument],
+        },
+    }
+    filtered = filter_browser_tools(config, [original])
+    assert argument not in filtered[0]["inputSchema"]["properties"]
+    assert argument not in filtered[0]["inputSchema"].get("required", [])
+    assert "safe" in filtered[0]["inputSchema"]["properties"]
+    assert argument in original["inputSchema"]["properties"]
+
+
+def test_browser_refuses_memory_snapshot(browser_manager: MCPClientManager) -> None:
+    config = browser_manager.server_configs[0]
+    with pytest.raises(ValueError, match="Loopback browser"):
+        enforce_browser_call(config, "take_memory_snapshot", {"filePath": "/tmp/host-heap"})
+    assert filter_browser_tools(config, [{"name": "take_memory_snapshot"}]) == []
 
 
 @pytest.fixture

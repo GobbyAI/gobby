@@ -285,8 +285,10 @@ class AuthService:
                 request.client is None
                 or not is_loopback_host(request.client.host)
                 or not is_loopback_host(request.url.hostname or "")
-                or not browser_route_allowed(
-                    str(request.scope.get("method", "GET")), request_path(request)
+                or not (
+                    request_path(request) == "/ws"
+                    if request.scope["type"] == "websocket"
+                    else browser_route_allowed(str(request.scope["method"]), request_path(request))
                 )
             ):
                 return AuthDecision(

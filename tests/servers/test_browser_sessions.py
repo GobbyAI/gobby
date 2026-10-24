@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.servers.browser_sessions import PREFIX, BrowserSessions
+from gobby.servers.browser_sessions import PREFIX, BrowserSessions, browser_route_allowed
 from gobby.utils.local_token import AgentApiTokenClaims
 
 
@@ -35,3 +35,30 @@ def test_browser_cookie_provenance_expiry_logout_and_restart() -> None:
 @pytest.mark.parametrize("token", [PREFIX + "body.é", PREFIX + "body.bad", PREFIX + "x" * 8192])
 def test_malformed_browser_cookie_is_refused(token: str) -> None:
     assert BrowserSessions().get(token) is None
+
+
+@pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "DELETE"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/mcp/servers",
+        "/api/mcp/call",
+        "/api/agents/spawn",
+        "/api/pipelines/run",
+        "/api/cron/jobs",
+        "/api/skills/install",
+        "/api/rules/import",
+        "/api/hooks/execute",
+        "/api/config",
+        "/api/secrets",
+        "/api/bootstrap",
+        "/api/settings",
+        "/api/users",
+        "/api/auth/password",
+        "/api/projects/register",
+        "/api/projects/own/checkouts",
+        "/api/unknown-future-action",
+    ],
+)
+def test_browser_mutations_are_denied_by_default(method: str, path: str) -> None:
+    assert browser_route_allowed(method, path) is False

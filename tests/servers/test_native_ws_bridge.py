@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,7 +31,12 @@ from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.users import LocalUserManager
-from gobby.utils.local_token import derive_managed_signing_key, issue_agent_api_token
+from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.utils.local_token import (
+    AgentApiTokenClaims,
+    derive_managed_signing_key,
+    issue_agent_api_token,
+)
 from gobby.utils.machine_id import get_machine_id
 from tests.fixtures.postgres import TEST_USER_ID, TEST_USER_PASSWORD_HASH
 
@@ -363,6 +369,90 @@ def test_browser_cookie_owner_is_bound_as_caller(
         welcome = websocket.receive_json()
         assert welcome["user_id"].startswith("local-web-")
     assert outcomes == {hub: "ok", remote: "ok"}
+
+
+def test_testing_cookie_bridge_refuses_actions_and_preserves_observation(
+    temp_db: HubDatabase, bridge_auth: AuthService, db_executor: DatabaseExecutor
+) -> None:
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    claims = AgentApiTokenClaims(
+        "bound-session",
+        "bound-project",
+        machine_id,
+        1,
+        int(time.time()) + 3600,
+        agent_run_id="run",
+    )
+    cookie = bridge_auth.browser_sessions.create(TEST_USER_ID, claims)
+    websocket_server = _ws_server(bridge_auth, _Publisher(), db_executor)
+    websocket_server.terminal_manager = None
+    websocket_server.lease_registry = TerminalLeaseRegistry()
+    with (
+        patch.object(bridge_auth, "_managed_capability_is_live", return_value=True),
+        patch("gobby.terminals.web_spawn.spawn_web_terminal", new=AsyncMock()) as spawn,
+        patch.object(websocket_server, "_handle_tool_call", new=AsyncMock()) as tools,
+        patch.object(websocket_server, "_cleanup_terminal_client", new=AsyncMock()),
+    ):
+        client = _client(websocket_server, bridge_auth, database=temp_db)
+        # The real signed browser-testing cookie passes entry=browser admission.
+        with client.websocket_connect(
+            "ws://127.0.0.1:43210/_gobby/ws/bridge",
+            headers=_headers(extra={"Cookie": f"gobby_session={cookie}"}),
+        ) as websocket:
+            assert websocket.receive_json() == _ready(admitted=True)
+            assert websocket.receive_json()["type"] == "connection_established"
+            for message_type in [
+                "terminal_create",
+                "terminal_input",
+                "tool_call",
+                "chat_message",
+                "send_to_cli_session",
+                "terminal_paste",
+                "workspace_op",
+                "unknown_future_action",
+            ]:
+                websocket.send_json({"type": message_type, "command": ["must-never-execute"]})
+                response = websocket.receive_json()
+                assert response["type"] == "error", (message_type, response)
+                assert "Browser" in response["message"], (message_type, response)
+            websocket.send_json({"type": "ping"})
+            assert websocket.receive_json()["type"] == "pong"
+            websocket.send_json({"type": "terminal_list", "project_id": claims.project_id})
+            assert websocket.receive_json()["type"] == "terminal_list"
+            selectors: list[dict[str, Any]] = [
+                {"project_id": "foreign"},
+                {"nested": [{"projectId": "foreign"}]},
+                {"session_id": "foreign"},
+                {"nested": {"sessionId": "foreign"}},
+                {"conversation_id": "foreign"},
+            ]
+            for selector in selectors:
+                websocket.send_json({"type": "terminal_list", **selector})
+                response = websocket.receive_json()
+                assert response["type"] == "error"
+                assert "Browser" in response["message"]
+        spawn.assert_not_called()
+        tools.assert_not_called()
+
+
+def test_testing_cookie_bridge_refuses_http_paths_as_ws_entries(
+    temp_db: HubDatabase, bridge_auth: AuthService, db_executor: DatabaseExecutor
+) -> None:
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    claims = AgentApiTokenClaims(
+        "session", "project", machine_id, 1, int(time.time()) + 3600, agent_run_id="run"
+    )
+    cookie = bridge_auth.browser_sessions.create(TEST_USER_ID, claims)
+    server = _ws_server(bridge_auth, _Publisher(), db_executor)
+    with patch.object(bridge_auth, "_managed_capability_is_live", return_value=True):
+        client = _client(server, bridge_auth, database=temp_db)
+        with client.websocket_connect(
+            "ws://127.0.0.1:43210/_gobby/ws/bridge",
+            headers=_headers(path="/api/tasks", extra={"Cookie": f"gobby_session={cookie}"}),
+        ) as websocket:
+            assert websocket.receive_json()["admitted"] is False
 
 
 def test_browser_decision_without_owner_answers_machine_not_owned(

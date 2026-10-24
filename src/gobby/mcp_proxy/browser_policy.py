@@ -1,11 +1,17 @@
 """Agent-facing restrictions for the bundled loopback browser transports."""
 
+from copy import deepcopy
 from typing import Any
 from urllib.parse import urlsplit
 
 from gobby.mcp_proxy.models import MCPServerConfig
 
-_UNSAFE_TOOLS = frozenset({"browser_run_code", "browser_file_upload", "upload_file"})
+_UNSAFE_TOOLS = frozenset(
+    {"browser_run_code", "browser_file_upload", "upload_file", "take_memory_snapshot"}
+)
+_HOST_PATH_ARGUMENTS = frozenset(
+    {"requestFilePath", "responseFilePath", "filePath", "path", "filename"}
+)
 _NAVIGATION_TOOLS = frozenset({"browser_navigate", "navigate_page", "new_page"})
 
 
@@ -14,7 +20,21 @@ def filter_browser_tools(
 ) -> list[dict[str, Any]]:
     if config is None or config.runtime_hook != "loopback_browser":
         return tools
-    return [tool for tool in tools if tool.get("name") not in _UNSAFE_TOOLS]
+    filtered = []
+    for tool in tools:
+        if tool.get("name") in _UNSAFE_TOOLS:
+            continue
+        tool = deepcopy(tool)
+        schema = tool.get("inputSchema", {})
+        properties = schema.get("properties", {})
+        for argument in _HOST_PATH_ARGUMENTS:
+            properties.pop(argument, None)
+        if "required" in schema:
+            schema["required"] = [
+                name for name in schema["required"] if name not in _HOST_PATH_ARGUMENTS
+            ]
+        filtered.append(tool)
+    return filtered
 
 
 def enforce_browser_call(
@@ -24,6 +44,8 @@ def enforce_browser_call(
         return
     if name in _UNSAFE_TOOLS:
         raise ValueError("Loopback browser refuses host code and file uploads")
+    if _HOST_PATH_ARGUMENTS.intersection(arguments):
+        raise ValueError("Loopback browser refuses host file paths")
     if name not in _NAVIGATION_TOOLS:
         return
     url = arguments.get("url")

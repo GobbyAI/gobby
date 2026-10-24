@@ -45,11 +45,16 @@ Do not attach to an existing Chrome instance or reuse a user's profile.
    proof. A new MCP process starts with no prior cookies or local storage.
 
 Managed browser sessions lose access when their run ends and cannot mint API
-keys or more sign-in links, change users/authentication or configuration secrets,
-or register projects. Normal UI read/action APIs remain available in the bound
-project. Project selectors must match; individual object-ID routes retain their
+keys or more sign-in links. HTTP access is read-only (GET/HEAD/OPTIONS), except
+POST `/api/auth/logout`; all other mutations are refused before dispatch.
+WebSocket access permits only ping/heartbeat, subscriptions, terminal list/attach/
+detach/focus/viewport/scroll, and workspace attach/snapshot. Commands, input,
+chat, tool calls, and other messages are refused. Project and session selectors
+must match the signed claims; individual object-ID routes retain their
 existing authorization checks. The shared MCP manager also refuses host-code
-execution, uploads and non-HTTP(S) loopback navigation, including `file://`.
+execution, uploads, memory snapshots, caller-chosen file output paths, and
+non-HTTP(S) loopback navigation, including `file://`. Omit filename/filePath/path
+arguments for screenshots, snapshots, PDFs, traces, and network captures.
 
 Treat the URL as a short-lived credential: pass it only as a browser tool input,
 never a Chrome process argument, repository file, screenshot, or saved trace.

@@ -445,6 +445,7 @@ class WebSocketServer(
         database: Any = None,
     ) -> None:
         """Run the public WebSocket connection lifecycle entry point."""
+        websocket.browser_session = getattr(decision, "browser_session", None)
         token = self._bind_connection_caller(websocket, decision, database)
         try:
             await self._handle_connection(websocket)
@@ -487,6 +488,22 @@ class WebSocketServer(
 
         data = cast(dict[str, Any], data)
         msg_type = data.get("type")
+
+        from gobby.servers.browser_sessions import BROWSER_WS_MESSAGES, browser_selectors_match
+
+        browser = getattr(websocket, "browser_session", None)
+        if browser is not None:
+            if (
+                not isinstance(msg_type, str)
+                or msg_type not in BROWSER_WS_MESSAGES
+                or not browser_selectors_match(
+                    data, browser.claims.project_id, browser.claims.session_id
+                )
+            ):
+                await self._send_error(websocket, "Browser message refused")
+                return
+            # Bind implicit project resolution to the signed claim too.
+            self.clients[websocket]["project_id"] = browser.claims.project_id
 
         # Lazily initialize dispatch table
         if not self._dispatch_table:

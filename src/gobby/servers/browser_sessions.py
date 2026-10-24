@@ -79,15 +79,48 @@ class BrowserSessions:
 
 
 def browser_route_allowed(method: str, path: str) -> bool:
-    """Allow ordinary UI actions while refusing new authority and configuration."""
+    """Browser-testing sessions can observe the UI and revoke their own cookie."""
     if path.startswith("/api/auth/"):
         return (method, path) in {("GET", "/api/auth/status"), ("POST", "/api/auth/logout")}
     if path == "/api/users" or path.startswith("/api/users/"):
         return False
-    if method not in {"GET", "HEAD", "OPTIONS"} and (
-        path.startswith(("/api/config", "/api/secrets", "/api/bootstrap", "/api/settings"))
-        or path in {"/api/projects", "/api/projects/init", "/api/projects/register"}
-        or (path.startswith("/api/projects/") and "/checkouts" in path)
-    ):
-        return False
+    return method in {"GET", "HEAD", "OPTIONS"}
+
+
+def browser_selectors_match(body: object, project_id: str, session_id: str | None = None) -> bool:
+    """Check selectors at every nesting depth before dispatching untrusted input."""
+    pending = [body]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {"project_id", "projectId"} and item != project_id:
+                    return False
+                if (
+                    session_id is not None
+                    and key in {"session_id", "sessionId", "conversation_id"}
+                    and item != session_id
+                ):
+                    return False
+                pending.append(item)
+        elif isinstance(value, list):
+            pending.extend(value)
     return True
+
+
+BROWSER_WS_MESSAGES = frozenset(
+    {
+        "ping",
+        "heartbeat",
+        "subscribe",
+        "unsubscribe",
+        "terminal_list",
+        "terminal_attach",
+        "terminal_detach",
+        "terminal_focus",
+        "terminal_set_viewport",
+        "terminal_set_scroll_offset",
+        "workspace_attach",
+        "workspace_snapshot",
+    }
+)

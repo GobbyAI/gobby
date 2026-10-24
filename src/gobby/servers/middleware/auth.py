@@ -5,7 +5,9 @@ Only login, health, startup readiness, signature-verified webhooks, and static
 browser assets are public. Other browser routes reach the SPA login shell.
 """
 
+import json
 import logging
+from email.message import Message
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -16,6 +18,7 @@ from starlette.responses import Response
 from gobby.hub.caller_scope import bind_decision, reset_caller
 from gobby.servers.auth_service import request_path
 from gobby.servers.browser_sessions import PREFIX as BROWSER_COOKIE_PREFIX
+from gobby.servers.browser_sessions import browser_selectors_match
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
 from gobby.utils.project_context import reset_project_context, set_project_context
@@ -74,10 +77,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request_path(request)
 
-        if path == "/api/auth/sign-in" or path == "/api/auth/logout":
-            # These routes consume an independently authorized link or discard authority.
+        if path == "/api/auth/sign-in":
+            # The exchange consumes an independently authorized one-time link.
             return await call_next(request)
         browser_cookie = request.cookies.get("gobby_session", "").startswith(BROWSER_COOKIE_PREFIX)
+        if not browser_cookie and path == "/api/auth/logout":
+            return await call_next(request)
         if not browser_cookie and (
             path in _PUBLIC_PATHS
             or any(_matches_path_prefix(path, prefix) for prefix in _PUBLIC_PREFIXES)
@@ -117,15 +122,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 for value in request.headers.getlist("x-gobby-session-id")
             ):
                 return JSONResponse(status_code=403, content={"error": "Browser session mismatch"})
-            if request.headers.get("content-type", "").startswith("application/json"):
+            raw_body = await request.body()
+            if raw_body:
+                media = Message()
+                media["content-type"] = request.headers.get("content-type", "")
+                subtype = media.get_content_subtype()
+                if media.get_content_maintype() != "application" or not (
+                    subtype == "json" or subtype.endswith("+json")
+                ):
+                    return JSONResponse(status_code=403, content={"error": "Browser body refused"})
                 try:
-                    body = await request.json()
-                except (ValueError, UnicodeError):
-                    body = None
-                if isinstance(body, dict):
-                    selectors.extend(
-                        body[key] for key in ("project_id", "projectId") if key in body
-                    )
+                    body = json.loads(raw_body)
+                except (ValueError, UnicodeError, RecursionError):
+                    return JSONResponse(status_code=403, content={"error": "Browser body refused"})
+                if not isinstance(body, dict) or not browser_selectors_match(body, project_id):
+                    return JSONResponse(status_code=403, content={"error": "Browser body refused"})
             if any(value != project_id for value in selectors):
                 return JSONResponse(status_code=403, content={"error": "Browser project mismatch"})
         if decision.allowed:
@@ -148,6 +159,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 if project_token is not None:
                     reset_project_context(project_token)
 
+        if (
+            browser_cookie
+            and request.method == "POST"
+            and path == "/api/auth/logout"
+            and decision.code == "session_invalid"
+        ):
+            # Invalid or expired cookies may only discard their stale authority.
+            return await call_next(request)
         if browser_cookie and path == "/api/auth/status":
             return JSONResponse(content={"authenticated": False})
 

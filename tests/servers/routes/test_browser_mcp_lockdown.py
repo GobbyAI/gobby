@@ -35,7 +35,8 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.timeout(240, method="thread"),
     pytest.mark.skipif(
-        bool(os.environ.get("SANDBOX_RUNTIME"))
+        os.environ.get("GOBBY_BROWSER_PROOF") != "1"
+        or bool(os.environ.get("SANDBOX_RUNTIME"))
         or shutil.which("npx") is None
         or resolve_chrome_devtools_executable_path() is None,
         reason="Browser proof requires npx and Chrome on the unsandboxed host",
@@ -169,6 +170,15 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                     for forbidden, arguments in forbidden_calls:
                         with pytest.raises(ValueError, match="Loopback browser"):
                             await call(forbidden, arguments, f"refuse {forbidden}")
+                    if browser == "chrome-devtools":
+                        screenshot = tmp_path / "forbidden-screenshot.png"
+                        with pytest.raises(ValueError, match="Loopback browser"):
+                            await call(
+                                "take_screenshot",
+                                {"filePath": str(screenshot)},
+                                "refuse host screenshot path",
+                            )
+                        assert not screenshot.exists()
 
                     async def navigate(url: str) -> Any:
                         step = f"navigate {urlsplit(url).scheme}://{urlsplit(url).netloc}{urlsplit(url).path}"
