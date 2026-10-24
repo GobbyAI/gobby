@@ -13,6 +13,8 @@ from starlette.requests import HTTPConnection
 
 from gobby.config.bootstrap import is_loopback_host
 from gobby.identity import DUMMY_PASSWORD_HASH, verify_password_hash
+from gobby.servers.browser_sessions import PREFIX as BROWSER_COOKIE_PREFIX
+from gobby.servers.browser_sessions import BrowserSessions, browser_route_allowed
 from gobby.servers.grant_auth import (
     GRANT_HEADER,
     AuthDecision,
@@ -230,6 +232,7 @@ class AuthService:
         self._bootstrap_file = bootstrap_file
         self._managed_key_stamp: tuple[Path, int, int, int] | None = None
         self._managed_key: bytes | None = None
+        self.browser_sessions = BrowserSessions()
 
     def managed_signing_key(self) -> bytes | None:
         """Observe bootstrap replacement on the next request, without a refresh interval."""
@@ -273,6 +276,28 @@ class AuthService:
         return self.authenticate(request).allowed
 
     def authenticate(self, request: HTTPConnection) -> AuthDecision:
+        cookie = request.cookies.get(_SESSION_COOKIE, "")
+        if cookie.startswith(BROWSER_COOKIE_PREFIX):
+            browser = self.browser_sessions.get(cookie)
+            if browser is None or not self._managed_capability_is_live(browser.claims):
+                return AuthDecision(allowed=False, code="session_invalid")
+            if (
+                request.client is None
+                or not is_loopback_host(request.client.host)
+                or not is_loopback_host(request.url.hostname or "")
+                or not browser_route_allowed(
+                    str(request.scope.get("method", "GET")), request_path(request)
+                )
+            ):
+                return AuthDecision(
+                    allowed=False, code="browser_authority_refused", status_code=403
+                )
+            return AuthDecision(
+                allowed=True,
+                user_id=browser.user_id,
+                machine_id=browser.claims.machine_id,
+                browser_session=browser,
+            )
         grant_route = match_grant_route(
             str(request.scope.get("method", "GET")),
             request_path(request),
@@ -533,6 +558,9 @@ class AuthService:
     def validate_session(self, token: str) -> bool:
         if not token:
             return False
+        if token.startswith(BROWSER_COOKIE_PREFIX):
+            browser = self.browser_sessions.get(token)
+            return browser is not None and self._managed_capability_is_live(browser.claims)
         return AuthStore(self._database_getter()).validate_session(token)
 
     def verify_password(self, email: str, password: str) -> User | None:

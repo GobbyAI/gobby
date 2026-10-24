@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -17,16 +18,26 @@ import uvicorn
 import yaml
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, RedirectResponse
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 
-from gobby.mcp_proxy.bundled import resolve_runtime_stdio_args
+from gobby.mcp_proxy.bundled import resolve_chrome_devtools_executable_path
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.servers.http import HTTPServer
 from tests.servers.routes.test_browser_sign_in import managed_headers, sign_in_server
 
 # Importing fixtures makes the isolated DB/HTTPServer shared by both acceptance files.
 __all__ = ["managed_headers", "sign_in_server"]
 ROOT = Path(__file__).resolve().parents[3]
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.e2e,
+    pytest.mark.skipif(
+        bool(os.environ.get("SANDBOX_RUNTIME"))
+        or shutil.which("npx") is None
+        or resolve_chrome_devtools_executable_path() is None,
+        reason="Browser proof requires npx and Chrome on the unsandboxed host",
+    ),
+]
 
 
 @asynccontextmanager
@@ -73,7 +84,6 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
     args = template["args"]
     assert "--isolated" in args, "each MCP must launch a fresh profile"
     assert all("@latest" not in arg for arg in args), "browser dependencies must be exact pins"
-    runtime_args = resolve_runtime_stdio_args(template["runtime_hook"], args)
     page_app = FastAPI()
 
     @page_app.get("/")
@@ -91,9 +101,14 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
             link = mint.json()["url"]
         # Run twice: the second launch must have neither cookies nor localStorage.
         for launch in range(2):
-            params = StdioServerParameters(
+            config = MCPServerConfig(
+                id=browser,
+                name=browser,
+                project_id="browser-proof",
+                transport="stdio",
                 command="npx",
-                args=[*runtime_args, "--headless"],
+                args=[*args, "--headless"],
+                runtime_hook=template["runtime_hook"],
                 # macOS SingletonSocket has a short Unix-socket path limit.
                 env={
                     **os.environ,
@@ -103,24 +118,42 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                     "CI": "1",
                 },
             )
+            manager = MCPClientManager(server_configs=[config])
             async with asyncio.timeout(120):
-                async with (
-                    stdio_client(params) as (read, write),
-                    ClientSession(read, write) as session,
-                ):
-                    await session.initialize()
+                try:
+                    inventory = (await manager.list_tools(browser))[browser]
+                    assert not {"browser_run_code", "browser_file_upload", "upload_file"} & {
+                        tool["name"] for tool in inventory
+                    }
+                    forbidden_calls: list[tuple[str, dict[str, Any]]] = [
+                        (
+                            "browser_run_code",
+                            {
+                                "code": "async (page) => page.context().browser().newContext({proxy:{server:'http://127.0.0.1:9',bypass:'*'}})"
+                            },
+                        ),
+                        ("browser_file_upload", {"paths": ["/etc/hosts"]}),
+                        ("upload_file", {"filePath": "/etc/hosts", "uid": "1"}),
+                    ]
+                    for forbidden, arguments in forbidden_calls:
+                        with pytest.raises(ValueError, match="Loopback browser"):
+                            await manager.call_tool(browser, forbidden, arguments)
 
-                    async def navigate(url: str) -> Any:
+                    async def navigate(url: str, proxy: MCPClientManager = manager) -> Any:
                         if browser == "playwright":
-                            return await session.call_tool("browser_navigate", {"url": url})
-                        return await session.call_tool("navigate_page", {"type": "url", "url": url})
+                            return await proxy.call_tool(browser, "browser_navigate", {"url": url})
+                        return await proxy.call_tool(
+                            browser, "navigate_page", {"type": "url", "url": url}
+                        )
 
-                    async def evaluate(function: str) -> str:
+                    async def evaluate(function: str, proxy: MCPClientManager = manager) -> str:
                         name = "browser_evaluate" if browser == "playwright" else "evaluate_script"
-                        return rendered(await session.call_tool(name, {"function": function}))
+                        return rendered(
+                            await proxy.call_tool(browser, name, {"function": function})
+                        )
 
                     if browser == "chrome-devtools":
-                        initial = await session.call_tool("new_page", {"url": vite})
+                        initial = await manager.call_tool(browser, "new_page", {"url": vite})
                     else:
                         initial = await navigate(vite)
                     assert not initial.is_error, rendered(initial)
@@ -145,6 +178,9 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                         )
                         commands, _ = await process.communicate()
                         assert link.split("token=", 1)[1].encode() not in commands
+                        assert (
+                            b"--proxy-bypass-list=<-loopback>;127.0.0.1;[::1];localhost" in commands
+                        )
                         await evaluate(
                             "async () => (await fetch('/api/auth/logout', {method:'POST'})).json()"
                         )
@@ -153,12 +189,26 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                         )
                     await navigate(vite)
                     # no-cors succeeds for unrestricted cross-origin requests; CORS cannot fake this refusal.
-                    for external in ["https://example.com/", "http://1.1.1.1/"]:
+                    for external in [
+                        "https://example.com/",
+                        "http://1.1.1.1/",
+                        "http://169.254.169.254/",
+                        "http://[fe80::1]/",
+                    ]:
                         function = f"async () => {{ try {{ await fetch({json.dumps(external)}, {{mode:'no-cors', signal:AbortSignal.timeout(8000)}}); return 'escaped'; }} catch(e) {{ return 'blocked'; }} }}"
                         assert "blocked" in await evaluate(function)
-                        result = await navigate(external)
-                        assert result.is_error or "ERR_" in rendered(result)
+                        with pytest.raises(ValueError, match="Loopback browser"):
+                            await navigate(external)
                         await navigate(vite)
+                    secret_file = tmp_path / "browser-file-proof.txt"
+                    secret_file.write_text("host-file-must-not-load")
+                    with pytest.raises(ValueError, match="Loopback browser"):
+                        await navigate(secret_file.as_uri())
+                    for target in ["ws://169.254.169.254/", "ws://[fe80::1]/"]:
+                        function = f"() => new Promise(resolve => {{ const ws = new WebSocket({json.dumps(target)}); const timer = setTimeout(() => {{ ws.close(); resolve('blocked'); }}, 8000); ws.onopen = () => {{ clearTimeout(timer); ws.close(); resolve('escaped'); }}; ws.onerror = () => {{ clearTimeout(timer); resolve('blocked'); }}; }})"
+                        assert "blocked" in await evaluate(function)
                     redirected = await navigate(f"{vite}/redirect")
                     assert redirected.is_error or "ERR_" in rendered(redirected)
+                finally:
+                    await manager.disconnect_all()
         assert link.split("token=", 1)[1] not in caplog.text

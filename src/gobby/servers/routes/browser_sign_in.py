@@ -191,6 +191,7 @@ def create_browser_sign_in_router(server: HTTPServer) -> APIRouter:
                 content={"error": "Invalid or expired sign-in link"},
                 headers=_NO_STORE,
             )
+        claims = None
         if link.managed_headers is not None:
             scope = dict(request.scope)
             scope.update(
@@ -208,17 +209,28 @@ def create_browser_sign_in_router(server: HTTPServer) -> APIRouter:
                     content={"error": "Minting run is no longer authorized"},
                     headers=_NO_STORE,
                 )
-        store = AuthStore(require_hub_database(server.services.database))
-        session_token, _ = await server.run_db(
-            store.create_session,
-            link.principal.user_id,
-            duration=timedelta(seconds=_SESSION_SECONDS),
-        )
-        row = await server.run_db(
-            store.db.fetchone,
-            "SELECT id FROM auth_sessions WHERE token_hash = %s",
-            (hash_token(session_token),),
-        )
+            claims = await server.run_db(server.auth_service.verified_agent_claims, Request(scope))
+            if claims is None:
+                return JSONResponse(
+                    status_code=401, content={"error": "Run expired"}, headers=_NO_STORE
+                )
+        row = None
+        if claims is not None:
+            session_token = server.auth_service.browser_sessions.create(
+                link.principal.user_id, claims
+            )
+        else:
+            store = AuthStore(require_hub_database(server.services.database))
+            session_token, _ = await server.run_db(
+                store.create_session,
+                link.principal.user_id,
+                duration=timedelta(seconds=_SESSION_SECONDS),
+            )
+            row = await server.run_db(
+                store.db.fetchone,
+                "SELECT id FROM auth_sessions WHERE token_hash = %s",
+                (hash_token(session_token),),
+            )
         response = RedirectResponse("/", status_code=303, headers=_NO_STORE)
         response.set_cookie(
             "gobby_session",

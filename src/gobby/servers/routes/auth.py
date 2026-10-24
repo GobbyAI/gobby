@@ -182,6 +182,7 @@ def create_auth_router(server: "HTTPServer", login_rate_limiter: LoginRateLimite
         """Clear session cookie and delete session."""
         token = request.cookies.get(COOKIE_NAME)
         if token:
+            server.auth_service.browser_sessions.revoke(token)
             auth_store = _get_auth_store(server)
             await server.run_db(auth_store.delete_session, token)
 

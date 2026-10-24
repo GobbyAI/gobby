@@ -203,3 +203,116 @@ def test_managed_run_can_mint_but_dead_or_forged_run_cannot(
         )
         assert client.post("/api/auth/sign-in-link", headers=managed_headers).status_code == 401
         assert client.get(minted.json()["url"], follow_redirects=False).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("POST", "/api/auth/keys"),
+        ("GET", "/api/auth/keys"),
+        ("POST", "/api/configuration/secrets"),
+        ("PUT", "/api/configuration"),
+        ("POST", "/api/projects/init"),
+        ("POST", "/api/users"),
+        ("POST", "/api/config/secrets"),
+        ("PATCH", "/api/config/values"),
+        ("DELETE", "/api/auth/keys/key-id"),
+        ("POST", "/api/auth/login"),
+        ("POST", "/api/projects/{project_id}/checkouts"),
+    ],
+)
+def test_managed_browser_refuses_operator_authority(
+    sign_in_server: HTTPServer, managed_headers: dict[str, str], method: str, path: str
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert minted.status_code == 200
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        target = path.replace("{project_id}", managed_headers["X-Gobby-Project-Id"])
+        response = client.request(method, target, json={"label": "must-not-mint"})
+        assert response.status_code == 403
+        assert client.post("/api/auth/sign-in-link").status_code in {401, 403}
+
+
+def test_managed_browser_revokes_on_run_end(
+    sign_in_server: HTTPServer, hub_db: HubDatabase, managed_headers: dict[str, str]
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert minted.status_code == 200
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        assert client.get("/api/auth/status").json() == {"authenticated": True}
+        hub_db.execute(
+            "UPDATE agent_runs SET status = 'completed' WHERE id = %s",
+            (managed_headers["X-Gobby-Agent-Run-Id"],),
+        )
+        assert client.get("/api/auth/status").json() == {"authenticated": False}
+        assert client.get("/api/tasks").status_code == 401
+
+
+def test_managed_browser_has_distinct_cookie_and_project_context(
+    sign_in_server: HTTPServer, hub_db: HubDatabase, managed_headers: dict[str, str]
+) -> None:
+    from gobby.storage.auth import hash_token
+
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        minted = client.post("/api/auth/sign-in-link", headers=managed_headers)
+        assert minted.status_code == 200
+        assert client.get(minted.json()["url"], follow_redirects=False).status_code == 303
+        token = client.cookies["gobby_session"]
+        assert (
+            hub_db.fetchone(
+                "SELECT id FROM auth_sessions WHERE token_hash = %s", (hash_token(token),)
+            )
+            is None
+        )
+        assert AuthStore(hub_db).session_user_id(token) is None
+        assert client.get("/api/tasks").status_code == 200
+        assert (
+            client.get(
+                "/api/tasks", params={"project_id": "00000000-0000-4000-8000-000000000001"}
+            ).status_code
+            == 403
+        )
+        assert client.post("/api/auth/sign-in-link").status_code in {401, 403}
+        assert client.post("/api/auth/logout").status_code == 200
+        assert client.get("/api/auth/status").json() == {"authenticated": False}
+        client.cookies.set("gobby_session", token)
+        assert client.get("/api/auth/status").json() == {"authenticated": False}
+
+
+def test_managed_browser_can_replace_its_cookie_with_a_new_link(
+    sign_in_server: HTTPServer, managed_headers: dict[str, str]
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        first = client.post("/api/auth/sign-in-link", headers=managed_headers).json()["url"]
+        second = client.post("/api/auth/sign-in-link", headers=managed_headers).json()["url"]
+        assert client.get(first, follow_redirects=False).status_code == 303
+        assert client.get(second, follow_redirects=False).status_code == 303
+        assert client.get("/api/auth/status").json() == {"authenticated": True}
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/projects/00000000-0000-4000-8000-000000000001"),
+        ("POST", "/api/projects/00000000-0000-4000-8000-000000000001/checkouts"),
+    ],
+)
+def test_managed_browser_refuses_foreign_project_paths(
+    sign_in_server: HTTPServer, managed_headers: dict[str, str], method: str, path: str
+) -> None:
+    with TestClient(
+        sign_in_server.app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)
+    ) as client:
+        link = client.post("/api/auth/sign-in-link", headers=managed_headers).json()["url"]
+        assert client.get(link, follow_redirects=False).status_code == 303
+        assert client.request(method, path, json={}).status_code == 403

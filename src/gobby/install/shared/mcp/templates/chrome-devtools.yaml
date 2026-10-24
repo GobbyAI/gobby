@@ -11,7 +11,7 @@ args:
   - "--no-performance-crux"
   - "--isolated"
   - "--proxy-server=http://127.0.0.1:9"
-  - "--chrome-arg=--proxy-bypass-list=127.0.0.1;[::1];localhost"
+  - "--chrome-arg=--proxy-bypass-list=<-loopback>;127.0.0.1;[::1];localhost"
   - "--chrome-arg=--disable-quic"
   - "--chrome-arg=--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
 runtime_hook: loopback_browser

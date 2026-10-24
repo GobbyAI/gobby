@@ -35,12 +35,21 @@ Do not attach to an existing Chrome instance or reuse a user's profile.
    store or transmit an operator password.
 3. Open the returned URL using `browser_navigate` (Playwright) or `navigate_page`
    (Chrome DevTools). The server consumes the link and redirects to `/`, setting
-   a normal HttpOnly session cookie. Verify an authenticated page or
+   an HttpOnly session cookie. Managed links create a signed browser-testing
+   session bound to the minting run and project; operator links use the normal
+   operator session. Verify an authenticated page or
    `/api/auth/status` before testing.
 4. The link expires after 120 seconds and works once, on its exact loopback
    origin. Mint another if it expires. The browser session expires after one
    hour; `/api/auth/logout` revokes it immediately. Close the browser after the
    proof. A new MCP process starts with no prior cookies or local storage.
+
+Managed browser sessions lose access when their run ends and cannot mint API
+keys or more sign-in links, change users/authentication or configuration secrets,
+or register projects. Normal UI read/action APIs remain available in the bound
+project. Project selectors must match; individual object-ID routes retain their
+existing authorization checks. The shared MCP manager also refuses host-code
+execution, uploads and non-HTTP(S) loopback navigation, including `file://`.
 
 Treat the URL as a short-lived credential: pass it only as a browser tool input,
 never a Chrome process argument, repository file, screenshot, or saved trace.

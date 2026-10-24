@@ -13,6 +13,6 @@ args:
   - "--isolated"
   - "--block-service-workers"
   - "--proxy-server=http://127.0.0.1:9"
-  - "--proxy-bypass=127.0.0.1,[::1],localhost"
+  - "--proxy-bypass=<-loopback>,127.0.0.1,[::1],localhost"
   - "--allowed-origins=127.0.0.1:*;localhost:*;[::1]:*"
 runtime_hook: loopback_browser

@@ -676,7 +676,9 @@ class HTTPServer:
         # Look up project from .gobby/project.json
         from gobby.utils.project_context import get_project_context
 
-        project_context = get_project_context(working_dir)
+        project_context = get_project_context() if cwd is None else None
+        if project_context is None:
+            project_context = get_project_context(working_dir)
         if project_context and project_context.get("id"):
             return str(project_context["id"])
 
