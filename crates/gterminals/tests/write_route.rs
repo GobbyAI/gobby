@@ -1037,6 +1037,51 @@ async fn a_second_acquire_waits_for_the_active_hold_to_release() -> anyhow::Resu
     Ok(())
 }
 
+#[tokio::test]
+async fn a_waiter_from_a_retired_token_is_refused_and_takes_no_hold() -> anyhow::Result<()> {
+    let fx = fixture().await?;
+    let t = fx.terminal;
+    let (_attachment, lease) = claim(&fx.leases, t).await?;
+
+    let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
+    let first = fx.route.handle(&fx.authority(), acquire.clone()).await;
+    assert_eq!(first["status"], "held", "{first}");
+    let hold = first["hold"].clone();
+
+    let route = fx.route.clone();
+    let old = fx.authority();
+    let waiting = acquire.clone();
+    let waiter = tokio::spawn(async move { route.handle(&old, waiting).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !waiter.is_finished(),
+        "a second acquire waits behind the held gate"
+    );
+
+    // The rotation retires the waiter's token. The first hold then releases,
+    // which frees the gate, but the stale reply reports the release as stale.
+    let _rotated = fx.token.install("token-2".into());
+    let released = fx
+        .route
+        .handle(
+            &fx.authority(),
+            json!({"call": "release_action", "hold": hold}),
+        )
+        .await;
+    assert_eq!(refusal_code(&released), "stale_hold", "{released}");
+
+    let waited = tokio::time::timeout(Duration::from_secs(5), waiter).await??;
+    assert_eq!(refusal_code(&waited), "retired_token", "{waited}");
+
+    let current = tokio::time::timeout(
+        Duration::from_millis(500),
+        fx.route.handle(&fx.authority(), acquire),
+    )
+    .await?;
+    assert_eq!(current["status"], "held", "{current}");
+    Ok(())
+}
+
 // The lifecycle and wake calls return typed outcomes, and a wake whose token
 // retired is refused before its batch dispatches.
 #[tokio::test]

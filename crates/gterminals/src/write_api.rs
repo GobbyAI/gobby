@@ -512,6 +512,11 @@ impl Route {
         // settle refuses at once.
         let deadline = Instant::now() + QUEUE_MAX_AGE;
         let hold = loop {
+            // Every attempt revalidates the token, so a waiter whose token
+            // retired during the wait takes no hold.
+            if !self.token_is(token) {
+                return refused(Stage::None, "retired_token", "the write token was retired");
+            }
             let taken = {
                 let mut gates = lock(&self.shared.gates);
                 let gate = gates.entry(terminal).or_default();
@@ -527,6 +532,12 @@ impl Route {
                 Err((error, _)) => return hold_refusal(error),
             }
         };
+        // The token may have retired around the grant. A hold it no longer
+        // owns is released at once, so it never blocks the replacement's writes.
+        if !self.token_is(token) {
+            release_reserved(&self.shared, vec![(terminal, hold)]);
+            return refused(Stage::None, "retired_token", "the write token was retired");
+        }
         let held = HeldAction {
             terminal_id: terminal,
             lease,
