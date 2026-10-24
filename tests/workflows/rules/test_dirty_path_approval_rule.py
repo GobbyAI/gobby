@@ -170,6 +170,34 @@ gobby sessions {approve,list}-dirty-paths s7
 E
 )""",
     'for d in a b; do echo "$d $(gobby sessions {approve,list}-dirty-paths s7)"; done',
+    """python3 -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """uv run python -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """env python3 -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 -Ic 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 -c 'import os,sys;os.system(sys.stdin.read())' <<E
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """(python3 -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E
+)""",
+    """uv run python -m runner <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 run.py <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    "C=/x/gobby; git bisect run a..$C",
+    "git grep --open-files-in-pager {gobby,x} pattern",
+    "git log --oneline {gobby,x}",
 )
 
 
@@ -219,6 +247,14 @@ queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
 PY
 )""",
     r"""for d in task-23678-dispatch-batch-retirement task-24244-decision-service; do echo "$d $(lsof -t +D /Users/josh/.gobby/worktrees/gobby/$d 2>/dev/null | tr '\n' ' ')"; done""",
+    """python3 <<'PY'
+print({"op": "grep"})
+PY""",
+    """python3 - <<'PY'
+queries = [{"op": "grep", "pattern": "x"}]
+PY""",
+    "C=2894b82caa4be295eae44877b08f302d2d381afb; git log --oneline 0.5.0..$C",
+    "git log a..$C",
 )
 
 

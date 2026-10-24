@@ -36,6 +36,24 @@ _DATA_COMMANDS = frozenset(
     {"echo", "printf", "rg", "grep", "gcode", "cat", "ls", "wc", "git", "cp"}
 )
 _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
+# Git subcommands whose operands are revisions or pathspecs. Git runs a program
+# from a positional only for subcommands such as `bisect run`, so these stay data.
+_GIT_READ_ONLY_SUBCOMMANDS = frozenset(
+    {
+        "blame",
+        "cat-file",
+        "describe",
+        "diff",
+        "log",
+        "ls-files",
+        "ls-tree",
+        "rev-list",
+        "rev-parse",
+        "show",
+        "shortlog",
+        "status",
+    }
+)
 _ASSIGNMENT_HEADS = frozenset({"export", "declare", "local", "readonly", "typeset"})
 # Reserved words that introduce a simple command, so the command word follows them.
 _COMPOUND_PREFIXES = frozenset({"!", "{", "do", "else", "elif", "if", "then", "until", "while"})
@@ -528,10 +546,11 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
     operands: dict[tuple[int, int], int] = {}
     head: str | None = None
     redirection_value = False
+    git_read_only: bool | None = None
     for token, span in zip(scan.tokens, scan.spans, strict=True):
         raw = subject[span[0] : span[1]]
         if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
-            head, redirection_value = None, False
+            head, redirection_value, git_read_only = None, False, None
             continue
         if redirection_value:
             redirection_value = False
@@ -553,6 +572,12 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
                 # `do echo` runs `echo`: a compound keyword is not the command word.
                 continue
             head = token.value if literal else ""
+        elif head == "git" and not raw.startswith("-"):
+            # The first operand names the subcommand; a read-only one's later operands are data.
+            if git_read_only is None:
+                git_read_only = token.value in _GIT_READ_ONLY_SUBCOMMANDS
+            elif git_read_only:
+                operands[span] = 0
         elif head in _DATA_BASENAME_HEADS:
             operands[span] = 0
     return operands

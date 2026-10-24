@@ -4,7 +4,7 @@ import re
 
 from gobby.hooks._shell_execution_words import _unwrap, option_word_count
 from gobby.hooks.code_navigation import shell_command_name
-from gobby.hooks.provider_launch_guard import _python_name
+from gobby.hooks.provider_launch_guard import _python_program
 
 # uv 0.12 global options, accepted before the subcommand and after it.
 _UV_GLOBAL_VALUE_OPTIONS = frozenset(
@@ -182,7 +182,7 @@ def _after_options(
 
 
 def _python_stage(words: list[str]) -> bool:
-    """Whether a stage's program is a Python interpreter, looking through ``uv run``."""
+    """Whether a stage runs Python reading its program from stdin, through ``uv run``."""
     unwrapped = _unwrap(words)
     argvs = _uv_run_argvs(shell_command_name(unwrapped[0]), unwrapped[1:]) if unwrapped else None
-    return any(_python_name(argv[0]) for argv in (argvs or [unwrapped]) if argv)
+    return any(_python_program(argv)[1] for argv in (argvs or [unwrapped]) if argv)
