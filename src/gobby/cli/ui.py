@@ -4,7 +4,6 @@ CLI commands for Gobby web UI management and development.
 
 from __future__ import annotations
 
-import json
 import subprocess  # nosec B404 # subprocess needed for npm commands
 import sys
 from pathlib import Path
@@ -30,7 +29,7 @@ from .utils import (
     spawn_ui_server,
     stop_ui_server,
 )
-from .utils_ui import _process_start_matches, _read_ui_pid_record
+from .utils_ui import _npm_install_plan, _process_start_matches, _read_ui_pid_record
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -75,58 +74,13 @@ def _get_ui_pid() -> int | None:
     return None
 
 
-_OPTIONAL_FLAGS = ("optional", "devOptional", "peerOptional")
-_LOCK_DIFFERENCE_SAMPLE = 3
-
-
-def _lock_differences(
-    locked: dict[str, dict[str, object]], installed: dict[str, dict[str, object]]
-) -> list[str]:
-    """Paths where the installed tree disagrees with the lockfile. Optional entries that npm
-    skips on this platform are absent by design and do not count."""
-    differences = [
-        f"{path} installed {entry.get('version')}, locked {locked[path].get('version')}"
-        for path, entry in installed.items()
-        if path and path in locked and entry.get("version") != locked[path].get("version")
-    ]
-    differences += [
-        f"{path} installed but not locked" for path in installed if path and path not in locked
-    ]
-    differences += [
-        f"{path} locked but not installed"
-        for path, entry in locked.items()
-        if path and path not in installed and not any(entry.get(flag) for flag in _OPTIONAL_FLAGS)
-    ]
-    return differences
-
-
-def _lock_mismatch(web_dir: Path) -> str | None:
-    """Name how node_modules differs from package-lock.json, or None when they agree."""
-    if not (web_dir / "node_modules").is_dir():
-        return "node_modules is missing"
-    lock_file = web_dir / "package-lock.json"
-    if not lock_file.is_file():
-        return None
-    try:
-        locked = json.loads(lock_file.read_text())["packages"]
-        hidden = web_dir / "node_modules" / ".package-lock.json"
-        installed = json.loads(hidden.read_text())["packages"]
-        differences = _lock_differences(locked, installed)
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return "could not read package-lock.json and node_modules/.package-lock.json to compare"
-    if not differences:
-        return None
-    sample = "; ".join(differences[:_LOCK_DIFFERENCE_SAMPLE])
-    return f"node_modules is out of sync with package-lock.json ({len(differences)}: {sample})"
-
-
 def _ensure_npm_deps_installed(web_dir: Path) -> bool:
     """Install npm dependencies unless node_modules matches package-lock.json. True on success."""
-    reason = _lock_mismatch(web_dir)
-    if reason is None:
+    plan = _npm_install_plan(web_dir)
+    if plan is None:
         return True
+    reason, command = plan
     click.echo(f"Installing dependencies: {reason}")
-    command = ["npm", "ci"] if (web_dir / "package-lock.json").is_file() else ["npm", "install"]
     try:
         result = subprocess.run(  # nosec B603 B607
             command,
