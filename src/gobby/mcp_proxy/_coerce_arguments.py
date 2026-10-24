@@ -18,7 +18,10 @@ def _decode_legacy_escapes(value: str) -> str | None:
     """Decode legacy escapes, retaining unknown ones and three-digit octal values."""
     # The former codec interpreted UTF-8 bytes as Latin-1 characters. Keep that
     # observable behavior, including for unescaped non-ASCII input.
-    raw = value.encode("utf-8").decode("latin-1")
+    try:
+        raw = value.encode("utf-8").decode("latin-1")
+    except UnicodeEncodeError:
+        return None
     decoded: list[str] = []
     index = 0
     simple = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
