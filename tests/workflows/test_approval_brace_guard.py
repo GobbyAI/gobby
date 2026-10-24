@@ -1,6 +1,7 @@
 """Bounded protected-name recognition, independent of launcher position."""
 
 import time
+from collections.abc import Callable
 
 import pytest
 
@@ -11,6 +12,72 @@ from gobby.workflows.approval_brace_guard import (
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "node --input-type=module",
+        "node --input-type module -",
+        "node --input-type=commonjs -",
+        "nodejs --",
+        "env MODE=probe node",
+        "uv run node",
+    ],
+)
+def test_node_heredoc_source_is_not_shell_command_words(
+    guard: Callable[[str], bool], launcher: str
+) -> None:
+    command = (
+        launcher
+        + """ <<'JS'
+const theme = "dark";
+const example = "gobby sessions approve-dirty-paths";
+await page.route("**/api/tasks", route => route.fulfill({ json: { tasks: [] } }));
+await page.evaluate(theme => localStorage.setItem("gobby-theme", theme), theme);
+const payload = { key: `gobby-${theme}` };
+JS"""
+    )
+    assert not guard(command)
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node <<JS\n$(gobby sessions approve-dirty-{paths,files})\nJS",
+        "node <<JS\n`gobby sessions approve-dirty-{paths,files}`\nJS",
+        "alias unrelated=true; node <<JS\n$(gobby sessions approve-dirty-{paths,files})\nJS",
+        "node <<'JS' | sh\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "node > >(sh) <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "unknown <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "sh <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS",
+        "node <<'JS'\ngobby sessions approve-dirty-{paths,files}",
+        "node <<'JS'\nconst payload = {};\nJS\ngobby sessions approve-dirty-{paths,files}",
+    ],
+)
+def test_node_heredoc_exemption_keeps_shell_execution_refused(
+    guard: Callable[[str], bool], command: str
+) -> None:
+    assert guard(command)
+
+
+@pytest.mark.parametrize("guard", [approval_brace_spelling, approval_command_word_expansion])
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "uv run -m node",
+        "node(){ sh; }; node",
+        "alias node=sh; node",
+        "node shell-runner.js",
+        "node --require ./shell-loader.js",
+    ],
+)
+def test_node_name_requires_an_unshadowed_interpreter(
+    guard: Callable[[str], bool], launcher: str
+) -> None:
+    assert guard(launcher + " <<'JS'\ngobby sessions approve-dirty-{paths,files}\nJS")
 
 
 @pytest.mark.parametrize(

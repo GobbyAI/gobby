@@ -33,6 +33,7 @@ from gobby.hooks.provider_launch_guard import _python_name, _python_program
 from .approval_git_scripts import git_shell_scripts
 from .condition_helpers import _GIT_GLOBAL_FLAGS, _GIT_GLOBAL_VALUE_OPTIONS
 from .engine.command_matching import (
+    LanguageBodies,
     _decoded_stages,
     _shell_input_scripts,
     _wrapper_scripts,
@@ -741,7 +742,9 @@ def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:
     return False
 
 
-def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]:
+def _approval_subjects(
+    command: str, *, language_bodies: LanguageBodies = "data"
+) -> tuple[list[tuple[str, ShellScan]], bool]:
     """Preflight all bodies before choosing any data exemptions."""
     subjects: list[tuple[str, ShellScan]] = []
     strict = False
@@ -756,9 +759,9 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
             raise _AmbiguousSyntax("Shell nesting limit")
         scan = scan_shell_command(text)
         strict |= _shell_setup(text, scan, _decoded_stages(text))
-        # A Python heredoc body is source, not shell words. Its braces are code, so
+        # A known language heredoc is source, not shell words. Its braces are code, so
         # only the shell-expanded substitutions inside it stay subjects.
-        for subject in executable_command_subjects(text, python_bodies="data"):
+        for subject in executable_command_subjects(text, language_bodies=language_bodies):
             scan = scan_shell_command(subject)
             stages = _decoded_stages(subject)
             strict |= _shell_setup(subject, scan, stages)
@@ -775,6 +778,10 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
                     subject = masked
                     scan = scan_shell_command(subject)
             subjects.append((subject, scan))
+    if strict and language_bodies == "data":
+        # Setup found in any wrapper can shadow an interpreter in another subject.
+        # Rebuild without language exemptions after the whole-text preflight.
+        return _approval_subjects(command, language_bodies="subjects")
     return subjects, strict
 
 
