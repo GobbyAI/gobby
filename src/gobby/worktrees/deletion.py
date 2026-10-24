@@ -237,10 +237,14 @@ async def _daemon_precheck(
     worktree_exists: bool,
 ) -> WorktreeDeletionResult | bool:
     """Refuse what a daemon deletion cannot prove; True when only generated files dirty the tree."""
-    if git_manager is None or not worktree_exists or request.force or request.force_delete_branch:
+    if git_manager is None or request.force or request.force_delete_branch:
         return WorktreeDeletionResult(
             success=False, git_deleted=False, error="Cannot safely verify the worktree"
         )
+    if not worktree_exists:
+        # Git already removed the tree (a teardown crashed after it). The missing-tree
+        # probe proves the registration and branch are gone before the record is deleted.
+        return False
     # Git deletes the branch the tree holds, so a tree switched off its record keeps both.
     status = await git_manager.get_worktree_status(worktree.worktree_path)
     if status is None or status.branch != worktree.branch_name or status.branch is None:

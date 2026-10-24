@@ -214,6 +214,40 @@ async def test_activation_writes_full_delta_and_agent_type(
 
 
 @pytest.mark.asyncio
+async def test_activation_arms_the_seat_reading_gates(
+    temp_db: HubDatabase, session_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seat = make_agent_definition(
+        name="seat",
+        surfaces=["persona"],
+        prompts={"persona": "Run the seat."},
+        workflows=make_agent_workflows(
+            variables={
+                "_seat_procedure": "gobby:references/agents/procedures/orchestrator.md",
+                "_seat_references": ["gobby:references/agents/gclient.md"],
+                "_reserved": "bad",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "gobby.workflows.agent_resolver.resolve_agent_with_row",
+        lambda name, *args, **kwargs: (seat, SimpleNamespace(step_workflow_id=None))
+        if name == "seat"
+        else None,
+    )
+
+    result = await apply_definition()(agent="seat", db=temp_db, session_id=session_id)
+
+    # Cold start activates the Orchestrator and Assistant this way, never through a spawn,
+    # so activation must arm the same required-reading gates a spawned seat gets.
+    assert result["success"] is True
+    variables = SessionVariableManager(temp_db).get_variables(session_id)
+    assert variables.get("_seat_procedure") == "gobby:references/agents/procedures/orchestrator.md"
+    assert variables.get("_seat_references") == ["gobby:references/agents/gclient.md"]
+    assert "_reserved" not in variables
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["unknown", "surface", "pipeline", "spawned", "task", "collision"])
 async def test_refusals_write_nothing(
     temp_db: HubDatabase, session_id: str, definitions: dict[str, AgentDefinitionBody], case: str

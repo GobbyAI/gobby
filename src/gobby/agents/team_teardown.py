@@ -23,6 +23,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.pipeline_state import StepExecution
 from gobby.worktrees.deletion import WorktreeDeletionResult
 
@@ -63,18 +64,24 @@ async def reconcile_team_teardowns(
 
 
 def _due_teams(db: HubDatabase, cutoff: datetime) -> list[_DueTeam]:
-    """Teams whose task closed before ``cutoff`` and whose own record has no outcome yet."""
+    """Teams whose task closed before ``cutoff`` and whose own record has no outcome yet.
+
+    Only the daemon on the tree's machine can prove and delete it, so a tree recorded
+    on another machine is left to that daemon.
+    """
     rows = db.fetchall(
         """
 SELECT se.* FROM step_executions se
 JOIN tasks t ON t.id::text = se.output_json #>> '{team,task_id}'
+LEFT JOIN worktrees w ON w.id::text = se.output_json #>> '{team,worktree_id}'
 WHERE se.step_id = %s
 AND se.output_json #>> '{team,team_id}' = se.execution_id::text
 AND se.output_json #>> '{teardown,outcome}' IS NULL
 AND t.closed_at <= %s
+AND (w.id IS NULL OR w.machine_id = %s)
 ORDER BY se.id
 """,
-        (ADMISSION_STEP, cutoff),
+        (ADMISSION_STEP, cutoff, require_machine_id()),
     )
     due = [b for b in (_binding(_recorded(StepExecution.from_row(row))) for row in rows) if b]
     if not due:

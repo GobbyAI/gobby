@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -22,10 +23,12 @@ from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.runner_maintenance.isolation import team_tree_deleter
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.fixtures.landing_case import make_landing_case
+from tests.fixtures.postgres import TEST_USER_ID
 from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
 from tests.fixtures.team_teardown_case import (
     Team,
@@ -194,6 +197,47 @@ async def test_teardown_recovers_after_restart(
     assert [task.id for task in finding_tasks(world, refused)] == [filed.id]
     assert LocalTaskManager(db).get_task(filed.id).is_escalated
     assert Path(refused.binding.worktree_path).is_dir()
+
+
+async def test_teardown_converges_after_git_removed_the_tree(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    team = await admitted_team(world, "Crashed teardown team")
+    task = close(world, team, land(world, team, "crash.py"))
+    # Git removed the tree, then the daemon stopped before the tree row was deleted.
+    world.case.git("worktree", "remove", "--force", team.binding.worktree_path)
+
+    await teardown_pass(db, daemon(db), closed_at(task) + TEARDOWN_GRACE)
+
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+    assert not branch_exists(world, team.binding.branch)
+    assert finding_tasks(world, team) == []
+
+
+async def test_teardown_leaves_another_machines_tree_alone(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    team = await admitted_team(world, "Remote teardown team")
+    task = close(world, team, land(world, team, "remote.py"))
+    elsewhere = str(uuid4())
+    LocalMachineManager(db).upsert_seen(elsewhere, TEST_USER_ID)
+    db.execute(
+        "UPDATE worktrees SET machine_id = %s WHERE id = %s",
+        (elsewhere, team.binding.worktree_id),
+    )
+
+    # Only the daemon on the tree's machine can prove and delete it.
+    assert await teardown_pass(db, daemon(db), closed_at(task) + TEARDOWN_GRACE) == 0
+
+    assert terminations.calls == []
+    assert teardown(world, team) == {}
+    assert finding_tasks(world, team) == []
 
 
 async def test_cleanup_preserves_unsafe_trees(
