@@ -1068,6 +1068,7 @@
         },
         "workflow": {
           "debug_echo_context": false,
+          "definition_regex_max_length": 2048,
           "enabled": true,
           "timeout": 24.0
         },
@@ -2147,6 +2148,7 @@
         },
         "workflow": {
           "debug_echo_context": false,
+          "definition_regex_max_length": 2048,
           "enabled": true,
           "timeout": 24.0
         },
