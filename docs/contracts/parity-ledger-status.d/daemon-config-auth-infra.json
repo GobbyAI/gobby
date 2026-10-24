@@ -1,4 +1,16 @@
 {
+  "CLI gobby ui sign-in-link": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/ui.py::sign_in_link`; blocked on native Rust CLI dispatcher. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in."
+  },
+  "HTTP GET /api/auth/sign-in": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/browser_sign_in.py::create_browser_sign_in_router.<locals>.consume`; blocked on native Rust handler. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in."
+  },
+  "HTTP POST /api/auth/sign-in-link": {
+    "status": "proxied",
+    "note": "Python `src/gobby/servers/routes/browser_sign_in.py::create_browser_sign_in_router.<locals>.mint`; blocked on native Rust handler. Owner: #21568 Remaining route families. #24908 supplies loopback browser sign-in."
+  },
   "CLI gobby auth": {
     "status": "proxied",
     "note": "Python `src/gobby/cli/auth.py::auth (line 13)`; blocked on Rust CLI dispatcher for `gobby auth`. Owner: #21568 Remaining route families."

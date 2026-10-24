@@ -835,6 +835,21 @@
     },
     {
       "surface": "cli",
+      "command": "gobby ui sign-in-link",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
+      "implementation": {
+        "path": "src/gobby/cli/ui.py",
+        "symbol": "sign_in_link"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-services-auth-ui"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby ui install-deps",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/clients.md",
       "implementation": {

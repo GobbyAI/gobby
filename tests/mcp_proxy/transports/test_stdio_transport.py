@@ -451,7 +451,12 @@ class TestStdioConnectSuccess:
             )
             await hooked.connect()
             hooked_params = harness.params
+            marker_arg = hooked_params.args[3]
+            assert marker_arg.startswith("--stop-file=")
+            marker = Path(marker_arg.split("=", 1)[1])
+            assert marker.is_file()
             await hooked.disconnect()
+            assert not marker.exists()
             await unhooked.connect()
             unhooked_params = harness.transport_calls[1][0]
             await unhooked.disconnect()
@@ -461,6 +466,7 @@ class TestStdioConnectSuccess:
             "-P",
             "-m",
             "gobby.utils.child_supervisor",
+            marker_arg,
             "npx",
             *chrome_args,
             "--executable-path=/tmp/chrome",

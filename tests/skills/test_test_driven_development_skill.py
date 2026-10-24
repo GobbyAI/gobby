@@ -37,33 +37,29 @@ def test_skill_parses_with_rust_stub_first_guidance() -> None:
     parsed = SkillLoader().load_skill(SKILL_DIR)
 
     assert parsed.name == "test-driven-development"
-    assert "## Rust Stub-First RED" in parsed.content
+    assert "## New APIs and Rust" in parsed.content
 
 
 def test_rust_guidance_requires_stub_first_direct_red() -> None:
     content = SKILL_PATH.read_text(encoding="utf-8")
 
-    rust = content.split("## Rust Stub-First RED", maxsplit=1)[1].split(
-        "## Completion Evidence", maxsplit=1
+    rust = content.split("## New APIs and Rust", maxsplit=1)[1].split(
+        "## Review and Handoff", maxsplit=1
     )[0]
     for expected in (
-        "minimal API shape",
+        "minimal behavior-free",
         "default",
         "stub",
         "`todo!()`",
         "cargo nextest run -p gobby-client -E 'test(agent_status_updates_sidebar)'",
         "assertion",
         "panic",
-        "Compiler failures",
-        "missing product types",
-        "reconstructed RED",
     ):
         assert expected in rust
 
-    assert rust.index("minimal API shape") < rust.index("cargo nextest run")
-    assert rust.index("cargo nextest run") < rust.index("Implement the behavior")
-    assert "do not count" in rust
-    assert "after implementation" in rust
+    assert rust.index("minimal behavior-free") < rust.index("before implementing the behavior")
+    assert "compilation failures before treating the run as RED" in content
+    assert "Do not manufacture failures or rewrite historical results" in content
 
 
 def test_rust_stub_first_pressure_scenario_has_behavioral_delta() -> None:

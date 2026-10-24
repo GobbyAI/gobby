@@ -119,74 +119,74 @@ class TestIsSubscribed:
 
     def test_no_subscriptions_returns_false(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = None
         assert b._is_subscribed(ws, {"type": "task_event"}) is False
 
     def test_wildcard_subscription_returns_true(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"*"}
         assert b._is_subscribed(ws, {"type": "session_event"}) is True
 
     def test_non_event_type_passes_for_any_subscriber(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"some_sub"}
         # "task_event" is NOT in the event_types set, so it passes through
         assert b._is_subscribed(ws, {"type": "task_event"}) is True
 
     def test_event_type_requires_explicit_subscription(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"other_type"}
         # session_event IS in the event_types set, requires explicit sub
         assert b._is_subscribed(ws, {"type": "session_event"}) is False
 
     def test_event_type_with_matching_subscription(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"session_event"}
         assert b._is_subscribed(ws, {"type": "session_event"}) is True
 
     def test_parametric_subscription_matches(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"session_message:session_id=abc123"}
         msg = {"type": "session_message", "session_id": "abc123"}
         assert b._is_subscribed(ws, msg) is True
 
     def test_parametric_subscription_no_match(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"session_message:session_id=abc123"}
         msg = {"type": "session_message", "session_id": "xyz789"}
         assert b._is_subscribed(ws, msg) is False
 
     def test_parametric_subscription_wrong_type(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"agent_event:run_id=r1"}
         msg = {"type": "session_event", "run_id": "r1"}
         assert b._is_subscribed(ws, msg) is False
 
     def test_hook_event_granularity_by_event_type(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"before_tool"}
         msg = {"type": "hook_event", "event_type": "before_tool"}
         assert b._is_subscribed(ws, msg) is True
 
     def test_hook_event_no_match(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"after_tool"}
         msg = {"type": "hook_event", "event_type": "before_tool"}
         assert b._is_subscribed(ws, msg) is False
 
     def test_parametric_subscription_without_equals_skipped(self) -> None:
         b = FakeBroadcaster()
-        ws = MagicMock()
+        ws = MagicMock(browser_session=None)
         ws.subscriptions = {"session_event:noequalssign"}
         msg = {"type": "session_event", "session_id": "abc"}
         assert b._is_subscribed(ws, msg) is False

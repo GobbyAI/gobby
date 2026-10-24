@@ -503,7 +503,8 @@ def test_config_patch_requires_operator_authority(boundary: Boundary, route: str
     assert response.status_code == 200
     result = response.json()
     if boundary.agent:
-        assert result["result"]["error"]["code"] == "forbidden"
+        assert result["success"] is False
+        assert result["error"]["code"] == "forbidden"
         assert boundary.config_patches == []
     else:
         assert result["success"] is True

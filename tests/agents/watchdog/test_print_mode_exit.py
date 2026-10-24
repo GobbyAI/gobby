@@ -15,6 +15,7 @@ from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.sessions.turn_lifecycle import TurnDisposition, TurnEvidence, TurnLifecycleReducer
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from tests.agents.test_lifecycle_monitor import (
     DETECTION_REGISTRY,
@@ -24,6 +25,7 @@ from tests.agents.test_lifecycle_monitor import (
     _make_terminal_run,
 )
 from tests.fixtures.isolated_checkout import patch_local_machine_id
+from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
 
@@ -243,3 +245,36 @@ async def test_exit_without_a_completed_last_turn_still_fails(
     assert stored.error is not None
     assert stored.error.startswith(reason)
     assert await monitor.check_unhealthy_agents() == 0
+
+
+@pytest.mark.asyncio
+async def test_remote_agy_completion_counts_its_forwarded_turns(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A node run's completed turn came as forwarded hooks, so its reducer count completes it."""
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
+    monitor, runs, run = _exited_run(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        provider="agy",
+        disposition="completed",
+    )
+    node_machine = str(uuid4())
+    LocalMachineManager(temp_db).upsert_seen(node_machine, TEST_USER_ID)
+    temp_db.execute("UPDATE agent_runs SET machine_id = %s WHERE id = %s", (node_machine, run.id))
+    temp_db.execute(
+        "UPDATE sessions SET turn_count = 0, tool_call_count = 0 WHERE id = %s",
+        (run.child_session_id,),
+    )
+    stored = runs.get(run.id)
+    assert stored is not None
+
+    assert await monitor._health_monitor._dead_terminal_reason(stored) is None
+
+    completed = runs.get(run.id)
+    assert completed is not None
+    assert completed.status == "success"

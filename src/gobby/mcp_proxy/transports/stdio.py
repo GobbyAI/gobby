@@ -1,7 +1,9 @@
 """Stdio transport connection."""
 
 import logging
+import os
 import sys
+import tempfile
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, TextIO
@@ -51,6 +53,7 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
         super().__init__(config)
         self._stdio_errlog_path = stdio_errlog_path
         self._stdio_errlog_handle: TextIO | None = None
+        self._stop_file: Path | None = None
 
     def _open_stdio_errlog(self, stack: AsyncExitStack) -> TextIO:
         """Open the subprocess stderr sink; a file handle closes with ``stack``."""
@@ -86,8 +89,14 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
             expanded_env.setdefault("npm_config_prefer_offline", "true")
 
         command = self.config.command
-        if self.config.runtime_hook == "chrome_executable_path":
-            command, *expanded_args = supervised_argv([command, *expanded_args])
+        if self.config.runtime_hook in {"chrome_executable_path", "loopback_browser"}:
+            fd, marker = tempfile.mkstemp(prefix="gobby-mcp-stop-")
+            os.close(fd)
+            self._stop_file = Path(marker)
+            stack.callback(self._stop_file.unlink, missing_ok=True)
+            command, *expanded_args = supervised_argv(
+                [command, *expanded_args], stop_file=self._stop_file
+            )
 
         params = StdioServerParameters(
             command=command,
@@ -95,3 +104,12 @@ class StdioTransportConnection(OwnerTaskTransportConnection):
             env=expanded_env,
         )
         return stdio_client(params, errlog=self._open_stdio_errlog(stack))
+
+    async def _cleanup_owner_task(self) -> None:
+        # Signal the subprocess independently of the SDK's shielded exit scopes.
+        # Killing its tree closes inherited pipes and lets that exit finish.
+        stop_file = self._stop_file
+        if stop_file is not None:
+            stop_file.unlink(missing_ok=True)
+            self._stop_file = None
+        await super()._cleanup_owner_task()

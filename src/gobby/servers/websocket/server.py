@@ -366,6 +366,7 @@ class WebSocketServer(
         """
         user_id = websocket.user_id
         client_id = str(uuid4())
+        browser = getattr(websocket, "browser_session", None)
 
         # Register client
         self.clients[websocket] = {
@@ -374,6 +375,11 @@ class WebSocketServer(
             "connected_at": datetime.now(UTC),
             "remote_address": websocket.remote_address,
         }
+        if browser is not None:
+            self.clients[websocket].update(
+                conversation_id=browser.claims.session_id,
+                project_id=browser.claims.project_id,
+            )
 
         logger.debug(
             "Client %s (%s) connected from %s. Total clients: %s",
@@ -385,7 +391,7 @@ class WebSocketServer(
 
         try:
             # Send welcome message with active conversation IDs
-            active_conversations = list(self._chat_sessions.keys())
+            active_conversations = [] if browser is not None else list(self._chat_sessions.keys())
             await websocket.send(
                 json_dumps(
                     {
@@ -399,7 +405,8 @@ class WebSocketServer(
             )
 
             # Re-broadcast pending interactions for active conversations
-            await self._rebroadcast_pending_interactions(websocket, active_conversations)
+            if browser is None:
+                await self._rebroadcast_pending_interactions(websocket, active_conversations)
 
             # Message processing loop
             async for message in websocket:
@@ -445,6 +452,7 @@ class WebSocketServer(
         database: Any = None,
     ) -> None:
         """Run the public WebSocket connection lifecycle entry point."""
+        websocket.browser_session = getattr(decision, "browser_session", None)
         token = self._bind_connection_caller(websocket, decision, database)
         try:
             await self._handle_connection(websocket)
@@ -487,6 +495,22 @@ class WebSocketServer(
 
         data = cast(dict[str, Any], data)
         msg_type = data.get("type")
+
+        from gobby.servers.browser_sessions import BROWSER_WS_MESSAGES, browser_selectors_match
+
+        browser = getattr(websocket, "browser_session", None)
+        if browser is not None:
+            if (
+                not isinstance(msg_type, str)
+                or msg_type not in BROWSER_WS_MESSAGES
+                or not browser_selectors_match(
+                    data, browser.claims.project_id, browser.claims.session_id
+                )
+            ):
+                await self._send_error(websocket, "Browser message refused")
+                return
+            # Bind implicit project resolution to the signed claim too.
+            self.clients[websocket]["project_id"] = browser.claims.project_id
 
         # Lazily initialize dispatch table
         if not self._dispatch_table:
