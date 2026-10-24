@@ -6,7 +6,6 @@ These endpoints handle server listing, addition, import, and removal.
 """
 
 import logging
-import time
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -183,7 +182,6 @@ async def add_mcp_server(
     server: "HTTPServer" = Depends(get_server),
 ) -> dict[str, Any]:
     """Add a server from a template or a manual payload."""
-    start_time = time.perf_counter()
 
     try:
         body = await _request_json_mapping(request)
@@ -203,11 +201,9 @@ async def add_mcp_server(
             )
 
         if server.mcp_manager is None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "MCP manager not available",
-                "response_time_ms": response_time_ms,
             }
 
         scope_project = request_mcp_scope(request, server, body)
@@ -238,18 +234,15 @@ async def add_mcp_server(
             except Exception as e:
                 logger.debug("Failed to broadcast mcp event server_added: %s", e)
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {**result, "response_time_ms": response_time_ms}
+        return result
 
     except HTTPException:
         raise
     except ValueError as e:
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.exception("Add MCP server error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def update_mcp_server(
@@ -259,7 +252,6 @@ async def update_mcp_server(
     body: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Patch a resolved (name, scope) instance by id."""
-    start_time = time.perf_counter()
 
     try:
         if body is None:
@@ -272,11 +264,9 @@ async def update_mcp_server(
             )
 
         if server.mcp_manager is None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "MCP manager not available",
-                "response_time_ms": response_time_ms,
             }
 
         scope_project = request_mcp_scope(request, server, body)
@@ -293,8 +283,7 @@ async def update_mcp_server(
             except Exception as e:
                 logger.debug("Failed to broadcast mcp event server_updated: %s", e)
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {**result, "response_time_ms": response_time_ms}
+        return result
 
     except HTTPException:
         raise
@@ -311,12 +300,10 @@ async def update_mcp_server(
     except ValueError as e:
         if "not found" in str(e).lower():
             raise _unknown_server(name) from e
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.exception("Update MCP server error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def patch_mcp_server(
@@ -350,7 +337,6 @@ async def import_mcp_server(
     Returns:
         Import result with imported/skipped/failed lists
     """
-    start_time = time.perf_counter()
 
     try:
         body = await _request_json_mapping(request)
@@ -370,11 +356,9 @@ async def import_mcp_server(
 
         current_project_id = request_mcp_scope(request, server, body)
         if not server.config:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "Daemon configuration not available",
-                "response_time_ms": response_time_ms,
             }
 
         # Create importer
@@ -411,18 +395,15 @@ async def import_mcp_server(
             except Exception as e:
                 logger.debug("Failed to broadcast mcp event server_imported: %s", e)
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
         if isinstance(result, dict):
-            result["response_time_ms"] = response_time_ms
             return result
-        return {"success": True, "data": result, "response_time_ms": response_time_ms}
+        return {"success": True, "data": result}
 
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Import MCP server error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def remove_mcp_server(
@@ -431,15 +412,12 @@ async def remove_mcp_server(
     server: "HTTPServer" = Depends(get_server),
 ) -> dict[str, Any]:
     """Remove the exact (name, resolved-project) MCP server row."""
-    start_time = time.perf_counter()
 
     try:
         if server.mcp_manager is None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "MCP manager not available",
-                "response_time_ms": response_time_ms,
             }
 
         scope_project = request_mcp_scope(request, server, None)
@@ -456,22 +434,18 @@ async def remove_mcp_server(
             except Exception as e:
                 logger.debug("Failed to broadcast mcp event server_removed: %s", e)
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
             "success": True,
             "message": f"Removed MCP server: {name}",
-            "response_time_ms": response_time_ms,
         }
 
     except HTTPException:
         raise
     except ValueError as e:
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
     except Exception as e:
         logger.exception("Remove MCP server error: %s", e)
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 async def set_mcp_server_enabled(
@@ -481,7 +455,6 @@ async def set_mcp_server_enabled(
     body: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Enable or disable the exact (name, resolved-project) instance."""
-    start_time = time.perf_counter()
 
     try:
         if body is None:
@@ -494,11 +467,9 @@ async def set_mcp_server_enabled(
             )
 
         if server.mcp_manager is None:
-            response_time_ms = (time.perf_counter() - start_time) * 1000
             return {
                 "success": False,
                 "error": "MCP manager not available",
-                "response_time_ms": response_time_ms,
             }
 
         scope_project = request_mcp_scope(request, server, body)
@@ -519,12 +490,10 @@ async def set_mcp_server_enabled(
             except Exception as e:
                 logger.debug("Failed to broadcast mcp event server_updated: %s", e)
 
-        response_time_ms = (time.perf_counter() - start_time) * 1000
         return {
             "success": True,
             "name": name,
             "enabled": result.get("enabled", enabled),
-            "response_time_ms": response_time_ms,
         }
 
     except HTTPException:
@@ -535,18 +504,16 @@ async def set_mcp_server_enabled(
             extra={"server_name": name, "enabled": enabled, "error": str(e)},
             exc_info=True,
         )
-        response_time_ms = (time.perf_counter() - start_time) * 1000
         raise HTTPException(
             status_code=403,
-            detail={"success": False, "error": str(e), "response_time_ms": response_time_ms},
+            detail={"success": False, "error": str(e)},
         ) from e
     except (ValueError, KeyError, RuntimeError, MCPError, CircuitBreakerOpen) as e:
         logger.exception(
             "Set MCP server enabled error",
             extra={"server_name": name, "enabled": enabled, "error": str(e)},
         )
-        response_time_ms = (time.perf_counter() - start_time) * 1000
-        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+        return {"success": False, "error": str(e)}
 
 
 __all__ = [

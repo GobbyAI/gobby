@@ -616,6 +616,7 @@ fn prefs_round_trip_and_reject_unknown_keys() {
     let defaults = load_prefs(&home).expect("missing file yields defaults");
     assert_eq!(defaults, ClientPrefs::default());
     assert!(defaults.mouse_capture);
+    assert_eq!(defaults.focus_hold_seconds, 300);
 
     let prefs = ClientPrefs {
         theme: "light".to_string(),
@@ -625,6 +626,7 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         sidebar_width: 32,
         right_click_passthrough_modifier: PassthroughModifier::Alt,
         title_scrolling: TitleScrolling::Right,
+        focus_hold_seconds: 45,
         ..ClientPrefs::default()
     };
     let path = save_prefs(&home, &prefs).expect("save");
@@ -638,6 +640,7 @@ fn prefs_round_trip_and_reject_unknown_keys() {
         "{text}"
     );
     assert!(text.contains("title_scrolling = \"right\"\n"), "{text}");
+    assert!(text.contains("focus_hold_seconds = 45\n"), "{text}");
     assert!(
         text.contains("[keymap]\npath = \"/tmp/keys.toml\"\n"),
         "{text}"

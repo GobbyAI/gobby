@@ -16,12 +16,14 @@ from gobby.agents.attention_metadata import validate_metadata_text, validate_met
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError
+from gobby.hub.remote_terminal import NodeTerminalWriteError
 from gobby.servers.routes.attention_roster import (
     _load_roster_entries,
     _model_display_names,
 )
-from gobby.storage.attention import AttentionState
+from gobby.storage.attention import AttentionState, AttentionStateManager
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.terminals.runtime import (
     Delivered,
@@ -133,11 +135,16 @@ class AttentionMetadataRequest(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class AttentionPane:
-    """Resolved terminal row target, its machine, and its capture operation."""
+    """Resolved terminal row target, its machine, and its capture operation.
+
+    A remote pane belongs to another machine: the hub cannot capture it, so its
+    capture returns None and respond answers it through the owning node.
+    """
 
     target: str
     capture: Callable[[], Awaitable[str | None]]
     machine_id: str | None = None
+    remote: bool = False
 
 
 @dataclass(slots=True)
@@ -219,13 +226,41 @@ def create_attention_router(
                 )
             )
         except TerminalWriteError as exc:
-            raise AttentionInjectionError(stage=exc.stage) from exc
+            code = exc.code if isinstance(exc, NodeTerminalWriteError) else None
+            raise AttentionInjectionError(stage=exc.stage, code=code) from exc
         except KeyError as exc:
             raise AttentionInjectionError(stage="none") from exc
         if isinstance(result, IndeterminateWrite):
             raise AttentionInjectionError(stage="partial")
         if not isinstance(result, Delivered):
             raise AttentionInjectionError(stage="none")
+
+    async def answer_remote(
+        pane: AttentionPane,
+        request: AttentionRespondRequest,
+        entry_id: str,
+    ) -> dict[str, str]:
+        """Answer a pane on another machine: write through its node, then clear the episode.
+
+        The hub has no local capture or detector for that pane. A refused write keeps the
+        episode open; a partial outcome retires it without redetection.
+        """
+        if manager is None:
+            raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+        latest = await server.services.run_db(manager.get, entry_id)
+        if latest is None:
+            raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+        _require_current_identity(latest, request)
+        try:
+            await inject_answer(pane, request.answer, latest)
+        except AttentionInjectionError as exc:
+            if exc.stage == "none":
+                raise _injection_http_error(stage="none", code=exc.code) from exc
+            await _clear_episode(server, manager, latest)
+            raise _injection_http_error(stage="partial") from exc
+        if not await _clear_episode(server, manager, latest):
+            raise _injection_http_error(stage="partial")
+        return {"status": "accepted", "entry_id": entry_id}
 
     @router.get("/roster")
     async def roster() -> dict[str, object]:
@@ -372,6 +407,8 @@ def create_attention_router(
                 if pane is None:
                     raise _injection_http_error(stage="none")
                 await _require_pane_owned(pane)
+                if pane.remote:
+                    return await answer_remote(pane, request, entry_id)
                 pane_output = await pane.capture()
                 if pane_output is None:
                     raise _injection_http_error(stage="none")
@@ -544,9 +581,32 @@ async def _require_pane_owned(pane: AttentionPane) -> None:
         raise HTTPException(status_code=403, detail={"code": exc.code}) from exc
 
 
-def _injection_http_error(*, stage: Literal["none", "partial"]) -> HTTPException:
-    code = "injection_failed" if stage == "none" else "injection_indeterminate"
-    return HTTPException(status_code=502, detail={"code": code, "stage": stage})
+def _injection_http_error(
+    *,
+    stage: Literal["none", "partial"],
+    code: str | None = None,
+) -> HTTPException:
+    if stage == "none" and code is not None:
+        # The owning node refused before sending, so the episode stays open for a retry.
+        return HTTPException(status_code=503, detail={"code": code, "stage": stage})
+    failure = "injection_failed" if stage == "none" else "injection_indeterminate"
+    return HTTPException(status_code=502, detail={"code": failure, "stage": stage})
+
+
+async def _clear_episode(
+    server: HTTPServer,
+    manager: AttentionStateManager,
+    current: AttentionState,
+) -> bool:
+    """Clear the episode against its stored identity; False when a newer episode replaced it."""
+    cleared = await manager.transition_async(
+        server.services.run_db,
+        current.entry_id,
+        state=None,
+        expected_attention_id=current.attention_id,
+        expected_fingerprint=current.fingerprint,
+    )
+    return cleared.applied
 
 
 async def _retire_and_redetect(
@@ -671,6 +731,20 @@ async def _redetect_retired_attention(
     )
 
 
+def _remote_pane(target: str, machine_id: str | None) -> AttentionPane:
+    """A pane on another machine: the hub cannot capture it, so its node takes the write."""
+
+    async def capture_remote_pane() -> str | None:
+        return None
+
+    return AttentionPane(
+        target=target,
+        capture=capture_remote_pane,
+        machine_id=machine_id,
+        remote=True,
+    )
+
+
 async def _resolve_attention_pane(
     server: HTTPServer,
     state: AttentionState,
@@ -681,6 +755,8 @@ async def _resolve_attention_pane(
     if state.session_id is not None and manager is not None and registry is not None:
         row = manager.get_live_for_session(state.session_id)
         if row is not None:
+            if not is_local_machine(row.machine_id):
+                return _remote_pane(row.id, row.machine_id)
             runtime = registry.resolve(row.backend)
 
             async def capture_session_pane() -> str | None:
@@ -703,6 +779,8 @@ async def _resolve_attention_pane(
     row = manager.get(run.terminal_id)
     if row is None:
         return None
+    if not is_local_machine(row.machine_id):
+        return _remote_pane(row.id, row.machine_id)
     runtime = registry.resolve(row.backend)
 
     async def capture_run_pane() -> str | None:

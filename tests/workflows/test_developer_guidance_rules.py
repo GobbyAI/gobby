@@ -187,7 +187,6 @@ async def test_restraint_gate_skips_writes_outside_the_repository(temp_db: HubDa
     [
         pytest.param("gobby-tasks", "create_task", id="create-task"),
         pytest.param("gobby-agents", "spawn_agent", id="spawn-agent"),
-        pytest.param("gobby-agents", "dispatch_batch", id="dispatch-batch"),
     ],
 )
 async def test_root_graph_expansion_requires_restraint(

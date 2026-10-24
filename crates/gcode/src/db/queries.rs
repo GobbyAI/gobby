@@ -101,14 +101,23 @@ pub fn read_graph_file_facts(
             &[&machine_id, &project_uuid, &file_path],
         )?
         .try_get("content_hash")?;
-    let imports = read_imports_for_file(conn, project_id, file_path, &content_hash)?;
-    let definitions = read_symbols_for_file(conn, project_id, file_path, &content_hash)?;
-    let calls = read_calls_for_file(conn, project_id, file_path, &content_hash)?;
-    let inheritance = read_inheritance_for_file(conn, project_id, file_path, &content_hash)?;
+    read_version_graph_facts(conn, project_id, file_path, &content_hash)
+}
+
+pub(crate) fn read_version_graph_facts(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<GraphFileFacts> {
+    let imports = read_imports_for_file(conn, project_id, file_path, content_hash)?;
+    let definitions = read_symbols_for_file(conn, project_id, file_path, content_hash)?;
+    let calls = read_calls_for_file(conn, project_id, file_path, content_hash)?;
+    let inheritance = read_inheritance_for_file(conn, project_id, file_path, content_hash)?;
 
     Ok(GraphFileFacts {
         file_path: file_path.to_string(),
-        content_hash,
+        content_hash: content_hash.to_string(),
         imports,
         definitions,
         calls,
@@ -216,6 +225,33 @@ pub fn dirty_graph_sync_for_file(
         &[&project_id, &file_path, &content_hash],
     )?;
     Ok(())
+}
+
+/// Reset the named projection flags on one content version. A flag passed as
+/// `false` keeps its value and attempt stamp. Returns whether the version row
+/// matched and at least one flag was named.
+pub(crate) fn dirty_version_sync(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+    vectors: bool,
+    graph: bool,
+) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
+    let rows = conn.execute(
+        "UPDATE code_indexed_files
+         SET vectors_synced = CASE WHEN $4 THEN false ELSE vectors_synced END,
+             vector_sync_attempted_at = CASE WHEN $4 THEN NULL ELSE vector_sync_attempted_at END,
+             graph_synced = CASE WHEN $5 THEN false ELSE graph_synced END,
+             graph_sync_attempted_at = CASE WHEN $5 THEN NULL ELSE graph_sync_attempted_at END
+         WHERE project_id = $1
+           AND file_path = $2
+           AND content_hash = $3
+           AND ($4 OR $5)",
+        &[&project_id, &file_path, &content_hash, &vectors, &graph],
+    )?;
+    Ok(rows > 0)
 }
 
 /// Reset graph sync flags for every machine's referenced content rows.

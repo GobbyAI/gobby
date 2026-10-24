@@ -1,5 +1,6 @@
 //! Reconnect scheduling, outcomes, and outage notifications.
 
+use super::jobs::{JobKey, LoopJobs, Pending};
 use super::*;
 
 pub(super) async fn recv_daemon_event(
@@ -55,6 +56,7 @@ pub(super) async fn handle_live_event(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     supervisor: &mut ReconnectSupervisor,
+    jobs: &mut LoopJobs,
     event: DaemonEvent,
 ) -> Result<(), DaemonError> {
     if let DaemonEvent::Disconnected { generation, error } = &event {
@@ -70,7 +72,14 @@ pub(super) async fn handle_live_event(
     if let DaemonEvent::Message(message) = &event {
         apply_live_write_outcome(workspace, message);
     }
+    let workspace_event = matches!(event, DaemonEvent::Workspace(_));
     workspace.apply_live_event(event).await?;
+    if workspace_event {
+        for terminal_id in workspace.unresolved_terminal_ids() {
+            let key = JobKey::Terminal(terminal_id.clone());
+            jobs.offer(workspace, chrome, key, Pending::Open(terminal_id));
+        }
+    }
     Ok(())
 }
 
@@ -188,17 +197,30 @@ mod tests {
         let mut chrome = Chrome::dark();
         chrome.connection.url = "http://127.0.0.1:60887".into();
         let mut supervisor = ReconnectSupervisor::new();
+        let mut jobs = LoopJobs::new(&workspace);
         let disconnected = || DaemonEvent::Disconnected {
             generation: daemon.generation(),
             error: DaemonError::Unavailable { retry_after: None },
         };
 
-        handle_live_event(&mut workspace, &mut chrome, &mut supervisor, disconnected())
-            .await
-            .expect("first disconnect");
-        handle_live_event(&mut workspace, &mut chrome, &mut supervisor, disconnected())
-            .await
-            .expect("duplicate disconnect");
+        handle_live_event(
+            &mut workspace,
+            &mut chrome,
+            &mut supervisor,
+            &mut jobs,
+            disconnected(),
+        )
+        .await
+        .expect("first disconnect");
+        handle_live_event(
+            &mut workspace,
+            &mut chrome,
+            &mut supervisor,
+            &mut jobs,
+            disconnected(),
+        )
+        .await
+        .expect("duplicate disconnect");
         assert_eq!(chrome.alert_log.len(), 1, "one toast for the outage");
         assert_eq!(
             chrome.alert_log[0].title,
@@ -206,9 +228,15 @@ mod tests {
         );
 
         workspace.daemon_ready = true;
-        handle_live_event(&mut workspace, &mut chrome, &mut supervisor, disconnected())
-            .await
-            .expect("next disconnect");
+        handle_live_event(
+            &mut workspace,
+            &mut chrome,
+            &mut supervisor,
+            &mut jobs,
+            disconnected(),
+        )
+        .await
+        .expect("next disconnect");
         assert_eq!(chrome.alert_log.len(), 2, "the next outage toasts again");
     }
 }

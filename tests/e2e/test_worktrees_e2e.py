@@ -32,7 +32,7 @@ pytestmark = pytest.mark.e2e
 def extract_result(response: dict[str, Any]) -> dict[str, Any]:
     """Extract the actual tool result from MCP response wrapper.
 
-    MCP responses are wrapped: {'success': True, 'result': {...}, 'response_time_ms': ...}
+    MCP responses are wrapped: {'success': True, 'result': {...}}
     This extracts the inner 'result' dict.
     """
     if "result" in response:

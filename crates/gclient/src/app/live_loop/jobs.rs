@@ -10,6 +10,7 @@ use std::future::Future;
 use std::hash::Hash;
 use std::io;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use gobby_terminal::protocol::ClientMessage;
 use ratatui::backend::Backend;
@@ -17,7 +18,7 @@ use ratatui::Terminal;
 use serde_json::{json, Value};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon, TerminalRow, WorkspaceOp};
 use crate::frame_source::{FrameError, FrameSource, PaneFrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
@@ -44,6 +45,8 @@ pub enum JobKey {
     Respond,
     /// A layout op; ops are not coalesced, so every outcome applies.
     Op,
+    /// The read that opens a placed terminal no pane shows; one per terminal.
+    Terminal(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,6 +122,13 @@ pub enum JobResult {
     Ops {
         unplaced: Option<String>,
         result: Result<(), DaemonError>,
+    },
+    /// The read that opens a placed terminal no pane shows. `elapsed` spans
+    /// the read, for the WARN when it fails.
+    Opened {
+        terminal_id: String,
+        elapsed: Duration,
+        result: Result<TerminalRow, DaemonError>,
     },
 }
 
@@ -255,6 +265,7 @@ pub(super) enum Pending {
     Geometry(PaneId, u16, u16),
     Scroll(PaneId, u32),
     HostGrant(PaneId),
+    Open(String),
 }
 
 /// One entry of the geometry pass: a shown pane, its inner rect and the
@@ -429,6 +440,15 @@ impl LoopJobs {
                 });
                 true
             }
+            Pending::Open(terminal_id) => {
+                // The row may have landed, or the pane closed or the focus
+                // moved, since this follow-up was queued.
+                if !workspace.is_unresolved_terminal(&terminal_id) {
+                    return false;
+                }
+                issue_terminal_open(workspace.daemon(), &self.tx, tag.clone(), terminal_id);
+                true
+            }
             Pending::Scroll(pane_id, rows) => {
                 let daemon = workspace.daemon().clone();
                 let Some(pane) = workspace.panes.get_mut(&pane_id) else {
@@ -497,6 +517,24 @@ pub(super) fn issue_workspace_op(
     spawn_job(tx, tag, async move {
         let result = daemon.workspace_op(op).await.map(|_| ());
         JobResult::WorkspaceOp { intent, result }
+    });
+}
+
+pub(super) fn issue_terminal_open(
+    daemon: &LiveDaemon,
+    tx: &UnboundedSender<JobOutcome>,
+    tag: JobTag,
+    terminal_id: String,
+) {
+    let daemon = daemon.clone();
+    spawn_job(tx, tag, async move {
+        let started = Instant::now();
+        let result = daemon.terminal(&terminal_id).await;
+        JobResult::Opened {
+            terminal_id,
+            elapsed: started.elapsed(),
+            result,
+        }
     });
 }
 

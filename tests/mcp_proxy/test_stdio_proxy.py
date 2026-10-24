@@ -231,7 +231,6 @@ async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
             "result_id": "11111111-1111-4111-8111-111111111111",
             "preview": "x" * 1_200,
         },
-        "response_time_ms": 1.0,
     }
     proxy = MagicMock(spec=DaemonProxy)
     proxy.call_tool = AsyncMock(return_value=http_envelope)
@@ -260,7 +259,6 @@ async def test_stdio_final_retrieval_response_stays_within_shared_cap() -> None:
             "next_offset": 1_400,
             "total_chars": 4_000,
         },
-        "response_time_ms": 1.0,
     }
     proxy = MagicMock(spec=DaemonProxy)
     proxy.call_tool = AsyncMock(return_value=http_result)
@@ -461,9 +459,34 @@ async def test_get_variable_calls_relocated_session_path_with_scope() -> None:
     assert req.await_args == call(
         "POST",
         "/api/sessions/sess-1/variables/get",
-        json={"name": "foo", "scope": "session"},
+        json={"name": "foo", "scope": "session", "brief": True},
         session_id="sess-1",
     )
+
+
+@pytest.mark.asyncio
+async def test_get_variable_forwards_brief_false_for_the_full_map() -> None:
+    proxy = DaemonProxy(60887)
+    with patch.object(proxy, "_request", new=AsyncMock(return_value={"success": True})) as req:
+        await proxy.get_variable(session_id="sess-1", brief=False)
+    assert req.await_args == call(
+        "POST",
+        "/api/sessions/sess-1/variables/get",
+        json={"name": None, "scope": "session", "brief": False},
+        session_id="sess-1",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("kwargs", "brief"), [({}, True), ({"brief": False}, False)])
+async def test_top_level_get_variable_forwards_brief(kwargs: dict[str, bool], brief: bool) -> None:
+    proxy = MagicMock(spec=DaemonProxy)
+    proxy.get_variable = AsyncMock(return_value={"success": True, "names": []})
+    get_variable = _capture_stdio_tools(proxy)["get_variable"]
+
+    await get_variable(session_id="sess-1", **kwargs)
+
+    assert proxy.get_variable.await_args.kwargs["brief"] is brief
 
 
 def test_stdio_proxy_has_no_workflows_variable_literal() -> None:

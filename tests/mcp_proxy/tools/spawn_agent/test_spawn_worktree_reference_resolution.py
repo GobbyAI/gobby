@@ -1,4 +1,4 @@
-"""spawn_agent and dispatch_batch resolve ``worktree_id`` refs before storage (#22377).
+"""spawn_agent resolves ``worktree_id`` refs before storage (#22377).
 
 Handoffs surface eight-character worktree IDs and every gobby-worktrees tool
 accepts them as unique id prefixes, but the spawn path passed the raw ref
@@ -374,79 +374,6 @@ class TestSpawnAgentResolvesWorktreeReferences:
         assert result["success"] is False, result
         assert error_needle in result["error"]
         assert "invalid input syntax" not in result["error"]
-        execute_spawn.assert_not_awaited()
-        prepare_terminal.assert_not_called()
-        assert storage.get(_FULL_ID) is not None
-        assert storage.get(_OTHER_ID) is not None
-
-
-class TestDispatchBatchResolvesWorktreeReferences:
-    """The dispatch_batch entry point accepts full UUIDs and unique prefixes."""
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("worktree_ref", _RESOLVABLE_REFS)
-    async def test_batch_agents_reuse_resolved_worktree(
-        self,
-        storage: LocalWorktreeManager,
-        mock_runner: MagicMock,
-        agent_body: AgentDefinitionBody,
-        checkout: IsolatedCheckoutProject,
-        worktree_ref: str,
-    ) -> None:
-        registry = _spawn_registry(mock_runner, storage, _git_manager())
-        with _spawn_flow(agent_body, checkout) as execute_spawn:
-            result = await registry.call(
-                "dispatch_batch",
-                {
-                    "suggestions": [{"task_ref": "22377", "prompt": "Continue the assigned task"}],
-                    "agent": "default",
-                    "provider": "claude",
-                    "parent_session_id": "parent-1",
-                    "worktree_id": worktree_ref,
-                },
-            )
-            await _drain_spawn_background_tasks()
-        assert result["dispatched"] == 1, result
-        entry = result["results"][0]
-        assert entry["success"] is True, entry
-        assert execute_spawn.await_args is not None
-        assert execute_spawn.await_args.args[0].worktree_id == _FULL_ID
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("worktree_ref", "error_needle"), _UNRESOLVABLE_REFS)
-    async def test_batch_refusal_reports_resolver_error_without_allocation(
-        self,
-        storage: LocalWorktreeManager,
-        mock_runner: MagicMock,
-        agent_body: AgentDefinitionBody,
-        checkout: IsolatedCheckoutProject,
-        worktree_ref: str,
-        error_needle: str,
-    ) -> None:
-        registry = _spawn_registry(mock_runner, storage, _git_manager())
-        with (
-            _spawn_flow(agent_body, checkout) as execute_spawn,
-            patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.prepare_terminal_spawn",
-                new=MagicMock(return_value=prepared_spawn()),
-            ) as prepare_terminal,
-        ):
-            result = await registry.call(
-                "dispatch_batch",
-                {
-                    "suggestions": [{"task_ref": "22377", "prompt": "Continue the assigned task"}],
-                    "agent": "default",
-                    "provider": "claude",
-                    "parent_session_id": "parent-1",
-                    "worktree_id": worktree_ref,
-                },
-            )
-            await _drain_spawn_background_tasks()
-        assert result["dispatched"] == 0, result
-        entry = result["results"][0]
-        assert entry["success"] is False, entry
-        assert error_needle in entry["error"]
-        assert "invalid input syntax" not in entry["error"]
         execute_spawn.assert_not_awaited()
         prepare_terminal.assert_not_called()
         assert storage.get(_FULL_ID) is not None

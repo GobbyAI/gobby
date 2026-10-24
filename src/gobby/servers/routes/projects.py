@@ -17,6 +17,8 @@ from gobby.config.validation_detection import (
     load_project_validation_detection,
     save_project_validation_detection,
 )
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.remote_workspaces import machine_refusal
 from gobby.servers.tool_approvals import (
     load_project_approval_rules,
     save_project_approval_rules,
@@ -141,8 +143,17 @@ def _local_checkout(db: Any, project_id: str) -> ProjectCheckout | None:
 def _local_checkouts(db: Any, project_ids: Iterable[str]) -> dict[str, ProjectCheckout]:
     """Return this daemon's checkouts for `project_ids`, keyed by project id, in one query."""
     machine_id = get_machine_id()
+    if not machine_id:
+        return {}
+    return _checkouts_for_machine(db, machine_id, project_ids)
+
+
+def _checkouts_for_machine(
+    db: Any, machine_id: str, project_ids: Iterable[str]
+) -> dict[str, ProjectCheckout]:
+    """Return one machine's checkouts for `project_ids`, keyed by project id, in one query."""
     wanted = set(project_ids)
-    if not machine_id or not wanted:
+    if not wanted:
         return {}
     return {
         checkout.project_id: checkout
@@ -211,14 +222,21 @@ def _get_project_stats(server: HTTPServer, project_id: str) -> dict[str, Any]:
 
 
 def _build_project_response(
-    project: Project, stats: dict[str, Any], checkout: ProjectCheckout | None
+    project: Project,
+    stats: dict[str, Any],
+    checkout: ProjectCheckout | None,
+    *,
+    read_checkout_files: bool = True,
 ) -> dict[str, Any]:
-    """Shape one project payload from already-resolved stats and checkout."""
+    """Shape one project payload from already-resolved stats and checkout.
+
+    A checkout on another machine is not on this filesystem, so its files are not read.
+    """
     data = cast(dict[str, Any], jsonable_encoder(project.to_dict()))
     data["display_name"] = "Personal" if project.name == "_personal" else project.name
     data.update(stats)
     data["checkout"] = _checkout_payload(checkout)
-    if checkout is None:
+    if checkout is None or not read_checkout_files:
         data["approval_rules"] = []
         data["validation_detection"] = None
     else:
@@ -236,16 +254,33 @@ def _project_to_response(
     return _build_project_response(project, stats, checkout)
 
 
-def _projects_to_responses(server: HTTPServer, projects: Sequence[Project]) -> list[dict[str, Any]]:
-    """Shape list payloads with one stats batch and one checkout query per request."""
+def _projects_to_responses(
+    server: HTTPServer, projects: Sequence[Project], *, machine_id: str | None = None
+) -> list[dict[str, Any]]:
+    """Shape list payloads with one stats batch and one checkout query per request.
+
+    The hub's own machine (or no machine) lists local checkouts. Another machine lists only
+    the projects it has a checkout for, and reads none of that checkout's files.
+    """
     if not projects:
         return []
     db = _get_project_manager(server).db
     project_ids = [project.id for project in projects]
-    stats_by_project = _get_project_stats_batch(server, project_ids)
-    checkouts = _local_checkouts(db, project_ids)
+    if machine_id is None or is_local_machine(machine_id):
+        checkouts = _local_checkouts(db, project_ids)
+        read_checkout_files = True
+    else:
+        checkouts = _checkouts_for_machine(db, machine_id, project_ids)
+        projects = [project for project in projects if project.id in checkouts]
+        read_checkout_files = False
+    stats_by_project = _get_project_stats_batch(server, [project.id for project in projects])
     return [
-        _build_project_response(project, stats_by_project[project.id], checkouts.get(project.id))
+        _build_project_response(
+            project,
+            stats_by_project[project.id],
+            checkouts.get(project.id),
+            read_checkout_files=read_checkout_files,
+        )
         for project in projects
     ]
 
@@ -268,9 +303,12 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                     e,
                 )
 
-    @router.get("")
-    async def list_projects() -> list[dict[str, Any]]:
-        """List all projects with computed stats."""
+    @router.get("", response_model=None)
+    async def list_projects(machine_id: str | None = None) -> list[dict[str, Any]] | JSONResponse:
+        """List all projects with computed stats, or the projects checked out on one machine."""
+        refusal = await server.run_db(machine_refusal, machine_id)
+        if refusal is not None:
+            return JSONResponse(status_code=403, content=refusal)
         pm = _get_project_manager(server)
         projects = await server.run_db(pm.list)
 
@@ -278,7 +316,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
             project for project in projects if project.name not in HIDDEN_PROJECT_NAMES
         ]
         results: list[dict[str, Any]] = await server.run_db(
-            _projects_to_responses, server, visible_projects
+            _projects_to_responses, server, visible_projects, machine_id=machine_id
         )
         return results
 

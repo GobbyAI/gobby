@@ -634,6 +634,7 @@ class DaemonProxy:
         name: str | None = None,
         *,
         session_id: str,
+        brief: bool = True,
     ) -> dict[str, Any]:
         """Get session-scoped variable(s)."""
         if session_id in {"", ".", ".."}:
@@ -641,7 +642,7 @@ class DaemonProxy:
         return await self._request(
             "POST",
             f"/api/sessions/{quote(session_id, safe='')}/variables/get",
-            json={"name": name, "scope": "session"},
+            json={"name": name, "scope": "session", "brief": brief},
             session_id=session_id,
         )
 

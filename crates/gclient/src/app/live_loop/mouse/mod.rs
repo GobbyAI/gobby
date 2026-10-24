@@ -26,6 +26,7 @@ mod forward;
 mod links;
 mod pointer;
 mod select;
+mod sidebar_divider;
 mod wheel;
 
 pub use select::{anchor_selection, extend_selection, finish_selection, ClickRun, DOUBLE_CLICK_MS};
@@ -53,6 +54,15 @@ pub enum MouseGesture {
     SplitDrag { border: usize },
     /// The sidebar edge is being dragged to resize the sidebar.
     SidebarDrag,
+    /// A sidebar section divider is being dragged. `index` is the section
+    /// above it (`SidebarSection::index`); `top` is that section's first row
+    /// and `rows` the pair's heights as the press drew them, so the drag
+    /// trades within a sum that stays put.
+    SidebarSectionDrag {
+        index: usize,
+        top: u16,
+        rows: [u16; 2],
+    },
     /// A sidebar section's scrollbar thumb is being dragged.
     SidebarScrollbarDrag {
         section: SidebarSection,

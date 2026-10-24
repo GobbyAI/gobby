@@ -394,8 +394,6 @@ def add_messaging_tools(
                 brief_response["failed_ws_broadcasts"] = failed_ws_broadcasts
             if wake_failures:
                 brief_response["wake_failures"] = wake_failures
-            if wake_declines:
-                brief_response["wake_declines"] = wake_declines
             return brief_response
 
         except ValueError as e:
