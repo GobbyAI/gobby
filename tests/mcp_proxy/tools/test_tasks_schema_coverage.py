@@ -159,8 +159,6 @@ class TestToolSchemas:
             "task_id",
             "reason",
             "changes_summary",
-            "skip_validation",
-            "override_justification",
             "commit_sha",
             "project_path",
             "preview",
@@ -170,8 +168,12 @@ class TestToolSchemas:
         for prop in expected_props:
             assert prop in props, f"Missing property: {prop}"
 
-        assert "without launching review or closing" in props["preview"]["description"].lower()
-        assert "in the same call" in schema["description"].lower()
+        assert "skip_validation" not in props
+        assert "override_justification" not in props
+
+        assert props["preview"] == {"type": "boolean", "default": False}
+        assert props["response_detail"]["enum"] == ["concise", "diagnostic"]
+        assert schema["inputSchema"]["required"] == ["task_id"]
 
     def test_close_task_schema_requires_changes_summary(
         self, task_registry: InternalToolRegistry

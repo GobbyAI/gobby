@@ -26,7 +26,8 @@ def installed_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[
     bin_dir.mkdir()
     for name in ("node", "gcode", "gdaemon", "ghook"):
         binary = bin_dir / name
-        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script = "#!/bin/sh\necho v22.12.0\n" if name == "node" else "#!/bin/sh\nexit 0\n"
+        binary.write_text(script, encoding="utf-8")
         binary.chmod(0o755)
     (bin_dir / ".gdaemon-schema-identity.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(bin_dir))
