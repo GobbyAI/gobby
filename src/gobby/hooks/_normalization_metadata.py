@@ -93,7 +93,10 @@ def _resolve_pending_source_read(
             **navigation,
             **{
                 key: scope[key]
-                for key in ("_canonical_source_read_output_channels",)
+                for key in (
+                    "_canonical_source_read_output_channels",
+                    "canonical_code_navigation_script_execution",
+                )
                 if key in scope
             },
             "canonical_file_paths": paths if preserved else list(record["paths"]),
