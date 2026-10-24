@@ -18,6 +18,7 @@ from gobby.shutdown_intent import ShutdownIntent, shutdown_marker_details
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.local_token import RELEASE_TOKEN_HEADER
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.spawn import run_cancellable_probe
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -264,8 +265,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             # Refuse before any stop. force skips the cron check, never this proof.
             try:
-                refusal = await asyncio.wait_for(
-                    asyncio.to_thread(_restart_start_refusal),
+                refusal = await run_cancellable_probe(
+                    _restart_start_refusal,
                     timeout=RESTART_START_PROOF_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
