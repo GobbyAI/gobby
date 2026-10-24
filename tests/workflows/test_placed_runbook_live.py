@@ -107,6 +107,26 @@ _INPUT_REF = re.compile(r"\$\{\{\s*inputs\.(\w+)\s*\}\}")
 _PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
 
 
+@pytest.fixture(scope="session", autouse=True)
+def require_nested_seatbelt() -> None:
+    """Require the platform capability before starting any live fixture."""
+    sandbox_exec = shutil.which("sandbox-exec")
+    if sandbox_exec is None:
+        pytest.skip("nested Seatbelt unavailable: sandbox-exec is not installed")
+    try:
+        probe = subprocess.run(
+            [sandbox_exec, "-p", "(version 1)(allow default)", "/usr/bin/true"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.skip(f"nested Seatbelt unavailable: {exc}")
+    if probe.returncode != 0:
+        pytest.skip(f"nested Seatbelt unavailable: {probe.stderr.strip()}")
+
+
 @pytest.fixture
 def e2e_home_dir(e2e_srt_spawn_home: Path) -> Path:
     return e2e_srt_spawn_home
