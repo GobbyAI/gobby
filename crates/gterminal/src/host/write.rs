@@ -101,13 +101,38 @@ impl HostState {
         if attachment_id.is_empty() {
             return err("invalid_request");
         }
-        let mut inner = self.inner.lock().await;
-        let slot = match native_slot_mut(&mut inner, &s(extra, "host_terminal_id")) {
-            Ok(slot) => slot,
-            Err(code) => return err(code),
+        let Some(host_attachment_id) = extra.get("host_attachment_id").and_then(Value::as_u64)
+        else {
+            return err("invalid_request");
         };
+        let host_terminal_id = s(extra, "host_terminal_id");
+        let mut inner = self.inner.lock().await;
+        if let Err(code) = native_slot_mut(&mut inner, &host_terminal_id) {
+            return err(code);
+        }
+        if !inner
+            .attachments
+            .get(&host_attachment_id)
+            .is_some_and(|attachment| attachment.host_terminal_id == host_terminal_id)
+        {
+            return err("attachment_mismatch");
+        }
+        // The trusted grant wins even if another stream preclaimed the daemon
+        // name. Reserve that name on the selected physical stream for themes.
+        for (id, attachment) in &mut inner.attachments {
+            if attachment.host_terminal_id != host_terminal_id {
+                continue;
+            }
+            if *id == host_attachment_id {
+                attachment.client_attachment_id = Some(attachment_id.clone());
+            } else if attachment.client_attachment_id.as_deref() == Some(&attachment_id) {
+                attachment.client_attachment_id = None;
+            }
+        }
+        let slot =
+            native_slot_mut(&mut inner, &host_terminal_id).expect("native slot checked above");
         let previous = slot.input_grant.replace(attachment_id);
-        let host_terminal_id = slot.host_terminal_id.clone();
+        slot.input_grant_attachment = Some(host_attachment_id);
         super::theme::apply_holder_theme(&inner, &host_terminal_id);
         json!({"ok": true, "granted": true, "previous": previous})
     }
@@ -128,6 +153,9 @@ impl HostState {
             Some(holder) if slot.input_grant.as_deref() != Some(holder) => false,
             _ => slot.input_grant.take().is_some(),
         };
+        if revoked {
+            slot.input_grant_attachment = None;
+        }
         json!({"ok": true, "revoked": revoked})
     }
 
@@ -161,11 +189,8 @@ impl HostState {
             if slot.locator.is_some() {
                 return Err("not_native");
             }
-            let holder = attachment
-                .client_attachment_id
-                .as_deref()
-                .ok_or("input_not_granted")?;
-            if slot.input_grant.as_deref() != Some(holder) {
+            let holder = slot.input_grant.as_deref().ok_or("input_not_granted")?;
+            if slot.input_grant_attachment != Some(attachment_id) {
                 return Err("input_not_granted");
             }
             let (effect, submit) = input.classify(slot);
@@ -836,6 +861,7 @@ mod tests {
         let grant = json!({
             "host_terminal_id": "interactive",
             "attachment_id": "client",
+            "host_attachment_id": attachment_id,
         });
         let granted = timeout(
             Duration::from_millis(250),

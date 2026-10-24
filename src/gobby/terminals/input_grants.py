@@ -32,9 +32,14 @@ class LeaseHolder(Protocol):
     @property
     def frame_delivery(self) -> str: ...
 
+    @property
+    def host_attachment_id(self) -> int | None: ...
+
 
 class InputGrantRuntime(Protocol):
-    async def grant_input(self, terminal: Terminal, attachment_id: str) -> None: ...
+    async def grant_input(
+        self, terminal: Terminal, attachment_id: str, host_attachment_id: int
+    ) -> None: ...
 
     async def revoke_input(self, terminal: Terminal, attachment_id: str | None = None) -> None: ...
 
@@ -73,7 +78,11 @@ async def sync_host_input_grant(
         return await asyncio.to_thread(
             manager.record_native_input_handoff, terminal, holder.attachment_id
         )
-    if holder is None or holder.frame_delivery != "direct":
+    host_attachment_id = None if holder is None else holder.host_attachment_id
+    direct_without_stream = (
+        holder is not None and holder.frame_delivery == "direct" and host_attachment_id is None
+    )
+    if holder is None or holder.frame_delivery != "direct" or host_attachment_id is None:
         try:
             await runtime.revoke_input(terminal)
         except _HOST_FAILURES as exc:
@@ -86,9 +95,9 @@ async def sync_host_input_grant(
         else:
             if manager is not None:
                 await run_on_operator_lane(manager.clear_native_input_handoff, terminal.id)
-        return None
+        return False if direct_without_stream else None
     try:
-        await runtime.grant_input(terminal, holder.attachment_id)
+        await runtime.grant_input(terminal, holder.attachment_id, host_attachment_id)
     except _HOST_FAILURES as exc:
         logger.warning(
             "grant_input for terminal %s attachment %s failed: %s",
@@ -96,6 +105,10 @@ async def sync_host_input_grant(
             holder.attachment_id,
             exc,
         )
+        try:
+            await runtime.revoke_input(terminal)
+        except _HOST_FAILURES as revoke_error:
+            logger.warning("revoke_input for terminal %s failed: %s", terminal.id, revoke_error)
         return False
     if manager is not None:
         await run_on_operator_lane(manager.clear_native_input_handoff, terminal.id)

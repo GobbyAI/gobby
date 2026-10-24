@@ -661,16 +661,18 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
             await self._reconnect_epoch(expected_epoch)
             await self._client.resize(self._host_id(terminal), rows, cols)
 
-    async def grant_input(self, terminal: Terminal, attachment_id: str) -> None:
+    async def grant_input(
+        self, terminal: Terminal, attachment_id: str, host_attachment_id: int
+    ) -> None:
         """Hand the host's frame-stream input grant for ``terminal`` to ``attachment_id``."""
         expected_epoch = self._require_current_epoch(terminal.host_epoch)
         host_id = self._host_id(terminal)
         try:
             await self._ensure()
-            await self._client.grant_input(host_id, attachment_id)
+            await self._client.grant_input(host_id, attachment_id, host_attachment_id)
         except (HostUnavailableError, ConnectionError, OSError):
             await self._reconnect_epoch(expected_epoch)
-            await self._client.grant_input(host_id, attachment_id)
+            await self._client.grant_input(host_id, attachment_id, host_attachment_id)
 
     async def revoke_input(self, terminal: Terminal, attachment_id: str | None = None) -> None:
         """Clear the host's input grant for ``terminal``; unnamed, whoever holds it."""

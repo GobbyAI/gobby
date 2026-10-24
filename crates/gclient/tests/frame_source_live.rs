@@ -592,7 +592,8 @@ async fn granted_direct_input_echoes_and_revoke_refuses() {
             "method": "grant_input",
             "id": "grant-1",
             "host_terminal_id": host_terminal_id,
-            "attachment_id": "att-live"
+            "attachment_id": "att-live",
+            "host_attachment_id": source.host_attachment_id().expect("host stream id")
         }),
     )
     .await;
@@ -811,6 +812,7 @@ async fn cancelled_direct_read_retires_and_closes_both_halves() {
                 &ServerMessage::Attached {
                     created: false,
                     host_terminal_id: "host-terminal-1".into(),
+                    host_attachment_id: 1,
                 },
             )
             .await
@@ -872,6 +874,7 @@ async fn cancelled_direct_read_retires_and_closes_both_halves() {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "host-terminal-1".into(),
+                host_attachment_id: 1,
             },
         )
         .await
@@ -960,6 +963,7 @@ async fn direct_frame_overflow_fails_typed_without_dropping() {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "host-terminal-1".into(),
+                host_attachment_id: 1,
             },
         )
         .await
@@ -1487,6 +1491,7 @@ async fn all_three_sources_share_one_surface() {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "host-terminal-1".into(),
+                host_attachment_id: 1,
             },
         )
         .await

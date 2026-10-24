@@ -23,7 +23,10 @@ class _GrantRuntime:
         self.current: str | None = None
         self.handoffs: list[tuple[str, str]] = []
 
-    async def grant_input(self, terminal: Terminal, attachment_id: str) -> None:
+    async def grant_input(
+        self, terminal: Terminal, attachment_id: str, host_attachment_id: int
+    ) -> None:
+        assert host_attachment_id > 0
         self.current = attachment_id
 
     async def revoke_input(self, terminal: Terminal, attachment_id: str | None = None) -> None:
@@ -80,7 +83,9 @@ async def test_shutdown_finalization_preserves_only_existing_direct_native_grant
         backend=backend,
         viewer=viewer,
     )
-    result = await registry.take_control(terminal.id, attachment.attachment_id)
+    result = await registry.take_control(
+        terminal.id, attachment.attachment_id, host_attachment_id=42
+    )
     assert result.granted
     before = runtime.current
     if preserve:
@@ -121,7 +126,9 @@ async def test_failed_recording_revokes_the_existing_grant(record_result: bool |
     registry = _registry(runtime, record_result)
     terminal = make_memory_terminal(backend="native")
     attachment = await registry.attach(terminal.id, "direct", terminal=terminal)
-    result = await registry.take_control(terminal.id, attachment.attachment_id)
+    result = await registry.take_control(
+        terminal.id, attachment.attachment_id, host_attachment_id=42
+    )
     assert result.host_input_granted is True
 
     await registry.finalize(attachment.attachment_id, "daemon_shutdown")
@@ -134,14 +141,18 @@ async def test_failed_recording_revokes_the_existing_grant(record_result: bool |
 @pytest.mark.asyncio
 async def test_refused_host_grant_is_never_preserved() -> None:
     class RefusingRuntime(_GrantRuntime):
-        async def grant_input(self, terminal: Terminal, attachment_id: str) -> None:
+        async def grant_input(
+            self, terminal: Terminal, attachment_id: str, host_attachment_id: int
+        ) -> None:
             raise ConnectionError("host refused grant")
 
     runtime = RefusingRuntime()
     registry = _registry(runtime)
     terminal = make_memory_terminal(backend="native")
     attachment = await registry.attach(terminal.id, "direct", terminal=terminal)
-    result = await registry.take_control(terminal.id, attachment.attachment_id)
+    result = await registry.take_control(
+        terminal.id, attachment.attachment_id, host_attachment_id=42
+    )
     assert result.host_input_granted is False
 
     await registry.finalize(attachment.attachment_id, "daemon_shutdown")
@@ -170,7 +181,7 @@ async def test_websocket_stop_marks_client_finalization_as_daemon_shutdown() -> 
     attachment = await registry.attach(
         terminal.id, "direct", websocket=socket, terminal=terminal, backend="native"
     )
-    await registry.take_control(terminal.id, attachment.attachment_id)
+    await registry.take_control(terminal.id, attachment.attachment_id, host_attachment_id=42)
     assert runtime.current == attachment.attachment_id
     server.clients[socket] = {}
 
@@ -189,8 +200,10 @@ async def test_preemption_and_release_retire_authority_before_shutdown() -> None
     terminal = make_memory_terminal(backend="native")
     old = await registry.attach(terminal.id, "direct", terminal=terminal)
     replacement = await registry.attach(terminal.id, "direct", terminal=terminal)
-    await registry.take_control(terminal.id, old.attachment_id)
-    result = await registry.take_control(terminal.id, replacement.attachment_id, takeover=True)
+    await registry.take_control(terminal.id, old.attachment_id, host_attachment_id=41)
+    result = await registry.take_control(
+        terminal.id, replacement.attachment_id, takeover=True, host_attachment_id=42
+    )
     assert result.displaced_attachment_id == old.attachment_id
     assert runtime.current == replacement.attachment_id
 
@@ -211,7 +224,7 @@ async def test_cancelled_recording_revokes_before_propagating_cancellation() -> 
     registry = _registry(runtime)
     terminal = make_memory_terminal(backend="native")
     attachment = await registry.attach(terminal.id, "direct", terminal=terminal)
-    await registry.take_control(terminal.id, attachment.attachment_id)
+    await registry.take_control(terminal.id, attachment.attachment_id, host_attachment_id=42)
     recording = asyncio.Event()
 
     async def follow_holder(change: HolderChange) -> bool | None:

@@ -45,6 +45,7 @@ async fn retired_direct_attach() -> (Workspace<LiveDaemon>, super::super::Direct
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "terminal-1".into(),
+                host_attachment_id: 1,
             },
         )
         .await

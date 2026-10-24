@@ -56,6 +56,7 @@ impl Workspace {
                 "type": "terminal_take_control",
                 "terminal_id": terminal_id,
                 "attachment_id": attachment,
+                "host_attachment_id": pane.host_attachment_id(),
                 "takeover": true
             }));
         }

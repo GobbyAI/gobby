@@ -352,7 +352,8 @@ pub(super) fn send_live_input(
         send_during_outage(workspace, chrome, jobs, pane_id, data, paste);
         return Ok(());
     }
-    if workspace.pane(pane_id).writable() {
+    let pane = workspace.pane(pane_id);
+    if pane.writable() && (!pane.direct_native() || pane.direct_input()) {
         return send_live_write(workspace, jobs, pane_id, data, paste);
     }
     let acquiring = workspace.awaiting_control(pane_id);

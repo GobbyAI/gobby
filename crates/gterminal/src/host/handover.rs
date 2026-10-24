@@ -41,6 +41,8 @@ pub struct HandoverState {
     pub control_listener_fd: RawFd,
     pub frames_listener_fd: RawFd,
     pub next_host_id: u64,
+    /// Physical stream IDs cannot be reused while this host epoch survives.
+    pub next_attachment: u64,
     pub events: CarriedEvents,
     pub panes: Vec<CarriedPane>,
 }
