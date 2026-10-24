@@ -989,6 +989,7 @@ fn capture(
         control_listener_fd: context.control_fd,
         frames_listener_fd: context.frames_fd,
         next_host_id: inner.next_host_id,
+        next_attachment: inner.next_attachment,
         events: state.events.carried(),
         panes,
     })

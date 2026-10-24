@@ -861,6 +861,7 @@ mod tests {
         let grant = json!({
             "host_terminal_id": "interactive",
             "attachment_id": "client",
+            "host_attachment_id": attachment_id,
         });
         let granted = timeout(
             Duration::from_millis(250),

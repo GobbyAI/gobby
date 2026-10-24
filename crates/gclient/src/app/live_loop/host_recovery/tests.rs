@@ -31,6 +31,13 @@ impl Write for LogWriter {
 
 /// A live direct source from a host that answers the handshake on `epoch`.
 async fn restored_source(epoch: &str) -> UnixSocketFrameSource {
+    restored_source_with_host(epoch, "").await.0
+}
+
+async fn restored_source_with_host(
+    epoch: &str,
+    frame_socket: &str,
+) -> (UnixSocketFrameSource, UnixStream) {
     let (client, mut host) = UnixStream::pair().expect("socket pair");
     let host_epoch = epoch.to_string();
     let host_task = tokio::spawn(async move {
@@ -59,14 +66,13 @@ async fn restored_source(epoch: &str) -> UnixSocketFrameSource {
         backend: "native".into(),
         frame_host_epoch: epoch.into(),
         host_terminal_id: "terminal-1".into(),
-        frame_socket_path: String::new(),
+        frame_socket_path: frame_socket.into(),
         pane: None,
     };
     let source = UnixSocketFrameSource::connect_stream(client, &locator, "token", 80, 24)
         .await
         .expect("restored source");
-    drop(host_task.await.expect("host handshake"));
-    source
+    (source, host_task.await.expect("host handshake"))
 }
 
 #[tokio::test]
@@ -138,6 +144,102 @@ async fn input_on_a_held_stream_without_a_host_grant_queues_and_requests_control
     assert_eq!(pane.pending_input.len(), 1);
     assert_eq!(pane.pending_input[0].parts(), (b"queued".as_slice(), false));
     assert!(workspace.awaiting_control(PaneId(1)));
+    assert!(chrome.alert_log.is_empty());
+}
+
+#[tokio::test]
+async fn recovered_held_stream_regrants_and_flushes_input_during_daemon_outage() {
+    use crate::app::live_loop::{
+        control::send_live_input, jobs::LoopJobs, jobs_apply::apply_job_outcome,
+    };
+    use crate::ui::Chrome;
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::time::{timeout, Duration};
+
+    let dir = tempfile::tempdir().unwrap();
+    let frame_socket = dir.path().join("gterm-frames.sock");
+    let control_socket = dir.path().join("gterm-control.sock");
+    let token = dir.path().join("gterm-control.token");
+    std::fs::write(&token, "test-token").unwrap();
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let listener = tokio::net::UnixListener::bind(&control_socket).unwrap();
+    std::fs::set_permissions(&control_socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let control = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut stream = BufReader::new(stream);
+        let mut line = String::new();
+        stream.read_line(&mut line).await.unwrap();
+        let hello: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(hello["control_token"], "test-token");
+        stream
+            .get_mut()
+            .write_all(b"{\"ok\":true}\n")
+            .await
+            .unwrap();
+        line.clear();
+        stream.read_line(&mut line).await.unwrap();
+        let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "grant_input");
+        assert_eq!(request["host_terminal_id"], "terminal-1");
+        assert_eq!(request["host_attachment_id"], 1);
+        stream
+            .get_mut()
+            .write_all(b"{\"ok\":true,\"granted\":true}\n")
+            .await
+            .unwrap();
+    });
+    let (source, mut host) =
+        restored_source_with_host("epoch-1", frame_socket.to_str().unwrap()).await;
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
+    let mut workspace = Workspace::live(daemon);
+    workspace.daemon_ready = false;
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    pane.install_frame_source(crate::frame_source::PaneFrameSource::Direct(source));
+    pane.remember_host_locator(&AttachLocator {
+        backend: "native".into(),
+        frame_host_epoch: "epoch-1".into(),
+        host_terminal_id: "terminal-1".into(),
+        frame_socket_path: frame_socket.to_string_lossy().into_owned(),
+        pane: None,
+    });
+    pane.live = true;
+    pane.restore_host_control();
+    pane.host_input_granted = false;
+    workspace.panes.insert(pane.id, pane);
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    send_live_input(
+        &mut workspace,
+        &mut chrome,
+        &mut jobs,
+        PaneId(1),
+        b"queued",
+        false,
+    )
+    .unwrap();
+    let outcome = timeout(Duration::from_secs(2), jobs.rx.recv())
+        .await
+        .expect("recovered Held stream must dispatch HostGrant during outage")
+        .expect("grant outcome");
+    apply_job_outcome(&mut workspace, &mut chrome, &mut jobs, outcome);
+    timeout(Duration::from_secs(2), control)
+        .await
+        .unwrap()
+        .unwrap();
+    let input = timeout(Duration::from_secs(2), async {
+        loop {
+            let message: ClientMessage =
+                read_message_async(&mut host, MAX_FRAME_SIZE).await.unwrap();
+            if let ClientMessage::Input { .. } = message {
+                break message;
+            }
+        }
+    })
+    .await
+    .expect("queued input must reach the recovered host stream");
+    assert!(matches!(input, ClientMessage::Input { data } if data == b"queued"));
+    assert!(workspace.panes[&PaneId(1)].pending_input.is_empty());
     assert!(chrome.alert_log.is_empty());
 }
 

@@ -180,3 +180,22 @@ async fn holder_theme_name_stays_reserved_when_its_stream_changes_labels() {
         Err("attachment_already_bound")
     );
 }
+
+#[cfg(all(unix, feature = "vt-engine"))]
+#[tokio::test]
+async fn exhausted_host_attachment_identifiers_fail_closed() {
+    let (state, _, _, _) = frame_grant_fixture().await;
+    state.inner.lock().await.next_attachment = u64::MAX;
+    assert!(matches!(
+        state
+            .attach(
+                "native",
+                None,
+                crate::protocol::RenderEncoding::TerminalAnsi,
+                24,
+                80
+            )
+            .await,
+        Err("capacity")
+    ));
+}

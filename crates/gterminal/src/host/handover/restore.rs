@@ -87,7 +87,12 @@ pub(crate) fn stage(
                 outcome: None,
             },
             events,
-            inner: Inner::restored(terminals, state.next_host_id, reservations),
+            inner: Inner::restored(
+                terminals,
+                state.next_host_id,
+                state.next_attachment,
+                reservations,
+            ),
         },
         control,
         frames,

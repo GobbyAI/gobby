@@ -162,6 +162,7 @@ impl Inner {
     pub(crate) fn restored(
         terminals: HashMap<Identity, TerminalSlot>,
         next_host_id: u64,
+        next_attachment: u64,
         reservations: HashMap<String, Reservation>,
     ) -> Self {
         let by_host_id = terminals
@@ -174,7 +175,7 @@ impl Inner {
             next_host_id,
             reservations,
             attachments: HashMap::new(),
-            next_attachment: 1,
+            next_attachment,
             control_owners: HashSet::new(),
         }
     }
@@ -220,7 +221,7 @@ impl HostState {
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
         let events = HostEvents::new(host_epoch.clone(), config.event_queue_bytes as usize);
-        let inner = Inner::restored(HashMap::new(), 1, HashMap::new());
+        let inner = Inner::restored(HashMap::new(), 1, 1, HashMap::new());
         Arc::new(Self {
             config,
             token,
@@ -574,7 +575,7 @@ impl HostState {
         }
         let mailbox = FrameMailbox::new();
         let id = inner.next_attachment;
-        inner.next_attachment += 1;
+        inner.next_attachment = id.checked_add(1).ok_or("capacity")?;
         inner.attachments.insert(
             id,
             Attachment {

@@ -396,7 +396,7 @@ impl LoopJobs {
                 let Some(pane) = workspace.panes.get(&pane_id) else {
                     return false;
                 };
-                if pane.writable() || pane.pending_input.is_empty() {
+                if pane.direct_input() || pane.pending_input.is_empty() {
                     return false;
                 }
                 let Some(locator) = pane.host_locator() else {
