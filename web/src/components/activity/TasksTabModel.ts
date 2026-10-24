@@ -22,10 +22,7 @@ export interface VisibleTaskRow {
 
 export type TaskFilterKey = TaskDisplayState;
 
-export const ACTIVE_STATE_FILTERS: TaskFilterKey[] = [
-  "open",
-  "in_progress",
-];
+export const ACTIVE_STATE_FILTERS: TaskFilterKey[] = ["open", "in_progress"];
 export const STATUS_FILTERS: TaskFilterKey[] = [
   "blocked",
   "escalated",

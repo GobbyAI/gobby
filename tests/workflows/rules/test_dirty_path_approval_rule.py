@@ -11,6 +11,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.approval_brace_guard import approval_command_word_expansion
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -340,9 +341,13 @@ def test_long_python_data_with_many_quotes_and_braces_stays_literal() -> None:
     # Additional proof requested after the initial correction: no behavior
     # change, and the retained RED of the protected-suffix test stays original.
     program = """
+import time
 from gobby.workflows.approval_brace_guard import approval_command_word_expansion
 command = "uv run python -c '" + 'value = {"key": "value"}; ' * 2000 + "'"
+started = time.perf_counter()
 assert not approval_command_word_expansion(command)
+elapsed = time.perf_counter() - started
+assert elapsed < 2, elapsed
 print('quoted Python data stays literal')
 """
     result = subprocess.run(
@@ -350,11 +355,50 @@ print('quoted Python data stays literal')
         cwd=Path(__file__).resolve().parents[3],
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=30,
         check=False,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "quoted Python data stays literal"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        """P=$(cat <<'EOF'
+print({"probe": "gobby"})
+EOF
+)
+cd /Users/josh/Projects/gobby && git status --short src/gobby/hooks;
+diff <(cd /Users/josh/Projects/gobby && uv run --no-sync python -c "$P" 2>&1) <(cd /Users/josh/.gobby/worktrees/gobby/task-24600-remote-workspace-expiry && uv run --no-sync python -c "$P" 2>&1)""",
+        'diff <(cd /repo/gobby && python -c "$P") <(cd /other && python -c "$P")',
+        'diff /repo/gobby "$P"',
+        'uv run --project /repo/gobby python -c "$P"',
+        'uv run --directory /repo/gobby python -c "$P"',
+        'python -c "$P" /repo/gobby "$Q"',
+        "cd /repo/gobby && git status --short",
+    ],
+)
+def test_command_slot_guard_allows_non_command_gobby_paths(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gobby sessions {approve-dirty-paths,list} s7",
+        "uv run gobby sessions {approve-dirty-paths,list} s7",
+        "gobby sessions approve-$(printf dirty)-paths s7",
+        "uv run gobby sessions approve-$(printf dirty)-paths s7",
+        'gobby sessions "$SUB" s7',
+        'uv run --project /repo/gobby gobby sessions "$SUB" s7',
+        'sudo -u root gobby sessions "$SUB" s7',
+        'python -m gobby.cli sessions "$SUB" s7',
+        'uv run -m gobby.cli sessions "$SUB" s7',
+    ],
+)
+def test_command_slot_guard_blocks_real_expanding_gobby_commands(command: str) -> None:
+    assert approval_command_word_expansion(command)
 
 
 def test_command_word_expansion_pattern_is_bounded_on_long_uv_run_probe() -> None:

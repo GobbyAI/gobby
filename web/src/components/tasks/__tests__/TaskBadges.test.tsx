@@ -14,12 +14,7 @@ describe("StatusBadge", () => {
   });
 
   it("renders known statuses", () => {
-    const statuses = [
-      "open",
-      "in_progress",
-      "closed",
-      "escalated",
-    ];
+    const statuses = ["open", "in_progress", "closed", "escalated"];
     for (const status of statuses) {
       const { unmount } = render(<StatusBadge status={status} />);
       expect(screen.getByText(status.replace(/_/g, " "))).toBeTruthy();

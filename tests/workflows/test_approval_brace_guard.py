@@ -446,13 +446,247 @@ def test_shell_setup_disables_data_narrowing_for_the_whole_text(command: str) ->
         'echo() if true; then "$@"; fi; D=approve-dirty-paths; '
         "echo gobby se$()ssions $D s7 --checkout /repo a.txt",
         "D=approve-dirty-paths; git -c alias.x='!gobby' x se$()ssions $D s7 --checkout /repo a.txt",
-        "git log --grep gobby $X",
+        "D=approve-dirty-paths; git $X gobby sessions $D s7 --checkout /repo a.txt",
     ],
 )
 def test_shadowed_data_and_git_heads_keep_expansion_slot_checks(command: str) -> None:
     context = {"tool_input": {"command": command}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     assert evaluator.evaluate("approval_command_word_expansion(tool_input['command'])")
+
+
+def test_git_builtin_grep_operand_is_not_a_command_word() -> None:
+    assert not approval_command_word_expansion("git log --grep gobby $X")
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "caffeinate",
+        "arch -arm64",
+        "/usr/bin/arch -arch arm64",
+        "doas",
+        "ionice -c3",
+        "flock /tmp/approval.lock",
+        "chronic",
+        "pipx run",
+        "poetry run",
+        "rtk",
+        "direnv exec .",
+        "script -q /dev/null",
+        "sandbox-exec -n profile",
+        "taskset 1",
+        "strace -f",
+        "unknown",
+    ],
+)
+@pytest.mark.parametrize("slot", ["$S", "{sessions,}"])
+@pytest.mark.parametrize("context", ["{}", "cat x | {}", "cat <(echo hi) <({})"])
+def test_unknown_launchers_keep_dynamic_gobby_slots_blocked(
+    launcher: str, slot: str, context: str
+) -> None:
+    command = context.format(f"{launcher} gobby {slot} approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        "git bisect run",
+        "git -C /r bisect run",
+        "git submodule foreach",
+        "git submodule foreach --recursive",
+        "git x",
+        "git -C /r x",
+        "python3 -m uv run",
+        "python3 -m pipx run",
+        "uv run python -m pipx run",
+    ],
+)
+@pytest.mark.parametrize("slot", ["$S", "{sessions,}"])
+@pytest.mark.parametrize("context", ["{}", "cat x | {}", "cat <(echo hi) <({})"])
+def test_git_and_python_module_launchers_keep_dynamic_gobby_slots_blocked(
+    launcher: str, slot: str, context: str
+) -> None:
+    command = context.format(f"{launcher} gobby {slot} approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git log --grep gobby $X",
+        "git show gobby $X",
+        "git -C /repo/gobby log --grep gobby $X",
+        'git add src/gobby "$F"',
+        'git checkout gobby "$B"',
+    ],
+)
+def test_git_builtin_operands_are_not_gobby_command_slots(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+def test_python_script_argv_is_an_accepted_residual() -> None:
+    # Orchestrator ruling: script/-c argv cannot bound arbitrary Python execution.
+    assert not approval_command_word_expansion("python3 l.py gobby $S approve-dirty-paths s7")
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        'git submodule foreach "{body}"',
+        'git submodule --quiet foreach --recursive "{body}"',
+        'git -C /r submodule foreach "{body}"',
+        'git bisect run sh -c "{body}"',
+        'git rebase -x "{body}" HEAD~1',
+        'git rebase --exec "{body}" HEAD~1',
+        'git rebase --exec="{body}" HEAD~1',
+        'git clone -u "{body}" /r',
+        'git clone --upload-pack="{body}" /r',
+        'git fetch --upload-pack "{body}" /r',
+        'git pull --upload-pack="{body}" /r',
+        'git ls-remote --upload-pack="{body}" /r',
+        'git push --receive-pack="{body}" /r',
+        'git push --exec="{body}" /r',
+        'git archive --remote=/r --exec="{body}" HEAD',
+        'git difftool -x "{body}" HEAD',
+        'git difftool --extcmd="{body}" HEAD',
+        'git grep -O"{body}" foo',
+        'git grep --open-files-in-pager="{body}" foo',
+        'git filter-branch --setup "{body}" HEAD',
+        'git filter-branch --env-filter "{body}" HEAD',
+        'git filter-branch --tree-filter "{body}" HEAD',
+        'git filter-branch --index-filter "{body}" HEAD',
+        'git filter-branch --parent-filter "{body}" HEAD',
+        'git filter-branch --msg-filter "{body}" HEAD',
+        'git filter-branch --commit-filter "{body}" HEAD',
+        'git filter-branch --tag-name-filter "{body}" HEAD',
+        'git -c core.sshCommand="{body}" fetch o',
+        'git -c core.pager="{body}" log',
+        'git -c core.editor="{body}" commit',
+        'git -c core.fsmonitor="{body}" status',
+        'git -c sequence.editor="{body}" rebase -i HEAD~1',
+        'git -c diff.external="{body}" diff',
+        'git -c credential.helper="{body}" fetch o',
+        'git -c gpg.program="{body}" commit -S',
+        'git -c pager.log="{body}" log',
+        'git -c alias.x="!{body}" status',
+        'GIT_SSH_COMMAND="{body}" git fetch o',
+        'env GIT_SSH_COMMAND="{body}" git fetch o',
+        'GIT_PAGER="{body}" git log',
+        'env GIT_PAGER="{body}" git log',
+        'GIT_EDITOR="{body}" git commit',
+        'env GIT_EDITOR="{body}" git commit',
+        'GIT_SEQUENCE_EDITOR="{body}" git rebase -i HEAD~1',
+        'env GIT_SEQUENCE_EDITOR="{body}" git rebase -i HEAD~1',
+        'GIT_EXTERNAL_DIFF="{body}" git diff',
+        'env GIT_EXTERNAL_DIFF="{body}" git diff',
+        "bash -c '{body}'",
+        "timeout 5 sh -c '{body}'",
+        "uv run sh -c '{body}'",
+        "find . -exec sh -c '{body}' \\;",
+        "xargs sh -c '{body}'",
+    ],
+)
+def test_git_shell_values_block_dynamic_gobby_slots(template: str) -> None:
+    command = template.format(body="gobby $S approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git rebase -x "echo hi" HEAD~1',
+        'git submodule foreach "git status"',
+        "git fetch -u origin",
+        "git push -u origin main",
+        'git clone -u "git-upload-pack" /r',
+        'git commit -m "gobby $S approve-dirty-paths s7"',
+        'git log --grep="gobby $S approve-dirty-paths s7"',
+        'git -c user.name="gobby $S approve-dirty-paths s7" commit -m x',
+    ],
+)
+def test_git_shell_values_preserve_data_operands(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        'git rebase -qx "{body}" HEAD~1',
+        'git rebase --exe="{body}" HEAD~1',
+        'git rebase --exe "{body}" HEAD~1',
+        'git clone --upload "{body}" /r',
+        'git clone -qu "{body}" /r',
+        'git push --receive "{body}" /r',
+        'git difftool --extc "{body}" HEAD',
+        'git difftool -qx "{body}" HEAD',
+        'git grep -qO"{body}" foo',
+        pytest.param('git rebase -Xx -x "{body}" HEAD~1', id="later_exec_rebase_X"),
+        pytest.param('git rebase -sx -x "{body}" HEAD~1', id="later_exec_rebase_s"),
+        pytest.param('git clone -ou -u "{body}" /r', id="later_exec_clone"),
+        pytest.param('git difftool -tx -x "{body}" HEAD', id="later_exec_difftool"),
+        pytest.param('git grep -eO -O"{body}" foo', id="later_exec_grep"),
+        'git -c credential.https://x.helper="!{body}" fetch o',
+        'git -c credential.https://x.example.com.helper="{body}" fetch o',
+        'git -c diff.x.command="{body}" diff',
+        'git -c diff.x.textconv="{body}" diff',
+        'git -c difftool.x.cmd="{body}" difftool',
+        'git -c mergetool.x.cmd="{body}" mergetool',
+        'git -c merge.x.driver="{body}" merge x',
+        'git -c filter.x.clean="{body}" add .',
+        'git -c filter.x.smudge="{body}" checkout .',
+        'git -c filter.x.process="{body}" add .',
+        'git -c remote.origin.uploadpack="{body}" fetch origin',
+        'git -c remote.origin.receivepack="{body}" push origin',
+        'git -c core.gitProxy="{body}" fetch o',
+        'git -c core.askpass="{body}" fetch o',
+        'GIT_ASKPASS="{body}" git fetch o',
+        'env GIT_ASKPASS="{body}" git fetch o',
+        'GIT_PROXY_COMMAND="{body}" git fetch o',
+        'env GIT_PROXY_COMMAND="{body}" git fetch o',
+    ],
+)
+def test_git_shell_value_spellings_block_dynamic_gobby_slots(template: str) -> None:
+    assert approval_command_word_expansion(template.format(body="gobby $S approve-dirty-paths s7"))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git rebase --onto main HEAD~2",
+        "git clean -fdx",
+        "git -c alias.st=status st",
+        "git -c diff.x.textconv=cat diff",
+        "git push --receive-pack=git-receive-pack /r",
+        "git grep -e foo -- gobby",
+    ],
+)
+def test_git_shell_value_spellings_preserve_data_operands(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        '{ echo "a $f"; }',
+        'for f in a; do [ -f "$f" ] && { echo "== $f"; cat "$f"; }; done',
+    ],
+)
+def test_compound_prefix_keeps_data_operands_literal(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "{ gobby $S approve-dirty-paths s7; }",
+        "{ gobby {sessions,} approve-dirty-paths s7; }",
+        "{ uv run gobby $S approve-dirty-paths s7; }",
+    ],
+)
+def test_compound_prefix_keeps_dynamic_gobby_slots_blocked(command: str) -> None:
+    assert approval_command_word_expansion(command)
 
 
 @pytest.mark.parametrize(

@@ -9,18 +9,28 @@ import {
 } from "../taskState";
 
 describe("taskState helpers", () => {
-  it.each(["needs_human", "deferred"] as const)("preserves the canonical %s hold", (name) => {
-    const task = { state: { name, hold_state: name, follow_up_at: "2026-10-23T12:00:00Z" } };
-    expect(getTaskDisplayState(task)).toBe(name);
-    expect(getCanonicalTaskState(task)).toMatchObject({
-      name, hold_state: name, follow_up_at: "2026-10-23T12:00:00Z", is_blocked: false,
-    });
-    expect(matchesTaskStateFilter(task, name)).toBe(true);
-    expect(matchesTaskStateFilter(task, "blocked")).toBe(false);
-  });
+  it.each(["needs_human", "deferred"] as const)(
+    "preserves the canonical %s hold",
+    (name) => {
+      const task = {
+        state: { name, hold_state: name, follow_up_at: "2026-10-23T12:00:00Z" },
+      };
+      expect(getTaskDisplayState(task)).toBe(name);
+      expect(getCanonicalTaskState(task)).toMatchObject({
+        name,
+        hold_state: name,
+        follow_up_at: "2026-10-23T12:00:00Z",
+        is_blocked: false,
+      });
+      expect(matchesTaskStateFilter(task, name)).toBe(true);
+      expect(matchesTaskStateFilter(task, "blocked")).toBe(false);
+    },
+  );
 
   it("prefers the server's canonical state over incomplete local flags", () => {
-    expect(getTaskDisplayState({ state: { name: "blocked", is_claimed: true } })).toBe("blocked");
+    expect(
+      getTaskDisplayState({ state: { name: "blocked", is_claimed: true } }),
+    ).toBe("blocked");
   });
 
   it("recognizes closure from a partial canonical payload", () => {
@@ -38,11 +48,19 @@ describe("taskState helpers", () => {
   });
 
   it("projects a claim when owner details are omitted", () => {
-    expect(getTaskDisplayState({ state: { is_claimed: true } })).toBe("in_progress");
+    expect(getTaskDisplayState({ state: { is_claimed: true } })).toBe(
+      "in_progress",
+    );
   });
   it("exposes the seven generic task states", () => {
     expect(Object.keys(TASK_STATE_COLORS).sort()).toEqual([
-      "blocked", "closed", "deferred", "escalated", "in_progress", "needs_human", "open",
+      "blocked",
+      "closed",
+      "deferred",
+      "escalated",
+      "in_progress",
+      "needs_human",
+      "open",
     ]);
     expect(TASK_STATE_COLORS.open).not.toBe(TASK_STATE_COLORS.in_progress);
   });
@@ -104,9 +122,16 @@ describe("taskState helpers", () => {
     const blockedTask = { state: { is_escalated: true, is_blocked: true } };
     expect(matchesTaskStateFilter({}, "open")).toBe(true);
     expect(matchesTaskStateFilter({}, "ready")).toBe(false);
-    expect(matchesTaskStateFilter({ claimed_by_session_id: "sess-1" }, "in_progress")).toBe(true);
+    expect(
+      matchesTaskStateFilter(
+        { claimed_by_session_id: "sess-1" },
+        "in_progress",
+      ),
+    ).toBe(true);
     expect(matchesTaskStateFilter(blockedTask, "blocked")).toBe(false);
     expect(matchesTaskStateFilter(blockedTask, "escalated")).toBe(true);
-    expect(matchesTaskStateFilter({ closed_at: "2026-04-12T00:00:00Z" }, "closed")).toBe(true);
+    expect(
+      matchesTaskStateFilter({ closed_at: "2026-04-12T00:00:00Z" }, "closed"),
+    ).toBe(true);
   });
 });

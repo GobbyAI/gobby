@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
 import { TerminalSessionList } from "../TerminalSessionList";
-import { joinTmuxSessions, type JoinedTerminalSession } from "../terminalSessions";
+import {
+  joinTmuxSessions,
+  type JoinedTerminalSession,
+} from "../terminalSessions";
 
 function makeTmux(overrides: Partial<TmuxSession> = {}): TmuxSession {
   const name = overrides.name ?? "shell";

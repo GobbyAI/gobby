@@ -70,8 +70,7 @@ function TaskTreeRowComponent({
   onRowKeyDown,
 }: TaskTreeRowProps) {
   const task = row.node.task;
-  const { displayState, stateSummary, failed } =
-    deriveSafeTaskState(task);
+  const { displayState, stateSummary, failed } = deriveSafeTaskState(task);
   const priority = task.priority ?? DEFAULT_TASK_PRIORITY;
   const textColor = PRIORITY_TEXT_COLORS[priority] ?? "var(--text-secondary)";
   const textWeight =

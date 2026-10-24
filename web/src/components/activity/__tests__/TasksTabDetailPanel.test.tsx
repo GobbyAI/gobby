@@ -221,11 +221,15 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
           })}
         />,
       );
-      expect(container.querySelector("[data-task-detail-review]")).not.toBeNull();
+      expect(
+        container.querySelector("[data-task-detail-review]"),
+      ).not.toBeNull();
       expect(getByText("Review")).toBeTruthy();
       expect(getByText(reviewStatus)).toBeTruthy();
       expect(getByText("Review feedback")).toBeTruthy();
-      expect(getByText("The reviewer checked the committed change.")).toBeTruthy();
+      expect(
+        getByText("The reviewer checked the committed change."),
+      ).toBeTruthy();
       expect(queryByText("Validation")).toBeNull();
     },
   );

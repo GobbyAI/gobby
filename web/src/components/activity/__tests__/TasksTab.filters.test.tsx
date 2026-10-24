@@ -115,9 +115,7 @@ describe("TasksTab — filters", () => {
       expect(screen.getByText("Canonical claimed task")).toBeTruthy();
     });
 
-    expect(
-      screen.getByLabelText("Status: In Progress · Claimed"),
-    ).toBeTruthy();
+    expect(screen.getByLabelText("Status: In Progress · Claimed")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
 

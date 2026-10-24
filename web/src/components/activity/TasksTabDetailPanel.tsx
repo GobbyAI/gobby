@@ -129,7 +129,10 @@ export function TasksTabDetailPanel({
         </div>
       )}
 
-      <ReviewRow status={task.review_status} failCount={task.review_fail_count} />
+      <ReviewRow
+        status={task.review_status}
+        failCount={task.review_fail_count}
+      />
 
       <TaskDetailEditableCore task={task} edit={edit} />
 

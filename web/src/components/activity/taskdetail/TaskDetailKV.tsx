@@ -69,11 +69,12 @@ export function ReviewRow({
   status: TaskReviewStatus;
   failCount: number;
 }) {
-  const variant = status === "valid"
-    ? "ok"
-    : status === "invalid" || status === "error"
-      ? "fail"
-      : "neutral";
+  const variant =
+    status === "valid"
+      ? "ok"
+      : status === "invalid" || status === "error"
+        ? "fail"
+        : "neutral";
   return (
     <div
       className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem] border-b border-border bg-[var(--bg-primary)] px-4 py-[0.65rem]"

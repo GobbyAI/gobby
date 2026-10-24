@@ -81,16 +81,15 @@ export const TASK_STATE_ORDER: TaskDisplayState[] = [
   "closed",
 ];
 
-export const TASK_STATE_LABELS: Record<TaskDisplayState, string> =
-  {
-    open: "Open",
-    in_progress: "In Progress",
-    blocked: "Blocked",
-    needs_human: "Needs Human",
-    escalated: "Escalated",
-    deferred: "Deferred",
-    closed: "Closed",
-  };
+export const TASK_STATE_LABELS: Record<TaskDisplayState, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  blocked: "Blocked",
+  needs_human: "Needs Human",
+  escalated: "Escalated",
+  deferred: "Deferred",
+  closed: "Closed",
+};
 
 export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
   open: "var(--color-info)",
@@ -149,11 +148,14 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
   const isBlocked =
     !isClosed && (task.state?.is_blocked ?? task.is_blocked ?? false);
   const holdState = task.state?.hold_state ?? null;
-  const name = task.state?.name ?? (
-    isClosed ? "closed" :
-    isEscalated ? "escalated" :
-    holdState ?? (isBlocked ? "blocked" : isClaimed ? "in_progress" : "open")
-  );
+  const name =
+    task.state?.name ??
+    (isClosed
+      ? "closed"
+      : isEscalated
+        ? "escalated"
+        : (holdState ??
+          (isBlocked ? "blocked" : isClaimed ? "in_progress" : "open")));
 
   return {
     name,
