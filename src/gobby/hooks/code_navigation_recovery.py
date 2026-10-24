@@ -531,6 +531,7 @@ def navigation_requires_index(
             continue
         if (
             segment.get("canonical_code_index_navigation")
+            or segment.get("canonical_code_navigation_script_execution")
             or segment.get("canonical_code_navigation_repo_scope") is False
             or (
                 segment.get("canonical_code_navigation_checkout_scope") is False

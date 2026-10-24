@@ -1006,6 +1006,32 @@ def test_one_event_asks_git_once_for_all_its_paths(
     assert len(spawns) == 2
 
 
+@pytest.mark.parametrize("shell", ["bash", "sh", "zsh"])
+def test_script_execution_does_not_require_source_navigation(repo: Path, shell: str) -> None:
+    script = repo.parent / "waitfile.sh"
+    script.write_text(f"cat {repo / 'src/long.py'}\n")
+
+    assert not broad_read_blocked(repo, f"{shell} {script}")
+    assert broad_read_blocked(repo, f"{shell} {script}; cat src/long.py")
+
+
+@pytest.mark.parametrize("command", ["cat src/long.py", "sed -n '1,60p' src/long.py"])
+def test_direct_source_read_still_requires_navigation(repo: Path, command: str) -> None:
+    assert broad_read_blocked(repo, command)
+
+
+@pytest.mark.parametrize("code", ["invalid_path_scope", "not_indexed"])
+def test_refused_outline_opens_only_requested_read(repo: Path, code: str) -> None:
+    variables = turn(
+        repo,
+        "gcode outline src/long.py",
+        f'{{"error":"{code}","message":"path outside index"}}',
+    )
+
+    assert not broad_read_blocked(repo, "cat src/long.py", variables)
+    assert broad_read_blocked(repo, "cat src/other.py", variables)
+
+
 def test_a_path_git_refuses_does_not_hide_later_answers(repo: Path) -> None:
     # A path inside a submodule stops `check-ignore --stdin` with exit 128,
     # dropping the answers for every path after it in the batch.

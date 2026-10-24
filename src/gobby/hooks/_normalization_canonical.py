@@ -833,6 +833,10 @@ def _classify_shell_segment_without_redirection(
                 deferred_functions=cmd == "eval",
             )
             if script is not None:
+                # Inspect script bodies for mutations without requiring callers to
+                # navigate every source file the executed program happens to read.
+                for segment in nested.get("canonical_code_navigation_segments", ()):
+                    segment["canonical_code_navigation_script_execution"] = True
                 nested["canonical_script_bodies"] = sorted(
                     {str(script[0]), *nested.get("canonical_script_bodies", ())}
                 )
