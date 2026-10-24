@@ -186,3 +186,43 @@ async def test_loop_runs_remote_step(temp_db: HubDatabase, monkeypatch: pytest.M
     monkeypatch.setattr(remote_workspaces, "node_command_client", factory)
     await remote_workspaces.expire_remote_workspaces(temp_db, run_db=_run_db)
     factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["worktree", "clone"])
+async def test_row_error_preserves_later_rows_and_loop_steps(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    node_machine: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    kind: WorkspaceKind,
+) -> None:
+    failed = _workspace(temp_db, sample_project["id"], node_machine, kind, session=True)
+    later = _workspace(temp_db, sample_project["id"], node_machine, kind, session=True)
+    client = AsyncMock()
+    client.send.side_effect = [RuntimeError("unexpected removal failure"), {"outcome": "removed"}]
+    monkeypatch.setattr(remote_workspaces, "node_command_client", lambda: client)
+    missing = AsyncMock()
+    reconcile = AsyncMock()
+    monkeypatch.setattr(isolation, "_cleanup_missing_isolation_records_async", missing)
+    monkeypatch.setattr(isolation, "reconcile_isolation_registry", reconcile)
+    shutdown = iter([False, True])
+
+    await isolation.cleanup_expired_isolation_loop(
+        temp_db, lambda: next(shutdown), interval_hours=0, run_db=_run_db
+    )
+
+    assert client.send.await_count == 2
+    assert [call.args[2]["path"] for call in client.send.await_args_list] == [
+        _path(failed),
+        _path(later),
+    ]
+    assert remote_workspaces.get_remote(temp_db, kind, failed.id) == failed
+    assert remote_workspaces.get_remote(temp_db, kind, later.id) is None
+    missing.assert_awaited_once()
+    reconcile.assert_awaited_once_with(temp_db, run_db=_run_db)
+    assert any(
+        failed.id in record.getMessage() and record.exc_info is not None
+        for record in caplog.records
+    )
