@@ -15,6 +15,7 @@ import pytest
 
 from gobby.events.wake import WakeDispatcher
 from gobby.hooks import terminal_handoff_delivery
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
 from gobby.sessions import codex_compact_watch
 from gobby.sessions.clear_continuation import stage_clear_attempt
@@ -156,10 +157,7 @@ def test_restart_recovers_handoff_before_dispatch_was_claimed(
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_pending"] is True
 
 
-@pytest.mark.parametrize("delivered", [False, True])
-def test_restart_leaves_web_chat_handoffs_unchanged(
-    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, delivered: bool
-) -> None:
+def _stage_web_chat_handoff(hub_db: HubDatabase, *, delivered: bool) -> SessionManager:
     session_manager = _session_manager(hub_db, "claude")
     hub_db.execute("UPDATE sessions SET session_type = 'web_chat' WHERE id = %s", (SESSION_ID,))
     staged = stage_handoff_attempt(
@@ -178,6 +176,14 @@ def test_restart_leaves_web_chat_handoffs_unchanged(
             boundary_kind="compact",
             continuation_session_id=SESSION_ID,
         )
+    return session_manager
+
+
+@pytest.mark.parametrize("delivered", [False, True])
+def test_restart_leaves_web_chat_handoffs_unchanged(
+    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, delivered: bool
+) -> None:
+    session_manager = _stage_web_chat_handoff(hub_db, delivered=delivered)
     variables = SessionVariableManager(hub_db)
     before = variables.get_variables(SESSION_ID)
     assert HANDOFF_DISPATCH_GATE_VARIABLE not in before
@@ -186,6 +192,35 @@ def test_restart_leaves_web_chat_handoffs_unchanged(
     with patch(f"{_DELIVERY}._schedule_claimed_delivery", return_value=True) as schedule:
         assert _sweep(session_manager, MagicMock()) == 0
 
+    schedule.assert_not_called()
+    assert variables.get_variables(SESSION_ID) == before
+    assert _receipts(hub_db) == int(delivered)
+
+
+@pytest.mark.parametrize("delivered", [False, True])
+def test_stop_leaves_web_chat_handoffs_unchanged(hub_db: HubDatabase, delivered: bool) -> None:
+    session_manager = _stage_web_chat_handoff(hub_db, delivered=delivered)
+    variables = SessionVariableManager(hub_db)
+    before = variables.get_variables(SESSION_ID)
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in before
+    event = HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="provider-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID, "session_type": "web_chat"},
+    )
+
+    with patch(f"{_DELIVERY}._schedule_claimed_delivery", return_value=True) as schedule:
+        scheduled = terminal_handoff_delivery.schedule_staged_handoff_on_stop(
+            event,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            event_loop=MagicMock(),
+        )
+
+    assert scheduled is False
     schedule.assert_not_called()
     assert variables.get_variables(SESSION_ID) == before
     assert _receipts(hub_db) == int(delivered)

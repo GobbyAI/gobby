@@ -320,6 +320,9 @@ def schedule_staged_handoff_on_stop(
     marker = variables.get(PENDING_HANDOFF_VARIABLE)
     if not isinstance(marker, Mapping):
         return False
+    session = session_manager.get(session_id)
+    if session is None or session.session_type != "terminal":
+        return False
     attempt_id = marker.get("attempt_id")
     if not isinstance(attempt_id, str) or not attempt_id:
         _log_skipped_delivery(session_id, attempt_id, "staged marker has no attempt_id")
