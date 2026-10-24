@@ -542,6 +542,11 @@ impl HostState {
         rows: u16,
         cols: u16,
     ) -> Result<(u64, FrameMailbox), &'static str> {
+        // The upgrade captures next_attachment under its write guard, so an id
+        // allocated while that guard is held would be missing from the image.
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return Err("host_upgrading");
+        };
         let mut inner = self.inner.lock().await;
         let identity = inner
             .by_host_id

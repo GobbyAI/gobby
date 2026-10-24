@@ -227,3 +227,55 @@ fn socket_path_byte_limit_has_actionable_diagnostics() {
     );
     assert!(message.contains("terminal_host.socket_dir"), "{message}");
 }
+
+#[cfg(all(unix, feature = "vt-engine"))]
+#[tokio::test]
+async fn frame_attach_allocators_refuse_while_the_upgrade_gate_is_held() {
+    use crate::protocol::{PaneLocator, RenderEncoding};
+    let (state, _, _, _) = frame_grant_fixture().await;
+    // The upgrade holds the write gate from admission through exec or rollback.
+    // Every attachment allocator must refuse while it is held, so a late
+    // allocation can never be missing from the captured next_attachment.
+    let gate = Arc::clone(&state.mutation_gate)
+        .try_write_owned()
+        .expect("upgrade gate");
+    let before = state.inner.lock().await.next_attachment;
+    assert_eq!(
+        state
+            .attach("native", None, RenderEncoding::TerminalAnsi, 24, 80)
+            .await
+            .err(),
+        Some("host_upgrading")
+    );
+    let locator = PaneLocator {
+        socket_path: "/tmp/gobby-gate.sock".into(),
+        server_pid: 1,
+        server_start_time: 1,
+        pane_id: "%1".into(),
+    };
+    assert_eq!(
+        super::embed::attach_frame(
+            &state,
+            "native",
+            None,
+            Some(locator),
+            None,
+            RenderEncoding::TerminalAnsi,
+            24,
+            80,
+        )
+        .await
+        .err(),
+        Some("host_upgrading")
+    );
+    assert_eq!(
+        state.inner.lock().await.next_attachment,
+        before,
+        "a refused attach must not consume an identifier"
+    );
+    drop(gate);
+    assert!(state
+        .attach("native", None, RenderEncoding::TerminalAnsi, 24, 80)
+        .await
+        .is_ok());
+}
