@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import cast
@@ -10,7 +11,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.inter_session_messages import InterSessionMessage
-from gobby.workflows.engine.seat_messages import CandidateMessageError, candidate_event
+from gobby.workflows.engine.seat_messages import (
+    _COORDINATION_GRAMMAR,
+    CandidateMessageError,
+    candidate_event,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -107,7 +112,7 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
         f"EVENT=LAND_PENDING TASK=#7 SHA={SHA} TASK_TITLE=t NOTE=receipt_pending",
         f"Prose EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA}",
         "plain message with no protocol line",
-        # Retired park/resume grammar is not validated at send time.
+        # Park and resume lines are checked by candidate_event, not this grammar.
         f"EVENT=CANDIDATE_RESUMED TASK=#7 SHA={SHA} TASK_TITLE=t extra words",
         # Retired review-only completion is not consumed.
         f"EVENT=REVIEW_COMPLETE TASK=#7 SHA={SHA} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=",
@@ -170,3 +175,19 @@ def test_candidate_lane_prefix_is_read_by_the_receiver(
 
     assert parsed is not None
     assert parsed.sha == SHA
+
+
+@pytest.mark.parametrize("event", ["CANDIDATE_UPDATE", "CANDIDATE_VERDICT_EXTRA", "CANDIDATE_"])
+def test_unknown_candidate_event_is_rejected_by_receiver(event: str) -> None:
+    message = cast(InterSessionMessage, _Message(f"EVENT={event} TASK=#7 COMMIT={SHA}"))
+
+    with pytest.raises(CandidateMessageError, match="expected EVENT=CANDIDATE TASK="):
+        candidate_event(MagicMock(), message)
+
+
+@pytest.mark.parametrize("event", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED", "CANDIDATE_PARKED"])
+def test_malformed_coordination_reports_event_grammar(event: str) -> None:
+    message = cast(InterSessionMessage, _Message(f"EVENT={event} TASK=#7 SHA=abc1234"))
+
+    with pytest.raises(CandidateMessageError, match=re.escape(_COORDINATION_GRAMMAR[event])):
+        candidate_event(MagicMock(), message)

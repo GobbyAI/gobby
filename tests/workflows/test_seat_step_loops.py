@@ -1859,21 +1859,119 @@ async def test_candidate_intake_survives_audit_failure(
     assert "audit sink unavailable" in caplog.text
 
 
+@pytest.mark.parametrize("target", ["project", "global"])
+async def test_unknown_candidate_event_fanout_is_unchanged(
+    temp_db: HubDatabase, target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    run = SeatRun(temp_db, "code-reviewer")
+    messages = InterSessionMessageManager(temp_db)
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate fanout")
+    add_messaging_tools(registry, messages, run.sessions, temp_db)
+    content = f"EVENT=CANDIDATE_UPDATE TASK=#7 COMMIT={SHA}"
+
+    with session_context_for_test(OWNER_ID):
+        result = await registry.call(
+            "send_message", {"target": target, "content": content, "wake": False}
+        )
+
+    assert result["success"] is True
+    assert "candidate_binding_error" not in result
+    assert [message.content for message in messages.get_messages(SESSION_ID)] == [content]
+
+
+@pytest.mark.parametrize("target", ["session", "agent"])
+async def test_candidate_send_refuses_unknown_task_before_storing(
+    temp_db: HubDatabase, target: str
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    target_id = SESSION_ID
+    if target == "agent":
+        target_id = (
+            LocalAgentRunManager(temp_db)
+            .create(
+                parent_session_id=COORDINATOR_ID,
+                child_session_id=SESSION_ID,
+                provider="codex",
+                prompt="Review",
+            )
+            .id
+        )
+    messages = InterSessionMessageManager(temp_db)
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate send")
+    add_messaging_tools(registry, messages, run.sessions, temp_db)
+
+    with session_context_for_test(OWNER_ID):
+        result = await registry.call(
+            "send_message",
+            {
+                "target": target,
+                "target_id": target_id,
+                "content": f"EVENT=CANDIDATE TASK=#999999 RUN=run WT=tree COMMIT={SHA}",
+                "wake": False,
+            },
+        )
+
+    assert result.get("candidate_binding_error") == "unknown TASK"
+    assert result["error"] == "unknown TASK"
+    assert result["error_code"] == "candidate_binding_error"
+    assert result["success"] is False
+    assert messages.get_messages(SESSION_ID) == []
+
+
+@pytest.mark.parametrize("busy", [False, True])
+async def test_candidate_send_stores_and_queues_for_reviewer(
+    temp_db: HubDatabase, busy: bool
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    active = run.task()
+    if busy:
+        await run.intake(active)
+    queued = run.task()
+    messages = InterSessionMessageManager(temp_db)
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate send")
+    add_messaging_tools(registry, messages, run.sessions, temp_db)
+    content = f"EVENT=CANDIDATE TASK={queued.id} RUN=run WT=tree COMMIT={SHA}"
+
+    with session_context_for_test(OWNER_ID):
+        result = await registry.call(
+            "send_message",
+            {"target": "session", "target_id": SESSION_ID, "content": content, "wake": False},
+        )
+
+    assert result["success"] is True
+    assert "candidate_binding_error" not in result
+    message = messages.get_message(result["message_ids"][0])
+    assert message is not None
+    assert message.content == content
+    if busy:
+        assert run.vars["candidate_task"] == active.id
+    else:
+        with session_context_for_test(SESSION_ID):
+            intake = await registry.call("get_inter_session_message", {"message_id": message.id})
+        await run.call(
+            "gobby-agents", "get_inter_session_message", {"message_id": message.id}, intake
+        )
+        assert run.step == "review"
+        assert run.vars["candidate_task"] == queued.id
+
+
 @pytest.mark.parametrize("prefix", ["", "LANE=1 "])
 @pytest.mark.parametrize(
-    "event, sha, error",
+    "event, sha",
     [
-        ("CANDIDATE", SHA, _CANDIDATE_GRAMMAR),
-        ("EVENT=CANDIDATE_WITHDRAWN", "bad", _CANDIDATE_GRAMMAR),
-        ("EVENT=CANDIDATE_WITHDRAWN", "a" * 10, _CANDIDATE_GRAMMAR),
-        ("EVENT=CANDIDATE_WITHDRAWN", "z" * 40, _CANDIDATE_GRAMMAR),
-        # Retired park and resume lines are prose, never protocol.
-        ("EVENT=CANDIDATE_RESUMED", "a" * 10, None),
-        ("EVENT=CANDIDATE_PARKED", "z" * 40, None),
+        ("CANDIDATE", SHA),
+        ("EVENT=CANDIDATE_WITHDRAWN", "bad"),
+        ("EVENT=CANDIDATE_WITHDRAWN", "a" * 10),
+        ("EVENT=CANDIDATE_WITHDRAWN", "z" * 40),
+        ("EVENT=CANDIDATE_RESUMED", "a" * 10),
+        ("EVENT=CANDIDATE_PARKED", "z" * 40),
     ],
 )
 async def test_candidate_malformed_protocol_reports_grammar(
-    temp_db: HubDatabase, prefix: str, event: str, sha: str, error: str | None
+    temp_db: HubDatabase, prefix: str, event: str, sha: str
 ) -> None:
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
@@ -1886,7 +1984,14 @@ async def test_candidate_malformed_protocol_reports_grammar(
     add_messaging_tools(registry, InterSessionMessageManager(temp_db), run.sessions, temp_db)
     with session_context_for_test(SESSION_ID):
         result = await registry.call("get_inter_session_message", {"message_id": message.id})
-    assert result.get("candidate_binding_error") == error
+    from gobby.workflows.engine.seat_messages import _COORDINATION_GRAMMAR
+
+    expected = (
+        _CANDIDATE_GRAMMAR
+        if event == "CANDIDATE"
+        else "CANDIDATE not bound: " + _COORDINATION_GRAMMAR[event.removeprefix("EVENT=")]
+    )
+    assert result.get("candidate_binding_error") == expected
     await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
     assert run.step == "await"
     assert run.vars["candidate_task"] is None
