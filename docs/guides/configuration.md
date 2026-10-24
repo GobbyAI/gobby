@@ -578,6 +578,7 @@ workflow:
   enabled: true
   timeout: 24.0
   debug_echo_context: false
+  definition_regex_max_length: 2048
 
 hooks:
   adapter_timeout: 26.0
@@ -593,6 +594,14 @@ Rule authors should target semantic workflow events such as `turn_start`,
 `turn_end`, `before_tool`, and `after_tool`. Provider runtime events are adapter
 details below that authoring API. See [rules.md](./rules.md) for the complete
 rule model.
+
+`workflow.definition_regex_max_length` limits definition-supplied regular
+expressions to 2,048 characters by default. Set a positive integer through daemon
+configuration. Registry writes read the current setting, so changes apply to the
+next sync, import, or API update without a restart. Command patterns, regex-valued
+fields, condition helper regex literals, and Jinja `regex_search`/`regex_replace`
+filter literals are checked before persistence. Rejection identifies the definition,
+field, actual length, and configured limit. Existing rows are checked when rewritten.
 
 Hook deadlines must stay strictly ordered:
 `20 < workflow.timeout < hooks.adapter_timeout < 30 < hooks.provider_timeout`.

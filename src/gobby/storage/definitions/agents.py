@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from gobby.storage.definition_validation import validate_registry_regexes
 from gobby.storage.definitions._shared import (
     DefinitionNameConflictError,
     DefinitionNotFoundError,
@@ -340,6 +341,7 @@ class AgentDefinitionManager:
         tags: list[str] | None = None,
         source: DefinitionSource = "installed",
     ) -> AgentDefinitionRow:
+        validate_registry_regexes(self.db, name, definition_json)
         parent = _with_enabled(_parent_body(definition_json), enabled)
         _refuse_network_write(parent, None)
         definition_id = new_definition_id()
@@ -430,6 +432,10 @@ class AgentDefinitionManager:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
         with self.db.transaction() as txn:
             current = _lock_live_row(txn, definition_id)
+            if "definition_json" in fields:
+                validate_registry_regexes(
+                    self.db, str(fields.get("name", current.name)), fields["definition_json"]
+                )
             if not from_sync:
                 body = fields.get("definition_json")
                 _refuse_network_write(
@@ -645,6 +651,8 @@ class AgentDefinitionManager:
         description: str | None = None,
         create_only: bool = False,
     ) -> AgentDefinitionRow:
+        validate_registry_regexes(self.db, name, body_json)
+        validate_registry_regexes(self.db, name, step_workflow)
         parent_body = _with_enabled(_parent_body(body_json), enabled)
         _refuse_network_write(parent_body, None)
         now = utc_now()
@@ -722,6 +730,8 @@ class AgentDefinitionManager:
         description: str | None = None,
         restore: bool = False,
     ) -> AgentDefinitionRow:
+        validate_registry_regexes(self.db, name, body_json)
+        validate_registry_regexes(self.db, name, step_workflow)
         parent_body = _with_enabled(_parent_body(body_json), enabled)
         now = utc_now()
         with self.db.transaction() as txn:
@@ -820,6 +830,7 @@ class AgentDefinitionManager:
         from_sync: bool,
     ) -> AgentDefinitionRow:
         require_definition_id(agent_definition_id, what=_WHAT)
+        validate_registry_regexes(self.db, self.get(agent_definition_id).name, step_workflow)
         with self.db.transaction() as txn:
             if not from_sync:
                 _refuse_locked_network(txn, agent_definition_id)

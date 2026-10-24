@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::{
-    SearchOptions, TextSearchOptions, resolve_hybrid_symbols, search, search_content,
-    search_symbol, search_text,
+    SearchOptions, TextSearchOptions, resolve_graph_symbols, resolve_hybrid_symbols, search,
+    search_content, search_symbol, search_text,
 };
 use crate::commands::grep::db_tests::{
     fixture_uuid, insert_chunk_version, insert_file_version, insert_machine_state,
@@ -15,6 +15,7 @@ use crate::{
     models::{CODE_INDEX_UUID_NAMESPACE, IndexedFile, IndexedProject, Symbol},
     output::Format,
     search::fts,
+    visibility,
 };
 
 fn indexed_symbol(project_id: &str, file_path: &str) -> Symbol {
@@ -389,4 +390,59 @@ fn symbol_search_checks_indexed_paths_in_one_batch() {
             "search symbol (with_graph={with_graph}) must check indexed paths with one set-based query, not one per symbol"
         );
     }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn graph_symbol_misses_resolve_in_one_visibility_batch() {
+    let SearchBatchFixture {
+        _cleanup,
+        mut conn,
+        ctx,
+        _root,
+    } = seed_search_batch("graph-symbol-miss-one-batch");
+    let symbols = fts::search_symbols_exact_first_visible(
+        &mut conn,
+        BATCH_MARKER,
+        &ctx,
+        None,
+        None,
+        &[],
+        100,
+    )
+    .expect("query symbol fixtures");
+    assert_eq!(
+        symbols.len(),
+        BATCH_FILE_COUNT,
+        "fixture must yield one visible symbol per file"
+    );
+    let merged: Vec<(String, f64, Vec<String>)> = symbols
+        .iter()
+        .map(|sym| (sym.id.clone(), 1.0, vec!["graph".to_string()]))
+        .collect();
+
+    visibility::reset_symbol_lookup_counts();
+    let resolved = resolve_graph_symbols(&mut conn, &ctx, &merged, HashMap::new(), None, None, &[])
+        .expect("resolve graph symbols");
+
+    assert_eq!(
+        visibility::per_id_symbol_lookup_count(),
+        0,
+        "cache-miss symbols must resolve with one batched visibility query, not one per symbol"
+    );
+    assert_eq!(
+        visibility::batch_symbol_lookup_count(),
+        1,
+        "cache-miss symbols must resolve with exactly one batched visibility query"
+    );
+    let resolved_ids: Vec<&str> = resolved.iter().map(|(sym, _, _)| sym.id.as_str()).collect();
+    let merged_ids: Vec<&str> = merged.iter().map(|(id, _, _)| id.as_str()).collect();
+    assert_eq!(
+        resolved_ids, merged_ids,
+        "resolved symbols must keep merged order"
+    );
 }

@@ -23,6 +23,7 @@ CALL_TOOL_CASES: list[dict[str, Any]] = json.loads(
 )["cases"]
 
 
+@pytest.mark.filterwarnings("error::DeprecationWarning")
 @pytest.mark.parametrize("case", CALL_TOOL_CASES, ids=[case["name"] for case in CALL_TOOL_CASES])
 def test_call_tool_cases_match_python_canonicalizer(case: dict[str, Any]) -> None:
     fields = {"server_name": None, "tool_name": None, **case["input"]}

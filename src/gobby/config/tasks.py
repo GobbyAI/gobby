@@ -519,6 +519,12 @@ class GobbyTasksConfig(BaseModel):
 class WorkflowConfig(BaseModel):
     """Workflow engine configuration."""
 
+    definition_regex_max_length: int = Field(
+        default=2048,
+        gt=0,
+        description="Maximum characters in a definition-supplied regex; enforced before registry writes",
+    )
+
     enabled: bool = Field(
         default=True,
         description="Enable workflow engine",

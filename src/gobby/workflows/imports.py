@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from gobby.paths import get_global_workflows_dir
+from gobby.storage.definition_validation import validate_registry_regexes
 from gobby.storage.definitions.agents import (
     AgentDefinitionManager,
 )
@@ -194,6 +195,7 @@ def sync_imported_definition(
         )
 
     name = _imported_definition_name(data, declared_type)
+    validate_registry_regexes(db, name, data)
     _refuse_kind_change(name, _lookup_existing_kind(db, name, project_id), declared_type)
 
     if declared_type == "agent":

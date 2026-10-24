@@ -12,6 +12,16 @@ pytestmark = pytest.mark.unit
 class TestCoerceStringArguments:
     """Unit tests for coerce_string_arguments."""
 
+    def test_quote_replacement_preserves_lone_surrogate(self) -> None:
+        raw = r"{\"title\": \"x" + chr(0xD800) + r"\"}"
+
+        assert coerce_string_arguments(raw) == {"title": "x" + chr(0xD800)}
+
+    def test_invalid_lone_surrogate_payload_returns_none(self) -> None:
+        raw = r"{\"title\": \"x" + chr(0xD800) + r"\""
+
+        assert coerce_string_arguments(raw) is None
+
     def test_valid_json_string(self) -> None:
         result = coerce_string_arguments('{"title": "hello", "count": 3}')
         assert result == {"title": "hello", "count": 3}
