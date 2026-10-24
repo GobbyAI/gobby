@@ -490,6 +490,48 @@ def test_unknown_launchers_keep_dynamic_gobby_slots_blocked(
 
 
 @pytest.mark.parametrize(
+    "launcher",
+    [
+        "git bisect run",
+        "git -C /r bisect run",
+        "git submodule foreach",
+        "git submodule foreach --recursive",
+        "git x",
+        "git -C /r x",
+        "python3 -m uv run",
+        "python3 -m pipx run",
+        "uv run python -m pipx run",
+    ],
+)
+@pytest.mark.parametrize("slot", ["$S", "{sessions,}"])
+@pytest.mark.parametrize("context", ["{}", "cat x | {}", "cat <(echo hi) <({})"])
+def test_git_and_python_module_launchers_keep_dynamic_gobby_slots_blocked(
+    launcher: str, slot: str, context: str
+) -> None:
+    command = context.format(f"{launcher} gobby {slot} approve-dirty-paths s7")
+    assert approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git log --grep gobby $X",
+        "git show gobby $X",
+        "git -C /repo/gobby log --grep gobby $X",
+        'git add src/gobby "$F"',
+        'git checkout gobby "$B"',
+    ],
+)
+def test_git_builtin_operands_are_not_gobby_command_slots(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+def test_python_script_argv_is_an_accepted_residual() -> None:
+    # Orchestrator ruling: script/-c argv cannot bound arbitrary Python execution.
+    assert not approval_command_word_expansion("python3 l.py gobby $S approve-dirty-paths s7")
+
+
+@pytest.mark.parametrize(
     "command",
     ["echo gobby sessions list", "git grep gobby", 'git commit -m "gobby sessions list"'],
 )

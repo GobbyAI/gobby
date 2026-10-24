@@ -60,6 +60,41 @@ _GIT_READ_ONLY_SUBCOMMANDS = frozenset(
         "status",
     }
 )
+_GIT_BUILTIN_SUBCOMMANDS = _GIT_READ_ONLY_SUBCOMMANDS | {
+    "add",
+    "am",
+    "apply",
+    "archive",
+    "bisect",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "config",
+    "fetch",
+    "gc",
+    "grep",
+    "init",
+    "merge",
+    "mv",
+    "notes",
+    "pull",
+    "push",
+    "rebase",
+    "reflog",
+    "remote",
+    "reset",
+    "restore",
+    "revert",
+    "rm",
+    "stash",
+    "submodule",
+    "switch",
+    "tag",
+    "worktree",
+}
 _ASSIGNMENT_HEADS = frozenset({"export", "declare", "local", "readonly", "typeset"})
 # Reserved words that introduce a simple command, so the command word follows them.
 _COMPOUND_PREFIXES = frozenset({"!", "{", "do", "else", "elif", "if", "then", "until", "while"})
@@ -507,6 +542,7 @@ def _stage_slots(words: list[str], raw: list[str], *, strict: bool = False) -> b
         if not argv:
             continue
         name = argv[0].rsplit("/", 1)[-1]
+        git_builtin = False
         if name == "find":
             # find's action operands execute argv, preserving their raw spelling.
             pending.extend(
@@ -532,6 +568,22 @@ def _stage_slots(words: list[str], raw: list[str], *, strict: bool = False) -> b
                     continue
                 # An expanded subcommand can select an alias that executes argv.
                 index = len(words) - len(argv) + cursor
+                git_builtin = word in _GIT_BUILTIN_SUBCOMMANDS and not _slot_hazard(raw[index])
+                action = cursor + 1
+                if word == "submodule":
+                    while action < len(argv) and argv[action] in {"--recursive", "--quiet", "-q"}:
+                        action += 1
+                expected_action = {"bisect": "run", "submodule": "foreach"}.get(word)
+                if expected_action is not None and argv[action : action + 1] == [expected_action]:
+                    action += 1
+                    if word == "submodule":
+                        while action < len(argv) and argv[action] in {
+                            "--recursive",
+                            "--quiet",
+                            "-q",
+                        }:
+                            action += 1
+                    pending.append((argv[action:], depth + 1))
                 if _slot_hazard(raw[index]) and any(
                     _positional_slots(words, raw, start)
                     for start in range(index + 1, len(words))
@@ -549,11 +601,15 @@ def _stage_slots(words: list[str], raw: list[str], *, strict: bool = False) -> b
             if module[:1] in (["gobby"], ["gobby.cli"]):
                 argv = module
                 name = argv[0]
+            elif module:
+                pending.append((module, depth + 1))
+                continue
         # Unknown heads may launch any later argv word. Only known operand
         # grammars can safely exclude their arguments from command-slot checks.
         if (
-            name not in _DATA_BASENAME_HEADS | {"diff", "find", "git", "gobby", "gobby.cli"}
+            name not in _DATA_BASENAME_HEADS | {"diff", "find", "gobby", "gobby.cli"}
             and not _python_name(name)
+            and not (name == "git" and git_builtin)
             and any(
                 _positional_slots(words, raw, index)
                 for index, word in enumerate(words)
