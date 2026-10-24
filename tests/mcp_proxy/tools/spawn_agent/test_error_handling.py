@@ -431,7 +431,7 @@ class TestSpawnAgentImplErrorBranches:
         assert cleanup_config.parent_session_id == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_reused_worktree_persists_rebased_base_commit_sha(
+    async def test_reused_worktree_persists_merged_base_commit_sha(
         self, temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
     ) -> None:
         from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
@@ -707,10 +707,10 @@ test"""
         )
 
     @pytest.mark.asyncio
-    async def test_reused_worktree_rebase_conflict_preserves_original_and_stops_spawn(
+    async def test_reused_worktree_merge_conflict_preserves_original_and_stops_spawn(
         self, tmp_path: Path
     ) -> None:
-        from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
+        from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = MagicMock()
@@ -735,8 +735,8 @@ test"""
         git_manager.get_local_commit = AsyncMock(return_value="base-sha")
         git_manager.run_git_command = AsyncMock(return_value=SimpleNamespace(returncode=0))
         git_manager.get_current_branch = AsyncMock(return_value="main")
-        conflict = ReusedWorktreeRebaseConflict(
-            "Failed to rebase reused worktree onto main: CONFLICT; rebase aborted",
+        conflict = ReusedWorktreeSyncConflict(
+            "Failed to merge base main into reused worktree: CONFLICT; merge aborted",
             worktree_path=str(old_path),
             base_ref="main",
             base_commit_sha="base-sha",
@@ -781,12 +781,12 @@ test"""
             )
 
         assert result["success"] is False
-        assert result["error_code"] == "reused_worktree_rebase_conflict"
+        assert result["error_code"] == "reused_worktree_merge_conflict"
         assert result["worktree_id"] == "wt-old"
         assert result["worktree_path"] == str(old_path)
         assert result["branch_name"] == "branch"
         assert result["base_branch"] == "feature-base"
-        assert result["rebase_target"] == "main"
+        assert result["merge_target"] == "main"
         assert result["base_commit_sha"] == "base-sha"
         assert result["preserved"] is True
         assert "original worktree was preserved" in result["error"]

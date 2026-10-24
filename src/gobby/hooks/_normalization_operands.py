@@ -14,6 +14,7 @@ from gobby.hooks._normalization_shell import (
     _looks_path_target,
     _rebase_shell_paths,
 )
+from gobby.hooks.checkout_reads import node_origin, path_facts
 
 _CURL_SHORT_OPTIONS_WITH_VALUES = frozenset("AbcCdDeEFHKmoPQrTtuwxXYz")
 # Options whose value is the next word (or attached) for file-mutation commands.
@@ -276,7 +277,12 @@ def _file_transfer_paths(
         target_directory is not None
         or directory_operand
         or destination.endswith("/")
-        or (probe.is_absolute() and probe.is_dir())
+        or (
+            probe.is_absolute()
+            and (
+                path_facts([str(probe)]).files[0].kind == "dir" if node_origin() else probe.is_dir()
+            )
+        )
     )
     # BSD cp copies a trailing-slash source's contents directly into the destination.
     # A dynamic basename is likewise covered only by the whole destination directory.

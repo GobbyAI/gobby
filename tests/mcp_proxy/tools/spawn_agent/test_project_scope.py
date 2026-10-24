@@ -460,6 +460,8 @@ async def test_reused_worktree_uses_target_manager_and_repo_path(
     mock_runner: MagicMock,
     agent_body: AgentDefinitionBody,
 ) -> None:
+    # This case exercises a developer continuation, which synchronizes the branch.
+    agent_body.task_step_writes = ["implementation"]
     daemon_project = isolated_checkout_factory(temp_db, "daemon-reuse")
     target_project = isolated_checkout_factory(temp_db, "target-reuse")
     _initialize_repo(daemon_project, "daemon-base", "daemon")
