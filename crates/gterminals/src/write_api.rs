@@ -153,6 +153,8 @@ const ADMIT_POLL: Duration = Duration::from_secs(1);
 pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 /// Largest decoded input one route call admits.
 pub const MAX_INPUT_BYTES: usize = 64 * 1024;
+/// The longest delay a wake operation may carry before it is submitted.
+const MAX_WAKE_STEP_DELAY: u64 = 5_000;
 /// Largest body the route reads: one control line plus its envelope.
 pub const MAX_ROUTE_BODY: usize = MAX_CONTROL_LINE + 64 * 1024;
 
@@ -198,7 +200,7 @@ enum Call {
         terminal_id: Uuid,
         action_key: String,
     },
-    RunWakeBatch {
+    RunNativeWakeBatch {
         requests: Vec<WireWake>,
     },
     ObserveResolved {
@@ -390,7 +392,7 @@ impl Route {
                     .quarantine(terminal_id, &action_key)
                     .await,
             ),
-            Call::RunWakeBatch { requests } => self.wake_batch(requests, token).await,
+            Call::RunNativeWakeBatch { requests } => self.wake_batch(requests, token).await,
             Call::ObserveResolved {
                 terminal_id,
                 action_key,
@@ -505,15 +507,16 @@ impl Route {
             Ok(row) => row,
             Err(error) => return encode_refusal(&error),
         };
-        // Unheld work in flight or queued makes acquire wait for it to drain. An
-        // active hold, or an uncertain effect that only proof can settle, refuses at once.
+        // Unheld work in flight or queued, and an active hold, make acquire wait
+        // for them to drain or lapse. An uncertain effect that only proof can
+        // settle refuses at once.
         let deadline = Instant::now() + QUEUE_MAX_AGE;
         let hold = loop {
             let taken = {
                 let mut gates = lock(&self.shared.gates);
                 let gate = gates.entry(terminal).or_default();
                 gate.acquire(Instant::now())
-                    .map_err(|error| (error, !gate.is_held() && gate.uncertainty().is_none()))
+                    .map_err(|error| (error, gate.uncertainty().is_none()))
             };
             match taken {
                 Ok(hold) => break hold,
@@ -542,6 +545,20 @@ impl Route {
         let Some(lane) = requests.first().map(|request| request.terminal_id) else {
             return json!({"results": []});
         };
+        if let Some(step) = requests
+            .iter()
+            .flat_map(|request| &request.operations)
+            .find(|operation| operation.delay_ms > MAX_WAKE_STEP_DELAY)
+        {
+            return refused(
+                Stage::None,
+                "delay_too_long",
+                format!(
+                    "a wake operation waits {}ms, over the {}ms limit",
+                    step.delay_ms, MAX_WAKE_STEP_DELAY
+                ),
+            );
+        }
         let bytes: usize = requests
             .iter()
             .flat_map(|request| &request.operations)
@@ -673,8 +690,8 @@ impl Drop for Admitted {
 }
 
 /// Runs one native wake batch under its lane's admitted effect. Every other
-/// target is reserved without waiting, so a hold or unheld write there cannot
-/// interleave with the batch; a busy target refuses the whole batch.
+/// target is reserved without waiting, for at most HOLD_TTL, so a hold or unheld
+/// write there cannot interleave with the batch; a busy target refuses the whole batch.
 async fn run_wake(shared: &Arc<Shared>, lane: Uuid, requests: Vec<WakeRequest>) -> Value {
     let mut targets: Vec<Uuid> = requests
         .iter()
@@ -704,13 +721,10 @@ async fn run_wake(shared: &Arc<Shared>, lane: Uuid, requests: Vec<WakeRequest>) 
 
 fn release_reserved(shared: &Arc<Shared>, reserved: Vec<(Uuid, HoldToken)>) {
     for (id, hold) in reserved {
-        let released = lock(&shared.gates)
+        // A reservation that lapsed under its TTL is already released.
+        let _ = lock(&shared.gates)
             .get_mut(&id)
             .map(|gate| gate.release(hold, Instant::now()));
-        debug_assert!(
-            matches!(released, Some(Ok(()))),
-            "a reservation taken in this batch is still held"
-        );
         pump(shared, id);
     }
 }

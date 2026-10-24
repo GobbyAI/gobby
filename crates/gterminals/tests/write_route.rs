@@ -535,14 +535,16 @@ async fn token_rotation_and_lost_replies_never_replay_writes() -> anyhow::Result
         .await;
     let hold = held["hold"].clone();
 
-    let busy = fx
-        .route
-        .handle(
-            &fx.authority(),
-            json!({"call": "acquire_action", "terminal_id": t, "lease": lease}),
-        )
-        .await;
-    assert_eq!(refusal_code(&busy), "hold_busy", "{busy}");
+    // A second acquire waits behind the live hold until uncertainty refuses it.
+    let route = fx.route.clone();
+    let authority = fx.authority();
+    let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
+    let waiter = tokio::spawn(async move { route.handle(&authority, acquire).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !waiter.is_finished(),
+        "a second acquire waits behind the live hold"
+    );
 
     // The caller goes away while the admitted write is inside the runtime.
     let (entered, release) = fx.native.hold_next();
@@ -576,6 +578,8 @@ async fn token_rotation_and_lost_replies_never_replay_writes() -> anyhow::Result
         )
         .await;
     assert_eq!(refusal_code(&busy), "hold_busy", "{busy}");
+    let waited = waiter.await?;
+    assert_eq!(refusal_code(&waited), "hold_busy", "{waited}");
 
     // A rotated token invalidates every hold it issued.
     let _rotated = fx.token.install("token-2".into());
@@ -1000,6 +1004,39 @@ async fn acquire_waits_behind_unheld_work_in_flight() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_second_acquire_waits_for_the_active_hold_to_release() -> anyhow::Result<()> {
+    let fx = fixture().await?;
+    let t = fx.terminal;
+    let (_attachment, lease) = claim(&fx.leases, t).await?;
+
+    let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
+    let first = fx.route.handle(&fx.authority(), acquire.clone()).await;
+    assert_eq!(first["status"], "held", "{first}");
+    let hold = first["hold"].clone();
+
+    let route = fx.route.clone();
+    let authority = fx.authority();
+    let second = tokio::spawn(async move { route.handle(&authority, acquire).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !second.is_finished(),
+        "a second acquire waits behind the active hold"
+    );
+
+    let released = fx
+        .route
+        .handle(
+            &fx.authority(),
+            json!({"call": "release_action", "hold": hold}),
+        )
+        .await;
+    assert_eq!(released["status"], "released", "{released}");
+    let held = second.await?;
+    assert_eq!(held["status"], "held", "{held}");
+    Ok(())
+}
+
 // The lifecycle and wake calls return typed outcomes, and a wake whose token
 // retired is refused before its batch dispatches.
 #[tokio::test]
@@ -1007,7 +1044,7 @@ async fn wake_and_lifecycle_calls_return_typed_outcomes() -> anyhow::Result<()> 
     let fx = fixture().await?;
     let t = fx.terminal;
     let wake = json!({
-        "call": "run_wake_batch",
+        "call": "run_native_wake_batch",
         "requests": [{
             "result_id": "wake-1",
             "terminal_id": t,
@@ -1044,6 +1081,55 @@ async fn wake_and_lifecycle_calls_return_typed_outcomes() -> anyhow::Result<()> 
     let reply = fx.route.handle(&old, wake).await;
     assert_eq!(refusal_code(&reply), "retired_token", "{reply}");
     assert_eq!(fx.native.batch_payloads().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_wake_step_delay_over_the_limit_is_refused_at_admission() -> anyhow::Result<()> {
+    let fx = fixture().await?;
+    let t = fx.terminal;
+    let wake = json!({
+        "call": "run_native_wake_batch",
+        "requests": [{
+            "result_id": "wake-1",
+            "terminal_id": t,
+            "clear_action_key": "wake-clear:t",
+            "wake_action_key": "wake:t",
+            "operations": [{"kind": "text", "payload": "hi", "delay_ms": 5001}],
+        }],
+    });
+    let reply = fx.route.handle(&fx.authority(), wake).await;
+    assert_eq!(reply["status"], "refusal", "{reply}");
+    assert_eq!(refusal_code(&reply), "delay_too_long", "{reply}");
+    assert_eq!(reply["stage"], "none", "{reply}");
+    assert!(fx.native.batch_payloads().is_empty(), "{reply}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_wake_step_delay_at_the_limit_is_admitted() -> anyhow::Result<()> {
+    let fx = fixture().await?;
+    let t = fx.terminal;
+    let wake = json!({
+        "call": "run_native_wake_batch",
+        "requests": [{
+            "result_id": "wake-1",
+            "terminal_id": t,
+            "clear_action_key": "wake-clear:t",
+            "wake_action_key": "wake:t",
+            "operations": [{"kind": "text", "payload": "hi", "delay_ms": 5000}],
+        }],
+    });
+    let reply = fx.route.handle(&fx.authority(), wake).await;
+    assert_eq!(
+        reply["results"][0]["outcome"],
+        json!({"status": "delivered"}),
+        "{reply}"
+    );
+    assert_eq!(
+        fx.native.batch_payloads().first().map(String::as_str),
+        Some("hi")
+    );
     Ok(())
 }
 
@@ -1084,7 +1170,7 @@ async fn an_enter_only_wake_is_refused_when_its_token_retires_during_the_pace() 
     let fx = fixture().await?;
     let t = fx.terminal;
     let wake = json!({
-        "call": "run_wake_batch",
+        "call": "run_native_wake_batch",
         "requests": [{
             "result_id": "wake-1",
             "terminal_id": t,
@@ -1117,7 +1203,7 @@ async fn a_wake_retired_between_its_prelude_and_enter_keeps_the_partial_latch() 
     let fx = fixture().await?;
     let t = fx.terminal;
     let wake = json!({
-        "call": "run_wake_batch",
+        "call": "run_native_wake_batch",
         "requests": [{
             "result_id": "wake-1",
             "terminal_id": t,
