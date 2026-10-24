@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 
 import gobby.agents.spawn as spawn_module
 import gobby.mcp_proxy.tools.spawn_agent._factory as factory
+import gobby.mcp_proxy.tools.spawn_agent._spawn_guards as spawn_guards
 from gobby.agents import srt_runtime
 from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawners.prompt_manager import MAX_ENV_PROMPT_LENGTH
@@ -39,9 +41,12 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.terminals import TerminalManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.servers.conftest import (
     TEST_FRONT_DOOR_IDENTITY,
+    TEST_FRONT_DOOR_SECRET,
     StubConfigRuntime,
     authenticate_as,
     create_http_server,
@@ -107,22 +112,30 @@ def local_parent(temp_db: HubDatabase, sample_project: dict[str, Any], local_mac
 def spawn_registry(temp_db: HubDatabase, runner: MagicMock) -> Any:
     return create_spawn_agent_registry(
         runner,
+        task_manager=LocalTaskManager(temp_db),
         session_manager=SessionManager(temp_db),
         db=temp_db,
         config_resolver=lambda: DaemonConfig(),
     )
 
 
-def _insert_session(db: HubDatabase, project_id: str, machine_id: str) -> str:
+def _insert_session(
+    db: HubDatabase, project_id: str, machine_id: str, status: str = "active"
+) -> str:
     session_id = str(uuid4())
     db.execute(
         """
-        INSERT INTO sessions (id, external_id, machine_id, source, project_id)
-        VALUES (%s, %s, %s, 'claude', %s)
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id, status)
+        VALUES (%s, %s, %s, 'claude', %s, %s)
         """,
-        (session_id, f"remote-spawn-{session_id}", machine_id, project_id),
+        (session_id, f"remote-spawn-{session_id}", machine_id, project_id, status),
     )
     return session_id
+
+
+def _run_count(db: HubDatabase) -> int:
+    row = db.fetchone("SELECT COUNT(*) AS n FROM agent_runs", ())
+    return int(row["n"]) if row else 0
 
 
 def _routed(machine_id: str) -> RoutedMachine:
@@ -212,6 +225,12 @@ def _owner_http_client(db: HubDatabase, user_id: str, runner: MagicMock) -> Iter
             desired_values={},
             active_values={},
         )
+    )
+    server.auth_service.bind_runtime(
+        grant_service=None,
+        local_machine_id=TEST_FRONT_DOOR_IDENTITY["X-Gobby-Machine-Id"],
+        clock=None,
+        front_door_secret=TEST_FRONT_DOOR_SECRET,
     )
     server = authenticate_as(server, user_id)
     with patch("gobby.servers.app_factory.HookManager") as hook_manager:
@@ -353,6 +372,321 @@ async def test_invalid_model_refusal_releases_task_lease(
     retry = TaskSpawnLease(db=temp_db, task_id=task.id)
     assert retry.acquire() is None
     retry.release_unattached()
+
+
+async def test_remote_resume_refuses_another_project(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    local_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    spawn_registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    impl = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(factory, "spawn_agent_impl", impl)
+    other = install_isolated_checkout_project(
+        temp_db, tmp_path / "other-checkout", name="other-project", machine_id=require_machine_id()
+    )
+    foreign = _insert_session(temp_db, other.project.id, remote_machine)
+    runs_before = _run_count(temp_db)
+
+    refused = await spawn_registry.call(
+        "spawn_agent",
+        {"prompt": "x", "parent_session_id": local_parent, "resume_session_id": foreign},
+    )
+
+    assert refused["success"] is False
+    assert refused["error_code"] == "resume_refused"
+    assert "another project" in refused["error"]
+    node.send.assert_not_awaited()
+    assert _run_count(temp_db) == runs_before
+    impl.assert_not_awaited()
+
+
+async def test_remote_resume_refuses_live_target(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    local_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    spawn_registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    impl = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(factory, "spawn_agent_impl", impl)
+    live = _insert_session(temp_db, sample_project["id"], remote_machine)
+    temp_db.execute("UPDATE sessions SET status = 'active' WHERE id = %s", (live,))
+    runs_before = _run_count(temp_db)
+
+    refused = await spawn_registry.call(
+        "spawn_agent",
+        {"prompt": "x", "parent_session_id": local_parent, "resume_session_id": live},
+    )
+
+    assert refused["success"] is False
+    assert refused["error_code"] == "resume_refused"
+    assert "still live" in refused["error"]
+    node.send.assert_not_awaited()
+    assert _run_count(temp_db) == runs_before
+    impl.assert_not_awaited()
+
+
+async def test_resume_by_reference_routes_to_owner(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    local_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    spawn_registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    impl = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(factory, "spawn_agent_impl", impl)
+    node_session = _insert_session(temp_db, sample_project["id"], remote_machine, status="expired")
+    temp_db.execute(
+        """
+        INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path,
+            base_branch, agent_session_id, status, created_at, updated_at)
+        VALUES (%s, %s, %s, 'agent/resumed', '/remote/worktrees/resumed', '0.5.0', %s,
+            'active', now(), now())
+        """,
+        (str(uuid4()), sample_project["id"], remote_machine, node_session),
+    )
+
+    resumed = await spawn_registry.call(
+        "spawn_agent",
+        {"prompt": "x", "parent_session_id": local_parent, "resume_session_id": node_session[:8]},
+    )
+
+    assert resumed["success"] is True
+    node.send.assert_awaited_once()
+    (machine_id, command, payload), _ = node.send.await_args
+    assert (machine_id, command) == (remote_machine, "agent.spawn")
+    assert payload["resume_session_id"] == f"remote-spawn-{node_session}"
+    impl.assert_not_awaited()
+
+
+async def test_closed_task_spawn_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    local_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    spawn_registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    impl = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(factory, "spawn_agent_impl", impl)
+    task = LocalTaskManager(temp_db).create_task(
+        title="Closed remote work",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Done.",
+    )
+    LocalTaskManager(temp_db).close_task(task.id)
+    runs_before = _run_count(temp_db)
+    sessions_before = _row_counts(temp_db)["sessions"]
+
+    refused = await spawn_registry.call(
+        "spawn_agent",
+        {
+            "prompt": "x",
+            "parent_session_id": local_parent,
+            "task_id": task.id,
+            "machine": remote_machine,
+        },
+    )
+
+    assert refused["success"] is False
+    node.send.assert_not_awaited()
+    assert _run_count(temp_db) == runs_before
+    assert _row_counts(temp_db)["sessions"] == sessions_before
+    impl.assert_not_awaited()
+
+
+async def test_remote_child_binds_run_and_variables(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+) -> None:
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(
+            remote_parent, sample_project["id"], initial_variables={"_agent_type": "developer"}
+        ),
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+    )
+
+    assert result["success"] is True
+    session = temp_db.fetchone(
+        "SELECT agent_run_id FROM sessions WHERE id = %s", (result["child_session_id"],)
+    )
+    assert session is not None and session["agent_run_id"] == result["run_id"]
+    variables = SessionVariableManager(temp_db).get_variable_subset(
+        result["child_session_id"], ("_agent_type",)
+    )
+    assert variables == {"_agent_type": "developer"}
+
+
+async def test_reserved_run_id_names_the_run(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+) -> None:
+    reserved = str(uuid4())
+
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(remote_parent, sample_project["id"], reserved_run_id=reserved),
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+    )
+
+    assert result["success"] is True
+    assert result["run_id"] == reserved
+    (_, _, payload), _ = node.send.await_args
+    assert payload["run_id"] == reserved
+
+
+async def test_prepare_failure_releases_task_lease(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        title="Prepare fails",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Done.",
+    )
+    prepare = MagicMock(side_effect=RuntimeError("prepare broke"))
+    monkeypatch.setattr(remote_spawn, "prepare_terminal_spawn", prepare)
+    lease = TaskSpawnLease(db=temp_db, task_id=task.id)
+
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(remote_parent, sample_project["id"], task_id=task.id),
+        lease=lease,
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "prepare_failed"
+    prepare.assert_called_once()
+    node.send.assert_not_awaited()
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()
+
+
+async def test_failed_terminal_row_rolls_back_run(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rollback = AsyncMock()
+    monkeypatch.setattr(remote_spawn, "_roll_back_run", rollback)
+    monkeypatch.setattr(
+        TerminalManager, "create_pending", MagicMock(side_effect=RuntimeError("row failed"))
+    )
+
+    result = await spawn_remote_agent(
+        temp_db,
+        routed=_routed(remote_machine),
+        request=_request(remote_parent, sample_project["id"]),
+        daemon_config=DaemonConfig(),
+        runner=runner,
+        session_manager=sessions,
+    )
+
+    assert result["success"] is False
+    rollback.assert_awaited_once()
+    assert rollback.await_args is not None
+    assert rollback.await_args.args[1] == result["run_id"]
+    node.send.assert_not_awaited()
+
+
+async def test_project_cap_counts_remote_runs(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    local_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    spawn_registry: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(spawn_guards, "configured_max_active_agents", lambda: 1)
+    args = {"prompt": "x", "parent_session_id": local_parent, "machine": remote_machine}
+
+    first = await spawn_registry.call("spawn_agent", args)
+    second = await spawn_registry.call("spawn_agent", args)
+
+    assert first["success"] is True
+    assert second["success"] is False
+    assert second["error_code"] == "project_cap_reached"
+    assert node.send.await_count == 1
+
+
+async def test_http_origin_is_the_front_door_machine(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    impl = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(factory, "spawn_agent_impl", impl)
+    task = LocalTaskManager(temp_db).create_task(
+        title="Front door origin",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Spawn is observable.",
+    )
+    temp_db.execute(
+        "INSERT INTO users (id, email, name, password_hash) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (id) DO NOTHING",
+        (OTHER_USER_ID, "other@example.test", "Other", "unused"),
+    )
+    foreign = str(uuid4())
+    LocalMachineManager(temp_db).upsert_seen(foreign, OTHER_USER_ID)
+    body = {"task_id": task.id, "prompt": "x", "machine": remote_machine, "provider": "claude"}
+
+    with _owner_http_client(temp_db, TEST_USER_ID, runner) as client:
+        refused = client.post(
+            "/api/agents/spawn", json=body, headers={"X-Gobby-Machine-Id": foreign}
+        )
+
+    assert refused.json()["error_code"] == "machine_not_owned"
+    node.send.assert_not_awaited()
 
 
 async def test_definite_failure_settles_in_database(
@@ -524,7 +858,7 @@ async def test_resume_routes_and_placement_refused(
 ) -> None:
     impl = AsyncMock(return_value={"success": True})
     monkeypatch.setattr(factory, "spawn_agent_impl", impl)
-    node_session = _insert_session(temp_db, sample_project["id"], remote_machine)
+    node_session = _insert_session(temp_db, sample_project["id"], remote_machine, status="expired")
     temp_db.execute(
         """
         INSERT INTO worktrees (id, project_id, machine_id, branch_name, worktree_path,
@@ -724,7 +1058,7 @@ async def test_machine_ceiling_refuses_before_rows(
     sessions: ChildSessionManager,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(remote_spawn, "configured_max_active_agents", lambda: 2, raising=False)
+    monkeypatch.setattr(remote_spawn, "configured_max_active_agents", lambda: 2)
     _fill_machine(temp_db, sample_project["id"], remote_machine, 2)
     before = _row_counts(temp_db)
     lease = _lease()
@@ -747,7 +1081,7 @@ async def test_machine_ceiling_refuses_before_rows(
     lease.release_unattached.assert_called_once()
 
     # One below the ceiling: two concurrent spawns admit exactly one.
-    monkeypatch.setattr(remote_spawn, "configured_max_active_agents", lambda: 2, raising=False)
+    monkeypatch.setattr(remote_spawn, "configured_max_active_agents", lambda: 2)
     temp_db.execute("DELETE FROM terminals WHERE machine_id = %s", (remote_machine,))
     _fill_machine(temp_db, sample_project["id"], remote_machine, 1)
 

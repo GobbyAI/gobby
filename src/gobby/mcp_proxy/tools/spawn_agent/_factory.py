@@ -31,6 +31,7 @@ from ._provider_resolution import (
 from ._remote_routing import (
     is_local_target,
     resolve_spawn_route,
+    session_machine_id,
     spawn_refusal,
     spawn_remote_route,
 )
@@ -642,13 +643,16 @@ def create_spawn_agent_registry(
                     session_manager=session_manager,
                     project_id=project_id or "",
                     machine=machine,
-                    caller_session_id=caller_session_id,
+                    origin_machine_id=session_machine_id(session_manager, caller_session_id),
                     resume_session_id=resume_session_id,
                 )
             except NodeCommandError as exc:
                 return spawn_refusal(exc.code, str(exc), exc.stage)
         elif not is_local_target(
-            session_manager, machine=machine, resume_session_id=resume_session_id
+            session_manager,
+            machine=machine,
+            resume_session_id=resume_session_id,
+            project_id=project_id,
         ):
             return spawn_refusal(
                 "routing_unavailable", "The hub database is unavailable for a routed spawn"
@@ -671,9 +675,11 @@ def create_spawn_agent_registry(
                 db,
                 routed=routed,
                 session_manager=session_manager,
+                task_manager=task_manager,
                 runner=runner,
                 daemon_config=config_resolver() if config_resolver is not None else None,
                 placement=placement,
+                completion_registry=completion_registry,
                 request=RemoteSpawnRequest(
                     parent_session_id=resolved_parent_session_id,
                     project_id=project_id,
@@ -693,6 +699,13 @@ def create_spawn_agent_registry(
                     workflow_name=effective_workflow,
                     task_id=task_id,
                     resume_session_id=resume_session_id,
+                    caller_session_id=caller_session_id,
+                    requested_provider=provider,
+                    allow_closed_task=allow_closed_task,
+                    extra_write_paths=extra_write_paths,
+                    write_paths_reason=write_paths_reason,
+                    reserved_run_id=reserved_run_id,
+                    lane=(lane or "").strip() or None,
                 ),
             )
 

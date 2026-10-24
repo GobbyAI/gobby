@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -188,7 +188,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     router = APIRouter(prefix="/api/agents", tags=["agent-spawn"])
 
     async def _do_spawn(
-        req: AgentSpawnRequest, project_id: str | None = None
+        req: AgentSpawnRequest,
+        project_id: str | None = None,
+        origin_machine_id: str | None = None,
     ) -> AgentSpawnResponse:
         """Execute a single spawn request."""
         if req.web_chat and req.network is not None:
@@ -366,14 +368,15 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             spawn_remote_route,
         )
 
-        # Check the target and its owner before the launcher session is written.
+        # Check the target and its owner before the launcher session is written. The origin
+        # is the verified front-door machine, never a request field.
         try:
             routed = await resolve_spawn_route(
                 task_manager.db,
                 session_manager=session_manager,
                 project_id=effective_project_id,
                 machine=req.machine,
-                caller_session_id=None,
+                origin_machine_id=origin_machine_id,
                 resume_session_id=None,
             )
         except NodeCommandError as exc:
@@ -399,9 +402,11 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 task_manager.db,
                 routed=routed,
                 session_manager=session_manager,
+                task_manager=task_manager,
                 runner=runner,
                 daemon_config=config_snapshot.active,
                 placement=None,
+                completion_registry=server.services.completion_registry,
                 request=RemoteSpawnRequest(
                     parent_session_id=parent_session_id,
                     project_id=effective_project_id,
@@ -419,6 +424,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                     initial_variables=initial_variables,
                     workflow_name=effective_workflow,
                     task_id=req.task_id,
+                    requested_provider=req.provider,
                 ),
             )
             if not remote["success"]:
@@ -525,7 +531,9 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     # POST /api/agents/spawn
     # -----------------------------------------------------------------------
     @router.post("/spawn", response_model=None)
-    async def spawn_agent(request: AgentSpawnRequest) -> dict[str, Any] | JSONResponse:
+    async def spawn_agent(
+        request: AgentSpawnRequest, http_request: Request
+    ) -> dict[str, Any] | JSONResponse:
         """Spawn an agent to work on a task."""
         inc_counter("agent_spawns_total")
 
@@ -535,8 +543,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             ctx = get_project_context()
             project_id = ctx.get("id") if ctx else None
+            identity = server.auth_service.verified_front_door_identity(http_request)
+            origin_machine_id = identity.machine_id if identity is not None else None
 
-            result = await _do_spawn(request, project_id)
+            result = await _do_spawn(request, project_id, origin_machine_id)
             if not result.success and result.error_code is not None:
                 return JSONResponse(status_code=400, content=result.model_dump(exclude_none=True))
             if not result.success:

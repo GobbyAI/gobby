@@ -187,6 +187,7 @@ def prepare_terminal_spawn(
     workspace_path: str | None = None,
     credential_manager: ManagedCredentialManager | None = None,
     config_snapshot: ConfigSnapshot | None = None,
+    routed_machine_id: str | None = None,
 ) -> PreparedSpawn:
     """
     Prepare a terminal spawn by creating the child session.
@@ -245,6 +246,7 @@ def prepare_terminal_spawn(
         is_local=is_local,
         sandbox_enabled=sandbox_enabled,
         workspace_path=workspace_path,
+        routed_machine_id=routed_machine_id,
     )
 
     child_session_id: str | None = None
@@ -315,6 +317,8 @@ def prepare_terminal_spawn(
             worktree_id=worktree_id,
             clone_id=clone_id,
             checkout_root=workspace_path,
+            machine_id=routed_machine_id,
+            remote=routed_machine_id is not None,
         )
         prompt_file = prepared.prompt_file
         prepared.config_snapshot = config_snapshot
@@ -366,11 +370,12 @@ def prepare_terminal_resume(
     resume_metadata_json: dict[str, Any],
     worktree_id: str | None,
     clone_id: str | None,
-    workspace_path: str,
+    workspace_path: str | None,
     credential_manager: ManagedCredentialManager | None = None,
     config_snapshot: ConfigSnapshot | None = None,
     relaunch: bool = False,
     paused_seat_not_live: bool = False,
+    routed_machine_id: str | None = None,
 ) -> PreparedSpawn:
     """Prepare a successor run against an existing durable session.
 
@@ -466,6 +471,8 @@ def prepare_terminal_resume(
             worktree_id=worktree_id,
             clone_id=clone_id,
             checkout_root=workspace_path,
+            machine_id=routed_machine_id,
+            remote=routed_machine_id is not None,
         )
         prepared.config_snapshot = config_snapshot
         try:
@@ -585,8 +592,14 @@ def _prepare_run_for_session(
     worktree_id: str | None,
     clone_id: str | None,
     checkout_root: str | None = None,
+    machine_id: str | None = None,
+    remote: bool = False,
 ) -> PreparedSpawn:
-    """Create and bind a run, then construct its terminal identity."""
+    """Create and bind a run, then construct its terminal identity.
+
+    A ``remote`` run launches on another machine's node, so no prompt file or local
+    terminal environment is written here; the node receives the prompt in its payload.
+    """
     from gobby.storage.agents import LocalAgentRunManager
 
     logging.getLogger("agents.spawn.prepare_terminal_spawn").debug(
@@ -640,32 +653,34 @@ def _prepare_run_for_session(
             resume_metadata_json=resume_metadata_json,
             worktree_id=worktree_id,
             clone_id=clone_id,
+            machine_id=machine_id,
         )
     else:
         raise RuntimeError(f"Agent run {agent_run_id} already exists with {existing_run.status}")
     bind_run(agent_run_id)
 
-    prompt_env: str | None = None
     prompt_file: str | None = None
     try:
-        if prompt:
-            if len(prompt) <= MAX_ENV_PROMPT_LENGTH:
-                prompt_env = prompt
-            else:
-                prompt_file = create_prompt_file(prompt, session_id)
-
-        env_vars = get_terminal_env_vars(
-            session_id=session_id,
-            parent_session_id=parent_session_id,
-            agent_run_id=agent_run_id,
-            project_id=project_id,
-            checkout_root=checkout_root,
-            workflow_name=workflow_name,
-            agent_depth=session_depth,
-            max_agent_depth=max_agent_depth,
-            prompt=prompt_env,
-            prompt_file=prompt_file,
-        )
+        env_vars: dict[str, str] = {}
+        if not remote:
+            prompt_env: str | None = None
+            if prompt:
+                if len(prompt) <= MAX_ENV_PROMPT_LENGTH:
+                    prompt_env = prompt
+                else:
+                    prompt_file = create_prompt_file(prompt, session_id)
+            env_vars = get_terminal_env_vars(
+                session_id=session_id,
+                parent_session_id=parent_session_id,
+                agent_run_id=agent_run_id,
+                project_id=project_id,
+                checkout_root=checkout_root,
+                workflow_name=workflow_name,
+                agent_depth=session_depth,
+                max_agent_depth=max_agent_depth,
+                prompt=prompt_env,
+                prompt_file=prompt_file,
+            )
 
         return PreparedSpawn(
             session_id=session_id,
