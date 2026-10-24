@@ -165,7 +165,11 @@ def classify_native_spawn_failure(
 async def refuse_unavailable_host(runtime: object) -> tuple[str, str | None] | None:
     """The (code, detail) a spawn fails closed with before creating anything, or None."""
     refusal = getattr(runtime, "spawn_refusal", None)
-    reason = await refusal() if callable(refusal) else None
+    try:
+        reason = await refusal() if callable(refusal) else None
+    except HostUnavailableError as exc:
+        code, detail, _settlement = classify_native_spawn_failure(exc)
+        return code, detail
     if reason is None:
         return None
     code, detail, _settlement = classify_native_spawn_failure(HostReasonUnavailableError(reason))

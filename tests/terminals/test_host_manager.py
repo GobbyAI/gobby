@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import stat
+import tempfile
 import threading
 import tomllib
 import uuid
@@ -43,6 +44,14 @@ from tests.terminals.host_fakes import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    """Host-start doubles still need a socket directory within the platform limit."""
+    with tempfile.TemporaryDirectory(prefix="h") as directory:
+        yield Path(directory)
+
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
