@@ -1407,6 +1407,114 @@ fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::R
 }
 
 #[test]
+fn runbook_migrations_upgrade_legacy_tasks_without_criteria() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 476)
+        .expect("review epoch migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    let open_task = Uuid::new_v4();
+    let closed_task = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'legacy criteria')",
+        &[&project_id],
+    )?;
+    // These rows predate required criteria; the NOT VALID check never validated them.
+    client.batch_execute("ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria")?;
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, task_type, validation_criteria) \
+         VALUES ($1, $2, 'legacy open', 'task', NULL)",
+        &[&open_task, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, task_type, validation_criteria, closed_at, \
+         closed_reason) VALUES ($1, $2, 'legacy closed', 'task', '  ', now(), 'completed')",
+        &[&closed_task, &project_id],
+    )?;
+    client.batch_execute(
+        "ALTER TABLE tasks ADD CONSTRAINT tasks_require_validation_criteria CHECK \
+         (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) \
+         IS NOT NULL))) NOT VALID",
+    )?;
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    for (task_id, criteria, reason, bucket) in [
+        (open_task, None, None, "open"),
+        (closed_task, Some("  "), Some("done"), "closed"),
+    ] {
+        let row = client.query_one(
+            "SELECT validation_criteria, review_status, closed_reason, state_bucket \
+             FROM tasks WHERE id = $1",
+            &[&task_id],
+        )?;
+        assert_eq!(row.get::<_, Option<String>>(0).as_deref(), criteria);
+        assert_eq!(row.get::<_, String>(1), "pending");
+        assert_eq!(row.get::<_, Option<String>>(2).as_deref(), reason);
+        assert_eq!(row.get::<_, String>(3), bucket);
+    }
+    let constraint = client.query_one(
+        "SELECT convalidated, pg_get_constraintdef(oid, true) FROM pg_constraint \
+         WHERE conrelid = 'tasks'::regclass AND conname = 'tasks_require_validation_criteria'",
+        &[],
+    )?;
+    assert!(!constraint.get::<_, bool>(0));
+    assert_eq!(
+        constraint.get::<_, String>(1),
+        "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) \
+         IS NOT NULL) NOT VALID"
+    );
+    let error = client
+        .execute(
+            "INSERT INTO tasks(id, project_id, title, task_type) VALUES ($1, $2, 'new', 'task')",
+            &[&Uuid::new_v4(), &project_id],
+        )
+        .expect_err("new tasks still need criteria");
+    assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
+fn first_released_runbook_receipts_still_verify() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    // The receipts the first 476/477 release recorded, before the legacy-criteria fix.
+    for (version, checksum) in [
+        (
+            476,
+            "312351fc7cd41c66d8cc3c35d9db9c06e25e09accf1faf96080cc0758754b041",
+        ),
+        (
+            477,
+            "5898d9726be534c13aa9d0764188918b38a8b37288738f21a106fdff84f0e099",
+        ),
+    ] {
+        client.execute(
+            "UPDATE schema_migrations SET checksum=$1 WHERE version=$2",
+            &[&checksum, &version],
+        )?;
+    }
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!report.baseline_applied);
+    assert_eq!(report.migrations_applied, 0);
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
 fn retired_task_validation_config_is_removed_on_upgrade() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
