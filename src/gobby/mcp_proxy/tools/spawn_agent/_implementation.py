@@ -38,7 +38,7 @@ from gobby.providers.version_gate import (
 )
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.utils.git import run_thread_to_completion, run_to_completion
-from gobby.utils.machine_id import get_machine_id
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -197,6 +197,7 @@ async def spawn_agent_impl(
             parent_session_id=parent_session_id,
             session_manager=session_manager,
             run_storage=runner.run_storage,
+            launch_machine_id=require_machine_id(),
         )
     except ValueError as exc:
         return {"success": False, "error": str(exc)}

@@ -24,7 +24,10 @@ from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
     resume_launch_defaults,
     standing_seat_suffix,
 )
-from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import concrete_provider
+from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
+    concrete_provider,
+    missing_provider_for_supplied_model,
+)
 from gobby.mcp_proxy.tools.spawn_agent._resume import resolve_resume_target
 from gobby.mcp_proxy.tools.spawn_agent._run_lifetime import resolve_run_lifetime
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import (
@@ -152,6 +155,11 @@ async def spawn_remote_route(
         provider, model, reasoning_effort = resume_launch_defaults(
             resume_target, model=model, reasoning_effort=reasoning_effort
         )
+    missing_provider = missing_provider_for_supplied_model(
+        explicit_provider=concrete_provider(provider), model=model
+    )
+    if missing_provider is not None:
+        return missing_provider.to_response()
     try:
         launch = await resolve_launch_model(
             provider=provider,

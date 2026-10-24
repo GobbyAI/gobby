@@ -42,6 +42,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import TerminalManager
+from gobby.utils.git import run_to_completion
 from gobby.workflows.definitions import AgentDefinitionBody
 
 _MACHINE_LOCKS: dict[str, asyncio.Lock] = {}
@@ -139,25 +140,62 @@ async def _settle_unlaunched(
     completion_registry: Any | None,
     task_manager: Any | None,
 ) -> dict[str, Any]:
-    """End a run that was never sent: settle its rows, its runtime, and its task lease."""
-    TerminalManager(db).fail_pending(terminal_id)
-    await _roll_back_run(
-        runner,
-        run_id,
-        error,
+    """End a run that was never sent: settle its rows, its runtime, and its task lease.
+
+    Settlement runs to completion through caller cancellation, so the lease is never released
+    while the rows it guards are still live.
+    """
+
+    async def settle() -> dict[str, Any]:
+        TerminalManager(db).fail_pending(terminal_id)
+        await _roll_back_run(
+            runner,
+            run_id,
+            error,
+            completion_registry=completion_registry,
+            task_manager=task_manager,
+            child_session_id=child_session_id,
+            terminal_id=terminal_id,
+        )
+        run = runner.run_storage.get(run_id)
+        if run is not None and run.status not in TERMINAL_AGENT_RUN_STATUSES:
+            # Rollback logs and swallows its own failures; the row must still end.
+            runner.run_storage.cancel(run_id, terminal_reason="spawn_rollback", result=code)
+        # The lease was attached to this run before the send, so only its row can end it.
+        TaskDispatchMutexManager(db).clear_by_run_id(run_id)
+        _release(lease)
+        return _refusal(code, error, run_id=run_id)
+
+    return await run_to_completion(settle())
+
+
+async def _drain_cancelled_prepare(
+    db: HubDatabase,
+    *,
+    prep_task: asyncio.Future[PreparedSpawn],
+    runner: Any,
+    lease: Any | None,
+    terminal_id: str,
+    run_id: str,
+    completion_registry: Any | None,
+    task_manager: Any | None,
+) -> None:
+    """Let an in-flight preparation finish, then settle the rows it left behind."""
+    await asyncio.wait({prep_task})
+    if prep_task.cancelled() or prep_task.exception() is not None:
+        return
+    await _settle_unlaunched(
+        db,
+        runner=runner,
+        lease=lease,
+        terminal_id=terminal_id,
+        run_id=run_id,
+        child_session_id=prep_task.result().session_id,
+        error="spawn cancelled",
+        code="spawn_cancelled",
         completion_registry=completion_registry,
         task_manager=task_manager,
-        child_session_id=child_session_id,
-        terminal_id=terminal_id,
     )
-    run = runner.run_storage.get(run_id)
-    if run is not None and run.status not in TERMINAL_AGENT_RUN_STATUSES:
-        # Rollback logs and swallows its own failures; the row must still end.
-        runner.run_storage.cancel(run_id, terminal_reason="spawn_rollback", result=code)
-    # The lease was attached to this run before the send, so only its row can end it.
-    TaskDispatchMutexManager(db).clear_by_run_id(run_id)
-    _release(lease)
-    return _refusal(code, error, run_id=run_id)
 
 
 async def spawn_remote_agent(
@@ -175,7 +213,7 @@ async def spawn_remote_agent(
 ) -> dict[str, Any]:
     """Launch one run on ``routed``'s node.
 
-    The caller has resolved the task, the resume target, and the write grant. This prepares
+    The caller has resolved the task and the resume target. This prepares
     the run with the shared spawn path, then sends it. The hub refuses anything but an enabled
     ``srt`` sandbox before it writes a row or sends a command.
     """
@@ -268,21 +306,20 @@ async def spawn_remote_agent(
             try:
                 prepared: PreparedSpawn = await asyncio.shield(prep_task)
             except asyncio.CancelledError:
-                # The thread cannot be stopped. Let it finish, then settle the rows it left.
-                await asyncio.wait({prep_task})
-                if not prep_task.cancelled() and prep_task.exception() is None:
-                    await _settle_unlaunched(
+                # The thread cannot be stopped. Drain it and settle its rows through any repeat
+                # cancellation, then propagate.
+                await run_to_completion(
+                    _drain_cancelled_prepare(
                         db,
+                        prep_task=prep_task,
                         runner=runner,
                         lease=lease,
                         terminal_id=terminal_id,
                         run_id=run_id,
-                        child_session_id=prep_task.result().session_id,
-                        error="spawn cancelled",
-                        code="spawn_cancelled",
                         completion_registry=completion_registry,
                         task_manager=task_manager,
                     )
+                )
                 raise
             except Exception as exc:
                 _release(lease)

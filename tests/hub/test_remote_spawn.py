@@ -24,6 +24,7 @@ import gobby.agents.spawn as spawn_module
 import gobby.mcp_proxy.tools.spawn_agent._factory as factory
 import gobby.mcp_proxy.tools.spawn_agent._spawn_guards as spawn_guards
 from gobby.agents import srt_runtime
+from gobby.agents.external_write_grants import GRANT_KEY, authorize_write_grant
 from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawners.prompt_manager import MAX_ENV_PROMPT_LENGTH
 from gobby.config.app import DaemonConfig
@@ -34,6 +35,7 @@ from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_spawn import RemoteSpawnRequest, spawn_remote_agent
 from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
+from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _roll_back_run
 from gobby.mcp_proxy.tools.spawn_agent._remote_routing import spawn_remote_route
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from gobby.storage.agents import LocalAgentRunManager
@@ -1648,3 +1650,204 @@ async def test_remote_foreign_model_refused(
     assert refused["stage"] == "none"
     assert _row_counts(temp_db) == before
     node.send.assert_not_awaited()
+
+
+async def test_remote_model_without_provider_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+) -> None:
+    """A supplied model needs an explicit provider, as on the local path, before any row."""
+    before = _row_counts(temp_db)
+
+    refused = await spawn_remote_route(
+        temp_db,
+        routed=_routed(remote_machine),
+        session_manager=SessionManager(temp_db),
+        task_manager=LocalTaskManager(temp_db),
+        runner=runner,
+        daemon_config=DaemonConfig(),
+        placement=None,
+        request=_request(remote_parent, sample_project["id"], provider=None, model="sonnet"),
+    )
+
+    assert refused["success"] is False
+    assert refused["error_code"] == "provider_required_for_model"
+    assert _row_counts(temp_db) == before
+    node.send.assert_not_awaited()
+
+
+async def test_node_caller_grant_refused_for_hub_target(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    local_parent: str,
+    remote_parent: str,
+    remote_machine: str,
+    local_machine: str,
+    node: AsyncMock,
+    runner: MagicMock,
+    spawn_registry: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grant recorded on a node does not follow its managed caller onto a hub-local launch."""
+    release = tmp_path / "release"
+    release.mkdir()
+    grant = authorize_write_grant(
+        [str(release)],
+        "release",
+        caller_session_id=remote_parent,
+        parent_session_id=None,
+        session_manager=SessionManager(temp_db),
+        run_storage=runner.run_storage,
+        launch_machine_id=remote_machine,
+    )
+    runner.run_storage.create(
+        parent_session_id=local_parent,
+        provider="claude",
+        prompt="Release review",
+        child_session_id=remote_parent,
+        machine_id=remote_machine,
+        resume_metadata_json={GRANT_KEY: grant},
+    )
+    # The launch gate sits behind the grant check; a refused gate makes any missed refusal visible.
+    runner.can_spawn.return_value = (False, "launch blocked by test guard", 0)
+    monkeypatch.setattr(factory, "enforce_spawn_caller", AsyncMock(return_value=remote_parent))
+    before = _row_counts(temp_db)
+
+    refused = await spawn_registry.call(
+        "spawn_agent",
+        {
+            "prompt": "x",
+            "parent_session_id": remote_parent,
+            "machine": local_machine,
+            "project_path": str(tmp_path),
+            "extra_write_paths": [str(release)],
+            "write_paths_reason": "release",
+        },
+    )
+
+    assert refused["success"] is False
+    assert "machine" in refused["error"]
+    assert _row_counts(temp_db) == before
+    node.send.assert_not_awaited()
+
+
+async def test_repeated_cancel_during_prepare_settles_before_release(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second cancel while preparation is blocked does not release the lease early."""
+    task = LocalTaskManager(temp_db).create_task(
+        title="Cancelled twice during prepare",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Next spawn is admitted.",
+    )
+    run_id = str(uuid4())
+    started = threading.Event()
+    finish = threading.Event()
+    real_prepare = spawn_module.prepare_terminal_spawn
+
+    def _slow_prepare(*args: Any, **kwargs: Any) -> Any:
+        started.set()
+        finish.wait()
+        return real_prepare(*args, **kwargs)
+
+    monkeypatch.setattr(remote_spawn, "prepare_terminal_spawn", _slow_prepare)
+    spawn = asyncio.create_task(
+        spawn_remote_agent(
+            temp_db,
+            routed=_routed(remote_machine),
+            request=_request(
+                remote_parent, sample_project["id"], task_id=task.id, reserved_run_id=run_id
+            ),
+            lease=TaskSpawnLease(db=temp_db, task_id=task.id),
+            daemon_config=DaemonConfig(),
+            runner=runner,
+            session_manager=sessions,
+        )
+    )
+    await asyncio.to_thread(started.wait)
+    spawn.cancel()
+    # Each loop turn lets one cancellation reach its await before the next arrives.
+    await asyncio.sleep(0)
+    spawn.cancel()
+    await asyncio.sleep(0)
+
+    try:
+        assert not spawn.done()
+        held = TaskSpawnLease(db=temp_db, task_id=task.id).acquire()
+        assert held is not None
+    finally:
+        finish.set()
+    with pytest.raises(asyncio.CancelledError):
+        await spawn
+
+    assert _state(temp_db, "agent_runs", run_id) == "cancelled"
+    node.send.assert_not_awaited()
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()
+
+
+async def test_cancel_during_settle_finishes_rollback(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    remote_parent: str,
+    remote_machine: str,
+    node: AsyncMock,
+    sessions: ChildSessionManager,
+    runner: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel while an unsent run's rollback is awaiting does not abandon the rollback."""
+    task = LocalTaskManager(temp_db).create_task(
+        title="Cancelled during settle",
+        task_type="task",
+        project_id=sample_project["id"],
+        validation_criteria="Next spawn is admitted.",
+    )
+    run_id = str(uuid4())
+    entered = asyncio.Event()
+    proceed = asyncio.Event()
+
+    async def _held_rollback(*args: Any, **kwargs: Any) -> None:
+        entered.set()
+        await proceed.wait()
+        await _roll_back_run(*args, **kwargs)
+
+    node.send.side_effect = NodeCommandError("node_refused", "Target refused", "none")
+    monkeypatch.setattr(remote_spawn, "_roll_back_run", _held_rollback)
+    spawn = asyncio.create_task(
+        spawn_remote_agent(
+            temp_db,
+            routed=_routed(remote_machine),
+            request=_request(
+                remote_parent, sample_project["id"], task_id=task.id, reserved_run_id=run_id
+            ),
+            lease=TaskSpawnLease(db=temp_db, task_id=task.id),
+            daemon_config=DaemonConfig(),
+            runner=runner,
+            session_manager=sessions,
+        )
+    )
+    await entered.wait()
+    spawn.cancel()
+    proceed.set()
+    with pytest.raises(asyncio.CancelledError):
+        await spawn
+
+    assert _state(temp_db, "agent_runs", run_id) == "cancelled"
+    retry = TaskSpawnLease(db=temp_db, task_id=task.id)
+    assert retry.acquire() is None
+    retry.release_unattached()

@@ -70,6 +70,7 @@ def authorize_write_grant(
     parent_session_id: str | None,
     session_manager: Any,
     run_storage: Any,
+    launch_machine_id: str,
 ) -> dict[str, Any] | None:
     """A coordinator asserts authority; managed callers may only narrow their grant."""
     roots = canonical_write_roots([] if paths is None else paths, reason)
@@ -81,11 +82,17 @@ def authorize_write_grant(
     session = session_manager.get(asserting_id)
     if session is None:
         raise ValueError("External write grant asserting session was not found")
+    if session.machine_id != launch_machine_id:
+        raise ValueError("External write grants apply only on the asserting session's machine")
     run_id = getattr(session, "agent_run_id", None)
     run = run_storage.get(run_id) if run_id else run_storage.get_by_session(session.id)
     if run is not None:
         if run.child_session_id != session.id:
             raise ValueError("External write grant session/run relationship is inconsistent")
+        if getattr(run, "machine_id", None) != launch_machine_id:
+            raise ValueError(
+                "Managed external write grants apply only on the granting run's machine"
+            )
         allowed = revalidate_write_grant(run.resume_metadata_json or {})
         if any(
             not any(Path(root).is_relative_to(Path(base)) for base in allowed) for root in roots

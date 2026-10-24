@@ -51,7 +51,7 @@ async def test_rendered_policy_preserves_workspace_and_sensitive_denials(
 def authority() -> dict[str, Any]:
     sessions = MagicMock()
     sessions.get.return_value = SimpleNamespace(
-        id="caller", agent_run_id=None, parent_session_id=None
+        id="caller", agent_run_id=None, parent_session_id=None, machine_id="hub-machine"
     )
     runs = MagicMock()
     runs.get_by_session.return_value = None
@@ -60,6 +60,7 @@ def authority() -> dict[str, Any]:
         "parent_session_id": "parent",
         "session_manager": sessions,
         "run_storage": runs,
+        "launch_machine_id": "hub-machine",
     }
 
 
@@ -137,7 +138,10 @@ def test_child_narrows_recorded_grant_and_cannot_spoof_parent(
     grant = authorize_write_grant([str(root)], "authorized", **authority)
     authority["session_manager"].get.return_value.agent_run_id = "run"
     authority["run_storage"].get.return_value = SimpleNamespace(
-        id="run", child_session_id="caller", resume_metadata_json={GRANT_KEY: grant}
+        id="run",
+        child_session_id="caller",
+        machine_id="hub-machine",
+        resume_metadata_json={GRANT_KEY: grant},
     )
     narrowed = authorize_write_grant([str(child)], "delegate tests", **authority)
     assert narrowed is not None
@@ -153,7 +157,7 @@ def test_child_narrows_recorded_grant_and_cannot_spoof_parent(
 
 def test_child_without_grant_cannot_create_one(tmp_path: Path, authority: dict[str, Any]) -> None:
     authority["run_storage"].get_by_session.return_value = SimpleNamespace(
-        id="run", child_session_id="caller", resume_metadata_json={}
+        id="run", child_session_id="caller", machine_id="hub-machine", resume_metadata_json={}
     )
     with pytest.raises(ValueError, match="only delegate"):
         authorize_write_grant([str(tmp_path)], "claimed authorization", **authority)
@@ -204,3 +208,51 @@ def test_no_grant_never_reads_session_or_inherits(authority: dict[str, Any]) -> 
     assert authorize_write_grant(None, None, **authority) is None
     authority["session_manager"].get.assert_not_called()
     assert revalidate_write_grant({}) == []
+
+
+def test_root_grant_from_other_machine_refused(tmp_path: Path, authority: dict[str, Any]) -> None:
+    root = tmp_path / "release"
+    root.mkdir()
+    authority["session_manager"].get.return_value = SimpleNamespace(
+        id="caller", agent_run_id=None, parent_session_id=None, machine_id="node-b"
+    )
+    with pytest.raises(ValueError, match="machine"):
+        authorize_write_grant([str(root)], "release", **authority)
+
+
+def test_grant_from_other_machine_refused(tmp_path: Path, authority: dict[str, Any]) -> None:
+    root = tmp_path / "release"
+    root.mkdir()
+    node_b = SimpleNamespace(
+        id="caller", agent_run_id=None, parent_session_id=None, machine_id="node-b"
+    )
+    authority["session_manager"].get.return_value = node_b
+    grant = authorize_write_grant(
+        [str(root)], "release", **{**authority, "launch_machine_id": "node-b"}
+    )
+    node_b.agent_run_id = "run"
+    authority["run_storage"].get.return_value = SimpleNamespace(
+        id="run",
+        child_session_id="caller",
+        machine_id="node-b",
+        resume_metadata_json={GRANT_KEY: grant},
+    )
+    with pytest.raises(ValueError, match="machine"):
+        authorize_write_grant([str(root)], "release", **authority)
+
+
+def test_managed_grant_run_machine_mismatch_refused(
+    tmp_path: Path, authority: dict[str, Any]
+) -> None:
+    root = tmp_path / "release"
+    root.mkdir()
+    grant = authorize_write_grant([str(root)], "release", **authority)
+    authority["session_manager"].get.return_value.agent_run_id = "run"
+    authority["run_storage"].get.return_value = SimpleNamespace(
+        id="run",
+        child_session_id="caller",
+        machine_id="node-b",
+        resume_metadata_json={GRANT_KEY: grant},
+    )
+    with pytest.raises(ValueError, match="machine"):
+        authorize_write_grant([str(root)], "release", **authority)
