@@ -1047,6 +1047,111 @@ async fn wake_and_lifecycle_calls_return_typed_outcomes() -> anyhow::Result<()> 
     Ok(())
 }
 
+/// Waits until the wake's latch is persisted, which happens after admission.
+async fn await_latch(fx: &Fixture, key: &str) -> anyhow::Result<()> {
+    for _ in 0..1000 {
+        if fx
+            .hub
+            .get(fx.terminal)
+            .await?
+            .unresolved_writes
+            .get(key)
+            .is_some()
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    anyhow::bail!("the latch {key} was never persisted")
+}
+
+/// Waits until the host has been submitted `payload`.
+async fn await_payload(native: &FakeRuntime, payload: &str) -> anyhow::Result<()> {
+    for _ in 0..1000 {
+        if native.batch_payloads().iter().any(|p| p == payload) {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    anyhow::bail!("the host never received {payload}")
+}
+
+// An Enter-only wake sleeps through its pace before it submits. A token retired
+// during that sleep must not send the Enter.
+#[tokio::test]
+async fn an_enter_only_wake_is_refused_when_its_token_retires_during_the_pace() -> anyhow::Result<()>
+{
+    let fx = fixture().await?;
+    let t = fx.terminal;
+    let wake = json!({
+        "call": "run_wake_batch",
+        "requests": [{
+            "result_id": "wake-1",
+            "terminal_id": t,
+            "clear_action_key": "wake-clear:t",
+            "wake_action_key": "wake:t",
+            "operations": [{"kind": "key", "payload": "enter", "delay_ms": 300}],
+        }],
+    });
+    let route = fx.route.clone();
+    let authority = fx.authority();
+    let runner = tokio::spawn(async move { route.handle(&authority, wake).await });
+    // Admitted once the latch persists; the pace then sleeps for 300ms.
+    await_latch(&fx, "wake:t").await?;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let _rotated = fx.token.install("token-2".into());
+    let reply = runner.await?;
+    assert_eq!(
+        reply["results"][0]["outcome"]["code"], "retired_token",
+        "{reply}"
+    );
+    assert!(fx.native.batch_payloads().is_empty(), "{reply}");
+    Ok(())
+}
+
+// The prelude reaches the composer before the pace; a token retired after that
+// must refuse the Enter and keep the latch, since the text is already typed.
+#[tokio::test]
+async fn a_wake_retired_between_its_prelude_and_enter_keeps_the_partial_latch() -> anyhow::Result<()>
+{
+    let fx = fixture().await?;
+    let t = fx.terminal;
+    let wake = json!({
+        "call": "run_wake_batch",
+        "requests": [{
+            "result_id": "wake-1",
+            "terminal_id": t,
+            "clear_action_key": "wake-clear:t",
+            "wake_action_key": "wake:t",
+            "operations": [
+                {"kind": "text", "payload": "hi", "delay_ms": 0},
+                {"kind": "key", "payload": "enter", "delay_ms": 300},
+            ],
+        }],
+    });
+    let route = fx.route.clone();
+    let authority = fx.authority();
+    let runner = tokio::spawn(async move { route.handle(&authority, wake).await });
+    // The prelude has reached the host; the Enter waits out its 300ms pace.
+    await_payload(&fx.native, "hi").await?;
+    let _rotated = fx.token.install("token-2".into());
+    let reply = runner.await?;
+    let outcome = &reply["results"][0];
+    assert_eq!(outcome["step"], "enter", "{reply}");
+    assert_eq!(outcome["outcome"]["code"], "retired_token", "{reply}");
+    assert_eq!(outcome["outcome"]["stage"], "partial", "{reply}");
+    assert_eq!(fx.native.batch_payloads(), vec!["hi".to_string()]);
+    assert!(
+        fx.hub
+            .get(t)
+            .await?
+            .unresolved_writes
+            .get("wake:t")
+            .is_some()
+    );
+    Ok(())
+}
+
 // A panicking runtime settles its effect as uncertain and releases the route's
 // active count. The uncertain gate then holds until proof settles it (plan 2.8).
 #[tokio::test]
