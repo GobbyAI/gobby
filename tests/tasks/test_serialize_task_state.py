@@ -27,6 +27,9 @@ def test_new_shape() -> None:
     assert "lifecycle_stage" not in state
     assert "lifecycle" not in state
     assert set(state) == {
+        "name",
+        "hold_state",
+        "follow_up_at",
         "owner_session_id",
         "is_claimed",
         "is_closed",
@@ -43,15 +46,17 @@ def test_new_shape() -> None:
         "additional_skills",
     }
     assert state["is_escalated"] is False
+    assert state["name"] == "open"
 
 
-def test_awaiting_human_review_label_is_reported_blocked() -> None:
+def test_awaiting_human_review_label_is_reported_needs_human() -> None:
     awaiting = serialize_task_state(
         SimpleNamespace(labels=["llm-reviewed", "awaiting-human-review"])
     )
     reviewed = serialize_task_state(SimpleNamespace(labels=["llm-reviewed", "human-reviewed"]))
 
-    assert awaiting["is_blocked"] is True
+    assert awaiting["name"] == "needs_human"
+    assert awaiting["is_blocked"] is False
     assert reviewed["is_blocked"] is False
 
 

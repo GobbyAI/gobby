@@ -19,7 +19,16 @@ pytestmark = pytest.mark.unit
 REFUSAL = "Refusing to publish dirty bundled content (modified: shared/skills/demo/SKILL.md)."
 
 
+class OperatorAuth:
+    """An operator caller: no managed principal, so the release window fence passes."""
+
+    def request_principal(self, _request: object) -> None:
+        return None
+
+
 class FakeServer:
+    auth_service = OperatorAuth()
+
     def get_runner(self) -> None:
         return None
 

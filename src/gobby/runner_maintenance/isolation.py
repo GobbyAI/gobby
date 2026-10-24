@@ -9,12 +9,15 @@ import subprocess
 from collections.abc import Awaitable, Callable
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
+from gobby.agents.team_lifecycle import TeamBinding
+from gobby.agents.team_teardown import TeamRunTerminator, TeamTreeDeleter
 from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.clones.git import CloneGitManager, GitOperationResult
 from gobby.hub.remote_workspaces import expire_remote_workspaces
+from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.runner_maintenance.isolation_reconciliation import reconcile_isolation_registry
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_tmux_repair import (
@@ -28,9 +31,11 @@ from gobby.sessions.tmux_window_naming import (
     release_window_name_if_unowned,
     resolve_tmux_repair_owner,
 )
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import require_root
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.terminal_ownership import TERMINAL_TITLE_REPAIR_STATUSES
@@ -38,6 +43,7 @@ from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.deletion import (
     DeletionSurface,
     WorktreeDeletionRequest,
+    WorktreeDeletionResult,
     delete_worktree_transaction,
 )
 from gobby.worktrees.executor import (
@@ -46,6 +52,9 @@ from gobby.worktrees.executor import (
     run_worktree_delete,
 )
 from gobby.worktrees.git import WorktreeGitManager
+
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
@@ -204,9 +213,7 @@ async def cleanup_expired_isolation_loop(
                             delete_worktree_transaction,
                             request=request,
                             worktree_storage=worktree_storage,
-                            resolve_git_manager=lambda current: WorktreeGitManager(
-                                require_root(db, current.project_id, current.machine_id)
-                            ),
+                            resolve_git_manager=partial(_worktree_git, db),
                             task_manager=LocalTaskManager(db),
                         ),
                     )
@@ -268,6 +275,53 @@ async def cleanup_expired_isolation_loop(
             break
         except Exception as e:
             logger.error("Error in expired isolation cleanup loop: %s", e)
+
+
+def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
+    """End a team seat's run through the daemon termination lifecycle, closing its tab."""
+
+    async def terminate(run: AgentRun) -> bool:
+        db = runner.database
+        result = await agent_cancellation.terminate_agent_run(
+            run=run,
+            runner=runner.agent_runner,
+            agent_run_manager=LocalAgentRunManager(db),
+            db=db,
+            lifecycle_monitor=runner.agent_lifecycle_monitor,
+            completion_registry=runner.completion_registry,
+            task_manager=runner.task_manager,
+            session_manager=SessionManager(db),
+            effective_status="cancelled",
+            debug=False,
+        )
+        return bool(result.get("success"))
+
+    return terminate
+
+
+def team_tree_deleter(db: HubDatabase, executor: WorktreeDeleteExecutor | None) -> TeamTreeDeleter:
+    """Delete a closed team's tree through the safe deletion transaction."""
+
+    async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
+        request = WorktreeDeletionRequest(
+            binding.worktree_id, DeletionSurface.TEARDOWN, merged_into=binding.base_branch
+        )
+        return await run_worktree_delete(
+            executor,
+            partial(
+                delete_worktree_transaction,
+                request=request,
+                worktree_storage=LocalWorktreeManager(db),
+                resolve_git_manager=partial(_worktree_git, db),
+                task_manager=LocalTaskManager(db),
+            ),
+        )
+
+    return delete
+
+
+def _worktree_git(db: HubDatabase, worktree: Worktree) -> WorktreeGitManager:
+    return WorktreeGitManager(require_root(db, worktree.project_id, worktree.machine_id))
 
 
 async def _delete_expired_clone(

@@ -19,6 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import get_machine_id
+from tests.servers.conftest import TEST_FRONT_DOOR_IDENTITY
 
 pytestmark = [
     pytest.mark.unit,
@@ -89,7 +90,8 @@ class TestAdminEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "tasks" in data
-        assert "ready" in data["tasks"]
+        assert "open" in data["tasks"]
+        assert "ready_unblocked" in data["tasks"]
         assert "in_progress" in data["tasks"]
 
     def test_status_check_with_memory_manager(
@@ -146,7 +148,8 @@ class TestAdminEndpoints:
 
     def test_shutdown_creates_background_task(self, basic_http_server: HTTPServer) -> None:
         """Test shutdown endpoint creates background task."""
-        client = TestClient(basic_http_server.app)
+        # A verified front-door operator: the release window fence admits it.
+        client = TestClient(basic_http_server.app, headers=TEST_FRONT_DOOR_IDENTITY)
 
         response = client.post("/api/admin/shutdown")
         assert response.status_code == 200

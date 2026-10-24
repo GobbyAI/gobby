@@ -1,4 +1,4 @@
-"""Exercise the team coordination and planning runbooks through the schema and renderer."""
+"""Exercise the team planning runbook through the schema and renderer."""
 
 import re
 from itertools import combinations
@@ -13,18 +13,7 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
-SEATS = {
-    "team-coordination": (
-        "archivist",
-        "log-monitor",
-        "metrics-monitor",
-        "release-manager",
-        "inbox-manager",
-        "recovery-steward",
-        "consolidator",
-    ),
-    "team-planning": ("plan-writer", "plan-adversary"),
-}
+SEATS = {"team-planning": ("plan-writer", "plan-adversary")}
 SHARED_INPUTS = {"lane", "workspace", "lane_pane", "project_path", "seats", "report_to"}
 STEP_REFERENCE = re.compile(r"steps\['([^']+)'\]")
 
@@ -49,8 +38,7 @@ def test_team_runbook_guards_only_approved_seats(pipeline: str) -> None:
         for seat in SEATS[pipeline]
         for name in ("provider", "model", "reasoning_effort")
     }
-    peer_inputs = {"metrics_monitor_log_monitor"} if pipeline == "team-coordination" else set()
-    assert set(definition.inputs) == SHARED_INPUTS | seat_inputs | peer_inputs
+    assert set(definition.inputs) == SHARED_INPUTS | seat_inputs
     guard = definition.steps[0].mcp
     assert guard is not None
     assert (guard.server, guard.tool) == ("gobby-agents", "check_runbook_seats")
@@ -69,7 +57,7 @@ def test_team_placements_reference_only_defined_steps(pipeline: str) -> None:
     assert set(STEP_REFERENCE.findall(text)) <= step_ids
 
 
-@pytest.mark.parametrize("pipeline", ["team-lane", "team-coordination", "team-planning"])
+@pytest.mark.parametrize("pipeline", ["devteam", "support", "team-planning"])
 def test_team_pipelines_carry_no_retired_seats(pipeline: str) -> None:
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((PIPELINES / f"{pipeline}.yaml").read_text())
@@ -110,8 +98,6 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         report_to="gobby#14972",
     )
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
-    if pipeline == "team-coordination":
-        inputs["metrics_monitor_log_monitor"] = "gobby#14973"
     renderer = StepRenderer(TemplateEngine())
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
@@ -141,15 +127,8 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         assert 'target="session", target_id="gobby#14972"' in args["prompt"]
         assert "every SRT denial" in args["prompt"]
         assert "current session ref" in args["prompt"]
-        if step.id == "consolidator":
-            # An idle-step seat goes idle instead of re-arming an expiring wait (#24405).
-            assert "go idle as your consolidate step directs" in args["prompt"]
-            assert "wait_for_coordination" not in args["prompt"]
-        else:
-            assert 'owner_session="gobby#14972"' in args["prompt"]
-            assert "wait_for_coordination" in args["prompt"]
-        if step.id == "metrics-monitor":
-            assert "Log Monitor ref: gobby#14973" in args["prompt"]
+        assert 'owner_session="gobby#14972"' in args["prompt"]
+        assert "wait_for_coordination" in args["prompt"]
         if anchor is None:
             assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": "Lane 7"}}
             anchor = f"pilot:{step.id}"

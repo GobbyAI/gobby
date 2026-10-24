@@ -9,7 +9,7 @@ from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 
 logger = logging.getLogger(__name__)
 
-_TERMINAL_CLOSURE_REASONS = {"completed", "obsolete"}
+_TERMINAL_CLOSURE_REASONS = {"done", "moot"}
 
 
 def on_epic_terminal(event: object, *, db: Any) -> PlanRecord | None:

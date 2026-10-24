@@ -24,11 +24,8 @@ class TestSkipReasons:
     """Tests for SKIP_REASONS constant."""
 
     def test_skip_reasons_contains_expected_values(self) -> None:
-        """Test that SKIP_REASONS contains all expected values."""
-        assert "duplicate" in SKIP_REASONS
-        assert "already_implemented" in SKIP_REASONS
-        assert "wont_fix" in SKIP_REASONS
-        assert "obsolete" in SKIP_REASONS
+        """SKIP_REASONS are the close reasons that need no commit: every reason but done."""
+        assert SKIP_REASONS == frozenset({"moot", "superseded", "wont_do"})
 
     def test_skip_reasons_is_frozenset(self) -> None:
         """Test that SKIP_REASONS is immutable."""

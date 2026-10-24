@@ -443,6 +443,7 @@ RULE_CASES = (
             "git cherry-pick abc1234",
             "git revert --no-edit abc1234",
             "git merge --continue",
+            "git rebase 0.5.0",
             # mask_quoted blanks the message, so --abort inside it cannot
             # borrow the abort exemption.
             'git commit -m "docs: explain git merge --abort"',
@@ -459,7 +460,7 @@ RULE_CASES = (
             "git merge-base HEAD main",
             "git commit-graph write",
             "git mergetool",
-            "git rebase 0.5.0",
+            "git rebase --abort",
         ),
     ),
     RuleCase(

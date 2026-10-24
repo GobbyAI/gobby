@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import gobby.runner_lifecycle_callbacks as lifecycle_callbacks
 import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.events.wake_recovery import WakeReplayCoordinator
@@ -90,11 +91,11 @@ async def test_periodic_agent_reconciliation_rotates_credentials_before_runs(
         return 2
 
     monkeypatch.setattr(
-        lifecycle_subsystems,
+        lifecycle_callbacks,
         "_reclassify_reconciliation_pending_runs",
         agent_reconcile,
     )
-    reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
+    reconciled = await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
 
     assert reconciled == 4
     assert calls == ["credentials", "runs"]
@@ -113,12 +114,12 @@ async def test_failed_credential_rotation_does_not_stop_run_reconciliation(
         SimpleNamespace(managed_credential_manager=SimpleNamespace(rotate_due=rotate_due)),
     )
     monkeypatch.setattr(
-        lifecycle_subsystems,
+        lifecycle_callbacks,
         "_reclassify_reconciliation_pending_runs",
         AsyncMock(return_value=2),
     )
     with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
-        reconciled = await lifecycle_subsystems._reconcile_agent_lifecycle_state(runner)
+        reconciled = await lifecycle_callbacks.reconcile_agent_lifecycle_state(runner)
 
     assert reconciled == 2
     assert "Managed credential rotation failed" in caplog.text

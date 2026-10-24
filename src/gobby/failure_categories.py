@@ -29,7 +29,7 @@ INFRASTRUCTURE_FAILURE_CATEGORIES = frozenset(
 type ValidationStatus = Literal["valid", "invalid", "pending", "error"]
 
 
-def persisted_validation_status(
+def persisted_review_status(
     status: ValidationStatus,
     failure_category: FailureCategory | None,
 ) -> ValidationStatus:

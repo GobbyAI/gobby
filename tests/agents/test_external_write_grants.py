@@ -24,7 +24,7 @@ async def test_rendered_policy_preserves_workspace_and_sensitive_denials(
 ) -> None:
     from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
     from gobby.agents.sandbox_policy import sensitive_write_roots
-    from gobby.agents.srt_runtime import render_srt_settings
+    from gobby.agents.srt_settings import render_srt_settings
 
     workspace = tmp_path / "workspace"
     external = tmp_path / "external"

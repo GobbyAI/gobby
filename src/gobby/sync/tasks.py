@@ -7,8 +7,19 @@ from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock, project_backup_path
+from gobby.sync.task_review_serialization import (
+    deserialize_task_review,
+    deserialize_task_step_records,
+    serialize_task_review,
+)
 from gobby.tasks.criteria_text import require_validation_criteria
-from gobby.tasks.state_semantics import serialize_task_state
+from gobby.tasks.state_semantics import (
+    serialize_task_state,
+    validate_task_close_reason,
+    validate_task_hold_state,
+    validate_task_state,
+)
+from gobby.tasks.step_records import restore_task_step_records, step_records_by_task
 from gobby.utils.json_helpers import json_dumps
 
 TASK_BACKUP_PAGE_SIZE = 100_000
@@ -243,8 +254,12 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
                     f"Task backup line {line_num}: invalid {field} timestamp"
                 ) from exc
 
-        state = data.get("state") or {}
-        for field in ("closed_at", "escalated_at"):
+        state = data.get("state")
+        if state is None:
+            state = {}
+        if not isinstance(state, dict):
+            raise TaskRestoreError(f"Task backup line {line_num}: state must be an object")
+        for field in ("closed_at", "escalated_at", "follow_up_at"):
             value = data.get(field, state.get(field))
             if value is not None:
                 try:
@@ -253,6 +268,15 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
                     raise TaskRestoreError(
                         f"Task backup line {line_num}: invalid {field} timestamp"
                     ) from exc
+
+        try:
+            if "name" in state:
+                validate_task_state(state["name"])
+            validate_task_hold_state(state.get("hold_state"), state.get("follow_up_at"))
+            if data.get("closed_at", state.get("closed_at")):
+                validate_task_close_reason(data.get("closed_reason", state.get("closed_reason")))
+        except ValueError as exc:
+            raise TaskRestoreError(f"Task backup line {line_num}: {exc}") from exc
 
         uuid_fields = (
             "project_id",
@@ -287,10 +311,18 @@ def _load_task_backup(path: Path) -> list[dict[str, Any]]:
         for dependency in data.get("deps_on") or []:
             _validate_uuid(dependency, field="deps_on entry", line_num=line_num, required=True)
 
-        for field in ("state", "validation"):
+        if "validation" in data:
+            raise TaskRestoreError(f"Task backup line {line_num}: retired validation object")
+        for field in ("state", "review"):
             value = data.get(field)
             if value is not None and not isinstance(value, dict):
                 raise TaskRestoreError(f"Task backup line {line_num}: {field} must be an object")
+
+        try:
+            deserialize_task_review(data.get("review"))
+            deserialize_task_step_records(data.get("review"), task_id=task_id)
+        except ValueError as exc:
+            raise TaskRestoreError(f"Task backup line {line_num}: {exc}") from exc
 
         seq_num = data.get("seq_num")
         if seq_num is not None and (type(seq_num) is not int or seq_num <= 0):
@@ -340,6 +372,7 @@ class TaskBackupManager:
                 offset += len(page)
 
             deps_rows = self.db.fetchall("SELECT task_id, depends_on FROM task_dependencies")
+            step_history = step_records_by_task(self.db)
 
             deps_map: dict[str, list[str]] = {}
             for row in deps_rows:
@@ -353,8 +386,11 @@ class TaskBackupManager:
             backup_data: list[dict[str, Any]] = []
             for task in tasks:
                 state = serialize_task_state(task)
+                # Labels can project a hold without owning an intrinsic hold field.
+                state["hold_state"] = task.hold_state
                 state["closed_at"] = _normalize_timestamp(task.closed_at)
                 state["escalated_at"] = _normalize_timestamp(task.escalated_at)
+                state["follow_up_at"] = _normalize_timestamp(task.follow_up_at)
                 task_dict = {
                     "id": task.id,
                     "title": task.title,
@@ -369,23 +405,14 @@ class TaskBackupManager:
                     "created_in_session_id": task.created_in_session_id,
                     "claimed_by_session_id": task.claimed_by_session_id,
                     "deps_on": sorted(deps_map.get(task.id, [])),  # Sort deps for stability
-                    "commits": sorted(set(task.commits)) if task.commits else [],
+                    # Link order is meaningful: the last commit is the tip step records bind.
+                    "commits": list(dict.fromkeys(task.commits)) if task.commits else [],
                     "closed_at": _normalize_timestamp(task.closed_at),
                     "closed_reason": task.closed_reason,
                     "closed_in_session_id": task.closed_in_session_id,
                     "closed_commit_sha": task.closed_commit_sha,
                     "labels": task.labels if task.labels else None,
-                    "validation": (
-                        {
-                            "state": task.validation_status,
-                            "feedback": task.validation_feedback,
-                            "fail_count": task.validation_fail_count,
-                            "criteria": task.validation_criteria,
-                            "override_reason": task.validation_override_reason,
-                        }
-                        if task.validation_status or task.validation_criteria
-                        else None
-                    ),
+                    "review": serialize_task_review(task, step_history.get(task.id, [])),
                     # Expansion fields
                     "category": task.category,
                     # External integrations
@@ -518,17 +545,11 @@ class TaskBackupManager:
                         # Handle commits array stored as JSON in the hub.
                         commits_json = json.dumps(data["commits"]) if data.get("commits") else None
 
-                        # Handle validation object (extract fields)
-                        validation = data.get("validation") or {}
-                        validation_status = validation.get("state") or validation.get("status")
-                        validation_feedback = validation.get("feedback")
-                        validation_fail_count = validation.get("fail_count", 0)
-                        validation_criteria = validation.get("criteria")
-                        validation_override_reason = validation.get("override_reason")
+                        review = deserialize_task_review(data.get("review"))
                         task_type = data.get("task_type", "task")
                         validation_criteria = require_validation_criteria(
                             task_type,
-                            validation_criteria,
+                            review["validation_criteria"],
                         )
 
                         # Handle labels stored as JSON in the hub.
@@ -578,16 +599,15 @@ class TaskBackupManager:
                             "commits": commits_json,
                             "closed_at": closed_at_file,
                             "closed_reason": data.get("closed_reason", state.get("closed_reason")),
+                            "hold_state": state.get("hold_state"),
+                            "follow_up_at": _parse_optional_timestamp(state.get("follow_up_at")),
                             "closed_in_session_id": closed_in_session_id,
                             "closed_commit_sha": data.get(
                                 "closed_commit_sha", state.get("closed_commit_sha")
                             ),
                             "labels": labels_json,
-                            "validation_status": validation_status,
-                            "validation_feedback": validation_feedback,
-                            "validation_fail_count": validation_fail_count,
+                            **review,
                             "validation_criteria": validation_criteria,
-                            "validation_override_reason": validation_override_reason,
                             "category": data.get("category"),
                             # Preserve automation and routing policy packed into state on export.
                             "assigned_agent": state.get("assigned_agent"),
@@ -720,6 +740,17 @@ class TaskBackupManager:
                             ON CONFLICT (task_id, depends_on, dep_type) DO NOTHING
                             """,
                             (task_id, depends_on, datetime.now(UTC)),
+                        )
+
+                # Phase 4: Append step record history each stored task lacks.
+                for data in records:
+                    history = deserialize_task_step_records(data.get("review"), task_id=data["id"])
+                    if data["id"] in existing_tasks and not restore_task_step_records(
+                        conn, data["id"], history
+                    ):
+                        logger.warning(
+                            "Task %s: kept the stored diverged step record history",
+                            data["id"],
                         )
 
             logger.info(

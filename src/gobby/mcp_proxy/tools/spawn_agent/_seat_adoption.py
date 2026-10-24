@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused, check_team_spawn
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import _definition_snapshot
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -116,18 +117,33 @@ def pipeline_invocation_reply(
     *,
     parent_session_id: str | None,
     project_id: str | None,
-    reserved_run_id: str,
+    reserved_run_id: str | None,
+    target: SeatTarget,
 ) -> dict[str, Any] | None:
-    """Authorize, then reconcile; None lets the ordinary spawn path launch the run."""
+    """Authorize and reconcile a reserved invocation, then keep a team seat in its team.
+
+    Every pipeline spawn gets the team check, reserved or not. None lets the ordinary
+    spawn path launch the run at ``target``.
+    """
     if db is None:
+        if reserved_run_id is None:
+            return None
         return _refusal("invocation_unauthorized", "reserved_run_id needs the hub database")
-    refusal = authorize_pipeline_invocation(
-        db,
-        caller,
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-        reserved_run_id=reserved_run_id,
-    )
-    if refusal is not None:
-        return refusal
-    return reconcile_pipeline_invocation(db, session_manager, caller, reserved_run_id)
+    if reserved_run_id is not None:
+        refusal = authorize_pipeline_invocation(
+            db,
+            caller,
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+            reserved_run_id=reserved_run_id,
+        )
+        if refusal is not None:
+            return refusal
+        adopted = reconcile_pipeline_invocation(db, session_manager, caller, reserved_run_id)
+        if adopted is not None:
+            return adopted
+    try:
+        check_team_spawn(db, caller, target)
+    except TeamAdmissionRefused as exc:
+        return _refusal(exc.code, str(exc))
+    return None

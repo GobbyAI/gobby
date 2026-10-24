@@ -43,7 +43,7 @@ def _open_parent(manager: LocalTaskManager, project_id: str) -> Any:
 
 def _closed_parent(manager: LocalTaskManager, project_id: str) -> Any:
     parent = _open_parent(manager, project_id)
-    manager.close_task(parent.id, reason="completed")
+    manager.close_task(parent.id, reason="done")
     return manager.get_task(parent.id)
 
 
@@ -177,7 +177,7 @@ def test_reopening_a_leaf_reopens_its_auto_closed_parent(
         parent_task_id=parent.id,
         validation_criteria=CRITERIA,
     )
-    manager.close_task(child.id, reason="completed")
+    manager.close_task(child.id, reason="done")
     assert manager.get_task(parent.id).closed_at is not None
 
     manager.reopen_task(child.id, reason="more work found")
@@ -205,7 +205,7 @@ def test_reopening_a_leaf_reopens_the_whole_closed_ancestor_chain(
         parent_task_id=parent.id,
         validation_criteria=CRITERIA,
     )
-    manager.close_task(child.id, reason="completed")
+    manager.close_task(child.id, reason="done")
     assert manager.get_task(grandparent.id).closed_at is not None
 
     manager.reopen_task(child.id, reason="more work found")
@@ -232,7 +232,7 @@ def test_reopening_a_leaf_leaves_an_open_parent_alone(
         parent_task_id=parent.id,
         validation_criteria=CRITERIA,
     )
-    manager.close_task(closed_child.id, reason="completed")
+    manager.close_task(closed_child.id, reason="done")
     parent_before = manager.get_task(parent.id)
     assert parent_before.closed_at is None
 
@@ -260,7 +260,7 @@ def test_create_waits_for_a_concurrent_parent_close_and_is_refused(
 
     def close_parent() -> None:
         with temp_db.transaction() as conn:
-            _close_task_in_txn(conn, parent.id, db=None, reason="completed")
+            _close_task_in_txn(conn, parent.id, db=temp_db, reason="done")
             close_holds_row.set()
             release_close.wait(timeout=JOIN_TIMEOUT_SECONDS)
 
@@ -321,7 +321,7 @@ def test_close_waits_for_a_concurrent_child_insert_and_is_refused(
 
     def close_parent() -> None:
         with temp_db.transaction() as conn:
-            _close_task_in_txn(conn, parent.id, db=None, reason="completed")
+            _close_task_in_txn(conn, parent.id, db=temp_db, reason="done")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         creator = executor.submit(create_child)

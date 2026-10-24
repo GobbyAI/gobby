@@ -391,7 +391,7 @@ def _closed_task(
     title: str,
     commits: list[str],
     theme: str = "close-gate validation reruns",
-    validation_status: str = "valid",
+    review_status: str = "valid",
     seq_num: int | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
@@ -406,7 +406,7 @@ def _closed_task(
         ),
         labels=["feedback-review"],
         task_type="bug",
-        validation_status=validation_status,
+        review_status=review_status,
         commits=commits,
     )
 

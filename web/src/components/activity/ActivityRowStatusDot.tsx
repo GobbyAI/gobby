@@ -95,7 +95,7 @@ const KIND_ICON: Record<StatusKind, StatusGlyph> = {
     </LocalGlyph>
   ),
   error: (props) => (
-    <LocalGlyph {...props}>
+    <LocalGlyph data-glyph="error" {...props}>
       <circle cx="12" cy="12" r="10" />
       <path d="m15 9-6 6" />
       <path d="m9 9 6 6" />
@@ -123,6 +123,11 @@ const KIND_ICON: Record<StatusKind, StatusGlyph> = {
 // failure X so a being-worked task does not read as a warning and a
 // dependency-blocked task does not read as a failure. The `kind` token still
 // supplies color/lightness, so grayscale ranking by L is preserved.
+export const ErrorGlyph: StatusGlyph = (props) => {
+  const Icon = KIND_ICON.error;
+  return <Icon {...props} />;
+};
+
 export const ActivityGlyph: StatusGlyph = (props) => (
   <LocalGlyph data-glyph="activity" {...props}>
     <path d="M22 12h-4l-3 9L9 3l-3 9H2" />

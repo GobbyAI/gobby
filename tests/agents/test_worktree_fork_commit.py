@@ -9,10 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.isolation_clone import CloneIsolationHandler
+from gobby.agents.isolation_git_hygiene import blocking_status_lines
 from gobby.agents.isolation_models import SpawnConfig
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
-from gobby.agents.worktree_reuse import _blocking_status_lines, sync_reused_worktree_to_base
+from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -221,7 +222,7 @@ async def test_dirty_parent_fork_yields_clean_worktree(
     assert servers["other"] == {"command": "kept"}
     assert set(servers) == {"other", "gobby"}
     assert not (child / "untracked.txt").exists()
-    assert not _blocking_status_lines(git(child, "status", "--porcelain"), child, repo)
+    assert not blocking_status_lines(git(child, "status", "--porcelain"), child, repo)
 
 
 async def test_repair_preserves_selected_provider_and_mcp_bytes(repo: Path, tmp_path: Path) -> None:

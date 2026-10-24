@@ -5,18 +5,13 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Query
 
+from gobby.storage.tasks import projected_task_state_sql
+from gobby.tasks.state_semantics import TASK_STATES
+
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
-
-
-def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
-    return (
-        f"{task_alias}.closed_at IS NULL "
-        f"AND {task_alias}.escalated_at IS NULL "
-        f"AND COALESCE({task_alias}.is_escalated, FALSE) IS FALSE"
-    )
 
 
 def _build_filters(
@@ -66,18 +61,15 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         # --- Tasks ---
         task_stats: dict[str, Any] = {
-            "ready": 0,
-            "in_progress": 0,
-            "closed": 0,
-            "escalated": 0,
+            **dict.fromkeys(TASK_STATES, 0),
             "ready_unblocked": 0,
-            "blocked": 0,
             "closed_24h": 0,
         }
         try:
             rows = await server.run_db(
                 db.fetchall,
-                "SELECT task.state_bucket as task_state, COUNT(*) as cnt FROM tasks task "
+                f"SELECT {projected_task_state_sql('task')} as task_state, "
+                "COUNT(*) as cnt FROM tasks task "
                 f"WHERE 1=1 {time_filter} GROUP BY task_state",
                 tuple(params),
             )
@@ -86,42 +78,8 @@ def register_stats_routes(router: APIRouter, server: "HTTPServer") -> None:
                 if state in task_stats:
                     task_stats[state] = row["cnt"]
 
-            # Available ready work with no unresolved blocking deps.
-            tf_aliased, _ = _build_filters(
-                hours,
-                days,
-                project_id,
-                created_col="t.created_at",
-                project_col="t.project_id",
-            )
-            ready_rows = await server.run_db(
-                db.fetchall,
-                "SELECT COUNT(*) as cnt FROM tasks t "
-                f"WHERE {_not_closed_or_escalated_sql('t')} "
-                f"{tf_aliased} "
-                "AND NOT EXISTS ("
-                "  SELECT 1 FROM task_dependencies td "
-                "  JOIN tasks blocker ON td.depends_on = blocker.id "
-                "  WHERE td.task_id = t.id AND blocker.closed_at IS NULL"
-                ")",
-                tuple(params),
-            )
-            task_stats["ready_unblocked"] = ready_rows[0]["cnt"] if ready_rows else 0
-
-            # Blocked = unresolved tasks with unresolved blocking deps
-            blocked_rows = await server.run_db(
-                db.fetchall,
-                "SELECT COUNT(*) as cnt FROM tasks t "
-                "WHERE t.closed_at IS NULL "
-                f"{tf_aliased} "
-                "AND EXISTS ("
-                "  SELECT 1 FROM task_dependencies td "
-                "  JOIN tasks blocker ON td.depends_on = blocker.id "
-                "  WHERE td.task_id = t.id AND blocker.closed_at IS NULL"
-                ")",
-                tuple(params),
-            )
-            task_stats["blocked"] = blocked_rows[0]["cnt"] if blocked_rows else 0
+            # These states have no hold or unresolved external blocker.
+            task_stats["ready_unblocked"] = task_stats["open"] + task_stats["in_progress"]
 
             # Closed in last 24h (always relative to now, intersected with window)
             closed_24h_rows = await server.run_db(

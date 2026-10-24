@@ -244,7 +244,7 @@ class TestTaskBackupManager:
                 "deps_on": [],
                 "start_date": "2023-01-05",
                 "due_date": "2023-01-10",
-                "validation": {"criteria": "Test task completion is observable."},
+                "review": {"criteria": "Test task completion is observable."},
             },
             {
                 "id": _task_id("task-imported-2"),
@@ -256,7 +256,7 @@ class TestTaskBackupManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [_task_id("task-imported-1")],
-                "validation": {"criteria": "Test task completion is observable."},
+                "review": {"criteria": "Test task completion is observable."},
             },
         ]
 
@@ -309,7 +309,7 @@ class TestTaskBackupManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [missing_id],
-                "validation": {"criteria": "Test task completion is observable."},
+                "review": {"criteria": "Test task completion is observable."},
             },
             {
                 "id": other_task_id,
@@ -319,7 +319,7 @@ class TestTaskBackupManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [],
-                "validation": {"criteria": "Test task completion is observable."},
+                "review": {"criteria": "Test task completion is observable."},
             },
         ]
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -373,7 +373,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         # Write file
@@ -405,7 +405,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         # Append to file
@@ -445,7 +445,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
         _backup_file(backup_manager).write_text(json.dumps(file_data) + "\n")
@@ -472,7 +472,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
         _backup_file(backup_manager).write_text(json.dumps(file_data) + "\n")
@@ -635,7 +635,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
         _backup_file(backup_manager).write_text(json.dumps(record) + "\n")
@@ -705,7 +705,7 @@ class TestImportEdgeCases:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -722,13 +722,13 @@ class TestImportEdgeCases:
         assert task.title == "Test Task"
 
     @pytest.mark.integration
-    def test_import_with_validation_data(
+    def test_import_with_review_data(
         self,
         backup_manager: TaskBackupManager,
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        """Test import handles validation object."""
+        """Restore the current independent-review outcome and epoch."""
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
@@ -741,10 +741,11 @@ class TestImportEdgeCases:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {
+            "review": {
                 "status": "valid",  # Must be 'pending', 'valid', or 'invalid'
                 "feedback": "All tests passed",
                 "fail_count": 0,
+                "epoch": 4,
                 "criteria": "Must pass unit tests",
                 "override_reason": None,
             },
@@ -759,8 +760,9 @@ class TestImportEdgeCases:
 
         task = task_manager.get_task(_task_id("task-validation"))
         assert task is not None
-        assert task.validation_status == "valid"
-        assert task.validation_feedback == "All tests passed"
+        assert task.review_status == "valid"
+        assert task.review_feedback == "All tests passed"
+        assert task.review_epoch == 4
         assert task.validation_criteria == "Must pass unit tests"
 
     @pytest.mark.integration
@@ -777,14 +779,14 @@ class TestImportEdgeCases:
             "id": _task_id("task-commits"),
             "title": "Task with Commits",
             "description": "Desc",
-            "status": "completed",
+            "status": "done",
             "created_at": now,
             "updated_at": now,
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
             "commits": ["abc123", "def456"],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -819,7 +821,7 @@ class TestImportEdgeCases:
             "deps_on": [],
             "escalated_at": now,
             "escalation_reason": "Blocked by external dependency",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -868,7 +870,7 @@ class TestImportEdgeCases:
                 "escalated_at": None,
                 "escalation_reason": None,
             },
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -883,13 +885,13 @@ class TestImportEdgeCases:
         assert task.claimed_by_session_id == _session_id("session-123")
 
     @pytest.mark.integration
-    def test_import_with_null_validation(
+    def test_import_with_null_review(
         self,
         backup_manager: TaskBackupManager,
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        """Test import handles null validation object."""
+        """A null review cannot bypass required task criteria."""
         now = "2023-01-02T00:00:00+00:00"
 
         tasks_data = {
@@ -902,7 +904,7 @@ class TestImportEdgeCases:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": None,
+            "review": None,
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -935,7 +937,7 @@ class TestImportEdgeCases:
             "created_at": "2024-01-01T00:00:00+00:00",
             "updated_at": "2024-01-01T00:00:00+00:00",
             "project_id": sample_project["id"],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
         _backup_file(backup_manager).write_text(json.dumps(valid_record) + "\n" + bad_line + "\n")
@@ -945,6 +947,48 @@ class TestImportEdgeCases:
 
         with pytest.raises(ValueError, match="not found"):
             task_manager.get_task(task_id)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "bad_fields, expected_error",
+    [
+        ({"review": {"status": "failed"}}, "review.status"),
+        ({"review": {"state": "valid"}}, "retired state"),
+        ({"review": {"fail_count": -1}}, "review.fail_count"),
+        ({"review": {"fail_count": True}}, "review.fail_count"),
+        ({"review": {"epoch": 0}}, "review.epoch"),
+        ({"review": {"epoch": True}}, "review.epoch"),
+        ({"review": {"feedback": []}}, "review.feedback"),
+        ({"validation": {"status": "valid"}}, "retired validation"),
+    ],
+)
+def test_invalid_review_aborts_entire_restore(
+    bad_fields: dict[str, object],
+    expected_error: str,
+    backup_manager: TaskBackupManager,
+    task_manager: LocalTaskManager,
+    sample_project: dict[str, Any],
+) -> None:
+    task_id = _task_id("valid-before-invalid-review")
+    valid_record = {
+        "id": task_id,
+        "title": "Must not be inserted",
+        "project_id": sample_project["id"],
+        "created_at": "2024-01-01T00:00:00+00:00",
+        "updated_at": "2024-01-01T00:00:00+00:00",
+        "review": {"criteria": "The restored review has valid fields."},
+    }
+    invalid_record = {**valid_record, "id": _task_id("invalid-review"), **bad_fields}
+    backup_path = _backup_file(backup_manager)
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_path.write_text(json.dumps(valid_record) + "\n" + json.dumps(invalid_record) + "\n")
+
+    with pytest.raises(TaskRestoreError, match=expected_error):
+        backup_manager.restore()
+
+    with pytest.raises(ValueError, match="not found"):
+        task_manager.get_task(task_id)
 
 
 class TestClosedStateRoundTrip:
@@ -968,8 +1012,12 @@ class TestClosedStateRoundTrip:
         backup_manager.db.execute(
             """UPDATE tasks SET
                 closed_at = '2026-01-15T10:00:00+00:00',
-                closed_reason = 'completed',
+                closed_reason = 'done',
                 closed_commit_sha = 'abc123def456',
+                review_status = 'valid',
+                review_feedback = 'Independent reviewer approved this commit',
+                review_fail_count = 2,
+                review_epoch = 5,
                 labels = '["bug", "p0"]',
                 category = 'code',
                 start_date = '2026-01-10',
@@ -986,7 +1034,7 @@ class TestClosedStateRoundTrip:
         data = json.loads(lines[0])
         assert data["state"]["is_closed"] is True
         assert data["closed_at"] is not None
-        assert data["closed_reason"] == "completed"
+        assert data["closed_reason"] == "done"
         assert data["closed_commit_sha"] == "abc123def456"
         assert data["labels"] == ["bug", "p0"]
         assert data["category"] == "code"
@@ -1011,8 +1059,12 @@ class TestClosedStateRoundTrip:
         assert reimported is not None
         assert is_task_closed(reimported)
         assert reimported.closed_at == datetime(2026, 1, 15, 10, tzinfo=UTC)
-        assert reimported.closed_reason == "completed"
+        assert reimported.closed_reason == "done"
         assert reimported.closed_commit_sha == "abc123def456"
+        assert reimported.review_status == "valid"
+        assert reimported.review_feedback == "Independent reviewer approved this commit"
+        assert reimported.review_fail_count == 2
+        assert reimported.review_epoch == 5
         assert reimported.labels == ["bug", "p0"]
         assert reimported.category == "code"
         assert not hasattr(reimported, "github_issue_number")
@@ -1066,7 +1118,7 @@ class TestClosedStateRoundTrip:
             "deps_on": [],
             "priority": 2,
             "task_type": "task",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -1168,13 +1220,13 @@ class TestExportEdgeCases:
         assert sorted(task3_data["deps_on"]) == sorted([t1.id, t2.id])
 
     @pytest.mark.integration
-    def test_export_with_validation_data(
+    def test_export_with_review_data(
         self,
         backup_manager: TaskBackupManager,
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        """Test export includes validation data."""
+        """Export the review outcome and epoch using the current contract."""
         task = task_manager.create_task(
             sample_project["id"],
             "Task with validation",
@@ -1184,9 +1236,10 @@ class TestExportEdgeCases:
         # Add validation data directly to DB (status must be 'pending', 'valid', or 'invalid')
         backup_manager.db.execute(
             """UPDATE tasks SET
-                validation_status = %s,
-                validation_feedback = %s,
-                validation_fail_count = %s,
+                review_status = %s,
+                review_feedback = %s,
+                review_fail_count = %s,
+                review_epoch = 4,
                 validation_criteria = %s
             WHERE id = %s""",
             ("invalid", "Test failed", 2, "Must pass CI", task.id),
@@ -1197,11 +1250,12 @@ class TestExportEdgeCases:
         lines = _backup_file(backup_manager).read_text().strip().split("\n")
         data = json.loads(lines[0])
 
-        assert data["validation"] is not None
-        assert data["validation"]["state"] == "invalid"
-        assert data["validation"]["feedback"] == "Test failed"
-        assert data["validation"]["fail_count"] == 2
-        assert data["validation"]["criteria"] == "Must pass CI"
+        assert "validation" not in data
+        assert data["review"]["status"] == "invalid"
+        assert data["review"]["feedback"] == "Test failed"
+        assert data["review"]["fail_count"] == 2
+        assert data["review"]["epoch"] == 4
+        assert data["review"]["criteria"] == "Must pass CI"
 
     @pytest.mark.integration
     def test_export_with_commits(
@@ -1289,7 +1343,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 42,
             "path_cache": "42",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -1335,7 +1389,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 5,
             "path_cache": "5",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -1392,7 +1446,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 100,
             "path_cache": "100",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -1429,7 +1483,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 100,
             "path_cache": "100",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
         task2 = {
             "id": _task_id("task-batch-2"),
@@ -1443,7 +1497,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 100,
             "path_cache": "100",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
@@ -1483,7 +1537,7 @@ class TestImportSeqNumPreservation:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
             # No seq_num or path_cache
         }
 
@@ -1521,7 +1575,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 50,
             "path_cache": "50",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
         child = {
             "id": _task_id("task-child-seq"),
@@ -1535,7 +1589,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 51,
             "path_cache": "50.51",
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         # UUID-sorted exports can place a child before its parent.
@@ -1597,7 +1651,7 @@ class TestImportSeqNumPreservation:
             "parent_id": foreign_parent_id,
             "deps_on": [],
             "seq_num": 78,
-            "validation": {"criteria": "Test task completion is observable."},
+            "review": {"criteria": "Test task completion is observable."},
         }
 
         _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)

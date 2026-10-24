@@ -23,6 +23,7 @@ from gobby.storage.hub.operation_deadline import (
     database_operation_deadline,
 )
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
+from gobby.tasks.state_semantics import TASK_STATES
 from gobby.telemetry.instruments import get_all_metrics, set_gauge, update_daemon_metrics
 
 if TYPE_CHECKING:
@@ -135,15 +136,7 @@ async def _collect_session_stats(server: "HTTPServer") -> dict[str, Any]:
 async def _collect_task_stats(server: "HTTPServer") -> dict[str, Any]:
     def collect() -> dict[str, Any]:
         state_counts = server.task_manager.count_by_state()
-        stats = {
-            key: state_counts.get(key, 0)
-            for key in (
-                "ready",
-                "in_progress",
-                "closed",
-                "escalated",
-            )
-        }
+        stats = {key: state_counts.get(key, 0) for key in TASK_STATES}
         stats["ready_unblocked"] = server.task_manager.count_ready_tasks()
         stats["blocked"] = server.task_manager.count_blocked_tasks()
         stats["closed_24h"] = server.task_manager.count_closed_since(hours=24)
@@ -512,12 +505,8 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "total": 0,
         }
         task_stats: dict[str, Any] = {
-            "ready": 0,
-            "in_progress": 0,
-            "closed": 0,
-            "escalated": 0,
+            **dict.fromkeys(TASK_STATES, 0),
             "ready_unblocked": 0,
-            "blocked": 0,
             "closed_24h": 0,
         }
         vector_store = (

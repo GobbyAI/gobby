@@ -18,6 +18,7 @@ import yaml
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools.spawn_agent._implementation import _spawn_background_tasks
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
@@ -36,39 +37,43 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
     ],
     ids=["definition-defaults", "launch-overrides"],
 )
-async def test_inbox_runbook_uses_definition_defaults_for_null_inputs(
+async def test_support_runbook_uses_definition_defaults_for_null_inputs(
     model: str | None, effort: str | None, expected_model: str, expected_effort: str
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
     workflows = Path(__file__).resolve().parents[3] / "src/gobby/install/shared/workflows"
+    # Bundled definitions name no model, so the definition defaults come from the test.
     agent_body = AgentDefinitionBody.model_validate(
-        yaml.safe_load((workflows / "agents/inbox-manager.yaml").read_text())
-    )
+        yaml.safe_load((workflows / "agents/release-manager.yaml").read_text())
+    ).model_copy(update={"model": "claude-sonnet-5-5", "reasoning_effort": "medium"})
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((workflows / "pipelines/team-coordination.yaml").read_text())
+        yaml.safe_load((workflows / "pipelines/support.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     for field in ("provider", "model", "reasoning_effort"):
-        assert inputs[f"inbox_manager_{field}"] is None
+        assert inputs[f"release_manager_{field}"] is None
     inputs.update(
-        lane="pilot",
-        seats="inbox-manager",
+        seats="release-manager",
         workspace="pilot-workspace",
         project_path="/repo",
         report_to="pilot-coordinator",
-        inbox_manager_provider="claude" if model is not None else None,
-        inbox_manager_model=model,
-        inbox_manager_reasoning_effort=effort,
+        release_manager_provider="claude" if model is not None else None,
+        release_manager_model=model,
+        release_manager_reasoning_effort=effort,
     )
-    step = next(step for step in definition.steps if step.id == "inbox-manager")
+    step = next(step for step in definition.steps if step.id == "release-manager")
     assert step.mcp is not None and step.mcp.arguments is not None
     args = StepRenderer(TemplateEngine()).render_mcp_arguments(
         step.mcp.arguments,
-        {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"},
+        {
+            "inputs": inputs,
+            "steps": {"guard": {"output": {"launch": ["release-manager"], "tab_exists": False}}},
+            "invocation_id": "pilot-run",
+        },
         drop_none=True,
     )
-    assert args["agent"] == "inbox-manager"
+    assert args["agent"] == "release-manager"
     if model is None:
         assert "provider" not in args
         assert "model" not in args and "reasoning_effort" not in args
@@ -77,7 +82,7 @@ async def test_inbox_runbook_uses_definition_defaults_for_null_inputs(
     handler = MagicMock()
     handler.prepare_environment = AsyncMock(return_value=IsolationContext(cwd="/repo"))
     handler.cleanup_environment = AsyncMock()
-    handler.build_context_prompt.return_value = "Manage inbox"
+    handler.build_context_prompt.return_value = "Manage releases"
     with (
         patch(
             "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context",
@@ -595,10 +600,12 @@ class TestProviderResolution:
         runner = _make_runner()
         runner.run_storage.get_by_session.return_value = None
         sessions = MagicMock()
+        # A grant applies only on the asserting session's machine, the launch machine here.
         sessions.get.return_value = SimpleNamespace(
             id="caller",
             agent_run_id=None,
             parent_session_id=None,
+            machine_id=require_machine_id(),
         )
 
         with (

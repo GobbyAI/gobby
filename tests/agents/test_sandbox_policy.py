@@ -25,7 +25,7 @@ pytest_plugins = ["pytester"]
 async def test_grant_cache_denied_with_own_bootstrap_allowed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gobby.agents.srt_runtime import render_srt_settings
+    from gobby.agents.srt_settings import render_srt_settings
 
     home = tmp_path / "home"
     home.mkdir()

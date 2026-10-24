@@ -74,7 +74,7 @@ def _deferral(
 
 def _task(
     *,
-    state: str = "ready",
+    state: str = "open",
     criteria: str = "Validate src/deferred.py",
     closed_reason: str | None = None,
 ) -> dict[str, Any]:
@@ -141,11 +141,10 @@ def test_validate_task_closed() -> None:
     assert store.dependency_calls == []
 
 
-@pytest.mark.parametrize("closed_reason", ["completed", "already_implemented"])
-def test_validate_closed_target_that_delivered_its_obligation(closed_reason: str) -> None:
+def test_validate_closed_target_that_delivered_its_obligation() -> None:
     """A deferral names work another task owns, so that task finishing is the success case."""
     store = FakeStore(
-        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason=closed_reason)},
+        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason="done")},
         labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
         dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
     )
@@ -155,9 +154,9 @@ def test_validate_closed_target_that_delivered_its_obligation(closed_reason: str
     assert result.status == "valid"
 
 
-@pytest.mark.parametrize("closed_reason", ["wont_fix", "obsolete", "out_of_repo", "duplicate"])
+@pytest.mark.parametrize("closed_reason", ["wont_do", "moot", "superseded"])
 def test_validate_closed_target_that_abandoned_its_obligation(closed_reason: str) -> None:
-    """Abandonment leaves the obligation unowned; `duplicate` moves it to an unnamed task."""
+    """Only delivered work satisfies a deferred obligation."""
     store = FakeStore(
         tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason=closed_reason)},
         labels={DEFERRED_TASK_REF: [PROVENANCE_LABEL]},
@@ -186,7 +185,7 @@ def test_validate_closed_target_without_a_recorded_reason_fails_closed() -> None
 def test_validate_delivered_target_still_runs_the_remaining_gates() -> None:
     """Delivery waives only the open-state gate: provenance and criteria still apply."""
     store = FakeStore(
-        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason="completed")},
+        tasks={DEFERRED_TASK_REF: _task(state="closed", closed_reason="done")},
         labels={DEFERRED_TASK_REF: []},
         dependencies={RECOVERY_EPIC_REF: [DEFERRED_TASK_REF]},
     )
@@ -370,7 +369,7 @@ def test_validate_cited_parent_non_active_state_rejected() -> None:
     store = FakeStore(
         tasks={
             DEFERRED_TASK_REF: _task(),
-            "#parent": _task(state="blocked", criteria="Parent task"),
+            "#parent": _task(state="closed", criteria="Parent task"),
         },
         labels={
             DEFERRED_TASK_REF: [PROVENANCE_LABEL, "cited-parent:#parent"],

@@ -28,7 +28,7 @@ export interface LifecycleTask {
   closed_reason?: string | null;
   closed_in_session_id?: string | null;
   closed_commit_sha?: string | null;
-  validation_fail_count?: number | null;
+  review_fail_count?: number | null;
   escalation_reason?: string | null;
   escalated_at?: string | null;
   is_escalated?: boolean;
@@ -67,14 +67,17 @@ export interface GobbyTask extends LifecycleTask {
   assigned_agent?: string | null;
 }
 
+export type TaskReviewStatus = "pending" | "valid" | "invalid" | "error";
+
 export interface GobbyTaskDetail extends GobbyTask {
   description: string | null;
   labels: string[] | null;
   category: string | null;
-  validation_status: string | null;
-  validation_feedback: string | null;
+  review_status: TaskReviewStatus;
+  review_feedback: string | null;
   validation_criteria: string | null;
-  validation_fail_count: number;
+  review_fail_count: number;
+  review_epoch: number;
   validation_override_reason: string | null;
   closed_at: string | null;
   closed_reason: string | null;

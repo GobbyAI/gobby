@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_clo
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
     async def close_task(
         task_id: str,
-        reason: str = "completed",
+        reason: str = "done",
         changes_summary: str | None = None,
         commit_sha: str | None = None,
         project_path: str | None = None,
@@ -42,16 +42,21 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         name="close_task",
         description=(
             "Close a task whose children are closed, with a linked commit or explicit "
-            "no-work disposition, clean task-attributed files, and linked work landed "
-            "on the project's integration branch. commit_sha links the supplied commit "
-            "atomically with closure. preview=true evaluates the same four invariants "
+            "no-work disposition, clean task-attributed files, linked work landed "
+            "on the project's integration branch, and the approved step records its "
+            "project policy requires. commit_sha links the supplied commit "
+            "atomically with closure. preview=true evaluates the same five gates "
             "without changing state. No reviewer is launched."
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference (#N, path, or UUID)."},
-                "reason": {"type": "string", "default": "completed"},
+                "reason": {
+                    "type": "string",
+                    "enum": ["done", "moot", "superseded", "wont_do"],
+                    "default": "done",
+                },
                 "changes_summary": {"type": "string"},
                 "commit_sha": {"type": "string", "minLength": 1},
                 "project_path": {"type": "string"},

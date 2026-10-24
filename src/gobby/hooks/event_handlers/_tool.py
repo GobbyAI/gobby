@@ -251,6 +251,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     manager.resolve_skill_name(name, project_id=project_id) if manager else None
                 ),
                 catalog=catalog,
+                operator_commands=skill_name == "gobby",
             )
             context = route.context
             if route.kind in ("help", "unknown"):

@@ -55,7 +55,12 @@ def _set_holder(db: HubDatabase, task_id: str, session_id: str | None) -> None:
 
 
 def _set_closed(db: HubDatabase, task_id: str, closed_at: datetime | None) -> None:
-    _execute(db, "UPDATE tasks SET closed_at = %s WHERE id = %s", (closed_at, task_id))
+    reason = None if closed_at is None else "done"
+    _execute(
+        db,
+        "UPDATE tasks SET closed_at = %s, closed_reason = %s WHERE id = %s",
+        (closed_at, reason, task_id),
+    )
 
 
 def _intervals(db: HubDatabase, task_id: str) -> list[dict[str, Any]]:

@@ -669,18 +669,17 @@ def _lint_production_size_growth(
 
 def _is_whole_file_deletion(plan_doc: PlanDocument, section: PlanSection, file_path: str) -> bool:
     """Require every entry for this file to explicitly delete its entire scope."""
-    entries = [
-        line
-        for line in iter_target_block_lines(plan_doc, section)
-        if _primary_target_path(line) == file_path
-    ]
-    for line in entries:
-        primary, *metadata = line.split(_PRIMARY_TOKEN_SEPARATOR)
-        target = _BULLET_RE.sub("", primary, count=1).strip().strip("`")
-        operations = [item.strip() for item in metadata if item.strip().startswith("operation:")]
-        if not target.endswith("::*") or operations != ["operation: delete"]:
-            return False
-    return bool(entries)
+    lines = iter_target_block_lines(plan_doc, section)
+    entries = [line for line in lines if _primary_target_path(line) == file_path]
+    return bool(entries) and all(is_whole_file_delete_entry(line) for line in entries)
+
+
+def is_whole_file_delete_entry(line: str) -> bool:
+    """Return whether a Targets entry deletes its file's entire ``::*`` scope."""
+    primary, *metadata = line.split(_PRIMARY_TOKEN_SEPARATOR)
+    target = _BULLET_RE.sub("", primary, count=1).strip().strip("`")
+    operations = [item.strip() for item in metadata if item.strip().startswith("operation:")]
+    return target.endswith("::*") and operations == ["operation: delete"]
 
 
 def is_delete_lines_entry(line: str) -> bool:

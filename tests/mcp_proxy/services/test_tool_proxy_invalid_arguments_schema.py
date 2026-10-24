@@ -260,6 +260,8 @@ async def test_close_task_summary_response_detail_is_refused_before_persist(
     ]
     mcp_manager.call_tool.assert_not_awaited()
     with db.transaction() as conn:
-        row = conn.execute("SELECT count(*) AS review_count FROM task_close_reviews").fetchone()
+        row = conn.execute(
+            "SELECT count(*) AS review_count FROM task_close_review_history"
+        ).fetchone()
     assert row is not None
     assert row["review_count"] == 0

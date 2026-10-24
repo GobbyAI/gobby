@@ -12,6 +12,7 @@ from gobby.storage.hub.protocol import (
     SessionVariableTransfer,
 )
 from gobby.storage.tasks._close import _close_task_in_txn
+from gobby.storage.tasks._de_escalation import REVIEW_EXHAUSTED, REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._models import (
     UNSET,
@@ -257,13 +258,15 @@ def release_task_claim(
     task_id: str,
     *,
     description: MaybeUnset[str | None] = UNSET,
-    validation_fail_count: MaybeUnset[int | None] = UNSET,
+    review_status: MaybeUnset[str | None] = UNSET,
+    review_feedback: MaybeUnset[str | None] = UNSET,
+    review_fail_count: MaybeUnset[int | None] = UNSET,
     escalated_at: MaybeUnset[datetime | str | None] = UNSET,
     escalation_reason: MaybeUnset[str | None] = UNSET,
     validation_override_reason: MaybeUnset[str | None] = UNSET,
     labels: MaybeUnset[list[str] | None] = UNSET,
 ) -> Task:
-    """Clear ownership while optionally changing recovery metadata."""
+    """Clear ownership while optionally changing review or recovery metadata."""
     with db.transaction() as conn:
         prior = conn.execute(
             "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
@@ -276,7 +279,9 @@ def release_task_claim(
             task_id,
             description=description,
             claimed_by_session_id=None,
-            validation_fail_count=validation_fail_count,
+            review_status=review_status,
+            review_feedback=review_feedback,
+            review_fail_count=review_fail_count,
             escalated_at=escalated_at,
             escalation_reason=escalation_reason,
             validation_override_reason=validation_override_reason,
@@ -384,7 +389,14 @@ def reopen_task(
         )
     has_ownership_metadata = bool(task.claimed_by_session_id)
     if not is_task_closed(task) and not task.is_escalated and not has_ownership_metadata:
-        raise ValueError(f"Task {_task_ref(task, task_id)} is already ready")
+        raise ValueError(f"Task {_task_ref(task, task_id)} is already open")
+    # Three rejections stand until the audited reset, so a reopen keeps them escalated.
+    exhausted = task.review_fail_count >= REVIEW_REJECTION_LIMIT
+    if exhausted and task.is_escalated and not is_task_closed(task):
+        raise ValueError(
+            f"Task {_task_ref(task, task_id)} exhausted its review epoch; only the audited "
+            "reset (de_escalate_task by Triage or the operator) reopens review."
+        )
 
     description = task.description
     if reason:
@@ -400,8 +412,8 @@ def reopen_task(
         closed_at=None,
         closed_in_session_id=None,
         closed_commit_sha=None,
-        escalated_at=None,
-        escalation_reason=None,
+        escalated_at=utc_now() if exhausted else None,
+        escalation_reason=REVIEW_EXHAUSTED if exhausted else None,
     )
     _reopen_closed_ancestors(db, task_id)
     withdraw_memory_reviews(db, task_id)

@@ -31,6 +31,13 @@ queues without a live wake. Sessions that are interrupted,
 awaiting input, awaiting approval, or awaiting handoff retain the durable mailbox row
 without daemon input until provider evidence makes wake safe.
 
+Triage exception: only the Assistant and Triage message the Orchestrator; the
+daemon's system sender and the operator's own unspawned terminal are exempt. Every
+other seat reports to Triage or its Dev Manager. A direct send to the Orchestrator
+is refused with `message_recipient_not_allowed`, and fanout withholds it. Triage's
+direct sends to the Orchestrator stay queued when `wake` is omitted; only an
+explicit `wake=true` wakes it.
+
 Use a targetless `project` broadcast for coordination inside the current repository.
 Use targetless `global` only for machine-local coordination across projects. Direct
 `session` and `agent` sends require `target_id`. AGY sessions interrupted

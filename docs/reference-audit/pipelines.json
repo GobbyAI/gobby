@@ -45,6 +45,21 @@
       ]
     },
     {
+      "path": "docs/guides/runbooks.md",
+      "anchors": [
+        "runbooks",
+        "start-admin",
+        "message-routing",
+        "launch-support",
+        "launch-a-devteam",
+        "fresh-reviewer",
+        "launch-planning"
+      ],
+      "evidence": [
+        "source-audit"
+      ]
+    },
+    {
       "path": "docs/guides/cron-scheduler.md",
       "anchors": [
         "cron-scheduler",

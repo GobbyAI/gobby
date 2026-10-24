@@ -1,8 +1,8 @@
 """Contract tests for the coordination seat definitions.
 
 The assistant and orchestrator are root persona panes and are never spawned. The
-lane-manager, release-manager and inbox-manager seats are spawned coordination
-seats. Each definition is the role text of record for its seat.
+dev-manager, release-manager and triage seats are spawned coordination seats.
+Each definition is the role text of record for its seat.
 """
 
 from __future__ import annotations
@@ -28,29 +28,26 @@ from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
 
-SEATS = ("assistant", "orchestrator", "lane-manager", "release-manager", "inbox-manager")
+SEATS = ("assistant", "orchestrator", "dev-manager", "release-manager", "triage")
 # The root panes carry only the persona surface; every other seat also spawns.
 SURFACES = {
     "assistant": ["persona"],
     "orchestrator": ["persona"],
-    "lane-manager": ["spawn", "persona"],
+    "dev-manager": ["spawn", "persona"],
     "release-manager": ["spawn", "persona"],
-    "inbox-manager": ["spawn", "persona"],
+    "triage": ["spawn", "persona"],
 }
 SEND_MESSAGE_TARGETS = {
     "assistant": {"parent", "session", "agent", "project", "global"},
     "orchestrator": {"parent", "session", "agent", "project", "global"},
-    "lane-manager": {"parent", "session", "project"},
-    "release-manager": {"parent", "session", "project"},
-    "inbox-manager": {"parent", "session"},
+    "dev-manager": {"parent", "session", "project"},
+    # The release batch announces each activation globally.
+    "release-manager": {"parent", "session", "project", "global"},
+    "triage": {"parent", "session"},
 }
-SPAWNABLE_AGENTS = {
-    "assistant": [],
-    "orchestrator": [],
-    "lane-manager": [],
-    "release-manager": ["task-close-reviewer"],
-    "inbox-manager": [],
-}
+# Seats with a procedure reference; the pane-placing seats also carry gclient's.
+PROCEDURE_SEATS = ("orchestrator", "dev-manager", "triage")
+PANE_SEATS = ("assistant", "orchestrator", "dev-manager")
 # The write tools a read-only seat may not call.
 READ_ONLY_BLOCKED_TOOLS = frozenset(
     {
@@ -70,7 +67,7 @@ READ_ONLY_BLOCKED_TOOLS = frozenset(
 SYNC_METADATA_KEYS = frozenset({"tags", "priority", "type"})
 # Terminal control (send_keys and capture_output) is opt-in: every other definition
 # selects the no-send-keys rule by name.
-KEEPS_TERMINAL_CONTROL = frozenset({"assistant", "orchestrator", "lane-manager"})
+KEEPS_TERMINAL_CONTROL = frozenset({"assistant", "orchestrator", "dev-manager"})
 # Worker-safety rules that keep daemon restarts and worktree cleanup off spawned seats.
 RESTART_AND_WORKTREE_RULES = frozenset(
     {"no-daemon-management", "no-daemon-management-http", "block-git-worktree-mutations"}
@@ -97,8 +94,12 @@ def _prompt(name: str) -> str:
     reference = body.workflows.variables.get("_seat_procedure")
     if reference:
         assert reference in prompt
-        path = get_bundled_agents_path().parents[1] / "skills/gobby" / reference.split(":", 1)[1]
-        prompt += "\n" + path.read_text()
+        skill_root = get_bundled_agents_path().parents[1] / "skills/gobby"
+        procedure = (skill_root / reference.split(":", 1)[1]).read_text()
+        prompt += "\n" + procedure
+        # Follow the further references the procedure tells the seat to load.
+        for path in re.findall(r'get_skill_file\(name="gobby", path="([^"]+)"\)', procedure):
+            prompt += "\n" + (skill_root / path).read_text()
     return flat(prompt)
 
 
@@ -139,33 +140,34 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
         "inherit",
         0,
     )
-    if name == "inbox-manager":
-        assert body.model == "claude-sonnet-5-5"
-        assert body.reasoning_effort == "medium"
-    else:
-        assert body.model is None
-        assert body.reasoning_effort is None
+    # Launch defaults choose every seat's model; Triage keeps its own reasoning effort.
+    assert body.model is None
+    assert body.reasoning_effort == ("medium" if name == "triage" else None)
     assert body.prompts is not None
     assert body.prompts.persona == body.prompts.agent
     assert body.workflows.rule_selectors is not None
     include = body.workflows.rule_selectors.include
     assert "tag:default" in include
     assert "tag:review-learning" not in include
-    assert body.workflows.variables == (
-        {"_seat_procedure": f"gobby:references/agents/procedures/{name}.md"}
-        if name in ("lane-manager", "orchestrator")
-        else {}
-    )
+    procedure = {"_seat_procedure": f"gobby:references/agents/procedures/{name}.md"}
+    references = {"_seat_references": ["gobby:references/agents/gclient.md"]}
+    assert body.workflows.variables == {
+        **(procedure if name in PROCEDURE_SEATS else {}),
+        **(references if name in PANE_SEATS else {}),
+        # The seat-spawn policy's manager exemption reads this variable.
+        **({"team_manager": True} if name == "dev-manager" else {}),
+    }
     assert body.step_workflow is None
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
     assert set(body.send_message_targets) == SEND_MESSAGE_TARGETS[name]
-    assert body.spawnable_agents == SPAWNABLE_AGENTS[name]
+    assert body.spawnable_agents == []
     for section in _baseline_sections():
         assert section in prompt
     assert "gobby-agents:send_message" in prompt
     assert "compact" in prompt
     assert "never /clear" in prompt
-    assert "lesson" not in prompt.lower()
+    # Only the Dev Manager records lessons, in its closing step record.
+    assert ("lesson" in prompt.lower()) is (name == "dev-manager")
 
 
 @pytest.mark.parametrize("name", ("assistant", "orchestrator"))
@@ -216,6 +218,35 @@ def test_orchestrator_coordinates_restarts_and_edits_tasks_as_needed() -> None:
     assert "Report each recovery to the Assistant" in prompt
 
 
+def test_orchestrator_writes_every_step_record_only_as_a_last_resort() -> None:
+    assert _load("orchestrator").task_step_writes == [
+        "test",
+        "implementation",
+        "review",
+        "closing",
+    ]
+    prompt = _prompt("orchestrator")
+    assert "For a missing step record, delegate first" in prompt
+    assert "an independent reviewer or a Dev Manager from outside the team" in prompt
+    assert "only when every other avenue is exhausted" in prompt
+    for name in ("assistant", "default"):
+        assert _load(name).task_step_writes == [], name
+
+
+def test_orchestrator_leaves_team_landings_to_the_dev_manager() -> None:
+    prompt = _prompt("orchestrator")
+
+    assert "landing_approval" not in prompt
+    assert "Its Dev Manager lands the approved SHA and closes the task" in prompt
+    assert "`report_to=<Triage ref>`" in prompt
+    assert "`report_to=<Dev Manager ref>`" in prompt
+    assert "never substitute another reviewer identity" in prompt
+    assert "Land with `gobby-tasks-ops:land_commit` only as the last resort" in prompt
+    assert "An escalated refusal has already moved the task to Triage" in prompt
+    for retired in ("EVENT=LANDED", "EVENT=ALREADY_LANDED", "EVENT=LAND_PENDING", "lane"):
+        assert retired not in prompt, retired
+
+
 def test_synced_seat_guidance_requires_handoff_during_restart_hold(temp_db: HubDatabase) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     row = RuleDefinitionManager(temp_db).get_by_name("inject-seat-common")
@@ -249,7 +280,7 @@ def test_consolidator_is_propose_only_with_read_only_task_tools() -> None:
     }
     assert "gobby-agents:send_message" in step.allowed_mcp_tools
     assert "gobby-agents:spawn_agent" not in step.allowed_mcp_tools
-    assert "which applies every task edit" in prompt
+    assert "the Orchestrator applies every task edit" in prompt
     assert "Never edit tasks, claim work, spawn agents" in prompt
     assert "use the launch assignment and injected project policy" in prompt
     assert "Honor project-policy exclusion roots" in prompt
@@ -274,70 +305,51 @@ def test_root_panes_keep_interactive_git_guards_without_worker_rules(temp_db: Hu
 
 
 def test_spawned_coordination_seats_keep_restart_and_worktree_guards(temp_db: HubDatabase) -> None:
-    for name in ("lane-manager", "release-manager"):
+    for name in ("dev-manager", "release-manager", "triage"):
         assert RESTART_AND_WORKTREE_RULES <= _selected_rules(name, temp_db), name
 
 
-def test_lane_manager_is_read_only_with_event_lines_and_hold_resume() -> None:
-    body = _load("lane-manager")
-    prompt = _prompt("lane-manager")
+def test_dev_manager_is_read_only_and_reports_to_triage() -> None:
+    body = _load("dev-manager")
+    prompt = _prompt("dev-manager")
 
     assert set(body.blocked_tools) == READ_ONLY_BLOCKED_TOOLS
-    assert (
-        "LANE= EVENT=STARTED|CANDIDATE|BOUNCE|CLOSED TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE="
-    ) in prompt
-    assert "Obey HOLD and RESUME from the Orchestrator at once and ACK each one" in prompt
+    assert body.task_step_writes == ["closing"]
+    # land_commit refuses a session that ever claimed the task.
+    assert "never call `claim_task`" in prompt
+    assert "Report to Triage" in prompt
+    assert "Never message the Orchestrator directly" in prompt
     assert "gobby-agents:wait_for_coordination" in prompt
-    assert "Check lanes, work with orchestrator to address blockers, keep agents working" in (
-        prompt
-    )
-    assert "Report through the Inbox Manager" in prompt
-    assert "Send task edit requests through the Inbox Manager" in prompt
-    assert "Found work goes to the Inbox Manager" in prompt
-    assert "blockers to the Orchestrator" not in prompt
-    assert "sent unprompted to the Assistant" in prompt
-    assert "the project's operating policy" in prompt
+    for retired in (
+        "CANDIDATE_PARKED",
+        "CANDIDATE_RESUMED",
+        "REVIEW_ONLY_REQUIRED",
+        "EVENT=LANDED",
+        "CronList",
+        "lane",
+    ):
+        assert retired not in prompt, retired
 
 
-def test_lane_manager_routes_parked_candidates_without_releasing_close() -> None:
-    prompt = _prompt("lane-manager")
-    parked = prompt.split("- Parked candidates.", 1)[1].split("\n    - ", 1)[0]
-    assert "EVENT=CANDIDATE_PARKED" in parked
-    assert "exact TASK, SHA, REASON, blocker, coordinator and prior approval receipt" in parked
-    assert "relay them through the Inbox Manager" in parked
-    assert "responsible seat" in parked
-    assert "EVENT=REVIEW_ONLY_REQUIRED or REASON=review_only" in parked
-    assert "explicit Orchestrator or Lane Manager marking" in parked
-    assert "exact task/SHA is review-only with nothing to land" in parked
-    assert "waiting alone never clears this blocker" in parked
-    assert "available for other routed candidates" in parked
-    assert "EVENT=CANDIDATE_RESUMED" in parked
-    assert "restore its reviewing link" in parked
-    assert "changed SHA is a fresh CANDIDATE" in parked
-    assert "needs fresh review and approval" in parked
-    assert "never supplies a landing receipt or releases a close" in parked
-
-
-def test_lane_manager_recovers_stalled_seats_only_without_a_recovery_steward() -> None:
-    prompt = _prompt("lane-manager")
+def test_dev_manager_recovers_stalled_seats_only_without_a_recovery_steward() -> None:
+    prompt = _prompt("dev-manager")
 
     assert "The Recovery Steward owns patrol and recovery of stalled seats" in prompt
     assert "Only when no Recovery Steward is running" in prompt
     assert "`gobby-sessions:send_keys` with literal text plus a trailing newline" in prompt
     assert "`continue: check your queued Gobby messages and proceed\\n`" in prompt
     assert "hand that to the Assistant without reading it" in prompt
-    assert "refused" not in prompt
-    assert "As a spawned lane-manager" not in prompt
 
 
-def test_release_manager_loads_as_the_landing_and_activation_ledger() -> None:
+def test_release_manager_runs_each_activation_as_a_release_batch() -> None:
     prompt = _prompt("release-manager")
 
-    for heading in ("Landing ledger.", "Close queue.", "Activation.", "Heavy-run slots."):
+    for heading in ("Landing ledger.", "Release window.", "Activation."):
         assert heading in prompt, heading
-    assert "`promote_workspace_binary_set`" in prompt
-    assert "`record_close_receipt`" in prompt
-    assert "Restarts and cutovers belong to the Orchestrator" in prompt
+    assert "`gobby-agents:acquire_release_window`" in prompt
+    assert "Never promote binaries, restart or cut over outside a batch" in prompt
+    for retired in ("Close queue.", "record_close_receipt", "task-close-reviewer"):
+        assert retired not in prompt, retired
 
 
 @pytest.mark.parametrize(
@@ -345,9 +357,9 @@ def test_release_manager_loads_as_the_landing_and_activation_ledger() -> None:
     (
         "assistant",
         "orchestrator",
-        "lane-manager",
+        "dev-manager",
         "release-manager",
-        "inbox-manager",
+        "triage",
         "researcher",
         "archivist",
     ),
@@ -392,7 +404,6 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
         "next five",
         "landing/activation/close",
         "Close backlog",
-        "Heavy slots",
         "Hold state",
         "Blocked or escalated",
         "Operator decisions",
@@ -405,6 +416,7 @@ def test_reporter_owns_bounded_scheduled_delivery() -> None:
         "Systems nominal",
     ):
         assert section in prompt, section
+    assert "Heavy slots" not in prompt
 
 
 def test_reporter_roster_covers_ordered_tabs_empty_panes_and_unclaimed_seats() -> None:
@@ -494,38 +506,27 @@ def test_installed_reporter_can_send_assistant_fallback(
     assert send_message_target_allowed(sessions, caller.id, "reporter", "global") is False
 
 
-def test_inbox_manager_is_read_only_and_routes_urgent_messages() -> None:
-    body = _load("inbox-manager")
-    prompt = _prompt("inbox-manager")
+def test_triage_is_read_only_and_queues_one_digest_for_the_orchestrator() -> None:
+    body = _load("triage")
+    prompt = _prompt("triage")
 
     assert set(body.blocked_tools) == READ_ONLY_BLOCKED_TOOLS
     assert body.network == "none"
-    assert body.spawnable_agents == []
     assert body.prewarm_pre_commit_store is False
-    assert "# Inbox Manager" in prompt
     assert "Work read-only in the main checkout" in prompt
     assert "Every five minutes, send the Orchestrator ONE digest with wake=false" in prompt
-    assert "Forward at once" in prompt
-    assert "with wake=true" in prompt
     assert 'single word "steady"' in prompt
-    assert "close backlog above the cap in the live project operating policy" in prompt
-    assert "found work that blocks a lane task or its landing" in prompt
-    assert "a HOLD or RESUME ACK" in prompt
-    assert "close backlog above 10" not in prompt
+    # Urgent items still queue: only the operator's request wakes the Orchestrator.
+    assert "Forward at once" in prompt
+    assert "Use wake=true only when the operator asks" in prompt
     assert "Never spawn agents, create or update tasks, edit files, restart the daemon" in prompt
-    assert "local_cli_token" not in prompt
-    assert "~/.gobby/bootstrap.yaml" in prompt
-    assert "Keep one five-minute recurring reminder" in prompt
-    assert "Lane, order, landing and close decisions belong to the Orchestrator" in prompt
-
-
-def test_inbox_manager_waits_for_confirmed_missing_landed_retest() -> None:
-    body = _load("inbox-manager")
-    assert body.prompts is not None
-    prompt = body.prompts.agent or ""
-    landing_relay = next(line for line in prompt.splitlines() if "a landing relay" in line)
-
-    assert "RETEST=FAIL" in landing_relay
-    assert "RETEST=UNAVAILABLE" not in landing_relay
-    assert "Forward `RETEST=UNAVAILABLE` only after the Lane Manager confirms" in prompt
-    assert "closing seat's `EVENT=PROOF_RESULT` is absent" in prompt
+    assert "Landing and close decisions belong to the Dev Managers" in prompt
+    for retired in (
+        "recurring reminder",
+        "close backlog",
+        "RETEST=",
+        "EVENT=LANDED",
+        "HOLD or RESUME ACK",
+        "lane",
+    ):
+        assert retired not in prompt, retired

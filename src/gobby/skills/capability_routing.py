@@ -16,10 +16,26 @@ from gobby.skills.parser import ParsedSkill
 
 @dataclass(frozen=True)
 class GobbyRoute:
-    kind: Literal["help", "menu", "reference", "skill", "unknown"]
+    kind: Literal["cold_start", "help", "menu", "reference", "skill", "unknown"]
     context: str
     arguments: str = ""
     unknown_name: str | None = None
+
+
+# Bare operator commands that cold start an operator pane, mapped to that pane's role.
+_COLD_START_ROLES = {"admin": "orchestrator", "assistant": "assistant"}
+
+
+def _cold_start_directive(role: str) -> str:
+    parameters = json.dumps({"role": role})
+    return (
+        f"Cold start this pane as the {role} seat. If its schema is not leased in this "
+        "context, first call "
+        'get_tool_schema(server_name="gobby-agents", tool_name="cold_start_admin") '
+        "in a separate outer tool result. Then call "
+        f'call_tool("gobby-agents", "cold_start_admin", {parameters}) and report both seat '
+        "refs from its result. It is safe to re-run; never spawn agents for it."
+    )
 
 
 def gobby_help_prefix(prompt: object) -> str | None:
@@ -86,11 +102,14 @@ def route_gobby_request(
     resolve_skill: Callable[[str], ParsedSkill | None],
     command_prefix: str = "/gobby",
     catalog: CapabilityCatalog | None = None,
+    operator_commands: bool = True,
 ) -> GobbyRoute:
     """Resolve arguments after the router trigger without executing operations.
 
     Agents evaluate natural-language loading conditions. The router exposes their
     metadata instead of guessing relevance from keywords or loading all bodies.
+    ``operator_commands`` lets a bare ``admin`` or ``assistant`` cold start the pane;
+    carriers that name the admin capability itself pass False.
     """
     catalog = catalog if catalog is not None else load_capability_catalog()
     parts = request.strip().split(None, 1)
@@ -105,6 +124,9 @@ def route_gobby_request(
             return GobbyRoute("help", capability_menu(catalog, command_prefix))
         name = parts[0]
         arguments = parts[1] if len(parts) > 1 else ""
+    role = _COLD_START_ROLES.get(name.lower())
+    if operator_commands and not explicit_skill and not arguments and role is not None:
+        return GobbyRoute("cold_start", _cold_start_directive(role))
     capability = next((item for item in catalog.capabilities if item.name == name.lower()), None)
     if capability is not None and not explicit_skill:
         parts = arguments.split(None, 1)

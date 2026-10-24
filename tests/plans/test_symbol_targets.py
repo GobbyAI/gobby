@@ -631,6 +631,71 @@ def test_validate_overlay_tombstone_shadows_parent_file(tmp_path: Path) -> None:
     assert (PROJECT_ID, "src/deleted.py") not in index.file_queries
 
 
+WHOLE_FILE_DELETE = "`src/deleted.py::*` — operation: delete — scope-reason: retired with its tool"
+
+
+def test_validate_accepts_executed_whole_file_delete_over_overlay_tombstone(
+    tmp_path: Path,
+) -> None:
+    context, overlay_id = _overlay_context(tmp_path)
+    index = _Index(
+        project_files={
+            overlay_id: {
+                "src/deleted.py": _IndexedFile(
+                    "__gcode_tombstone__",
+                    0,
+                    language="__gcode_deleted__",
+                )
+            },
+            PROJECT_ID: {"src/deleted.py": _IndexedFile("parent", 1)},
+        },
+        project_symbols={PROJECT_ID: {"src/deleted.py": [_Symbol("run")]}},
+        available_projects={overlay_id, PROJECT_ID},
+    )
+
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- {WHOLE_FILE_DELETE}"),
+        project_context=context,
+        code_index=index,
+        required=True,
+    )
+
+    assert result.status == "passed"
+    assert result.issues == ()
+
+
+def test_validate_accepts_executed_whole_file_delete_without_index_record(tmp_path: Path) -> None:
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- {WHOLE_FILE_DELETE}"),
+        project_context=_project_context(tmp_path),
+        code_index=_Index(),
+        required=True,
+    )
+
+    assert result.status == "passed"
+    assert result.issues == ()
+
+
+def test_validate_pending_whole_file_delete_keeps_index_checks(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "deleted.py"
+    source.parent.mkdir()
+    source.write_text("def run() -> None: ...\n", encoding="utf-8")
+    index = _Index(
+        files={"src/deleted.py": _IndexedFile(content_hash="stale", symbol_count=1)},
+        symbols={"src/deleted.py": [_Symbol("run")]},
+    )
+
+    result = validate_symbol_targets(
+        _parse(tmp_path, f"- {WHOLE_FILE_DELETE}"),
+        project_context=_project_context(tmp_path),
+        code_index=index,
+        required=True,
+    )
+
+    assert result.status == "failed"
+    assert _issue_codes(result) == {INDEX_STALE}
+
+
 @pytest.mark.parametrize(
     "project_context",
     [

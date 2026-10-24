@@ -71,6 +71,14 @@
     "status": "proxied",
     "note": "Blocked on #21568 item 12 (install and setup): port `gobby pack` from Python callback `src/gobby/cli/pack.py:433` to Rust portable archive export/restore and CLI parity."
   },
+  "CLI gobby release": {
+    "status": "proxied",
+    "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port the `gobby release` group from Python callback `src/gobby/cli/release.py:32` to Rust release-window CLI orchestration and output parity."
+  },
+  "CLI gobby release batch": {
+    "status": "proxied",
+    "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby release batch` from Python callback `src/gobby/cli/release.py:40` to Rust release-batch validation, activation and smoke orchestration with output parity."
+  },
   "CLI gobby restart": {
     "status": "proxied",
     "note": "Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby restart` from Python callback `src/gobby/cli/daemon_lifecycle.py:412` to Rust daemon lifecycle/health CLI orchestration and output parity."

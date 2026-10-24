@@ -30,18 +30,7 @@ def test_stats_no_filters(test_app):
 
     def fetchall_mock(query, params):
         if "FROM tasks" in query and "GROUP BY task_state" in query:
-            return [{"task_state": "ready", "cnt": 10}, {"task_state": "in_progress", "cnt": 2}]
-        if "FROM tasks t" in query and "is_ready_sql" not in query:
-            return [{"cnt": 5}]
-        if (
-            "SELECT COUNT(*) as cnt FROM tasks" in query
-            and "closed_at IS NULL" in query
-            and "blocker.closed_at IS NULL" in query
-        ):
-            if "NOT EXISTS" in query:
-                return [{"cnt": 3}]  # ready
-            elif "EXISTS" in query:
-                return [{"cnt": 2}]  # blocked
+            return [{"task_state": "open", "cnt": 10}, {"task_state": "in_progress", "cnt": 2}]
         if "SELECT status, COUNT(*) as cnt FROM sessions" in query:
             return [{"status": "active", "cnt": 1}]
         if "SELECT source, status, COUNT(*) as cnt FROM sessions" in query:
@@ -86,7 +75,8 @@ def test_stats_no_filters(test_app):
 
     assert response.status_code == 200
     data = response.json()
-    assert data["tasks"]["ready"] == 10
+    assert data["tasks"]["open"] == 10
+    assert data["tasks"]["ready_unblocked"] == 12
     assert data["tasks"]["in_progress"] == 2
     assert data["sessions"]["active"] == 1
     assert data["sessions"]["by_source"]["cli"]["active"] == 1
@@ -162,7 +152,7 @@ def test_stats_with_filters_returns_postgres_counts(
     response = TestClient(app).get(f"/stats?hours=24&project_id={included_project.id}")
 
     assert response.status_code == 200
-    assert response.json()["tasks"]["ready"] == 1
+    assert response.json()["tasks"]["open"] == 1
 
 
 def test_stats_exceptions_return_server_error(test_app: tuple[FastAPI, MagicMock]) -> None:

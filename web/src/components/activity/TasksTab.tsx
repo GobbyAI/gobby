@@ -55,7 +55,7 @@ interface TasksTabProps {
 }
 
 function isGobbyTaskDetailSnapshot(task: GobbyTask): task is GobbyTaskDetail {
-  return "description" in task && "validation_status" in task;
+  return "description" in task && "review_status" in task;
 }
 
 function mergeTaskSnapshotIntoDetail(
@@ -65,10 +65,10 @@ function mergeTaskSnapshotIntoDetail(
   return {
     ...detail,
     ...snapshot,
-    validation_fail_count:
-      typeof snapshot.validation_fail_count === "number"
-        ? snapshot.validation_fail_count
-        : detail.validation_fail_count,
+    review_fail_count:
+      typeof snapshot.review_fail_count === "number"
+        ? snapshot.review_fail_count
+        : detail.review_fail_count,
   };
 }
 
