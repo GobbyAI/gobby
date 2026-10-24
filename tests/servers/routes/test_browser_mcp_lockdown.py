@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import socket
@@ -11,6 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -31,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[3]
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.e2e,
+    pytest.mark.timeout(180, method="thread"),
     pytest.mark.skipif(
         bool(os.environ.get("SANDBOX_RUNTIME"))
         or shutil.which("npx") is None
@@ -78,6 +81,7 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level("DEBUG", logger="gobby")
+    caplog.set_level("INFO", logger=__name__)
     template = yaml.safe_load(
         (ROOT / "src/gobby/install/shared/mcp/templates" / f"{browser}.yaml").read_text()
     )
@@ -119,9 +123,35 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                 },
             )
             manager = MCPClientManager(server_configs=[config])
+            step_number = 0
+
+            async def call(
+                name: str,
+                arguments: dict[str, Any],
+                step: str,
+                proxy: MCPClientManager = manager,
+                launch_number: int = launch,
+            ) -> Any:
+                nonlocal step_number
+                step_number += 1
+                label = f"{browser} launch {launch_number} step {step_number}: {step}"
+                logging.getLogger(__name__).info("Browser proof starting %s", label)
+                try:
+                    async with asyncio.timeout(25):
+                        result = await proxy.call_tool(browser, name, arguments, timeout=20)
+                except TimeoutError:
+                    pytest.fail(f"Browser proof timed out: {label}")
+                logging.getLogger(__name__).info("Browser proof finished %s", label)
+                return result
+
             async with asyncio.timeout(120):
                 try:
-                    inventory = (await manager.list_tools(browser))[browser]
+                    logging.getLogger(__name__).info("Browser proof discovering %s", browser)
+                    try:
+                        async with asyncio.timeout(25):
+                            inventory = (await manager.list_tools(browser))[browser]
+                    except TimeoutError:
+                        pytest.fail(f"Browser proof timed out: {browser} tool discovery")
                     assert not {"browser_run_code", "browser_file_upload", "upload_file"} & {
                         tool["name"] for tool in inventory
                     }
@@ -137,23 +167,26 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                     ]
                     for forbidden, arguments in forbidden_calls:
                         with pytest.raises(ValueError, match="Loopback browser"):
-                            await manager.call_tool(browser, forbidden, arguments)
+                            await call(forbidden, arguments, f"refuse {forbidden}")
 
-                    async def navigate(url: str, proxy: MCPClientManager = manager) -> Any:
+                    async def navigate(url: str) -> Any:
+                        step = f"navigate {urlsplit(url).scheme}://{urlsplit(url).netloc}{urlsplit(url).path}"
                         if browser == "playwright":
-                            return await proxy.call_tool(browser, "browser_navigate", {"url": url})
-                        return await proxy.call_tool(
-                            browser, "navigate_page", {"type": "url", "url": url}
+                            return await call("browser_navigate", {"url": url}, step)
+                        return await call(
+                            "navigate_page", {"type": "url", "url": url, "timeout": 10000}, step
                         )
 
-                    async def evaluate(function: str, proxy: MCPClientManager = manager) -> str:
+                    async def evaluate(function: str) -> str:
                         name = "browser_evaluate" if browser == "playwright" else "evaluate_script"
                         return rendered(
-                            await proxy.call_tool(browser, name, {"function": function})
+                            await call(name, {"function": function}, f"evaluate {function[:120]}")
                         )
 
                     if browser == "chrome-devtools":
-                        initial = await manager.call_tool(browser, "new_page", {"url": vite})
+                        initial = await call(
+                            "new_page", {"url": vite, "timeout": 10000}, "new Vite page"
+                        )
                     else:
                         initial = await navigate(vite)
                     assert not initial.is_error, rendered(initial)
@@ -210,5 +243,7 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                     redirected = await navigate(f"{vite}/redirect")
                     assert redirected.is_error or "ERR_" in rendered(redirected)
                 finally:
-                    await manager.disconnect_all()
+                    logging.getLogger(__name__).info("Browser proof disconnecting %s", browser)
+                    async with asyncio.timeout(20):
+                        await manager.disconnect_all()
         assert link.split("token=", 1)[1] not in caplog.text
