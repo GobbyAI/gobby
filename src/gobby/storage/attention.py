@@ -305,7 +305,7 @@ class AttentionStateManager:
                 run.id::text AS source_id,
                 run.child_session_id::text AS session_id,
                 COALESCE(child.status, run.status) AS lifecycle_status,
-                run.task_id::text AS task_id,
+                task.id::text AS task_id,
                 CASE
                     WHEN task.id IS NULL THEN NULL
                     WHEN task.seq_num IS NOT NULL THEN '#' || task.seq_num::text
@@ -337,7 +337,16 @@ class AttentionStateManager:
             LEFT JOIN sessions child ON child.id = run.child_session_id
             LEFT JOIN sessions parent ON parent.id = run.parent_session_id
             LEFT JOIN session_variables seat ON seat.session_id = child.id
-            LEFT JOIN tasks task ON task.id = run.task_id
+            LEFT JOIN LATERAL (
+                SELECT owned.id
+                FROM tasks owned
+                WHERE owned.claimed_by_session_id = child.id
+                  AND owned.closed_at IS NULL
+                ORDER BY (owned.id::text = seat.variables->>'active_task_id') DESC NULLS LAST,
+                         owned.updated_at DESC, owned.id
+                LIMIT 1
+            ) claimed ON TRUE
+            LEFT JOIN tasks task ON task.id = COALESCE(claimed.id, run.task_id)
             LEFT JOIN terminals terminal ON terminal.id = run.terminal_id
             WHERE run.status IN ('queued', 'running', 'pending')
 
@@ -407,7 +416,8 @@ class AttentionStateManager:
                 FROM tasks owned
                 WHERE owned.claimed_by_session_id = session.id
                   AND owned.closed_at IS NULL
-                ORDER BY owned.updated_at DESC, owned.id
+                ORDER BY (owned.id::text = seat.variables->>'active_task_id') DESC NULLS LAST,
+                         owned.updated_at DESC, owned.id
                 LIMIT 1
             ) claimed ON TRUE
             WHERE session.status = ANY(%s)
