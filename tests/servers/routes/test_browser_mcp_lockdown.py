@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[3]
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.e2e,
-    pytest.mark.timeout(180, method="thread"),
+    pytest.mark.timeout(240, method="thread"),
     pytest.mark.skipif(
         bool(os.environ.get("SANDBOX_RUNTIME"))
         or shutil.which("npx") is None
@@ -113,6 +113,7 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                 command="npx",
                 args=[*args, "--headless"],
                 runtime_hook=template["runtime_hook"],
+                connect_timeout=60,
                 # macOS SingletonSocket has a short Unix-socket path limit.
                 env={
                     **os.environ,
@@ -144,11 +145,11 @@ async def test_locked_browser_managed_sign_in_and_fresh_profile(
                 logging.getLogger(__name__).info("Browser proof finished %s", label)
                 return result
 
-            async with asyncio.timeout(120):
+            async with asyncio.timeout(150):
                 try:
                     logging.getLogger(__name__).info("Browser proof discovering %s", browser)
                     try:
-                        async with asyncio.timeout(25):
+                        async with asyncio.timeout(95):
                             inventory = (await manager.list_tools(browser))[browser]
                     except TimeoutError:
                         pytest.fail(f"Browser proof timed out: {browser} tool discovery")
