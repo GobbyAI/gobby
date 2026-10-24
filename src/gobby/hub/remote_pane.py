@@ -73,22 +73,21 @@ class RemotePaneStore:
             )
             return previous
 
-    def mark_stopped(self, terminal_id: str) -> None:
-        """Flag the terminal's entry as stopped on whichever machine holds it."""
+    def mark_stopped(self, terminal_id: str, machine_id: str) -> None:
+        """Flag the terminal's entry as stopped on the machine that hosts it."""
         with self._lock:
-            for state in self._machines.values():
-                pane = state.panes.get(terminal_id)
-                if pane is not None:
-                    state.panes[terminal_id] = replace(pane, stopped=True)
-                    return
+            state = self._machines.get(machine_id)
+            if state is None:
+                return
+            pane = state.panes.get(terminal_id)
+            if pane is not None:
+                state.panes[terminal_id] = replace(pane, stopped=True)
 
-    def get(self, terminal_id: str) -> RemotePane | None:
+    def get(self, terminal_id: str, machine_id: str) -> RemotePane | None:
+        """The machine's own entry for the terminal; another machine's never answers."""
         with self._lock:
-            for state in self._machines.values():
-                pane = state.panes.get(terminal_id)
-                if pane is not None:
-                    return pane
-        return None
+            state = self._machines.get(machine_id)
+            return None if state is None else state.panes.get(terminal_id)
 
 
 def _entry(machine_id: str, agent: ReportAgent, prior: RemotePane | None) -> RemotePane:
@@ -169,7 +168,7 @@ async def apply_pane_state(
         if pane is None:
             continue
         # A terminal stopped on the hub is no longer attended, whatever the node reports.
-        current = remote_pane_store().get(agent.terminal_id)
+        current = remote_pane_store().get(agent.terminal_id, machine_id)
         if current is not None and current.stopped:
             continue
         try:

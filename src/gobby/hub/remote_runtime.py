@@ -29,21 +29,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _live_entry(terminal_id: str) -> RemotePane | None:
-    entry = remote_pane_store().get(terminal_id)
+def _live_entry(terminal_id: str, machine_id: str) -> RemotePane | None:
+    entry = remote_pane_store().get(terminal_id, machine_id)
     return None if entry is None or entry.stopped else entry
 
 
-def _stored_tail(terminal_id: str) -> str:
-    entry = _live_entry(terminal_id)
+def _stored_tail(terminal_id: str, machine_id: str) -> str:
+    entry = _live_entry(terminal_id, machine_id)
     if entry is None or entry.pane is None:
         return ""
     return entry.pane.tail
 
 
-def remote_composer_state(terminal_id: str) -> str:
+def remote_composer_state(terminal_id: str, machine_id: str) -> str:
     """The composer the node reported for the terminal; a missing, stopped or pane-less entry is unknown."""
-    entry = _live_entry(terminal_id)
+    entry = _live_entry(terminal_id, machine_id)
     if entry is None or entry.pane is None:
         return "unknown"
     return entry.pane.composer.state
@@ -73,16 +73,16 @@ class RemoteTerminalRuntime:
         raise NotImplementedError("a node terminal spawns through its node, not the hub runtime")
 
     async def is_live(self, terminal: Terminal) -> bool:
-        return _live_entry(terminal.id) is not None
+        return _live_entry(terminal.id, terminal.machine_id) is not None
 
     async def session_present(self, terminal: Terminal) -> bool:
-        return _live_entry(terminal.id) is not None
+        return _live_entry(terminal.id, terminal.machine_id) is not None
 
     async def snapshot(
         self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
     ) -> SnapshotResult:
         del mode
-        rows = _stored_tail(terminal.id).splitlines()
+        rows = _stored_tail(terminal.id, terminal.machine_id).splitlines()
         kept = rows[max(len(rows) - lines, 0) :]
         return SnapshotResult(
             text="\n".join(kept), truncated=False, dropped_bytes=None, total_bytes=None
@@ -90,7 +90,10 @@ class RemoteTerminalRuntime:
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
         return SnapshotResult(
-            text=_stored_tail(terminal.id), truncated=False, dropped_bytes=None, total_bytes=None
+            text=_stored_tail(terminal.id, terminal.machine_id),
+            truncated=False,
+            dropped_bytes=None,
+            total_bytes=None,
         )
 
     async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
@@ -125,7 +128,7 @@ class RemoteTerminalRuntime:
                 run, self._db, signal_name="KILL", close_terminal=True
             )
         if result.get("success") is True:
-            remote_pane_store().mark_stopped(terminal.id)
+            remote_pane_store().mark_stopped(terminal.id, terminal.machine_id)
             return
         logger.warning("Node did not stop run %s: %s", run.id, result.get("error"))
 
