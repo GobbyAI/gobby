@@ -38,6 +38,7 @@ from gobby.storage.projects import (
     LocalProjectManager,
 )
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees.executor import WorktreeDeleteExecutor
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
@@ -65,7 +66,7 @@ def clear_cache() -> Iterator[None]:
 
 
 @pytest.fixture
-def mock_server() -> Iterator[MagicMock]:
+def mock_server(monkeypatch: pytest.MonkeyPatch) -> Iterator[MagicMock]:
     """Create a mock HTTPServer with minimal service plumbing."""
     server = MagicMock()
     server.session_manager = MagicMock()
@@ -80,6 +81,12 @@ def mock_server() -> Iterator[MagicMock]:
     executor = WorktreeDeleteExecutor()
     server.services.run_worktree_delete = executor.run_delete
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    # These unit tests fake local storage with symbolic IDs. Supply its owner lookup;
+    # real cross-machine ownership and node dispatch live in test_remote_workspace_routes.
+    monkeypatch.setattr(
+        "gobby.servers.routes.source_control_worktrees.remote_workspaces.owner_machine",
+        lambda _db, _kind, ref: (ref, require_machine_id()),
+    )
     try:
         yield server
     finally:

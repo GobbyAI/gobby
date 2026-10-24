@@ -9,9 +9,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from gobby.clones.git import CloneGitManager
+from gobby.hub import remote_workspaces
+from gobby.hub.caller_scope import require_machine_owned
+from gobby.hub.node_client import NodeCommandError
 from gobby.mcp_proxy.tools.clones import create_clones_registry
 from gobby.servers.routes import source_control_git
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees import git as worktree_git
 from gobby.worktrees.containment import path_is_within
 from gobby.worktrees.creation import create_worktree as create_worktree_record
@@ -44,12 +48,74 @@ def create_source_control_worktrees_router(
     """Create source-control worktree and clone routes."""
     router = APIRouter()
 
+    async def authorize_machine(machine_id: str | None) -> None:
+        try:
+            await server.run_db(require_machine_owned, machine_id)
+        except NodeCommandError as exc:
+            raise HTTPException(
+                status_code=403, detail={"error_code": exc.code, "stage": "none"}
+            ) from exc
+
+    async def workspace_owner(kind: remote_workspaces.WorkspaceKind, ref: str) -> tuple[str, str]:
+        owner = cast(
+            tuple[str, str] | None,
+            await server.run_db(
+                remote_workspaces.owner_machine, server.services.database, kind, ref
+            ),
+        )
+        if owner is None:
+            raise HTTPException(404, f"{kind.capitalize()} not found")
+        await authorize_machine(owner[1])
+        return owner
+
+    async def remove_node_workspace(
+        kind: remote_workspaces.WorkspaceKind, workspace_id: str, merged_into: str | None = None
+    ) -> dict[str, Any]:
+        row = await server.run_db(
+            remote_workspaces.get_remote, server.services.database, kind, workspace_id
+        )
+        if row is None:
+            raise HTTPException(404, f"{kind.capitalize()} not found")
+        try:
+            result = await remote_workspaces.remove_remote(
+                server.services.database,
+                kind,
+                row,
+                force=False,
+                force_delete_branch=False,
+                merged_into=merged_into,
+                client=remote_workspaces.node_command_client(),
+            )
+        except NodeCommandError as exc:
+            raise HTTPException(
+                status_code=503 if exc.code == "node_offline" else 502,
+                detail={"error_code": exc.code, "stage": exc.stage},
+            ) from exc
+        if not result["success"]:
+            raise HTTPException(
+                status_code=409,
+                detail={"success": False, "id": workspace_id, "error_code": result["error_code"]},
+            )
+        return {"success": True, "id": workspace_id, "git_deleted": True}
+
     @router.get("/worktrees")
     async def list_worktrees(
         project_id: str | None = None,
         status: str | None = None,
+        machine_id: str | None = None,
     ) -> dict[str, Any]:
         """List worktrees."""
+        await authorize_machine(machine_id)
+        if machine_id is not None and machine_id != require_machine_id():
+            worktrees = await server.run_db(
+                remote_workspaces.list_remote,
+                server.services.database,
+                "worktree",
+                machine_id,
+                project_id=project_id,
+                status=status,
+            )
+            return {"worktrees": [worktree.to_dict() for worktree in worktrees]}
         if not server.services.worktree_storage:
             return {"worktrees": []}
 
@@ -116,6 +182,10 @@ def create_source_control_worktrees_router(
         worktree_storage = server.services.worktree_storage
         if worktree_storage is None:
             raise HTTPException(503, "Worktree storage not available")
+
+        owner = await workspace_owner("worktree", worktree_id)
+        if owner[1] != require_machine_id():
+            return await remove_node_workspace("worktree", owner[0], merged_into)
 
         try:
             worktree = await server.run_db(worktree_storage.get, worktree_id)
@@ -239,8 +309,19 @@ def create_source_control_worktrees_router(
     @router.get("/clones")
     async def list_clones(
         project_id: str | None = None,
+        machine_id: str | None = None,
     ) -> dict[str, Any]:
         """List clones."""
+        await authorize_machine(machine_id)
+        if machine_id is not None and machine_id != require_machine_id():
+            clones = await server.run_db(
+                remote_workspaces.list_remote,
+                server.services.database,
+                "clone",
+                machine_id,
+                project_id=project_id,
+            )
+            return {"clones": [clone.to_dict() for clone in clones]}
         if not server.services.clone_storage:
             return {"clones": []}
 
@@ -262,6 +343,19 @@ def create_source_control_worktrees_router(
     async def run_clone_operation(clone_id: str, tool_name: str) -> dict[str, Any]:
         if not server.services.clone_storage:
             raise HTTPException(503, "Clone storage not available")
+
+        owner = await workspace_owner("clone", clone_id)
+        local_machine = require_machine_id()
+        if owner[1] != local_machine:
+            if tool_name == "delete_clone":
+                return await remove_node_workspace("clone", owner[0])
+            refusal = MachineOwnershipMismatchError(
+                resource_kind="clone",
+                resource_id=owner[0],
+                owner_machine_id=owner[1],
+                current_machine_id=local_machine,
+            )
+            raise HTTPException(status_code=409, detail=refusal.to_dict())
 
         try:
             clone = await server.run_db(server.services.clone_storage.get, clone_id)
