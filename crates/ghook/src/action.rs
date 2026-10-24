@@ -8,6 +8,10 @@ use std::process::ExitCode;
 
 pub(crate) const DELIVERY_RECEIPT_FIELD: &str = "_gobby_delivery_receipt";
 
+#[cfg(test)]
+#[path = "action/daemon_down_tests.rs"]
+mod daemon_down_tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeliveryReceiptAck {
     pub receipt_id: String,
@@ -307,6 +311,9 @@ pub(crate) fn action_from_failure(
     failure_kind: transport::DeliveryFailureKind,
     detail: &str,
 ) -> HookAction {
+    if let Some(action) = crate::daemon_down::action(hook_type, cfg, failure_kind) {
+        return action;
+    }
     if cfg.is_critical_hook(hook_type) {
         let reason = match failure_kind {
             transport::DeliveryFailureKind::Http => format!(
