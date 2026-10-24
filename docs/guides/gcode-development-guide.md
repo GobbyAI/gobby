@@ -287,7 +287,7 @@ Search, symbol, outline, and graph commands all run resolved paths through the h
 - `normalize_file_arg(ctx, file)` — relativize a CLI-supplied path against the resolved project root.
 - `path_exists_in_current_project(ctx, file_path)` — does the path exist on disk inside the current project root?
 - `indexed_file_exists` / `content_chunks_exist` — does the file have rows in `code_indexed_files` / `code_content_chunks` for the current `project_id`?
-- `current_indexed_path_is_valid` — composite check used as a gate before returning results.
+- `indexed_paths::valid_indexed_paths` — batch gate that checks a result set's paths with one query before results are returned.
 
 ### Import/Call PostgreSQL Storage
 

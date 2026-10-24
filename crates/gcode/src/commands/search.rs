@@ -1,14 +1,13 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::Path;
 
 mod output;
 
-use crate::commands::{scope, token_budget};
+use crate::commands::{indexed_paths, scope, token_budget};
 use crate::config::Context;
 use crate::db;
-use crate::models::{SearchResult, SearchWarning, SearchWarningCause, SearchWarningLane, Symbol};
+use crate::models::{SearchWarning, SearchWarningCause, SearchWarningLane, Symbol};
 use crate::output::Format;
 use crate::search::{fts, graph_boost, rrf};
 use crate::vector::code_symbols;
@@ -288,16 +287,10 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     let all_results: Vec<_> = exact_results
         .into_iter()
         .filter(|s| {
-            symbol_matches_filters(
-                &mut conn,
-                ctx,
-                s,
-                options.kind,
-                options.language,
-                &path_patterns,
-            )
+            symbol_matches_local_filters(ctx, s, options.kind, options.language, &path_patterns)
         })
         .collect();
+    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |s| s.file_path.as_str());
     let total = all_results.len();
     let results: Vec<_> = all_results
         .into_iter()
@@ -396,11 +389,13 @@ fn search_symbol_with_graph(
         };
 
         if let Some(s) = sym
-            && symbol_matches_filters(conn, ctx, &s, options.kind, options.language, path_patterns)
+            && symbol_matches_local_filters(ctx, &s, options.kind, options.language, path_patterns)
         {
             all_resolved.push((s, *rrf_score, source_names.clone()));
         }
     }
+    let mut all_resolved =
+        retain_indexed_results(conn, ctx, all_resolved, |r| r.0.file_path.as_str());
 
     all_resolved.sort_by(|a, b| {
         exact_tier(query, &a.0)
@@ -490,9 +485,11 @@ pub fn search_text(
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| {
-            search_result_matches_filters(&mut conn, ctx, r, options.language, &path_patterns)
+            options.language.is_none_or(|lang| r.language == lang)
+                && path_matches_filters(&path_patterns, &r.file_path)
         })
         .collect();
+    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |r| r.file_path.as_str());
     let total = if has_path_filters {
         all_results.len()
     } else {
@@ -591,9 +588,9 @@ pub fn search_content(
                 .language
                 .is_none_or(|lang| r.language.as_deref() == Some(lang))
                 && path_matches_filters(&path_patterns, &r.file_path)
-                && scope::current_indexed_path_is_valid(&mut conn, ctx, &r.file_path)
         })
         .collect();
+    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |r| r.file_path.as_str());
     let total = if has_path_filters {
         all_results.len()
     } else {
@@ -651,18 +648,6 @@ fn final_rank_score(query: &str, symbol: &Symbol, rrf_score: f64) -> f64 {
     exact_tier_score(query, symbol) + rrf_score
 }
 
-fn symbol_matches_filters(
-    conn: &mut postgres::Client,
-    ctx: &Context,
-    symbol: &Symbol,
-    kind: Option<&str>,
-    language: Option<&str>,
-    path_patterns: &[glob::Pattern],
-) -> bool {
-    symbol_matches_local_filters(ctx, symbol, kind, language, path_patterns)
-        && visibility::indexed_file_exists(conn, ctx, &symbol.file_path)
-}
-
 fn symbol_matches_local_filters(
     ctx: &Context,
     symbol: &Symbol,
@@ -685,26 +670,29 @@ fn resolve_hybrid_symbols(
     language: Option<&str>,
     path_patterns: &[glob::Pattern],
 ) -> Vec<(Symbol, f64, Vec<String>)> {
-    merged
+    let resolved: Vec<_> = merged
         .iter()
         .filter_map(|(symbol_id, score, sources)| {
             let symbol = symbol_cache.get(symbol_id)?.clone();
-            symbol_matches_filters(conn, ctx, &symbol, kind, language, path_patterns)
+            symbol_matches_local_filters(ctx, &symbol, kind, language, path_patterns)
                 .then(|| (symbol, *score, sources.clone()))
         })
-        .collect()
+        .collect();
+    retain_indexed_results(conn, ctx, resolved, |r| r.0.file_path.as_str())
 }
 
-fn search_result_matches_filters(
+fn retain_indexed_results<T>(
     conn: &mut postgres::Client,
     ctx: &Context,
-    result: &SearchResult,
-    language: Option<&str>,
-    path_patterns: &[glob::Pattern],
-) -> bool {
-    language.is_none_or(|lang| result.language == lang)
-        && path_matches_filters(path_patterns, &result.file_path)
-        && scope::current_indexed_path_is_valid(conn, ctx, &result.file_path)
+    results: Vec<T>,
+    file_path: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    let file_paths: BTreeSet<String> = results.iter().map(|r| file_path(r).to_string()).collect();
+    let valid = indexed_paths::valid_indexed_paths(conn, ctx, &file_paths);
+    results
+        .into_iter()
+        .filter(|r| valid.contains(file_path(r)))
+        .collect()
 }
 
 fn path_matches_filters(path_patterns: &[glob::Pattern], file_path: &str) -> bool {

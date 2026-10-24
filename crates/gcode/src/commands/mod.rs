@@ -3,6 +3,7 @@ pub(crate) mod evidence;
 pub(crate) mod graph;
 pub(crate) mod grep;
 pub(crate) mod index;
+pub(crate) mod indexed_paths;
 pub(crate) mod init;
 pub(crate) mod pin;
 pub(crate) mod repair;
