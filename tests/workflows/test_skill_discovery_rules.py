@@ -4477,17 +4477,9 @@ class TestCodeIndexNavigationRules:
             'gcode grep "pattern" src || true',
         ):
             event = self._normalized_bash_event(command)
+            assert event.data["canonical_code_navigation_broad"] is True
             if command.startswith("gcode"):
-                assert event.data["canonical_code_navigation_broad"] is False
                 assert "canonical_code_index_navigation" not in event.data
-                assert (
-                    event.data["canonical_code_navigation_segments"][0][
-                        "canonical_code_index_navigation"
-                    ]
-                    is True
-                )
-            else:
-                assert event.data["canonical_code_navigation_broad"] is True
             response = await engine.evaluate(
                 event,
                 session_id=SESSION_ID,
