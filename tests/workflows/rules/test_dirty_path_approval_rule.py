@@ -341,9 +341,13 @@ def test_long_python_data_with_many_quotes_and_braces_stays_literal() -> None:
     # Additional proof requested after the initial correction: no behavior
     # change, and the retained RED of the protected-suffix test stays original.
     program = """
+import time
 from gobby.workflows.approval_brace_guard import approval_command_word_expansion
 command = "uv run python -c '" + 'value = {"key": "value"}; ' * 2000 + "'"
+started = time.perf_counter()
 assert not approval_command_word_expansion(command)
+elapsed = time.perf_counter() - started
+assert elapsed < 2, elapsed
 print('quoted Python data stays literal')
 """
     result = subprocess.run(
@@ -351,7 +355,7 @@ print('quoted Python data stays literal')
         cwd=Path(__file__).resolve().parents[3],
         text=True,
         capture_output=True,
-        timeout=5,
+        timeout=30,
         check=False,
     )
     assert result.returncode == 0, result.stderr
