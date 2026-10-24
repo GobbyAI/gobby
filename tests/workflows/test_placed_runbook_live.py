@@ -110,9 +110,11 @@ _PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
 @pytest.fixture(scope="session", autouse=True)
 def require_nested_seatbelt() -> None:
     """Require the platform capability before starting any live fixture."""
+    if sys.platform != "darwin":
+        pytest.skip(f"placed runbook live tests require Darwin; platform={sys.platform}")
     sandbox_exec = shutil.which("sandbox-exec")
     if sandbox_exec is None:
-        pytest.skip("nested Seatbelt unavailable: sandbox-exec is not installed")
+        pytest.fail("nested Seatbelt unavailable: sandbox-exec is not installed")
     try:
         probe = subprocess.run(
             [sandbox_exec, "-p", "(version 1)(allow default)", "/usr/bin/true"],
@@ -122,9 +124,9 @@ def require_nested_seatbelt() -> None:
             timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        pytest.skip(f"nested Seatbelt unavailable: {exc}")
+        pytest.fail(f"nested Seatbelt probe failed: {exc}")
     if probe.returncode != 0:
-        pytest.skip(f"nested Seatbelt unavailable: {probe.stderr.strip()}")
+        pytest.fail(f"nested Seatbelt probe exited {probe.returncode}: {probe.stderr.strip()}")
 
 
 @pytest.fixture
