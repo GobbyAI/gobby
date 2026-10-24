@@ -180,6 +180,30 @@ Working note with the repository facts, rulings and transcribed wire schemas:
 Orchestrator edits named by these rulings. This plan's leaves never edit another plan's
 file or task.
 
+Orchestrator task edits, applied verbatim at expansion after Josh approves:
+
+1. #24246, field `dependencies`: add `depends_on` this plan's 1.1 leaf. Fields
+   `description` and `validation_criteria`: remove `noul`, its three Noul fixtures, the
+   wire-contracts Noul note and
+   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`. Replace
+   the 3.1.1 anchor with "satisfied by community-label-decisions 1.1.1".
+2. #24248, field `dependencies`: add `depends_on` this plan's 1.3 leaf. Field
+   `validation_criteria`: replace `test_evaluate_choice_and_noul_round_trip` with
+   `test_evaluate_round_trips_every_decision_shape`, and append: "Box:
+   `gobby-decisions:evaluate` accepts an absolute PNG or JPEG path, calls
+   `DecisionService.box`, and returns `{"box": {"top", "bottom", "left", "right"},
+   "confidence"}` by key, or the typed `DecisionsUnavailable` reason when the backend
+   cannot serve Box. Score returns `{"score", "probabilities", "confidence"}`. test:
+   `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_round_trips_every_decision_shape`."
+3. #24701, field `dependencies`: add `depends_on` #22604. Field `description`: append
+   "Preserve #22604's Choice gate, Noul carry and Score sufficiency decisions, with their
+   tests, in the native job (D1 = A). Never delete them silently. Start only after #22604
+   closes, its Python study included." The code-index-family 8.3 text gets the same
+   amendment.
+
+This plan's 1.3 closes on the parser, fixtures and wire note. #24248's close is the
+completion gate for Box's consumer, and 3.5 records it.
+
 - **#24701 / code-index-family 8.3 (D1).** Preserve the gate, carry and sufficiency
   decisions, with their tests, in the native job, and stop deleting them. The Orchestrator
   amends 8.3 before #24701 dispatches, and adds a `blocked-by` edge from #24701 to #22604.
