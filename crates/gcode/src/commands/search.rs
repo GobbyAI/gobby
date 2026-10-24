@@ -377,25 +377,20 @@ fn search_symbol_with_graph(
     }
 
     let merged = rrf::merge(sources);
-    let mut symbol_cache: HashMap<String, Symbol> = exact_results
+    let symbol_cache: HashMap<String, Symbol> = exact_results
         .into_iter()
         .map(|sym| (sym.id.clone(), sym))
         .collect();
-    let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
-    for (sym_id, rrf_score, source_names) in &merged {
-        let sym = match symbol_cache.remove(sym_id) {
-            Some(symbol) => Some(symbol),
-            None => visibility::visible_symbol_by_id(conn, ctx, sym_id)?,
-        };
-
-        if let Some(s) = sym
-            && symbol_matches_local_filters(ctx, &s, options.kind, options.language, path_patterns)
-        {
-            all_resolved.push((s, *rrf_score, source_names.clone()));
-        }
-    }
-    let mut all_resolved =
-        retain_indexed_results(conn, ctx, all_resolved, |r| r.0.file_path.as_str());
+    let resolved = resolve_graph_symbols(
+        conn,
+        ctx,
+        &merged,
+        symbol_cache,
+        options.kind,
+        options.language,
+        path_patterns,
+    )?;
+    let mut all_resolved = retain_indexed_results(conn, ctx, resolved, |r| r.0.file_path.as_str());
 
     all_resolved.sort_by(|a, b| {
         exact_tier(query, &a.0)
@@ -659,6 +654,39 @@ fn symbol_matches_local_filters(
         && language.is_none_or(|lang| symbol.language == lang)
         && path_matches_filters(path_patterns, &symbol.file_path)
         && scope::path_exists_in_current_project(ctx, &symbol.file_path)
+}
+
+/// Resolves graph-merged symbol IDs to visible symbols in merged order. IDs held
+/// in `symbol_cache` are used as-is; all remaining misses share one visibility lookup.
+fn resolve_graph_symbols(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    merged: &[(String, f64, Vec<String>)],
+    mut symbol_cache: HashMap<String, Symbol>,
+    kind: Option<&str>,
+    language: Option<&str>,
+    path_patterns: &[glob::Pattern],
+) -> anyhow::Result<Vec<(Symbol, f64, Vec<String>)>> {
+    let misses: Vec<String> = merged
+        .iter()
+        .filter(|(sym_id, _, _)| !symbol_cache.contains_key(sym_id))
+        .map(|(sym_id, _, _)| sym_id.clone())
+        .collect();
+    symbol_cache.extend(
+        visibility::visible_symbols_by_ids(conn, ctx, &misses)?
+            .into_iter()
+            .map(|sym| (sym.id.clone(), sym)),
+    );
+    let mut resolved = Vec::new();
+    for (sym_id, rrf_score, source_names) in merged {
+        let Some(s) = symbol_cache.remove(sym_id) else {
+            continue;
+        };
+        if symbol_matches_local_filters(ctx, &s, kind, language, path_patterns) {
+            resolved.push((s, *rrf_score, source_names.clone()));
+        }
+    }
+    Ok(resolved)
 }
 
 fn resolve_hybrid_symbols(

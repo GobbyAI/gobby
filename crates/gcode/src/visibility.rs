@@ -417,11 +417,50 @@ pub fn overlay_has_row(conn: &mut Client, overlay_project_id: &str, file_path: &
     .unwrap_or(false)
 }
 
+#[cfg(test)]
+thread_local! {
+    static PER_ID_SYMBOL_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static BATCH_SYMBOL_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_symbol_lookup_counts() {
+    PER_ID_SYMBOL_LOOKUPS.with(|count| count.set(0));
+    BATCH_SYMBOL_LOOKUPS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn per_id_symbol_lookup_count() -> usize {
+    PER_ID_SYMBOL_LOOKUPS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+pub(crate) fn batch_symbol_lookup_count() -> usize {
+    BATCH_SYMBOL_LOOKUPS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn record_per_id_symbol_lookup() {
+    PER_ID_SYMBOL_LOOKUPS.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(not(test))]
+fn record_per_id_symbol_lookup() {}
+
+#[cfg(test)]
+fn record_batch_symbol_lookup() {
+    BATCH_SYMBOL_LOOKUPS.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(not(test))]
+fn record_batch_symbol_lookup() {}
+
 pub fn visible_symbol_by_id(
     conn: &mut Client,
     ctx: &Context,
     id: &str,
 ) -> anyhow::Result<Option<Symbol>> {
+    record_per_id_symbol_lookup();
     // A non-uuid id cannot exist in the uuid column: no such symbol.
     let Ok(id) = db::id_param(id) else {
         return Ok(None);
@@ -453,6 +492,7 @@ pub fn visible_symbols_by_ids(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
+    record_batch_symbol_lookup();
     let columns = db::symbol_select_columns("");
     let sql = format!(
         "SELECT {columns} FROM code_symbols
