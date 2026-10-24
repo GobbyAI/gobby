@@ -10,7 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.workflows.engine.seat_messages import _CANDIDATE_GRAMMAR
+from gobby.workflows.engine.seat_messages import _CANDIDATE_GRAMMAR, _COORDINATION_GRAMMAR
 
 pytestmark = pytest.mark.unit
 
@@ -161,6 +161,8 @@ async def test_unknown_candidate_event_reports_binding_error_without_storing(
     result = await _send(registry, f"{prefix}EVENT={event} TASK=#7 COMMIT={SHA}")
 
     assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
+    assert result["error"] == _CANDIDATE_GRAMMAR
+    assert result["error_code"] == "candidate_binding_error"
     assert result["success"] is False
     message_manager.create_message.assert_not_called()
 
@@ -173,6 +175,8 @@ async def test_known_candidate_events_send_unchanged(
     event: str, registry: InternalToolRegistry, message_manager: MagicMock
 ) -> None:
     verdict = " VERDICT=LAND" if event == "CANDIDATE_VERDICT" else ""
+    if event == "CANDIDATE_PARKED":
+        verdict = " REASON=approval"
     content = f"EVENT={event} TASK=#7 SHA={SHA}{verdict} NOTE=unchanged"
 
     result = await _send(registry, content)
@@ -180,6 +184,32 @@ async def test_known_candidate_events_send_unchanged(
     assert result["success"] is True
     assert "candidate_binding_error" not in result
     assert _stored_content(message_manager) == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED", "CANDIDATE_PARKED"])
+async def test_malformed_coordination_send_reports_event_grammar(
+    event: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(registry, f"EVENT={event} TASK=#7 SHA=abc1234 NOTE=x")
+
+    assert result["success"] is False
+    assert f"EVENT={event}" in result["error"]
+    assert "COMMIT=" not in result["error"]
+    message_manager.create_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["", " REASON=later", " NOTE=x REASON=approval"])
+async def test_parked_send_refuses_missing_or_invalid_reason(
+    reason: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(registry, f"EVENT=CANDIDATE_PARKED TASK=#7 SHA={SHA}{reason} NOTE=x")
+
+    assert result["success"] is False
+    assert result["error_code"] == "candidate_binding_error"
+    assert result["error"] == _COORDINATION_GRAMMAR["CANDIDATE_PARKED"]
+    message_manager.create_message.assert_not_called()
 
 
 @pytest.mark.asyncio

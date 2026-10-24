@@ -2071,6 +2071,8 @@ async def test_candidate_send_refuses_unknown_task_before_storing(
         )
 
     assert result.get("candidate_binding_error") == "unknown TASK"
+    assert result["error"] == "unknown TASK"
+    assert result["error_code"] == "candidate_binding_error"
     assert result["success"] is False
     assert messages.get_messages(SESSION_ID) == []
 
@@ -2137,7 +2139,14 @@ async def test_candidate_malformed_protocol_reports_grammar(
     add_messaging_tools(registry, InterSessionMessageManager(temp_db), run.sessions, temp_db)
     with session_context_for_test(SESSION_ID):
         result = await registry.call("get_inter_session_message", {"message_id": message.id})
-    assert result.get("candidate_binding_error") == _CANDIDATE_GRAMMAR
+    from gobby.workflows.engine.seat_messages import _COORDINATION_GRAMMAR
+
+    expected = (
+        _CANDIDATE_GRAMMAR
+        if event == "CANDIDATE"
+        else "CANDIDATE not bound: " + _COORDINATION_GRAMMAR[event.removeprefix("EVENT=")]
+    )
+    assert result.get("candidate_binding_error") == expected
     await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
     assert run.step == "await"
     assert run.vars["candidate_task"] is None

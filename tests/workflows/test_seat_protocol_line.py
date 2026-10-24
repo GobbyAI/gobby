@@ -12,7 +12,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.inter_session_messages import InterSessionMessage
-from gobby.workflows.engine.seat_messages import CandidateMessageError, candidate_event
+from gobby.workflows.engine.seat_messages import (
+    _COORDINATION_GRAMMAR,
+    CandidateMessageError,
+    candidate_event,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -270,4 +274,12 @@ def test_unknown_candidate_event_is_rejected_by_receiver(event: str) -> None:
     message = cast(InterSessionMessage, _Message(f"EVENT={event} TASK=#7 COMMIT={SHA}"))
 
     with pytest.raises(CandidateMessageError, match="expected EVENT=CANDIDATE TASK="):
+        candidate_event(MagicMock(), message)
+
+
+@pytest.mark.parametrize("event", ["CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED", "CANDIDATE_PARKED"])
+def test_malformed_coordination_reports_event_grammar(event: str) -> None:
+    message = cast(InterSessionMessage, _Message(f"EVENT={event} TASK=#7 SHA=abc1234"))
+
+    with pytest.raises(CandidateMessageError, match=re.escape(_COORDINATION_GRAMMAR[event])):
         candidate_event(MagicMock(), message)

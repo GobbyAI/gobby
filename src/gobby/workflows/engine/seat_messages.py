@@ -20,6 +20,16 @@ _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _CANDIDATE_GRAMMAR = (
     "expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] RUN= WT= COMMIT=<40-hex> [NOTE=...]"
 )
+PARK_REASONS = frozenset({"approval", "base_update", "review_only"})
+_COORDINATION_GRAMMAR: dict[str, str] = {
+    "CANDIDATE_WITHDRAWN": "expected EVENT=CANDIDATE_WITHDRAWN TASK=<ref> SHA=<40-hex> [NOTE=...]",
+    "CANDIDATE_RESUMED": "expected EVENT=CANDIDATE_RESUMED TASK=<ref> SHA=<40-hex> [NOTE=...]",
+    "CANDIDATE_PARKED": (
+        "expected EVENT=CANDIDATE_PARKED TASK=<ref> SHA=<40-hex> REASON="
+        + "|".join(sorted(PARK_REASONS))
+        + " [NOTE=...]"
+    ),
+}
 _ENVELOPE_FIELDS = {
     "COMMIT",
     "SHA",
@@ -257,8 +267,10 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     try:
         parsed = envelope_fields(line)
     except CandidateMessageError as exc:
-        if is_candidate or exc.event == "CANDIDATE_WITHDRAWN":
+        if is_candidate:
             raise CandidateMessageError(_CANDIDATE_GRAMMAR) from exc
+        if exc.event == "CANDIDATE_WITHDRAWN":
+            raise CandidateMessageError(_COORDINATION_GRAMMAR["CANDIDATE_WITHDRAWN"]) from exc
         return None
     fields = parsed if parsed is not None else _loose_envelope_fields(line)
     if fields is None:
@@ -268,9 +280,11 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     task_ref = fields.get("TASK")
     sha = fields.get("COMMIT") if is_candidate else fields.get("SHA") or fields.get("COMMIT")
     if not task_ref or not sha or not _SHA.fullmatch(sha):
-        if fields.get("EVENT") in {"CANDIDATE_WITHDRAWN", "CANDIDATE_RESUMED", "CANDIDATE_PARKED"}:
-            raise CandidateMessageError(_CANDIDATE_GRAMMAR)
+        if (event := fields.get("EVENT")) in _COORDINATION_GRAMMAR:
+            raise CandidateMessageError(_COORDINATION_GRAMMAR[event])
         return None
+    if fields.get("EVENT") == "CANDIDATE_PARKED" and fields.get("REASON") not in PARK_REASONS:
+        raise CandidateMessageError(_COORDINATION_GRAMMAR["CANDIDATE_PARKED"])
     caller = SessionManager(db).get(message.to_session)
     if caller is None:
         return None

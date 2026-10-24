@@ -19,6 +19,7 @@ from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, list_close_r
 from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
+    PARK_REASONS,
     CandidateEvent,
     CandidateMessageError,
     candidate_event,
@@ -272,11 +273,7 @@ def _reviewer_message(
         return {}
     if incoming and not is_task_reviewer(db, event):
         return {}
-    if kind == "CANDIDATE_PARKED" and fields.get("REASON") in {
-        "approval",
-        "base_update",
-        "review_only",
-    }:
+    if kind == "CANDIDATE_PARKED" and fields.get("REASON") in PARK_REASONS:
         return {
             **_clear_candidate(),
             "parked_candidates": parked + [{"task": event.task.id, "sha": event.sha}],

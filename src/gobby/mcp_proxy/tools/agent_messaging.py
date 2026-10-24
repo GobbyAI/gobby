@@ -312,7 +312,12 @@ def add_messaging_tools(
                     try:
                         candidate_event(db, pending)
                     except CandidateMessageError as exc:
-                        return {"success": False, "candidate_binding_error": str(exc)}
+                        return {
+                            "success": False,
+                            "error": str(exc),
+                            "error_code": "candidate_binding_error",
+                            "candidate_binding_error": str(exc),
+                        }
 
             # A direct recipient can be woken once; implicit fanout wakes can
             # multiply across a project or machine and feed coordination loops.
