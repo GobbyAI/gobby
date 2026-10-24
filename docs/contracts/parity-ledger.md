@@ -25,7 +25,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1110. Unclassified: 0.
+Public surfaces and evidence gates: 1113. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -207,6 +207,8 @@ Public surfaces and evidence gates: 1110. Unclassified: 0.
 | `CLI gobby qdrant` | proxied | Python `src/gobby/cli/qdrant.py::qdrant (line 16)`; blocked on Rust CLI dispatcher for `gobby qdrant`. Owner: #21568 Remaining route families. |
 | `CLI gobby qdrant install` | proxied | Python `src/gobby/cli/qdrant.py::qdrant_install (line 21)`; blocked on Rust CLI dispatcher for `gobby qdrant install`. Owner: #21568 Remaining route families. |
 | `CLI gobby qdrant status` | proxied | Python `src/gobby/cli/qdrant.py::qdrant_status (line 37)`; blocked on Rust CLI dispatcher for `gobby qdrant status`. Owner: #21568 Remaining route families. |
+| `CLI gobby release` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port the `gobby release` group from Python callback `src/gobby/cli/release.py:32` to Rust release-window CLI orchestration and output parity. |
+| `CLI gobby release batch` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby release batch` from Python callback `src/gobby/cli/release.py:40` to Rust release-batch validation, activation and smoke orchestration with output parity. |
 | `CLI gobby restart` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby restart` from Python callback `src/gobby/cli/daemon_lifecycle.py:412` to Rust daemon lifecycle/health CLI orchestration and output parity. |
 | `CLI gobby rules` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules` from Python callback `src/gobby/cli/rules.py:157` to Rust services and CLI parity. |
 | `CLI gobby rules audit` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules audit` from Python callback `src/gobby/cli/rules.py:335` to Rust services and CLI parity. |
@@ -729,6 +731,7 @@ Public surfaces and evidence gates: 1110. Unclassified: 0.
 | `MCP gobby-agents:cancel_stale_helpers` | proxied | Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::cancel_stale_helpers`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:check_runbook_seats` | proxied | Python `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::check_runbook_seats_tool`; Rust blocker: implement native live runbook seat/catalogue guard MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:checkpoint_agent_worktree` | proxied | Python `src/gobby/mcp_proxy/tools/agents_checkpoint_tools.py::checkpoint_agent_worktree`; Rust blocker: implement native task-owned agent worktree checkpoint MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
+| `MCP gobby-agents:cold_start_admin` | proxied | Python `src/gobby/mcp_proxy/tools/admin_cold_start.py::cold_start_admin`; Rust blocker: implement the native operator-terminal Orchestrator and Assistant seat activation MCP handler. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:end_agent_run` | proxied | Python `src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py::end_agent_run`; Rust blocker: implement native agent termination/completion cleanup and final-handoff MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:end_release_window` | proxied | Python `src/gobby/mcp_proxy/tools/release_tools.py::end_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |
 | `MCP gobby-agents:evaluate_spawn` | proxied | Python `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::evaluate_spawn_tool`; Rust blocker: implement native spawn evaluation and live definition/persona application MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries. |

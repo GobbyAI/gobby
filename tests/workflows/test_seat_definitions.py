@@ -287,11 +287,11 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     else:
         assert "persona" not in seat["prompts"]
     assert seat["provider"] == "inherit"
+    # Launch defaults choose every seat's model; Triage keeps its own reasoning effort.
+    assert "model" not in seat
     if name == "triage":
-        assert seat["model"] == "claude-sonnet-5-5"
         assert seat["reasoning_effort"] == "medium"
     else:
-        assert "model" not in seat
         assert "reasoning_effort" not in seat
     assert seat["checkout_mode"] == "inherit"
     assert seat["timeout"] == (900 if name in SPAWN_ONLY_SEATS else 0)

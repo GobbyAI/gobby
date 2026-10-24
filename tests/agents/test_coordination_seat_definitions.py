@@ -136,12 +136,9 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
         "inherit",
         0,
     )
-    if name == "triage":
-        assert body.model == "claude-sonnet-5-5"
-        assert body.reasoning_effort == "medium"
-    else:
-        assert body.model is None
-        assert body.reasoning_effort is None
+    # Launch defaults choose every seat's model; Triage keeps its own reasoning effort.
+    assert body.model is None
+    assert body.reasoning_effort == ("medium" if name == "triage" else None)
     assert body.prompts is not None
     assert body.prompts.persona == body.prompts.agent
     assert body.workflows.rule_selectors is not None

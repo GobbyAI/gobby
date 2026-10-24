@@ -60,8 +60,8 @@ def test_bundled_roles_and_runbooks_inherit_provider_choices() -> None:
     for path in sorted(agents.rglob("*.yaml")):
         raw = cast(dict[str, Any], yaml.safe_load(path.read_text()))
         assert raw.get("provider") in (None, "inherit"), path.name
+        assert raw.get("model") in (None, "inherit"), path.name
         if path.name == "triage.yaml":
-            assert raw.get("model") == "claude-sonnet-5-5"
             assert raw.get("reasoning_effort") == "medium"
         else:
             for key in ("model", "reasoning_effort"):

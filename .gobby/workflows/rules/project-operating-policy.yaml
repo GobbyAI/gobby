@@ -70,6 +70,7 @@ rules:
                 "release_manager_model": "gpt-6.1-sol",
                 "release_manager_reasoning_effort": "medium",
                 "triage_provider": "claude",
+                "triage_model": "claude-sonnet-5-5",
                 "archivist_provider": "claude",
                 "archivist_model": "claude-opus-5-5",
                 "archivist_reasoning_effort": "medium",
