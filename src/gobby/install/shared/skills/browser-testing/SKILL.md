@@ -54,7 +54,8 @@ must match the signed claims; individual object-ID routes retain their
 existing authorization checks. The shared MCP manager also refuses host-code
 execution, uploads, memory snapshots, caller-chosen file output paths, and
 non-HTTP(S) loopback navigation, including `file://`. Omit filename/filePath/path
-arguments for screenshots, snapshots, PDFs, traces, and network captures.
+arguments for screenshots, snapshots, PDFs, traces, and network captures, and
+outputDirPath for Lighthouse reports.
 
 Treat the URL as a short-lived credential: pass it only as a browser tool input,
 never a Chrome process argument, repository file, screenshot, or saved trace.

@@ -10,7 +10,7 @@ _UNSAFE_TOOLS = frozenset(
     {"browser_run_code", "browser_file_upload", "upload_file", "take_memory_snapshot"}
 )
 _HOST_PATH_ARGUMENTS = frozenset(
-    {"requestFilePath", "responseFilePath", "filePath", "path", "filename"}
+    {"requestFilePath", "responseFilePath", "filePath", "path", "filename", "outputDirPath"}
 )
 _NAVIGATION_TOOLS = frozenset({"browser_navigate", "navigate_page", "new_page"})
 

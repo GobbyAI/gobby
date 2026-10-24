@@ -17,6 +17,7 @@ FILE_ARGUMENTS = [
     ("performance_start_trace", "filePath"),
     ("performance_stop_trace", "filePath"),
     ("screencast_start", "path"),
+    ("lighthouse_audit", "outputDirPath"),
     ("browser_take_screenshot", "filename"),
     ("browser_pdf_save", "filename"),
 ]
