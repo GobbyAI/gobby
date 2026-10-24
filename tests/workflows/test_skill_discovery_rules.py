@@ -131,6 +131,7 @@ SKILL_DISCOVERY_RULES = {
     "require-ruby-skill",
     "require-rust-skill",
     "require-scala-skill",
+    "require-seat-procedure",
     "require-swift-skill",
     "require-typescript-skill",
     "require-yaml-skill",
@@ -148,6 +149,7 @@ LANGUAGE_SKILL_RULES = {
         "require-code-review-skill",
         "require-impeccable-skill",
         "require-plan-skill",
+        "require-seat-procedure",
     }
 }
 
@@ -3866,6 +3868,68 @@ class TestRequireImpeccableSkillCondition:
             "skill-discovery/require-impeccable-skill.yaml", "require-impeccable-skill"
         )
 
+    @staticmethod
+    def _eval_shell(condition: str, command: str, project_path: Path) -> bool:
+        data: dict[str, Any] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "cwd": str(project_path),
+            "project_path": str(project_path),
+        }
+        normalize_tool_fields(data)
+        context = {
+            "variables": {"loaded_skills": []},
+            "event": SimpleNamespace(data=data),
+            "tool_input": data["tool_input"],
+        }
+        return SafeExpressionEvaluator(
+            context=context, allowed_funcs=build_condition_helpers(context=context)
+        ).evaluate(condition)
+
+    @pytest.mark.parametrize(
+        "scratchpad",
+        [
+            "/tmp/gobby-agent-scratchpad-session",
+            "/private/tmp/claude-501/agent-scratchpad/session",
+        ],
+        ids=["tmp", "private-tmp"],
+    )
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "cp web/src/Widget.tsx {scratchpad}/web/src/Widget.tsx",
+            "printf 'plain text' > {scratchpad}/web/src/bad.ts",
+        ],
+        ids=["cp", "redirect"],
+    )
+    def test_skips_literal_scratchpad_shell_writes(
+        self, condition: str, tmp_path: Path, scratchpad: str, command: str
+    ) -> None:
+        assert not self._eval_shell(
+            condition, command.format(scratchpad=scratchpad), tmp_path / "project"
+        )
+
+    @pytest.mark.parametrize("suffix", ["css", "tsx"])
+    @pytest.mark.parametrize(
+        "command",
+        ["cp fixture.txt web/src/Widget.{suffix}", "printf 'plain text' > web/src/Widget.{suffix}"],
+        ids=["cp", "redirect"],
+    )
+    def test_requires_skill_for_repository_shell_writes(
+        self, condition: str, tmp_path: Path, suffix: str, command: str
+    ) -> None:
+        assert self._eval_shell(condition, command.format(suffix=suffix), tmp_path / "project")
+
+    @pytest.mark.parametrize("suffix", ["css", "tsx"])
+    def test_requires_skill_for_mixed_scratchpad_repository_writes(
+        self, condition: str, tmp_path: Path, suffix: str
+    ) -> None:
+        command = (
+            "printf 'scratch' > /tmp/gobby-agent-scratchpad-session/web/src/bad.ts; "
+            f"printf 'repository' > web/src/Widget.{suffix}"
+        )
+        assert self._eval_shell(condition, command, tmp_path / "project")
+
     @pytest.mark.parametrize("file_path", UI_PREDICATE_MATCHING_PATHS)
     def test_matches_ui_writes(self, condition: str, file_path: str) -> None:
         assert _eval_condition(condition, file_path) is True
@@ -4411,9 +4475,17 @@ class TestCodeIndexNavigationRules:
             'gcode grep "pattern" src || true',
         ):
             event = self._normalized_bash_event(command)
-            assert event.data["canonical_code_navigation_broad"] is True
             if command.startswith("gcode"):
+                assert event.data["canonical_code_navigation_broad"] is False
                 assert "canonical_code_index_navigation" not in event.data
+                assert (
+                    event.data["canonical_code_navigation_segments"][0][
+                        "canonical_code_index_navigation"
+                    ]
+                    is True
+                )
+            else:
+                assert event.data["canonical_code_navigation_broad"] is True
             response = await engine.evaluate(
                 event,
                 session_id=SESSION_ID,
