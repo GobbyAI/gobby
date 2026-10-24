@@ -61,8 +61,10 @@ launches `planning` directly:
 
 The first step, `gobby-agents:check_runbook_seats(workspace, requested,
 catalogue)`, refuses a bad seat name, another live execution of the same
-runbook in the same project, workspace and machine, a missing or disabled seat
-agent definition, a missing `report_to` where the runbook requires one, and any
+runbook in the same project, workspace and machine (with a `task` input, only
+one for the same task, so teams for different tasks launch in parallel), a
+missing or disabled seat agent definition, a missing `report_to` where the
+runbook requires one, and any
 failed or truncated lookup. It checks no capacity and no title. Each later seat
 step is one placed `spawn_agent` call with `reserved_run_id: ${{ invocation_id }}`;
 its output carries `run_id` and `pane_ref`. Seats are identified by
