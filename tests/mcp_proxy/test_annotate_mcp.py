@@ -53,6 +53,11 @@ def e2e_pre_daemon_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, postgres_db: HubDatabase
 ) -> None:
     """Install the real npm package where the isolated daemon resolves binaries."""
+    if not (WORKSPACE / "node_modules" / "esbuild" / "package.json").is_file():
+        pytest.fail(
+            f"Annotate build dependencies are missing. Run `npm ci` in {WORKSPACE} "
+            "before running this integration test."
+        )
     sync_bundled_mcp_templates(postgres_db)
     sync_bundled_skills(postgres_db)
     subprocess.run(
