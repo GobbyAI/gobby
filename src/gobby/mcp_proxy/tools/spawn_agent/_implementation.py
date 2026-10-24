@@ -28,7 +28,7 @@ from gobby.agents.spawn import PreparedSpawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
-from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
@@ -482,7 +482,10 @@ async def spawn_agent_impl(
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
-            if resume_target is not None:
+            # Associated seats join the exact candidate; only implementation seats sync it.
+            if resume_target is not None or (
+                agent_body is not None and "implementation" not in agent_body.task_step_writes
+            ):
                 isolation_ctx, handler = await prepare_resumed_worktree(
                     existing_worktree=existing_worktree,
                     spawn_config=spawn_config,
@@ -500,12 +503,12 @@ async def spawn_agent_impl(
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
             )
-        except ReusedWorktreeRebaseConflict as exc:
+        except ReusedWorktreeSyncConflict as exc:
             return {
                 "success": False,
-                "error_code": "reused_worktree_rebase_conflict",
+                "error_code": "reused_worktree_merge_conflict",
                 "error": (
-                    f"Reused worktree {existing_worktree.id} could not be rebased onto "
+                    f"Reused worktree {existing_worktree.id} could not merge base "
                     f"{exc.base_ref}; the original worktree was preserved at "
                     f"{existing_worktree.worktree_path}: {exc}"
                 ),
@@ -513,11 +516,11 @@ async def spawn_agent_impl(
                 "worktree_path": existing_worktree.worktree_path,
                 "branch_name": existing_worktree.branch_name,
                 "base_branch": existing_worktree.base_branch,
-                "rebase_target": exc.base_ref,
+                "merge_target": exc.base_ref,
                 "base_commit_sha": exc.base_commit_sha,
                 "preserved": True,
                 "recovery": (
-                    "Check the preserved worktree's rebase state and resolve the branch against "
+                    "Check the preserved worktree's merge state and resolve the branch against "
                     f"'{exc.base_ref}' in the preserved worktree, then retry spawn_agent "
                     f"with worktree_id='{existing_worktree.id}'."
                 ),
