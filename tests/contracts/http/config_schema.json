@@ -5760,6 +5760,16 @@
           "default": false,
           "description": "Debug: echo additionalContext to system_message for terminal visibility"
         },
+        "workflow.definition_regex_max_length": {
+          "type": "integer",
+          "namespace": "workflow",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 2048,
+          "description": "Maximum characters in a definition-supplied regex; enforced before registry writes"
+        },
         "workflow.enabled": {
           "type": "boolean",
           "namespace": "workflow",

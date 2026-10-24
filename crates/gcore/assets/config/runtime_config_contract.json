@@ -5941,6 +5941,17 @@
     },
     {
       "activation": "live",
+      "default": 2048,
+      "description": "Maximum characters in a definition-supplied regex; enforced before registry writes",
+      "key": "workflow.definition_regex_max_length",
+      "machineExport": false,
+      "namespace": "workflow",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": true,
       "description": "Enable workflow engine",
       "key": "workflow.enabled",

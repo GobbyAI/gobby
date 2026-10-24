@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from gobby.storage.definition_validation import validate_registry_regexes
 from gobby.storage.definitions._shared import (
     DefinitionNotFoundError,
     DefinitionSource,
@@ -135,6 +136,7 @@ class RuleDefinitionManager:
         tags: list[str] | None = None,
         source: DefinitionSource = "installed",
     ) -> RuleDefinitionRow:
+        validate_registry_regexes(self.db, name, definition_json)
         definition_id = new_definition_id()
         now = utc_now()
         with self.db.transaction() as txn:
@@ -225,6 +227,10 @@ class RuleDefinitionManager:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
         with self.db.transaction() as txn:
             current = _lock_live_row(txn, definition_id)
+            if "definition_json" in fields:
+                validate_registry_regexes(
+                    self.db, str(fields.get("name", current.name)), fields["definition_json"]
+                )
             incoming: Mapping[str, Any] = fields
             if from_sync:
                 incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
