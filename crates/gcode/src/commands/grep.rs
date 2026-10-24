@@ -4,6 +4,7 @@ use postgres::Client;
 use postgres::types::ToSql;
 use serde::Serialize;
 
+mod content_prefilter;
 mod grep_matcher;
 mod indexed_paths;
 
@@ -133,7 +134,12 @@ pub(crate) struct GrepResult {
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_indexed_chunks(&mut conn, ctx, &filters)?;
+    let loaded = load_indexed_chunks(
+        &mut conn,
+        ctx,
+        &filters,
+        content_prefilter::content_literal(&options),
+    )?;
     let scan_options = GrepOptions {
         max_count: None,
         offset: 0,
@@ -274,7 +280,12 @@ pub(crate) fn grep_repo(
     options: &GrepOptions<'_>,
 ) -> anyhow::Result<GrepResult> {
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_indexed_chunks(conn, ctx, &filters)?;
+    let loaded = load_indexed_chunks(
+        conn,
+        ctx,
+        &filters,
+        content_prefilter::content_literal(options),
+    )?;
     let mut result = grep_chunks_with_filters(&loaded.chunks, options, &filters)?;
     result.truncated |= loaded.truncated;
     attach_coverage_gap(conn, ctx, &filters, options, &loaded, &mut result)?;
@@ -285,6 +296,7 @@ fn load_indexed_chunks(
     conn: &mut Client,
     ctx: &Context,
     filters: &GrepFilters,
+    literal: Option<&str>,
 ) -> anyhow::Result<LoadedIndexedChunks> {
     let mut chunks = Vec::new();
     let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
@@ -294,6 +306,16 @@ fn load_indexed_chunks(
             truncated: false,
         });
     };
+    let candidates = match literal {
+        Some(literal) => Some(content_prefilter::literal_files(conn, ctx, literal)?),
+        None => None,
+    };
+    if candidates.as_ref().is_some_and(|files| files.is_empty()) {
+        return Ok(LoadedIndexedChunks {
+            chunks,
+            truncated: false,
+        });
+    }
     let rows = match &ctx.index_scope {
         ProjectIndexScope::Single => {
             let project_id = db::id_param(&ctx.project_id)?;
@@ -305,6 +327,10 @@ fn load_indexed_chunks(
                 "fs.machine_id = $3".to_string(),
             ];
             push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+            if let Some(files) = candidates.as_ref() {
+                params.push(files);
+                conditions.push(format!("c.file_path = ANY(${})", params.len()));
+            }
             let limit = GREP_SQL_SAFETY_LIMIT + 1;
             let limit_placeholder = format!("${}", params.len() + 1);
             params.push(&limit);
@@ -347,6 +373,10 @@ fn load_indexed_chunks(
                 "fs.machine_id = $4".to_string(),
             ];
             push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+            if let Some(files) = candidates.as_ref() {
+                params.push(files);
+                conditions.push(format!("c.file_path = ANY(${})", params.len()));
+            }
             let limit = GREP_SQL_SAFETY_LIMIT + 1;
             let limit_placeholder = format!("${}", params.len() + 1);
             params.push(&limit);
