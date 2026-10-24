@@ -30,7 +30,9 @@ from gobby.storage.project_checkouts import (
     CheckoutSentinelRejectedError,
     require_root,
 )
+from gobby.storage.sessions import SessionManager
 from gobby.sync.jsonl_io import atomic_write_text
+from gobby.tasks.lifecycle_access import session_agent_definition
 from gobby.utils import spawn
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.local_token import GOBBY_RELEASE_TOKEN_ENV
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 WINDOW_FILE_NAME = "release-window.json"
+RELEASE_ROLES = frozenset({"release-manager"})
 LEASE_TTL = timedelta(minutes=10)
 RENEW_INTERVAL = timedelta(seconds=60)
 
@@ -312,7 +315,16 @@ async def route_activation_refusal(
         return f"main_checkout_unavailable: {exc}"
     except ReleaseWindowRefused as refused:
         return f"{refused.code}: {refused}"
+    # The lease is an unsigned file any shell can write, so its owner must hold a release seat.
+    if not await asyncio.to_thread(_release_seat, db, session_id):
+        return "release_window_forbidden: only the Release Manager's lease activates the daemon"
     return None
+
+
+def _release_seat(db: HubDatabase, session_id: str) -> bool:
+    session = SessionManager(db).get(session_id)
+    definition = session_agent_definition(db, session) if session is not None else None
+    return definition is not None and definition[0].name in RELEASE_ROLES
 
 
 def _parse(data: object) -> ReleaseWindow | ReleaseWindowUnreadable:

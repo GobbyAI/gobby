@@ -8,6 +8,7 @@ from typing import Any
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.releases.window import (
+    RELEASE_ROLES,
     ReleaseWindow,
     ReleaseWindowRefused,
     acquire_window,
@@ -17,8 +18,6 @@ from gobby.releases.window import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.tasks.lifecycle_access import session_agent_definition
-
-RELEASE_ROLES = frozenset({"release-manager"})
 
 
 class _Forbidden(Exception):

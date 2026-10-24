@@ -7,17 +7,23 @@ import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 
 from gobby.agents.isolation_models import IsolationContext, SpawnConfig
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.config.app import DaemonConfig
+from gobby.hub import machine_routing, remote_spawn
+from gobby.hub.machine_routing import RoutedMachine
+from gobby.hub.remote_spawn import RemoteSpawnRequest
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.release_tools import register_release_tools
 from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import prepare_spawn_isolation
+from gobby.mcp_proxy.tools.spawn_agent._remote_routing import spawn_remote_route
 from gobby.releases.window import (
     LEASE_TTL,
     ReleaseWindowRefused,
@@ -28,16 +34,20 @@ from gobby.releases.window import (
     release_window,
     renew_window,
     require_window_owner,
+    route_activation_refusal,
     window_path,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.session_models import Session
-from gobby.storage.tasks import Task
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import get_current_session_id, session_context_for_test
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import LandingCase, make_landing_case
+from tests.fixtures.postgres import TEST_USER_ID
 from tests.fixtures.review_approvals import grant_step_writes
 from tests.fixtures.team_case import TITLE, TeamWorld, execution_id, make_team_world
 
@@ -445,3 +455,113 @@ async def test_release_tools_admit_only_the_release_manager(case: LandingCase) -
         )
     assert ended == {"success": True}
     assert read_window(common) is None
+
+
+async def test_only_the_release_manager_lease_activates_the_daemon(case: LandingCase) -> None:
+    manager = case.session("release manager")
+    grant_step_writes(case.db, manager, case.project_id, "release-manager", ())
+    developer = case.session("developer")
+    grant_step_writes(case.db, developer, case.project_id, "developer", ())
+    now = datetime.now(UTC)
+    # The lease is a plain file any shell can write; acquiring as the developer forges one.
+    forged = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=developer, now=now
+    )
+
+    refusal = await route_activation_refusal(
+        case.db, session_id=developer, project_id=case.project_id, token=forged.token, now=now
+    )
+
+    assert refusal is not None and refusal.startswith("release_window_forbidden"), refusal
+    await release_window(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=developer,
+        token=forged.token,
+        generation=forged.generation,
+        now=now,
+    )
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=manager, now=now
+    )
+    assert (
+        await route_activation_refusal(
+            case.db, session_id=manager, project_id=case.project_id, token=lease.token, now=now
+        )
+        is None
+    )
+
+
+async def test_remote_fresh_trees_wait_for_the_window(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    common = case.repo / ".git"
+    node_machine = str(uuid4())
+    node_checkout = f"/node-only/{node_machine}/checkout"
+    LocalMachineManager(case.db).upsert_seen(node_machine, TEST_USER_ID)
+    case.db.execute(
+        "INSERT INTO project_checkouts(machine_id, project_id, root_path) VALUES (%s, %s, %s)",
+        (node_machine, case.project_id, node_checkout),
+    )
+    parent = str(uuid4())
+    case.db.execute(
+        """
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id, status)
+        VALUES (%s, %s, %s, 'claude', %s, 'active')
+        """,
+        (parent, f"remote-{parent}", node_machine, case.project_id),
+    )
+    node = AsyncMock()
+    node.connected_machine_ids.return_value = {node_machine}
+    node.send.return_value = {"accepted": True}
+    monkeypatch.setattr(machine_routing, "node_command_client", lambda: node)
+    monkeypatch.setattr(remote_spawn, "node_command_client", lambda: node, raising=False)
+    runner = MagicMock()
+    runner.can_spawn.return_value = (True, "", 0)
+    runner.run_storage = LocalAgentRunManager(case.db)
+
+    async def remote_spawn_with(isolation: str | None) -> dict[str, Any]:
+        return await spawn_remote_route(
+            case.db,
+            routed=RoutedMachine(node_machine, local=False, checkout_root=node_checkout),
+            session_manager=SessionManager(case.db),
+            task_manager=LocalTaskManager(case.db),
+            runner=runner,
+            daemon_config=DaemonConfig(),
+            placement=None,
+            request=RemoteSpawnRequest(
+                parent_session_id=parent,
+                project_id=case.project_id,
+                prompt="Work on the node",
+                provider="claude",
+                isolation=isolation,
+            ),
+        )
+
+    await acquire_window(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=case.session("release owner"),
+        now=datetime.now(UTC),
+    )
+
+    # A fresh tree on another machine is new work, so this machine's window holds it.
+    for code in ("release_window_active", "release_window_unreadable"):
+        if code == "release_window_unreadable":
+            window_path(common).write_text("{not json", encoding="utf-8")
+        for isolation in ("worktree", "clone"):
+            refused = await remote_spawn_with(isolation)
+            assert refused.get("error_code") == code, (isolation, refused)
+    node.send.assert_not_awaited()
+    runs = case.db.fetchone("SELECT COUNT(*) AS n FROM agent_runs", ())
+    assert runs is not None and int(runs["n"]) == 0
+
+    # A run in the node's own checkout makes no tree and still launches.
+    shared = await remote_spawn_with(None)
+    assert shared["success"] is True, shared
+
+    # Clearing the window reopens fresh trees.
+    window_path(common).unlink()
+    fresh = await remote_spawn_with("worktree")
+    assert fresh["success"] is True, fresh
+    assert node.send.await_count == 2

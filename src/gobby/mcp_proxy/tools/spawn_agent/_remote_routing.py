@@ -11,6 +11,7 @@ project slot before any row is written.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.session import ChildSessionManager
@@ -37,7 +38,9 @@ from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import (
     reserve_agent_slot,
     resolve_spawn_task_context,
 )
+from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import CheckoutNotFoundError, CheckoutSentinelRejectedError
 from gobby.storage.sessions import SessionManager
 
 if TYPE_CHECKING:
@@ -121,9 +124,9 @@ async def spawn_remote_route(
 ) -> dict[str, Any]:
     """Launch the run on ``routed``'s node. Call only when ``routed`` is not local.
 
-    Every check that can refuse runs before a row is written: the resume target, the launch
-    settings, the task, and the project slot. Only then does ``spawn_remote_agent`` prepare
-    the run with the shared path and send it.
+    Every check that can refuse runs before a row is written: the resume target or the
+    release window, the launch settings, the task, and the project slot. Only then does
+    ``spawn_remote_agent`` prepare the run with the shared path and send it.
     """
     if placement is not None:
         return spawn_refusal(
@@ -154,6 +157,16 @@ async def spawn_remote_route(
             )
         except ValueError as exc:
             return spawn_refusal("resume_refused", str(exc))
+    elif request.isolation in ("worktree", "clone"):
+        # A fresh tree on another machine is new work, so this machine's window holds it.
+        try:
+            await require_admissions_open(db, request.project_id, datetime.now(UTC))
+        except ReleaseWindowRefused as exc:
+            return spawn_refusal(exc.code, str(exc))
+        except CheckoutSentinelRejectedError as exc:
+            return spawn_refusal("main_checkout_unavailable", str(exc))
+        except CheckoutNotFoundError:
+            pass  # This machine has no checkout of the project, so it holds no window.
 
     provider, model, reasoning_effort = request.provider, request.model, request.reasoning_effort
     if resume_target is not None:
