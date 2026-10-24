@@ -724,6 +724,48 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
     return operands
 
 
+def _interpreter_filename(word: str) -> bool:
+    name = word.rsplit("/", 1)[-1]
+    return name in {"node", "nodejs"} or name.startswith("python")
+
+
+def _interpreter_setup(scan: ShellScan) -> bool:
+    """Detect resolution changes before granting interpreter stdin-data exemptions."""
+    stages: list[list[str]] = [[]]
+    redirect_operand = False
+    output_operand = False
+    for token in scan.tokens:
+        if redirect_operand:
+            if output_operand and _interpreter_filename(token.value):
+                return True
+            redirect_operand = False
+            continue
+        if is_fd_duplication_token(token):
+            continue
+        output_operand = is_shell_output_redirection_token(token)
+        if output_operand or is_shell_input_redirection_token(token):
+            redirect_operand = True
+            continue
+        if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
+            stages.append([])
+        else:
+            stages[-1].append(token.value)
+    for words in stages:
+        unwrapped = _unwrap(words)
+        prefix = words[: len(words) - len(unwrapped)] if unwrapped else words
+        assignments = [word for word in prefix if _ASSIGNMENT.match(word)]
+        if unwrapped and unwrapped[0] in _ASSIGNMENT_HEADS:
+            assignments.extend(unwrapped[1:])
+        for word in assignments:
+            variable = word.split("=", 1)[0].removesuffix("+")
+            if variable == "PATH" or variable.startswith(("NODE_", "PYTHON")):
+                return True
+        if unwrapped and unwrapped[0].rsplit("/", 1)[-1] in {"ln", "cp", "mv", "install"}:
+            if any(_interpreter_filename(word) for word in unwrapped[1:]):
+                return True
+    return False
+
+
 def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:
     """Shell setup invalidates every data-head assumption in the submitted text."""
     functions = shell_function_bodies(text, scan)
@@ -748,6 +790,7 @@ def _approval_subjects(
     """Preflight all bodies before choosing any data exemptions."""
     subjects: list[tuple[str, ShellScan]] = []
     strict = False
+    language_setup = False
     pending = [(command, 0)]
     seen: set[str] = set()
     while pending:
@@ -759,12 +802,14 @@ def _approval_subjects(
             raise _AmbiguousSyntax("Shell nesting limit")
         scan = scan_shell_command(text)
         strict |= _shell_setup(text, scan, _decoded_stages(text))
+        language_setup |= _interpreter_setup(scan)
         # A known language heredoc is source, not shell words. Its braces are code, so
         # only the shell-expanded substitutions inside it stay subjects.
         for subject in executable_command_subjects(text, language_bodies=language_bodies):
             scan = scan_shell_command(subject)
             stages = _decoded_stages(subject)
             strict |= _shell_setup(subject, scan, stages)
+            language_setup |= _interpreter_setup(scan)
             scripts = _wrapper_scripts(stages)
             scripts.extend(git_shell_scripts(stages))
             scripts.extend(_shell_input_scripts(subject))
@@ -778,7 +823,7 @@ def _approval_subjects(
                     subject = masked
                     scan = scan_shell_command(subject)
             subjects.append((subject, scan))
-    if strict and language_bodies == "data":
+    if (strict or language_setup) and language_bodies == "data":
         # Setup found in any wrapper can shadow an interpreter in another subject.
         # Rebuild without language exemptions after the whole-text preflight.
         return _approval_subjects(command, language_bodies="subjects")

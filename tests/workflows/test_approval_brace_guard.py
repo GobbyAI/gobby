@@ -22,7 +22,6 @@ pytestmark = pytest.mark.unit
         "node --input-type module -",
         "node --input-type=commonjs -",
         "nodejs --",
-        "env MODE=probe node",
         "uv run node",
     ],
 )
@@ -72,6 +71,37 @@ def test_node_heredoc_exemption_keeps_shell_execution_refused(
         "alias node=sh; node",
         "node shell-runner.js",
         "node --require ./shell-loader.js",
+        *[
+            pytest.param(
+                template.format(interpreter=interpreter, variable=variable, value=value),
+                id=f"identity-{name}-{interpreter}",
+            )
+            for interpreter, variable, value in (
+                ("node", "NODE_OPTIONS", "--require=./e.js"),
+                ("python3", "PYTHONPATH", "/tmp/x"),
+            )
+            for name, template in (
+                ("symlink-path", "ln -s /bin/sh {interpreter} && ./{interpreter}"),
+                ("relative-path", "./{interpreter}"),
+                ("absolute-path", "/tmp/x/{interpreter}"),
+                ("path-assignment", "PATH=/tmp/x {interpreter}"),
+                ("env-path", "env PATH=/tmp/x {interpreter}"),
+                ("export-path", "export PATH=.:$PATH; {interpreter}"),
+                ("uv-path", "uv run ./{interpreter}"),
+                ("option-assignment", "{variable}={value} {interpreter}"),
+                ("env-options", "env {variable}={value} {interpreter}"),
+                ("export-options", "export {variable}={value}; {interpreter}"),
+                ("symlink-bare", "ln -s /bin/sh {interpreter} && {interpreter}"),
+                ("copy-bare", "cp /bin/sh {interpreter}; {interpreter}"),
+                ("move-bare", "mv shell {interpreter}; {interpreter}"),
+                ("install-bare", "install /bin/sh {interpreter}; {interpreter}"),
+                ("redirect-bare", "cat shell > {interpreter}; {interpreter}"),
+                ("stage-assignment", "MODE=probe {interpreter}"),
+                ("stage-env", "env MODE=probe {interpreter}"),
+            )
+        ],
+        pytest.param("env NODE_OPTIONS=--import=./e.mjs node", id="identity-node-import"),
+        pytest.param("export PYTHONSTARTUP=./e.py; node", id="identity-cross-language-environment"),
     ],
 )
 def test_node_name_requires_an_unshadowed_interpreter(
