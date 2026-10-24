@@ -120,6 +120,42 @@ def _restart_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(f"{_DELIVERY}.DISPATCH_OWNER", "f" * 32)
 
 
+@pytest.mark.parametrize("armed", [False, True])
+def test_restart_recovers_handoff_before_dispatch_was_claimed(
+    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, armed: bool
+) -> None:
+    session_manager = _session_manager(hub_db, "claude")
+    stage_handoff_attempt(
+        hub_db,
+        SESSION_ID,
+        attempt_id=ATTEMPT_ID,
+        handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
+        clear_session=False,
+    )
+    if armed:
+        SessionVariableManager(hub_db).set_variable(
+            SESSION_ID,
+            HANDOFF_DISPATCH_GATE_VARIABLE,
+            {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": ATTEMPT_ID,
+                "clear_session": False,
+            },
+        )
+    _restart_daemon(monkeypatch)
+    with patch(f"{_DELIVERY}._schedule_claimed_delivery", return_value=True) as schedule:
+        assert _sweep(session_manager, MagicMock()) == 1
+        assert _sweep(session_manager, MagicMock()) == 0
+    schedule.assert_called_once()
+    claimed = schedule.call_args.args[0]
+    assert claimed.attempt_id == ATTEMPT_ID
+    assert claimed.reclaimed_dispatch_started_at is None
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert variables[PENDING_HANDOFF_VARIABLE]["dispatch_owner"] == "f" * 32
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_pending"] is True
+
+
 def _sweep(session_manager: SessionManager, loop: Any) -> int:
     return resume_dead_handoff_dispatches(
         MACHINE_ID,
