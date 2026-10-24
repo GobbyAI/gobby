@@ -80,6 +80,44 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
         .join("\n")
 }
 
+#[test]
+fn seat_sidebar_renders_live_claim_from_roster_without_run_task_binding() {
+    let mut ws = scripted_workspace();
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 2,
+        "entries": [{
+            "entry_id": "run:term-alpha",
+            "run_id": "seat-run",
+            "session_id": "seat-session",
+            "project_id": "proj-alpha",
+            "machine_id": "local",
+            "provider": "codex",
+            "definition_title": "Developer",
+            "lifecycle_status": "active",
+            "terminal": {"terminal_id": "term-alpha", "backend": "native"},
+            "task": {"id": "live-task", "ref": "#24638", "title": "Live claim label"}
+        }]
+    }));
+    ws.reconcile_subscribe_first().unwrap();
+    let chrome = current_project_chrome();
+    let rows = agents::agent_rows(&ws, &chrome);
+    let row = rows.iter().find(|row| row.id == "run:term-alpha").unwrap();
+    assert_eq!(row.task, Some(("#24638".into(), "Live claim label".into())));
+    let mut terminal = Terminal::new(TestBackend::new(70, 40)).unwrap();
+    terminal
+        .draw(|frame| {
+            render_sidebar(frame, frame.area(), &ws, &chrome);
+        })
+        .unwrap();
+    let text = screen(&terminal);
+    assert!(
+        text.contains("Working task 24638 Live claim label"),
+        "{text}"
+    );
+    assert!(!text.contains("No assigned task"), "{text}");
+}
+
 fn rgb(color: ratatui::style::Color) -> (u8, u8, u8) {
     match color {
         ratatui::style::Color::Rgb(r, g, b) => (r, g, b),

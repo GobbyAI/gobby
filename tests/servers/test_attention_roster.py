@@ -968,6 +968,94 @@ def test_roster_session_entries_carry_the_open_claimed_task(
     assert _live_roster_entry(temp_db, entry_id)["task"] is None
 
 
+@pytest.mark.parametrize("spawn_task", [False, True])
+def test_seat_roster_prefers_live_claim_to_spawn_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    spawn_task: bool,
+) -> None:
+    session = session_manager.register(
+        external_id="roster-seat-claim",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    tasks = LocalTaskManager(temp_db)
+    original = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Spawn-time task",
+        validation_criteria="Spawn-time binding remains a fallback for the roster.",
+    )
+    current = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Seat's live task",
+        validation_criteria="The roster displays this live claim ahead of the spawn binding.",
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id,
+        child_session_id=session.id,
+        provider="codex",
+        prompt="test",
+        task_id=original.id if spawn_task else None,
+    )
+    tasks.claim_task(current.id, session.id)
+
+    assert _live_roster_entry(temp_db, f"run:{run.id}")["task"] == {
+        "id": current.id,
+        "ref": f"#{current.seq_num}",
+        "title": current.title,
+    }
+
+
+@pytest.mark.parametrize("kind", ["run", "session"])
+def test_roster_follows_second_claim_even_when_previous_task_is_updated(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    kind: str,
+) -> None:
+    session = session_manager.register(
+        external_id="roster-seat-second-claim",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+        terminal_context={"tmux_pane": "%7"},
+    )
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(
+        project_id=sample_project["id"],
+        title="First claim",
+        validation_criteria="The roster initially displays this claim.",
+    )
+    second = tasks.create_task(
+        project_id=sample_project["id"],
+        title="Second claim",
+        validation_criteria="The roster follows this claim despite updates to the previous task.",
+    )
+    entry_id = f"session:{session.id}"
+    if kind == "run":
+        run = LocalAgentRunManager(temp_db).create(
+            parent_session_id=session.id,
+            child_session_id=session.id,
+            provider="codex",
+            prompt="test",
+            task_id=first.id,
+        )
+        entry_id = f"run:{run.id}"
+    tasks.claim_task(first.id, session.id)
+    assert _live_roster_entry(temp_db, entry_id)["task"]["id"] == first.id
+
+    tasks.claim_task(second.id, session.id)
+    tasks.update_task(first.id, title="First claim updated later")
+
+    assert _live_roster_entry(temp_db, entry_id)["task"] == {
+        "id": second.id,
+        "ref": f"#{second.seq_num}",
+        "title": second.title,
+    }
+
+
 @pytest.mark.asyncio
 async def test_roster_p95_stays_below_deadline_with_shared_executor_load(
     temp_db: HubDatabase,
