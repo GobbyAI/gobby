@@ -176,8 +176,7 @@ def _command_scripts(subcommand: str, args: list[str]) -> list[str]:
                     break
         if takes_script:
             if value is None and cursor + 1 < len(args):
-                cursor += 1
-                value = args[cursor]
+                value = args[cursor + 1]
             if value is not None:
                 scripts.append(value)
         cursor += 1
