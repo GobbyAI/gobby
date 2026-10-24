@@ -373,6 +373,25 @@ async def test_short_budget_ends_retries_at_timeout(wire: FakeWire) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("caller_budget", "expected_budget"), [(None, 0.5), (0.1, 0.1), (1.0, 0.5)]
+)
+async def test_request_timeouts_follow_effective_budget(
+    wire: FakeWire, caller_budget: float | None, expected_budget: float
+) -> None:
+    wire.handler = _card_handler(lambda: _card("/models/kev-a"))
+    service = DecisionService(_config(identity_contract="model_card", timeout_seconds=0.5))
+
+    result = await service.choose("test", STATE, QUESTIONS, timeout_seconds=caller_budget)
+
+    assert result.backend_identity is not None
+    assert {request.url.path for request in wire.requests} == {"/v1/systemone", "/v1/models"}
+    assert [request.extensions["timeout"] for request in wire.requests] == [
+        dict.fromkeys(("connect", "read", "write", "pool"), expected_budget)
+    ] * 2
+
+
+@pytest.mark.asyncio
 async def test_no_proxy_or_redirect_hop(wire: FakeWire, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.test:3128")
     monkeypatch.setenv("HTTP_PROXY", "http://proxy.test:3128")
