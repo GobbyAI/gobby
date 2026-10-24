@@ -65,12 +65,12 @@ directed recovery, never to bypass validation, committing, or closing.
 
 ## Release a parked claim
 
-The Orchestrator or the holder's owning Lane Manager can call
+The Orchestrator or the task's Dev Manager can call
 `gobby-tasks:release_task_claim(task_id, holder_session_ref, reason)` to release
 a named seat's claim on an open task. Discover the schema first. The caller,
 holder, and task must belong to the same project, and the holder must be on the
-caller's machine. Lane Manager authority requires current running agent runs
-with the same recorded lane; an ordinary agent cannot release claims.
+caller's machine. A Dev Manager may release only a seat of its own team, on the
+task that team was admitted for; an ordinary agent cannot release claims.
 
 The call checks that the named holder still owns the task and refuses dirty
 task-attributed paths, naming them. An unavailable attributed checkout also
@@ -80,10 +80,28 @@ It preserves edit attribution and unrelated task bindings.
 
 Use this for parked claims outside the holder's current assigned task. Releasing
 the assigned task is also accepted, but does not clear `assigned_task_id` or
-advance its workflow step; coordinate the holder's recovery separately. This
-call does not transfer activation-receipt authority.
+advance its workflow step; coordinate the holder's recovery separately.
 
 Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::release_task_claim`.
+
+## Hand off a claim within a team
+
+The task's Dev Manager calls
+`gobby-tasks:hand_off_task_claim(task_id, holder_session_ref, recipient_session_ref, reason)`
+to move the task claim from one seat of its team to another. Discover the schema
+first. The caller needs an active agent run bound to the task, a definition that
+writes the closing step, and a seat in the task's team; otherwise the call returns
+`team_manager_required`. A holder or recipient outside that team returns
+`team_seat_required`.
+
+The holder must still own the open task (`task_claim_conflict` otherwise) and have
+no dirty task-attributed paths (`task_has_uncommitted_changes`, naming them). The
+ownership check, the dirty-path check and the move commit together, so of two
+concurrent hand-offs from one holder exactly one succeeds. Success selects the
+task for the recipient, clears it from the holder's claim state, and records the
+manager, both seats and the reason in a lifecycle event.
+
+Source: `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::hand_off_task_claim`.
 
 ## Metadata and recovery
 
@@ -101,4 +119,4 @@ requested scope. Use closing guidance for no-work dispositions.
 
 Guide: [Create and Claim](../../../../../../../../docs/guides/tasks.md#create-and-claim).
 
-_Last verified: 2026-10-17_
+_Last verified: 2026-10-23_

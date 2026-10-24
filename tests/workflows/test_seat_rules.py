@@ -160,7 +160,8 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     assert "Push: operator approves exact SHA" in first
     assert 'healthy="Systems nominal"' in first
     assert "stalled-session resume only" in first
-    assert "No spawns except Assistant, Orchestrator and automated close review." in first
+    assert "No spawns except Assistant and Orchestrator." in first
+    assert "Team managers may resume their team's seats" in first
     assert GUIDANCE_HEADING not in second
 
 
@@ -216,7 +217,8 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
     for seat in (DEVELOPER, ASSISTANT, ORCHESTRATOR, PLAN_WRITER, PLAN_ENHANCER):
         blocked = await _decide(engine, shell_spawn, seat)
         assert blocked.decision == "block", seat
-        assert "send the request to the Orchestrator" in (blocked.reason or "")
+        # The Orchestrator and Assistant hit this rule too, so the redirect names who uses it.
+        assert "seats without that authority send the request to Triage" in (blocked.reason or "")
         allowed = await _decide(
             engine, _proxy_call("gobby-workflows", "set_variable", {"name": "x"}), seat
         )
@@ -229,14 +231,14 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "agent_type", ("lane-manager", "developer", "code-reviewer", "archivist", "plan-writer")
+    "agent_type", ("dev-manager", "developer", "code-reviewer", "archivist", "plan-writer")
 )
 async def test_other_seats_cannot_launch_pipelines(engine: RuleEngine, agent_type: str) -> None:
     for launch in PIPELINE_LAUNCHES:
         blocked = await _decide(engine, launch, {"_agent_type": agent_type})
         assert blocked.decision == "block", launch
         assert "Only the Orchestrator launches pipelines" in (blocked.reason or "")
-        assert "send the request to the Orchestrator" in (blocked.reason or "")
+        assert "send the request to Triage" in (blocked.reason or "")
 
 
 @pytest.mark.asyncio
@@ -249,8 +251,8 @@ async def test_orchestrator_and_assistant_launch_pipelines(
         assert allowed.decision == "allow", launch
 
 
-WORKER_SEATS = ("developer", "code-reviewer", "plan-writer")
 RESUME = {"agent": "developer", "resume_session_id": "gobby#15771"}
+TEAM_MANAGER = {"_agent_type": "dev-manager", "team_manager": True}
 
 
 @pytest.mark.asyncio
@@ -264,11 +266,8 @@ async def test_orchestrator_and_assistant_spawn_fresh_sessions(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", ("lane-manager",))
-async def test_recovery_seats_resume_an_existing_session(
-    engine: RuleEngine, agent_type: str
-) -> None:
-    seat = {"_agent_type": agent_type}
+async def test_a_team_manager_resumes_an_existing_session(engine: RuleEngine) -> None:
+    seat = TEAM_MANAGER
 
     resumed = await _decide(engine, _proxy_call("gobby-agents", "spawn_agent", RESUME), seat)
     new_spawn = await _decide(
@@ -281,7 +280,10 @@ async def test_recovery_seats_resume_an_existing_session(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent_type", WORKER_SEATS)
+# A dev-manager session without its definition's team_manager variable resumes nothing.
+@pytest.mark.parametrize(
+    "agent_type", ("developer", "code-reviewer", "test-writer", "plan-writer", "dev-manager")
+)
 async def test_other_seats_cannot_resume_or_spawn(engine: RuleEngine, agent_type: str) -> None:
     seat = {"_agent_type": agent_type}
 
@@ -319,7 +321,7 @@ def _seat_definitions() -> list[str]:
 async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
     ask = {"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Land?"}]}}
     seats = _seat_definitions()
-    assert {"assistant", "orchestrator", "inbox-manager", "release-manager"} <= set(seats)
+    assert {"assistant", "orchestrator", "dev-manager", "triage", "release-manager"} <= set(seats)
 
     for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
         if agent_type == "assistant":
@@ -398,10 +400,10 @@ NOT_PROJECT_CREATES = (
 )
 PROJECT_CREATE_BLOCKED: tuple[dict[str, Any], ...] = (
     DEVELOPER,
-    {"_agent_type": "lane-manager"},
+    TEAM_MANAGER,
     {"is_spawned_agent": True},
     {"_agent_type": "default", "is_spawned_agent": True},
-    {"_agent_type": "task-close-reviewer", "is_spawned_agent": True},
+    {"_agent_type": "test-writer", "is_spawned_agent": True},
 )
 PROJECT_CREATE_ALLOWED: tuple[dict[str, Any], ...] = (
     ASSISTANT,

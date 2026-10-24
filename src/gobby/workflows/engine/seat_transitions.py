@@ -15,11 +15,10 @@ from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, list_close_receipts
+from gobby.tasks.step_records import landing_review_approval, list_task_step_records
 from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
-    PARK_REASONS,
     CandidateEvent,
     CandidateMessageError,
     candidate_event,
@@ -31,13 +30,10 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 
 
-def _approved(db: HubDatabase, reviewer_session_id: str, task_id: str, sha: str) -> bool:
-    return any(
-        receipt.kind == INDEPENDENT_REVIEW_APPROVAL
-        and receipt.author_session_id == reviewer_session_id
-        and receipt.commit_sha == sha
-        for receipt in list_close_receipts(db, task_id)
-    )
+def _approved(db: HubDatabase, reviewer_session_id: str, task: Task, sha: str) -> bool:
+    """Landing reads the same approval, so the land gate and land_commit agree."""
+    records = list_task_step_records(db, task.id)
+    return landing_review_approval(task, records, sha, reviewer_session_id) is not None
 
 
 def _requested_task(tasks: LocalTaskManager, bound_id: Any, requested_ref: Any) -> Task | None:
@@ -50,21 +46,6 @@ def _requested_task(tasks: LocalTaskManager, bound_id: Any, requested_ref: Any) 
     except (ValueError, TaskNotFoundError):
         pass
     return None
-
-
-def candidate_landing_approved(
-    sessions: SessionManager | None,
-    reviewer_session_id: str,
-    task_id: Any,
-    sha: Any,
-    requested_task: Any,
-    requested_sha: Any,
-) -> bool:
-    """The landing call must name the approved intake unit, including its full SHA."""
-    if sessions is None or not isinstance(sha, str) or requested_sha != sha:
-        return False
-    task = _requested_task(LocalTaskManager(sessions.db), task_id, requested_task)
-    return task is not None and _approved(sessions.db, reviewer_session_id, task.id, sha)
 
 
 def _same_task(db: HubDatabase, ref: Any, event: CandidateEvent) -> bool:
@@ -131,27 +112,25 @@ def _monitor_message(
     recipient_role = SessionVariableManager(db).get_variable_subset(recipient, ("_agent_type",))
     target_role = recipient_role.get("_agent_type")
     if role == "log-monitor":
-        if target_role != "orchestrator":
+        if target_role != "triage":
             return {}
         return {"tick_done": False, "tick_window": sent_at}
-    if target_role not in {"orchestrator", "log-monitor"}:
+    if target_role not in {"triage", "log-monitor"}:
         return {}
     if step == "report" and content != state.get("_window_report"):
         return {}
-    orchestrator = state.get("orchestrator_reported", False) if step == "report" else False
+    triage = state.get("triage_reported", False) if step == "report" else False
     log_monitor = state.get("log_monitor_reported", False) if step == "report" else False
-    orchestrator = orchestrator or target_role == "orchestrator"
+    triage = triage or target_role == "triage"
     log_monitor = log_monitor or target_role == "log-monitor"
     changes = {
         "tick_window": state.get("tick_window") if step == "report" else sent_at,
         "_window_report": content,
-        "tick_done": not (orchestrator and log_monitor),
-        "orchestrator_reported": orchestrator,
+        "tick_done": not (triage and log_monitor),
+        "triage_reported": triage,
         "log_monitor_reported": log_monitor,
     }
-    changes["orchestrator_session" if target_role == "orchestrator" else "log_monitor_session"] = (
-        recipient
-    )
+    changes["triage_session" if target_role == "triage" else "log_monitor_session"] = recipient
     return changes
 
 
@@ -213,7 +192,6 @@ def _reviewer_message(
         and _same_task(db, session_variables.get("candidate_task"), event)
         and event.sha == session_variables.get("candidate_sha")
     )
-    parked = list(variables.get("parked_candidates") or [])
     if incoming and kind == "CANDIDATE":
         if _candidate_rejection(db, variables, event) is not None:
             return {}
@@ -227,71 +205,25 @@ def _reviewer_message(
             "candidate_sha": event.sha,
             "candidate_owner": event.message.from_session,
             "candidate_received_at": received_at,
-            "parked_candidates": [
-                record for record in parked if not _same_task(db, record.get("task"), event)
-            ],
         }
-    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(
-        db, event, session_id, parked_candidates=parked
-    ):
-        changes = _clear_candidate() if same_unit or stale_session_unit else {}
-        remaining = [
-            record
-            for record in parked
-            if not (_same_task(db, record.get("task"), event) and record.get("sha") == event.sha)
-        ]
-        if remaining != parked:
-            changes["parked_candidates"] = remaining
-        return changes
-    if kind == "CANDIDATE_RESUMED" and is_task_coordinator(
-        db, event, session_id, parked_candidates=parked
-    ):
-        matching = [
-            record
-            for record in parked
-            if _same_task(db, record.get("task"), event) and record.get("sha") == event.sha
-        ]
-        if variables.get("candidate_received") or not matching:
-            return {}
-        return {
-            "candidate_received": True,
-            "verdict_ready": _approved(db, session_id, event.task.id, event.sha),
-            "candidate_task": event.task.id,
-            "candidate_sha": event.sha,
-            "candidate_owner": event.task.claimed_by_session_id,
-            "candidate_received_at": event.message.sent_at.isoformat(),
-            "parked_candidates": [record for record in parked if record not in matching],
-        }
-    if (
-        stale_session_unit
-        and event.message.from_session == session_id
-        and kind in {"LANDED", "ALREADY_LANDED"}
-        and _approved(db, session_id, event.task.id, event.sha)
-    ):
-        return _clear_candidate()
+    if kind == "CANDIDATE_WITHDRAWN" and is_task_coordinator(db, event, session_id):
+        return _clear_candidate() if same_unit or stale_session_unit else {}
     if not same_unit:
         return {}
     if incoming and not is_task_reviewer(db, event):
         return {}
-    if kind == "CANDIDATE_PARKED" and fields.get("REASON") in PARK_REASONS:
-        return {
-            **_clear_candidate(),
-            "parked_candidates": parked + [{"task": event.task.id, "sha": event.sha}],
-        }
+    if kind != "CANDIDATE_VERDICT":
+        return {}
     # A peer's BOUNCE leaves the unit open; only this seat's own verdict ends it.
+    if fields.get("VERDICT") == "BOUNCE" and event.message.from_session == session_id:
+        return _clear_candidate()
+    # The Dev Manager lands an approved LAND, so the reviewer's unit ends at the verdict.
     if (
-        kind == "CANDIDATE_VERDICT"
-        and fields.get("VERDICT") == "BOUNCE"
-        and event.message.from_session == session_id
+        not incoming
+        and fields.get("VERDICT") == "LAND"
+        and _approved(db, session_id, event.task, event.sha)
     ):
         return _clear_candidate()
-    if not incoming and kind in {"LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"}:
-        if kind == "REVIEW_COMPLETE" and (
-            fields.get("VERDICT") != "LAND" or fields.get("LANDING") != "NOT_REQUIRED"
-        ):
-            return {}
-        if _approved(db, session_id, event.task.id, event.sha):
-            return _clear_candidate()
     return {}
 
 
@@ -324,12 +256,12 @@ def advance_seat(
         return {"additional_skills": skills["claimed_task_extra_skills"], "skills_routed": True}
     if role == "code-reviewer" and mcp_tool in {
         ("gobby-tasks", "get_task"),
-        ("gobby-tasks", "record_close_receipt"),
+        ("gobby-tasks", "record_review_step"),
     }:
         task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
         task = _requested_task(tasks, task_id, tool_input.get("task_id"))
         if task is not None and isinstance(sha, str) and state.get("candidate_received"):
-            if _approved(db, session_id, task.id, sha):
+            if _approved(db, session_id, task, sha):
                 return {"verdict_ready": True}
         return {}
     if mcp_tool[0] != "gobby-agents":
@@ -357,7 +289,8 @@ def advance_seat(
             )
         elif role == "plan-adversary" and message.from_session == session_id:
             match = re.match(
-                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?: |$)", message.content
+                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)",
+                message.content.partition("\n")[0],
             )
             if match and step == "review" and match[1] == "CONSENSUS":
                 changes = {"consensus": True, "consensus_sha": match[2], "bounced": False}

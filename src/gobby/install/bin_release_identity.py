@@ -44,7 +44,7 @@ def _toml(path: Path) -> dict[str, Any]:
         return tomllib.load(stream)
 
 
-def _crate_closure(root: Path, crate: Path) -> set[Path]:
+def crate_closure(root: Path, crate: Path) -> set[Path]:
     """Include normal, build, target and workspace-inherited path dependencies."""
     workspace_dependencies = _toml(root / "Cargo.toml").get("workspace", {}).get("dependencies", {})
     pending = [crate.resolve()]
@@ -96,7 +96,7 @@ def _locked_dependencies(root: Path, crates: set[Path]) -> bytes:
 def workspace_source_identity(root: Path, name: str) -> str:
     """Fingerprint the binary crate, recursive path dependencies and build inputs."""
     root = root.resolve()
-    crates = _crate_closure(root, root / "crates" / RELEASE_CRATES[name])
+    crates = crate_closure(root, root / "crates" / RELEASE_CRATES[name])
     digest = hashlib.sha256()
     files: set[Path] = set()
     try:

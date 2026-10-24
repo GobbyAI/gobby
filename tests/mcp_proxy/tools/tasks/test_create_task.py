@@ -255,7 +255,7 @@ async def test_create_task_refuses_a_closed_parent_with_an_actionable_error(
         task_type="epic",
         validation_criteria="The epic is done.",
     )
-    manager.close_task(parent.id, reason="completed")
+    manager.close_task(parent.id, reason="done")
 
     with session_context_for_test(session.id):
         result = await registry.call(

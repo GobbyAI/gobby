@@ -1199,9 +1199,15 @@ def test_existing_reviewer_login_gains_only_live_assignment_reads(
             visible = _ids(agent, "SELECT id FROM code_indexed_projects")
             assert overlay_ids[0] not in visible
             assert overlay_ids[1] in visible
-            owner.execute("UPDATE tasks SET closed_at = now() WHERE id = %s", (task_id,))
+            owner.execute(
+                "UPDATE tasks SET closed_at = now(), closed_reason = 'done' WHERE id = %s",
+                (task_id,),
+            )
             assert not set(overlay_ids) & _ids(agent, "SELECT id FROM code_indexed_projects")
-            owner.execute("UPDATE tasks SET closed_at = NULL WHERE id = %s", (task_id,))
+            owner.execute(
+                "UPDATE tasks SET closed_at = NULL, closed_reason = NULL WHERE id = %s",
+                (task_id,),
+            )
             owner.execute("DELETE FROM session_tasks WHERE task_id = %s", (task_id,))
             assert not set(overlay_ids) & _ids(agent, "SELECT id FROM code_indexed_projects")
         finally:

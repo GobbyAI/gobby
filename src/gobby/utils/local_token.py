@@ -55,6 +55,9 @@ def read_managed_signing_key(bootstrap: Path | None = None) -> bytes | None:
 # This is a filename, not a credential value.
 GOBBY_AGENT_API_TOKEN_ENV = "GOBBY_AGENT_API_TOKEN"
 GOBBY_MANAGED_EXECUTION_ID_ENV = "GOBBY_MANAGED_EXECUTION_ID"
+# The live release window token, exported only by `gobby release batch`.
+GOBBY_RELEASE_TOKEN_ENV = "GOBBY_RELEASE_TOKEN"
+RELEASE_TOKEN_HEADER = "X-Gobby-Release-Token"
 _AGENT_TOKEN_VERSION = "gobby-agent-v1"
 
 # Expiry is defense-in-depth: the daemon's per-request owner-liveness check is
@@ -328,6 +331,14 @@ _AGENT_IDENTITY_ENV_HEADERS = (
     ("GOBBY_PROJECT_ID", "X-Gobby-Caller-Project-Id"),
     ("GOBBY_AGENT_RUN_ID", "X-Gobby-Agent-Run-Id"),
     (GOBBY_MANAGED_EXECUTION_ID_ENV, "X-Gobby-Managed-Execution-Id"),
+    (GOBBY_RELEASE_TOKEN_ENV, RELEASE_TOKEN_HEADER),
+)
+# Everything that names or authenticates a managed caller. A daemon started from
+# that caller's shell must not hand these to its terminals.
+AGENT_IDENTITY_ENV_NAMES = (
+    GOBBY_AGENT_API_TOKEN_ENV,
+    "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+    *(env_name for env_name, _header in _AGENT_IDENTITY_ENV_HEADERS),
 )
 
 

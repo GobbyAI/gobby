@@ -14,8 +14,6 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._claim_release as claim_release
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import _claim_release, create_task_registry
-from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -24,6 +22,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_dirty_state import task_dirty_paths
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.landing_case import grant_orchestrator
 
 pytestmark = pytest.mark.unit
 
@@ -121,8 +120,7 @@ def world(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
             "task_edited_file_checkouts": {task.id: {str(repo): ["note.py"]}},
         },
     )
-    AgentDefinitionManager(temp_db).create("orchestrator", {}, project_id=checkout.project.id)
-    variables.set_variable(coordinator.id, "_agent_type", "orchestrator")
+    grant_orchestrator(temp_db, coordinator.id, checkout.project.id)
     return ReleaseWorld(
         temp_db,
         tasks,
@@ -216,60 +214,6 @@ async def test_records_releasing_session_holder_and_reason(world: ReleaseWorld) 
     assert event.by_actor == world.coordinator
     assert world.holder in event.reason
     assert "Move the parked task to its new lane" in event.reason
-
-
-def _lane_manager(world: ReleaseWorld, lane: str, holder_lane: str) -> None:
-    sessions = SessionManager(world.db)
-    caller = sessions.get(world.coordinator)
-    assert caller is not None
-    AgentDefinitionManager(world.db).create("lane-manager", {}, project_id=caller.project_id)
-    world.variables.set_variable(caller.id, "_agent_type", "lane-manager")
-    runs = LocalAgentRunManager(world.db)
-    for session_id, agent, seat_lane in (
-        (world.coordinator, "lane-manager", lane),
-        (world.holder, "developer", holder_lane),
-    ):
-        run = runs.create(
-            parent_session_id=world.receiver,
-            provider="codex",
-            prompt="Isolated seat fixture",
-            agent_name=agent,
-            child_session_id=session_id,
-            resume_metadata_json={"lane": seat_lane},
-        )
-        runs.start(run.id)
-        world.db.execute(
-            "UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run.id, session_id)
-        )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("lane,holder_lane,allowed", [("1", "1", True), ("2", "1", False)])
-async def test_only_the_holders_lane_manager_can_release(
-    world: ReleaseWorld,
-    lane: str,
-    holder_lane: str,
-    allowed: bool,
-) -> None:
-    _lane_manager(world, lane, holder_lane)
-    result = await world.release()
-    if allowed:
-        assert result.get("success") is True, result
-        assert world.tasks.get_task(world.task.id).claimed_by_session_id is None
-    else:
-        assert result.get("error_code") == "coordinator_required", result
-        assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
-
-
-@pytest.mark.asyncio
-async def test_lane_role_without_recorded_run_is_refused(world: ReleaseWorld) -> None:
-    caller = SessionManager(world.db).get(world.coordinator)
-    assert caller is not None
-    AgentDefinitionManager(world.db).create("lane-manager", {}, project_id=caller.project_id)
-    world.variables.set_variable(caller.id, "_agent_type", "lane-manager")
-    result = await world.release()
-    assert result.get("error_code") == "coordinator_required", result
-    assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
 
 
 @pytest.mark.asyncio

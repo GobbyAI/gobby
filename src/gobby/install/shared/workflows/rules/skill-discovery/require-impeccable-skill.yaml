@@ -5,6 +5,8 @@ tags: [skill-discovery, context, gobby, default]
 # a web/ segment so skill scripts and Node tooling stay out of design
 # enforcement. Paths may arrive absolute or repo-relative, hence both the
 # '/web/' segment check and the 'web/' prefix check.
+# Canonical repository scope reuses the shared scratchpad/temp path classifier;
+# absent scope metadata keeps direct write events subject to the gate.
 
 rules:
   require-impeccable-skill:
@@ -15,6 +17,7 @@ rules:
     when: >
       not skill_loaded('impeccable')
       and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_repo_mutation', True)
       and touches_ui_design_path(event.data, tool_input)
     effects:
       - type: block

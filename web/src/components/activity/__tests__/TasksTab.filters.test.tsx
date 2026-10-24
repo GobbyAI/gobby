@@ -115,9 +115,7 @@ describe("TasksTab — filters", () => {
       expect(screen.getByText("Canonical claimed task")).toBeTruthy();
     });
 
-    expect(
-      screen.getByLabelText("Status: In Progress · Claimed"),
-    ).toBeTruthy();
+    expect(screen.getByLabelText("Status: In Progress · Claimed")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
 
@@ -133,7 +131,7 @@ describe("TasksTab — filters", () => {
         String(url).includes("/api/stages/registry"),
       ),
     ).toBe(false);
-    expect(screen.getByLabelText("Ready")).toBeChecked();
+    expect(screen.getByLabelText("Open")).toBeChecked();
     expect(screen.getByLabelText("In Progress")).toBeChecked();
     expect(screen.getByText("Closed")).toBeTruthy();
   });

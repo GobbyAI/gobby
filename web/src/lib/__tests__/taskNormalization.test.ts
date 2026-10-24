@@ -95,13 +95,13 @@ describe("extractTaskPayload", () => {
 });
 
 describe("normalizeTaskPayload", () => {
-  it("fills display defaults for a ready task", () => {
+  it("fills display defaults for an open task", () => {
     const task = normalizeTaskPayload({ id: "task-1", seq_num: 42 });
     expect(task).toMatchObject({
       id: "task-1",
       ref: "#42",
       title: "",
-      status: "ready",
+      status: "open",
       task_type: "task",
       parent_task_id: null,
       state: { is_claimed: false, is_closed: false, is_blocked: false },

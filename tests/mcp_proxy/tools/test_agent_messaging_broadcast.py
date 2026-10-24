@@ -8,11 +8,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.inter_session_messages import InterSessionMessage
 
 pytestmark = pytest.mark.unit
 
@@ -44,7 +47,7 @@ class MockMessage:
     metadata_json: str | None = None
     delivered_at: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "from_session": self.from_session,
@@ -71,10 +74,10 @@ class MockWebSocket:
     async def close(self, code: int = 1000, reason: str = "") -> None:
         self.closed = True
 
-    def all_messages(self) -> list[dict]:
+    def all_messages(self) -> list[dict[str, Any]]:
         return [json.loads(m) for m in self.sent_messages]
 
-    def messages_of_type(self, msg_type: str) -> list[dict]:
+    def messages_of_type(self, msg_type: str) -> list[dict[str, Any]]:
         return [m for m in self.all_messages() if m.get("type") == msg_type]
 
 
@@ -84,7 +87,7 @@ class MockWebSocket:
 
 
 @pytest.fixture
-def mock_session_manager():
+def mock_session_manager() -> MagicMock:
     mgr = MagicMock()
     mgr.resolve_session_reference = MagicMock(side_effect=lambda ref, project_id=None: ref)
     mgr.get = MagicMock(return_value=None)
@@ -93,7 +96,7 @@ def mock_session_manager():
 
 
 @pytest.fixture
-def mock_message_manager():
+def mock_message_manager() -> MagicMock:
     mgr = MagicMock()
     mgr.create_message = MagicMock(return_value=MockMessage())
     mgr.get_undelivered_messages = MagicMock(return_value=[])
@@ -102,7 +105,7 @@ def mock_message_manager():
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     db = MagicMock()
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
@@ -110,17 +113,17 @@ def mock_db():
 
 
 @pytest.fixture
-def mock_broadcast_fn():
+def mock_broadcast_fn() -> AsyncMock:
     return AsyncMock()
 
 
 @pytest.fixture
 def messaging_registry_with_broadcast(
-    mock_session_manager,
-    mock_message_manager,
-    mock_db,
-    mock_broadcast_fn,
-):
+    mock_session_manager: MagicMock,
+    mock_message_manager: MagicMock,
+    mock_db: MagicMock,
+    mock_broadcast_fn: AsyncMock,
+) -> InternalToolRegistry:
     """Registry with broadcast_fn wired."""
     from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
@@ -231,9 +234,9 @@ class TestSendMessageBroadcast:
     @pytest.mark.asyncio
     async def test_broadcast_on_success(
         self,
-        messaging_registry_with_broadcast,
-        mock_session_manager,
-        mock_broadcast_fn,
+        messaging_registry_with_broadcast: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_broadcast_fn: AsyncMock,
     ) -> None:
         """Successful send_message triggers agent_message broadcast."""
         mock_session_manager.get.side_effect = lambda sid: {
@@ -262,9 +265,9 @@ class TestSendMessageBroadcast:
     @pytest.mark.asyncio
     async def test_send_message_returns_failed_broadcasts_per_recipient(
         self,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Persisted fanout succeeds, but failed WebSocket broadcasts are reported."""
@@ -294,16 +297,12 @@ class TestSendMessageBroadcast:
         mock_db.fetchone.side_effect = lambda sql, params=(): (
             {"id": "11111111-1111-4111-8111-111111110001"} if "FROM projects" in sql else None
         )
-        mock_db.fetchall.return_value = [
-            {
-                "id": "s-child-1",
-                "status": "active",
-            },
-            {
-                "id": "s-child-2",
-                "status": "active",
-            },
-        ]
+        # The recipient-role query finds no seats; the broadcast query finds both children.
+        mock_db.fetchall.side_effect = lambda sql, params=(): (
+            []
+            if "_agent_type" in sql
+            else [{"id": "s-child-1", "status": "active"}, {"id": "s-child-2", "status": "active"}]
+        )
         mock_message_manager.create_message.side_effect = lambda **kwargs: MockMessage(
             id=f"msg-{kwargs['to_session']}",
             from_session=kwargs["from_session"],
@@ -337,15 +336,15 @@ class TestSendMessageBroadcast:
             for record in caplog.records
             if record.message == "Failed to broadcast agent_message"
         )
-        assert failure_log.to_session == "s-child-1"
+        assert failure_log.__dict__["to_session"] == "s-child-1"
         assert failure_log.exc_info is not None
 
     @pytest.mark.asyncio
     async def test_send_message_preserves_mailbox_broadcast_failures(
         self,
-        mock_session_manager,
-        mock_message_manager,
-        mock_db,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Mailbox and WebSocket broadcast failures remain distinct."""
@@ -356,12 +355,13 @@ class TestSendMessageBroadcast:
             "recipient_session_id": "s-missing",
             "error": "mailbox unavailable",
         }
-        message = MockMessage(
+        message = InterSessionMessage(
             id="msg-s-to",
             from_session="s-from",
             to_session="s-to",
             content="hello",
             priority="normal",
+            sent_at=datetime(2026, 1, 1, tzinfo=UTC),
             message_type="message",
             metadata_json=None,
         )
@@ -416,9 +416,9 @@ class TestSendMessageBroadcast:
     @pytest.mark.asyncio
     async def test_no_broadcast_on_failure(
         self,
-        messaging_registry_with_broadcast,
-        mock_session_manager,
-        mock_broadcast_fn,
+        messaging_registry_with_broadcast: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_broadcast_fn: AsyncMock,
     ) -> None:
         """Failed send_message does not broadcast."""
         mock_session_manager.get.return_value = None  # session not found

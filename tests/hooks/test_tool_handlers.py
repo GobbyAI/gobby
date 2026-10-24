@@ -77,6 +77,31 @@ class TestToolHandlers:
             name.removeprefix("gobby:"), project_id="project-override"
         )
 
+    def test_native_router_cold_starts_only_through_the_gobby_skill(
+        self, event_handlers: EventHandlers
+    ) -> None:
+        manager = MagicMock()
+        manager.resolve_skill_name.return_value = None
+        manager.discover_core_skills.return_value = []
+        event_handlers._skill_manager = manager
+        router = event_handlers._resolve_skill_tool_call(
+            {"tool_input": {"skill": "gobby", "args": "assistant"}}, "project-1"
+        )
+        assert router is not None
+        assert router.context is not None
+        assert 'call_tool("gobby-agents", "cold_start_admin", {"role": "assistant"})' in (
+            router.context
+        )
+        assert "User arguments" not in router.context
+        capability = event_handlers._resolve_skill_tool_call(
+            {"tool_input": {"skill": "gobby:admin"}}, "project-1"
+        )
+        assert capability is not None
+        assert capability.context is not None
+        assert '"path":"references/admin/overview.md"' in capability.context
+        assert "cold_start_admin" not in capability.context
+        manager.resolve_skill_name.assert_not_called()
+
     @pytest.mark.parametrize("router_request", ["help", "missing"])
     def test_native_router_honors_exclusions_without_hiding_unselected_skills(
         self, event_handlers: EventHandlers, router_request: str

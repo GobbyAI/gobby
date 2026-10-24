@@ -8,7 +8,7 @@ rules:
     priority: 32
     when: >
       variables.get('require_commit_before_status') and
-      tool_input.get('reason', '') not in ['already_implemented', 'obsolete', 'duplicate', 'wont_fix', 'out_of_repo'] and
+      tool_input.get('reason', '') not in ['moot', 'superseded', 'wont_do'] and
       not variables.get('target_task_has_commits') and not tool_input.get('commit_sha') and
       variables.get('target_task_has_edits')
     effects:
@@ -23,5 +23,5 @@ rules:
           No commit linked to the task is available for this status transition.
 
           For a task with no code changes, pass a reason to skip the commit requirement:
-          close_task(task_id="#N", reason="obsolete")
-          Valid reasons: obsolete, duplicate, wont_fix, already_implemented, out_of_repo
+          close_task(task_id="#N", reason="moot")
+          No-work reasons: moot, superseded, wont_do

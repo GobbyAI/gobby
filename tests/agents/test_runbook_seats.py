@@ -14,6 +14,7 @@ import yaml
 
 from gobby.agents.runbook_seats import (
     READ_BOUND,
+    AdmittedSeats,
     CatalogueSeat,
     RunbookSeatRefusal,
     RunbookSeatStores,
@@ -26,6 +27,7 @@ from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgent
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.session_context import session_context_for_test
@@ -416,6 +418,196 @@ def test_seats_sharing_a_title_admit(env: _Env) -> None:
     assert [seat.name for seat in seats] == ["researcher-1", "researcher-2"]
 
 
+def _seat_session(env: _Env, agent: str) -> tuple[str, str]:
+    """Run ``agent`` with its own live child session; return the session and run ids."""
+    child = SessionManager(env.db).register(
+        external_id=f"seat-{uuid.uuid4()}",
+        machine_id=AGENT_TEST_MACHINE_ID,
+        source="claude",
+        project_id=env.project_id,
+        parent_session_id=env.parent_session_id,
+    )
+    run = LocalAgentRunManager(env.db).create(
+        parent_session_id=env.parent_session_id,
+        provider="claude",
+        prompt="seat",
+        agent_name=agent,
+        child_session_id=child.id,
+    )
+    env.db.execute("UPDATE agent_runs SET status = 'running' WHERE id = %s", (run.id,))
+    return child.id, run.id
+
+
+def _skip_check(env: _Env, caller: str, tab_title: str | None = None) -> AdmittedSeats:
+    return check_runbook_seats(
+        env.stores,
+        caller_session_id=caller,
+        workspace=env.workspace_id,
+        requested="lead,dev",
+        catalogue=CATALOGUE,
+        skip_live_seats=True,
+        tab_title=tab_title,
+    )
+
+
+def test_live_seats_are_skipped_only_when_opted_in(env: _Env) -> None:
+    caller = _pipeline_child(env)
+    lead, _ = _seat_session(env, "lead-agent")
+
+    skipped = _skip_check(env, caller)
+    plain = check_runbook_seats(
+        env.stores,
+        caller_session_id=caller,
+        workspace=env.workspace_id,
+        requested="lead,dev",
+        catalogue=CATALOGUE,
+    )
+
+    assert (skipped.launch, dict(skipped.live)) == (("dev",), {"lead": lead})
+    assert [seat.name for seat in skipped.seats] == ["lead", "dev"]
+    assert (plain.launch, dict(plain.live)) == (("lead", "dev"), {})
+
+
+def _finished_run(env: _Env, session_id: str, run_id: str) -> None:
+    env.db.execute("UPDATE agent_runs SET status = 'completed' WHERE id = %s", (run_id,))
+
+
+def _ended_session(env: _Env, session_id: str, run_id: str) -> None:
+    env.db.execute("UPDATE sessions SET status = 'expired' WHERE id = %s", (session_id,))
+
+
+def _other_machine(env: _Env, session_id: str, run_id: str) -> None:
+    env.db.execute(
+        "UPDATE agent_runs SET machine_id = %s WHERE id = %s",
+        ("21000000-0000-4000-8000-000000000002", run_id),
+    )
+
+
+def _other_project(env: _Env, session_id: str, run_id: str) -> None:
+    other = LocalProjectManager(env.db).create(f"other-{uuid.uuid4().hex[:8]}")
+    env.db.execute("UPDATE sessions SET project_id = %s WHERE id = %s", (other.id, session_id))
+
+
+@pytest.mark.parametrize(
+    "unseat",
+    [_finished_run, _ended_session, _other_machine, _other_project],
+    ids=["finished-run", "ended-session", "other-machine", "other-project"],
+)
+def test_only_a_running_seat_of_this_project_and_machine_is_live(
+    env: _Env, unseat: Callable[[_Env, str, str], None]
+) -> None:
+    caller = _pipeline_child(env)
+    unseat(env, *_seat_session(env, "lead-agent"))
+
+    admitted = _skip_check(env, caller)
+
+    assert (admitted.launch, dict(admitted.live)) == (("lead", "dev"), {})
+
+
+def _support_tab(env: _Env, title: str = "Support") -> None:
+    WorkspaceManager(env.db).create_tab(
+        env.workspace_id, pane_id=str(uuid.uuid4()), project_id=env.project_id, title=title
+    )
+
+
+@pytest.mark.parametrize("tabs", [0, 1])
+def test_guard_reports_whether_the_titled_tab_exists(env: _Env, tabs: int) -> None:
+    caller = _pipeline_child(env)
+    _support_tab(env, "Lane 3")
+    for _ in range(tabs):
+        _support_tab(env)
+
+    assert _skip_check(env, caller, tab_title="Support").tab_exists is (tabs == 1)
+    assert _skip_check(env, caller).tab_exists is False
+
+
+def test_guard_refuses_an_ambiguous_titled_tab(env: _Env) -> None:
+    caller = _pipeline_child(env)
+    _support_tab(env)
+    _support_tab(env)
+
+    with pytest.raises(RunbookSeatRefusal, match="2 tabs titled 'Support'"):
+        _skip_check(env, caller, tab_title="Support")
+
+
+SUPPORT_SEATS = ("release-manager", "triage", "archivist", "recovery-steward", "consolidator")
+
+
+def _run_support(env: _Env) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the bundled Support runbook's guard; return its reply and each launched placement."""
+    path = get_bundled_pipelines_path() / "support.yaml"
+    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
+    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    inputs.update(
+        workspace=env.workspace_id, report_to=env.parent_session_id, project_path="/support"
+    )
+    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "support-run"}
+    renderer = StepRenderer(TemplateEngine())
+    guard = definition.steps[0].mcp
+    assert guard is not None and guard.arguments is not None
+    arguments = renderer.render_mcp_arguments(guard.arguments, context, drop_none=True)
+    caller = _pipeline_child(env)
+    registry = create_agents_registry(
+        MagicMock(), session_manager=SessionManager(env.db), db=env.db
+    )
+    with session_context_for_test(caller):
+        reply = registry.call_sync("check_runbook_seats", arguments)
+    child = SessionManager(env.db).get(caller)
+    assert child is not None
+    execution_id = child.external_id.removeprefix("pipeline-")
+    LocalPipelineExecutionManager(env.db, env.project_id).update_execution_status(
+        execution_id, ExecutionStatus.COMPLETED
+    )
+    context["steps"]["guard"] = {"output": reply}
+    placements: dict[str, Any] = {}
+    for step in definition.steps[1:]:
+        if step.mcp is not None and renderer.should_run_step(step, context):
+            assert step.mcp.arguments is not None
+            rendered = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+            placements[step.id] = rendered["placement"]
+    return reply, placements
+
+
+def _split(env: _Env, title: str) -> dict[str, Any]:
+    return {
+        "split": {
+            "workspace": env.workspace_id,
+            "tab_title": "Support",
+            "axis": "right",
+            "title": title,
+        }
+    }
+
+
+def test_support_reruns_launch_only_the_missing_seats(env: _Env) -> None:
+    for agent in SUPPORT_SEATS:
+        _install_agent(env.db, agent, env.project_id)
+
+    first, placed = _run_support(env)
+    titles = {entry["name"]: entry["title"] for entry in first["seats"]}
+    runs = {seat: _seat_session(env, seat) for seat in placed}
+    _support_tab(env)
+    second, replaced = _run_support(env)
+    _finished_run(env, *runs["triage"])
+    third, healed = _run_support(env)
+
+    assert (first["success"], list(first["launch"]), first["tab_exists"]) == (
+        True,
+        list(SUPPORT_SEATS),
+        False,
+    )
+    assert placed == {
+        "release-manager": {"tab": {"workspace": env.workspace_id, "title": "Support"}},
+        **{seat: _split(env, titles[seat]) for seat in SUPPORT_SEATS[1:]},
+    }
+    assert (list(second["launch"]), second["tab_exists"], replaced) == ([], True, {})
+    assert dict(second["live"]) == {seat: session for seat, (session, _) in runs.items()}
+    assert (list(third["launch"]), healed) == (
+        ["triage"],
+        {"triage": _split(env, titles["triage"])},
+    )
+
+
 @pytest.mark.parametrize(
     ("requested", "cause"),
     [
@@ -465,6 +657,9 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
         "success": True,
         "workspace_id": env.workspace_id,
         "seats": ({"name": "lead", "title": "Lead", "agent": "lead-agent"},),
+        "launch": ("lead",),
+        "live": {},
+        "tab_exists": False,
     }
     assert refused == {
         "success": False,
@@ -474,15 +669,14 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
 
 
 @pytest.mark.parametrize("report_to", [None, "", " \t", "operator"])
-def test_team_lane_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
-    """Outside lane inference, report targets still require explicit valid input."""
-    path = get_bundled_pipelines_path() / "team-lane.yaml"
+def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: str | None) -> None:
+    """The DevTeam guard requires an explicit, valid report target."""
+    path = get_bundled_pipelines_path() / "devteam.yaml"
     definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
-        lane="3",
         workspace=env.workspace_id,
         seats="developer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,
@@ -490,8 +684,6 @@ def test_team_lane_guard_validates_rendered_report_target(env: _Env, report_to: 
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
         guard.arguments, {"inputs": inputs, "steps": {}}, drop_none=True
     )
-    # The lane resolver has its own integration tests; isolate explicit report validation.
-    arguments.pop("lane")
     _install_agent(env.db, "developer", env.project_id)
     caller = _pipeline_child(env)
     registry = create_agents_registry(

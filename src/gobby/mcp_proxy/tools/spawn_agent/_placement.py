@@ -73,7 +73,7 @@ async def preflight_placement(
         )
     if reserver is None:
         return _refusal("invalid_op", "Agent pane placement is not available")
-    # Only a lane manager's own-lane seat resume may place from an autonomous caller.
+    # Only a team manager's own-team seat resume may place from an autonomous caller.
     own_seat = (
         resume_session_id is not None
         and session_manager is not None

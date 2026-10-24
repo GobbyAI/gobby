@@ -11,9 +11,12 @@ import {
 import { MetaKVRow, ParentKVRow, type ParentTaskRef } from "./TaskDetailKV";
 
 const SUBTASK_STATE_ORDER: TaskDisplayState[] = [
-  "ready",
+  "open",
   "in_progress",
   "blocked",
+  "needs_human",
+  "escalated",
+  "deferred",
   "closed",
 ];
 

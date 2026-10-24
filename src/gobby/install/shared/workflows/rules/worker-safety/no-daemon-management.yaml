@@ -2,7 +2,7 @@ tags: [worker-safety, enforcement, gobby]
 
 rules:
   no-daemon-management:
-    description: "Block spawned agents from starting/stopping/restarting the gobby daemon via CLI"
+    description: "Block spawned agents from starting, stopping, restarting or cutting over the gobby daemon via CLI; release batches activate it"
     event: before_tool
     enabled: true
     priority: 50
@@ -10,7 +10,7 @@ rules:
     effects:
       - type: block
         tools: [Bash]
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?gobby\\s+(start|stop|restart)\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(?:uv\\s+run\\s+)?gobby\\s+(start|stop|restart|cutover)\\b"
         reason: "Spawned agents cannot manage the daemon. This would restart the production daemon or start a new instance in the clone."
 
   no-daemon-management-http:

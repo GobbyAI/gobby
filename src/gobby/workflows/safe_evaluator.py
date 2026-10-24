@@ -20,10 +20,12 @@ from psycopg.errors import QueryCanceled
 
 from gobby.skills.instruction_requirements import instruction_is_loaded
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
+from gobby.workflows.assistant_response_matching import (
+    assistant_response_text,
+    first_response_match,
+)
 
 __all__ = [
-    "ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS",
-    "ASSISTANT_RESPONSE_SCAN_LIMIT",
     "LazyBool",
     "SafeExpressionEvaluator",
     "build_agent_workflow_allowed_funcs",
@@ -31,38 +33,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-ASSISTANT_RESPONSE_SCAN_LIMIT = 8000
-ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS = (
-    r"\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bnot\b\s+[^.!?\n,;:]{1,80}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
-    r"\bnot\b\s+[^.!?\n,;:]{1,120}?,\s*\bbut\b\s+[^.!?\n]{1,120}",
-    r"\b(?!not\b)[A-Z0-9][^.!?\n,;:]{1,120}?,\s*\bnot\b\s+[^.!?\n]{1,120}",
-)
-_ASSISTANT_RESPONSE_REGEX_ALLOWLIST = frozenset(ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS)
-# Fenced blocks, inline code, and double-quoted spans cite text instead of
-# asserting it; masking keeps offsets so matches still slice the original.
-_ASSISTANT_RESPONSE_CITED_SPAN = re.compile(
-    r"```.*?(?:```|\Z)|`[^`\n]+`|\"[^\"\n]*\"|“[^”\n]*”", re.DOTALL
-)
-_ASSISTANT_RESPONSE_TEXT_KEYS = (
-    "response",
-    "assistant_response",
-    "assistant_response_text",
-    "prompt_response",
-    "last_assistant_message",
-    "last_assistant_content",
-    "output",
-    "message",
-    "content",
-    "log",
-)
-_NESTED_TEXT_KEYS = (
-    "text",
-    "content",
-    "message",
-    "response",
-    "output",
-)
 
 
 class LazyBool:
@@ -471,53 +441,15 @@ def build_agent_workflow_allowed_funcs(
     }
 
 
-def _coerce_response_text(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, list | tuple):
-        return "\n".join(text for item in value if (text := _coerce_response_text(item).strip()))
-    if isinstance(value, dict):
-        parts = [
-            text
-            for key in _NESTED_TEXT_KEYS
-            if (text := _coerce_response_text(value.get(key)).strip())
-        ]
-        return "\n".join(parts)
-    return ""
-
-
 def _assistant_response_text(context: dict[str, Any]) -> str:
     cached = context.get("_assistant_response_text_cache")
     if isinstance(cached, str):
         return cached
 
-    event = context.get("event")
-    data = _event_field(event, "data", {})
-    if not isinstance(data, dict):
-        data = {}
-
-    text = ""
-    for key in _ASSISTANT_RESPONSE_TEXT_KEYS:
-        text = _coerce_response_text(data.get(key)).strip()
-        if text:
-            break
-
-    if not text:
-        variables = _get_variables(context)
-        for key in ("last_assistant_response", "last_assistant_message"):
-            text = _coerce_response_text(variables.get(key)).strip()
-            if text:
-                break
-
+    data = _event_field(context.get("event"), "data", {})
+    text = assistant_response_text(data if isinstance(data, dict) else {}, _get_variables(context))
     context["_assistant_response_text_cache"] = text
     return text
-
-
-def _mask_cited_spans(text: str) -> str:
-    """Blank cited spans with same-length filler so offsets map to ``text``."""
-    return _ASSISTANT_RESPONSE_CITED_SPAN.sub(
-        lambda match: re.sub(r"[^\n]", "x", match.group(0)), text
-    )
 
 
 def _event_field(event: Any, field: str, default: Any) -> Any:
@@ -793,6 +725,12 @@ def build_condition_helpers(
 
         return missing_claimed_task_extra_skills(_get_variables(ctx))
 
+    def _first_unloaded_instruction(references: Any) -> str | None:
+        """Return the first listed skill or reference this context has not loaded."""
+        variables = _get_variables(ctx)
+        listed = [references] if isinstance(references, str) else references or ()
+        return next((ref for ref in listed if not instruction_is_loaded(str(ref), variables)), None)
+
     def _task_mutation_requires_tasks_skill(
         tool_input: Any = None,
         event_data: dict[str, Any] | None = None,
@@ -808,34 +746,7 @@ def build_condition_helpers(
         """Return the first matched assistant response text fragment."""
         if not isinstance(patterns, list | tuple):
             return None
-
-        text = _assistant_response_text(ctx)
-        if not text:
-            return None
-        haystack = text[:ASSISTANT_RESPONSE_SCAN_LIMIT]
-        masked = _mask_cited_spans(haystack)
-
-        if not regex:
-            lowered = masked.lower()
-            for pattern in patterns:
-                if not isinstance(pattern, str) or pattern == "":
-                    continue
-                index = lowered.find(pattern.lower())
-                if index >= 0:
-                    return haystack[index : index + len(pattern)]
-            return None
-
-        for pattern in patterns:
-            if not isinstance(pattern, str) or pattern not in _ASSISTANT_RESPONSE_REGEX_ALLOWLIST:
-                continue
-            try:
-                match = re.search(pattern, masked, re.IGNORECASE)
-            except re.error:
-                logger.warning("Invalid bundled assistant response regex skipped: %s", pattern)
-                continue
-            if match:
-                return haystack[match.start() : match.end()]
-        return None
+        return first_response_match(_assistant_response_text(ctx), patterns, regex)
 
     funcs["mcp_called"] = _mcp_called
     funcs["mcp_result_is_null"] = _mcp_result_is_null
@@ -847,6 +758,7 @@ def build_condition_helpers(
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error
     funcs["missing_claimed_task_extra_skills"] = _missing_claimed_task_extra_skills
+    funcs["first_unloaded_instruction"] = _first_unloaded_instruction
     funcs["task_mutation_requires_tasks_skill"] = _task_mutation_requires_tasks_skill
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
 

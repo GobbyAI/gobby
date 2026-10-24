@@ -780,7 +780,7 @@ async def test_terminal_provider_error_keeps_closed_task_success_precedence(
         title="Already completed task",
         validation_criteria="Done before provider failure.",
     )
-    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task.id, reason="done", closed_commit_sha="abc123")
     transcript_path = tmp_path / "codex-usage-limit-after-close.jsonl"
     monitor, run = _make_idle_monitor_run(
         temp_db=temp_db,

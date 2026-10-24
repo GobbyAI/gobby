@@ -20,5 +20,6 @@ rules:
           task_id, to an open lane epic or one of its descendants. Open lane epics:
           {{ open_lane_epic_refs() }}. Only an epic labeled `lane` is created without a
           parent. Create the plan's epic under a lane and run start_expansion_run with
-          its plan_file. If no lane fits, ask the Orchestrator with
-          gobby-agents:send_message. Nothing was written.
+          its plan_file. If no lane fits, the Orchestrator rules; seats that cannot
+          message it send the question to Triage with gobby-agents:send_message.
+          Nothing was written.

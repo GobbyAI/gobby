@@ -12,9 +12,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.agents.team_lifecycle import SeatTarget
+
+# A module reference: remote_spawn imports this package, so its names may not exist yet.
+from gobby.hub import remote_spawn
 from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
-from gobby.hub.remote_spawn import RemoteSpawnRequest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.agent_resolver import AgentResolutionError
@@ -381,6 +384,9 @@ def create_spawn_agent_registry(
             placement: Bind the agent's terminal into a workspace pane before exec:
                 {"tab": {"workspace": REF, "title": TEXT}} or
                 {"split": {"pane": REF, "axis": "right"|"down", "title": TEXT}}.
+                A split may name {"workspace": REF, "tab_title": TEXT} in place of
+                "pane" to land beside the focused pane of the one tab with that
+                title; no matching tab, or several, refuses with 'invalid_ref'.
                 Split axis 'balanced' keeps panes at least 80 columns by 12 rows
                 when viewport 'columns' (default 80) and required 'rows' fit them,
                 else tiles the tab evenly across the viewport. A viewport too
@@ -462,12 +468,10 @@ def create_spawn_agent_registry(
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
-        invoking_pipeline = (
-            await asyncio.to_thread(pipeline_caller, session_manager, caller_session_id)
-            if reserved_run_id is not None
-            else None
+        invoking_pipeline = await asyncio.to_thread(
+            pipeline_caller, session_manager, caller_session_id
         )
-        if reserved_run_id is not None and invoking_pipeline is not None:
+        if invoking_pipeline is not None:
             invocation_reply = await asyncio.to_thread(
                 pipeline_invocation_reply,
                 db,
@@ -476,6 +480,15 @@ def create_spawn_agent_registry(
                 parent_session_id=resolved_parent_session_id,
                 project_id=project_id,
                 reserved_run_id=reserved_run_id,
+                target=SeatTarget(
+                    task_id=task_id,
+                    checkout_mode=checkout_mode,
+                    branch_name=branch_name,
+                    base_branch=base_branch,
+                    clone_id=clone_id,
+                    worktree_id=worktree_id,
+                    project_path=project_path,
+                ),
             )
             if invocation_reply is not None:
                 return invocation_reply
@@ -679,7 +692,7 @@ def create_spawn_agent_registry(
                 daemon_config=config_resolver() if config_resolver is not None else None,
                 placement=placement,
                 completion_registry=completion_registry,
-                request=RemoteSpawnRequest(
+                request=remote_spawn.RemoteSpawnRequest(
                     parent_session_id=resolved_parent_session_id,
                     project_id=project_id,
                     prompt=effective_prompt,

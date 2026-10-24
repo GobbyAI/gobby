@@ -1199,6 +1199,322 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
 }
 
 #[test]
+fn task_state_migration_preserves_close_reasons_and_rebuckets() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 477)
+        .expect("task state migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'task state migration')",
+        &[&project_id],
+    )?;
+    let reasons = [
+        (None, "done"),
+        (Some("completed"), "done"),
+        (Some("already_implemented"), "done"),
+        (Some("obsolete"), "moot"),
+        (Some("duplicate"), "superseded"),
+        (Some("wont_fix"), "wont_do"),
+        (Some("out_of_repo"), "wont_do"),
+        (Some("Original narrative close summary"), "done"),
+    ];
+    let task_ids: Vec<Uuid> = reasons.iter().map(|_| Uuid::new_v4()).collect();
+    for (task_id, (reason, _)) in task_ids.iter().zip(reasons) {
+        client.execute(
+            "INSERT INTO tasks(id, project_id, title, validation_criteria, closed_at, closed_reason) \
+             VALUES ($1, $2, 'historical closure', 'history survives', now(), $3)",
+            &[task_id, &project_id, &reason],
+        )?;
+    }
+    let open_task = Uuid::new_v4();
+    let human_task = Uuid::new_v4();
+    for (task_id, labels) in [
+        (open_task, "[]"),
+        (human_task, "[\"awaiting-human-review\"]"),
+    ] {
+        client.execute(
+            "INSERT INTO tasks(id, project_id, title, validation_criteria, labels) \
+             VALUES ($1, $2, 'open work', 'state agrees', $3::text::jsonb)",
+            &[&task_id, &project_id, &labels],
+        )?;
+    }
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    for (task_id, (original, expected)) in task_ids.iter().zip(reasons) {
+        let row = client.query_one(
+            "SELECT closed_reason, state_bucket FROM tasks WHERE id = $1",
+            &[task_id],
+        )?;
+        assert_eq!(row.get::<_, String>(0), expected);
+        assert_eq!(row.get::<_, String>(1), "closed");
+        let body: String = client
+            .query_one(
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:477'",
+                &[task_id],
+            )?
+            .get(0);
+        let snapshot: serde_json::Value = serde_json::from_str(&body)?;
+        assert_eq!(snapshot["kind"], "legacy_close_reason_snapshot");
+        assert_eq!(snapshot["closed_reason"], serde_json::json!(original));
+    }
+    for (task_id, expected) in [(open_task, "open"), (human_task, "needs_human")] {
+        let bucket: String = client
+            .query_one("SELECT state_bucket FROM tasks WHERE id = $1", &[&task_id])?
+            .get(0);
+        assert_eq!(bucket, expected);
+    }
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    let snapshots: i64 = client
+        .query_one(
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:477'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(snapshots, i64::try_from(reasons.len())?);
+    Ok(())
+}
+
+#[test]
+fn review_epoch_migration_preserves_history_and_resets_open_tasks() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 476)
+        .expect("review epoch migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    let open_task = Uuid::new_v4();
+    let closed_task = Uuid::new_v4();
+    let review_id = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'review migration')",
+        &[&project_id],
+    )?;
+    for (task_id, closed) in [(open_task, false), (closed_task, true)] {
+        client.execute(
+            "INSERT INTO tasks(id, project_id, title, validation_criteria, validation_status, \
+             validation_feedback, validation_fail_count, closed_at, closed_commit_sha) \
+             VALUES ($1, $2, 'historical review', 'evidence survives', 'invalid', \
+             'original feedback', 2, CASE WHEN $3 THEN now() ELSE NULL END, \
+             CASE WHEN $3 THEN 'historical-commit' ELSE NULL END)",
+            &[&task_id, &project_id, &closed],
+        )?;
+    }
+    client.execute(
+        "INSERT INTO task_close_reviews(id, task_id, task_ref, caller_session_id, \
+         close_arguments, review_fingerprint, evidence_fingerprint, status, result_payload) \
+         VALUES ($1, $2, '#historical', $3, '{}', 'review', 'evidence', 'invalid', \
+         '{\"validation_status\":\"invalid\",\"feedback\":\"original payload\"}')",
+        &[&review_id, &closed_task, &Uuid::new_v4()],
+    )?;
+    let before: String = client
+        .query_one(
+            "SELECT row_to_json(r)::text FROM task_close_reviews r WHERE id = $1",
+            &[&review_id],
+        )?
+        .get(0);
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let archived: String = client
+        .query_one(
+            "SELECT row_to_json(r)::text FROM task_close_review_history r WHERE id = $1",
+            &[&review_id],
+        )?
+        .get(0);
+    assert_eq!(archived, before);
+    for (task_id, expected_status, expected_count) in
+        [(open_task, "pending", 0), (closed_task, "invalid", 2)]
+    {
+        let row = client.query_one(
+            "SELECT review_status, review_feedback, review_fail_count, review_epoch, closed_commit_sha \
+             FROM tasks WHERE id = $1",
+            &[&task_id],
+        )?;
+        assert_eq!(row.get::<_, String>(0), expected_status);
+        assert_eq!(row.get::<_, i32>(2), expected_count);
+        assert_eq!(row.get::<_, i32>(3), 1);
+        assert_eq!(
+            row.get::<_, Option<String>>(1).as_deref(),
+            (task_id == closed_task).then_some("original feedback")
+        );
+        assert_eq!(
+            row.get::<_, Option<String>>(4).as_deref(),
+            (task_id == closed_task).then_some("historical-commit")
+        );
+        let snapshot: String = client
+            .query_one(
+                "SELECT body FROM task_comments WHERE task_id = $1 AND author = 'migration:476'",
+                &[&task_id],
+            )?
+            .get(0);
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot)?;
+        assert_eq!(snapshot["kind"], "legacy_review_snapshot");
+        assert_eq!(snapshot["epoch"], 0);
+        assert_eq!(snapshot["status"], "invalid");
+        assert_eq!(snapshot["feedback"], "original feedback");
+        assert_eq!(snapshot["fail_count"], 2);
+    }
+    let old_table: bool = client
+        .query_one("SELECT to_regclass('task_close_reviews') IS NOT NULL", &[])?
+        .get(0);
+    assert!(!old_table);
+    for (privilege, expected) in [
+        ("SELECT", true),
+        ("INSERT", false),
+        ("UPDATE", false),
+        ("DELETE", false),
+    ] {
+        let granted: bool = client.query_one(
+            "SELECT has_table_privilege('gobby_daemon_runtime', 'task_close_review_history', $1)",
+            &[&privilege],
+        )?.get(0);
+        assert_eq!(granted, expected, "historical table privilege {privilege}");
+    }
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    let snapshots: i64 = client
+        .query_one(
+            "SELECT count(*) FROM task_comments WHERE author = 'migration:476'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(snapshots, 2);
+    Ok(())
+}
+
+#[test]
+fn runbook_migrations_upgrade_legacy_tasks_without_criteria() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    let migration_index = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version == 476)
+        .expect("review epoch migration");
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..migration_index])?
+        .apply()?;
+    let project_id = Uuid::new_v4();
+    let open_task = Uuid::new_v4();
+    let closed_task = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO projects(id, name) VALUES ($1, 'legacy criteria')",
+        &[&project_id],
+    )?;
+    // These rows predate required criteria; the NOT VALID check never validated them.
+    client.batch_execute("ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria")?;
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, task_type, validation_criteria) \
+         VALUES ($1, $2, 'legacy open', 'task', NULL)",
+        &[&open_task, &project_id],
+    )?;
+    client.execute(
+        "INSERT INTO tasks(id, project_id, title, task_type, validation_criteria, closed_at, \
+         closed_reason) VALUES ($1, $2, 'legacy closed', 'task', '  ', now(), 'completed')",
+        &[&closed_task, &project_id],
+    )?;
+    client.batch_execute(
+        "ALTER TABLE tasks ADD CONSTRAINT tasks_require_validation_criteria CHECK \
+         (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) \
+         IS NOT NULL))) NOT VALID",
+    )?;
+
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    for (task_id, criteria, reason, bucket) in [
+        (open_task, None, None, "open"),
+        (closed_task, Some("  "), Some("done"), "closed"),
+    ] {
+        let row = client.query_one(
+            "SELECT validation_criteria, review_status, closed_reason, state_bucket \
+             FROM tasks WHERE id = $1",
+            &[&task_id],
+        )?;
+        assert_eq!(row.get::<_, Option<String>>(0).as_deref(), criteria);
+        assert_eq!(row.get::<_, String>(1), "pending");
+        assert_eq!(row.get::<_, Option<String>>(2).as_deref(), reason);
+        assert_eq!(row.get::<_, String>(3), bucket);
+    }
+    let constraint = client.query_one(
+        "SELECT convalidated, pg_get_constraintdef(oid, true) FROM pg_constraint \
+         WHERE conrelid = 'tasks'::regclass AND conname = 'tasks_require_validation_criteria'",
+        &[],
+    )?;
+    assert!(!constraint.get::<_, bool>(0));
+    assert_eq!(
+        constraint.get::<_, String>(1),
+        "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) \
+         IS NOT NULL) NOT VALID"
+    );
+    let error = client
+        .execute(
+            "INSERT INTO tasks(id, project_id, title, task_type) VALUES ($1, $2, 'new', 'task')",
+            &[&Uuid::new_v4(), &project_id],
+        )
+        .expect_err("new tasks still need criteria");
+    assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
+fn first_released_runbook_receipts_still_verify() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    // The receipts the first 476/477 release recorded, before the legacy-criteria fix.
+    for (version, checksum) in [
+        (
+            476,
+            "312351fc7cd41c66d8cc3c35d9db9c06e25e09accf1faf96080cc0758754b041",
+        ),
+        (
+            477,
+            "5898d9726be534c13aa9d0764188918b38a8b37288738f21a106fdff84f0e099",
+        ),
+    ] {
+        client.execute(
+            "UPDATE schema_migrations SET checksum=$1 WHERE version=$2",
+            &[&checksum, &version],
+        )?;
+    }
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+    assert!(!report.baseline_applied);
+    assert_eq!(report.migrations_applied, 0);
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
 fn retired_task_validation_config_is_removed_on_upgrade() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
@@ -1303,7 +1619,9 @@ fn build_and_stage_retirement_rebuckets_tasks_and_drops_tables() -> anyhow::Resu
         .get(0);
     assert_eq!(before, "in_progress");
 
-    SchemaRunner::new(&mut client, "public")?.apply()?;
+    // Stop at 472 so later bucket migrations cannot mask its contract.
+    let through_retirement = &MIGRATIONS[..=migration_index];
+    SchemaRunner::with_migrations_for_test(&mut client, "public", through_retirement)?.apply()?;
     for table in [
         "task_stage_states",
         "task_type_default_stages",
@@ -1396,7 +1714,7 @@ fn build_and_stage_retirement_rebuckets_tasks_and_drops_tables() -> anyhow::Resu
         assert_eq!(observed, bucket);
     }
     assert_eq!(
-        SchemaRunner::new(&mut client, "public")?
+        SchemaRunner::with_migrations_for_test(&mut client, "public", through_retirement)?
             .apply()?
             .migrations_applied,
         0

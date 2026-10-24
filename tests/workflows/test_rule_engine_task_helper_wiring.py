@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -12,9 +13,11 @@ from gobby.storage.pipeline_subscribers import PipelineSubscriberStorageError
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.observer_plan_mode import detect_plan_mode_from_context
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -201,12 +204,18 @@ async def test_require_task_close_rejects_live_epic_label(db: HubDatabase) -> No
 
 @pytest.mark.asyncio
 async def test_unresolved_dependency_yields_claim_gates_and_rearms_after_close(
-    db: HubDatabase,
+    db: HubDatabase, tmp_path: Path
 ) -> None:
     _sync_bundled(db)
     session_id = "11111111-1111-4111-8111-111111111111"
     task_manager = LocalTaskManager(db)
-    project = LocalProjectManager(db).create(name="dependency-stop-wait", repo_path=None)
+    # Closing the blocker reads the project's step-record policy from its checkout.
+    project = install_isolated_checkout_project(
+        db,
+        tmp_path / "dependency-stop-wait",
+        name="dependency-stop-wait",
+        machine_id=require_machine_id(),
+    ).project
     epic = task_manager.create_task(
         project_id=project.id,
         title="Blocked epic",

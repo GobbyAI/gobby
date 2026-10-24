@@ -34,16 +34,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("parent_source,expected", [("codex", "codex"), ("pipeline", "claude")])
-def test_team_lane_developer_inherits_live_provider_or_resolver_fallback(
+def test_devteam_developer_inherits_live_provider_or_resolver_fallback(
     definition_db: PostgresHubDatabase, parent_source: str, expected: str
 ) -> None:
-    """Regression for team-lane d6a9f756 with developer_provider unset."""
+    """Regression for runbook run d6a9f756 with developer_provider unset."""
     workflows = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((workflows / "pipelines/team-lane.yaml").read_text())
+        yaml.safe_load((workflows / "pipelines/devteam.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(lane="example", lane_epic="", first_job="")
+    inputs.update(task="example", report_to="test-manager")
     assert inputs["developer_provider"] is None
     step = next(step for step in definition.steps if step.id == "developer")
     assert step.mcp is not None and step.mcp.arguments is not None
@@ -52,15 +52,14 @@ def test_team_lane_developer_inherits_live_provider_or_resolver_fallback(
         {
             "inputs": inputs,
             "steps": {
-                "guard": {
+                "guard": {"output": {"workspace_id": "test-workspace"}},
+                "admit": {
                     "output": {
-                        "worktree": "test-worktree",
-                        "report_to": "test-manager",
-                        "lane_pane": "test-pane",
-                        "lane_columns": 2,
-                        "lane_rows": 2,
+                        "branch": "task-example",
+                        "project_path": "/repo",
+                        "team": {"team_id": "team-1"},
                     }
-                }
+                },
             },
             "invocation_id": "d6a9f756",
         },

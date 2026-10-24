@@ -127,7 +127,7 @@ deferral:
 ```
 
 The referenced task must carry `deferred-from:<plan-id>:<section-id>` provenance
-and be open or closed as completed/already_implemented. Other closure reasons
+and be open or closed as `done`. Other closure reasons
 require a valid replacement owner. Placeholder refs are resolved through the
 expansion run deferral_task_map and then materialized in the canonical plan.
 

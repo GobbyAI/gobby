@@ -14,6 +14,7 @@ class TaskToolErrorCode(str, Enum):
     SESSION_REQUIRED = "SESSION_REQUIRED"
     SESSION_INACTIVE = "SESSION_INACTIVE"
     TASK_CLAIM_CONFLICT = "TASK_CLAIM_CONFLICT"
+    REVIEW_RESET_FORBIDDEN = "REVIEW_RESET_FORBIDDEN"
 
 
 def task_error(error: str, code: TaskToolErrorCode, **details: Any) -> dict[str, Any]:

@@ -289,10 +289,12 @@ async def test_bundled_rule_blocks_interactive_sessions(temp_db: HubDatabase) ->
     [
         ("orchestrator", False),
         ("assistant", False),
-        ("lane-manager", False),
+        ("dev-manager", False),
+        ("triage", False),
         ("release-manager", False),
         ("reporter", False),
         ("developer", True),
+        ("test-writer", True),
         ("default", True),
         (None, True),
     ],

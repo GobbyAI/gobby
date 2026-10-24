@@ -100,7 +100,7 @@ Relationship-check status per mutation tool. Bucket: **G** = interim claim guard
 | open_delivery_pr | none — file has zero session imports | push branch + open real GitHub PR for anyone's task | R |
 | start/resume/cancel_expansion_run | none (cancel: session never resolved; resume: unscoped `run_id`) | cancel anyone's run; apply subtrees under foreign tasks | R |
 | reset_expansion_output | symmetric `is claimed` refusal (caller-agnostic); `run is None` path unchecked | hard-delete run descendants | R |
-| backup_tasks / restore_tasks | none | restore ingests caller-supplied JSONL as ledger state incl. claim/closure fields; backup exfiltrates to any path | R (operator-only) |
+| backup_tasks / restore_tasks | none | restore ingests caller-supplied JSONL as ledger state incl. claim/closure fields; backup exfiltrates to any path | ✓ (#24797: restore_tasks removed; `gobby tasks restore` is operator-only and refused to agent shells; backup_tasks writes only the default path) |
 | reindex_tasks | none | `all_projects=true` resource lever | R (low) |
 
 ## Interim guard (#20821, 0.5.0)

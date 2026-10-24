@@ -74,7 +74,7 @@ from .command_matching_heredoc import (
     classify_heredoc_execution,
     heredoc_free_text,
 )
-from .command_matching_uv import _after_options, _python_stage, _uv_run_argvs
+from .command_matching_uv import _after_options, _language_stage, _uv_run_argvs
 
 _SUBSTITUTION_OPENING = re.compile(r"\$(?:\\\n)*\(|`|[<>](?:\\\n)*\(")
 # A newline right after one of these continues the same command list.
@@ -409,22 +409,22 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
     return "".join(out)
 
 
-PythonBodies = Literal["subjects", "data"]
+LanguageBodies = Literal["subjects", "data"]
 
 
 def executable_command_subjects(
-    command: str, *, python_bodies: PythonBodies = "subjects"
+    command: str, *, language_bodies: LanguageBodies = "subjects"
 ) -> list[str]:
     """Return the match subjects of ``command``: one per executable segment.
 
     A command the scanner cannot parse (unclosed quote) or that has no tokens
-    is matched whole, the fail-closed reading. ``python_bodies="data"`` omits a
-    heredoc body that a Python interpreter parses, since Python source is not
+    is matched whole, the fail-closed reading. ``language_bodies="data"`` omits a
+    heredoc body that Python or Node parses, since language source is not
     shell text. Its unquoted substitutions still run in the outer shell, so they
     remain subjects.
     """
     try:
-        return _subjects(command, 0, python_bodies=python_bodies)
+        return _subjects(command, 0, language_bodies=language_bodies)
     except ValueError:
         # An arm body can remain malformed after its pattern is removed.
         return [command]
@@ -436,7 +436,7 @@ def _subjects(
     *,
     heredoc_source: Literal["shell", "language"] | None = None,
     correlated_subjects: list[str] | None = None,
-    python_bodies: PythonBodies = "subjects",
+    language_bodies: LanguageBodies = "subjects",
 ) -> list[str]:
     try:
         scan = scan_shell_command(command)
@@ -469,10 +469,13 @@ def _subjects(
             except ValueError:
                 cursor = match.end()
     if split_substitution and not _runs_substitution_output(scan.tokens):
-        resolved = _resolve_substitutions(command, depth, correlations, python_bodies)
+        resolved = _resolve_substitutions(command, depth, correlations, language_bodies)
         if resolved[0] != command:
             projected = _subjects(
-                resolved[0], depth, correlated_subjects=correlations, python_bodies=python_bodies
+                resolved[0],
+                depth,
+                correlated_subjects=correlations,
+                language_bodies=language_bodies,
             )
             projected.extend(resolved[1:])
             if correlated_subjects is None:
@@ -561,20 +564,22 @@ def _subjects(
                             candidate[opening + 1 : end],
                             depth + 1,
                             correlated_subjects=correlations,
-                            python_bodies=python_bodies,
+                            language_bodies=language_bodies,
                         )
                     )
                     inner_spans.append((opening + 1, end))
             # In a data run a group contributes only its recursed subjects. The scanner
             # hides the group's heredocs, so its literal text would re-expose a body.
             emitted = candidate
-            if python_bodies == "data":
+            if language_bodies == "data":
                 for group_start, group_end in reversed(inner_spans):
                     emitted = emitted[:group_start] + emitted[group_end:]
             if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1]):
                 subjects.append(emitted)
             else:
-                subjects.extend(_resolve_substitutions(emitted, depth, correlations, python_bodies))
+                subjects.extend(
+                    _resolve_substitutions(emitted, depth, correlations, language_bodies)
+                )
     owner = 0
     classifications: dict[int, HeredocExecution] = {}
     for heredoc in scan.heredocs:
@@ -588,12 +593,13 @@ def _subjects(
             tokens = scan.tokens[segment.first : segment.last + 1]
             stages = [_stage_words(stage) for stage in _pipeline_stages(tokens)]
             classification = classify_heredoc_execution(
-                tokens, raw[owner], stages, [_python_stage(words) for words in stages]
+                tokens, raw[owner], stages, [_language_stage(words) for words in stages]
             )
             classifications[owner] = classification
         opener = heredoc.opener - segment.first
-        as_data = python_bodies == "data" and classification.runs_python(opener)
-        if classification.may_execute(heredoc, opener) and not as_data:
+        as_data = language_bodies == "data" and classification.runs_language(heredoc, opener)
+        emit_body = classification.may_execute(heredoc, opener) and not as_data
+        if emit_body:
             # Each executed body has its own quote context. Joining it to the
             # owner or a sibling lets an interpreter quote hide later commands.
             subjects.extend(
@@ -602,17 +608,18 @@ def _subjects(
                     depth,
                     heredoc_source=classification.source,
                     correlated_subjects=correlations,
-                    python_bodies=python_bodies,
+                    language_bodies=language_bodies,
                 )
             )
-        elif not heredoc.quoted:
+        if not heredoc.quoted and (not emit_body or classification.source == "language"):
+            # Even a conservatively retained language body has outer-shell expansions.
             for span in _substitution_spans(heredoc.text):
                 subjects.extend(
                     _subjects(
                         span,
                         depth + 1,
                         correlated_subjects=correlations,
-                        python_bodies=python_bodies,
+                        language_bodies=language_bodies,
                     )
                 )
     if correlated_subjects is None:
@@ -621,7 +628,7 @@ def _subjects(
 
 
 def _resolve_substitutions(
-    subject: str, depth: int, correlations: list[str], python_bodies: PythonBodies
+    subject: str, depth: int, correlations: list[str], language_bodies: LanguageBodies
 ) -> list[str]:
     """Extract each command substitution into independent executable subjects.
 
@@ -670,7 +677,10 @@ def _resolve_substitutions(
                 body = backtick_body(body)
             bodies = (
                 _subjects(
-                    body, depth + 1, correlated_subjects=correlations, python_bodies=python_bodies
+                    body,
+                    depth + 1,
+                    correlated_subjects=correlations,
+                    language_bodies=language_bodies,
                 )
                 if body
                 else []

@@ -576,7 +576,7 @@ def test_apply_ignores_closed_obsolete_historical_output(
     first = _save_run(service, parent, sample_project, spec)
     applied = service.apply_run(first.id, session_id=None)
     for task_id in applied.created_task_ids:
-        service.task_manager.close_task(task_id, reason="obsolete", force=True)
+        service.task_manager.close_task(task_id, reason="moot", force=True)
     second_spec = {
         **spec,
         "tasks": [{**spec["tasks"][0], "id": "leaf-2"}],
@@ -590,7 +590,7 @@ def test_apply_ignores_closed_obsolete_historical_output(
     for task_id in applied.created_task_ids:
         old_task = service.task_manager.get_task(task_id)
         assert old_task.closed_at is not None
-        assert old_task.closed_reason == "obsolete"
+        assert old_task.closed_reason == "moot"
 
 
 def _cross_plan_spec(parent_id: str, root_ref: str, blocker_ref: str) -> dict[str, Any]:

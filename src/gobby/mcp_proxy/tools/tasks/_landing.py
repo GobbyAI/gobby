@@ -12,6 +12,7 @@ from gobby.mcp_proxy.tools.tasks._context import (
     RegistryContext,
     checkout_unresolved_error,
 )
+from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.storage.hub.protocol import MainCheckoutLanding
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.land_commit import land_candidate
@@ -86,7 +87,7 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     async def land_commit(task_id: str, commit_sha: str) -> dict[str, Any]:
-        """Land a linked candidate for the reviewer who approved that exact SHA."""
+        """Land a linked candidate as the task's Dev Manager or the Orchestrator."""
         session_id = get_current_session_id()
         if not session_id:
             return {"landed": False, "error": "session_required"}
@@ -100,14 +101,21 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 caller_session_id=ctx.resolve_session_id(session_id),
                 sessions=ctx.session_manager,
             )
-            return dict(
-                await land_candidate(
-                    ctx.task_manager.db,
-                    task=task,
-                    caller_session_id=session_id,
-                    commit_sha=commit_sha,
-                )
+            result = await land_candidate(
+                ctx.task_manager.db,
+                task=task,
+                caller_session_id=session_id,
+                commit_sha=commit_sha,
             )
+            if result.get("escalated"):
+                # Triage owns the conflict now: release the claimant's session claim state.
+                coordinate_task_escalation(
+                    ctx,
+                    ctx.task_manager.get_task(task.id),
+                    prior_owner_session_id=task.claimed_by_session_id,
+                    session_id=session_id,
+                )
+            return dict(result)
         except CHECKOUT_RESOLUTION_ERRORS as exc:
             return checkout_unresolved_error(exc)
         except (TaskNotFoundError, ValueError) as exc:
@@ -116,8 +124,12 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
     registry.register(
         name="land_commit",
         description=(
-            "Land a linked full commit SHA approved by the calling independent reviewer. "
-            "A session that has ever claimed the task is refused."
+            "Land a linked full commit SHA as the task's bound Dev Manager, or as the "
+            "Orchestrator as a last resort. The current review step must approve that exact "
+            "SHA and be written by another session; reviewers and any session that has ever "
+            "claimed the task are refused. A landing freeze refuses. Disjoint integration "
+            "changes land as a merge; paths the integration tip also changed and merge "
+            "conflicts escalate the task to Triage. Unlanded candidates never block."
         ),
         input_schema={
             "type": "object",

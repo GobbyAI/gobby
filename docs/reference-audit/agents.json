@@ -110,6 +110,15 @@
         "source-audit",
         "focused-agents"
       ]
+    },
+    {
+      "path": "docs/guides/gclient-user-guide.md",
+      "anchors": [
+        "workspaces"
+      ],
+      "evidence": [
+        "gclient-placement"
+      ]
     }
   ],
   "operations": [
@@ -323,6 +332,21 @@
       "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
       "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/admin_cold_start.py",
+        "symbol": "register_admin_cold_start_tools.cold_start_admin"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "operator pane; /gobby admin and /gobby assistant cold start",
+      "server": "gobby-agents",
+      "tool": "cold_start_admin"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/personas.md",
+      "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_spawn_tools.py",
         "symbol": "register_agent_spawn_tools.apply_persona"
       },
@@ -363,6 +387,21 @@
       "audience": "agent",
       "server": "gobby-agents",
       "tool": "check_runbook_seats"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/runbook_seat_tools.py",
+        "symbol": "register_runbook_seat_tools.admit_team_tool"
+      },
+      "verification": [
+        "source-audit",
+        "team-admission"
+      ],
+      "audience": "agent; team runbook admit step only",
+      "server": "gobby-agents",
+      "tool": "admit_team"
     },
     {
       "surface": "mcp",
@@ -1193,6 +1232,12 @@
       "result": "242 passed in 41.18s; isolated fixtures, no live mutation probes."
     },
     {
+      "id": "team-admission",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/agents/test_team_admission.py tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py tests/agents/test_runbook_seats.py -q",
+      "result": "55 passed (#24797). Concurrent admissions for one task create one team, one branch and one worktree named task-<seq>-<title-slug>; the loser gets team_exists. A re-run adopts its own tree from the recorded intent. A replacement joins with team_id and leaves commits and dirty files untouched. Admission and seat spawns refuse any task, tree, branch, base or clone drift."
+    },
+    {
       "id": "sandbox-cli-models",
       "kind": "pytest",
       "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_sandbox.py tests/agents/test_sandbox_policy.py tests/agents/test_srt_runtime.py tests/agents/test_srt_spawn.py tests/agents/test_external_write_grants.py tests/agents/test_worktree_checkpoint.py tests/config/test_daemon_sandbox.py tests/cli/test_cli_agents.py tests/cli/test_agents_coverage.py tests/cli/test_agents_steps.py tests/providers/capabilities tests/mcp_proxy/tools/test_agents.py tests/mcp_proxy/tools/test_agents_spawn_evaluation.py tests/skills/test_capability_catalog.py -q",
@@ -1221,6 +1266,12 @@
       "kind": "pytest",
       "command": "RTK_DISABLED=1 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv --directory /Users/josh/.gobby/worktrees/gobby/task-23308-coordination-wait-contract run pytest tests/events/test_coordination_waits.py -k test_mcp_replay_contract_matches_public_guidance -q",
       "result": "3 failed before the guidance repair, after all runtime assertions passed; the same command then passed all 3 cases. Isolated MCP registration covers active ID/expiry preservation, release after registration, fresh wait on identical terminal replay and independent fresh-key hold. MCP description, guide and bundled messaging reference agree with that behavior. Runtime behavior remains as intentionally changed in e90924169c5c3740501fdf247973010535ee692c. No live wait mutation."
+    },
+    {
+      "id": "gclient-placement",
+      "kind": "pytest",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/terminals/test_workspace_agent_panes.py tests/workflows/test_seat_definitions.py -q",
+      "result": "59 passed in 8.77s (#24797). Covers the three placement forms, including a split beside the focused pane of the one tab with a given title, the refusal codes, and the seat-references gate that requires the gclient reference again after context loss. Isolated fixtures; no live workspace mutation."
     }
   ],
   "discrepancies": [

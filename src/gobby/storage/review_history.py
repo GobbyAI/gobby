@@ -39,7 +39,9 @@ class ReviewHistory:
         self.db = db
 
     def get(self, review_id: str) -> HistoricalCloseReview | None:
-        row = self.db.fetchone("SELECT * FROM task_close_reviews WHERE id = %s", (review_id,))
+        row = self.db.fetchone(
+            "SELECT * FROM task_close_review_history WHERE id = %s", (review_id,)
+        )
         return _from_row(row) if row is not None else None
 
     def for_task(
@@ -52,7 +54,7 @@ class ReviewHistory:
         if not 1 <= limit <= 100 or offset < 0:
             raise ValueError("History requires a limit of 1..100 and a nonnegative offset.")
         rows = self.db.fetchall(
-            """SELECT * FROM task_close_reviews WHERE task_id = %s
+            """SELECT * FROM task_close_review_history WHERE task_id = %s
                ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s""",
             (task_id, limit, offset),
         )
@@ -61,7 +63,9 @@ class ReviewHistory:
 
 def read_review_row(conn: Transaction, review_id: str) -> Mapping[str, Any] | None:
     """Read an immutable historical record inside a task-repair transaction."""
-    return conn.execute("SELECT * FROM task_close_reviews WHERE id = %s", (review_id,)).fetchone()
+    return conn.execute(
+        "SELECT * FROM task_close_review_history WHERE id = %s", (review_id,)
+    ).fetchone()
 
 
 def _object(value: object) -> dict[str, Any] | None:

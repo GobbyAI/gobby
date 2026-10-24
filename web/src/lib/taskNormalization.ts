@@ -36,10 +36,7 @@ export type RawTaskPayload = {
   assigned_agent?: string | null;
 };
 
-export type NormalizedTaskPayload = Omit<
-  RawTaskPayload,
-  "state"
-> & {
+export type NormalizedTaskPayload = Omit<RawTaskPayload, "state"> & {
   ref: string;
   title: string;
   status: string;
@@ -130,10 +127,8 @@ const OPTIONAL_TASK_FIELD_VALIDATORS = {
 } satisfies Partial<Record<keyof RawTaskPayload, OptionalTaskFieldValidator>>;
 
 function hasValidOptionalTaskFields(record: Record<string, unknown>): boolean {
-  return (
-    Object.entries(OPTIONAL_TASK_FIELD_VALIDATORS).every(([field, validate]) =>
-      validate(record[field]),
-    )
+  return Object.entries(OPTIONAL_TASK_FIELD_VALIDATORS).every(
+    ([field, validate]) => validate(record[field]),
   );
 }
 

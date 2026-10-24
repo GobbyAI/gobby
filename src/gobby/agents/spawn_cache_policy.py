@@ -7,12 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from gobby.agents.cargo_environment import cargo_environment
 from gobby.agents.constants import (
     CARGO_HOME,
     CARGO_TARGET_DIR,
     GOBBY_SESSION_ID,
     UV_CACHE_DIR,
     ensure_agent_cargo_home_dir,
+    ensure_agent_sccache_dir,
     ensure_agent_uv_cache_dir,
     get_agent_session_cache_dir,
 )
@@ -89,6 +91,10 @@ def build_spawn_cache_env(session_id: str) -> dict[str, str]:
     """Return env values for shared spawned-agent cache and tool paths."""
     env = {entry.env_var: entry.ensure_path(session_id) for entry in SPAWN_CACHE_POLICY}
     env[PATH_ENV_VAR] = merge_spawn_path(os.environ.get(PATH_ENV_VAR))
+    # Kept out of SPAWN_CACHE_POLICY: sandboxed spawns turn that policy into write grants.
+    # The socket sits beside the cache to stay within the socket path limit.
+    sccache_dir = ensure_agent_sccache_dir()
+    env.update(cargo_environment(sccache_dir, sccache_dir.with_name("sccache.sock")))
     return env
 
 

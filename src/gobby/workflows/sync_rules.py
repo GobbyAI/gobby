@@ -44,11 +44,7 @@ def get_bundled_rules_paths() -> list[Path]:
     """Get active bundled rule roots."""
     from gobby.paths import get_install_dir
 
-    install_dir = get_install_dir()
-    return [
-        install_dir / "shared" / "workflows" / "rules",
-        install_dir / "shared" / "rules",
-    ]
+    return [get_install_dir() / "shared" / "workflows" / "rules"]
 
 
 def _iter_active_rule_files(rules_paths: list[Path]) -> list[tuple[Path, Path]]:

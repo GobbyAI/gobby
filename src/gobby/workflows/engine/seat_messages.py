@@ -35,7 +35,6 @@ _ENVELOPE_FIELDS = {
     "SHA",
     "VERDICT",
     "REASON",
-    "LANDING",
     "BRANCH",
     "RECEIPT",
     "MODE",
@@ -84,14 +83,7 @@ _ENVELOPE_CANONICAL: dict[str, str] = {
     "CANDIDATE": "TASK_TITLE RUN WT COMMIT NOTE",
     "CANDIDATE_WITHDRAWN": "SHA NOTE",
     "CANDIDATE_VERDICT": "SHA VERDICT TASK_TITLE NOTE",
-    "LANDED": (
-        "SHA BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
-        "PROJECT_SYNC_REQUIRED PROVENANCE RETEST TASK_TITLE NOTE"
-    ),
-    "ALREADY_LANDED": "SHA RECEIPT LANDED_BY_SESSION_ID TASK_TITLE NOTE",
-    "REVIEW_COMPLETE": "SHA VERDICT LANDING NOTE",
     "PROOF_REQUEST": "SHA NOTE",
-    "PROOF_RESULT": "SHA RETEST NOTE",
 }
 # Ordering the receiver depends on: ranks must not decrease, and unlisted keys are
 # unordered. TASK_TITLE is free text, so a binding field must precede it, except on
@@ -101,22 +93,14 @@ _ENVELOPE_RANKS: dict[str, tuple[tuple[str, ...], ...]] = {
     "CANDIDATE": (("TASK_TITLE",), ("RUN", "WT", "COMMIT")),
     "CANDIDATE_WITHDRAWN": (("SHA",),),
     "CANDIDATE_VERDICT": (("SHA",), ("VERDICT",), ("TASK_TITLE",)),
-    "LANDED": (("SHA",), ("TASK_TITLE",)),
-    "ALREADY_LANDED": (("SHA",), ("TASK_TITLE",)),
-    "REVIEW_COMPLETE": (("SHA",), ("VERDICT",)),
     "PROOF_REQUEST": (("SHA",),),
-    "PROOF_RESULT": (("SHA",), ("RETEST",)),
 }
 # Fields that must be non-empty. TASK is required for every event.
 _ENVELOPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "CANDIDATE": ("RUN", "WT", "COMMIT"),
     "CANDIDATE_WITHDRAWN": ("SHA",),
     "CANDIDATE_VERDICT": ("SHA", "VERDICT"),
-    "LANDED": ("SHA",),
-    "ALREADY_LANDED": ("SHA",),
-    "REVIEW_COMPLETE": ("SHA",),
     "PROOF_REQUEST": ("SHA",),
-    "PROOF_RESULT": ("SHA",),
 }
 
 
@@ -192,7 +176,7 @@ def envelope_fields(text: str) -> dict[str, str] | None:
 
 
 def _loose_envelope_fields(line: str) -> dict[str, str] | None:
-    """Read retired park/resume lines with the pre-grammar reader."""
+    """Read retired park, resume and landing lines with the pre-grammar reader."""
     prefix = _PREFIX.match(line)
     if prefix is None:
         return None
@@ -253,7 +237,8 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
 
     Consumed envelopes are read by envelope_fields, the grammar send_message also
     enforces. CANDIDATE accepts keyed metadata after its optional free title. NOTE
-    never carries authority. Retired park/resume lines keep the loose reader.
+    never carries authority. Retired park, resume and landing lines keep the loose
+    reader.
     """
     line = message.content.partition("\n")[0]
     is_candidate = re.match(r"^(?:LANE=\S*\s+)?EVENT=CANDIDATE(?:\s|$)", line) is not None
@@ -303,10 +288,8 @@ def is_task_coordinator(
     db: HubDatabase,
     event: CandidateEvent,
     reviewer_session_id: str,
-    *,
-    parked_candidates: list[dict[str, Any]],
 ) -> bool:
-    """Only the unit's reviewer, root Orchestrator or owning LM controls its state."""
+    """Only the unit's reviewer, the Orchestrator or the task's Dev Manager controls its state."""
     from gobby.mcp_proxy.tools.tasks._claim_release import _can_release
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
@@ -323,13 +306,12 @@ def is_task_coordinator(
     ):
         return False
     if caller.id == reviewer.id:
-        return is_task_reviewer(db, event) or any(
-            record.get("task") == event.task.id and record.get("sha") == event.sha
-            for record in parked_candidates
-        )
-    # Reuse the claim-release rule, including the enabled definition, root
-    # Orchestrator and bound running LM run with the reviewer's recorded lane.
-    return _can_release(RegistryContext(task_manager=LocalTaskManager(db)), caller, reviewer)
+        return is_task_reviewer(db, event)
+    # Reuse the claim-release rule: the root Orchestrator, or the task's bound
+    # Dev Manager when the reviewer is a seat of its team.
+    return _can_release(
+        RegistryContext(task_manager=LocalTaskManager(db)), caller, reviewer, event.task.id
+    )
 
 
 def is_task_reviewer(db: HubDatabase, event: CandidateEvent) -> bool:

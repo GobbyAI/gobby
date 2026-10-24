@@ -1,0 +1,234 @@
+name: support
+type: pipeline
+version: "1.0"
+description: |
+  Support runbook: launches the standing support seats into one Support tab in the shared
+  checkout. Seats: release-manager, triage, archivist, recovery-steward and consolidator.
+
+  Re-runnable: the guard skips each seat whose agent already runs live in this project on
+  this machine, so a re-run launches only the missing seats and never duplicates one. The
+  first launched seat opens the Support tab when the workspace has none; every other seat
+  splits that tab. A failed runbook execution is never resumed; run it again.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Existing target workspace UUID or ref"
+  project_path:
+    type: string
+    required: true
+    description: "Shared project checkout; no worktree is created"
+  seats:
+    type: string
+    default: release-manager,triage,archivist,recovery-steward,consolidator
+    description: "Comma-separated seats: release-manager, triage, archivist, recovery-steward, consolidator"
+  report_to:
+    type: string
+    required: true
+    description: "Live session ref for readiness, blockers and unassigned waits: the Orchestrator for Triage alone, then Triage for every other seat"
+  release_manager_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  release_manager_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  release_manager_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+  triage_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  triage_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  triage_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+  archivist_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  archivist_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  archivist_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+  recovery_steward_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  recovery_steward_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  recovery_steward_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+  consolidator_provider:
+    type: string
+    default: null
+    description: "Seat provider; override to change the default"
+  consolidator_model:
+    type: string
+    default: null
+    description: "Seat model; override to change the default"
+  consolidator_reasoning_effort:
+    type: string
+    default: null
+    description: "Seat reasoning effort; override to change the default"
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        skip_live_seats: true
+        tab_title: Support
+        catalogue:
+          - name: release-manager
+            title: Support release manager
+            agent: release-manager
+          - name: triage
+            title: Support triage
+            agent: triage
+          - name: archivist
+            title: Support archivist
+            agent: archivist
+          - name: recovery-steward
+            title: Support recovery steward
+            agent: recovery-steward
+          - name: consolidator
+            title: Support consolidator
+            agent: consolidator
+
+  - id: release-manager
+    condition: "${{ 'release-manager' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: release-manager
+        title: Support release manager
+        provider: "${{ inputs.release_manager_provider }}"
+        model: "${{ inputs.release_manager_model }}"
+        reasoning_effort: "${{ inputs.release_manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the release manager seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
+          'axis': 'right', 'title': 'Support release manager'}}
+          if steps.guard.output.tab_exists
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
+
+  - id: triage
+    condition: "${{ 'triage' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: triage
+        title: Support triage
+        provider: "${{ inputs.triage_provider }}"
+        model: "${{ inputs.triage_model }}"
+        reasoning_effort: "${{ inputs.triage_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the triage seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
+          'axis': 'right', 'title': 'Support triage'}}
+          if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
+
+  - id: archivist
+    condition: "${{ 'archivist' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: archivist
+        title: Support archivist
+        provider: "${{ inputs.archivist_provider }}"
+        model: "${{ inputs.archivist_model }}"
+        reasoning_effort: "${{ inputs.archivist_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the archivist seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
+          'axis': 'right', 'title': 'Support archivist'}}
+          if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
+          or 'triage' in steps.guard.output.launch
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
+
+  - id: recovery-steward
+    condition: "${{ 'recovery-steward' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: recovery-steward
+        title: Support recovery steward
+        provider: "${{ inputs.recovery_steward_provider }}"
+        model: "${{ inputs.recovery_steward_model }}"
+        reasoning_effort: "${{ inputs.recovery_steward_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the recovery steward seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
+          'axis': 'right', 'title': 'Support recovery steward'}}
+          if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
+          or 'triage' in steps.guard.output.launch or 'archivist' in steps.guard.output.launch
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
+
+  - id: consolidator
+    condition: "${{ 'consolidator' in steps.guard.output.launch }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: consolidator
+        title: Support consolidator
+        provider: "${{ inputs.consolidator_provider }}"
+        model: "${{ inputs.consolidator_model }}"
+        reasoning_effort: "${{ inputs.consolidator_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ inputs.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the consolidator seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, go idle as your consolidate step directs. Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': inputs.workspace, 'tab_title': 'Support',
+          'axis': 'right', 'title': 'Support consolidator'}}
+          if steps.guard.output.tab_exists or 'release-manager' in steps.guard.output.launch
+          or 'triage' in steps.guard.output.launch or 'archivist' in steps.guard.output.launch
+          or 'recovery-steward' in steps.guard.output.launch
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}

@@ -32,6 +32,7 @@ from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
 from gobby.tasks.close_receipts import list_close_receipts
 from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.step_records import current_task_steps, list_task_step_records
 from gobby.utils.datetime import datetime_to_iso
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 
@@ -494,6 +495,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             [receipt.kind, receipt.commit_sha, receipt.recorded_at, receipt.facts]
             for receipt in list_close_receipts(ctx.task_manager.db, resolved_id)
         ]
+        history = list_task_step_records(ctx.task_manager.db, resolved_id)
+        result["step_records"] = {
+            step: record.model_dump(mode="json")
+            for step, record in current_task_steps(history, task.review_epoch).items()
+        }
 
         return result
 

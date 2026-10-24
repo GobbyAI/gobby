@@ -135,6 +135,205 @@ class TestEnsureNpmDepsInstalled:
         assert _ensure_npm_deps_installed(tmp_path) is False
 
 
+_LOCKED_PACKAGES: dict[str, dict[str, object]] = {
+    "node_modules/vite": {"version": "6.4.5"},
+    "node_modules/fsevents": {"version": "2.3.3", "optional": True},
+}
+
+
+def _write_lock_pair(
+    web_dir: Path,
+    locked: dict[str, dict[str, object]],
+    installed: dict[str, dict[str, object]],
+) -> None:
+    """Write package-lock.json and the hidden lockfile npm leaves in node_modules."""
+    lock = {"lockfileVersion": 3, "packages": {"": {}, **locked}}
+    (web_dir / "package-lock.json").write_text(json.dumps(lock))
+    (web_dir / "node_modules").mkdir(exist_ok=True)
+    (web_dir / "node_modules" / ".package-lock.json").write_text(
+        json.dumps({"packages": installed})
+    )
+
+
+class TestNpmDepsLockSync:
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_matching_tree_is_left_alone(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.5"}})
+        assert _ensure_npm_deps_installed(tmp_path) is True
+        mock_run.assert_not_called()
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_optional_entry_absent_on_this_platform_is_in_sync(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        optional_only = {"node_modules/fsevents": {"version": "2.3.3", "optional": True}}
+        _write_lock_pair(tmp_path, optional_only, {})
+        assert _ensure_npm_deps_installed(tmp_path) is True
+        mock_run.assert_not_called()
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_version_drift_reinstalls_from_lock(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        assert _ensure_npm_deps_installed(tmp_path) is True
+        assert mock_run.call_args.args[0] == ["npm", "ci"]
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_extra_installed_package_reinstalls_from_lock(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        installed: dict[str, dict[str, object]] = {
+            "node_modules/vite": {"version": "6.4.5"},
+            "node_modules/left-over": {"version": "1.0.0"},
+        }
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, installed)
+        assert _ensure_npm_deps_installed(tmp_path) is True
+        assert mock_run.call_args.args[0] == ["npm", "ci"]
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_unreadable_hidden_lock_reinstalls_from_lock(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        (tmp_path / "package-lock.json").write_text(
+            json.dumps({"packages": {"": {}, **_LOCKED_PACKAGES}})
+        )
+        (tmp_path / "node_modules").mkdir()
+        assert _ensure_npm_deps_installed(tmp_path) is True
+        assert mock_run.call_args.args[0] == ["npm", "ci"]
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_mismatch_message_names_the_drifted_package(
+        self, mock_run: MagicMock, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        _ensure_npm_deps_installed(tmp_path)
+        assert "node_modules/vite" in capsys.readouterr().out
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_failed_reinstall_is_reported_as_failure(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=1)
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        assert _ensure_npm_deps_installed(tmp_path) is False
+
+    @patch("gobby.cli.ui.subprocess.run")
+    def test_missing_tree_without_lockfile_falls_back_to_npm_install(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        assert _ensure_npm_deps_installed(tmp_path) is True
+        assert mock_run.call_args.args[0] == ["npm", "install"]
+
+
+class TestUiBuildLockSync:
+    @patch("gobby.cli.ui.subprocess.run")
+    @patch("gobby.cli.ui.find_web_dir")
+    def test_out_of_sync_tree_reinstalls_before_building(
+        self, mock_find: MagicMock, mock_run: MagicMock, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        _write_lock_pair(web_dir, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        mock_find.return_value = web_dir
+        mock_run.return_value = MagicMock(returncode=0)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
+        assert result.exit_code == 0
+        assert [c.args[0] for c in mock_run.call_args_list] == [
+            ["npm", "ci"],
+            ["npm", "run", "build"],
+        ]
+        assert "node_modules/vite" in result.output
+        assert "Build complete" in result.output
+
+    @patch("gobby.cli.ui.subprocess.run")
+    @patch("gobby.cli.ui.find_web_dir")
+    def test_out_of_sync_tree_stops_when_reinstall_fails(
+        self, mock_find: MagicMock, mock_run: MagicMock, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        _write_lock_pair(web_dir, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        mock_find.return_value = web_dir
+        mock_run.return_value = MagicMock(returncode=1)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
+        assert result.exit_code != 0
+        assert [c.args[0] for c in mock_run.call_args_list] == [["npm", "ci"]]
+
+    @patch("gobby.cli.ui.subprocess.run")
+    @patch("gobby.cli.ui.find_web_dir")
+    def test_in_sync_tree_builds_without_reinstalling(
+        self, mock_find: MagicMock, mock_run: MagicMock, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        web_dir = tmp_path / "web"
+        web_dir.mkdir()
+        _write_lock_pair(web_dir, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.5"}})
+        mock_find.return_value = web_dir
+        mock_run.return_value = MagicMock(returncode=0)
+        result = runner.invoke(ui, ["build"], obj=_runtime(MagicMock()), catch_exceptions=False)
+        assert result.exit_code == 0
+        assert [c.args[0] for c in mock_run.call_args_list] == [["npm", "run", "build"]]
+        assert "Build complete" in result.output
+
+
+def _spawn_dev_server(
+    web_dir: Path, commands: list[list[str]], npm_returncode: int = 0
+) -> int | None:
+    """Run spawn_ui_server with npm and the dev server stubbed; record each command in order."""
+    from gobby.cli.utils import spawn_ui_server
+
+    deps = MagicMock()
+    deps.is_port_available.return_value = True
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(cmd)
+        return MagicMock(returncode=npm_returncode, stderr=b"")
+
+    def fake_popen(cmd: list[str], **_kwargs: object) -> MagicMock:
+        commands.append(cmd)
+        process = MagicMock(pid=4242)
+        process.poll.return_value = None
+        return process
+
+    with (
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui.spawn.run", side_effect=fake_run),
+        patch("gobby.cli.utils_ui.subprocess.Popen", side_effect=fake_popen),
+        patch("gobby.cli.utils_ui._write_ui_pid_record"),
+        patch("gobby.cli.utils_ui.time.sleep"),
+    ):
+        return spawn_ui_server("127.0.0.1", 5173, web_dir, web_dir / "ui.log")
+
+
+DEV_SERVER_COMMAND = ["npm", "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"]
+
+
+class TestSpawnUiServerLockSync:
+    def test_drifted_tree_runs_npm_ci_before_dev_server(self, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        commands: list[list[str]] = []
+
+        assert _spawn_dev_server(tmp_path, commands) == 4242
+        assert commands == [["npm", "ci"], DEV_SERVER_COMMAND]
+
+    def test_in_sync_tree_starts_dev_server_without_install(self, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.5"}})
+        commands: list[list[str]] = []
+
+        assert _spawn_dev_server(tmp_path, commands) == 4242
+        assert commands == [DEV_SERVER_COMMAND]
+
+    def test_failed_npm_ci_stops_before_dev_server(self, tmp_path: Path) -> None:
+        _write_lock_pair(tmp_path, _LOCKED_PACKAGES, {"node_modules/vite": {"version": "6.4.3"}})
+        commands: list[list[str]] = []
+
+        assert _spawn_dev_server(tmp_path, commands, npm_returncode=1) is None
+        assert commands == [["npm", "ci"]]
+
+
 # ---------------------------------------------------------------------------
 # ui start
 # ---------------------------------------------------------------------------

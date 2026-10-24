@@ -403,9 +403,7 @@ test.describe("Live approval mode verification", () => {
       .map((entry) => entry.trim().toLowerCase())
       .filter(Boolean);
     const providersToVerify = (
-      requestedProviders.length > 0
-        ? requestedProviders
-        : ["claude", "codex"]
+      requestedProviders.length > 0 ? requestedProviders : ["claude", "codex"]
     ) as Array<"claude" | "codex">;
     const runId = Date.now().toString(36);
 

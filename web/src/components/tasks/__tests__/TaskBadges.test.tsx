@@ -14,12 +14,7 @@ describe("StatusBadge", () => {
   });
 
   it("renders known statuses", () => {
-    const statuses = [
-      "open",
-      "in_progress",
-      "closed",
-      "escalated",
-    ];
+    const statuses = ["open", "in_progress", "closed", "escalated"];
     for (const status of statuses) {
       const { unmount } = render(<StatusBadge status={status} />);
       expect(screen.getByText(status.replace(/_/g, " "))).toBeTruthy();
@@ -36,7 +31,7 @@ describe("StatusBadge", () => {
 describe("StatusDot", () => {
   it("renders with correct aria-label", () => {
     render(<StatusDot status="open" />);
-    expect(screen.getByLabelText("Status: Ready")).toBeTruthy();
+    expect(screen.getByLabelText("Status: Open")).toBeTruthy();
   });
 
   it("renders with title", () => {
@@ -62,10 +57,13 @@ describe("StatusDot — honest task-state glyphs (#14769 / D2)", () => {
     ["open", "circle", "info"],
     ["in_progress", "activity", "warning"],
     ["blocked", "lock", "error"],
-    ["closed", "dash", "disabled"],
+    ["needs_human", "eye", "warning"],
+    ["escalated", "error", "error"],
+    ["deferred", "dash", "disabled"],
+    ["closed", "check", "disabled"],
   ];
 
-  it("maps every state to a distinct, non-alarm shape with its lightness band intact", () => {
+  it("maps every state to a distinct shape with its lightness band intact", () => {
     const seenGlyphs = new Set<string>();
     for (const [status, glyph, kind] of cases) {
       const { container, unmount } = render(<StatusDot status={status} />);

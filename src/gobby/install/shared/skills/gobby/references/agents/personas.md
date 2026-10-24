@@ -34,10 +34,18 @@ Relaunch the terminal pane with the requested definition. Spawned sessions have
 their definition fixed at spawn and refuse activation with
 `spawned_session_definition_fixed`.
 
+To cold start an operator pane, call `gobby-agents:cold_start_admin` with
+`role` set to `orchestrator` or `assistant`. It applies that definition to the
+caller's session, then reuses the counterpart seat: a live session holding the
+other role, or a pane with that role in the caller's tab. Otherwise it splits
+the caller's pane once and launches the same provider CLI with the
+counterpart's `/gobby` command (`$gobby` for Codex). Re-running it opens no
+second pane and never spawns an agent. Report both seat refs from the result.
+
 If resolution fails or the definition lacks the persona surface, report the
 error and list eligible choices. Do not substitute a spawned worker. Check the
 installed definition's scope and source filter when a name is unavailable.
 
 Guide: [Usage surfaces](../../../../../../../../docs/guides/agents.md#usage-surfaces).
 
-_Last verified: 2026-10-08_
+_Last verified: 2026-10-23_

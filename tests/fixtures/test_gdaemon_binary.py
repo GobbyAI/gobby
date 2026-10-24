@@ -103,16 +103,21 @@ def test_runtime_boundary_resolves_cargo_debug_binaries(
 def test_single_active_daemon_keeps_parent_cargo_target_after_environment_cleanup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
     from tests.e2e import test_single_active_daemon
 
     target = tmp_path / "cargo-cache"
     monkeypatch.setenv("CARGO_TARGET_DIR", str(target))
     home = tmp_path / "daemon-home"
     (home / "logs").mkdir(parents=True)
+    # The real prepare_daemon_env always pins the isolated native bin directory.
+    native_bin = tmp_path / "native-bin"
+    native_bin.mkdir()
+    (native_bin / native_bin_name("gdaemon")).write_bytes(b"fixture binary")
 
     def cleaned_env(*, home_dir: Path) -> dict[str, str]:
         assert home_dir == home
-        return {"PATH": "base-path"}
+        return {"PATH": "base-path", NATIVE_BIN_DIR_ENV: str(native_bin)}
 
     monkeypatch.setattr(test_single_active_daemon, "prepare_daemon_env", cleaned_env)
     with patch("tests.e2e.test_single_active_daemon.subprocess.Popen") as spawn:

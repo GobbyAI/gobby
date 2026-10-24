@@ -7,7 +7,7 @@ from gobby.failure_categories import (
     ValidationStatus,
     classify_exception,
     classify_failure,
-    persisted_validation_status,
+    persisted_review_status,
 )
 
 pytestmark = pytest.mark.unit
@@ -25,12 +25,12 @@ pytestmark = pytest.mark.unit
         ("error", FailureCategory.PROVIDER, "error"),
     ],
 )
-def test_persisted_validation_status(
+def test_persisted_review_status(
     status: ValidationStatus,
     category: FailureCategory | None,
     expected: ValidationStatus,
 ) -> None:
-    assert persisted_validation_status(status, category) == expected
+    assert persisted_review_status(status, category) == expected
 
 
 @pytest.mark.parametrize(

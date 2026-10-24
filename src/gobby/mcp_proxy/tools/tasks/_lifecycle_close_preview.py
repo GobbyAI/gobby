@@ -29,7 +29,7 @@ class CloseEvaluation:
 
     @property
     def ready(self) -> bool:
-        evaluated = self.already_closed or len(self.checklist.gates) == 4
+        evaluated = self.already_closed or len(self.checklist.gates) == len(CLOSE_GATE_ORDER)
         return self.error is None and evaluated and self.checklist.ready
 
     def refuse(self, error: str, message: str) -> CloseEvaluation:

@@ -1,4 +1,4 @@
-"""Isolated-daemon coverage for the four task-close invariants."""
+"""Isolated-daemon coverage for the five task-close gates."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def _close(
     commit_sha: str | None = None,
     *,
     preview: bool = False,
-    reason: str = "completed",
+    reason: str = "done",
 ) -> dict[str, Any]:
     arguments: dict[str, Any] = {
         "task_id": task_id,
@@ -129,13 +129,13 @@ def test_ready_task_previews_and_closes(
     preview = _close(mcp_client, task_id, commit_sha, preview=True)
     assert preview["can_close"] is True, preview
     assert preview["closed"] is False
-    assert [gate["name"] for gate in preview["gates"]] == [
-        "children_closed",
-        "linked_commits",
-        "uncommitted_task_edits",
-        "integration_ancestry",
+    assert [(gate["name"], gate["status"]) for gate in preview["gates"]] == [
+        ("children_closed", "passed"),
+        ("linked_commits", "passed"),
+        ("uncommitted_task_edits", "passed"),
+        ("integration_ancestry", "passed"),
+        ("step_records", "skipped"),
     ]
-    assert all(gate["status"] == "passed" for gate in preview["gates"])
     stored = _unwrap(mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id}))
     assert stored["state"]["is_closed"] is False
 
@@ -195,7 +195,7 @@ def test_unintegrated_commit_blocks_close(
     assert result["closed"] is False
 
 
-@pytest.mark.parametrize("reason,ready", [("completed", False), ("obsolete", True)])
+@pytest.mark.parametrize("reason,ready", [("done", False), ("moot", True)])
 def test_epic_uses_same_commit_and_no_work_gates(
     daemon_instance: DaemonInstance,
     mcp_client: MCPTestClient,
@@ -210,7 +210,7 @@ def test_epic_uses_same_commit_and_no_work_gates(
     assert result["closed"] is False, result
     assert result["can_close"] is ready, result
     assert result.get("error") == (None if ready else "linked_commits")
-    assert len(result["gates"]) == 4
+    assert len(result["gates"]) == 5
 
 
 def test_edit_after_ready_preview_blocks_close(

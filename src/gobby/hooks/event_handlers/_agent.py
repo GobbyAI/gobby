@@ -399,6 +399,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
             request,
             resolve_skill=lambda name: manager.resolve_skill_name(name, **project_kwargs),
             command_prefix=command_prefix,
+            operator_commands=skill_name is None,
         )
         if route.kind == "help":
             return self._generate_help_content(

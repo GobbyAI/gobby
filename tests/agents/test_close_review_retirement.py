@@ -38,7 +38,7 @@ def test_old_reviews_are_history_only(temp_db: HubDatabase, sample_project: dict
     review_id = str(uuid4())
     with temp_db.transaction() as conn:
         conn.execute(
-            """INSERT INTO task_close_reviews
+            """INSERT INTO task_close_review_history
                (id, task_id, task_ref, caller_session_id, close_arguments,
                 review_fingerprint, evidence_fingerprint, status)
                VALUES (%s, %s, %s, %s, '{}'::jsonb, 'old-review', 'old-evidence', 'queued')""",

@@ -244,7 +244,6 @@ async def _invoke_other_link_caller(
         _escalation_coordinator.link_escalating_session(ctx, caller.task.id, caller.caller_id)
     elif site == "close":
         evaluation = CloseEvaluation(
-            requested_task_id=caller.task.id,
             task_id=caller.task.id,
             resolved_session_id=caller.caller_id,
         )

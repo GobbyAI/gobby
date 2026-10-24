@@ -105,7 +105,8 @@ def test_fleet_uses_latest_topic_evidence_and_excludes_earlier_terminal_states()
     result = digest_projection(content, "fleet")
     assert result["backlog"] == ["- Close backlog 8/10 at 10:00", "- Close backlog 7/10 at 11:00"]
     assert result["consolidator"] == ["- Consolidator review at 10:45"]
-    assert result["heavy_slots"] == ["- Heavy slot 2 released at 11:02"]
+    # Heavy-run slots are retired, so their old digest lines feed no topic.
+    assert "heavy_slots" not in result
     assert result["holds"] == ["- DAEMON BACK at 11:03."]
 
 
@@ -153,7 +154,7 @@ def test_main_pages_complete_entries_under_byte_budget(
         key = "lanes"
     else:
         content = "## Orchestrator updates — current\n" + "".join(
-            f"- {topic} {text}\n" for topic in ("close backlog", "heavy slot", "hold", "ROADMAP")
+            f"- {topic} {text}\n" for topic in ("close backlog", "hold", "Consolidator", "ROADMAP")
         )
         expected = []
         key = "backlog"
@@ -190,7 +191,7 @@ def test_main_pages_complete_entries_under_byte_budget(
     assert sum(counts) == page["total"]
     if section == "fleet":
         assert seen == [
-            f"- {topic} {text}" for topic in ("close backlog", "heavy slot", "hold", "ROADMAP")
+            f"- {topic} {text}" for topic in ("close backlog", "hold", "Consolidator", "ROADMAP")
         ]
     else:
         assert seen == expected

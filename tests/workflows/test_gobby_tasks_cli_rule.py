@@ -104,6 +104,8 @@ def _shell_event(tool_name: str, command: str) -> HookEvent:
         "gobby tasks update #1 --priority 1",
         "gobby tasks close #1",
         "gobby tasks claim #1",
+        "uv run gobby tasks restore",
+        "gobby tasks restore --input forged.jsonl --quiet",
     ],
 )
 def test_blocks_mutating_task_cli_commands(

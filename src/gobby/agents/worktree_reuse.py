@@ -10,23 +10,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
-from gobby.agents.isolation_git_hygiene import (
-    GENERATED_ISOLATION_EXCLUDE_PATHS,
-    PROJECT_JSON_RELATIVE_PATH,
-    apply_isolation_git_hygiene,
-    is_generated_isolation_project_json,
-)
+from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene, blocking_status_lines
 from gobby.utils.project_context import IsolationProjectJsonError, ensure_project_json_for_isolation
 from gobby.worktrees.base_branch import select_worktree_base
 from gobby.worktrees.deletion import probe_missing_worktree_git_state
 
 logger = logging.getLogger(__name__)
-
-GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES = (
-    ".claude/",
-    ".codex/",
-    ".factory/",
-)
 
 
 class ReusedWorktreeRebaseConflict(RuntimeError):
@@ -178,7 +167,7 @@ async def _ensure_clean_worktree(git_manager: Any, path: Path) -> None:
     if status.returncode != 0:
         detail = _detail(status)
         raise RuntimeError(f"Failed to inspect reused worktree cleanliness: {detail}")
-    blocking_lines = _blocking_status_lines(status.stdout, path, main_repo_path)
+    blocking_lines = blocking_status_lines(status.stdout, path, main_repo_path)
     if blocking_lines:
         raise RuntimeError(
             "Cannot reuse worktree with uncommitted changes; commit, stash, or inspect it first"
@@ -225,45 +214,3 @@ def _detail(result: subprocess.CompletedProcess[str]) -> str:
 def _main_repo_path(git_manager: Any) -> str | Path | None:
     repo_path = getattr(git_manager, "repo_path", None)
     return cast(str | Path | None, repo_path)
-
-
-def _blocking_status_lines(
-    status_output: str,
-    worktree_path: Path,
-    main_repo_path: str | Path | None,
-) -> list[str]:
-    blocking: list[str] = []
-    for line in status_output.splitlines():
-        relative_path = _porcelain_path(line)
-        if _is_generated_isolation_status_path(line, relative_path):
-            continue
-        if relative_path == PROJECT_JSON_RELATIVE_PATH and is_generated_isolation_project_json(
-            worktree_path / PROJECT_JSON_RELATIVE_PATH,
-            main_repo_path=main_repo_path,
-        ):
-            continue
-        blocking.append(line)
-    return blocking
-
-
-def _is_generated_isolation_status_path(line: str, relative_path: str) -> bool:
-    if relative_path in GENERATED_ISOLATION_EXCLUDE_PATHS:
-        return True
-    if not line.startswith("?? "):
-        return False
-    return any(
-        relative_path == prefix or relative_path.startswith(prefix)
-        for prefix in GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES
-    )
-
-
-def _porcelain_path(line: str) -> str:
-    """Return the best-effort path from a porcelain v1 status line.
-
-    This intentionally supports the simple short-format lines emitted by
-    ``git status --porcelain``. It does not fully unescape quoted pathnames.
-    """
-    path = line[3:].strip() if len(line) > 3 else line.strip()
-    if " -> " in path:
-        path = path.rsplit(" -> ", 1)[1]
-    return path.strip('"')

@@ -13,7 +13,7 @@ import logging
 import re
 from datetime import datetime
 
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.review_history import read_review_row
 from gobby.storage.tasks._models import (
     Task,
@@ -27,6 +27,38 @@ from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transit
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+def _original_close_reason(
+    conn: Transaction, task_id: str, closed_at: datetime, closed_reason: str | None
+) -> str | None:
+    """Recover the exact reason archived when migration 477 normalized a closure."""
+    rows = conn.execute(
+        "SELECT body FROM task_comments "
+        "WHERE task_id = %s AND author = 'migration:477' AND author_type = 'system'",
+        (task_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            snapshot = json.loads(row["body"])
+            if (
+                isinstance(snapshot, dict)
+                and snapshot.get("kind") == "legacy_close_reason_snapshot"
+                and datetime.fromisoformat(snapshot["closed_at"]) == closed_at
+            ):
+                original = snapshot.get("closed_reason")
+                if original is None or isinstance(original, str):
+                    normalized = {
+                        "obsolete": "moot",
+                        "duplicate": "superseded",
+                        "wont_fix": "wont_do",
+                        "out_of_repo": "wont_do",
+                    }.get(original or "", "done")
+                    if normalized == closed_reason:
+                        return original
+        except (ValueError, TypeError, KeyError):
+            continue
+    return closed_reason
 
 
 def repair_closed_candidate(
@@ -55,7 +87,7 @@ def repair_closed_candidate(
             raise ValueError("Repair requires a registered caller in the task project.")
         if (
             task["closed_at"] is None
-            or task["validation_status"] != "valid"
+            or task["review_status"] != "valid"
             or task["claimed_by_session_id"] is not None
             or task["is_escalated"]
             or task["merge_in_progress"]
@@ -85,13 +117,15 @@ def repair_closed_candidate(
             raise ValueError("The review's original request and VALID evidence are required.")
         if (
             payload.get("closed") is not True
+            # Archived result bytes retain the original automatic-review vocabulary.
             or payload.get("validation_status") != "valid"
             or payload.get("status") != "closed"
             or payload.get("event") != "task_close_review_completed"
             or payload.get("review_id") != review_id
             or payload.get("task_id") != task_id
             or arguments.get("commit_sha") != candidate_commit_sha
-            or arguments.get("reason") != task["closed_reason"]
+            or arguments.get("reason")
+            != _original_close_reason(conn, task_id, task["closed_at"], task["closed_reason"])
         ):
             raise ValueError(
                 "Only the exact explicit candidate of a completed VALID review can be repaired."
@@ -113,7 +147,7 @@ def repair_closed_candidate(
             "previous_closed_commit_sha": expected_closed_commit_sha,
             "candidate_commit_sha": candidate_commit_sha,
             "closed": True,
-            "validation_status": "valid",
+            "review_status": "valid",
             "applied": False,
             "commit_shas": links,
         }
@@ -169,10 +203,9 @@ def close_task(
             (task_id,),
         )
         if open_children:
-            child_list = ", ".join(f"{c['id']} ({c['title']})" for c in open_children[:3])
-            if len(open_children) > 3:
-                child_list += f" and {len(open_children) - 3} more"
-            raise TaskHasOpenChildrenError(task_id, [child_list])
+            raise TaskHasOpenChildrenError(
+                task_id, [f"{child['id']} ({child['title']})" for child in open_children]
+            )
 
     collected: list[str] = [] if closed_ancestors is None else closed_ancestors
     _close_task_transition(
@@ -203,7 +236,7 @@ def reopen_task(
         reason: Optional reason for reopening
 
     Raises:
-        ValueError: If task not found or already ready
+        ValueError: If task not found or already open
     """
     _reopen_task_transition(db, task_id, reason=reason)
 

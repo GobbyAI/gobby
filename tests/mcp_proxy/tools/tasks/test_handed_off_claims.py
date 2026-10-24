@@ -1,8 +1,8 @@
 """A handed-off claim stops holding a session's claim capacity (#23665).
 
-A claim is handed off once a reviewer recorded an independent_review_approval
-receipt for it and none of its attributed paths is uncommitted. The session keeps
-at most one active claim, and that claim receives its edits.
+Claiming another task hands off the session's active claim, whatever its review or
+working-tree state. The session keeps at most one active claim, and that claim
+receives its edits.
 """
 
 from __future__ import annotations
@@ -16,16 +16,12 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import claims_without_edit_target
 
 pytestmark = pytest.mark.unit
-
-_REVIEWED_SHA = "a" * 40
 
 
 def _task(manager: LocalTaskManager, project: dict[str, Any], title: str) -> Task:
@@ -45,27 +41,6 @@ async def _call(registry: Any, session: Session, tool: str, **arguments: Any) ->
 async def _claim(registry: Any, session: Session, task: Task) -> None:
     claimed = await _call(registry, session, "claim_task", task_id=task.id)
     assert claimed.get("success") is True, claimed
-
-
-@pytest.fixture
-def reviewer(temp_db: HubDatabase, sample_project: dict[str, Any]) -> Session:
-    return SessionManager(temp_db).register(
-        external_id="handed-off-claim-reviewer",
-        machine_id="21000000-0000-4000-8000-00000000000b",
-        source="codex",
-        project_id=sample_project["id"],
-        title="Reviewer",
-    )
-
-
-def _approve(db: HubDatabase, task: Task, reviewer: Session) -> None:
-    record_close_receipt(
-        db,
-        task=task,
-        author_session_id=reviewer.id,
-        kind=INDEPENDENT_REVIEW_APPROVAL,
-        commit_sha=_REVIEWED_SHA,
-    )
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -95,14 +70,12 @@ async def test_handed_off_claim_lets_the_session_claim_another_task(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
     landed = _task(manager, sample_project, "Landed")
     nxt = _task(manager, sample_project, "Next")
     await _claim(registry, canonical_task_session, landed)
-    _approve(temp_db, landed, reviewer)
 
     claimed = await _call(registry, canonical_task_session, "claim_task", task_id=nxt.id)
 
@@ -122,13 +95,11 @@ async def test_handed_off_claim_lets_the_session_create_and_claim_a_task(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
     landed = _task(manager, sample_project, "Landed")
     await _claim(registry, canonical_task_session, landed)
-    _approve(temp_db, landed, reviewer)
 
     created = await _call(
         registry,
@@ -150,7 +121,6 @@ async def test_several_active_claims_and_created_tasks_accumulate(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
@@ -158,7 +128,6 @@ async def test_several_active_claims_and_created_tasks_accumulate(
     active = _task(manager, sample_project, "Active")
     third = _task(manager, sample_project, "Third")
     await _claim(registry, canonical_task_session, landed)
-    _approve(temp_db, landed, reviewer)
     await _claim(registry, canonical_task_session, active)
 
     claimed = await _call(registry, canonical_task_session, "claim_task", task_id=third.id)
@@ -179,12 +148,11 @@ async def test_several_active_claims_and_created_tasks_accumulate(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["dirty", "git_unavailable", "unreviewed"])
-async def test_dirty_unreviewed_or_unavailable_claims_do_not_block_accumulation(
+@pytest.mark.parametrize("state", ["dirty", "git_unavailable", "committed"])
+async def test_dirty_committed_or_unavailable_claims_do_not_block_accumulation(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
     tmp_path: Path,
     state: str,
 ) -> None:
@@ -202,9 +170,7 @@ async def test_dirty_unreviewed_or_unavailable_claims_do_not_block_accumulation(
     SessionVariableManager(temp_db).record_edited_files(
         canonical_task_session.id, ["a.py"], checkout_root=str(checkout)
     )
-    if state != "unreviewed":
-        _approve(temp_db, held, reviewer)
-    if state == "unreviewed":
+    if state == "committed":
         _git(checkout, "commit", "-q", "-am", "held work")
 
     claimed = await _call(registry, canonical_task_session, "claim_task", task_id=nxt.id)
@@ -214,37 +180,10 @@ async def test_dirty_unreviewed_or_unavailable_claims_do_not_block_accumulation(
 
 
 @pytest.mark.asyncio
-async def test_committing_the_attributed_paths_completes_the_hand_off(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    canonical_task_session: Session,
-    reviewer: Session,
-    tmp_path: Path,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    registry = create_task_registry(manager)
-    held = _task(manager, sample_project, "Held")
-    nxt = _task(manager, sample_project, "Next")
-    await _claim(registry, canonical_task_session, held)
-    checkout = _repo_with_committed_file(tmp_path / "repo")
-    (checkout / "a.py").write_text("two\n")
-    SessionVariableManager(temp_db).record_edited_files(
-        canonical_task_session.id, ["a.py"], checkout_root=str(checkout)
-    )
-    _approve(temp_db, held, reviewer)
-    _git(checkout, "commit", "-q", "-am", "held work")
-
-    claimed = await _call(registry, canonical_task_session, "claim_task", task_id=nxt.id)
-
-    assert claimed.get("success") is True, claimed
-
-
-@pytest.mark.asyncio
 async def test_edits_after_the_new_claim_attribute_only_to_it(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
     tmp_path: Path,
 ) -> None:
     manager = LocalTaskManager(temp_db)
@@ -255,7 +194,6 @@ async def test_edits_after_the_new_claim_attribute_only_to_it(
     await _claim(registry, canonical_task_session, landed)
     checkout = _repo_with_committed_file(tmp_path / "repo")
     variables.record_edited_files(canonical_task_session.id, ["a.py"], checkout_root=str(checkout))
-    _approve(temp_db, landed, reviewer)
     landed_before = _variables(temp_db, canonical_task_session)["task_edited_files"][landed.id]
     await _claim(registry, canonical_task_session, nxt)
 
@@ -267,17 +205,11 @@ async def test_edits_after_the_new_claim_attribute_only_to_it(
 
 
 async def _release_the_newer_claim(
-    db: HubDatabase,
-    registry: Any,
-    session: Session,
-    reviewer: Session,
-    handed_off: list[Task],
-    newer: Task,
+    registry: Any, session: Session, handed_off: list[Task], newer: Task
 ) -> None:
     """Hand off each task in turn, claim the newer task, then release that claim."""
     for task in handed_off:
         await _claim(registry, session, task)
-        _approve(db, task, reviewer)
     await _claim(registry, session, newer)
     escalated = await _call(
         registry,
@@ -294,7 +226,6 @@ async def test_releasing_the_newer_claim_leaves_the_survivor_without_an_edit_tar
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
     tmp_path: Path,
 ) -> None:
     """Only a reclaim makes a handed-off claim active again, so no edit reaches it first."""
@@ -302,9 +233,7 @@ async def test_releasing_the_newer_claim_leaves_the_survivor_without_an_edit_tar
     registry = create_task_registry(manager)
     landed = _task(manager, sample_project, "Landed")
     newer = _task(manager, sample_project, "Next")
-    await _release_the_newer_claim(
-        temp_db, registry, canonical_task_session, reviewer, [landed], newer
-    )
+    await _release_the_newer_claim(registry, canonical_task_session, [landed], newer)
     checkout = _repo_with_committed_file(tmp_path / "repo")
     SessionVariableManager(temp_db).record_edited_files(
         canonical_task_session.id, ["a.py"], checkout_root=str(checkout)
@@ -322,7 +251,6 @@ async def test_reclaiming_the_sole_survivor_restores_claim_and_edit_attribution(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
     tmp_path: Path,
 ) -> None:
     """The reclaim runs the capacity check, and its result marks the owner's return."""
@@ -330,9 +258,7 @@ async def test_reclaiming_the_sole_survivor_restores_claim_and_edit_attribution(
     registry = create_task_registry(manager)
     landed = _task(manager, sample_project, "Landed")
     newer = _task(manager, sample_project, "Next")
-    await _release_the_newer_claim(
-        temp_db, registry, canonical_task_session, reviewer, [landed], newer
-    )
+    await _release_the_newer_claim(registry, canonical_task_session, [landed], newer)
 
     reclaimed = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
     checkout = _repo_with_committed_file(tmp_path / "repo")
@@ -356,16 +282,13 @@ async def test_a_reclaim_activates_one_of_several_handed_off_claims(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
     first = _task(manager, sample_project, "First")
     second = _task(manager, sample_project, "Second")
     newer = _task(manager, sample_project, "Next")
-    await _release_the_newer_claim(
-        temp_db, registry, canonical_task_session, reviewer, [first, second], newer
-    )
+    await _release_the_newer_claim(registry, canonical_task_session, [first, second], newer)
 
     reclaimed = await _call(registry, canonical_task_session, "claim_task", task_id=second.id)
 
@@ -383,14 +306,12 @@ async def test_reclaim_selects_a_task_while_another_claim_remains_active(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     canonical_task_session: Session,
-    reviewer: Session,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     registry = create_task_registry(manager)
     landed = _task(manager, sample_project, "Landed")
     active = _task(manager, sample_project, "Active")
     await _claim(registry, canonical_task_session, landed)
-    _approve(temp_db, landed, reviewer)
     await _claim(registry, canonical_task_session, active)
 
     selected = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
@@ -403,7 +324,6 @@ async def test_reclaim_selects_a_task_while_another_claim_remains_active(
     assert _variables(temp_db, canonical_task_session)["active_task_id"] == landed.id
     assert manager.get_task(active.id).claimed_by_session_id == canonical_task_session.id
 
-    _approve(temp_db, active, reviewer)
     reactivated = await _call(registry, canonical_task_session, "claim_task", task_id=landed.id)
 
     assert reactivated["success"] is True

@@ -28,7 +28,7 @@ def test_close_task_does_not_mark_linked_worktree_merged(
         task_id=task.id,
     )
 
-    task_manager.close_task(task.id, reason="completed")
+    task_manager.close_task(task.id, reason="done")
 
     refreshed = worktree_manager.get(worktree.id)
     assert refreshed is not None
@@ -63,7 +63,7 @@ def test_reopen_task_does_not_reactivate_linked_worktree(
         worktree_path=f"/tmp/gobby-reopen-linked-task-{expected_status}",
         task_id=task.id,
     )
-    task_manager.close_task(task.id, reason="completed")
+    task_manager.close_task(task.id, reason="done")
 
     transitioned = getattr(worktree_manager, transition_method)(worktree.id)
     assert transitioned is not None

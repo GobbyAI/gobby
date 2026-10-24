@@ -1,4 +1,4 @@
-"""The four data invariants required to close a task."""
+"""The four data invariants and the required step records for closing a task."""
 
 from __future__ import annotations
 
@@ -8,14 +8,13 @@ from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
-NO_WORK_CLOSE_REASONS = frozenset(
-    {"duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"}
-)
+NO_WORK_CLOSE_REASONS = frozenset({"moot", "superseded", "wont_do"})
 CLOSE_GATE_ORDER = (
     (1, "children_closed"),
     (2, "linked_commits"),
     (3, "uncommitted_task_edits"),
     (4, "integration_ancestry"),
+    (5, "step_records"),
 )
 
 
@@ -27,9 +26,47 @@ async def evaluate_close_invariants(
     attributed_checkouts: Mapping[str, Set[str]],
     integration_repo_path: str | None,
     integration_ref: str | None,
+    required_steps: Sequence[str],
+    missing_steps: Sequence[str],
     attribution_complete: bool = True,
 ) -> CloseChecklist:
-    """Evaluate every invariant without changing task, Git, or review state."""
+    """Evaluate every gate without changing task, Git, or review state."""
+    gates = await _data_invariants(
+        open_children=open_children,
+        commit_shas=commit_shas,
+        reason=reason,
+        attributed_checkouts=attributed_checkouts,
+        integration_repo_path=integration_repo_path,
+        integration_ref=integration_ref,
+        attribution_complete=attribution_complete,
+    )
+    details = {"required_steps": list(required_steps), "missing_steps": list(missing_steps)}
+    gates.append(
+        CloseGateResult(
+            5,
+            "step_records",
+            "skipped" if not required_steps else "failed" if missing_steps else "passed",
+            "Project policy requires no step records."
+            if not required_steps
+            else "Record the approved steps project policy requires: " + ", ".join(missing_steps)
+            if missing_steps
+            else "Every required step record is approved.",
+            details,
+        )
+    )
+    return CloseChecklist(tuple(gates))
+
+
+async def _data_invariants(
+    *,
+    open_children: Sequence[str],
+    commit_shas: Sequence[str],
+    reason: str,
+    attributed_checkouts: Mapping[str, Set[str]],
+    integration_repo_path: str | None,
+    integration_ref: str | None,
+    attribution_complete: bool,
+) -> list[CloseGateResult]:
     gates = [
         CloseGateResult(
             1,
@@ -77,7 +114,7 @@ async def evaluate_close_invariants(
         gates.append(
             CloseGateResult(4, "integration_ancestry", "skipped", "No linked work to check.")
         )
-        return CloseChecklist(tuple(gates))
+        return gates
 
     tip = (
         await resolve_commit(integration_repo_path, integration_ref)
@@ -116,7 +153,7 @@ async def evaluate_close_invariants(
             },
         )
     )
-    return CloseChecklist(tuple(gates))
+    return gates
 
 
 async def resolve_commit(repo_path: str, ref: str) -> str | None:

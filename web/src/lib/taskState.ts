@@ -1,16 +1,22 @@
 import {
   ActivityGlyph,
+  CheckGlyph,
   CircleGlyph,
   DashGlyph,
+  ErrorGlyph,
+  EyeGlyph,
   LockGlyph,
   type StatusGlyph,
   type StatusKind,
 } from "../components/activity/ActivityRowStatusDot";
 
 export type TaskDisplayState =
-  | "ready"
+  | "open"
   | "in_progress"
   | "blocked"
+  | "needs_human"
+  | "escalated"
+  | "deferred"
   | "closed";
 
 /**
@@ -25,6 +31,9 @@ export interface OwnerSessionRef {
 }
 
 export interface CanonicalTaskState {
+  name: TaskDisplayState;
+  hold_state: "needs_human" | "deferred" | null;
+  follow_up_at: string | null;
   owner_session_id: string | null;
   owner_session_ref: OwnerSessionRef | null;
 
@@ -63,58 +72,67 @@ export interface TaskStateBadgeToken {
 }
 
 export const TASK_STATE_ORDER: TaskDisplayState[] = [
-  "ready",
+  "open",
   "in_progress",
-
   "blocked",
-
+  "needs_human",
+  "escalated",
+  "deferred",
   "closed",
 ];
 
-export const TASK_STATE_LABELS: Record<TaskDisplayState, string> =
-  {
-    ready: "Ready",
-    in_progress: "In Progress",
-
-    blocked: "Blocked",
-
-    closed: "Closed",
-  };
+export const TASK_STATE_LABELS: Record<TaskDisplayState, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  blocked: "Blocked",
+  needs_human: "Needs Human",
+  escalated: "Escalated",
+  deferred: "Deferred",
+  closed: "Closed",
+};
 
 export const TASK_STATE_COLORS: Record<TaskDisplayState, string> = {
-  ready: "var(--color-info)",
+  open: "var(--color-info)",
   in_progress: "var(--color-warning-foreground)",
 
   blocked: "var(--color-error)",
-
+  needs_human: "var(--color-warning-foreground)",
+  escalated: "var(--color-error)",
+  deferred: "var(--text-muted)",
   closed: "var(--text-muted)",
 };
 
 export const TASK_STATE_KIND: Record<TaskDisplayState, StatusKind> = {
-  ready: "info",
+  open: "info",
   in_progress: "warning",
 
   blocked: "error",
-
+  needs_human: "warning",
+  escalated: "error",
+  deferred: "disabled",
   closed: "disabled",
 };
 
 // Shapes distinguish task states without relying on color.
 export const TASK_STATE_GLYPH: Record<TaskDisplayState, StatusGlyph> = {
-  ready: CircleGlyph,
+  open: CircleGlyph,
   in_progress: ActivityGlyph,
 
   blocked: LockGlyph,
-
-  closed: DashGlyph,
+  needs_human: EyeGlyph,
+  escalated: ErrorGlyph,
+  deferred: DashGlyph,
+  closed: CheckGlyph,
 };
 
 export const TASK_STATE_BG: Record<TaskDisplayState, string> = {
-  ready: "var(--color-info-soft)",
+  open: "var(--color-info-soft)",
   in_progress: "var(--color-warning-soft)",
 
   blocked: "var(--color-error-soft)",
-
+  needs_human: "var(--color-warning-soft)",
+  escalated: "var(--color-error-soft)",
+  deferred: "color-mix(in srgb, var(--text-muted) 15%, transparent)",
   closed: "color-mix(in srgb, var(--text-muted) 15%, transparent)",
 };
 
@@ -123,20 +141,33 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
     task.state?.owner_session_id ?? task.claimed_by_session_id ?? null;
   const ownerSessionRef =
     task.state?.owner_session_ref ?? task.owner_session_ref ?? null;
+  const isClaimed = task.state?.is_claimed ?? Boolean(ownerSessionId);
   const isClosed = task.state?.is_closed ?? Boolean(task.closed_at);
   const isEscalated =
     !isClosed && (task.state?.is_escalated ?? Boolean(task.escalated_at));
   const isBlocked =
-    !isClosed && (task.state?.is_blocked ?? task.is_blocked ?? isEscalated);
+    !isClosed && (task.state?.is_blocked ?? task.is_blocked ?? false);
+  const holdState = task.state?.hold_state ?? null;
+  const name =
+    task.state?.name ??
+    (isClosed
+      ? "closed"
+      : isEscalated
+        ? "escalated"
+        : (holdState ??
+          (isBlocked ? "blocked" : isClaimed ? "in_progress" : "open")));
 
   return {
+    name,
+    hold_state: holdState,
+    follow_up_at: task.state?.follow_up_at ?? null,
     owner_session_id: ownerSessionId,
     owner_session_ref: ownerSessionRef,
 
-    is_claimed: task.state?.is_claimed ?? Boolean(ownerSessionId),
-    is_closed: Boolean(isClosed),
-    is_escalated: Boolean(isEscalated),
-    is_blocked: Boolean(isBlocked),
+    is_claimed: isClaimed,
+    is_closed: name === "closed",
+    is_escalated: name === "escalated",
+    is_blocked: name === "blocked",
 
     closed_at: task.state?.closed_at ?? task.closed_at ?? null,
     closed_reason: task.state?.closed_reason ?? task.closed_reason ?? null,
@@ -151,12 +182,7 @@ export function getCanonicalTaskState(task: TaskStateLike): CanonicalTaskState {
 }
 
 export function getTaskDisplayState(task: TaskStateLike): TaskDisplayState {
-  const state = getCanonicalTaskState(task);
-  if (state.is_closed) return "closed";
-  if (state.is_blocked || state.is_escalated) return "blocked";
-  if (state.is_claimed) return "in_progress";
-
-  return "ready";
+  return getCanonicalTaskState(task).name;
 }
 
 export function isTaskClosed(task: TaskStateLike): boolean {
@@ -202,15 +228,6 @@ export function getTaskStateTokens(task: TaskStateLike): TaskStateBadgeToken[] {
     });
   }
 
-  if (!state.is_closed && state.is_escalated) {
-    tokens.push({
-      key: "escalated",
-      label: "Escalated",
-      color: "var(--color-error)",
-      background: "var(--color-error-soft)",
-    });
-  }
-
   return tokens;
 }
 
@@ -218,11 +235,12 @@ export function countTasksByState(
   tasks: TaskStateLike[],
 ): Record<TaskDisplayState, number> {
   const counts: Record<TaskDisplayState, number> = {
-    ready: 0,
+    open: 0,
     in_progress: 0,
-
     blocked: 0,
-
+    needs_human: 0,
+    escalated: 0,
+    deferred: 0,
     closed: 0,
   };
 
@@ -244,14 +262,6 @@ export function matchesTaskStateFilter(
     case "recently_done":
     case "closed":
       return displayState === "closed";
-    case "open":
-    case "ready":
-      return displayState === "ready";
-    case "escalated":
-    case "blocked":
-      return displayState === "blocked";
-    case "in_progress":
-      return displayState === "in_progress";
     default:
       return displayState === filter;
   }

@@ -15,7 +15,7 @@ import click
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
 from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
-from gobby.cli.daemon_lifecycle import _do_stop
+from gobby.cli.daemon_lifecycle import START_AFTER_OWN_STOP, _do_stop
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.daemon_start import start
 from gobby.cli.runtime import get_cli_runtime
@@ -161,7 +161,7 @@ def _dirty_schema_inputs(root: Path) -> list[str]:
     return [line[3:].strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _read_installed_pin(bin_dir: Path) -> dict[str, int | str]:
+def read_installed_pin(bin_dir: Path) -> dict[str, int | str]:
     pin_path = bin_dir / IDENTITY_STAMP_NAME
     try:
         parsed: object = json.loads(pin_path.read_text(encoding="utf-8"))
@@ -170,7 +170,7 @@ def _read_installed_pin(bin_dir: Path) -> dict[str, int | str]:
         raise CutoverError(f"installed schema identity pin is unreadable: {exc}") from exc
 
 
-def _read_workspace_pin(root: Path) -> dict[str, int | str]:
+def read_workspace_pin(root: Path) -> dict[str, int | str]:
     pin_path = root / _PIN_PATH
     try:
         parsed: object = json.loads(pin_path.read_text(encoding="utf-8"))
@@ -185,7 +185,7 @@ def _render_identity(identity: dict[str, int | str]) -> str:
 
 
 def _verify_restart_target(bin_dir: Path) -> None:
-    pin = _read_installed_pin(bin_dir)
+    pin = read_installed_pin(bin_dir)
     resolved = resolve_native_bin("gdaemon")
     if resolved is None:
         raise CutoverError(f"the daemon restart gdaemon is unavailable; {REBUILD_REMEDY}")
@@ -299,26 +299,37 @@ def run_cutover(
     # that the old process exited. Never replace its binaries before that proof.
     if not stop_daemon():
         raise CutoverError("refusing to promote: daemon stop failed; installed binaries unchanged")
+    from gobby.releases.window import agent_activation_refusal
+
+    lease_refusal: str | None = None
     try:
         _require_unchanged_sources(root, sources)
-        promote_workspace_binary_set(
-            artifacts,
-            bin_dir=bin_dir,
-            workspace_root=root,
-            source_identities=sources,
-            metadata=WorkspacePromotionMetadata(
-                install_method=_INSTALL_METHOD,
-                target=_platform_target(),
-            ),
-        )
-        _verify_restart_target(bin_dir)
+        # A release batch's lease can lapse while the daemon stops. Nothing is promoted
+        # yet, so the unchanged daemon starts again and the cutover is refused.
+        lease_refusal = agent_activation_refusal()
+        if lease_refusal is None:
+            promote_workspace_binary_set(
+                artifacts,
+                bin_dir=bin_dir,
+                workspace_root=root,
+                source_identities=sources,
+                metadata=WorkspacePromotionMetadata(
+                    install_method=_INSTALL_METHOD,
+                    target=_platform_target(),
+                ),
+            )
+            _verify_restart_target(bin_dir)
         start_daemon()
     except Exception as exc:
         # After confirmed shutdown, every failed phase needs operator recovery
         # guidance, including startup errors and identity decoding failures.
+        refused = f"refusing to promote: {lease_refusal}; " if lease_refusal else ""
         raise CutoverError(
-            f"{exc}. The daemon is stopped. After resolving this failure, run `gobby start`."
+            f"{refused}{exc}. The daemon is stopped. After resolving this failure, run "
+            "`gobby start`."
         ) from exc
+    if lease_refusal is not None:
+        raise CutoverError(f"refusing to promote: {lease_refusal}; restarted the unchanged daemon")
     if isinstance(build.client, str):
         return build.client
     try:
@@ -373,6 +384,10 @@ def _require_unchanged_sources(root: Path, sources: dict[str, str]) -> None:
 @click.pass_context
 def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) -> None:
     """Build and activate all schema-aware native binaries as one set."""
+    from gobby.releases.window import agent_activation_refusal
+
+    if refusal := agent_activation_refusal():
+        raise click.ClickException(f"Refusing to cut over: {refusal}")
     # A node never runs the Python daemon, so refuse before any build or promotion.
     with contextlib.suppress(BootstrapConfigError):
         if refusal := node_daemon_refusal(load_bootstrap()):
@@ -391,6 +406,7 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
         )
 
     def start_daemon() -> None:
+        ctx.meta[START_AFTER_OWN_STOP] = True
         try:
             ctx.invoke(start, verbose=False)
         except SystemExit as exc:
@@ -404,7 +420,7 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
                 + ", ".join(dirty)
                 + "; commit or stash them, or pass --allow-dirty"
             )
-        expected_identity = _read_workspace_pin(root)
+        expected_identity = read_workspace_pin(root)
         runtime = get_cli_runtime(ctx)
         client_failure = run_cutover(
             root,

@@ -17,23 +17,23 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.memory import create_memory_registry
-from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.memory.manager import MemoryManager
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, list_close_receipts
+from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.landing_case import grant_orchestrator
+from tests.fixtures.review_approvals import grant_review_writes
 
 pytestmark = pytest.mark.unit
 
@@ -58,6 +58,17 @@ class CrossProjectWorld:
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    @property
+    def caller_project_id(self) -> str:
+        caller = self.sessions.get(self.caller_id)
+        assert caller is not None and caller.project_id is not None
+        return caller.project_id
+
+    def close(self) -> None:
+        self.task = self.tasks.close_task(
+            self.task.id, force=True, closed_in_session_id=self.child_id, closed_commit_sha=self.sha
+        )
 
     def ref(self, form: str) -> str:
         if form == "qualified":
@@ -134,23 +145,22 @@ def world(
     result.sha = result.git("rev-parse", "HEAD")
     result.git("checkout", "main")
     tasks.link_commit(task.id, result.sha)
-    result.task = tasks.close_task(
-        task.id, force=True, closed_in_session_id=worker.id, closed_commit_sha=result.sha
-    )
+    result.task = tasks.get_task(task.id)
     return result
 
 
 async def approve(world: CrossProjectWorld, caller_id: str, ref: str) -> dict[str, Any]:
-    registry = create_commit_registry(
-        world.tasks, project_manager=LocalProjectManager(world.db), session_manager=world.sessions
-    )
+    registry = create_task_registry(world.tasks)
+    review = {
+        "task_id": ref,
+        "status": "approved",
+        "epoch": 1,
+        "round_number": 1,
+        "feedback": "LAND: the documentation commit is reviewed.",
+        "commit_sha": world.sha,
+    }
     with session_context_for_test(caller_id):
-        return dict(
-            await registry.call(
-                "record_close_receipt",
-                {"task_id": ref, "kind": INDEPENDENT_REVIEW_APPROVAL, "commit_sha": world.sha},
-            )
-        )
+        return dict(await registry.call("record_review_step", review))
 
 
 @pytest.mark.asyncio
@@ -158,15 +168,18 @@ async def approve(world: CrossProjectWorld, caller_id: str, ref: str) -> dict[st
 async def test_land_commit_resolves_child_task_in_other_project(
     world: CrossProjectWorld, form: str
 ) -> None:
-    receipt = await approve(world, world.caller_id, world.ref(form))
-    assert "error" not in receipt, receipt
-    assert receipt["task_id"] == world.task.id
+    grant_review_writes(world.db, world.caller_id, world.caller_project_id)
+    approval = await approve(world, world.caller_id, world.ref(form))
+    assert "error" not in approval, approval
+    assert approval["record"]["task_id"] == world.task.id
+    grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
-    with session_context_for_test(world.caller_id):
+    with session_context_for_test(world.stranger_id):
         result = await registry.call(
             "land_commit", {"task_id": world.ref(form), "commit_sha": world.sha}
         )
-    assert result["landed"] is True
+    assert result["landed"] is True, result
+    assert result["landed_by_session_id"] == world.stranger_id
     assert result["landed_tip"] == world.sha
     assert world.git("rev-parse", "HEAD") == world.sha
     assert (world.repo / "docs" / "note.md").read_text() == "Reviewed documentation.\n"
@@ -178,6 +191,7 @@ async def test_review_task_memories_resolves_other_project_task(
     world: CrossProjectWorld, form: str
 ) -> None:
     variables = SessionVariableManager(world.db)
+    world.close()
     assert world.task.closed_at is not None
     closure_id = f"{world.task.id}:{world.task.closed_at.isoformat()}"
     variables.set_variable(
@@ -220,11 +234,12 @@ async def test_review_task_memories_resolves_other_project_task(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("form", ["qualified", "uuid"])
-@pytest.mark.parametrize("tool", ["land_commit", "record_close_receipt", "review_task_memories"])
+@pytest.mark.parametrize("tool", ["land_commit", "record_review_step", "review_task_memories"])
 async def test_cross_project_ref_without_authority_is_refused(
     world: CrossProjectWorld, form: str, tool: str
 ) -> None:
-    if tool == "record_close_receipt":
+    if tool == "record_review_step":
+        grant_review_writes(world.db, world.stranger_id, world.caller_project_id)
         result = await approve(world, world.stranger_id, world.ref(form))
     elif tool == "land_commit":
         registry = create_task_ops_registry(world.tasks)
@@ -233,6 +248,7 @@ async def test_cross_project_ref_without_authority_is_refused(
                 tool, {"task_id": world.ref(form), "commit_sha": world.sha}
             )
     else:
+        world.close()
         memories = MemoryManager(world.db, MemoryConfig())
         registry = create_memory_registry(
             lambda: memories, task_manager=world.tasks, session_manager=world.sessions
@@ -248,11 +264,12 @@ async def test_cross_project_ref_without_authority_is_refused(
             )
     assert result["error"] == "task_not_found"
     assert world.git("rev-parse", "HEAD") == world.base
-    assert list_close_receipts(world.db, world.task.id) == []
+    assert list_task_step_records(world.db, world.task.id) == []
 
 
 @pytest.mark.asyncio
 async def test_cross_project_review_cannot_impersonate_ancestor(world: CrossProjectWorld) -> None:
+    world.close()
     memories = MemoryManager(world.db, MemoryConfig())
     registry = create_memory_registry(
         lambda: memories, task_manager=world.tasks, session_manager=world.sessions
@@ -282,22 +299,32 @@ async def test_installed_operator_role_can_approve_other_project(
 ) -> None:
     caller = world.sessions.get(world.stranger_id)
     assert caller is not None
-    AgentDefinitionManager(world.db).create(role, {}, project_id=caller.project_id)
+    AgentDefinitionManager(world.db).create(
+        role,
+        {
+            "prompts": {"agent": "Coordinate the fleet."},
+            "task_step_writes": ["review"],
+            "workflows": {"rule_selectors": {"include": []}},
+        },
+        project_id=caller.project_id,
+    )
     SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", role)
-    receipt = await approve(world, caller.id, world.ref("qualified"))
-    assert "error" not in receipt, receipt
-    assert receipt["task_id"] == world.task.id
-    assert receipt["kind"] == INDEPENDENT_REVIEW_APPROVAL
+    approval = await approve(world, caller.id, world.ref("qualified"))
+    assert "error" not in approval, approval
+    assert approval["record"]["task_id"] == world.task.id
+    assert (approval["record"]["step"], approval["record"]["status"]) == ("review", "approved")
+    assert approval["record"]["agent_definition"] == role
 
 
 @pytest.mark.asyncio
 async def test_cross_project_land_still_needs_review_approval(world: CrossProjectWorld) -> None:
+    grant_orchestrator(world.db, world.stranger_id, world.caller_project_id)
     registry = create_task_ops_registry(world.tasks)
-    with session_context_for_test(world.caller_id):
+    with session_context_for_test(world.stranger_id):
         result = await registry.call(
             "land_commit", {"task_id": world.ref("qualified"), "commit_sha": world.sha}
         )
-    assert result["error"] == "review_receipt_missing"
+    assert result["blockers"] == ["review_approval_missing"]
     assert world.git("rev-parse", "HEAD") == world.base
 
 
@@ -321,7 +348,7 @@ async def test_role_name_alone_does_not_grant_cross_project_access(
     SessionVariableManager(world.db).set_variable(caller.id, "_agent_type", "assistant")
     result = await approve(world, caller.id, world.ref("qualified"))
     assert result["error"] == "task_not_found"
-    assert list_close_receipts(world.db, world.task.id) == []
+    assert list_task_step_records(world.db, world.task.id) == []
 
 
 @pytest.mark.asyncio

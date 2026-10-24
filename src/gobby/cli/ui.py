@@ -29,7 +29,7 @@ from .utils import (
     spawn_ui_server,
     stop_ui_server,
 )
-from .utils_ui import _process_start_matches, _read_ui_pid_record
+from .utils_ui import _npm_install_plan, _process_start_matches, _read_ui_pid_record
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -75,25 +75,27 @@ def _get_ui_pid() -> int | None:
 
 
 def _ensure_npm_deps_installed(web_dir: Path) -> bool:
-    """Install npm dependencies if node_modules is missing. Returns True on success."""
-    if (web_dir / "node_modules").exists():
+    """Install npm dependencies unless node_modules matches package-lock.json. True on success."""
+    plan = _npm_install_plan(web_dir)
+    if plan is None:
         return True
-    click.echo("Installing dependencies...")
+    reason, command = plan
+    click.echo(f"Installing dependencies: {reason}")
     try:
         result = subprocess.run(  # nosec B603 B607
-            ["npm", "install"],
+            command,
             cwd=web_dir,
             capture_output=False,
             timeout=120,
         )
     except subprocess.TimeoutExpired:
-        click.echo("npm install timed out after 120 seconds", err=True)
+        click.echo(f"{' '.join(command)} timed out after 120 seconds", err=True)
         return False
     except FileNotFoundError:
         click.echo("npm not found. Please install Node.js and npm.", err=True)
         return False
     except OSError as e:
-        click.echo(f"Failed to run npm install: {e}", err=True)
+        click.echo(f"Failed to run {' '.join(command)}: {e}", err=True)
         return False
     return result.returncode == 0
 

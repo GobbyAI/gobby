@@ -33,6 +33,7 @@ from gobby.cli.tasks._utils import (
 )
 from gobby.cli.utils import resolve_project_ref
 from gobby.tasks.close_invariants import NO_WORK_CLOSE_REASONS
+from gobby.tasks.state_semantics import TASK_STATES
 from gobby.utils.project_context import get_project_context
 
 
@@ -52,6 +53,9 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
 
 
 @click.command("list")
+@click.option(
+    "--state", type=click.Choice(sorted(TASK_STATES)), help="Filter by canonical task state"
+)
 @click.option(
     "--active",
     is_flag=True,
@@ -81,6 +85,7 @@ def _services(*, apply_migrations: bool = True) -> CrudServices:
 )
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_tasks(
+    state: str | None,
     active: bool,
     project_ref: str | None,
     claimed: bool,
@@ -107,6 +112,7 @@ def list_tasks(
         limit,
         group_by,
         json_format,
+        state=state,
     )
 
 
@@ -263,7 +269,8 @@ def update_task(
 @click.option(
     "--reason",
     "-r",
-    default="completed",
+    default="done",
+    type=click.Choice(["done", "moot", "superseded", "wont_do"]),
     help=(
         "Reason for closing; canonical no-work reasons allow direct leaf "
         f"disposition: {', '.join(sorted(NO_WORK_CLOSE_REASONS))}"

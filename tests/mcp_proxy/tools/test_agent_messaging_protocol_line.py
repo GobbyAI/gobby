@@ -121,22 +121,15 @@ async def test_candidate_with_spaced_run_is_refused_and_nothing_is_stored(
 
 
 @pytest.mark.asyncio
-async def test_landed_with_title_before_sha_is_refused_with_template_order(
+async def test_retired_landing_report_sends_unchanged(
     registry: InternalToolRegistry, message_manager: MagicMock
 ) -> None:
-    result = await _send(
-        registry,
-        f"EVENT=LANDED TASK=#7 TASK_TITLE=Seat proofs SHA={SHA} RECEIPT=r NOTE=landed",
-    )
+    content = f"EVENT=LANDED TASK=#7 TASK_TITLE=Seat proofs SHA={SHA} RECEIPT=r NOTE=landed"
 
-    assert result["success"] is False
-    assert result["error_code"] == "protocol_line_rejected"
-    assert result["field"] == "SHA"
-    assert (
-        "SHA BRANCH RECEIPT MODE LANDED_TIP ACTIVATION "
-        "PROJECT_SYNC_REQUIRED PROVENANCE RETEST TASK_TITLE NOTE"
-    ) in result["error"]
-    message_manager.create_message.assert_not_called()
+    result = await _send(registry, content)
+
+    assert result["success"] is True
+    assert _stored_content(message_manager) == content
 
 
 @pytest.mark.asyncio
@@ -224,22 +217,6 @@ async def test_malformed_candidate_reports_binding_error_without_storing(
 
 
 @pytest.mark.asyncio
-async def test_well_formed_landed_sends_unchanged(
-    registry: InternalToolRegistry, message_manager: MagicMock
-) -> None:
-    content = (
-        f"EVENT=LANDED TASK=#7 SHA={SHA} TASK_TITLE=Seat proofs BRANCH=b RECEIPT=r "
-        "MODE=merge LANDED_TIP=t ACTIVATION=none PROJECT_SYNC_REQUIRED=false "
-        "PROVENANCE=p RETEST=PASS NOTE=landed"
-    )
-
-    result = await _send(registry, content)
-
-    assert result["success"] is True
-    assert _stored_content(message_manager) == content
-
-
-@pytest.mark.asyncio
 async def test_non_consumed_event_with_free_text_is_unaffected(
     registry: InternalToolRegistry, message_manager: MagicMock
 ) -> None:
@@ -282,16 +259,11 @@ async def test_empty_lane_candidate_sends_unchanged(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "content",
-    [
-        f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned",
-        f"EVENT=REVIEW_COMPLETE TASK=#7 SHA={SHA} VERDICT=LAND LANDING=NOT_REQUIRED NOTE=",
-    ],
-)
-async def test_well_formed_withdrawal_and_review_complete_send_unchanged(
-    content: str, registry: InternalToolRegistry, message_manager: MagicMock
+async def test_well_formed_withdrawal_sends_unchanged(
+    registry: InternalToolRegistry, message_manager: MagicMock
 ) -> None:
+    content = f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned"
+
     result = await _send(registry, content)
 
     assert result["success"] is True
@@ -302,7 +274,7 @@ async def test_well_formed_withdrawal_and_review_complete_send_unchanged(
 @pytest.mark.parametrize(
     ("content", "field", "canonical"),
     [
-        (f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA}ab RETEST=PASS NOTE=g", "SHA", "SHA RETEST NOTE"),
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it", "SHA", "SHA NOTE"),
         ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA", "SHA NOTE"),
     ],
 )
@@ -325,10 +297,10 @@ async def test_malformed_proof_lines_are_refused_and_nothing_is_stored(
 
 
 @pytest.mark.asyncio
-async def test_well_formed_proof_result_sends_unchanged(
+async def test_well_formed_proof_request_sends_unchanged(
     registry: InternalToolRegistry, message_manager: MagicMock
 ) -> None:
-    content = f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA} RETEST=PASS NOTE=focused green"
+    content = f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=rerun the focused tests"
 
     result = await _send(registry, content)
 

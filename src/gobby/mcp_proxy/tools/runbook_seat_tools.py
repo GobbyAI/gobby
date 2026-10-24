@@ -1,4 +1,4 @@
-"""gobby-agents:check_runbook_seats, the runbook's read-only seat guard (#23329)."""
+"""gobby-agents runbook tools: the read-only seat guard (#23329) and team admission."""
 
 from __future__ import annotations
 
@@ -6,9 +6,10 @@ from dataclasses import asdict
 from typing import Any
 
 from gobby.agents.runbook_seats import RunbookSeatRefusal, RunbookSeatStores, check_runbook_seats
-from gobby.agents.team_launch_inputs import resolve_team_launch_inputs
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -23,6 +24,7 @@ def runbook_seat_stores(db: HubDatabase) -> RunbookSeatStores:
         executions=lambda project_id: LocalPipelineExecutionManager(db, project_id),
         definitions=AgentDefinitionManager(db),
         workspaces=WorkspaceManager(db),
+        runs=LocalAgentRunManager(db),
     )
 
 
@@ -35,28 +37,22 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "{name, title, agent}. Refuses when the same runbook is still launching for the "
             "same project in the same workspace on the same machine, or when a seat's agent "
             "definition is missing or disabled. If supplied, report_to must be a nonempty "
-            "session ref; require_report_to rejects omission without lane inference. "
-            "For team-lane, lane resolves omitted report_to from the one running "
-            "lane-manager whose run recorded that lane, and omitted workspace, lane_pane and "
-            "worktree from live state, and omitted lane_columns and "
-            "lane_rows from the gclient window showing the workspace; explicit values, "
-            "names and UUIDs override. Launches without a developer seat require worktree=. "
-            "Ambiguous state refuses with candidates. On success it returns the checked "
-            "seats and resolved launch inputs."
+            "session ref; require_report_to rejects omission. "
+            "launch names the seats to start; skip_live_seats leaves out each seat whose "
+            "agent already runs on this machine with a live session in this project and "
+            "maps it to that session under live. tab_title sets tab_exists for that tab of "
+            "the workspace. On success it returns the checked seats."
         ),
         read_only=True,
     )
     def check_runbook_seats_tool(
         requested: str,
         catalogue: list[dict[str, Any]],
-        workspace: str | None = None,
+        workspace: str,
         report_to: str | None = None,
         require_report_to: bool = False,
-        lane: str | int | None = None,
-        worktree: str | None = None,
-        lane_pane: str | None = None,
-        lane_columns: int | None = None,
-        lane_rows: int | None = None,
+        skip_live_seats: bool = False,
+        tab_title: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -66,33 +62,6 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             }
         try:
             caller_session_id = ctx.resolve_session_id(caller_ref)
-            resolved: dict[str, Any] = {}
-            if lane is not None:
-                if worktree is None and "developer" not in {
-                    seat.strip() for seat in requested.split(",")
-                }:
-                    raise RunbookSeatRefusal(
-                        "team-lane launches without a developer seat require worktree="
-                    )
-                leases = ctx.lease_registry_resolver() if ctx.lease_registry_resolver else None
-                resolved = asdict(
-                    resolve_team_launch_inputs(
-                        ctx.db,
-                        caller_session_id=caller_session_id,
-                        lane=lane,
-                        workspace=workspace,
-                        report_to=report_to,
-                        worktree=worktree,
-                        lane_pane=lane_pane,
-                        lane_columns=lane_columns,
-                        lane_rows=lane_rows,
-                        viewports=None if leases is None else leases.viewports,
-                    )
-                )
-                workspace = resolved["workspace"]
-                report_to = resolved["report_to"]
-            if workspace is None:
-                raise RunbookSeatRefusal("workspace is required without a lane")
             admitted = check_runbook_seats(
                 runbook_seat_stores(ctx.db),
                 caller_session_id=caller_session_id,
@@ -101,10 +70,65 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 catalogue=catalogue,
                 report_to=report_to,
                 require_report_to=require_report_to,
+                skip_live_seats=skip_live_seats,
+                tab_title=tab_title,
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
         # No "error" key on success: execute_mcp_step fails any result that carries one.
-        return {"success": True, **asdict(admitted), **resolved}
+        return {"success": True, **asdict(admitted)}
+
+    @registry.tool(
+        name="admit_team",
+        description=(
+            "Admit a single-use team for one open task. Call it from a team runbook's "
+            "'admit' pipeline mcp step. Under the project landing lock it creates the task's "
+            "branch and worktree from the integration branch, both named "
+            "task-<seq>-<title-slug>; it accepts no branch or tree name. A re-run of the same "
+            "execution returns the same team. A replacement execution passes team_id, the "
+            "admitting execution id, and must name the same task. Refuses team_exists while "
+            "the task has a live team tree. fresh_reviewer=true joins team_id as the review "
+            "epoch's one fresh reviewer; it requires exactly two rejected review rounds, "
+            "exclude_reviewers (comma-separated session refs) naming every session that "
+            "reviewed in the epoch, and the claim already handed to one of them. Returns the "
+            "team plus task_id, branch, worktree and project_path for the seat steps."
+        ),
+    )
+    async def admit_team_tool(
+        task: str,
+        team_id: str | None = None,
+        fresh_reviewer: bool = False,
+        exclude_reviewers: str | None = None,
+    ) -> dict[str, Any]:
+        caller_ref = ctx.get_current_session_id()
+        if ctx.db is None or not caller_ref:
+            return {
+                "success": False,
+                "error": "admit_team needs a database and a caller session",
+                "error_code": "team_caller_invalid",
+            }
+        try:
+            team = await admit_team(
+                ctx.db,
+                caller_session_id=ctx.resolve_session_id(caller_ref),
+                task=task,
+                team_id=team_id,
+                fresh_reviewer=fresh_reviewer,
+                exclude_reviewers=[
+                    ref.strip() for ref in (exclude_reviewers or "").split(",") if ref.strip()
+                ],
+            )
+        except TeamAdmissionRefused as exc:
+            return {"success": False, "error": str(exc), "error_code": exc.code}
+        except ValueError as exc:
+            return {"success": False, "error": str(exc), "error_code": "team_caller_invalid"}
+        return {
+            "success": True,
+            "team": asdict(team),
+            "task_id": team.task_id,
+            "branch": team.branch,
+            "worktree": team.worktree_id,
+            "project_path": team.worktree_path,
+        }

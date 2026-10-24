@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol
 from gobby.plans._artifact_refs import artifact_referenced
 from gobby.plans._task_refs import is_placeholder_task_ref, normalize_task_ref
 from gobby.plans.parser import Deferral
+from gobby.tasks.state_semantics import TASK_STATES
 
 type DeferralStatus = Literal[
     "valid",
@@ -19,7 +20,7 @@ type DeferralStatus = Literal[
     "missing_dependency_or_cited_parent",
 ]
 
-_ACTIVE_TASK_STATES = frozenset({"ready", "escalated"})
+_ACTIVE_TASK_STATES = TASK_STATES - {"closed"}
 
 # Closure reasons under which the deferral target delivered the obligation it
 # was pointed at. A deferral names work another task owns, so the target
@@ -27,10 +28,10 @@ _ACTIVE_TASK_STATES = frozenset({"ready", "escalated"})
 # ("this section is covered by #N") became verified rather than stale.
 #
 # Every other closure leaves the obligation unowned and still fails the gate --
-# `wont_fix`, `obsolete`, and `out_of_repo` abandon it, and `duplicate` moves it
+# `wont_do` and `moot` abandon it, and `superseded` moves it
 # to a task this plan does not name, so the deferral must be re-pointed. A
 # closed target with no recorded reason fails closed for the same reason.
-_SATISFIED_CLOSE_REASONS = frozenset({"completed", "already_implemented"})
+_SATISFIED_CLOSE_REASONS = frozenset({"done"})
 
 
 @dataclass(frozen=True)

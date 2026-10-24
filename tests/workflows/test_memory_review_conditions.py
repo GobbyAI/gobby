@@ -24,7 +24,7 @@ def _task(**overrides: Any) -> SimpleNamespace:
         "seq_num": 42,
         "task_type": "task",
         "category": "code",
-        "closed_reason": "completed",
+        "closed_reason": "done",
         "closed_at": datetime(2026, 8, 25, tzinfo=UTC),
         "commits": ["abc1234"],
     }
@@ -36,7 +36,7 @@ def _input(**overrides: Any) -> dict[str, Any]:
     values: dict[str, Any] = {
         "task_id": "#42",
         "changes_summary": "Implemented layered memory guidance.",
-        "reason": "completed",
+        "reason": "done",
         "commit_shas": [],
     }
     values.update(overrides)
@@ -78,11 +78,9 @@ def test_completed_non_repository_leaf_queues_without_commits(category: str | No
         *[
             (_task(closed_reason=reason), False)
             for reason in (
-                "duplicate",
-                "already_implemented",
-                "wont_fix",
-                "obsolete",
-                "out_of_repo",
+                "superseded",
+                "moot",
+                "wont_do",
             )
         ],
     ],
