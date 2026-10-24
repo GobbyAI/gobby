@@ -265,6 +265,7 @@ already-created registry continue to use the live per-epoch configuration contra
 | workflow.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | workflow.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows | Default 90 seconds; daemon restart required; must remain between memory recall and adapter deadlines. |
 | workflow.debug_echo_context | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| workflow.definition_regex_max_length | DaemonConfig schema via /api/config/schema; save via /api/config/values | (none — daemon-config-only) | cli-only | keep | (none) | maximum characters in a definition-supplied regex (default 2048); enforced before registry writes; settings UI is out of scope |
 | databases.qdrant.url | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
 | databases.qdrant.api_key | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
 | databases.qdrant.port | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
