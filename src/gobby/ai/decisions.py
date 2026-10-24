@@ -185,10 +185,12 @@ class DecisionService:
             async with asyncio.timeout(budget):
                 if config.identity_contract == "model_card":
                     card = asyncio.create_task(
-                        _fetch_card_identity(base, model, config.resolved_backend_max_state_tokens)
+                        _fetch_card_identity(
+                            base, model, config.resolved_backend_max_state_tokens, budget
+                        )
                     )
                 payload = await retry_async(
-                    lambda: _post(url, headers, body),
+                    lambda: _post(url, headers, body, budget),
                     max_retries=_ATTEMPTS,
                     delay=_RETRY_DELAY,
                     retry_if=_retryable,
@@ -279,13 +281,15 @@ def _endpoint(wire_api: str, base: str, model: str) -> str:
     return f"{root}/ai/run/@cf/cloudflare/{model}"
 
 
-def _client() -> httpx.AsyncClient:
+def _client(timeout_seconds: float) -> httpx.AsyncClient:
     # The wire URL is the only host dialed: no environment proxy and no redirect hop.
-    return httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=None)
+    return httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=timeout_seconds)
 
 
-async def _post(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) -> Any:
-    async with _client() as client:
+async def _post(
+    url: str, headers: Mapping[str, str], body: Mapping[str, Any], timeout_seconds: float
+) -> Any:
+    async with _client(timeout_seconds) as client:
         response = await client.post(url, json=body, headers=headers)
     if not 200 <= response.status_code < 300:
         raise _HTTPStatusError(response.status_code)
@@ -385,9 +389,11 @@ def _check_not_truncated(body: dict[str, Any], backend_max: int) -> None:
         )
 
 
-async def _fetch_card_identity(base: str, model: str, backend_max: int) -> str | None:
+async def _fetch_card_identity(
+    base: str, model: str, backend_max: int, timeout_seconds: float
+) -> str | None:
     try:
-        async with _client() as client:
+        async with _client(timeout_seconds) as client:
             response = await client.get(f"{base.rstrip('/')}/v1/models")
         payload = response.json() if response.status_code == 200 else None
     except (httpx.HTTPError, ValueError):

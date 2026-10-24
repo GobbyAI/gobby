@@ -22,6 +22,7 @@ pytest_plugins = [
     "tests.fixtures.postgres",
     "tests.review_coverage_helpers",
     "tests.fixtures.e2e_run_cleanup",
+    "tests.fixtures.socket_paths",
 ]
 
 

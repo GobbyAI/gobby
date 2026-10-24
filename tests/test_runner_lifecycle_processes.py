@@ -117,9 +117,9 @@ def _install_fake_psutil(monkeypatch: pytest.MonkeyPatch) -> dict[int, FakeProce
     return processes
 
 
-def _host_manager(tmp_path: Path, *, identity_ok: bool = True) -> TerminalHostManager:
+def _host_manager(short_socket_dir: Path, *, identity_ok: bool = True) -> TerminalHostManager:
     return TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path)),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir)),
         terminal_config=TerminalConfig(),
         pid_identity=lambda pid: identity_ok and pid == HOST_PID,
     )
@@ -127,11 +127,11 @@ def _host_manager(tmp_path: Path, *, identity_ok: bool = True) -> TerminalHostMa
 
 @pytest.mark.asyncio
 async def test_reap_preserves_gterm_host_by_default(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     processes = _install_fake_psutil(monkeypatch)
-    host = _host_manager(tmp_path)
-    write_pidfile(tmp_path, HOST_PID)
+    host = _host_manager(short_socket_dir)
+    write_pidfile(short_socket_dir, HOST_PID)
     # `stop()` has already cleared the supervisor's pid; the pidfile still names the host.
     host.host_pid = None
     runner = SimpleNamespace(terminal_host_manager=host)
@@ -150,10 +150,12 @@ async def test_reap_preserves_gterm_host_by_default(
 
 
 @pytest.mark.asyncio
-async def test_reap_takes_drained_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_reap_takes_drained_host(
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     processes = _install_fake_psutil(monkeypatch)
-    host = _host_manager(tmp_path)
-    write_pidfile(tmp_path, HOST_PID)
+    host = _host_manager(short_socket_dir)
+    write_pidfile(short_socket_dir, HOST_PID)
     host.host_pid = HOST_PID
     host.host_drained = True
     runner = SimpleNamespace(terminal_host_manager=host)
@@ -169,9 +171,9 @@ async def test_reap_takes_drained_host(tmp_path: Path, monkeypatch: pytest.Monke
     assert processes[SHELL_PID].terminated is True
 
 
-def test_host_preserve_pids_requires_gterm_identity(tmp_path: Path) -> None:
-    host = _host_manager(tmp_path, identity_ok=False)
-    write_pidfile(tmp_path, HOST_PID)
+def test_host_preserve_pids_requires_gterm_identity(short_socket_dir: Path) -> None:
+    host = _host_manager(short_socket_dir, identity_ok=False)
+    write_pidfile(short_socket_dir, HOST_PID)
     host.host_pid = HOST_PID
     runner = SimpleNamespace(terminal_host_manager=host)
     assert runner_lifecycle_processes._host_preserve_pids(cast(GobbyRunner, runner)) == set()

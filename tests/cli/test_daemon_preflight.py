@@ -69,6 +69,73 @@ _CANDIDATE = Path("/workspace/target/release/gdaemon")
 _BOOTSTRAP_URL = "postgresql://bootstrap.example/gobby"
 
 
+def test_restart_data_preflight_failure_leaves_daemon_running(
+    ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stopped: list[str] = []
+    monkeypatch.setattr(daemon_module, "_do_stop", lambda *_a, **_k: stopped.append("stop"))
+    monkeypatch.setattr(
+        daemon_preflight,
+        "preflight_schema",
+        _raising_plan("migration 421 UPDATE legacy_preflight: criteria_required"),
+    )
+    assert _start_refusal(ctx) == "migration 421 UPDATE legacy_preflight: criteria_required"
+    plan_calls.clear()
+    result = CliRunner().invoke(cli, ["restart"])
+    assert result.exit_code == 1, result.output
+    assert "migration 421 UPDATE legacy_preflight: criteria_required" in result.output
+    assert "The running daemon was left alone." in result.output
+    assert stopped == []
+    assert plan_calls == [(_BOOTSTRAP_URL, None)]
+
+
+def test_cutover_data_preflight_failure_leaves_daemon_running(
+    ctx: click.Context,
+    plan_calls: list[tuple[str, Path | None]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import Mock
+
+    from gobby.cli import cutover
+
+    monkeypatch.setattr(daemon_preflight, "_candidate_identity_refusal", lambda *_a, **_k: None)
+    calls: list[tuple[str, Path | None]] = []
+
+    def fail_data(database_url: str, *, gdaemon: Path | None = None) -> str:
+        calls.append((database_url, gdaemon))
+        raise SchemaContractError("migration 421 UPDATE legacy_preflight: criteria_required")
+
+    monkeypatch.setattr(daemon_preflight, "preflight_schema", fail_data)
+    assert _start_refusal(ctx, _CANDIDATE) == (
+        "migration 421 UPDATE legacy_preflight: criteria_required"
+    )
+    calls.clear()
+    plan_calls.clear()
+    monkeypatch.setattr(
+        cutover,
+        "_build_artifacts",
+        lambda _root: cutover._Build({"gdaemon": _CANDIDATE}, "unused client"),
+    )
+    monkeypatch.setattr(cutover, "workspace_source_identity", lambda *_a: "test-source")
+    monkeypatch.setattr(cutover, "preflight_binary_promotions", lambda *_a, **_k: None)
+    stop = Mock(return_value=True)
+    start = Mock()
+    with pytest.raises(cutover.CutoverError, match="migration 421.*criteria_required"):
+        cutover.run_cutover(
+            tmp_path,
+            tmp_path / "bin",
+            stop_daemon=stop,
+            start_daemon=start,
+            start_refusal=lambda candidate: _start_refusal(ctx, candidate),
+        )
+    stop.assert_not_called()
+    start.assert_not_called()
+    assert not (tmp_path / "bin").exists()
+    assert calls == [(_BOOTSTRAP_URL, _CANDIDATE)]
+    assert plan_calls == [(_BOOTSTRAP_URL, _CANDIDATE)]
+
+
 @pytest.fixture
 def ctx() -> click.Context:
     return click.Context(click.Command("restart"), obj=CliRuntime(config_file=None))
@@ -110,6 +177,7 @@ def _every_gate_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(schema_divergence, "schema_apply_refusal", lambda _database: None)
     monkeypatch.setattr(daemon_preflight, "open_preflight_hub", lambda _runtime: None)
     monkeypatch.setattr(daemon_preflight, "verify_catalog_test_cluster", lambda _url: None)
+    monkeypatch.setattr(daemon_preflight, "preflight_schema", lambda *_a, **_k: "", raising=False)
     monkeypatch.setattr(install_setup_srt, "restage_srt_runner", lambda: None)
     config = DaemonConfig()
     config.agent_sandbox.enabled = False
@@ -379,17 +447,19 @@ def test_plan_timeout_and_launch_failures_become_refusals(
     assert _start_refusal(ctx) == detail
 
 
-def test_no_readable_hub_url_skips_the_plan(
+def test_no_readable_hub_url_refuses_unproven_restart(
     ctx: click.Context, plan_calls: list[tuple[str, Path | None]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Unreadable is not a refusal; the start is simply left unproven."""
+    """A restart cannot prove data migrations without the hub connection."""
     monkeypatch.setattr(
         daemon_preflight,
         "load_bootstrap",
         lambda: SimpleNamespace(datastore_mode="local", database_url=None),
     )
 
-    assert _start_refusal(ctx) is None
+    assert _start_refusal(ctx) == (
+        "Schema data preflight requires a readable hub URL; refusing restart"
+    )
     assert plan_calls == []
 
 

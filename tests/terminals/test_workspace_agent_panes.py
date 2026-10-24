@@ -23,6 +23,7 @@ from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager, tmux_locator_key
+from gobby.storage.workspace_layout import layout_pane_ids
 from gobby.storage.workspaces import (
     InvalidWorkspaceOpError,
     Workspace,
@@ -522,8 +523,9 @@ async def test_split_placement_by_tab_title(harness: _Harness) -> None:
     h = harness
     ws, elsewhere = _workspace(h), _workspace(h, "elsewhere")
     lane, first = _base(h, ws, title="lane")
-    focused = _labeled_split(h, first, "manager", _terminal(h))
-    h.workspaces.set_focus_hints(ws.id, project_id=h.project_id, tab_id=lane.id, pane_id=focused.id)
+    last = _labeled_split(h, first, "manager", _terminal(h))
+    # Focus never steers the split: it lands beside the tab's last pane.
+    h.workspaces.set_focus_hints(ws.id, project_id=h.project_id, tab_id=lane.id, pane_id=first.id)
     _base(h, ws, title="reviews")
     _base(h, elsewhere, title="lane")  # Another workspace's tab never matches.
     split = {"workspace": ws.id, "tab_title": "lane", "axis": "right", "title": "seat"}
@@ -531,7 +533,7 @@ async def test_split_placement_by_tab_title(harness: _Harness) -> None:
     resolved = await h.reserver.preflight(
         OPERATOR, h.project_id, AgentPlacement.parse({"split": split})
     )
-    assert (resolved.tab_id, resolved.beside_pane_id) == (lane.id, focused.id)
+    assert (resolved.tab_id, resolved.beside_pane_id) == (lane.id, last.id)
     reserved = await h.reserver.reserve(resolved, worktree_id=None)
     assert reserved.tab_id == lane.id
     assert _split_axis(_tab_row(h, ws, lane.id).layout, reserved.pane_id) == "horizontal"
@@ -545,14 +547,60 @@ async def test_split_placement_by_tab_title(harness: _Harness) -> None:
     assert (_tab_ids(h, ws), _pane_ids(h, ws), h.events) == before
 
     for body in (
-        {**split, "pane": focused.id},
-        {"pane": focused.id, "tab_title": "lane", "axis": "right", "title": "seat"},
+        {**split, "pane": last.id},
+        {"pane": last.id, "tab_title": "lane", "axis": "right", "title": "seat"},
         {"workspace": ws.id, "axis": "right", "title": "seat"},
         {**split, "tab_title": "  "},
     ):
         with pytest.raises(AgentPlacementError) as caught:
             AgentPlacement.parse({"split": body})
         assert caught.value.code == "invalid_placement", body
+
+
+async def test_later_team_seats_split_the_branch_tab_without_focus(harness: _Harness) -> None:
+    """Seat 1 opens the branch tab; later seats line up in it though no pane takes focus."""
+    h = harness
+    ws = _workspace(h)
+    admin = h.workspaces.create_tab(
+        ws.id, pane_id=str(uuid.uuid4()), project_id=h.project_id, role="orchestrator"
+    )
+    admin_tab, admin_pane = admin.tabs[0], admin.panes[0]
+    # The operator's admin tab holds the workspace focus throughout the launch.
+    h.workspaces.set_focus_hints(
+        ws.id, project_id=h.project_id, tab_id=admin_tab.id, pane_id=admin_pane.id
+    )
+    seat, _ = await _launch(h, _tab(ws.id, "task-1-branch"))
+    assert _tab_row(h, ws, seat.tab_id).focused_pane_id is None
+    placed = [seat.pane_id]
+
+    for title in ("test writer", "developer", "code reviewer"):
+        split = {"workspace": ws.id, "tab_title": "task-1-branch", "axis": "right", "title": title}
+        resolved = await h.reserver.preflight(
+            OPERATOR, h.project_id, AgentPlacement.parse({"split": split})
+        )
+        assert (resolved.tab_id, resolved.beside_pane_id) == (seat.tab_id, placed[-1])
+        reserved = await h.reserver.reserve(resolved, worktree_id=None)
+        await h.reserver.bind(reserved, _terminal(h).id)
+        placed.append(reserved.pane_id)
+
+    assert layout_pane_ids(_tab_row(h, ws, seat.tab_id).layout) == placed
+    assert layout_pane_ids(_tab_row(h, ws, admin_tab.id).layout) == [admin_pane.id]
+
+
+async def test_titled_split_refuses_another_projects_tab(harness: _Harness) -> None:
+    h = harness
+    ws = _workspace(h)
+    other = LocalProjectManager(h.db).create(name="agent-panes-foreign-team")
+    foreign_tab, foreign_pane = _base(h, ws, title="task-2-branch", project_id=other.id)
+    h.workspaces.set_focus_hints(
+        ws.id, project_id=other.id, tab_id=foreign_tab.id, pane_id=foreign_pane.id
+    )
+    before = (_tab_ids(h, ws), _pane_ids(h, ws), list(h.events))
+    split = {"workspace": ws.id, "tab_title": "task-2-branch", "axis": "right", "title": "seat"}
+
+    placement = AgentPlacement.parse({"split": split})
+    await _refused("forbidden", h.reserver.preflight(OPERATOR, h.project_id, placement))
+    assert (_tab_ids(h, ws), _pane_ids(h, ws), h.events) == before
 
 
 @pytest.mark.parametrize("columns", [80, 323])

@@ -652,7 +652,7 @@ fn insert_receipt(
     client: &mut impl GenericClient,
     receipt_table: &str,
     migration: &EmbeddedMigration,
-) -> Result<(), SchemaError> {
+) -> Result<(), postgres::Error> {
     client.execute(
         &format!(
             "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) VALUES ($1, $2, $3, NOW())"

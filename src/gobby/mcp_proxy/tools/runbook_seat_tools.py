@@ -14,6 +14,7 @@ from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspaces import WorkspaceManager
 
 
@@ -25,6 +26,7 @@ def runbook_seat_stores(db: HubDatabase) -> RunbookSeatStores:
         definitions=AgentDefinitionManager(db),
         workspaces=WorkspaceManager(db),
         runs=LocalAgentRunManager(db),
+        tasks=LocalTaskManager(db),
     )
 
 

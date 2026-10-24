@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
 
 from gobby.agents.worktree_reuse import (
-    ReusedWorktreeRebaseConflict,
+    ReusedWorktreeSyncConflict,
     sync_reused_worktree_to_base,
 )
 from gobby.worktrees.base_branch import select_worktree_base
 from gobby.worktrees.git import WorktreeGitManager
 
 
-class FakeGitManager:
+class FakeGitManager(WorktreeGitManager):
     def __init__(
         self,
         responses: list[subprocess.CompletedProcess[str] | BaseException],
@@ -24,16 +25,27 @@ class FakeGitManager:
         self.responses = responses
         self.calls: list[tuple[list[str], str | Path | None, int]] = []
 
-    async def get_local_commit(self, ref: str) -> str | None:
-        result = await self.run_git_command(["rev-parse", "--verify", ref])
+    async def get_local_commit(self, branch: str) -> str | None:
+        result = await self.run_git_command(["rev-parse", "--verify", branch])
         return result.stdout.strip() if result.returncode == 0 else None
+
+    async def _run_git(
+        self,
+        args: list[str],
+        cwd: str | Path | None = None,
+        timeout: int = 30,
+        check: bool = False,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return await self.run_git_command(args, cwd=cwd, timeout=timeout)
 
     async def run_git_command(
         self,
         args: list[str],
-        *,
         cwd: str | Path | None = None,
         timeout: int = 30,
+        check: bool = False,
+        env: Mapping[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if args[0] == "check-ref-format":
             return subprocess.CompletedProcess(args, 0, "", "")
@@ -128,14 +140,14 @@ async def test_sync_reused_worktree_prefers_branch_over_same_named_tag(tmp_path:
         git_manager=WorktreeGitManager(tmp_path), worktree_path=str(tmp_path), base_branch="main"
     )
 
-    assert result.status == "rebased"
+    assert result.status == "merged"
     assert result.base_commit_sha == base_sha
     assert _git(tmp_path, "rev-parse", "HEAD").stdout.strip() == base_sha
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: Path) -> None:
+async def test_sync_reused_worktree_merges_when_base_is_not_ancestor(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     git = FakeGitManager(
@@ -143,7 +155,7 @@ async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: 
             _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
             _result(["git", "status"], 0),
             _result(["git", "merge-base"], 1),
-            _result(["git", "rebase"], 0),
+            _result(["git", "merge"], 0),
         ]
     )
 
@@ -153,9 +165,9 @@ async def test_sync_reused_worktree_rebases_when_base_is_not_ancestor(tmp_path: 
         base_branch="0.4.7",
     )
 
-    assert result.status == "rebased"
+    assert result.status == "merged"
     assert result.base_ref == "refs/heads/0.4.7"
-    assert git.calls[3][0] == ["rebase", "base-sha"]
+    assert git.calls[3][0] == ["merge", "base-sha", "--no-edit"]
     assert git.calls[3][1] == worktree
     assert git.calls[3][2] == 120
 
@@ -315,7 +327,7 @@ async def test_sync_reused_worktree_rejects_non_generated_project_metadata(
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_sync_reused_worktree_aborts_failed_rebase(tmp_path: Path) -> None:
+async def test_sync_reused_worktree_aborts_failed_merge(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     git = FakeGitManager(
@@ -323,24 +335,25 @@ async def test_sync_reused_worktree_aborts_failed_rebase(tmp_path: Path) -> None
             _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
             _result(["git", "status"], 0),
             _result(["git", "merge-base"], 1),
-            _result(["git", "rebase"], 1, stderr="CONFLICT\n"),
-            _result(["git", "rebase", "--abort"], 0),
+            _result(["git", "merge"], 1, stderr="CONFLICT\n"),
+            _result(["git", "diff"], 0, stdout="shared.txt\n"),
+            _result(["git", "merge", "--abort"], 0),
         ]
     )
 
-    with pytest.raises(ReusedWorktreeRebaseConflict, match="rebase aborted"):
+    with pytest.raises(ReusedWorktreeSyncConflict, match="aborted"):
         await sync_reused_worktree_to_base(
             git_manager=git,
             worktree_path=str(worktree),
             base_branch="0.4.7",
         )
 
-    assert git.calls[-1][0] == ["rebase", "--abort"]
+    assert git.calls[-1][0] == ["merge", "--abort"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.unit
-async def test_sync_reused_worktree_aborts_timed_out_rebase(tmp_path: Path) -> None:
+async def test_sync_reused_worktree_aborts_timed_out_merge(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     git = FakeGitManager(
@@ -348,16 +361,44 @@ async def test_sync_reused_worktree_aborts_timed_out_rebase(tmp_path: Path) -> N
             _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
             _result(["git", "status"], 0),
             _result(["git", "merge-base"], 1),
-            subprocess.TimeoutExpired(cmd=["git", "rebase", "0.4.7"], timeout=120),
-            _result(["git", "rebase", "--abort"], 0),
+            subprocess.TimeoutExpired(cmd=["git", "merge", "0.4.7"], timeout=120),
+            _result(["git", "merge", "--abort"], 0),
         ]
     )
 
-    with pytest.raises(RuntimeError, match="Timed out rebasing reused worktree.*rebase aborted"):
+    with pytest.raises(RuntimeError, match="timed out.*aborted"):
         await sync_reused_worktree_to_base(
             git_manager=git,
             worktree_path=str(worktree),
             base_branch="0.4.7",
         )
 
-    assert git.calls[-1] == (["rebase", "--abort"], worktree, 30)
+    assert git.calls[-1] == (["merge", "--abort"], worktree, 30)
+
+
+@pytest.mark.integration
+async def test_reuse_merge_sets_gobby_merge_environment(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Merge Test")
+    _git(tmp_path, "commit", "--allow-empty", "-m", "initial")
+    _git(tmp_path, "checkout", "-b", "candidate")
+    (tmp_path / "candidate.txt").write_text("candidate")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "candidate")
+    _git(tmp_path, "checkout", "main")
+    (tmp_path / "base.txt").write_text("base")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    _git(tmp_path, "checkout", "candidate")
+    hook = tmp_path / ".git" / "hooks" / "pre-merge-commit"
+    hook.write_text('#!/bin/sh\ntest "$GOBBY_MERGE" = "1"\n')
+    hook.chmod(0o755)
+
+    result = await sync_reused_worktree_to_base(
+        git_manager=WorktreeGitManager(tmp_path), worktree_path=str(tmp_path), base_branch="main"
+    )
+
+    assert result.status == "merged"
+    assert _git(tmp_path, "rev-parse", "HEAD^2").stdout.strip() == base

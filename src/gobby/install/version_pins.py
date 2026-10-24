@@ -4,12 +4,12 @@ from __future__ import annotations
 
 MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track shipped helper versions.
-    "ghook": "0.9.40",
-    "gcode": "1.9.60",
-    "gdaemon": "0.4.92",
+    "ghook": "0.9.41",
+    "gcode": "1.9.61",
+    "gdaemon": "0.4.93",
     "gterm": "0.1.15",
-    "gclient": "0.1.77",
-    "gmcp": "0.1.4",
+    "gclient": "0.1.78",
+    "gmcp": "0.1.6",
 }
 
 UNPUBLISHED_MANAGED_BINS: frozenset[str] = frozenset({"gterm", "gclient", "gmcp"})

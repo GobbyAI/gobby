@@ -9,7 +9,7 @@ import pytest
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
 from gobby.cli.daemon_lifecycle import _do_stop
 from gobby.cli.runtime import CliRuntime
-from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
+from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES, HandoffShutdownBlocked
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -77,7 +77,10 @@ def test_wait_timeout_refuses_shutdown() -> None:
             "gobby.cli._daemon_handoffs.guard_handoff_shutdown",
             side_effect=HandoffShutdownBlocked("unresolved #12332"),
         ) as check,
-        patch("gobby.cli._daemon_handoffs.time.monotonic", side_effect=[0, 601]),
+        patch(
+            "gobby.cli._daemon_handoffs.time.monotonic",
+            side_effect=[0, HANDOFF_IN_FLIGHT_MINUTES * 60 + 1],
+        ),
         patch("gobby.cli._daemon_handoffs.time.sleep") as sleep,
         pytest.raises(HandoffShutdownBlocked, match="unresolved"),
         protect_pending_handoffs(MagicMock(spec=CliRuntime), wait=True, report=messages.append),
@@ -86,6 +89,30 @@ def test_wait_timeout_refuses_shutdown() -> None:
     sleep.assert_not_called()
     assert check.call_count == 1
     assert messages == []
+
+
+def test_wait_allows_a_marker_to_reach_the_stale_cutoff() -> None:
+    elapsed = 0.0
+
+    @contextmanager
+    def guard(*_args: object, **_kwargs: object) -> Iterator[None]:
+        if elapsed < HANDOFF_IN_FLIGHT_MINUTES * 60:
+            raise HandoffShutdownBlocked("pending #12332")
+        yield
+
+    def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    messages: list[str] = []
+    with (
+        patch("gobby.cli._daemon_handoffs.guard_handoff_shutdown", side_effect=guard),
+        patch("gobby.cli._daemon_handoffs.time.monotonic", side_effect=lambda: elapsed),
+        patch("gobby.cli._daemon_handoffs.time.sleep", side_effect=advance),
+        protect_pending_handoffs(MagicMock(spec=CliRuntime), wait=True, report=messages.append),
+    ):
+        assert elapsed == HANDOFF_IN_FLIGHT_MINUTES * 60
+    assert messages == ["Waiting for handoff completion: pending #12332"]
 
 
 def test_stop_refuses_handoff_without_force(capsys: pytest.CaptureFixture[str]) -> None:

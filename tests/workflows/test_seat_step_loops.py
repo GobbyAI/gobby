@@ -1077,6 +1077,7 @@ async def test_plan_adversary_consensus_variables_are_handler_owned(
         f"EVENT=CONSENSUS SHA={SHA[:39]}",
         f"EVENT=CONSENSUS SHA={SHA}a",
         f"EVENT=CONSENSUS\nSHA={SHA}",
+        f"Evidence follows.\nEVENT=CONSENSUS SHA={SHA}",
     ],
 )
 async def test_plan_adversary_rejects_malformed_consensus(
@@ -1088,6 +1089,31 @@ async def test_plan_adversary_rejects_malformed_consensus(
     assert run.step == "review"
     assert run.vars["consensus"] is False
     assert not await run.admits(*DERIVE)
+
+
+@pytest.mark.parametrize("suffix", ["\tNOTE=approved", "\r\nPLAN=example"])
+async def test_plan_adversary_consensus_preserves_whitespace_delimiters(
+    temp_db: HubDatabase, suffix: str
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA}{suffix}")
+    assert run.step == "stamp"
+    assert run.vars["consensus"] is True
+    assert run.vars["consensus_sha"] == SHA
+
+
+@pytest.mark.parametrize("suffix", ["\tNOTE=unresolved", "\r\nPLAN=example"])
+async def test_plan_adversary_withdrawal_preserves_whitespace_delimiters(
+    temp_db: HubDatabase, suffix: str
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    assert run.step == "stamp"
+    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}{suffix}")
+    assert run.step == "review"
+    assert run.vars["consensus"] is False
 
 
 async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: HubDatabase) -> None:
@@ -1157,25 +1183,28 @@ async def test_developer_claim_keeps_ref_when_task_card_is_offloaded(temp_db: Hu
     assert run.vars["assigned_task_ref"] == ref
 
 
-async def test_developer_submit_unlinks_a_superseded_commit(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "developer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task(owner=SESSION_ID)
+@pytest.mark.parametrize("last_commit", [True, False], ids=["last-commit", "older-commit"])
+async def test_developer_submit_unlinks_a_superseded_commit(
+    linked_developer: tuple[SeatRun, Task, str, str], last_commit: bool
+) -> None:
+    run, task, sha, other_sha = linked_developer
+    tasks = LocalTaskManager(run.db)
+    if not last_commit:
+        tasks.link_commit(task.id, other_sha)
+    commits = tasks.get_task(task.id).commits
+    assert commits is not None and commits
+    updated = tasks.unlink_commit(task.id, commits[0])
     await run.call(
         "gobby-tasks",
-        "claim_task",
-        {"task_id": task.id},
-        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+        "unlink_commit",
+        {"task_id": task.id, "commit_sha": sha},
+        {"task_id": task.id, "commits": updated.commits},
     )
-    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
-    await run.call("gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": SHA})
-    await run.call(
-        "gobby-tasks", "link_commit", {"task_id": task.id, "commit_sha": REPLACEMENT_SHA}
-    )
-    await run.call("gobby-tasks", "unlink_commit", {"task_id": task.id, "commit_sha": SHA})
-    assert run.step == "submit"
+    assert run.step == ("implement" if last_commit else "submit")
     assert run.vars["bounced"] is False
-    assert run.vars["implementation_complete"] is True
+    assert run.vars["implementation_complete"] is (not last_commit)
+    assert run.vars["candidate_sent"] is (not last_commit)
+    assert await run.admits_native("Bash", {"command": "git status"}) is last_commit
 
 
 @pytest.mark.parametrize("name", ["developer", "code-reviewer", "researcher", "consolidator"])

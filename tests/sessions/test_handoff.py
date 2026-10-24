@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -803,6 +804,53 @@ async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_ha
     assert receipt["attempt_id"] == attempt_id
     assert receipt["boundary_kind"] == "compact"
     assert receipt["continuation_session_id"] == session.id
+
+
+@pytest.mark.asyncio
+async def test_concurrent_get_handoff_consumers_finish_within_request_timeout(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    parent = _registered_session(session_manager)
+    payload = build_handoff_payload(current_state="Continue the task", next_steps=["Resume"])
+    sessions: list[str] = []
+    for index in range(24):
+        session_id = session_manager.register_session(
+            external_id=f"concurrent-handoff-{index}",
+            machine_id=MACHINE_ID,
+            source="codex",
+            project_id=parent.project_id,
+        )
+        attempt_id = uuid4().hex
+        staged = stage_handoff_attempt(
+            temp_db, session_id, attempt_id=attempt_id, handoff=payload, clear_session=False
+        )
+        record_handoff_delivery(
+            temp_db,
+            handoff_id=staged.handoff_record_id,
+            attempt_id=attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=session_id,
+        )
+        SessionVariableManager(temp_db).set_variable(
+            session_id, HANDOFF_TURN_END_PENDING_VARIABLE, False
+        )
+        sessions.append(session_id)
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    async def consume(session_id: str) -> dict[str, Any]:
+        with session_context_for_test(session_id):
+            return cast(dict[str, Any], await registry.call("get_handoff", {}))
+
+    async with asyncio.timeout(10):
+        results = await asyncio.gather(*(consume(session_id) for session_id in sessions))
+    assert len(results) == 24
+    assert all(result["success"] and result["found"] for result in results)
+    assert {result["session_id"] for result in results} == set(sessions)
+    assert all(result["handoff"] == payload.rendered_markdown for result in results)
+    async with asyncio.timeout(10):
+        repeated = await asyncio.gather(*(consume(session_id) for session_id in sessions))
+    assert all(result["success"] and not result["found"] for result in repeated)
 
 
 @pytest.mark.asyncio

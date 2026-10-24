@@ -29,6 +29,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import PipelineDefinition
@@ -90,12 +91,16 @@ def _pipeline_child(
     *,
     workspace: str | None = None,
     machine_id: str = AGENT_TEST_MACHINE_ID,
+    inputs: dict[str, str] | None = None,
 ) -> str:
-    """Start an execution of the runbook in ``workspace`` on ``machine_id``; return its child session."""
+    """Start an execution of the runbook in ``workspace`` on ``machine_id``; return its child session.
+
+    ``inputs`` adds launch inputs such as a team's ``task`` and ``team_id``.
+    """
     executions = LocalPipelineExecutionManager(env.db, env.project_id)
     execution = executions.create_execution(
         RUNBOOK,
-        inputs_json=json.dumps({"workspace": workspace or env.workspace_id}),
+        inputs_json=json.dumps({"workspace": workspace or env.workspace_id, **(inputs or {})}),
         project_id=env.project_id,
     )
     child = SessionManager(env.db).register(
@@ -288,6 +293,38 @@ def test_concurrent_executions_admit_at_most_one(env: _Env) -> None:
     assert all(f"another '{RUNBOOK}' execution" in outcome for outcome in outcomes)
 
 
+def _team_task(env: _Env, title: str) -> Task:
+    return LocalTaskManager(env.db).create_task(
+        project_id=env.project_id,
+        title=title,
+        validation_criteria=f"{title} launches its own team.",
+    )
+
+
+def _execution_id(env: _Env, child_session_id: str) -> str:
+    session = SessionManager(env.db).get(child_session_id)
+    assert session is not None
+    return session.external_id.removeprefix("pipeline-")
+
+
+def test_teams_for_different_tasks_launch_in_parallel(env: _Env) -> None:
+    """A live launch refuses only another launch for its task, in any reference form."""
+    first, second = _team_task(env, "First team"), _team_task(env, "Second team")
+    original = _pipeline_child(env, inputs={"task": f"#{first.seq_num}"})
+
+    parallel = _pipeline_child(env, inputs={"task": f"#{second.seq_num}"})
+    assert [seat.name for seat in _check(env, parallel)] == ["lead", "dev"]
+
+    duplicates = (
+        {"task": f"#{first.seq_num}"},
+        {"task": first.id},
+        {"task": str(first.seq_num), "team_id": _execution_id(env, original)},
+    )
+    for inputs in duplicates:
+        with pytest.raises(RunbookSeatRefusal, match=f"another '{RUNBOOK}' execution is live"):
+            _check(env, _pipeline_child(env, inputs=inputs))
+
+
 def _storage_error(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
     def failing_list(*args: Any, **kwargs: Any) -> list[object]:
         raise RuntimeError("hub connection lost")
@@ -339,6 +376,11 @@ def _sibling_workspace_unresolved(env: _Env, monkeypatch: pytest.MonkeyPatch) ->
     return _pipeline_child(env)
 
 
+def _sibling_task_unresolved(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
+    _pipeline_child(env, inputs={"task": str(uuid.uuid4())})
+    return _pipeline_child(env, inputs={"task": _team_task(env, "Caller team").id})
+
+
 @pytest.mark.parametrize(
     ("arrange", "cause"),
     [
@@ -348,6 +390,7 @@ def _sibling_workspace_unresolved(env: _Env, monkeypatch: pytest.MonkeyPatch) ->
         (_sibling_without_session, "has no pipeline child session"),
         (_sibling_without_workspace, "has no workspace input"),
         (_sibling_workspace_unresolved, "does not resolve"),
+        (_sibling_task_unresolved, "task .* does not resolve"),
     ],
     ids=[
         "storage-error",
@@ -356,6 +399,7 @@ def _sibling_workspace_unresolved(env: _Env, monkeypatch: pytest.MonkeyPatch) ->
         "sibling-without-session",
         "sibling-without-workspace",
         "sibling-workspace-unresolved",
+        "sibling-task-unresolved",
     ],
 )
 def test_uncertain_lookup_fails_closed(

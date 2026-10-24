@@ -206,6 +206,17 @@ fn schema_help_exposes_plan() -> anyhow::Result<()> {
 }
 
 #[test]
+fn schema_help_exposes_data_preflight() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "--help"])
+        .output()?;
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(output.status.success());
+    assert!(stdout.contains("preflight"), "{stdout}");
+    Ok(())
+}
+
+#[test]
 fn plan_has_no_dsn_argument() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args([

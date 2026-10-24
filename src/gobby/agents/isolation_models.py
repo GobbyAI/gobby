@@ -54,6 +54,7 @@ class SpawnConfig:
     provider: str
     parent_session_id: str
     phase_timings_ms: dict[str, float] = field(default_factory=dict)
+    preserve_existing_worktree: bool = False
 
 
 type SpawnStateKey = tuple[

@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-/// Per-CLI dispatcher knobs. Frozen at compile time — CLIs are a closed set.
+/// Per-CLI dispatcher policy and the launch-time spawned-session identity.
 #[derive(Debug, Clone)]
 pub struct CliConfig {
     /// Source identifier sent to the daemon.
@@ -17,13 +17,21 @@ pub struct CliConfig {
     /// skip JSON on stdout and the parse error on stderr, because AGY blocks
     /// the tool on any non-zero `PreToolUse` exit.
     pub json_error_exit_code: u8,
+    /// Local copy of the daemon's spawned-session identity, set at launch.
+    pub(crate) spawned_agent: bool,
 }
 
 impl CliConfig {
+    pub(crate) fn with_spawned_agent(mut self, spawned: bool) -> Self {
+        self.spawned_agent = spawned;
+        self
+    }
+
     pub fn for_cli(cli: &str) -> Option<Self> {
         match cli.to_ascii_lowercase().as_str() {
             "claude" => Some(Self {
                 source: "claude",
+                spawned_agent: false,
                 critical_hooks: ["session-start", "session-end", "pre-compact"]
                     .into_iter()
                     .collect(),
@@ -31,6 +39,7 @@ impl CliConfig {
             }),
             "codex" => Some(Self {
                 source: "codex",
+                spawned_agent: false,
                 critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
                     .into_iter()
                     .collect(),
@@ -38,11 +47,13 @@ impl CliConfig {
             }),
             "agy" => Some(Self {
                 source: "agy",
+                spawned_agent: false,
                 critical_hooks: HashSet::new(),
                 json_error_exit_code: 0,
             }),
             "grok" => Some(Self {
                 source: "grok",
+                spawned_agent: false,
                 critical_hooks: ["session_start", "session_end", "pre_compact"]
                     .into_iter()
                     .collect(),
@@ -50,6 +61,7 @@ impl CliConfig {
             }),
             "droid" => Some(Self {
                 source: "droid",
+                spawned_agent: false,
                 critical_hooks: ["SessionStart", "SessionEnd", "PreCompact"]
                     .into_iter()
                     .collect(),

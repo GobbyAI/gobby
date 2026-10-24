@@ -47,6 +47,29 @@ pub fn split_sql_statements(sql: &str) -> Result<Vec<String>, SchemaError> {
     Ok(statements)
 }
 
+/// First SQL keyword, ignoring whitespace and leading comments (including nesting).
+pub(super) fn leading_keyword(sql: &str) -> Result<&str, SchemaError> {
+    let bytes = sql.as_bytes();
+    let mut index = 0;
+    loop {
+        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
+            index += 1;
+        }
+        if bytes.get(index..index + 2) == Some(b"--") {
+            index = skip_line_comment(bytes, index);
+        } else if bytes.get(index..index + 2) == Some(b"/*") {
+            index = skip_block_comment(bytes, index)?;
+        } else {
+            break;
+        }
+    }
+    let length = bytes[index..]
+        .iter()
+        .take_while(|byte| byte.is_ascii_alphabetic())
+        .count();
+    Ok(&sql[index..index + length])
+}
+
 fn skip_line_comment(bytes: &[u8], start: usize) -> usize {
     bytes[start + 2..]
         .iter()

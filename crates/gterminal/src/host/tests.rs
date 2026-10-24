@@ -199,3 +199,31 @@ async fn exhausted_host_attachment_identifiers_fail_closed() {
         Err("capacity")
     ));
 }
+
+#[test]
+fn socket_path_byte_limit_has_actionable_diagnostics() {
+    let limit = if cfg!(any(target_os = "linux", target_os = "android")) {
+        107
+    } else {
+        103
+    };
+    let at_limit = std::path::PathBuf::from("x".repeat(limit));
+    super::check_socket_path(&at_limit).expect("at-limit path is valid");
+    // Character count differs from the encoded pathname length.
+    let over_limit = std::path::PathBuf::from(format!("{}é", "x".repeat(limit - 1)));
+    let error = super::check_socket_path(&over_limit).expect_err("over-limit path");
+    let message = error.to_string();
+    assert!(
+        message.contains(&over_limit.display().to_string()),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("{} bytes", limit + 1)),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("limit {limit} bytes")),
+        "{message}"
+    );
+    assert!(message.contains("terminal_host.socket_dir"), "{message}");
+}

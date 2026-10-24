@@ -329,24 +329,27 @@ def test_expected_identity_matches_gdaemon() -> None:
     assert probe_identity(binary) == schema_contract.expected_schema_identity()
 
 
+@pytest.mark.parametrize("action", ["plan", "preflight"])
 def test_plan_uses_candidate_binary_and_pins_database_url(
     monkeypatch: pytest.MonkeyPatch,
+    action: str,
 ) -> None:
-    """Cutover proves an unpromoted build, so plan must run the binary it is given."""
+    """Cutover's schema probes must run the unpromoted candidate they are given."""
     line = "schema gobby plan: database v1, code v2, baseline_pending=false, pending=1 [2]\n"
     run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=line, stderr=""))
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
     monkeypatch.setattr("gobby.utils.spawn.run", run)
     monkeypatch.setenv("GOBBY_EXPECTED_SCHEMA_IDENTITY", "{}")
 
-    stdout = schema_contract.plan_schema(
+    probe = schema_contract.plan_schema if action == "plan" else schema_contract.preflight_schema
+    stdout = probe(
         "postgresql://gobby:secret@database.example/gobby",
         gdaemon=Path("/workspace/target/release/gdaemon"),
     )
 
-    assert run.call_args.args[0] == ["/workspace/target/release/gdaemon", "schema", "plan"]
+    assert stdout == line
+    assert run.call_args.args[0] == ["/workspace/target/release/gdaemon", "schema", action]
     assert run.call_args.kwargs["env"]["GOBBY_DATABASE_URL"] == (
         "postgresql://gobby:secret@database.example/gobby"
     )
     assert "GOBBY_EXPECTED_SCHEMA_IDENTITY" not in run.call_args.kwargs["env"]
-    assert stdout == line

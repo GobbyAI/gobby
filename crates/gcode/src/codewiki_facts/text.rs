@@ -1,7 +1,4 @@
-use std::collections::BTreeMap;
-
 use crate::commands::grep::{self, GrepOptions};
-use crate::config::ProjectIndexScope;
 use crate::output::Format;
 
 use super::{CodewikiFacts, FileId, ScopeSelector};
@@ -81,39 +78,34 @@ impl CodewikiFacts {
             .iter()
             .map(|file| file.as_str().to_string())
             .collect::<Vec<_>>();
-        let project_ids = match &self.context().index_scope {
-            ProjectIndexScope::Single => {
-                vec![self.context().project_id.clone()]
-            }
-            ProjectIndexScope::Overlay {
-                overlay_project_id,
-                parent_project_id,
-                ..
-            } => vec![overlay_project_id.clone(), parent_project_id.clone()],
-        };
-        let mut chunks = BTreeMap::new();
+        let ctx = self.context();
+        let selectors = crate::visibility::visible_selectors_sql(ctx, "$1", "$2");
         let mut conn = self.read_connection()?;
-        for project_id in project_ids {
-            let project_id = crate::db::id_param(&project_id)?;
-            for row in conn.query(
-                "SELECT file_path, line_start::BIGINT AS line_start, \
-                        line_end::BIGINT AS line_end, content \
-                 FROM code_content_chunks \
-                 WHERE project_id = $1 AND file_path = ANY($2) AND chunk_index = 0",
-                &[&project_id, &paths],
-            )? {
-                let path: String = row.get("file_path");
-                chunks
-                    .entry(path.clone())
-                    .or_insert_with(|| LeadingChunkFact {
-                        file: FileId::new(path),
-                        content: row.get("content"),
-                        line_start: usize::try_from(row.get::<_, i64>("line_start")).unwrap_or(0),
-                        line_end: usize::try_from(row.get::<_, i64>("line_end")).unwrap_or(0),
-                    });
-            }
-        }
-        Ok(chunks.into_values().collect())
+        let rows = conn.query(
+            &format!(
+                "SELECT c.file_path, c.line_start::BIGINT AS line_start,
+                             c.line_end::BIGINT AS line_end, c.content
+                      FROM code_content_chunks c JOIN ({selectors}) visible
+                        ON visible.project_id = c.project_id AND visible.file_path = c.file_path
+                       AND visible.content_hash = c.content_hash
+                      WHERE c.file_path = ANY($3) AND c.chunk_index = 0 ORDER BY c.file_path"
+            ),
+            &[
+                &crate::db::id_param(&ctx.machine_id)?,
+                &crate::db::id_param(crate::visibility::scope_project_id(ctx))?,
+                &paths,
+            ],
+        )?;
+        rows.iter()
+            .map(|row| {
+                Ok(LeadingChunkFact {
+                    file: FileId::new(row.try_get::<_, String>("file_path")?),
+                    content: row.try_get("content")?,
+                    line_start: usize::try_from(row.try_get::<_, i64>("line_start")?)?,
+                    line_end: usize::try_from(row.try_get::<_, i64>("line_end")?)?,
+                })
+            })
+            .collect()
     }
 
     pub fn grep(&self, pattern: &str, scope: &ScopeSelector) -> anyhow::Result<GrepOutcome> {

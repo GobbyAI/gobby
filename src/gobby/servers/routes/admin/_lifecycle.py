@@ -18,6 +18,7 @@ from gobby.shutdown_intent import ShutdownIntent, shutdown_marker_details
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.local_token import RELEASE_TOKEN_HEADER
 from gobby.utils.machine_id import require_machine_id
+from gobby.utils.spawn import run_cancellable_probe
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -26,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 _restart_lock: asyncio.Lock | None = None
 
-# Bounds the start proof the restart route runs before any stop. The CLI and web clients
-# wait longer than this, so a slow proof returns its own refusal instead of a client timeout.
+# Deadline for cancelling start-proof commands before any stop. Worker cleanup is
+# joined afterwards, so non-subprocess work can extend the response beyond it.
 RESTART_START_PROOF_TIMEOUT_SECONDS = 60.0
 
 
@@ -227,8 +228,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
         """
         Graceful daemon restart endpoint.
 
-        Proves the start half first. It refuses with 409 before any stop when that
-        proof fails or does not finish within RESTART_START_PROOF_TIMEOUT_SECONDS.
+        Proves the start half first. Failed or timed-out proofs refuse with 409
+        before any stop. RESTART_START_PROOF_TIMEOUT_SECONDS cancels active proof
+        commands; the route then waits for worker cleanup before responding, so
+        hub I/O or other non-subprocess work can extend the total response time.
         Otherwise it requests backend shutdown with restart intent, and the native
         supervisor reaps and replaces this backend. Returns once the stop request is
         issued, and on Windows once the restart helper is spawned.
@@ -264,8 +267,8 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             # Refuse before any stop. force skips the cron check, never this proof.
             try:
-                refusal = await asyncio.wait_for(
-                    asyncio.to_thread(_restart_start_refusal),
+                refusal = await run_cancellable_probe(
+                    _restart_start_refusal,
                     timeout=RESTART_START_PROOF_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
