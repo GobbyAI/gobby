@@ -70,6 +70,9 @@ def test_candidate_run_with_whitespace_names_run() -> None:
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} TASK_TITLE=t VERDICT=BOUNCE", "VERDICT"),
         (f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} VERDICT=BOUNCE SHA={SHA}", "SHA"),
+        ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA"),
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it now", "SHA"),
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
     ],
 )
 def test_malformed_consumed_envelopes_name_the_offending_field(line: str, field: str) -> None:
@@ -102,7 +105,6 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
     "line",
     [
         f"EVENT=LAND_PENDING TASK=#7 SHA={SHA} TASK_TITLE=t NOTE=receipt_pending",
-        "EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now",
         f"Prose EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA}",
         "plain message with no protocol line",
         # Retired park/resume grammar is not validated at send time.
@@ -112,10 +114,20 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
         # Retired landing reports are not consumed.
         f"EVENT=LANDED TASK=#7 TASK_TITLE=Seat proofs SHA={SHA} RECEIPT=r NOTE=x",
         f"EVENT=ALREADY_LANDED TASK=#7 SHA={SHA} RECEIPT=r LANDED_BY_SESSION_ID=s NOTE=",
+        # A retired proof result rides a resent CANDIDATE's NOTE instead.
+        f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA}ab RETEST=PASS NOTE=green",
     ],
 )
 def test_lines_without_a_consumed_event_are_unaffected(line: str) -> None:
     assert _parse(line) is None
+
+
+def test_well_formed_proof_request_parses() -> None:
+    fields = _parse(f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=prove it now")
+
+    assert fields is not None
+    assert fields["SHA"] == SHA
+    assert fields["TASK"] == "#7"
 
 
 @dataclass

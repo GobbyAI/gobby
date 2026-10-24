@@ -72,6 +72,7 @@ _ENVELOPE_CANONICAL: dict[str, str] = {
     "CANDIDATE": "TASK_TITLE RUN WT COMMIT NOTE",
     "CANDIDATE_WITHDRAWN": "SHA NOTE",
     "CANDIDATE_VERDICT": "SHA VERDICT TASK_TITLE NOTE",
+    "PROOF_REQUEST": "SHA NOTE",
 }
 # Ordering the receiver depends on: ranks must not decrease, and unlisted keys are
 # unordered. TASK_TITLE is free text, so a binding field must precede it, except on
@@ -81,12 +82,14 @@ _ENVELOPE_RANKS: dict[str, tuple[tuple[str, ...], ...]] = {
     "CANDIDATE": (("TASK_TITLE",), ("RUN", "WT", "COMMIT")),
     "CANDIDATE_WITHDRAWN": (("SHA",),),
     "CANDIDATE_VERDICT": (("SHA",), ("VERDICT",), ("TASK_TITLE",)),
+    "PROOF_REQUEST": (("SHA",),),
 }
 # Fields that must be non-empty. TASK is required for every event.
 _ENVELOPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "CANDIDATE": ("RUN", "WT", "COMMIT"),
     "CANDIDATE_WITHDRAWN": ("SHA",),
     "CANDIDATE_VERDICT": ("SHA", "VERDICT"),
+    "PROOF_REQUEST": ("SHA",),
 }
 
 

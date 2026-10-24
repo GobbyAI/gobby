@@ -130,24 +130,24 @@ def _agent(run_id: str, terminal_id: str, pane: dict[str, Any] | None) -> Report
 def test_store_follows_report_revisions() -> None:
     store = remote_pane.RemotePaneStore()
     assert store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())]) == {}
-    assert store.get("term-a") is not None
+    assert store.get("term-a", MACHINE) is not None
 
     previous = store.apply_report(MACHINE, 3, [_agent("run-b", "term-b", _pane())])
     assert previous is not None
     assert set(previous) == {"term-a"}
-    assert store.get("term-a") is None
-    assert store.get("term-b") is not None
+    assert store.get("term-a", MACHINE) is None
+    assert store.get("term-b", MACHINE) is not None
 
     assert store.apply_report(MACHINE, 2, [_agent("run-c", "term-c", _pane())]) is None
     assert store.apply_report(MACHINE, 3, [_agent("run-c", "term-c", _pane())]) is None
-    assert store.get("term-c") is None
-    assert store.get("term-b") is not None
+    assert store.get("term-c", MACHINE) is None
+    assert store.get("term-b", MACHINE) is not None
 
     assert store.apply_report(OTHER, 1, [_agent("run-d", "term-d", _pane())]) == {}
-    other = store.get("term-d")
+    other = store.get("term-d", OTHER)
     assert other is not None
     assert other.machine_id == OTHER
-    assert store.get("term-b") is not None
+    assert store.get("term-b", MACHINE) is not None
 
 
 def test_store_marks_terminal_stopped() -> None:
@@ -155,30 +155,30 @@ def test_store_marks_terminal_stopped() -> None:
     store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())])
     store.apply_report(OTHER, 1, [_agent("run-d", "term-d", _pane())])
 
-    store.mark_stopped("term-a")
-    store.mark_stopped("term-d")
-    stopped = store.get("term-a")
+    store.mark_stopped("term-a", MACHINE)
+    store.mark_stopped("term-d", OTHER)
+    stopped = store.get("term-a", MACHINE)
     assert stopped is not None
     assert stopped.stopped is True
-    other = store.get("term-d")
+    other = store.get("term-d", OTHER)
     assert other is not None
     assert other.stopped is True
 
-    store.mark_stopped("term-unknown")
-    assert store.get("term-unknown") is None
+    store.mark_stopped("term-unknown", MACHINE)
+    assert store.get("term-unknown", MACHINE) is None
 
     store.apply_report(MACHINE, 2, [_agent("run-a", "term-a", _pane())])
-    kept = store.get("term-a")
+    kept = store.get("term-a", MACHINE)
     assert kept is not None
     assert kept.stopped is True
 
     store.apply_report(MACHINE, 3, [_agent("run-b", "term-a", _pane())])
-    restarted = store.get("term-a")
+    restarted = store.get("term-a", MACHINE)
     assert restarted is not None
     assert restarted.stopped is False
 
     store.apply_report(MACHINE, 4, [])
-    assert store.get("term-a") is None
+    assert store.get("term-a", MACHINE) is None
 
 
 @pytest.mark.asyncio
@@ -397,7 +397,7 @@ async def _attend(
     store = remote_pane.remote_pane_store()
     store.apply_report(MACHINE, 1, [agent])
     if stopped:
-        store.mark_stopped("term-stopped")
+        store.mark_stopped("term-stopped", MACHINE)
 
     async def load_run(_function: Any, *_args: Any, **_kwargs: Any) -> AgentRun:
         return run
@@ -431,11 +431,31 @@ async def test_live_terminal_is_attended(
     assert _blocked_state(manager, run.id) is not None
 
 
+def test_store_answers_and_stops_only_for_the_hosting_machine() -> None:
+    store = remote_pane.RemotePaneStore()
+    store.apply_report(OTHER, 1, [_agent("run-x", "term-a", _pane())])
+    store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())])
+
+    owner = store.get("term-a", MACHINE)
+    assert owner is not None
+    assert owner.machine_id == MACHINE
+    assert owner.run_id == "run-a"
+
+    store.mark_stopped("term-a", MACHINE)
+    stopped = store.get("term-a", MACHINE)
+    assert stopped is not None
+    assert stopped.stopped is True
+    forged = store.get("term-a", OTHER)
+    assert forged is not None
+    assert forged.stopped is False
+    assert store.get("term-a", "unknown-machine") is None
+
+
 def test_store_reads_wait_for_a_writer() -> None:
     store = remote_pane.RemotePaneStore()
     store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())])
     read: list[remote_pane.RemotePane | None] = []
-    reader = threading.Thread(target=lambda: read.append(store.get("term-a")))
+    reader = threading.Thread(target=lambda: read.append(store.get("term-a", MACHINE)))
 
     with store._lock:
         reader.start()

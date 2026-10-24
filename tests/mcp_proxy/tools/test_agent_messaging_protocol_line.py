@@ -189,3 +189,41 @@ async def test_well_formed_withdrawal_sends_unchanged(
 
     assert result["success"] is True
     assert _stored_content(message_manager) == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "field", "canonical"),
+    [
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it", "SHA", "SHA NOTE"),
+        ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA", "SHA NOTE"),
+    ],
+)
+async def test_malformed_proof_lines_are_refused_and_nothing_is_stored(
+    content: str,
+    field: str,
+    canonical: str,
+    registry: InternalToolRegistry,
+    message_manager: MagicMock,
+) -> None:
+    result = await _send(registry, content)
+
+    assert result["success"] is False
+    assert result["error_code"] == "protocol_line_rejected"
+    assert result["field"] == field
+    assert result["canonical_order"] == canonical
+    assert field in result["error"]
+    assert canonical in result["error"]
+    message_manager.create_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_well_formed_proof_request_sends_unchanged(
+    registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    content = f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=rerun the focused tests"
+
+    result = await _send(registry, content)
+
+    assert result["success"] is True
+    assert _stored_content(message_manager) == content
