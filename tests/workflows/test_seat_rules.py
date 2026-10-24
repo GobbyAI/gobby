@@ -218,7 +218,8 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
     for seat in (DEVELOPER, ASSISTANT, ORCHESTRATOR, PLAN_WRITER, PLAN_ENHANCER):
         blocked = await _decide(engine, shell_spawn, seat)
         assert blocked.decision == "block", seat
-        assert "send the request to the Orchestrator" in (blocked.reason or "")
+        # The Orchestrator and Assistant hit this rule too, so the redirect names who uses it.
+        assert "seats without that authority send the request to Triage" in (blocked.reason or "")
         allowed = await _decide(
             engine, _proxy_call("gobby-workflows", "set_variable", {"name": "x"}), seat
         )
@@ -238,7 +239,7 @@ async def test_other_seats_cannot_launch_pipelines(engine: RuleEngine, agent_typ
         blocked = await _decide(engine, launch, {"_agent_type": agent_type})
         assert blocked.decision == "block", launch
         assert "Only the Orchestrator launches pipelines" in (blocked.reason or "")
-        assert "send the request to the Orchestrator" in (blocked.reason or "")
+        assert "send the request to Triage" in (blocked.reason or "")
 
 
 @pytest.mark.asyncio
@@ -327,7 +328,7 @@ def _seat_definitions() -> list[str]:
 async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
     ask = {"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Land?"}]}}
     seats = _seat_definitions()
-    assert {"assistant", "orchestrator", "inbox-manager", "release-manager"} <= set(seats)
+    assert {"assistant", "orchestrator", "dev-manager", "triage", "release-manager"} <= set(seats)
 
     for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
         if agent_type == "assistant":

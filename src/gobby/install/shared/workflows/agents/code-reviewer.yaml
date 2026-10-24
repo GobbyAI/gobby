@@ -2,7 +2,8 @@ name: code-reviewer
 description: |
   Code Reviewer seat. Reviews the CANDIDATEs routed to it against the current
   project integration head and returns LAND or BOUNCE with rated findings. The
-  Orchestrator lands each LAND. Read-only.
+  task's Dev Manager lands each LAND. Read-only until a second rejection hands
+  it the task's claim; it then fixes the blocking findings.
 version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
@@ -11,17 +12,9 @@ execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session]
+# Review steps allow no edit tool; only the fix step does.
 blocked_tools:
-  - "Edit"
   - "KillShell"
-  - "MultiEdit"
-  - "NotebookEdit"
-  - "Write"
-  - "apply_patch"
-  - "edit_file"
-  - "notebook_edit"
-  - "replace"
-  - "write_file"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 # A LAND verdict needs this seat's approved review step record.
@@ -29,26 +22,18 @@ task_step_writes: [review]
 
 prompts:
   agent: &seat |
-    {% if seat_context %}
-    ## Assignment
-    Lane: {{ seat_context.get('lane') or 'unassigned' }}
-    Lane epic: {{ seat_context.get('lane_epic') or 'unassigned' }}
-    Worktree: {{ seat_context.get('worktree') or 'unassigned' }}
-    First job: {{ seat_context.get('first_job') or 'await assignment' }}
-    {% endif %}
     ## Role
-    You review the CANDIDATEs routed to you, in the Orchestrator's priority order, and return a LAND or BOUNCE verdict. Your LAND is the source approval; the Orchestrator lands it without re-reviewing it. Don't write the author's code, and never approve your own fix.
-    On launch, report readiness to the live session named in the launch prompt with target="session". A runbook's pipeline parent may have ended; use the supplied report target for readiness and blockers.
-    ## Bounded correction loop
-    - On the initial BOUNCE, the author gets one correction pass addressing the blocking findings. A new commit SHA does not reset this limit.
-    - If the revised candidate still has blocking findings, don't send it back to the author again. Write an exact fix spec: each finding with its file and line, the required change and the test that proves it. Send it to the Orchestrator, which names the developer who implements only that spec.
-    - Review that developer's fix as usual. Send any further blocker to the Orchestrator.
-    - You stay read-only: never claim the task or edit its files.
-    - Every writer's commit needs review by someone other than its writer. Keep every remaining blocker tracked in the task until it is fixed; the correction cap does not bypass validation or close gates.
+    You review the CANDIDATEs your Dev Manager routes to you and return a LAND or BOUNCE verdict. Your LAND is the source approval; your Dev Manager lands it without re-reviewing it. Never edit the author's code until your Dev Manager hands you the task's claim, and never approve your own fix.
+    On launch, report readiness to the live session named in the launch prompt with target="session". Find your Dev Manager with `gobby-agents:list_running_agents(task_id=<task>)`: it is the one run bound to the task. Send it your session ref.
+    ## Rejections
+    - First BOUNCE: the author fixes the blocking findings and sends a new CANDIDATE. A new commit SHA does not reset the count.
+    - Second BOUNCE: your Dev Manager moves the task's claim to you and you become its fixer. Call `gobby-tasks:claim_task(task_id)` once; its already_claimed result opens your fix step, the only step where you may edit. Fix the blocking findings tests first, commit, attach the commit with `gobby-tasks:link_commit`, record `gobby-tasks:record_implementation_step`, and send the CANDIDATE to your Dev Manager. A fresh reviewer reviews your fix.
+    - Third BOUNCE: the rejected review step record escalates the task to Triage.
+    - Every writer's commit needs review by someone other than its writer. Keep every remaining blocker tracked in the task until it is fixed; the rejection limit does not bypass validation or close gates.
 
     ## Messages
-    - Reach the Orchestrator, your Lane Manager and the author lane through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
-    - Your lane, Lane Manager and author lanes come from your launch prompt and from the CANDIDATE line.
+    - Reach your Dev Manager and the author through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`. The author comes from the CANDIDATE line.
+    - Send anything that needs its own task to Triage with the failing command, diagnostics, paths and impact.
 
     ## Continuity
     Continuity: compact in place after each verdict. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
@@ -69,6 +54,8 @@ workflows:
     include:
       - "name:require-seat-procedure"
       - "tag:default"
+      # The second-rejection fixer edits and commits like a developer.
+      - "tag:worker-safety"
       - "name:no-send-keys"
   variables:
     _seat_procedure: gobby:references/agents/procedures/code-reviewer.md
@@ -82,6 +69,7 @@ step_workflow:
     required_skills_loaded: false
     candidate_received: false
     verdict_ready: false
+    fixing: false
     candidate_task: null
     candidate_sha: null
 
@@ -92,7 +80,9 @@ step_workflow:
       status_message: |
         Defer review preflight until review. Report readiness or a bootstrap
         blocker to the live session in your launch prompt with
-        gobby-agents:send_message(target="session").
+        gobby-agents:send_message(target="session"), and send your session ref
+        to your Dev Manager, found with
+        gobby-agents:list_running_agents(task_id=<task>).
         Load the required review skills before taking a candidate:
         1. get_skill(name="code-review") on gobby-skills
         2. get_skill(name="restraint") on gobby-skills
@@ -112,6 +102,7 @@ step_workflow:
         - "gobby-skills:get_skill_file"
         - "gobby-sessions:get_session"
         - "gobby-sessions:set_title"
+        - "gobby-agents:list_running_agents"
         - "gobby-agents:send_message"
         - "gobby-agents:get_inter_session_message"
         - "gobby-agents:wait_for_coordination"
@@ -139,10 +130,16 @@ step_workflow:
       status_message: |
         Read a routed CANDIDATE with gobby-agents:get_inter_session_message.
         Its stored incoming task/SHA starts review. End each idle turn on a
-        registered gobby-agents:wait_for_coordination reply wait on your
-        coordinator; re-arm after an interim owner reply. If no wait applies,
-        send EVENT=SEAT_READY NOTE=idle to your coordinator and end the turn.
+        registered gobby-agents:wait_for_coordination reply wait on your Dev
+        Manager; re-arm after an interim owner reply. If no wait applies,
+        send EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
         An idle declaration expires when the next turn starts.
+        When your Dev Manager hands you the task's claim after a second
+        rejection, call gobby-tasks:claim_task(task_id) once; its
+        already_claimed result opens the fix step.
+        When told to end while idle, call gobby-agents:end_agent_run with
+        current_state naming the last verdict sent and next_steps naming any
+        open item.
       allowed_tools:
         - Bash
         - Read
@@ -154,8 +151,11 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:get_inter_session_message"
         - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:list_running_agents"
+        - "gobby-agents:end_agent_run"
         - "gobby-sessions:get_session"
         - "gobby-sessions:set_title"
+        - "gobby-tasks:claim_task"
       on_mcp_success:
         - server: gobby-agents
           tool: send_message
@@ -163,7 +163,16 @@ step_workflow:
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
+        # Only a claim the Dev Manager handed over reports already_claimed.
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: fixing
+          value: true
+          when: "(tool_output.get('result') or tool_output).get('already_claimed')"
       transitions:
+        - to: fix
+          when: "vars.fixing"
         - to: verdict
           when: "vars.candidate_received and vars.verdict_ready"
         - to: review
@@ -184,12 +193,14 @@ step_workflow:
         commit_sha=<full SHA>, epoch=<review_epoch>,
         round_number=<review_fail_count + 1>, feedback=<your evidence>), reading
         both counts from get_task(brief=false). Record it, then send the LAND
-        verdict. Send a matching durable BOUNCE verdict to finish review.
-        Read the Orchestrator's or your owning Lane Manager's stored incoming
+        verdict. For a BOUNCE, record the same call with status="rejected" and
+        the blocking findings as feedback, then send a matching durable BOUNCE
+        verdict to finish review.
+        Read the Orchestrator's or the task's Dev Manager's stored incoming
         EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
-        exact event to the coordinator for your own recorded reviewing assignment.
-        The claimant, author and unrelated reviewers or Lane Managers cannot
-        withdraw this unit.
+        exact event to your Dev Manager for your own recorded reviewing
+        assignment. The claimant, author, unrelated reviewers and other Dev
+        Managers cannot withdraw this unit.
       allowed_tools:
         - Bash
         - Read
@@ -233,13 +244,13 @@ step_workflow:
       description: "Send the verdict"
       status_message: |
         Send the CANDIDATE_VERDICT line. For a LAND, record the approved review
-        step first, then send the LAND verdict to the Orchestrator and the
-        author lane; the Orchestrator lands it. A message that starts with the
+        step first, then send the LAND verdict to your Dev Manager and the
+        author; your Dev Manager lands it. A message that starts with the
         BOUNCE verdict line, or with the LAND verdict line after your approved
         review step record, for candidate_task returns you to await.
-        On withdrawal or reassignment, read the Orchestrator's or your owning
-        Lane Manager's stored incoming EVENT=CANDIDATE_WITHDRAWN with the exact
-        task and full SHA, or send that exact event to the coordinator for your
+        On withdrawal or reassignment, read the Orchestrator's or the task's
+        Dev Manager's stored incoming EVENT=CANDIDATE_WITHDRAWN with the exact
+        task and full SHA, or send that exact event to your Dev Manager for your
         own recorded reviewing assignment. The claimant or author cannot withdraw.
         Read a stored incoming replacement CANDIDATE for this same task to
         supersede the current SHA and return to fresh review.
@@ -256,9 +267,10 @@ step_workflow:
         - "gobby-tasks:get_task"
         - "gobby-tasks:record_review_step"
         - "gobby-agents:wait_for_coordination"
-      # A message whose first line is the candidate's CANDIDATE_VERDICT line ends
-      # the unit: VERDICT=BOUNCE always, and VERDICT=LAND once this seat's
-      # approved review step record exists for that SHA. Fields split on single
+      # A message this seat sends whose first line is the candidate's
+      # CANDIDATE_VERDICT line ends the unit: VERDICT=BOUNCE always, and
+      # VERDICT=LAND once this seat's approved review step record exists for
+      # that SHA. A peer reviewer's BOUNCE leaves the unit open. Fields split on single
       # spaces: EVENT and TASK must be the first two and match exactly, and
       # TASK_TITLE and NOTE values are never read as fields. Prose, title words
       # and a message that does not start with the line keep the unit open, as
@@ -284,3 +296,45 @@ step_workflow:
           when: "vars.candidate_received and not vars.verdict_ready"
         - to: await
           when: "not vars.candidate_received"
+
+    # Entered only after the Dev Manager hands this seat the claim; the seat
+    # stays the task's fixer until the task closes.
+    - name: fix
+      mcp_error_policy: stay
+      description: "Fix the blocking findings as the task's claimant"
+      status_message: |
+        You hold the task's claim. Fix the blocking findings tests first,
+        loading the language skills the touched paths need, and validate.
+        Commit, attach the commit with gobby-tasks:link_commit(task_id,
+        commit_sha=<sha>), and record gobby-tasks:record_implementation_step
+        for that SHA. Then send the CANDIDATE line to your Dev Manager, which
+        routes it to a fresh reviewer. Never review or approve your own fix.
+        Wait for its reply with gobby-agents:wait_for_coordination.
+      allowed_tools:
+        - Bash
+        - Read
+        - Grep
+        - Glob
+        - LS
+        - Edit
+        - MultiEdit
+        - Write
+        - NotebookEdit
+        - apply_patch
+        - edit_file
+        - notebook_edit
+        - replace
+        - write_file
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:link_commit"
+        - "gobby-tasks:record_implementation_step"
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+        - "gobby-agents:send_message"
+        - "gobby-agents:get_inter_session_message"
+        - "gobby-agents:wait_for_coordination"

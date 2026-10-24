@@ -232,7 +232,7 @@ def test_review_producers_do_not_reference_review_learning() -> None:
         "evidence": SKILLS_ROOT / "gobby/references/review/evidence.md",
         "epic-reviewer": WORKFLOWS / "epic-reviewer.yaml",
         "feedback-reviewer": WORKFLOWS / "feedback-reviewer.yaml",
-        "task-close-reviewer": WORKFLOWS / "task-close-reviewer.yaml",
+        "code-reviewer": WORKFLOWS / "code-reviewer.yaml",
     }
     for name, path in producers.items():
         text = path.read_text()

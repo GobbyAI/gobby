@@ -80,8 +80,6 @@ async def test_runbook_title_survives_task_claim_and_close(
                         "worktree": str(uuid4()),
                         "project_path": str(PIPELINES),
                         "lane_pane": "test-pane",
-                        "lane_columns": 160,
-                        "lane_rows": 100,
                         "report_to": "gobby#1",
                         "workspace_id": "test-workspace",
                         "launch": [seat],

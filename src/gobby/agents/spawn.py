@@ -499,7 +499,7 @@ def _issue_prelaunch_credential(
 
     ``workspace_path`` is the run's checkout. When it is a registered worktree of
     the run's project, the issuer binds that worktree's code-index overlay, so a
-    run without its own isolation workspace (a close reviewer) can still index it.
+    run without its own isolation workspace (a team seat) can still index it.
     """
     from gobby.agents.code_index import (
         _active_deployment_grant_context,

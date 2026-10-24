@@ -12,6 +12,6 @@ rules:
       - type: block
         mcp_tools: ["gobby-tasks:update_task"]
         reason: >-
-          Use gobby-agents:send_message to send the task edit to the Orchestrator.
+          Use gobby-agents:send_message to send the task edit to Triage for the Orchestrator.
           Your agent definition does not grant task edits, including edits to your
           own assigned task.

@@ -29,7 +29,7 @@ pytestmark = pytest.mark.unit
 
 STANDING_SEATS = ("security-reviewer", "design-reviewer", "debugger", "recovery-steward")
 NEW_SEATS = (*STANDING_SEATS, "reporter")
-# Copy of the write-tool block in lane-manager.yaml.
+# The write-tool block every read-only seat shares.
 WRITE_BLOCKED_TOOLS = frozenset(
     {
         "Edit",
@@ -146,7 +146,7 @@ def test_seats_send_to_their_targets_and_never_kill_agents(name: str, targets: l
 
 
 @pytest.mark.parametrize("name", STANDING_SEATS)
-def test_standing_seats_block_edit_and_write_tools_like_lane_manager(name: str) -> None:
+def test_standing_seats_block_edit_and_write_tools(name: str) -> None:
     assert set(_load(name).blocked_tools) == WRITE_BLOCKED_TOOLS
 
 
@@ -210,7 +210,7 @@ def test_security_reviewer_bounces_on_exploit_paths_and_never_fixes() -> None:
         assert phrase in prompt, phrase
 
 
-def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_author_lane() -> None:
+def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_dev_manager() -> None:
     prompt = flat(_raw("security-reviewer")["prompts"]["agent"])
     verdict = prompt[prompt.index("- Verdict.") : prompt.index("- Never fix what you review")]
 
@@ -219,8 +219,10 @@ def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_author
         "`EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA=<full 40-hex> VERDICT=LAND|BOUNCE "
         "TASK_TITLE= NOTE=`" in verdict
     )
-    for recipient in ("author lane", "Code Reviewer", "Orchestrator", "Lane Manager"):
+    for recipient in ("author", "Code Reviewer", "Dev Manager"):
         assert recipient in verdict, recipient
+    # Only the Assistant and Triage reach the Orchestrator.
+    assert "Orchestrator" not in verdict
 
 
 def test_security_reviewer_grok_resolution_preserves_seat_authority(temp_db: HubDatabase) -> None:

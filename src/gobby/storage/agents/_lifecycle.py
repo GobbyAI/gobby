@@ -424,7 +424,7 @@ class _AgentRunLifecycleMixin:
         terminal_reason: AgentRunTerminalReason | None = None,
     ) -> AgentRun | None:
         """
-        Complete a run, failing a close reviewer that has no persisted verdict.
+        Complete a pending or running run.
 
         Args:
             run_id: The agent run ID.

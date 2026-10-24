@@ -13,6 +13,7 @@ import json
 import subprocess
 import threading
 import uuid
+from dataclasses import fields
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ import yaml
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.agents.team_lifecycle import ADMISSION_STEP, TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -40,6 +42,7 @@ from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -48,7 +51,7 @@ from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import PipelineDefinition, PipelineStep, RuleDefinitionBody
 from gobby.workflows.engine import seat_transitions
 from gobby.workflows.engine._offload import ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX
 from gobby.workflows.engine.core import RuleEngine
@@ -90,6 +93,7 @@ AGENTS_DIR = get_bundled_agents_path()
 OWNER_ID = "55555555-5555-4555-8555-555555555555"
 COORDINATOR_ID = "66666666-6666-4666-8666-666666666666"
 PEER_ID = "77777777-7777-4777-8777-777777777777"
+AUTHORITY_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 SHA = "a" * 40
 REPLACEMENT_SHA = "b" * 40
 WAIT = ("gobby-agents", "wait_for_coordination")
@@ -800,52 +804,91 @@ async def test_developer_refuses_unsubmitted_commit_close(
     assert not await run.admits("gobby-tasks", "close_task", arguments)
 
 
-def test_developer_submit_releases_only_after_the_lander_landed() -> None:
+def test_developer_submit_leaves_landing_and_close_to_the_dev_manager() -> None:
     source = " ".join((AGENTS_DIR / "developer.yaml").read_text().split())
-    assert (
-        "Once the lander has sent EVENT=LANDED and only activation or the closing seat's "
-        "landed retest remains"
-    ) in source
-    assert "wait for the lander's EVENT=LANDED" in source
-    assert "reviewer's EVENT=LANDED" not in source
-    assert "candidate <= HEAD <= integration tip" in source
-    assert "A `Landed #N` notice alone keeps you at submit" in source
-    assert "resend the unchanged CANDIDATE to your Lane Manager only" in source
-    assert "Once the candidate has landed" not in source
+    assert "Your Dev Manager lands the approved SHA and closes the task" in source
+    assert "resend the unchanged CANDIDATE to your Dev Manager only" in source
+    # Landing receipts, activation relays and landed-retest proofs are retired.
+    for retired in ("EVENT=LANDED", "EVENT=PROOF_RESULT", "Release Manager GO", "Lane Manager"):
+        assert retired not in source, retired
+
+
+def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
+    """A runbook session whose admission step recorded team ``team_id`` for ``task``."""
+    runbook = PipelineDefinition(
+        name="team-runbook", steps=[PipelineStep(id=ADMISSION_STEP, exec="true")]
+    )
+    executions = LocalPipelineExecutionManager(db, PROJECT_ID)
+    execution = executions.create_execution(
+        runbook.name,
+        json.dumps({"task": task.id}),
+        definition_json=runbook.model_dump_json(),
+        project_id=PROJECT_ID,
+    )
+    step = executions.create_step_execution(execution.id, ADMISSION_STEP)
+    team = {item.name: f"{team_id}-{item.name}" for item in fields(TeamBinding)}
+    team.update(team_id=team_id, task_id=task.id, project_id=PROJECT_ID)
+    executions.update_step_execution(step.id, output_json=json.dumps({"team": team}))
+    session = SessionManager(db).register(
+        external_id=f"pipeline-{execution.id}",
+        machine_id=AUTHORITY_MACHINE_ID,
+        source="pipeline",
+        project_id=PROJECT_ID,
+    )
+    return session.id
 
 
 @pytest.fixture
 async def reviewer_authorities(
     temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[SeatRun, Task, dict[str, str]]:
-    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
-    definitions = AgentDefinitionManager(temp_db)
-    definitions.create("lane-manager", {}, project_id=PROJECT_ID)
+    other_task = run.task()
+    # The binding test reads the closing grant from the installed definition.
+    AgentDefinitionManager(temp_db).create(
+        "dev-manager",
+        {
+            "name": "dev-manager",
+            "version": "1.0",
+            "prompts": {"agent": "Manage the team."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "task_step_writes": ["closing"],
+        },
+        project_id=PROJECT_ID,
+    )
+    teams = {
+        "own": _team_runbook(temp_db, task, "team-own"),
+        "other": _team_runbook(temp_db, other_task, "team-other"),
+    }
     actors = {
         "author": OWNER_ID,
         "reviewer": SESSION_ID,
         "orchestrator": COORDINATOR_ID,
         "other_reviewer": PEER_ID,
     }
-    for name in ("own_lm", "other_lm", "unbound_lm"):
+    # The own and unbound managers sit in the reviewer's team; only the own one has a
+    # running run bound to the task. The other manager runs another task's team.
+    for name, team in (("own_dm", "own"), ("other_dm", "other"), ("unbound_dm", "own")):
         actor_session = run.sessions.register(
             external_id=name,
             source="codex",
             project_id=PROJECT_ID,
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id=AUTHORITY_MACHINE_ID,
+            parent_session_id=teams[team],
         )
         actors[name] = actor_session.id
-        SessionVariableManager(temp_db).set_variable(
-            actor_session.id, "_agent_type", "lane-manager"
-        )
+        SessionVariableManager(temp_db).set_variable(actor_session.id, "_agent_type", "dev-manager")
+    temp_db.execute(
+        "UPDATE sessions SET parent_session_id = %s WHERE id = %s", (teams["own"], SESSION_ID)
+    )
     runs = LocalAgentRunManager(temp_db)
-    for actor, role, lane in (
-        (SESSION_ID, "code-reviewer", "1"),
-        (actors["own_lm"], "lane-manager", "1"),
-        (actors["other_lm"], "lane-manager", "2"),
+    for actor, role, bound in (
+        (SESSION_ID, "code-reviewer", None),
+        (actors["own_dm"], "dev-manager", task.id),
+        (actors["other_dm"], "dev-manager", other_task.id),
     ):
         record = runs.create(
             parent_session_id=COORDINATOR_ID,
@@ -853,7 +896,7 @@ async def reviewer_authorities(
             prompt="Seat authority fixture",
             agent_name=role,
             child_session_id=actor,
-            resume_metadata_json={"lane": lane},
+            task_id=bound,
         )
         runs.start(record.id)
         temp_db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (record.id, actor))
@@ -866,7 +909,7 @@ async def reviewer_authorities(
 
 @pytest.mark.parametrize(
     "actor",
-    ["author", "reviewer", "orchestrator", "own_lm", "other_lm", "other_reviewer", "unbound_lm"],
+    ["author", "reviewer", "orchestrator", "own_dm", "other_dm", "other_reviewer", "unbound_dm"],
 )
 async def test_reviewer_withdrawal_requires_own_unit_authority(
     reviewer_authorities: tuple[SeatRun, Task, dict[str, str]], actor: str
@@ -878,7 +921,7 @@ async def test_reviewer_withdrawal_requires_own_unit_authority(
         await run.send(line)
     else:
         await run.incoming(line, actors[actor])
-    if actor in {"reviewer", "orchestrator", "own_lm"}:
+    if actor in {"reviewer", "orchestrator", "own_dm"}:
         assert run.step == "await"
         assert run.vars["candidate_received"] is False
         assert "parked_candidates" not in run.vars
@@ -888,7 +931,7 @@ async def test_reviewer_withdrawal_requires_own_unit_authority(
 
 
 @pytest.mark.parametrize("mismatch", ["task", "sha"])
-@pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_lm"])
+@pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_dm"])
 async def test_reviewer_withdrawal_refuses_another_unit(
     reviewer_authorities: tuple[SeatRun, Task, dict[str, str]],
     mismatch: str,

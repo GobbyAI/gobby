@@ -177,7 +177,7 @@ def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
 
 
 def is_task_claimed_by_session(task: Any, session_id: str) -> bool:
-    """Ownership includes an escalated task claimed by its close reviewer."""
+    """An open task, escalated ones included, belongs to its claiming session."""
     return not is_task_closed(task) and get_claimed_session_id(task) == session_id
 
 

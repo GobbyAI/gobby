@@ -212,15 +212,14 @@ def test_claim_guidance_accounts_for_spawn_preclaim() -> None:
         for phrase in prompt_claim_phrases:
             assert phrase not in prompt, path.name
 
-    agents_with_updated_claim_steps = (
-        "developer",
-        "tech-writer",
-    )
-    for agent_name in agents_with_updated_claim_steps:
-        status = _step(_agent(agent_name), "claim")["status_message"]
-        assert "Spawned agents normally arrive" in status, agent_name
-        assert "skip this step" in status, agent_name
-        assert "If this step is active" in status, agent_name
+    tech_writer = _step(_agent("tech-writer"), "claim")["status_message"]
+    assert "Spawned agents normally arrive" in tech_writer
+    assert "skip this step" in tech_writer
+    assert "If this step is active" in tech_writer
+
+    # A DevTeam developer receives the Dev Manager's claim and still claims once.
+    developer = " ".join(_step(_agent("developer"), "claim")["status_message"].split())
+    assert "already_claimed and binds the task, so do not skip this step" in developer
 
 
 def test_epic_review_skill_defines_methodology_and_verdict_block() -> None:
@@ -308,16 +307,13 @@ def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() 
 
 
 @pytest.mark.parametrize("agent_name", ["tech-writer"])
-def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> None:
+def test_direct_close_agents_preview_then_close(agent_name: str) -> None:
     agent = _agent(agent_name)
     implement = _step(agent, "implement")
     guidance = f"{agent['prompts']['agent']}\n{implement['status_message']}"
 
     assert "preview=true" in guidance
     assert "preview=false" in guidance
-    assert "wait_for_agent once" in guidance
-    assert "reviewer_run_id" in guidance
-    assert "get_task" in guidance
 
     get_task_handlers = [
         handler
@@ -329,16 +325,19 @@ def test_direct_close_agents_preview_then_wait_for_reviewer(agent_name: str) -> 
     assert get_task_handlers[0]["variable"] == "implementation_complete"
 
 
-def test_developer_submit_waits_for_the_close_reviewer_then_reads_the_task() -> None:
+def test_developer_submit_waits_for_the_dev_manager_then_reads_the_task() -> None:
     submit = _step(_agent("developer"), "submit")
     guidance = submit["status_message"]
 
-    assert {"gobby-agents:wait_for_agent", "gobby-tasks:get_task"} <= set(
-        submit["allowed_mcp_tools"]
-    )
-    assert "close_review_required" in guidance
-    assert "wait_for_agent once" in guidance
-    assert "reviewer_run_id" in guidance
+    # link_commit moves implement to submit, and the record needs the linked tip.
+    assert {
+        "gobby-agents:wait_for_coordination",
+        "gobby-tasks:get_task",
+        "gobby-tasks:record_implementation_step",
+    } <= set(submit["allowed_mcp_tools"])
+    # No close reviewer runs: the Dev Manager lands and closes the task.
+    assert "gobby-agents:wait_for_agent" not in submit["allowed_mcp_tools"]
+    assert "never close a team task yourself" in guidance
     assert "get_task(task_id=assigned_task_id)" in guidance
 
 
@@ -383,13 +382,12 @@ def test_tdd_discipline_skills_are_bundled() -> None:
 
     assert "test judgment" in discipline.lower()
     assert "test-driven-development" in discipline
-    assert "red evidence" in tdd.lower()
-    assert "minimal green" in tdd.lower()
-    assert "refactor/final-green" in tdd.lower()
-    assert "test-quality audit" in tdd.lower()
-    assert "missing baseline is not a skip reason" in tdd.lower()
-    assert "unsupported-language warning" in tdd
-    assert "repo-native validation" in tdd
+    assert "inspect its expected assertion failure" in tdd
+    assert "smallest complete change that makes the failing test pass" in tdd
+    assert "Refactor, then rerun the relevant validation" in tdd
+    assert "test-quality audit" in tdd
+    assert "A missing baseline means current findings are new" in tdd
+    assert "For unsupported languages, use focused native validation" in tdd
     assert "a missing baseline counts current findings as new" in discipline.lower()
     assert "unsupported" in discipline.lower()
     assert "language warnings with focused native validation" in discipline
@@ -503,4 +501,4 @@ def test_reference_contract_4_2_1() -> None:
             assert any(evaluator.evaluate(condition) for condition in conditions), path.name
             variables["loaded_skill_references"] = []
             assert not any(evaluator.evaluate(condition) for condition in conditions), path.name
-    assert checked_steps >= 10
+    assert checked_steps >= 9

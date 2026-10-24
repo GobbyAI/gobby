@@ -81,7 +81,6 @@ def digest_projection(content: str, section: str) -> dict[str, object]:
     ]
     topics = {
         "backlog": r"close backlog|backlog.*?/10",
-        "heavy_slots": r"heavy.*?slot|slot.*?grant|slot.*?released",
         "holds": r"drain|hold|DAEMON BACK|restart.*?retimed",
         "consolidator": r"Consolidator|consolidation.*?review",
         "roadmap": r"ROADMAP|Story B|critical path",

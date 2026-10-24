@@ -3,9 +3,7 @@
 The code-reviewer, archivist, log-monitor and researcher seats are bundled
 definitions whose prompt is the role text of record (agent-definition-profiles
 P3, section 3.3). They share the seat shape and differ in their tool
-restrictions, step workflows and message contracts. The lane-manager relay of
-the lander's landing lines ships here too, because the reviewer's LAND verdict
-starts that protocol.
+restrictions, step workflows and message contracts.
 """
 
 from __future__ import annotations
@@ -60,7 +58,9 @@ READ_ONLY_BLOCKED_TOOLS = frozenset(
         "write_file",
     }
 )
-READ_ONLY_SEATS = ("code-reviewer", "log-monitor", "metrics-monitor")
+READ_ONLY_SEATS = ("log-monitor", "metrics-monitor")
+# The Code Reviewer reviews read-only and edits only as the second-rejection fixer.
+CODE_REVIEWER_REVIEW_STEPS = ("load_skills", "await", "review", "verdict")
 # Sync metadata keys `validate_workflow_definition_data` strips before the body.
 SYNC_METADATA_KEYS = frozenset({"tags", "priority", "type"})
 OBSERVATION_SELECTORS = frozenset(
@@ -74,7 +74,10 @@ OBSERVATION_SELECTORS = frozenset(
 )
 RULE_SELECTORS = {
     # The operator's hold: never tag:review-learning.
-    "code-reviewer": frozenset({"tag:default", "name:no-send-keys", "name:require-seat-procedure"}),
+    # The second-rejection fixer edits and commits, so it needs the worker-safety rules.
+    "code-reviewer": frozenset(
+        {"tag:default", "tag:worker-safety", "name:no-send-keys", "name:require-seat-procedure"}
+    ),
     "archivist": OBSERVATION_SELECTORS,
     "log-monitor": OBSERVATION_SELECTORS,
     "metrics-monitor": OBSERVATION_SELECTORS,
@@ -411,6 +414,29 @@ def test_read_only_seats_block_every_write_tool(name: str) -> None:
     assert set(_load(name).blocked_tools) == READ_ONLY_BLOCKED_TOOLS
 
 
+def test_code_reviewer_edits_only_after_the_claim_hand_off() -> None:
+    steps = _steps("code-reviewer")
+    edit_tools = READ_ONLY_BLOCKED_TOOLS - {"KillShell"}
+    fix = steps["fix"]
+    (claim,) = (
+        handler for handler in steps["await"].on_mcp_success if handler["tool"] == "claim_task"
+    )
+
+    assert _load("code-reviewer").blocked_tools == ["KillShell"]
+    for name in CODE_REVIEWER_REVIEW_STEPS:
+        assert not _allowed_tools(steps[name]) & edit_tools, name
+    assert "gobby-tasks:claim_task" in _allowed_mcp_tools(steps["await"])
+    # Only a claim the Dev Manager handed over reports already_claimed.
+    assert (claim["action"], claim["variable"]) == ("set_variable", "fixing")
+    assert "already_claimed" in claim["when"]
+    assert {"Edit", "Write", "apply_patch"} <= _allowed_tools(fix)
+    assert {"gobby-tasks:link_commit", "gobby-tasks:record_implementation_step"} <= (
+        _allowed_mcp_tools(fix)
+    )
+    assert "gobby-tasks:record_review_step" not in _allowed_mcp_tools(fix)
+    assert not fix.transitions
+
+
 @pytest.mark.parametrize("name", COMPACT_SEATS)
 def test_standing_seats_compact_and_never_clear(name: str) -> None:
     prompt = _prompt(name)
@@ -442,6 +468,7 @@ def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
                 "gobby-agents:send_message",
                 "gobby-agents:get_inter_session_message",
                 "gobby-agents:wait_for_coordination",
+                "gobby-agents:list_running_agents",
                 "gobby-sessions:get_session",
                 "gobby-sessions:set_title",
             }
@@ -480,15 +507,17 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
         "code-review",
         "restraint",
     ]
-    assert {key: variables[key] for key in ("candidate_received", "verdict_ready")} == {
+    assert {key: variables[key] for key in ("candidate_received", "verdict_ready", "fixing")} == {
         "candidate_received": False,
         "verdict_ready": False,
+        "fixing": False,
     }
     assert variables["candidate_task"] is None
     assert "parked_candidates" not in variables
-    assert list(steps) == ["load_skills", "await", "review", "verdict"]
+    assert list(steps) == [*CODE_REVIEWER_REVIEW_STEPS, "fix"]
     assert _transitions(steps["load_skills"]) == [("await", LOAD_SKILLS_WHEN)]
     assert _transitions(steps["await"]) == [
+        ("fix", "vars.fixing"),
         ("verdict", "vars.candidate_received and vars.verdict_ready"),
         ("review", "vars.candidate_received"),
     ]
@@ -500,9 +529,12 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
         ("review", "vars.candidate_received and not vars.verdict_ready"),
         ("await", "not vars.candidate_received"),
     ]
-    assert {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"} <= (
-        _allowed_mcp_tools(steps["await"])
-    )
+    # A directed end of an idle standing reviewer exits as success.
+    assert {
+        "gobby-agents:send_message",
+        "gobby-agents:wait_for_coordination",
+        "gobby-agents:end_agent_run",
+    } <= _allowed_mcp_tools(steps["await"])
     for step in steps.values():
         assert "mcp__gobby__set_variable" not in _allowed_tools(step)
     assert {"Bash", "Read", "Grep"} <= _allowed_tools(steps["review"])
@@ -522,8 +554,8 @@ def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
     ("content", "withdrawn"),
     [
         ("EVENT=CANDIDATE_WITHDRAWN TASK=#24164 NOTE=already reviewed elsewhere", True),
-        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24188 NOTE=Lane Manager reassignment", True),
-        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24236 NOTE=Lane Manager reassignment", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24188 NOTE=Dev Manager reassignment", True),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24236 NOTE=Dev Manager reassignment", True),
         ("EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate", False),
         ("Prose EVENT=CANDIDATE_WITHDRAWN TASK=#24164", False),
         ("EVENT=PROOF_REQUEST TASK=#24164 NOTE=EVENT=CANDIDATE_WITHDRAWN", False),
@@ -610,7 +642,7 @@ async def test_land_verdict_rejects_malformed_bound_sha(
     assert run.vars == before
 
 
-def test_code_reviewer_hands_each_land_verdict_to_the_orchestrator() -> None:
+def test_code_reviewer_hands_each_land_verdict_to_the_dev_manager() -> None:
     verdict = _steps("code-reviewer")["verdict"]
     prompt = _prompt("code-reviewer")
 
@@ -625,8 +657,8 @@ def test_code_reviewer_hands_each_land_verdict_to_the_orchestrator() -> None:
     assert "Bash" in _allowed_tools(verdict)
     assert "mcp__gobby__set_variable" not in _allowed_tools(verdict)
     approval = prompt.index('gobby-tasks:record_review_step(task_id, status="approved"')
-    assert approval < prompt.index("send the LAND verdict to the Orchestrator and the author lane")
-    assert "The Orchestrator lands the approved SHA" in prompt
+    assert approval < prompt.index("send the LAND verdict to your Dev Manager and the author")
+    assert "Your Dev Manager lands the approved SHA" in prompt
     assert "starts with that line, after your approved review step record" in prompt
     definition = str(_raw("code-reviewer"))
     for retired in (
@@ -646,7 +678,7 @@ def test_code_reviewer_hands_each_land_verdict_to_the_orchestrator() -> None:
     ):
         assert retired not in prompt
         assert retired not in definition
-    # A new SHA needs its own approval before the Orchestrator can land it.
+    # A new SHA needs its own approval before the Dev Manager can land it.
     new_sha = prompt.index("- Replacement SHA.")
     assert "fresh approved review step record for its full SHA" in prompt[new_sha:]
     assert "Merge Manager" not in prompt
@@ -712,7 +744,7 @@ def test_archivist_writes_only_the_workspace_digest() -> None:
     assert "only active and parked" in prompt
     assert "Carries forward" in prompt
     assert "only from Orchestrator evidence" in prompt
-    assert "Flag gaps or contradictions to the Orchestrator" in prompt
+    assert "Flag gaps or contradictions to Triage" in prompt
 
 
 def test_log_monitor_runs_the_tick_report_loop() -> None:
@@ -791,58 +823,16 @@ def test_researcher_is_a_research_only_serving_seat() -> None:
     assert list(steps) == ["load_skills", "serve"]
     assert _transitions(steps["load_skills"]) == [("serve", LOAD_SKILLS_WHEN)]
     assert steps["serve"].transitions == []
-    assert {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"} <= (
-        _allowed_mcp_tools(steps["serve"])
-    )
+    assert {
+        "gobby-agents:send_message",
+        "gobby-agents:wait_for_coordination",
+        "gobby-agents:end_agent_run",
+    } <= _allowed_mcp_tools(steps["serve"])
     assert "claim" not in steps
     assert "Research only" in prompt
-    assert "to the Orchestrator" in prompt
+    assert "Send findings and proposals to Triage" in prompt
     assert "through the Assistant" in prompt
-    assert "Ask the Orchestrator before killing processes" in prompt
-
-
-def test_lane_manager_relays_orchestrator_landings_and_gates_the_close_release() -> None:
-    body = _load("lane-manager")
-    prompt = _prompt("lane-manager")
-
-    assert body.step_workflow is None
-    assert "Merge Manager" not in prompt
-    assert "The Orchestrator lands each approved LAND" in prompt
-    assert "Code Reviewer lands" not in prompt
-    assert "landing_approval" not in prompt
-    event_list = prompt.split("reports ", 1)[1].split(" to you;", 1)[0]
-    for event in (
-        "EVENT=LANDED",
-        "EVENT=ALREADY_LANDED",
-        "EVENT=LAND_PENDING",
-        "EVENT=LAND_BLOCKED",
-    ):
-        assert event in prompt
-        assert event in event_list
-    assert "Relay each of those lines through the Inbox Manager" in prompt
-    assert "Relay `EVENT=ALREADY_LANDED` through the Inbox Manager" in prompt
-    assert "original `RECEIPT` and `LANDED_BY_SESSION_ID`" in prompt
-    assert "It neither releases nor holds the close" in prompt
-    assert "close still waits on the original lander's `EVENT=LANDED`" in prompt
-    assert "`EVENT=LANDED` line that carries a `RECEIPT` value" in prompt
-    assert "git merge-base --is-ancestor <LANDED_TIP> <BRANCH>" in prompt
-    assert "MODE=merge" not in prompt
-    assert "The lander's `EVENT=LANDED` may carry `RETEST=UNAVAILABLE`" in prompt
-    assert "A pending, unavailable or failed author retest withholds the release" in prompt
-    assert "landed merge SHA and the same test set" in prompt
-    assert "A failing `EVENT=PROOF_RESULT` reopens the task" in prompt
-    assert "`ACTIVATION=unknown` withholds the release" in prompt
-    assert "`PROJECT_SYNC_REQUIRED=true` holds the release until project sync is verified" in prompt
-    assert (
-        "An absent or unknown `PROJECT_SYNC_REQUIRED` is treated like `ACTIVATION=unknown`"
-        in prompt
-    )
-    assert "your release alone admits a close" in prompt
-    assert "the reviewer has run the retest" not in prompt
-    assert "the author lane already has the reviewer's report" not in prompt
-    assert "the author's `EVENT=PROOF_RESULT` has reported the retest" in prompt
-    assert "The author lane owns the landed retest in its own worktree" in prompt
-    assert "confirm it with the author before raising found work" in prompt
+    assert "Ask Triage for the Orchestrator's go before killing processes" in prompt
 
 
 def test_review_and_observation_seats_sync_as_installed_rows(

@@ -28,7 +28,7 @@ inputs:
   report_to:
     type: string
     required: true
-    description: "Live Orchestrator session ref for readiness, blockers and unassigned waits"
+    description: "Live session ref for readiness, blockers and unassigned waits: the Orchestrator for Triage alone, then Triage for every other seat"
   release_manager_provider:
     type: string
     default: null

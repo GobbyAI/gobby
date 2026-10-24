@@ -15,8 +15,7 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.skills.sync import get_bundled_skills_path
-from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
-from gobby.workflows.engine import RuleEngine
+from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents._yaml_helpers import flat
 
 pytestmark = pytest.mark.unit
@@ -75,33 +74,6 @@ def _steps() -> dict[str, dict[str, Any]]:
     return {step["name"]: step for step in _raw("developer")["step_workflow"]["steps"]}
 
 
-def _task_closing_steps() -> list[tuple[str, WorkflowStep]]:
-    closing_steps: list[tuple[str, WorkflowStep]] = []
-    for path in sorted(get_bundled_agents_path().glob("*.yaml")):
-        body = AgentDefinitionBody.model_validate(_raw(path.stem))
-        if body.step_workflow is None:
-            continue
-        for step in body.step_workflow.steps:
-            if step.allowed_mcp_tools == "all" or RuleEngine._mcp_tool_matches(
-                "gobby-tasks:close_task", step.allowed_mcp_tools
-            ):
-                if not RuleEngine._mcp_tool_matches(
-                    "gobby-tasks:close_task", step.blocked_mcp_tools
-                ):
-                    closing_steps.append((path.stem, step))
-    return closing_steps
-
-
-@pytest.mark.parametrize(("agent_name", "step"), _task_closing_steps())
-def test_task_closing_steps_allow_close_review_wait(agent_name: str, step: WorkflowStep) -> None:
-    assert step.allowed_mcp_tools == "all" or RuleEngine._mcp_tool_matches(
-        "gobby-agents:wait_for_agent", step.allowed_mcp_tools
-    ), (agent_name, step.name)
-    assert not RuleEngine._mcp_tool_matches(
-        "gobby-agents:wait_for_agent", step.blocked_mcp_tools
-    ), (agent_name, step.name)
-
-
 def test_developer_carries_the_seat_shape() -> None:
     raw = _raw("developer")
     body = _body()
@@ -125,6 +97,8 @@ def test_developer_carries_the_seat_shape() -> None:
         body.workflows.rule_selectors.include
     )
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+    # The Dev Manager lands and closes team tasks, so no close reviewer is spawned.
+    assert body.spawnable_agents == []
     assert set(body.send_message_targets) == {"parent", "session"}
     for heading in ("## Platform Context", "## Skills"):
         assert flat(_section(persona, heading)) in prompt
@@ -132,12 +106,16 @@ def test_developer_carries_the_seat_shape() -> None:
     assert "lesson" not in prompt.lower()
 
 
-def test_developer_prompt_carries_the_lane_flow_and_skill_routing() -> None:
+def test_developer_prompt_carries_the_team_flow_and_skill_routing() -> None:
     prompt = _prompt()
 
-    assert ("`LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`") in prompt
-    assert "Lane Manager and the assigned Code Reviewer" in prompt
-    assert "only when your Lane Manager releases it" in prompt
+    assert "`EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`" in prompt
+    assert "Dev Manager and the assigned Code Reviewer" in prompt
+    assert "`gobby-tasks:record_implementation_step`" in prompt
+    assert "never close a team task yourself" in prompt
+    assert "Send anything that needs its own task to Triage" in prompt
+    # Teams carry no lane: the launch prompt names the task, team and branch.
+    assert re.search(r"LANE=|Lane Manager|EVENT=PROOF_RESULT|seat_context", prompt) is None
     assert "HOLD" in prompt
     assert "GO" in prompt
     assert "gobby-agents:wait_for_coordination" in prompt

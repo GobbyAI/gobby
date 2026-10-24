@@ -1120,9 +1120,10 @@ class TestSyncBundledAgents:
             }
         )
         assert "expansion-qa" in names
-        close_reviewer = mgr.get_by_name("task-close-reviewer")
-        assert close_reviewer is not None
-        assert _parse_body(close_reviewer).reasoning_effort is None
+        assert mgr.get_by_name("task-close-reviewer") is None
+        code_reviewer = mgr.get_by_name("code-reviewer")
+        assert code_reviewer is not None
+        assert _parse_body(code_reviewer).reasoning_effort is None
         for name in ("reporter", "assistant"):
             status_sender = mgr.get_by_name(name)
             assert status_sender is not None
@@ -1289,14 +1290,15 @@ _STEPLESS_BUNDLED_AGENTS = frozenset(
         "debugger",
         "default",
         "design-reviewer",
-        "inbox-manager",
-        "lane-manager",
+        "dev-manager",
         "memory-curator",
         "orchestrator",
         "recovery-steward",
         "release-manager",
         "reporter",
         "security-reviewer",
+        "test-writer",
+        "triage",
         "triage-agent",
     }
 )

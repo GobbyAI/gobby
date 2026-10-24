@@ -126,8 +126,9 @@ validation again after changes and provide the results for independent review.
 
 ### Recover a handed-off task after a developer relaunch
 
-A fresh developer workflow may no longer have its previous handoff list. After
-the Lane Manager releases landed work, reclaim that task with `claim_task`. If
+A DevTeam task needs no recovery: its Dev Manager lands and closes it. Outside a
+DevTeam, a fresh developer workflow may no longer have its previous handoff list.
+After the Orchestrator releases landed work, reclaim that task with `claim_task`. If
 `de_escalate_task` or the close preview says "Finish only a task this developer
 handed off", repeat `escalate_task` on the reclaimed task with the original
 `Handed off: reviewer LAND ...` reason. This releases the reclaimed escalated

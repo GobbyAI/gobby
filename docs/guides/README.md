@@ -71,6 +71,7 @@ seed empty content; bootstrap and files-home ownership errors require recovery.
 | Guide | Description |
 |-------|-------------|
 | [agents.md](agents.md) | Agent definitions, spawning, command routing, and run lifecycle |
+| [runbooks.md](runbooks.md) | Admin cold start, the Support and DevTeam runbooks, planning launches, and seat message routing |
 | [worktrees.md](worktrees.md) | Worktree and clone isolation, merge operations, and task links |
 | [orchestration.md](orchestration.md) | Spawned agent work, isolation, and the spawn cap |
 | [cron-scheduler.md](cron-scheduler.md) | Cron jobs, run history, and scheduler execution |

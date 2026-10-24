@@ -177,13 +177,13 @@ async def test_runbook_unassigned_seat_can_bootstrap_and_report(
 
 
 @pytest.mark.asyncio
-async def test_reviewer_required_load_transition_releases_deferred_preflight(
+async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
-    """Real paged skill delivery unlocks native review only after every required load."""
+    """Real paged skill delivery moves the bundled reviewer on only after every required load."""
     import hashlib
 
     import yaml
@@ -194,7 +194,7 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
     from gobby.workflows.state_manager import SessionVariableManager
 
     shared = Path(__file__).parents[2] / "src/gobby/install/shared"
-    definition = yaml.safe_load((shared / "workflows/agents/task-close-reviewer.yaml").read_text())
+    definition = yaml.safe_load((shared / "workflows/agents/code-reviewer.yaml").read_text())
     step_workflow = definition.pop("step_workflow")
     _setup_step_workflow(
         db,
@@ -203,36 +203,32 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
         current_step="load_skills",
         workflow_data={**definition, **step_workflow},
     )
-    stored = manager.get_by_name("task-close-reviewer")
+    stored = manager.get_by_name("code-reviewer")
     assert stored is not None and stored.step_workflow_id is not None
     variables = SessionVariableManager(db)
     storage = LocalSkillManager(db)
     router = storage.create_skill(name="gobby", description="Router", content="# Router")
-    references = [
-        "references/agents/procedures/task-close-reviewer.md",
-        "references/code-index/overview.md",
-        "references/tasks/overview.md",
-    ]
-    files: list[SkillFile] = []
-    for path in references:
-        content = (shared / "skills/gobby" / path).read_text()
-        encoded = content.encode()
-        files.append(
+    procedure = "references/agents/procedures/code-reviewer.md"
+    content = (shared / "skills/gobby" / procedure).read_text()
+    encoded = content.encode()
+    storage.set_skill_files(
+        router.id,
+        [
             SkillFile(
                 id="",
                 skill_id=router.id,
-                path=path,
+                path=procedure,
                 file_type="reference",
                 content=content,
                 content_hash=hashlib.sha256(encoded).hexdigest(),
                 size_bytes=len(encoded),
             )
-        )
-    storage.set_skill_files(router.id, files)
-    for name in ("proportionality", "code-review"):
+        ],
+    )
+    for name in ("code-review", "restraint"):
         content = (shared / "skills" / name / "SKILL.md").read_text()
         # Exercise the real final-page tracking boundary, not a manual loaded-variable write.
-        if name == "proportionality":
+        if name == "restraint":
             content += "\n\nAdditional review context.\n" * 2_000
         storage.create_skill(name=name, description=name, content=content)
     registry = create_skills_registry(db)
@@ -260,32 +256,21 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
             variables=variables.get_variables(SESSION_ID),
         )
 
-    native = _make_event(data={"tool_name": "Bash", "tool_input": {"command": "ocr --version"}})
-    blocked = await engine.evaluate(native, session_id=SESSION_ID, variables={})
-    assert blocked.decision == "block"
-    assert blocked.reason is not None and "load_skills" in blocked.reason
-
     with session_context_for_test(SESSION_ID):
-        for path in references:
-            arguments = {"name": "gobby", "path": path}
-            result = await get_file(**arguments)
-            await after_load("get_skill_file", arguments, result)
+        arguments = {"name": "gobby", "path": procedure}
+        result = await get_file(**arguments)
+        await after_load("get_skill_file", arguments, result)
         result = await get_skill(name="code-review")
         await after_load("get_skill", {"name": "code-review"}, result)
         instance = instance_mgr.get_for_session(SESSION_ID)
         assert instance is not None and instance.current_step == "load_skills"
-        assert "proportionality" not in variables.get_variables(SESSION_ID)["loaded_skills"]
+        assert "restraint" not in variables.get_variables(SESSION_ID)["loaded_skills"]
 
-        result = await get_skill(name="proportionality")
+        result = await get_skill(name="restraint")
         assert result["page"]["complete"] is False
-        await after_load("get_skill", {"name": "proportionality"}, result)
+        await after_load("get_skill", {"name": "restraint"}, result)
         partial = instance_mgr.get_for_session(SESSION_ID)
         assert partial is not None and partial.current_step == "load_skills"
-        blocked = await engine.evaluate(
-            native, session_id=SESSION_ID, variables=variables.get_variables(SESSION_ID)
-        )
-        assert blocked.decision == "block"
-        assert blocked.reason is not None and "proportionality" in blocked.reason
 
         transition = HookResponse()
         while result["page"]["next_cursor"] is not None:
@@ -294,14 +279,10 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
             transition = await after_load("get_skill", arguments, result)
 
     complete = instance_mgr.get_for_session(SESSION_ID)
-    assert complete is not None and complete.current_step == "review"
-    allowed = await engine.evaluate(
-        native, session_id=SESSION_ID, variables=variables.get_variables(SESSION_ID)
-    )
-    assert allowed.decision != "block"
+    assert complete is not None and complete.current_step == "await"
     assert transition.context is not None
-    assert "Step transition: load_skills -> review" in transition.context
-    assert "Run the deferred code-review Preflight now" in transition.context
+    assert "Step transition: load_skills -> await" in transition.context
+    assert "Read a routed CANDIDATE" in transition.context
 
 
 def _setup_load_then_review(

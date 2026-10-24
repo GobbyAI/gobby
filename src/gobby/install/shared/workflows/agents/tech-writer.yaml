@@ -34,10 +34,7 @@ prompts:
     Commit the documentation changes, call close_task with
     preview=true, the commit_sha, and changes_summary, then repair every
     deterministic blocker. When preview passes, repeat the same close with
-    preview=false. If it returns close_review_required, call wait_for_agent once
-    with reviewer_run_id and yield; after delivery, call get_task. Repair reviewer
-    feedback and restart the preview when the task is still open, or finish when
-    it is closed.
+    preview=false.
 
     Boundaries:
     - Task transitions flow one way from a leaf: reopen_task and
@@ -145,8 +142,7 @@ step_workflow:
       status_message: |
         Implement the docs leaf. Commit changes, then call close_task with
         preview=true, commit_sha, and changes_summary, repair deterministic blockers,
-        then repeat with preview=false. Wait once on reviewer_run_id when review is
-        required, then read the task after delivery.
+        then repeat with preview=false.
         Message the parent with target=parent.
         Sending the parent a task_blocker message ends this run after delivery;
         the parent respawns you with the answer, reusing the worktree. For a question

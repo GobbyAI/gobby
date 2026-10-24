@@ -46,14 +46,15 @@ SEAT_REFERENCE_EXEMPT_TOOLS = [
 SEAT_CATALOGUE = {
     "assistant",
     "orchestrator",
-    "lane-manager",
+    "dev-manager",
+    "test-writer",
     "developer",
     "code-reviewer",
     "researcher",
     "archivist",
     "log-monitor",
     "metrics-monitor",
-    "inbox-manager",
+    "triage",
     "release-manager",
     "reporter",
     "security-reviewer",
@@ -67,7 +68,7 @@ PERSONA_ONLY_SEATS = {"assistant", "orchestrator"}
 # A short-lived spawned run: no persona surface, a bounded one-shot run.
 SPAWN_ONLY_SEATS = {"reporter"}
 # Seats whose definitions leave `name:no-send-keys` out of the rule selection.
-SEND_KEYS_SEATS = {"default", "assistant", "orchestrator", "lane-manager", "recovery-steward"}
+SEND_KEYS_SEATS = {"default", "assistant", "orchestrator", "dev-manager", "recovery-steward"}
 RUNBOOK_AGENTS = ("plan-writer", "plan-enhancer", "plan-adversary")
 
 # Decision 8: the runbooks list every read-only seat blocks.
@@ -84,11 +85,10 @@ READ_ONLY_BLOCKED_TOOLS = {
     "write_file",
 }
 READ_ONLY_SEATS = {
-    "lane-manager",
-    "code-reviewer",
+    "dev-manager",
     "log-monitor",
     "metrics-monitor",
-    "inbox-manager",
+    "triage",
     "reporter",
     "security-reviewer",
     "debugger",
@@ -112,15 +112,16 @@ UNSUPPORTED_KEYS = {"terminal_backend", "backend", "sandbox"}
 SEND_MESSAGE_TARGETS = {
     "assistant": ["parent", "session", "agent", "project", "global"],
     "orchestrator": ["parent", "session", "agent", "project", "global"],
-    "lane-manager": ["parent", "session", "project"],
+    "dev-manager": ["parent", "session", "project"],
+    "test-writer": ["parent", "session"],
     "developer": ["parent", "session"],
     "code-reviewer": ["parent", "session"],
     "researcher": ["parent", "session"],
     "archivist": ["parent", "session"],
     "log-monitor": ["parent", "session"],
     "metrics-monitor": ["parent", "session"],
-    "inbox-manager": ["parent", "session"],
-    "release-manager": ["parent", "session", "project"],
+    "triage": ["parent", "session"],
+    "release-manager": ["parent", "session", "project", "global"],
     "reporter": ["session"],
     "security-reviewer": ["parent", "session"],
     "debugger": ["parent", "session"],
@@ -134,10 +135,10 @@ ROOT_PANE_EXCLUDES = ["name:block-update-task"]
 
 # Steps that wait on another session report and wait from the step itself.
 # #23750 adds the developer and code-reviewer load_skills and the developer
-# claim reports, so a relaunched seat can reach its Lane Manager before work.
+# claim reports, so a relaunched seat can reach its Dev Manager before work.
 WAITING_STEPS = {
     "developer": {"load_skills", "claim", "submit"},
-    "code-reviewer": {"load_skills", "await", "review", "verdict"},
+    "code-reviewer": {"load_skills", "await", "review", "verdict", "fix"},
     "log-monitor": {"tick", "report"},
     "metrics-monitor": {"tick", "report"},
     "researcher": {"serve"},
@@ -155,7 +156,7 @@ HANDLER_KEYS = ("on_enter", "on_mcp_success", "on_mcp_error", "on_exit")
 FLAG_READ_RE = re.compile(r"vars\.(?:get\(\s*['\"])?(\w+)")
 
 ROUTED_SKILLS = {"impeccable", "rust", "typescript", "tech-writer"}
-CANDIDATE_EVENT_LINE = "`LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`"
+CANDIDATE_EVENT_LINE = "`EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`"
 ROUTE_LINE_RE = re.compile(r"^- [^:]+: (?P<skills>.+)$")
 # Seat flags the workflow engine writes itself (seat_transitions.py). The
 # native-variable-authority rule rejects hand writes to them, so no step needs set_variable.
@@ -286,7 +287,7 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     else:
         assert "persona" not in seat["prompts"]
     assert seat["provider"] == "inherit"
-    if name == "inbox-manager":
+    if name == "triage":
         assert seat["model"] == "claude-sonnet-5-5"
         assert seat["reasoning_effort"] == "medium"
     else:
@@ -304,7 +305,7 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     assert "tag:roles" not in include
     assert ("name:no-send-keys" in include) is (name not in SEND_KEYS_SEATS)
     assert not any("review-learning" in entry for value in selectors.values() for entry in value)
-    if name == "lane-manager":
+    if name in ("dev-manager", "test-writer"):
         assert "tag:worker-safety" in include
     if name in PERSONA_ONLY_SEATS:
         assert include == ROOT_PANE_INCLUDES
@@ -318,11 +319,15 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     assert "## Platform Context" in prompt
     assert "## Skills" in prompt
     assert "gobby-agents:send_message" in prompt
-    assert "lesson" not in prompt.lower()
+    # Only the Dev Manager records lessons, in its closing step record.
+    assert ("lesson" in prompt.lower()) is (name == "dev-manager")
 
     blocked = set(seat.get("blocked_tools") or [])
     if name in READ_ONLY_SEATS:
         assert blocked == READ_ONLY_BLOCKED_TOOLS
+    if name == "code-reviewer":
+        # Review steps stay read-only by step; the fix step edits after a claim hand-off.
+        assert blocked == {"KillShell"}
     if name in WRITE_SCOPE_RULES:
         assert not blocked & READ_ONLY_BLOCKED_TOOLS
         assert WRITE_SCOPE_RULES[name] in prompt
@@ -381,7 +386,7 @@ def test_developer_routes_skills_by_task() -> None:
         assert (SKILLS_DIR / skill / "SKILL.md").is_file(), skill
 
 
-@pytest.mark.parametrize("name", ["orchestrator", "assistant"])
+@pytest.mark.parametrize("name", ["orchestrator", "assistant", "dev-manager"])
 def test_seat_references_gate_required_reading(name: str) -> None:
     raw = yaml.safe_load(SEAT_GATES.read_text())
     rule = raw["rules"]["require-seat-references"]

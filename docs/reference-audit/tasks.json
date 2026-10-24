@@ -89,7 +89,7 @@
       "verification": [
         "coordinator-claim-release"
       ],
-      "audience": "Orchestrator or owning Lane Manager; same project and machine"
+      "audience": "Orchestrator or the task's Dev Manager for a seat of its team; same project and machine"
     },
     {
       "surface": "mcp",

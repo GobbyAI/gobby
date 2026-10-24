@@ -75,6 +75,13 @@ HEAVY_RUN_GUIDANCE = re.compile(
     r"(?:grant|request)s? (?:a |the )?slot",
     re.IGNORECASE,
 )
+# The mailbox refuses every other sender a send to the Orchestrator (3.4).
+ORCHESTRATOR_SENDERS = ("assistant", "orchestrator", "triage")
+ORCHESTRATOR_SEND = re.compile(
+    r"\b(?:send|sends|report|reports|flag|ask|alert|present|tell|escalate|relay)\b"
+    r"[^.]{0,80}?\bto the Orchestrator\b|\b(?:ask|send) the Orchestrator\b",
+    re.IGNORECASE,
+)
 
 
 def _pipeline(name: str) -> PipelineDefinition:
@@ -159,7 +166,10 @@ def test_runbook_seat_catalogues() -> None:
     for seat, condition in _conditions(support).items():
         assert f"'{seat}' in steps.guard.output.launch" in (condition or ""), seat
     for name in runbooks:
-        agents = {entry["agent"] for entry in _catalogue(_pipeline(name))}
+        # Planning launches from operator shells too, so its guard needs no report target.
+        guard = _pipeline(name).steps[0].mcp
+        assert guard is not None and guard.arguments is not None, name
+        agents = {entry["agent"] for entry in guard.arguments["catalogue"]}
         assert agents.isdisjoint(MONITORS), name
 
     devteam = _pipeline("devteam")
@@ -202,6 +212,7 @@ def test_agent_retirement_and_retention(temp_db: HubDatabase, tmp_path: Path) ->
     for name in RETIRED_AGENTS:
         (previous / f"{name}.yaml").write_text(
             f"name: {name}\ndescription: Retired seat\nprompts:\n  agent: Retired.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
         )
     with patch("gobby.agents.sync.get_bundled_agents_path", return_value=previous):
         assert sync_bundled_agents(temp_db)["errors"] == []
@@ -308,3 +319,29 @@ def test_no_heavy_run_slot_guidance() -> None:
         if (matches := HEAVY_RUN_GUIDANCE.findall(path.read_text()))
     }
     assert found == {}
+
+
+def test_only_the_assistant_and_triage_send_to_the_orchestrator() -> None:
+    sources = [
+        *AGENTS.glob("*.yaml"),
+        *PROCEDURES.glob("*.md"),
+        *(SHARED / "workflows/rules").rglob("*.yaml"),
+        *PIPELINES.glob("*.yaml"),
+    ]
+    found = {
+        str(path.relative_to(ROOT)): matches
+        for path in sources
+        if path.stem not in ORCHESTRATOR_SENDERS
+        and (matches := ORCHESTRATOR_SEND.findall(" ".join(path.read_text().split())))
+    }
+    assert found == {}
+    for seat in ("archivist", "consolidator", "researcher"):
+        assert "Triage" in _guidance(seat), seat
+
+    # Triage launches first and reports to the Orchestrator; the other Support seats and
+    # the planning seats report to Triage.
+    orchestrator = _guidance("orchestrator")
+    for phrase in ("seats=triage", "team-planning"):
+        assert phrase in orchestrator, phrase
+    support_inputs = yaml.safe_load((PIPELINES / "support.yaml").read_text())["inputs"]
+    assert "Triage" in support_inputs["report_to"]["description"]

@@ -28,10 +28,10 @@ RUN_SPECIFICS = re.compile(
 
 PROCEDURE_ROLES = [
     "code-reviewer",
-    "lane-manager",
+    "dev-manager",
     "orchestrator",
     "reporter",
-    "task-close-reviewer",
+    "triage",
 ]
 
 
@@ -60,7 +60,7 @@ def test_bundled_roles_and_runbooks_inherit_provider_choices() -> None:
     for path in sorted(agents.rglob("*.yaml")):
         raw = cast(dict[str, Any], yaml.safe_load(path.read_text()))
         assert raw.get("provider") in (None, "inherit"), path.name
-        if path.name == "inbox-manager.yaml":
+        if path.name == "triage.yaml":
             assert raw.get("model") == "claude-sonnet-5-5"
             assert raw.get("reasoning_effort") == "medium"
         else:
@@ -87,9 +87,7 @@ def test_reporter_renders_every_lane_from_policy(lane_count: int) -> None:
     assert "{{" not in rendered
 
 
-@pytest.mark.parametrize(
-    "name", ["developer", "code-reviewer", "security-reviewer", "researcher", "lane-manager"]
-)
+@pytest.mark.parametrize("name", ["security-reviewer", "researcher"])
 def test_launch_assignment_is_rendered_in_the_seat_definition(name: str) -> None:
     assignment = {
         "lane": "verification",
@@ -313,18 +311,3 @@ def test_moved_seat_procedures_are_required_in_every_context_epoch(name: str) ->
     ]:
         event.data = {"mcp_server": server, "mcp_tool": tool}
         assert not evaluator.evaluate(rule["when"]), f"Recovery must remain available: {tool}"
-
-
-def test_lane_manager_procedure_keeps_author_owned_retest_proof() -> None:
-    shared = get_bundled_agents_path().parents[1]
-    procedure = shared / "skills/gobby/references/agents/procedures/lane-manager.md"
-    content = procedure.read_text()
-
-    for protocol in ("PROOF_RESULT", "UNAVAILABLE"):
-        assert protocol in content, f"lane-manager must retain the current {protocol} contract"
-    assert "The author lane owns the landed retest" in content
-    # The Orchestrator lands and reports LANDED; the author owns the retest.
-    assert "PROOF_REQUEST" not in content
-    assert "run them in the main checkout" not in content
-    assert "the reviewer has run the retest" not in content
-    assert "confirm it with the author before raising found work" in content

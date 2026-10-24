@@ -1,7 +1,7 @@
-"""Daemon-attested landing receipts that a task-close review may cite.
+"""Daemon-attested landing receipts that a task close may cite.
 
 A close criterion can name the landing of an exact commit, which happens in
-the lander's session. The close reviewer reads none of that session, so
+the lander's session. The closing session may not be the lander, so
 land_commit records a receipt here with the lander as its author. Review
 approval is the review step record (``step_records``), not a receipt.
 

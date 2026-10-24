@@ -15,9 +15,9 @@ rules:
     # variable) recovers its team's stalled seats, so it may resume one. Spawn
     # admission limits that resume to a seat of the manager's own team.
     when: >
-      variables.get('_agent_type') in ['dev-manager', 'lane-manager',
+      variables.get('_agent_type') in ['dev-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and not (
@@ -32,7 +32,7 @@ rules:
         reason: >-
           Seats do not spawn agents. The Assistant and the Orchestrator spawn seats,
           and a team manager may only resume an existing seat of its team with
-          spawn_agent resume_session_id; send other work to the Orchestrator.
+          spawn_agent resume_session_id; send other work to Triage.
 
   # The Orchestrator is the primary pipeline launcher and the Assistant is the
   # backup, launching only while the Orchestrator is down. The split is a norm in
@@ -45,9 +45,9 @@ rules:
     # `block` mcp_tools matching is exact or `server:*`, and exposed pipelines are
     # named `pipeline:<name>`, so the condition alone selects the call.
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and variables.get('_agent_type') not in ['assistant', 'orchestrator']
@@ -59,8 +59,8 @@ rules:
         reason: >-
           Only the Orchestrator launches pipelines, and the Assistant only while the
           Orchestrator is down: a pipeline's steps run outside seat rules. Runbooks
-          launch from the operator's surfaces or the Orchestrator; send the request to the
-          Orchestrator.
+          launch from the operator's surfaces or the Orchestrator; send the request to
+          Triage.
 
   # One block effect per rule, so the shell's pipeline and spawn launches are
   # separate rules: the pipeline half exempts the Orchestrator and Assistant.
@@ -70,9 +70,9 @@ rules:
     enabled: true
     priority: 10
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and variables.get('_agent_type') not in ['assistant', 'orchestrator']
@@ -83,8 +83,8 @@ rules:
         reason: >-
           Only the Orchestrator launches pipelines, and the Assistant only while the
           Orchestrator is down: a pipeline's steps run outside seat rules. Runbooks
-          launch from the operator's surfaces or the Orchestrator; send the request to the
-          Orchestrator.
+          launch from the operator's surfaces or the Orchestrator; send the request to
+          Triage.
 
   seat-no-launch-cli:
     description: "Seats, the Orchestrator and Assistant included, do not spawn agents through the gobby CLI"
@@ -92,9 +92,9 @@ rules:
     enabled: true
     priority: 10
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager', 'lane-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager', 'test-writer', 'triage',
+        'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
     effects:
@@ -103,7 +103,8 @@ rules:
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:--config(?:=|\\s+)\\S+\\s+)?agents\\s+spawn\\b"
         reason: >-
           Seats do not spawn agents from the shell. Agents start through
-          gobby-agents spawn_agent or a runbook; send the request to the Orchestrator.
+          gobby-agents spawn_agent or a runbook; seats without that authority send
+          the request to Triage.
 
   # Every agent except the Assistant and Orchestrator needs this rule against new
   # project creation. Root sessions fall back to `_agent_type` 'default' and stay
@@ -130,4 +131,4 @@ rules:
         command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+(?:--config(?:=|\\s+)\\S+\\s+)?(?:init\\b|install\\b[^;&|\\n]*--no-interactive\\b)|^(?!\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:[^\\s;&|]*/)?(?:grep|rg|gcode)\\b).*/api/projects/init\\b"
         reason: >-
           Agents do not create or register Gobby projects: project creation needs the
-          operator's go through the Orchestrator. Send the request to the Orchestrator.
+          operator's go through the Orchestrator. Send the request to Triage.

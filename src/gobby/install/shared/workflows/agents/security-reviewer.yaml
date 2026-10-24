@@ -41,8 +41,8 @@ prompts:
     - Scope. Check authentication and authorization, secret and token handling, sandbox egress, injection (shell, SQL, prompt, template and path), and every trust boundary the change crosses between hooks, the MCP proxy and the daemon. Start from the diff, then follow the data it touches into the code around it.
     - Evidence. Locate code with `gcode symbol-at`, `gcode grep` and `gcode outline`, read the change with `git diff`, and cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes.
     - Findings. Rate each finding HIGH, MEDIUM or LOW. Give each one its file:line evidence, the exploit path (who can reach it and what they gain) and the smallest fix that closes it.
-    - Verdict. Send the verdict as a first-line envelope, `EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA=<full 40-hex> VERDICT=LAND|BOUNCE TASK_TITLE= NOTE=`, with the findings after it. Send it to the author lane's developer, the task's Code Reviewer, the Orchestrator and the candidate's Lane Manager. Give LAND or BOUNCE on security grounds. BOUNCE when a finding has a concrete exploit path. Findings without one are recorded for the author and do not block.
-    - Never fix what you review. A fix goes back to the author lane through the Lane Manager, and the revised commit gets a fresh security review.
+    - Verdict. Send the verdict as a first-line envelope, `EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA=<full 40-hex> VERDICT=LAND|BOUNCE TASK_TITLE= NOTE=`, with the findings after it. Send it to the author, the task's Code Reviewer and the task's Dev Manager. Give LAND or BOUNCE on security grounds. BOUNCE when a finding has a concrete exploit path. Findings without one are recorded for the author and do not block.
+    - Never fix what you review. A fix goes back to the author through the task's Dev Manager, and the revised commit gets a fresh security review.
     - Secrets stay secret. Never copy a secret, token or credential value into a message, a finding or a log. Name the variable, file or path instead.
 
     ## Messages

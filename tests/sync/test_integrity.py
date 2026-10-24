@@ -350,17 +350,17 @@ class TestVerifyBundledIntegrity:
     def test_non_git_extra_bundled_yaml_is_untracked(self, tmp_path: Path) -> None:
         """Extra protected files are treated like untracked git content."""
         shared = tmp_path / "shared"
-        rule = shared / "rules" / "build" / "known.yaml"
+        rule = shared / "workflows" / "rules" / "demo" / "known.yaml"
         rule.parent.mkdir(parents=True)
         rule.write_text("rules: {}\n", encoding="utf-8")
         write_bundled_content_manifest(tmp_path)
-        extra = shared / "rules" / "build" / "extra.yaml"
+        extra = shared / "workflows" / "rules" / "demo" / "extra.yaml"
         extra.write_text("rules: {}\n", encoding="utf-8")
 
         with patch("gobby.sync.integrity.run_git_command", return_value=None):
             result = verify_bundled_integrity(tmp_path)
 
-        assert result.untracked_files == ["shared/rules/build/extra.yaml"]
+        assert result.untracked_files == ["shared/workflows/rules/demo/extra.yaml"]
         assert get_dirty_content_types(result.untracked_files, tmp_path) == {"rules"}
 
     def test_unknown_registry_file_is_ignored(
@@ -567,7 +567,6 @@ class TestGetDirtyContentTypes:
         dirty = [
             "shared/workflows/dev.yaml",
             "shared/workflows/rules/tool-hygiene/require-uv.yaml",
-            "shared/rules/build/build-agent-safety.yaml",
             "shared/workflows/variables/gobby-default-variables.yaml",
             "shared/registry/build_profiles.yaml",
         ]
@@ -575,6 +574,12 @@ class TestGetDirtyContentTypes:
         result = get_dirty_content_types(dirty, tmp_path)
 
         assert result == {"pipelines", "rules", "variables"}
+
+    def test_retired_shared_rules_root_is_not_a_sync_root(self, tmp_path: Path) -> None:
+        """Rules live only under shared/workflows/rules; shared/rules syncs nothing."""
+        result = get_dirty_content_types(["shared/rules/build/demo.yaml"], tmp_path)
+
+        assert result == set()
 
     def test_content_type_dirs_matches_sync_targets(self) -> None:
         """Directory mappings cover the surviving sync targets."""
