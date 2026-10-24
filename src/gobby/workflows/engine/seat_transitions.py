@@ -281,7 +281,12 @@ def _reviewer_message(
             **_clear_candidate(),
             "parked_candidates": parked + [{"task": event.task.id, "sha": event.sha}],
         }
-    if kind == "CANDIDATE_VERDICT" and fields.get("VERDICT") == "BOUNCE":
+    # A peer's BOUNCE leaves the unit open; only this seat's own verdict ends it.
+    if (
+        kind == "CANDIDATE_VERDICT"
+        and fields.get("VERDICT") == "BOUNCE"
+        and event.message.from_session == session_id
+    ):
         return _clear_candidate()
     if not incoming and kind in {"LANDED", "ALREADY_LANDED", "REVIEW_COMPLETE"}:
         if kind == "REVIEW_COMPLETE" and (

@@ -720,8 +720,8 @@ async def test_developer_returns_to_implement_on_security_bounce_envelope(
     assert run.vars["implementation_complete"] is False
 
 
-async def test_security_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) -> None:
-    """An incoming Security BOUNCE for the reviewed unit ends the Code Reviewer's unit (#24890)."""
+async def test_peer_bounce_keeps_the_code_reviewer_in_review(temp_db: HubDatabase) -> None:
+    """A peer's BOUNCE leaves the Code Reviewer in review until it sends its own verdict (#24903)."""
     run = SeatRun(temp_db, "code-reviewer")
     await run.load(*run.vars["required_skills"])
     task = run.task()
@@ -733,6 +733,20 @@ async def test_security_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabas
         "TASK_TITLE=security NOTE=exploit path",
         PEER_ID,
     )
+    assert run.step == "review"
+    assert run.vars["candidate_received"] is True
+    assert run.vars["candidate_sha"] == SHA
+
+
+async def test_own_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) -> None:
+    """Only the Code Reviewer's own BOUNCE ends its unit and moves it to await (#24903)."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake(task)
+    assert run.vars["candidate_received"] is True
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE NOTE=HIGH")
+    assert run.step == "await"
     assert run.vars["candidate_received"] is False
     assert run.vars["candidate_sha"] is None
 
