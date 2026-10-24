@@ -655,7 +655,9 @@ async def test_lost_observation_fails_closed_before_typing() -> None:
 
 
 def test_resolve_pane_io_prefers_the_live_terminal_row() -> None:
-    terminal = MagicMock(backend="native", id="term-1")
+    from gobby.utils.machine_id import require_machine_id
+
+    terminal = MagicMock(backend="native", id="term-1", machine_id=require_machine_id())
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = terminal
     registry = MagicMock()

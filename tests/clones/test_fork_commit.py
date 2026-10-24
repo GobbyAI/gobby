@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,6 +48,14 @@ def clones_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root
 
 
+@pytest.fixture
+def pin_project(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    # Git selection uses real repositories; index admission is a separate service.
+    pin = AsyncMock()
+    monkeypatch.setattr("gobby.mcp_proxy.tools._clones_creation.GcodeGateway.pin_project", pin)
+    return pin
+
+
 def clone_tool(repo: Path) -> tuple[Any, MagicMock]:
     from gobby.mcp_proxy.tools.clones import create_clones_registry
 
@@ -63,7 +71,9 @@ def clone_tool(repo: Path) -> tuple[Any, MagicMock]:
     return registry, storage
 
 
-async def test_local_clone_uses_caller_head(repo: Path, clones_root: Path) -> None:
+async def test_local_clone_uses_caller_head(
+    repo: Path, clones_root: Path, pin_project: AsyncMock
+) -> None:
     git(repo, "switch", "-c", "caller")
     selected = commit(repo, "caller.txt", "unpushed\n", "unpushed caller commit")
     registry, storage = clone_tool(repo)
@@ -78,10 +88,13 @@ async def test_local_clone_uses_caller_head(repo: Path, clones_root: Path) -> No
     assert result["base_commit_sha"] == selected
     assert result["index_source"] == "local"
     assert storage.create.call_args.kwargs["base_branch"] == "caller"
+    pin_project.assert_awaited_once_with(path)
 
 
 @pytest.mark.parametrize("base", ["main", "origin/main", "external"])
-async def test_clone_ref_sources(repo: Path, clones_root: Path, tmp_path: Path, base: str) -> None:
+async def test_clone_ref_sources(
+    repo: Path, clones_root: Path, tmp_path: Path, base: str, pin_project: AsyncMock
+) -> None:
     main = git(repo, "rev-parse", "HEAD")
     git(repo, "switch", "-c", "caller")
     commit(repo, "caller.txt", "caller only\n", "caller commit")
@@ -108,8 +121,11 @@ async def test_clone_ref_sources(repo: Path, clones_root: Path, tmp_path: Path, 
     assert result["base_commit_sha"] == expected
     assert result["index_source"] == ("cold" if base == "external" else "local")
     if base != "external":
+        pin_project.assert_awaited_once_with(path)
         assert storage.create.call_args.kwargs["base_branch"] == "main"
         assert git(path, "rev-parse", "--abbrev-ref", "HEAD") == "child"
+    else:
+        pin_project.assert_not_awaited()
     assert git(repo, "rev-parse", "refs/heads/main") == main
 
 
