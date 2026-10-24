@@ -32,6 +32,7 @@ from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.agents.watchdog.composer_gate import composer_refuses_automation
+from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
 from gobby.storage.coordination_waits import CoordinationWaitManager
@@ -96,8 +97,10 @@ class AgentLifecycleMonitor:
         attention_manager: AttentionStateManager | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
         terminal_services: Any | None = None,
+        terminal_config: TerminalConfig | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
+        self._terminal_config = terminal_config or TerminalConfig()
         self._db = db
         self._detection_registry = detection_registry
         self._run_db_callback = run_db
@@ -178,7 +181,7 @@ class AgentLifecycleMonitor:
             terminal_manager=self._terminal_services.manager,
             runtime_registry=self._terminal_services.registry,
             session_manager=self._session_manager,
-            spawn_in_doubt_seconds=150.0,
+            spawn_in_doubt_seconds=self._terminal_config.spawn_in_doubt_seconds,
         )
         self._health_monitor = AgentHealthMonitor(
             agent_run_manager=agent_run_manager,
@@ -191,6 +194,7 @@ class AgentLifecycleMonitor:
             checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
             terminal_services=self._terminal_services,
             get_session_coordinator=lambda: self._session_coordinator,
+            terminal_config=self._terminal_config,
         )
         self._memory_watchdog = MemoryWatchdogHandler(
             agent_run_manager=agent_run_manager,

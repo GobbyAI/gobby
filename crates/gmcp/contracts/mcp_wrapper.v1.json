@@ -5,7 +5,7 @@
   "wait_tool_names": ["wait_for_output", "wait_for_pane_output"],
   "wait_tool_timeout_seconds": 300.0,
   "extended_timeout_tool_names": [
-    "close_task", "submit_close_review", "land_commit", "expand_task", "merge_resolve",
+    "close_task", "land_commit", "expand_task", "merge_resolve",
     "suggest_next_task", "set_handoff", "recall_review_context", "rebuild_knowledge_graph",
     "merge_worktree", "sync_worktree", "create_worktree", "delete_worktree", "spawn_agent",
     "run_expansion_qa_coverage", "reindex_embeddings", "rebuild_crossrefs"

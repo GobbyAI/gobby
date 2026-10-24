@@ -33,6 +33,7 @@ class HeredocExecution:
     downstream_shell: list[bool]
     raw_outproc: bool
     source: Literal["shell", "language"]
+    python_stage: list[bool]
 
     def may_execute(self, heredoc: HeredocBody, opener: int) -> bool:
         if not heredoc.terminated or self.raw_outproc:
@@ -40,9 +41,14 @@ class HeredocExecution:
         owner = self.stage_of[opener]
         return self.consumer_executes[owner] or self.downstream_shell[owner]
 
+    def runs_python(self, opener: int) -> bool:
+        """Whether Python parses the heredoc as source and no downstream shell reads its output."""
+        owner = self.stage_of[opener]
+        return self.python_stage[owner] and not self.downstream_shell[owner]
+
 
 def classify_heredoc_execution(
-    tokens: list[ShellToken], raw: str, stages: list[list[str]]
+    tokens: list[ShellToken], raw: str, stages: list[list[str]], python_stage: list[bool]
 ) -> HeredocExecution:
     """Classify every stage once, for constant-time checks of its heredocs."""
     stage_of: list[int] = []
@@ -72,4 +78,5 @@ def classify_heredoc_execution(
         downstream_shell,
         bool(_OUTPUT_PROCESS_SUBSTITUTION.search(raw)),
         "shell" if shell_source else "language",
+        python_stage,
     )

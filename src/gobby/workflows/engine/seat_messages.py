@@ -80,6 +80,8 @@ _ENVELOPE_CANONICAL: dict[str, str] = {
     ),
     "ALREADY_LANDED": "SHA RECEIPT LANDED_BY_SESSION_ID TASK_TITLE NOTE",
     "REVIEW_COMPLETE": "SHA VERDICT LANDING NOTE",
+    "PROOF_REQUEST": "SHA NOTE",
+    "PROOF_RESULT": "SHA RETEST NOTE",
 }
 # Ordering the receiver depends on: ranks must not decrease, and unlisted keys are
 # unordered. TASK_TITLE is free text, so a binding field must precede it, except on
@@ -92,6 +94,8 @@ _ENVELOPE_RANKS: dict[str, tuple[tuple[str, ...], ...]] = {
     "LANDED": (("SHA",), ("TASK_TITLE",)),
     "ALREADY_LANDED": (("SHA",), ("TASK_TITLE",)),
     "REVIEW_COMPLETE": (("SHA",), ("VERDICT",)),
+    "PROOF_REQUEST": (("SHA",),),
+    "PROOF_RESULT": (("SHA",), ("RETEST",)),
 }
 # Fields that must be non-empty. TASK is required for every event.
 _ENVELOPE_REQUIRED: dict[str, tuple[str, ...]] = {
@@ -101,6 +105,8 @@ _ENVELOPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "LANDED": ("SHA",),
     "ALREADY_LANDED": ("SHA",),
     "REVIEW_COMPLETE": ("SHA",),
+    "PROOF_REQUEST": ("SHA",),
+    "PROOF_RESULT": ("SHA",),
 }
 
 

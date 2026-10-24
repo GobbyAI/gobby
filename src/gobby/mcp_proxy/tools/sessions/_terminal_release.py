@@ -30,7 +30,7 @@ def register_release_composer_tool(
             "A session cannot release its own composer."
         ),
     )
-    async def release_composer_tool(session_id: str) -> dict[str, Any]:
+    def release_composer_tool(session_id: str) -> dict[str, Any]:
         if terminal_manager is None:
             return {
                 "success": False,

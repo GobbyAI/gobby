@@ -6,9 +6,11 @@ node is ownership-checked first.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,8 +20,10 @@ from gobby.hub.node_client import NodeCommandError, node_command_client
 from gobby.hub.node_commands import MergePayload, MergeResult, RemovePayload, RemoveResult
 from gobby.storage.clones import Clone
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.isolation_cleanup import CLOSED_TASK_CLEANUP_PREDICATE
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.worktrees import _UUID_TEXT_PREFIX_RE, Worktree, _escape_like_prefix
+from gobby.utils.machine_id import require_machine_id
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 if TYPE_CHECKING:
@@ -31,6 +35,7 @@ Owner = tuple[str, str]
 
 __all__ = [
     "WorkspaceKind",
+    "expire_remote_workspaces",
     "get_remote",
     "list_remote",
     "machine_refusal",
@@ -47,6 +52,56 @@ _CLEANUP_DAYS: dict[WorkspaceKind, int] = {"worktree": 0, "clone": 7}
 _REMOVE_REFUSALS = {"dirty": "dirty", "unmerged": "unmerged", "busy": "workspace_busy"}
 _MERGE_TIMEOUT_MS = 250_000
 _LIST_TOOLS = frozenset({"list_worktrees", "list_clones"})
+logger = logging.getLogger(__name__)
+
+
+async def expire_remote_workspaces(
+    db: HubDatabase, *, run_db: Callable[..., Awaitable[Any]] | None
+) -> None:
+    """Ask owning nodes to safely remove expired merged workspaces."""
+    runner = run_db or asyncio.to_thread
+    rows = await runner(_expired_remote_rows, db)
+    if not rows:
+        return
+    client = node_command_client()
+    for kind, row in rows:
+        try:
+            result = await remove_remote(
+                db,
+                kind,
+                row,
+                force=False,
+                force_delete_branch=False,
+                merged_into=None,
+                client=client,
+            )
+            if not result["success"]:
+                logger.debug("Skipped expired remote %s %s: %s", kind, row.id, result)
+        except NodeCommandError as exc:
+            logger.debug("Skipped expired remote %s %s: %s", kind, row.id, exc)
+        except Exception:
+            logger.exception("Failed to clean up expired remote %s %s", kind, row.id)
+
+
+def _expired_remote_rows(db: HubDatabase) -> list[tuple[WorkspaceKind, Workspace]]:
+    rows: list[tuple[WorkspaceKind, Workspace]] = []
+    machine_id = require_machine_id()
+    now = datetime.now(UTC)
+    for kind, table in _TABLE.items():
+        sql = f"""
+            SELECT w.* FROM {table} w
+            WHERE w.status = 'merged' AND w.machine_id != %s
+              AND w.cleanup_after < %s
+        """  # nosec B608
+        sql += CLOSED_TASK_CLEANUP_PREDICATE
+        sql += " ORDER BY w.cleanup_after ASC, w.id ASC LIMIT %s"
+        rows.extend(
+            (kind, _from_row(kind, row))
+            for row in db.fetchall(sql, (machine_id, now, 1000 - len(rows)))
+        )
+        if len(rows) == 1000:
+            break
+    return rows
 
 
 def _matches(db: HubDatabase, kind: WorkspaceKind, ref: str) -> list[Any]:
@@ -86,10 +141,13 @@ def list_remote(
     project_id: str | None = None,
     status: str | None = None,
     agent_session_id: str | None = None,
-    limit: int | None = None,
+    limit: int | None = 50,
 ) -> list[Any]:
     conditions = ["machine_id = %s"]
     params: list[Any] = [machine_id]
+    if kind == "clone":
+        conditions.append("status != %s")
+        params.append("cleanup")
     if project_id:
         conditions.append("project_id = %s")
         params.append(project_id)

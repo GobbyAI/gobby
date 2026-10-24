@@ -268,28 +268,29 @@ class TestEnsureIsolationCodeIndex:
 
         assert result.env == {}
         calls = self._gcode_calls(popen)
-        assert len(calls) == 3
+        assert len(calls) == 4
         # The config probe must exercise the run-scoped grant path (status reads
         # through the scoped role and /api/runtime/config), never an
         # operator-only listing route the run token cannot call.
         assert calls[0].args[0][:4] == ["/tmp/gcode", "status", "--quiet", "--format"]
         assert calls[0].args[0][4:8] == ["json", "--allow-stale", "--project", str(tmp_path)]
-        assert calls[1].args[0][:4] == ["/tmp/gcode", "index", "--quiet", "--project"]
-        assert calls[1].args[0][4] == str(tmp_path)
-        assert calls[2].args[0][:3] == [
+        assert calls[1].args[0] == ["/tmp/gcode", "pin", "--quiet", "--project", str(tmp_path)]
+        assert calls[2].args[0][:4] == ["/tmp/gcode", "index", "--quiet", "--project"]
+        assert calls[2].args[0][4] == str(tmp_path)
+        assert calls[3].args[0][:3] == [
             "/tmp/gcode",
             "search-content",
             "__gobby_code_index_smoke__",
         ]
-        assert "--allow-stale" in calls[2].args[0]
-        assert "--no-freshness" not in calls[2].args[0]
+        assert "--allow-stale" in calls[3].args[0]
+        assert "--no-freshness" not in calls[3].args[0]
         assert popen_threads and all(thread_id != loop_thread for thread_id in popen_threads)
         for gcode_call in calls:
             assert Path(gcode_call.args[0][0]).is_absolute()
             assert "cwd" not in gcode_call.kwargs
             assert "start_new_session" not in gcode_call.kwargs
             assert "preexec_fn" not in gcode_call.kwargs
-        assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 10.0], abs=0.25)
+        assert proc.communicate_timeouts == pytest.approx([5.0, 120.0, 120.0, 10.0], abs=0.25)
 
     @pytest.mark.asyncio
     async def test_scoped_credential_creates_gcode_wrapper_runtime(
@@ -726,7 +727,7 @@ class TestEnsureIsolationCodeIndex:
             )
 
         calls = self._gcode_calls(popen)
-        assert len(calls) == 3
+        assert len(calls) == 4
         for call in calls:
             env = call.kwargs["env"]
             assert "GOBBY_AGENT_API_TOKEN" not in env
@@ -829,7 +830,7 @@ class TestEnsureIsolationCodeIndex:
             patch("gobby.agents.code_index.resolve_native_bin", return_value="/tmp/gcode"),
             patch(
                 "gobby.agents.code_index.spawn.popen",
-                side_effect=[proc_ok, proc_fail],
+                side_effect=[proc_ok, proc_ok, proc_fail],
             ),
         ):
             with pytest.raises(GcodeCommandError) as exc_info:
@@ -883,8 +884,8 @@ class TestEnsureIsolationCodeIndex:
                 search_smoke_timeout=5,
             )
 
-        assert len(observed) == 3
-        assert 0 < observed[2] < observed[1] < observed[0] <= 0.2
+        assert len(observed) == 4
+        assert 0 < observed[3] < observed[2] < observed[1] < observed[0] <= 0.2
 
     @pytest.mark.asyncio
     async def test_gcode_launch_oserror_uses_failure_code(self, tmp_path: Path) -> None:
