@@ -1321,7 +1321,7 @@ class TestWorktreeStats:
 
 
 class TestDeleteWorktree:
-    def test_foreign_worktree_returns_conflict_without_effects(
+    def test_worktree_storage_ownership_refusal_returns_conflict_without_effects(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
         mock_storage = MagicMock()
@@ -1773,7 +1773,7 @@ class TestDeleteClone:
         assert storage.delete.call_count == 2
         assert not clone_path.exists()
 
-    def test_foreign_clone_returns_conflict_without_effects(
+    def test_clone_storage_ownership_refusal_returns_conflict_without_effects(
         self, client: TestClient, mock_server: MagicMock
     ) -> None:
         mock_storage = MagicMock()
