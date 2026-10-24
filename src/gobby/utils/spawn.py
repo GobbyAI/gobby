@@ -171,12 +171,14 @@ async def run_cancellable_probe[T](probe: Callable[[], T], *, timeout: float) ->
         _command_scope.reset(token)
     try:
         return await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
-    except (TimeoutError, asyncio.CancelledError):
+    except (TimeoutError, asyncio.CancelledError) as interruption:
+        outcome: BaseException = interruption
         scope.cancel()
         while not worker.done():
             try:
                 await asyncio.shield(worker)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as cancellation:
+                outcome = cancellation
                 scope.cancel()
             except Exception:
                 break  # Retrieve and log the worker error below; preserve the interruption.
@@ -184,7 +186,9 @@ async def run_cancellable_probe[T](probe: Callable[[], T], *, timeout: float) ->
             worker.result()
         except Exception:
             logger.debug("Interrupted probe finished with an error", exc_info=True)
-        raise
+        if outcome is interruption:
+            raise
+        raise outcome from interruption
 
 
 _thread_deadline = threading.local()

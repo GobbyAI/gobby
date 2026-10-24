@@ -71,7 +71,9 @@ async def test_restart_probe_reaps_slow_gdaemon_before_finishing(
         return None
 
     monkeypatch.setattr(_lifecycle, "_restart_start_refusal", proof)
-    monkeypatch.setattr(_lifecycle, "RESTART_START_PROOF_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(
+        _lifecycle, "RESTART_START_PROOF_TIMEOUT_SECONDS", 30 if interruption == "cancel" else 2
+    )
     app = _client().app
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         request = asyncio.create_task(client.post("/api/admin/restart"))
