@@ -837,6 +837,10 @@ def _classify_shell_segment_without_redirection(
                 # navigate every source file the executed program happens to read.
                 for segment in nested.get("canonical_code_navigation_segments", ()):
                     segment["canonical_code_navigation_script_execution"] = True
+                for record in nested.get("_canonical_pending_source_reads", ()):
+                    record["scope"]["canonical_code_navigation_script_execution"] = True
+                if deferred := nested.get("_canonical_deferred_source_read"):
+                    deferred["canonical_code_navigation_script_execution"] = True
                 nested["canonical_script_bodies"] = sorted(
                     {str(script[0]), *nested.get("canonical_script_bodies", ())}
                 )

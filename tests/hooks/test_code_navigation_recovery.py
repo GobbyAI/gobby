@@ -1007,15 +1007,34 @@ def test_one_event_asks_git_once_for_all_its_paths(
 
 
 @pytest.mark.parametrize("shell", ["bash", "sh", "zsh"])
-def test_script_execution_does_not_require_source_navigation(repo: Path, shell: str) -> None:
+@pytest.mark.parametrize(
+    ("body", "invocation"),
+    [
+        ("cat {repo}/src/long.py\n", "{shell} {script}"),
+        ('cat "$1"\n', "{shell} {script} src/long.py"),
+        (
+            'f={repo}/src/long.py\nuntil [ -s "$f" ]; do sleep 1; done\ncat "$f"\n',
+            "{shell} {script}",
+        ),
+        ('cat "$f"\n', "for f in src/long.py; do {shell} {script}; done"),
+    ],
+    ids=["literal", "positional", "wait-loop", "outer-binding"],
+)
+def test_script_execution_does_not_require_source_navigation(
+    repo: Path, shell: str, body: str, invocation: str
+) -> None:
     script = repo.parent / "waitfile.sh"
-    script.write_text(f"cat {repo / 'src/long.py'}\n")
+    script.write_text(body.format(repo=repo))
+    command = invocation.format(shell=shell, script=script)
 
-    assert not broad_read_blocked(repo, f"{shell} {script}")
-    assert broad_read_blocked(repo, f"{shell} {script}; cat src/long.py")
+    assert not broad_read_blocked(repo, command)
+    assert broad_read_blocked(repo, f"{command}; cat src/long.py")
 
 
-@pytest.mark.parametrize("command", ["cat src/long.py", "sed -n '1,60p' src/long.py"])
+@pytest.mark.parametrize(
+    "command",
+    ["cat src/long.py", "sed -n '1,60p' src/long.py", "bash -c 'cat src/long.py'"],
+)
 def test_direct_source_read_still_requires_navigation(repo: Path, command: str) -> None:
     assert broad_read_blocked(repo, command)
 
