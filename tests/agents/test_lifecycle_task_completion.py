@@ -118,7 +118,7 @@ def test_closed_task_completion_result_does_not_duplicate_supplied_suffix(
         title="Persist close suffix once",
         validation_criteria="The close suffix is idempotent.",
     )
-    task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task.id, reason="done", closed_commit_sha="abc123")
     closed_task = task_manager.get_task(task.id)
 
     supplied = closed_task_completion_result(closed_task, "done")
@@ -142,7 +142,7 @@ async def test_closed_task_run_succeeds_on_next_completion_sweep(
         parent_session=parent_session,
         sample_project=sample_project,
     )
-    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task_id, reason="done", closed_commit_sha="abc123")
     stuck_detector = MagicMock()
     stuck_detector.is_stuck.return_value = StuckDetectionResult(is_stuck=False)
     monitor = _monitor(
@@ -188,7 +188,7 @@ async def test_allow_closed_task_respawn_survives_completion_sweep(
         parent_session=parent_session,
         sample_project=sample_project,
     )
-    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task_id, reason="done", closed_commit_sha="abc123")
     agent_run_manager.merge_resume_metadata(run.id, {"allow_closed_task": True})
     monitor = _monitor(
         agent_run_manager=agent_run_manager,
@@ -227,7 +227,7 @@ async def test_task_completed_before_session_end_persists_closed_task_result(
         result_prefix=stale_result,
     )
     assert seeded is not None
-    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task_id, reason="done", closed_commit_sha="abc123")
     closed_task = task_manager.get_task(task_id)
     monitor = _monitor(
         agent_run_manager=agent_run_manager,
@@ -285,7 +285,7 @@ async def test_closed_task_notifies_parent_of_success(
         parent_session=parent_session,
         sample_project=sample_project,
     )
-    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task_id, reason="done", closed_commit_sha="abc123")
     notifications: list[tuple[str, str, dict[str, Any]]] = []
 
     async def wake_parent(
@@ -454,7 +454,7 @@ async def test_failed_session_end_run_stays_failed_when_bound_task_closes(
     )
     failed = agent_run_manager.fail(run.id, error=error, tool_calls_count=12, turns_used=8)
     assert failed is not None
-    task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+    task_manager.close_task(task_id, reason="done", closed_commit_sha="abc123")
 
     handled = await _sweep_completed_task_agents(
         agent_run_manager=agent_run_manager,
@@ -497,7 +497,7 @@ async def test_task_completion_sweep_uses_task_state_for_live_and_expired_sessio
     )
     session_manager.update_status(caller_session.id, session_status)
     if closed:
-        task_manager.close_task(task_id, reason="Done", closed_commit_sha="abc123")
+        task_manager.close_task(task_id, reason="done", closed_commit_sha="abc123")
 
     handled = await _sweep_completed_task_agents(
         agent_run_manager=agent_run_manager,

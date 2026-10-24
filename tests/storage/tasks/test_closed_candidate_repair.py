@@ -84,12 +84,28 @@ def reviewed_task(
     manager.link_commit(task.id, _CANDIDATE)
     manager.link_commit(task.id, _OLD)
     manager.close_task(
-        task.id, reason="completed", closed_in_session_id=actor.id, closed_commit_sha=_OLD
+        task.id, reason="done", closed_in_session_id=actor.id, closed_commit_sha=_OLD
     )
     closed = manager.get_task(task.id)
     assert closed.closed_at is not None
+    # Migration 477 preserves the exact reason while normalizing the live row.
     temp_db.execute(
-        "UPDATE tasks SET validation_status = 'valid', validation_feedback = %s WHERE id = %s",
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, 'migration:477', 'system', %s)",
+        (
+            str(uuid4()),
+            task.id,
+            json.dumps(
+                {
+                    "kind": "legacy_close_reason_snapshot",
+                    "closed_reason": "completed",
+                    "closed_at": closed.closed_at.isoformat(),
+                }
+            ),
+        ),
+    )
+    temp_db.execute(
+        "UPDATE tasks SET review_status = 'valid', review_feedback = %s WHERE id = %s",
         ("Original independent VALID review.", task.id),
     )
     review_id = str(uuid4())
@@ -102,7 +118,7 @@ def reviewed_task(
         "task_id": task.id,
     }
     temp_db.execute(
-        """INSERT INTO task_close_reviews (
+        """INSERT INTO task_close_review_history (
             id, task_id, task_ref, caller_session_id, close_arguments, review_fingerprint,
             evidence_fingerprint, status, result_payload, created_at, completed_at,
             diff_sha, test_bodies_sha, stable_facts
@@ -153,8 +169,8 @@ def test_repair_preview_is_read_only_and_apply_is_audited(
     assert after.closed_at == before.closed_at
     assert after.closed_reason == before.closed_reason
     assert after.closed_in_session_id == before.closed_in_session_id
-    assert after.validation_status == "valid"
-    assert after.validation_feedback == before.validation_feedback
+    assert after.review_status == "valid"
+    assert after.review_feedback == before.review_feedback
     assert after.commits == before.commits
     assert after.claimed_by_session_id is None
     assert ReviewHistory(manager.db).get(review.id) == review
@@ -225,6 +241,8 @@ def test_audit_failure_rolls_back_the_marker_correction(
         "different_candidate",
         "terminal_payload",
         "marker",
+        "close_reason",
+        "missing_reason_snapshot",
     ],
 )
 def test_repair_rejects_unreviewed_or_changed_state_without_writes(
@@ -235,7 +253,7 @@ def test_repair_rejects_unreviewed_or_changed_state_without_writes(
         manager.db.execute("UPDATE tasks SET closed_at = NULL WHERE id = %s", (review.task_id,))
     elif drift == "invalid":
         manager.db.execute(
-            "UPDATE tasks SET validation_status = 'invalid' WHERE id = %s", (review.task_id,)
+            "UPDATE tasks SET review_status = 'invalid' WHERE id = %s", (review.task_id,)
         )
     elif drift == "claimed":
         manager.db.execute(
@@ -256,11 +274,11 @@ def test_repair_rejects_unreviewed_or_changed_state_without_writes(
         )
     elif drift == "invalid_review":
         manager.db.execute(
-            "UPDATE task_close_reviews SET status = 'invalid' WHERE id = %s", (review.id,)
+            "UPDATE task_close_review_history SET status = 'invalid' WHERE id = %s", (review.id,)
         )
     elif drift == "terminal_payload":
         manager.db.execute(
-            """UPDATE task_close_reviews SET result_payload =
+            """UPDATE task_close_review_history SET result_payload =
                '{"closed": true, "validation_status": "valid", "status": "invalid"}'::jsonb
                WHERE id = %s""",
             (review.id,),
@@ -269,6 +287,15 @@ def test_repair_rejects_unreviewed_or_changed_state_without_writes(
         manager.db.execute(
             "UPDATE tasks SET closed_commit_sha = %s WHERE id = %s",
             ("c" * 40, review.task_id),
+        )
+    elif drift == "close_reason":
+        manager.db.execute(
+            "UPDATE tasks SET closed_reason = 'moot' WHERE id = %s", (review.task_id,)
+        )
+    elif drift == "missing_reason_snapshot":
+        manager.db.execute(
+            "DELETE FROM task_comments WHERE task_id = %s AND author = 'migration:477'",
+            (review.task_id,),
         )
     before = manager.get_task(review.task_id)
     with pytest.raises(ValueError):

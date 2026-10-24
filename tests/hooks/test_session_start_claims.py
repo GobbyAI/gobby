@@ -364,7 +364,7 @@ def test_closed_task_is_skipped_without_aborting(tmp_path: Path, hub_db: HubData
     harness = _make_harness(hub_db, tmp_path)
     kept = harness.create_claimed_task("Still open")
     closed = harness.create_claimed_task("Already closed")
-    close_task(hub_db, closed.id, reason="test")
+    close_task(hub_db, closed.id, reason="done")
 
     preserve_task_claim_state(
         harness.handler(),

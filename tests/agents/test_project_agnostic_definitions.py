@@ -12,8 +12,7 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT, fit_additional_context
-from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
-from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.templates import TemplateEngine
 
@@ -29,10 +28,10 @@ RUN_SPECIFICS = re.compile(
 
 PROCEDURE_ROLES = [
     "code-reviewer",
-    "lane-manager",
+    "dev-manager",
     "orchestrator",
     "reporter",
-    "task-close-reviewer",
+    "triage",
 ]
 
 
@@ -61,8 +60,8 @@ def test_bundled_roles_and_runbooks_inherit_provider_choices() -> None:
     for path in sorted(agents.rglob("*.yaml")):
         raw = cast(dict[str, Any], yaml.safe_load(path.read_text()))
         assert raw.get("provider") in (None, "inherit"), path.name
-        if path.name == "inbox-manager.yaml":
-            assert raw.get("model") == "claude-sonnet-5-5"
+        assert raw.get("model") in (None, "inherit"), path.name
+        if path.name == "triage.yaml":
             assert raw.get("reasoning_effort") == "medium"
         else:
             for key in ("model", "reasoning_effort"):
@@ -88,9 +87,7 @@ def test_reporter_renders_every_lane_from_policy(lane_count: int) -> None:
     assert "{{" not in rendered
 
 
-@pytest.mark.parametrize(
-    "name", ["developer", "code-reviewer", "security-reviewer", "researcher", "lane-manager"]
-)
+@pytest.mark.parametrize("name", ["security-reviewer", "researcher"])
 def test_launch_assignment_is_rendered_in_the_seat_definition(name: str) -> None:
     assignment = {
         "lane": "verification",
@@ -111,35 +108,6 @@ def test_missing_or_cleared_policy_keeps_the_reporter_role_and_reports_the_gap()
     assert cleared_prompt == default_prompt
     assert "You own the scheduled status" in cleared_prompt
     assert "mark missing policy as a source gap" in cleared_prompt
-
-
-def test_team_lane_passes_assignment_inputs_to_each_spawn() -> None:
-    path = get_bundled_agents_path().parent / "pipelines" / "team-lane.yaml"
-    definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
-    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(lane="03", lane_epic="project#42", first_job="Audit routing")
-    context = {
-        "inputs": inputs,
-        "steps": {"guard": {"output": {"worktree": "resolved-worktree"}}},
-        "invocation_id": "assignment-run",
-        "_string_inputs": frozenset(
-            name for name, spec in definition.inputs.items() if spec.get("type") == "string"
-        ),
-    }
-    renderer = StepRenderer(TemplateEngine())
-    spawns = [step.mcp for step in definition.steps if step.mcp and step.mcp.tool == "spawn_agent"]
-    assert len(spawns) == 5
-    for spawn in spawns:
-        assert spawn is not None and spawn.arguments is not None
-        rendered = renderer.render_mcp_arguments(
-            {"seat_context": spawn.arguments["seat_context"]}, context, drop_none=True
-        )
-        assert rendered["seat_context"] == {
-            "lane": "03",
-            "lane_epic": "project#42",
-            "worktree": "resolved-worktree",
-            "first_job": "Audit routing",
-        }
 
 
 def test_project_policy_root_inventory_and_role_guidance_stay_queryable() -> None:
@@ -169,8 +137,30 @@ def test_project_policy_root_inventory_and_role_guidance_stay_queryable() -> Non
         assert root["epic"].startswith("#")
         assert root["description"]
     assert policy["integration_branch"] == "0.5.0"
-    assert policy["launch_defaults"]["team-lane"]["developer_provider"] == "claude"
+    assert policy["release_cadence_minutes"] == 120
+    assert {"heavy_run_cap", "close_backlog_cap"}.isdisjoint(policy)
+    devteam = policy["launch_defaults"]["devteam"]
+    assert (devteam["reviewer_provider"], devteam["reviewer_model"]) == ("codex", "gpt-6.1-sol")
+    assert devteam["reviewer_reasoning_effort"] == "medium"
+    assert (devteam["fresh_reviewer_provider"], devteam["fresh_reviewer_model"]) == (
+        "claude",
+        "claude-opus-5-5",
+    )
+    assert devteam["fresh_reviewer_reasoning_effort"] == "xhigh"
+    support = policy["launch_defaults"]["support"]
+    for seat in ("release_manager", "triage", "archivist", "recovery_steward", "consolidator"):
+        assert support[f"{seat}_provider"]
+    assert set(policy["launch_defaults"]) == {"devteam", "support", "team-planning"}
+    pipelines = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
+    for runbook, defaults in policy["launch_defaults"].items():
+        inputs = yaml.safe_load((pipelines / f"{runbook}.yaml").read_text())["inputs"]
+        assert set(defaults) <= set(inputs), runbook
+    assert set(policy["workspace_layout"]) == {"admin", "support", "devteam", "planning"}
     assert policy["role_launch_defaults"]["expansion-qa"]["model"] == "gpt-6-luna"
+    assert "task-close-reviewer" not in policy["role_launch_defaults"]
+    assert {"log-monitor", "metrics-monitor", "researcher", "security-reviewer"} <= set(
+        policy["role_launch_defaults"]
+    )
     assert {
         "analyst",
         "architect",
@@ -321,23 +311,3 @@ def test_moved_seat_procedures_are_required_in_every_context_epoch(name: str) ->
     ]:
         event.data = {"mcp_server": server, "mcp_tool": tool}
         assert not evaluator.evaluate(rule["when"]), f"Recovery must remain available: {tool}"
-
-
-@pytest.mark.parametrize("name", ["code-reviewer", "lane-manager"])
-def test_extracted_retest_procedures_keep_author_owned_proof(name: str) -> None:
-    shared = get_bundled_agents_path().parents[1]
-    procedure = shared / f"skills/gobby/references/agents/procedures/{name}.md"
-    content = procedure.read_text()
-
-    for protocol in ("PROOF_RESULT", "UNAVAILABLE"):
-        assert protocol in content, f"{name} must retain the current {protocol} proof contract"
-    assert "author" in content
-    # #24756: the reviewer sends LANDED at once; the closing seat owns the retest.
-    assert "PROOF_REQUEST" not in content
-    assert "run them in the main checkout" not in content
-    assert "the reviewer has run the retest" not in content
-    if name == "code-reviewer":
-        assert "closing seat owns the landed retest" in content
-        assert "run no retest yourself" in content
-    else:
-        assert "confirm it with the author before raising found work" in content

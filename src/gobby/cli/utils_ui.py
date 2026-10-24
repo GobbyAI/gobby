@@ -199,6 +199,60 @@ def _terminate_ui_process(proc: psutil.Process) -> None:
             continue
 
 
+_OPTIONAL_FLAGS = ("optional", "devOptional", "peerOptional")
+_LOCK_DIFFERENCE_SAMPLE = 3
+
+
+def _lock_differences(
+    locked: dict[str, dict[str, object]], installed: dict[str, dict[str, object]]
+) -> list[str]:
+    """Paths where the installed tree disagrees with the lockfile. Optional entries that npm
+    skips on this platform are absent by design and do not count."""
+    differences = [
+        f"{path} installed {entry.get('version')}, locked {locked[path].get('version')}"
+        for path, entry in installed.items()
+        if path and path in locked and entry.get("version") != locked[path].get("version")
+    ]
+    differences += [
+        f"{path} installed but not locked" for path in installed if path and path not in locked
+    ]
+    differences += [
+        f"{path} locked but not installed"
+        for path, entry in locked.items()
+        if path and path not in installed and not any(entry.get(flag) for flag in _OPTIONAL_FLAGS)
+    ]
+    return differences
+
+
+def _lock_mismatch(web_dir: Path) -> str | None:
+    """Name how node_modules differs from package-lock.json, or None when they agree."""
+    if not (web_dir / "node_modules").is_dir():
+        return "node_modules is missing"
+    lock_file = web_dir / "package-lock.json"
+    if not lock_file.is_file():
+        return None
+    try:
+        locked = json.loads(lock_file.read_text())["packages"]
+        hidden = web_dir / "node_modules" / ".package-lock.json"
+        installed = json.loads(hidden.read_text())["packages"]
+        differences = _lock_differences(locked, installed)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return "could not read package-lock.json and node_modules/.package-lock.json to compare"
+    if not differences:
+        return None
+    sample = "; ".join(differences[:_LOCK_DIFFERENCE_SAMPLE])
+    return f"node_modules is out of sync with package-lock.json ({len(differences)}: {sample})"
+
+
+def _npm_install_plan(web_dir: Path) -> tuple[str, list[str]] | None:
+    """Reason and npm command when node_modules must be installed, or None when it matches."""
+    reason = _lock_mismatch(web_dir)
+    if reason is None:
+        return None
+    command = ["npm", "ci"] if (web_dir / "package-lock.json").is_file() else ["npm", "install"]
+    return reason, command
+
+
 def spawn_ui_server(
     host: str,
     port: int,
@@ -230,13 +284,14 @@ def spawn_ui_server(
             deps.logger.error("Port %s still in use after cleanup - aborting UI server spawn", port)
             return None
 
-    node_modules = web_dir / "node_modules"
-    if not node_modules.exists():
-        deps.logger.debug("Installing web UI dependencies...")
+    plan = _npm_install_plan(web_dir)
+    if plan is not None:
+        reason, command = plan
+        deps.logger.debug("Installing web UI dependencies: %s", reason)
         try:
-            result = spawn.run(["npm", "install"], cwd=web_dir, capture_output=True, timeout=120)
+            result = spawn.run(command, cwd=web_dir, capture_output=True, timeout=120)
         except subprocess.TimeoutExpired:
-            deps.logger.error("npm install timed out after 120s")
+            deps.logger.error("%s timed out after 120s", " ".join(command))
             return None
         except FileNotFoundError:
             deps.logger.error("npm not found - install Node.js/npm and ensure it is on PATH")

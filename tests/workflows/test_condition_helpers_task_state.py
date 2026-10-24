@@ -41,22 +41,22 @@ def test_task_state_in_projects_closed_and_escalated(
     assert task_state_in(manager, escalated.id, "escalated") is True
 
 
-def test_task_state_in_defaults_to_ready_for_open_task(
+def test_task_state_in_reports_a_new_task_as_open(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = _manager(temp_db)
     task = _task(manager, sample_project)
 
-    assert task_state_in(manager, task.id, "ready") is True
+    assert task_state_in(manager, task.id, "open") is True
 
 
 def test_helpers_return_false_without_task_manager() -> None:
-    assert task_state_in(None, "#42", "ready") is False
+    assert task_state_in(None, "#42", "open") is False
 
 
 def test_task_state_in_returns_false_for_invalid_uuid_bytes(temp_db: HubDatabase) -> None:
     """Invalid UUID bytes normalize safely and fail closed."""
-    assert task_state_in(_manager(temp_db), b"short", "ready") is False
+    assert task_state_in(_manager(temp_db), b"short", "open") is False
 
 
 def test_safe_evaluator_exposes_task_state_in(
@@ -68,7 +68,7 @@ def test_safe_evaluator_exposes_task_state_in(
     helpers = build_condition_helpers(task_manager=manager, context=ctx)
     evaluator = SafeExpressionEvaluator(ctx, helpers)
 
-    assert evaluator.evaluate("task_state_in(variables.task_id, 'ready')") is True
+    assert evaluator.evaluate("task_state_in(variables.task_id, 'open')") is True
 
 
 def test_safe_evaluator_stubs_task_state_helpers_without_manager() -> None:
@@ -76,7 +76,7 @@ def test_safe_evaluator_stubs_task_state_helpers_without_manager() -> None:
     helpers = build_condition_helpers(task_manager=None, context=ctx)
     evaluator = SafeExpressionEvaluator(ctx, helpers)
 
-    assert evaluator.evaluate("task_state_in('#42', 'ready')") is False
+    assert evaluator.evaluate("task_state_in('#42', 'open')") is False
 
 
 def test_no_commit_close_requires_a_task_manager() -> None:

@@ -60,6 +60,7 @@ from gobby.storage.tasks._models import (
     TaskIDCollisionError,
     TaskNotFoundError,
     TaskStaleStateError,
+    TaskStepRecordsMissingError,
     UnsetType,
     normalize_priority,
     validate_category,
@@ -67,9 +68,11 @@ from gobby.storage.tasks._models import (
     validate_task_type,
 )
 from gobby.storage.tasks._ordering import order_tasks_hierarchically
+from gobby.storage.tasks._queries import projected_task_state_sql
 from gobby.tasks.categories import TDD_ELIGIBLE_CATEGORIES
 
 __all__ = [
+    "projected_task_state_sql",
     # Core classes
     "Task",
     "LocalTaskManager",
@@ -89,6 +92,7 @@ __all__ = [
     "TaskAlreadyClaimedError",
     "TaskHasOpenChildrenError",
     "TaskStaleStateError",
+    "TaskStepRecordsMissingError",
     "TaskArtifactConstraintError",
     "ArtifactCheckConstraintError",
     "MissingIsolationBaseError",

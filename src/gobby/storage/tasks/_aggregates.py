@@ -7,51 +7,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition, newer_than_now_expr
 from gobby.storage.tasks._models import task_type_filter_values
 from gobby.storage.tasks._queries import (
-    _awaiting_human_review_sql,
     _candidate_message_sql,
     _ready_tasks_cte_sql,
+    projected_task_state_sql,
 )
 from gobby.storage.tasks._read import _escape_like_pattern
-
-
-def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
-    return (
-        f"{task_alias}.closed_at IS NULL "
-        f"AND {task_alias}.escalated_at IS NULL "
-        f"AND COALESCE({task_alias}.is_escalated, FALSE) IS FALSE"
-    )
-
-
-def _external_blocker_exists_sql(task_alias: str = "t") -> str:
-    return f"""
-    EXISTS (
-        SELECT 1 FROM task_dependencies d
-        JOIN tasks blocker ON d.depends_on = blocker.id
-        WHERE d.task_id = {task_alias}.id
-          AND d.dep_type = 'blocks'
-          AND blocker.closed_at IS NULL
-          AND NOT EXISTS (
-              WITH RECURSIVE ancestors(ancestor_id, path, depth) AS (
-                  SELECT blocker.parent_task_id,
-                         ARRAY[blocker.id, blocker.parent_task_id],
-                         1
-                  WHERE blocker.parent_task_id IS NOT NULL
-                  UNION ALL
-                  SELECT p.parent_task_id, a.path || p.parent_task_id, a.depth + 1
-                  FROM tasks p
-                  JOIN ancestors a ON p.id = a.ancestor_id
-                  WHERE p.parent_task_id IS NOT NULL
-                    AND a.depth < 100
-                    AND NOT p.parent_task_id = ANY(a.path)
-              )
-              SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
-          )
-    )
-    """
-
-
-def _no_external_blocker_sql(task_alias: str = "t") -> str:
-    return f"NOT {_external_blocker_exists_sql(task_alias)}"
+from gobby.tasks.state_semantics import validate_task_state
 
 
 def count_tasks(
@@ -69,6 +30,7 @@ def count_tasks(
     title_like: str | None = None,
     updated_since: datetime | None = None,
     candidate: bool | None = None,
+    state: str | None = None,
 ) -> int:
     """Count tasks with optional filters.
 
@@ -85,6 +47,10 @@ def count_tasks(
      WHERE 1=1
     """
     params: list[Any] = []
+
+    if state is not None:
+        query += f" AND ({projected_task_state_sql('t')}) = %s"
+        params.append(validate_task_state(state))
 
     if project_id:
         query += " AND t.project_id = %s"
@@ -152,8 +118,8 @@ def count_by_state(
     Returns:
         Dictionary mapping state bucket to count
     """
-    query = """
-    SELECT t.state_bucket, COUNT(*) as count
+    query = f"""
+    SELECT ({projected_task_state_sql("t")}) AS projected_state, COUNT(*) as count
       FROM tasks t
     """
     params: list[Any] = []
@@ -162,10 +128,10 @@ def count_by_state(
         query += " WHERE t.project_id = %s"
         params.append(project_id)
 
-    query += " GROUP BY state_bucket"
+    query += " GROUP BY projected_state"
 
     rows = db.fetchall(query, tuple(params))
-    return {row["state_bucket"]: row["count"] for row in rows}
+    return {row["projected_state"]: row["count"] for row in rows}
 
 
 def count_ready_tasks(
@@ -252,13 +218,7 @@ def count_blocked_tasks(
     # ancestor chain and check if the blocked task (t.id) appears anywhere.
     query = f"""
     SELECT COUNT(*) as count FROM tasks t
-    WHERE t.closed_at IS NULL
-    AND (
-        t.escalated_at IS NOT NULL
-        OR COALESCE(t.is_escalated, FALSE) IS TRUE
-        OR {_external_blocker_exists_sql("t")}
-        OR {_awaiting_human_review_sql("t")}
-    )
+    WHERE ({projected_task_state_sql("t")}) = 'blocked'
     """
     params: list[Any] = []
 

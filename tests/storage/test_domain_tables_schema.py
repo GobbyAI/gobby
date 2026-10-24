@@ -104,20 +104,20 @@ def test_catalog_pins_task_close_review_state_and_active_lock() -> None:
     indexes = _catalog_entries("indexes")
 
     assert {
-        "task_close_reviews.task_id",
-        "task_close_reviews.caller_session_id",
-        "task_close_reviews.agent_run_id",
-        "task_close_reviews.close_arguments",
-        "task_close_reviews.review_fingerprint",
-        "task_close_reviews.evidence_fingerprint",
-        "task_close_reviews.status",
-        "task_close_reviews.result_payload",
-        "task_close_reviews.delivered_at",
+        "task_close_review_history.task_id",
+        "task_close_review_history.caller_session_id",
+        "task_close_review_history.agent_run_id",
+        "task_close_review_history.close_arguments",
+        "task_close_review_history.review_fingerprint",
+        "task_close_review_history.evidence_fingerprint",
+        "task_close_review_history.status",
+        "task_close_review_history.result_payload",
+        "task_close_review_history.delivered_at",
     } <= column_names
     status = next(
         entry
         for entry in constraints
-        if entry["name"] == "task_close_reviews.task_close_reviews_status_check"
+        if entry["name"] == "task_close_review_history.task_close_review_history_status_check"
     )
     assert all(
         value in status["definition"]
@@ -132,11 +132,7 @@ def test_catalog_pins_task_close_review_state_and_active_lock() -> None:
             "error",
         )
     )
-    active = next(
-        entry for entry in indexes if entry["name"] == "uq_task_close_reviews_active_task"
-    )
-    assert "CREATE UNIQUE INDEX" in active["definition"]
-    assert all(value in active["definition"] for value in ("launching", "running", "finalizing"))
+    assert "uq_task_close_reviews_active_task" not in {entry["name"] for entry in indexes}
 
 
 def test_memories_surfaced_columns() -> None:

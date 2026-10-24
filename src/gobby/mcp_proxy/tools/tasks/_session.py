@@ -80,50 +80,6 @@ def create_session_registry(ctx: RegistryContext) -> InternalToolRegistry:
         func=delegate_task,
     )
 
-    def transfer_task_authority(task_id: str, reason: str) -> dict[str, Any]:
-        """Take over activation-receipt authority that no live session can use."""
-        from gobby.utils.session_context import get_current_session_id
-
-        caller_session_id = get_current_session_id()
-        if not caller_session_id:
-            return {"error": "No session context available. Ensure session_id is set."}
-        try:
-            resolved_task_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-            task = ctx.task_manager.transfer_task_authority(
-                resolved_task_id,
-                caller_session_id=caller_session_id,
-                reason=reason,
-            )
-        except (TaskNotFoundError, ValueError) as exc:
-            return {"error": str(exc)}
-        return {
-            "task_id": task.id,
-            "delegated_by_session_id": task.delegated_by_session_id,
-            "delegated_to_session_id": task.delegated_to_session_id,
-            "delegation_reason": task.delegation_reason,
-        }
-
-    registry.register(
-        name="transfer_task_authority",
-        description=(
-            "Take over activation-receipt authority for a task whose creator and "
-            "delegator have both expired, or whose live creator is its claimant with "
-            "no live delegator. A paused creator or delegator counts as ended once every "
-            "agent run linked to it ended or its recorded process exited. Refused while a "
-            "creator that is not the claimant, or a delegator, is otherwise live, and for "
-            "the task's claimant or a task-close reviewer."
-        ),
-        input_schema={
-            "type": "object",
-            "properties": {
-                "task_id": {"type": "string"},
-                "reason": {"type": "string"},
-            },
-            "required": ["task_id", "reason"],
-        },
-        func=transfer_task_authority,
-    )
-
     def link_task_to_session(
         task_id: str,
         action: str = "worked_on",

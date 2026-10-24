@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.storage.worktrees import LocalWorktreeManager
-    from gobby.terminals.leases import TerminalLeaseRegistry
     from gobby.terminals.workspace_agent_panes import AgentPaneReserver
     from gobby.terminals.workspace_ops import WorkspaceOps
     from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -104,7 +103,6 @@ def setup_internal_registries(
     workspace_manager: WorkspaceManager | None = None,
     workspace_ops_resolver: Callable[[], WorkspaceOps | None] | None = None,
     agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None,
-    lease_registry_resolver: Callable[[], TerminalLeaseRegistry | None] | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -348,7 +346,7 @@ def setup_internal_registries(
             transcript_reader=transcript_reader,
             detection_registry=detection_registry,
             agent_pane_reserver_resolver=agent_pane_reserver_resolver,
-            lease_registry_resolver=lease_registry_resolver,
+            workspace_ops_resolver=workspace_ops_resolver,
         )
 
         # Add inter-agent messaging tools if dependencies are available

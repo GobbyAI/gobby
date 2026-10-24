@@ -15,6 +15,8 @@ from gobby.workflows.variable_defaults import (
 )
 
 logger = logging.getLogger(__name__)
+# Required-reading gates a spawned seat inherits from its definition; activation arms them too.
+_SEAT_READING_GATES = frozenset({"_seat_procedure", "_seat_references"})
 
 
 def build_definition_changes(
@@ -70,7 +72,7 @@ def build_definition_changes(
     definition_keys: set[str] = set()
     if agent_body.workflows and agent_body.workflows.variables:
         for key, value in agent_body.workflows.variables.items():
-            if key.startswith("_"):
+            if key.startswith("_") and key not in _SEAT_READING_GATES:
                 logger.warning("Skipping reserved variable %r from agent definition", key)
                 continue
             changes[key] = value

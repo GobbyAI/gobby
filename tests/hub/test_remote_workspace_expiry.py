@@ -42,7 +42,9 @@ def _workspace(
     task = LocalTaskManager(db).create_task(
         project, "Remote expiry owner", validation_criteria="Node confirms safe removal"
     )
-    db.execute("UPDATE tasks SET closed_at = NOW() WHERE id = %s", (task.id,))
+    db.execute(
+        "UPDATE tasks SET closed_at = NOW(), closed_reason = 'done' WHERE id = %s", (task.id,)
+    )
     storage = LocalWorktreeManager(db) if kind == "worktree" else LocalCloneManager(db)
     row = storage.create(project, f"task/{uuid4()}", f"/node/{uuid4()}", task_id=task.id)
     storage.update(row.id, status="merged", cleanup_after=datetime.now(UTC) - timedelta(days=1))

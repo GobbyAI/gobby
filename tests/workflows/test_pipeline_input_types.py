@@ -14,7 +14,6 @@ from gobby.mcp_proxy.services.argument_validation import check_arguments
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.runbook_seat_tools import register_runbook_seat_tools
-from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.workflows.definitions import MCPStepConfig, PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -141,12 +140,12 @@ async def test_string_defaults_and_native_overrides_are_normalized(
     assert received == [{"value": expected} if expected is not None else {}]
 
 
-def test_real_two_input_cli_command_reaches_the_lane_guard(
+def test_real_cli_command_keeps_numeric_text_inputs_to_the_guard(
     mock_db: MagicMock, mock_execution_manager: MagicMock, mock_llm_service: MagicMock
 ) -> None:
     root = Path(__file__).resolve().parents[2]
     bundled = root / "src/gobby/install/shared/workflows/pipelines"
-    definition = yaml.safe_load((bundled / "team-lane.yaml").read_text())
+    definition = yaml.safe_load((bundled / "devteam.yaml").read_text())
     # Keep the actual input declarations and guard; this test never executes a spawn step.
     definition["steps"] = definition["steps"][:1]
     pipeline = PipelineDefinition.model_validate(definition)
@@ -156,12 +155,10 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
     ctx.db = mock_db
     ctx.get_current_session_id.return_value = caller
     ctx.resolve_session_id.return_value = caller
-    leases = TerminalLeaseRegistry()
-    ctx.lease_registry_resolver = lambda: leases
     register_runbook_seat_tools(registry, ctx)
     proxy = GuardProxy(registry)
     execution = cast(MagicMock, mock_execution_manager.create_execution.return_value)
-    execution.pipeline_name = "team-lane"
+    execution.pipeline_name = "devteam"
 
     def update_status(*, execution_id: str, status: ExecutionStatus, **kwargs: Any) -> MagicMock:
         execution.status = status
@@ -185,27 +182,25 @@ def test_real_two_input_cli_command_reaches_the_lane_guard(
         patch("gobby.cli.pipelines.get_pipeline_executor", return_value=executor),
         patch("gobby.utils.project_context.get_project_context", return_value=None),
         patch(
-            "gobby.mcp_proxy.tools.runbook_seat_tools.resolve_team_launch_inputs",
-            side_effect=RunbookSeatRefusal("isolated lane guard reached; no seat launched"),
-        ) as resolve,
+            "gobby.mcp_proxy.tools.runbook_seat_tools.check_runbook_seats",
+            side_effect=RunbookSeatRefusal("isolated guard reached; no seat launched"),
+        ) as guard,
     ):
         result = CliRunner().invoke(
-            pipelines, ["run", "team-lane", "-i", "seats=developer", "-i", "lane=3", "--json"]
+            pipelines,
+            [
+                "run",
+                "devteam",
+                *("-i", "task=24797", "-i", "workspace=3", "-i", "report_to=17281"),
+                *("-i", "seats=developer", "--json"),
+            ],
         )
 
     assert result.exit_code == 1  # The isolated guard deliberately refuses the launch.
     assert len(proxy.calls) == 1
-    assert proxy.calls[0]["lane"] == "3"
+    assert proxy.calls[0]["workspace"] == "3"
+    assert proxy.calls[0]["report_to"] == "17281"
     assert proxy.calls[0]["requested"] == "developer"
-    resolve.assert_called_once_with(
-        mock_db,
-        caller_session_id=caller,
-        lane="3",
-        workspace=None,
-        report_to=None,
-        worktree=None,
-        lane_pane=None,
-        lane_columns=None,
-        lane_rows=None,
-        viewports=leases.viewports,
-    )
+    guard.assert_called_once()
+    assert guard.call_args.kwargs["workspace"] == "3"
+    assert guard.call_args.kwargs["report_to"] == "17281"

@@ -79,7 +79,7 @@ def _make_task(
 
 
 @pytest.fixture(autouse=True)
-def _stub_project_manager() -> Iterator[None]:
+def _stub_project_manager(tmp_path: Path) -> Iterator[None]:
     """Resolve the test checkout during repo-path resolution.
 
     RegistryContext.__post_init__ builds a real LocalProjectManager over the
@@ -117,6 +117,9 @@ def _stub_project_manager() -> Iterator[None]:
             "gobby.storage.project_checkouts.require_root",
             return_value=TEST_REPO_PATH,
         ),
+        # Close reads its step-record policy from the primary checkout; an empty
+        # checkout carries the default policy.
+        patch("gobby.tasks.step_records.require_root", return_value=str(tmp_path)),
         patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionManager",
             return_value=_checkout_session_manager(),
@@ -248,6 +251,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
             "linked_commits",
             "uncommitted_task_edits",
             "integration_ancestry",
+            "step_records",
         ]
         mock_task_manager.close_task.assert_not_called()
         archive.assert_not_called()
@@ -271,14 +275,14 @@ class TestCloseTask(_CloseTaskGitIsolation):
         mock_task_manager.close_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_obsolete_empty_epic_closes_without_commits(
+    async def test_moot_empty_epic_closes_without_commits(
         self, mock_task_manager: MagicMock
     ) -> None:
         task = _make_task(task_type="epic")
         mock_task_manager.get_task.return_value = task
         with patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as archive:
             result = await _create_registry(mock_task_manager).call(
-                "close_task", {"task_id": task.id, "reason": "obsolete"}
+                "close_task", {"task_id": task.id, "reason": "moot"}
             )
         assert result["closed"] is True
         mock_task_manager.close_task.assert_called_once()
@@ -307,7 +311,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
         mock_task_manager.close_task_with_commit.assert_called_once_with(
             task.id,
             "abc1234",
-            reason="completed",
+            reason="done",
             closed_in_session_id="resolved-session",
             cwd=TEST_REPO_PATH,
             expected_updated_at=task.updated_at,
@@ -326,7 +330,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
         result = await _create_registry(mock_task_manager).call("close_task", {"task_id": task.id})
         assert result["closed"] is True
         assert mock_task_manager.close_task.call_args.kwargs["closed_commit_sha"] == "abc1234"
-        assert "reset_validation_fail_count" not in mock_task_manager.close_task.call_args.kwargs
+        assert "reset_review_fail_count" not in mock_task_manager.close_task.call_args.kwargs
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("external_worktree", [False, True])

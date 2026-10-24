@@ -188,8 +188,8 @@ def _create_task_in_transaction(
                     created_in_session_id, claimed_by_session_id,
                     priority, task_type,
                     labels,
-                    validation_status, category,
-                    validation_criteria, validation_fail_count,
+                    review_status, category,
+                    validation_criteria, review_fail_count,
                     assigned_agent, implementation_domain, additional_skills,
                     seq_num
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s)
@@ -205,7 +205,7 @@ def _create_task_in_transaction(
                     priority,
                     task_type,
                     labels_json,
-                    None,
+                    "pending",
                     category,
                     validation_criteria,
                     assigned_agent,

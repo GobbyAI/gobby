@@ -367,7 +367,9 @@ def test_sweep_skips_closed_and_escalated_tasks(
     closed = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     escalated = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     now = datetime.now(UTC).isoformat()
-    temp_db.execute("UPDATE tasks SET closed_at = %s WHERE id = %s", (now, closed.id))
+    temp_db.execute(
+        "UPDATE tasks SET closed_at = %s, closed_reason = 'done' WHERE id = %s", (now, closed.id)
+    )
     temp_db.execute(
         "UPDATE tasks SET escalated_at = %s, is_escalated = TRUE WHERE id = %s",
         (now, escalated.id),

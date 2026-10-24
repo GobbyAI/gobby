@@ -39,6 +39,37 @@ def test_reference_contract_3_1_2() -> None:
     assert "PROJECT BODY" not in result
 
 
+@pytest.mark.parametrize(
+    ("prompt", "role"),
+    [
+        ("/gobby admin", "orchestrator"),
+        ("$gobby admin", "orchestrator"),
+        ("/gobby assistant", "assistant"),
+        ("$gobby assistant\n", "assistant"),
+    ],
+)
+def test_typed_operator_command_cold_starts_the_pane(prompt: str, role: str) -> None:
+    handler = AgentEventHandlerMixin()
+    handler._skill_manager = HookSkillManager()
+    with (
+        patch.object(handler._skill_manager, "discover_core_skills", return_value=[]),
+        patch.object(handler, "_skill_not_found_context", return_value="Skill not found."),
+    ):
+        result = handler._intercept_skill_command(prompt, project_id="project-1")
+    assert result is not None
+    assert f'call_tool("gobby-agents", "cold_start_admin", {{"role": "{role}"}})' in result
+
+
+def test_typed_colon_form_loads_the_admin_capability() -> None:
+    """Colon syntax names the capability, like the native Skill(skill="gobby:admin") call."""
+    handler = AgentEventHandlerMixin()
+    handler._skill_manager = HookSkillManager()
+    result = handler._intercept_skill_command("/gobby:admin", project_id="project-1")
+    assert result is not None
+    assert '"path":"references/admin/overview.md"' in result
+    assert "cold_start_admin" not in result
+
+
 class TestGobbyRouterSkill:
     def test_skill_parses(self) -> None:
         parsed = parse_skill_file(SKILL_PATH)

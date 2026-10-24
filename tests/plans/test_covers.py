@@ -44,7 +44,7 @@ def _leaf_coverage(label: str, state: str, closed_reason: str | None) -> Coverag
 
 @pytest.mark.parametrize("label", ["covers:plan:A1:A1.9", "covers:plan:A9:A9.1", "covers:bad"])
 def test_closed_obsolete_leaf_dangling_label_is_ignored(label: str) -> None:
-    report = _leaf_coverage(label, "closed", "obsolete")
+    report = _leaf_coverage(label, "closed", "moot")
 
     assert not report.has_invalid
     assert [(row.item_id, row.status, row.leaves) for row in report.rows] == [
@@ -53,7 +53,7 @@ def test_closed_obsolete_leaf_dangling_label_is_ignored(label: str) -> None:
 
 
 def test_closed_obsolete_leaf_does_not_cover_live_item() -> None:
-    report = _leaf_coverage("covers:plan:A1:A1.1", "closed", "obsolete")
+    report = _leaf_coverage("covers:plan:A1:A1.1", "closed", "moot")
 
     assert report.has_missing
     assert len(report.rows) == 1
@@ -63,7 +63,7 @@ def test_closed_obsolete_leaf_does_not_cover_live_item() -> None:
 
 @pytest.mark.parametrize(
     ("state", "closed_reason"),
-    [("open", None), ("open", "obsolete"), ("closed", "completed"), ("closed", "duplicate")],
+    [("open", None), ("open", "moot"), ("closed", "completed"), ("closed", "duplicate")],
 )
 @pytest.mark.parametrize("label", ["covers:plan:A1:A1.9", "covers:plan:A9:A9.1", "covers:bad"])
 def test_dangling_label_on_non_obsolete_leaf_stays_invalid(

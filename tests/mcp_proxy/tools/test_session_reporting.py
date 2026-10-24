@@ -105,7 +105,6 @@ async def test_session_task_history_uses_json_native_brief_cards(
         assert isinstance(row["link_created_at"], str)
         assert card["labels"] == ["reporting"]
         assert isinstance(card["created_at"], str)
-        assert isinstance(card["checkout_mode"], str)
         assert card == await registry.call("get_task", {"task_id": card["id"]})
         cards[card["id"]] = card
     assert cards[task_ids[0]]["state"]["claimed_by_session_id"] == session.id

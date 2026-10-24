@@ -20,25 +20,23 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
+BRANCH = "task-24797-runbooks"
 
 
 @pytest.mark.parametrize(
-    ("runbook", "seat", "role"),
+    ("runbook", "seat", "title"),
     [
-        ("team-lane", "developer", "developer"),
-        ("team-lane", "code-reviewer", "code reviewer"),
-        ("team-lane", "security-reviewer", "security reviewer"),
-        ("team-lane", "researcher", "researcher"),
-        ("team-lane", "lane-manager", "manager"),
-        ("team-coordination", "archivist", "archivist"),
-        ("team-coordination", "log-monitor", "log monitor"),
-        ("team-coordination", "metrics-monitor", "metrics monitor"),
-        ("team-coordination", "release-manager", "release manager"),
-        ("team-coordination", "inbox-manager", "inbox manager"),
-        ("team-coordination", "recovery-steward", "recovery steward"),
-        ("team-coordination", "consolidator", "consolidator"),
-        ("team-planning", "plan-writer", "plan writer"),
-        ("team-planning", "plan-adversary", "plan adversary"),
+        ("devteam", "dev-manager", f"{BRANCH} dev manager"),
+        ("devteam", "test-writer", f"{BRANCH} test writer"),
+        ("devteam", "developer", f"{BRANCH} developer"),
+        ("devteam", "code-reviewer", f"{BRANCH} code reviewer"),
+        ("support", "release-manager", "Support release manager"),
+        ("support", "triage", "Support triage"),
+        ("support", "archivist", "Support archivist"),
+        ("support", "recovery-steward", "Support recovery steward"),
+        ("support", "consolidator", "Support consolidator"),
+        ("team-planning", "plan-writer", "Lane 3 plan writer"),
+        ("team-planning", "plan-adversary", "Lane 3 plan adversary"),
     ],
 )
 @pytest.mark.asyncio
@@ -49,7 +47,7 @@ async def test_runbook_title_survives_task_claim_and_close(
     monkeypatch: pytest.MonkeyPatch,
     runbook: str,
     seat: str,
-    role: str,
+    title: str,
     lane_pane: str | None,
 ) -> None:
     definition = PipelineDefinition.model_validate(
@@ -82,9 +80,18 @@ async def test_runbook_title_survives_task_claim_and_close(
                         "worktree": str(uuid4()),
                         "project_path": str(PIPELINES),
                         "lane_pane": "test-pane",
-                        "lane_columns": 160,
-                        "lane_rows": 100,
                         "report_to": "gobby#1",
+                        "workspace_id": "test-workspace",
+                        "launch": [seat],
+                        "tab_exists": False,
+                    }
+                },
+                "admit": {
+                    "output": {
+                        "branch": BRANCH,
+                        "project_path": str(PIPELINES),
+                        "task_id": None,
+                        "team": {"team_id": str(uuid4())},
                     }
                 },
             },
@@ -142,7 +149,6 @@ async def test_runbook_title_survives_task_claim_and_close(
     prepared = result["prepared"]
     variables = result["variables"]
 
-    title = f"Lane 3 {role}"
     child = session_manager.get(prepared.session_id)
     assert child is not None and child.title == title and child.title_source == "definition"
     title_listener.assert_called_with(child.id, title)

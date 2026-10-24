@@ -18,29 +18,14 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import projected_task_state_sql
+from gobby.tasks.state_semantics import TaskState, serialize_task_state, validate_task_state
 
 __all__ = ["create_hub_registry"]
 
 
 def _task_state_from_row(row: dict[str, Any]) -> dict[str, Any]:
-    closed_at = row["closed_at"]
-    escalated_at = row["escalated_at"]
-    is_closed = bool(closed_at)
-    is_escalated = not is_closed and bool(escalated_at or row["is_escalated"])
-    owner_session_id = row["claimed_by_session_id"]
-    return {
-        "owner_session_id": owner_session_id,
-        "is_claimed": bool(owner_session_id and not is_closed and not is_escalated),
-        "is_closed": is_closed,
-        "is_escalated": is_escalated,
-        "is_blocked": bool(row["is_blocked"]),
-        "closed_at": closed_at,
-        "closed_reason": row["closed_reason"],
-        "closed_in_session_id": row["closed_in_session_id"],
-        "closed_commit_sha": row["closed_commit_sha"],
-        "escalated_at": escalated_at,
-        "escalation_reason": row["escalation_reason"],
-    }
+    return serialize_task_state(row)
 
 
 def create_hub_registry(
@@ -177,14 +162,14 @@ def create_hub_registry(
         description="Query tasks across all projects in the hub database.",
     )
     async def list_cross_project_tasks(
-        state: str | None = None,
+        state: TaskState | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         """
         List tasks across all projects in the hub.
 
         Args:
-            state: Optional projected state filter (ready, closed, escalated)
+            state: Optional canonical task state filter.
             limit: Maximum number of tasks to return (default 50)
         """
         if db is None:
@@ -193,9 +178,9 @@ def create_hub_registry(
         try:
             where_clause = ""
             params: tuple[Any, ...]
-            if state:
-                where_clause = "WHERE t.state_bucket = %s"
-                params = (state, limit)
+            if state is not None:
+                where_clause = f"WHERE ({projected_task_state_sql('t')}) = %s"
+                params = (validate_task_state(state), limit)
             else:
                 params = (limit,)
 
@@ -206,15 +191,9 @@ def create_hub_registry(
                        t.created_at, t.updated_at, t.claimed_by_session_id,
                        t.closed_at, t.closed_reason, t.closed_in_session_id,
                        t.closed_commit_sha, t.escalated_at, t.escalation_reason,
+                       t.hold_state, t.follow_up_at, t.labels,
                        COALESCE(t.is_escalated, false) as is_escalated,
-                       EXISTS (
-                           SELECT 1
-                             FROM task_dependencies td
-                             JOIN tasks blocker ON td.depends_on = blocker.id
-                            WHERE td.task_id = t.id
-                              AND td.dep_type = 'blocks'
-                              AND blocker.closed_at IS NULL
-                       ) as is_blocked
+                       ({projected_task_state_sql("t")}) = 'blocked' as is_blocked
                 FROM tasks t
                 {where_clause}
                 ORDER BY t.updated_at DESC
@@ -331,8 +310,8 @@ def create_hub_registry(
             stats["project_count"] = project_count_result["count"] if project_count_result else 0
 
             task_stats = db.fetchall(
-                """
-                SELECT t.state_bucket as task_state, COUNT(*) as count
+                f"""
+                SELECT {projected_task_state_sql("t")} as task_state, COUNT(*) as count
                 FROM tasks t
                 GROUP BY task_state
                 """

@@ -1,0 +1,217 @@
+name: devteam
+type: pipeline
+version: "1.0"
+description: |
+  One-task development team. Admits the task's team (its task-titled branch and worktree),
+  then launches the requested seats into that tree, sharing one tab titled with the branch.
+  Run with task, workspace and report_to; pass the project policy's launch defaults.
+  A replacement execution names the team with team_id. After the second review rejection,
+  fresh_reviewer=true with team_id and exclude_reviewers launches only the fresh code
+  reviewer, under the fresh_reviewer_* identity.
+  Approved seats: dev-manager, test-writer, developer and code-reviewer.
+tags: [runbook]
+resume_on_restart: true
+
+inputs:
+  task:
+    type: string
+    required: true
+    description: "Task the team is admitted for"
+  team_id:
+    type: string
+    default: null
+    description: "Admitting execution id of the team to join; omitted admits a new team"
+  workspace:
+    type: string
+    required: true
+    description: "Workspace name, UUID or ref for the team's tab"
+  report_to:
+    type: string
+    required: true
+    description: "Live session ref the seats report readiness and blockers to"
+  seats:
+    type: string
+    default: "test-writer,developer,code-reviewer,dev-manager"
+    description: "Comma-separated seat kinds: dev-manager, test-writer, developer, code-reviewer"
+  fresh_reviewer:
+    type: boolean
+    default: false
+    description: "Launch only the fresh code reviewer for team_id after the second rejection"
+  exclude_reviewers:
+    type: string
+    default: null
+    description: "Comma-separated refs of every session that reviewed in the current epoch"
+  test_writer_provider:
+    type: string
+    default: null
+  test_writer_model:
+    type: string
+    default: null
+  test_writer_reasoning_effort:
+    type: string
+    default: null
+  developer_provider:
+    type: string
+    default: null
+  developer_model:
+    type: string
+    default: null
+  developer_reasoning_effort:
+    type: string
+    default: null
+  reviewer_provider:
+    type: string
+    default: null
+  reviewer_model:
+    type: string
+    default: null
+  reviewer_reasoning_effort:
+    type: string
+    default: null
+  fresh_reviewer_provider:
+    type: string
+    default: null
+  fresh_reviewer_model:
+    type: string
+    default: null
+  fresh_reviewer_reasoning_effort:
+    type: string
+    default: null
+  manager_provider:
+    type: string
+    default: null
+  manager_model:
+    type: string
+    default: null
+  manager_reasoning_effort:
+    type: string
+    default: null
+
+steps:
+  - id: guard
+    mcp:
+      server: gobby-agents
+      tool: check_runbook_seats
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        requested: "${{ 'code-reviewer' if inputs.fresh_reviewer else inputs.seats }}"
+        report_to: "${{ inputs.report_to }}"
+        require_report_to: true
+        catalogue:
+          - name: dev-manager
+            title: Dev manager
+            agent: dev-manager
+          - name: test-writer
+            title: Test writer
+            agent: test-writer
+          - name: developer
+            title: Developer
+            agent: developer
+          - name: code-reviewer
+            title: Code reviewer
+            agent: code-reviewer
+
+  - id: admit
+    mcp:
+      server: gobby-agents
+      tool: admit_team
+      arguments:
+        task: "${{ inputs.task }}"
+        team_id: "${{ inputs.team_id }}"
+        fresh_reviewer: "${{ inputs.fresh_reviewer }}"
+        exclude_reviewers: "${{ inputs.exclude_reviewers }}"
+
+  - id: dev-manager
+    condition: "${{ not inputs.fresh_reviewer and 'dev-manager' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: dev-manager
+        title: "${{ steps.admit.output.branch + ' dev manager' }}"
+        provider: "${{ inputs.manager_provider }}"
+        model: "${{ inputs.manager_model }}"
+        reasoning_effort: "${{ inputs.manager_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.admit.output.project_path }}"
+        task_id: "${{ steps.admit.output.task_id }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the dev manager seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        # The team's first manager opens the branch tab; a replacement's splits it.
+        placement: >-
+          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+          'tab_title': steps.admit.output.branch, 'axis': 'right',
+          'title': steps.admit.output.branch + ' dev manager'}} if inputs.team_id else
+          {'tab': {'workspace': steps.guard.output.workspace_id,
+          'title': steps.admit.output.branch}} }}
+
+  - id: test-writer
+    condition: "${{ not inputs.fresh_reviewer and 'test-writer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: test-writer
+        title: "${{ steps.admit.output.branch + ' test writer' }}"
+        provider: "${{ inputs.test_writer_provider }}"
+        model: "${{ inputs.test_writer_model }}"
+        reasoning_effort: "${{ inputs.test_writer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.admit.output.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the test writer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+          'tab_title': steps.admit.output.branch, 'axis': 'right',
+          'title': steps.admit.output.branch + ' test writer'}} }}
+
+  - id: developer
+    condition: "${{ not inputs.fresh_reviewer and 'developer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: developer
+        title: "${{ steps.admit.output.branch + ' developer' }}"
+        provider: "${{ inputs.developer_provider }}"
+        model: "${{ inputs.developer_model }}"
+        reasoning_effort: "${{ inputs.developer_reasoning_effort }}"
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.admit.output.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the developer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+          'tab_title': steps.admit.output.branch, 'axis': 'right',
+          'title': steps.admit.output.branch + ' developer'}} }}
+
+  - id: code-reviewer
+    condition: "${{ inputs.fresh_reviewer or 'code-reviewer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: code-reviewer
+        title: >-
+          ${{ steps.admit.output.branch
+          + (' fresh code reviewer' if inputs.fresh_reviewer else ' code reviewer') }}
+        provider: >-
+          ${{ inputs.fresh_reviewer_provider if inputs.fresh_reviewer
+          else inputs.reviewer_provider }}
+        model: "${{ inputs.fresh_reviewer_model if inputs.fresh_reviewer else inputs.reviewer_model }}"
+        reasoning_effort: >-
+          ${{ inputs.fresh_reviewer_reasoning_effort if inputs.fresh_reviewer
+          else inputs.reviewer_reasoning_effort }}
+        execution_mode: interactive
+        checkout_mode: none
+        project_path: "${{ steps.admit.output.project_path }}"
+        reserved_run_id: "${{ invocation_id }}"
+        prompt: "You are the ${{ 'fresh ' if inputs.fresh_reviewer else '' }}code reviewer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        placement: >-
+          ${{ {'split': {'workspace': steps.guard.output.workspace_id,
+          'tab_title': steps.admit.output.branch, 'axis': 'right',
+          'title': steps.admit.output.branch
+          + (' fresh code reviewer' if inputs.fresh_reviewer else ' code reviewer')}} }}

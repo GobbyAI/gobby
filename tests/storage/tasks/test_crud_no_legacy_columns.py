@@ -57,7 +57,7 @@ class _CapturePostgresDb:
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, str]]:
         self.fetchall_calls.append((sql, params))
-        return [{"name": "validation_fail_count"}, {"name": "updated_at"}]
+        return [{"name": "review_fail_count"}, {"name": "updated_at"}]
 
     def transaction(self) -> _CaptureTransaction:
         return _CaptureTransaction(self)
@@ -71,12 +71,12 @@ def test_update_task_uses_postgres_column_introspection(monkeypatch: pytest.Monk
         lambda db, task_id: SimpleNamespace(closed_at=None, escalated_at=None),
     )
 
-    changed_parent = _updates.update_task(db, "task-1", validation_fail_count=1)
+    changed_parent = _updates.update_task(db, "task-1", review_fail_count=1)
 
     assert changed_parent is False
     column_sql, column_params = db.fetchall_calls[0]
     assert "information_schema.columns" in column_sql
     assert column_params == ("tasks",)
     assert db.execute_calls[0][0] == (
-        "UPDATE tasks SET validation_fail_count = %s, updated_at = %s WHERE id = %s"
+        "UPDATE tasks SET review_fail_count = %s, updated_at = %s WHERE id = %s"
     )

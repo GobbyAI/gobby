@@ -86,6 +86,7 @@ def select_test_gdaemon(
     if newest is not None and newest[1] > binary.stat().st_mtime_ns:
         raise CheckoutBinaryError(
             f"{binary} is older than {newest[0]}; run `cargo build -p gobby-daemon` "
-            "before testing against the checkout binary"
+            "before testing against the checkout binary. If cargo reports it already "
+            "fresh, that input does not reach gdaemon: `touch` the binary to acknowledge"
         )
     return binary

@@ -94,7 +94,7 @@ def _task(*, closed: bool = False) -> Task:
         category="code",
         labels=[f"covers:landed-lint:1.1:1.1.{item}" for item in (1, 2, 3)],
         closed_at=now if closed else None,
-        closed_reason="completed" if closed else None,
+        closed_reason="done" if closed else None,
     )
 
 
@@ -248,12 +248,10 @@ def test_unfinished_section_still_rejects_size_and_bare_target(
     [
         None,
         "unknown",
-        "completed",
-        "already_implemented",
-        "duplicate",
-        "wont_fix",
-        "obsolete",
-        "out_of_repo",
+        "done",
+        "moot",
+        "superseded",
+        "wont_do",
     ],
 )
 def test_closed_section_requires_delivered_reason_or_landing(
@@ -281,8 +279,8 @@ def test_closed_section_requires_delivered_reason_or_landing(
     task = _task(closed=True)
     task.closed_reason = reason
     result = _validate(plan, index, [task])
-    delivered = reason in {"completed", "already_implemented"}
-    abandoned = reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}
+    delivered = reason == "done"
+    abandoned = reason in {"moot", "superseded", "wont_do"}
     expected = not abandoned and (delivered or landed) if bare_only else delivered
     assert result["valid"] is expected, result
     if not expected:
@@ -302,7 +300,7 @@ def test_completion_evidence_fails_closed(landed_plan: tuple[Path, _Index], prob
     elif problem == "foreign":
         task.project_id = "other-project"
     else:
-        task.closed_reason = "wont_fix"
+        task.closed_reason = "wont_do"
     result = _validate(plan, index, tasks)
     assert result["valid"] is False
     assert "production-size-growth" in str(result["errors"])
@@ -454,7 +452,7 @@ def test_size_growth_requires_every_covering_leaf_closed(
     assert result["valid"] is repair_closed, result
 
 
-@pytest.mark.parametrize("reason", ["duplicate", "obsolete", "wont_fix", "out_of_repo"])
+@pytest.mark.parametrize("reason", ["moot", "superseded", "wont_do"])
 def test_closed_no_work_leaf_does_not_veto_delivered_coverage(
     landed_plan: tuple[Path, _Index], reason: str
 ) -> None:
@@ -467,7 +465,7 @@ def test_closed_no_work_leaf_does_not_veto_delivered_coverage(
     assert result["valid"] is True, result
 
 
-@pytest.mark.parametrize("reason", ["duplicate", "obsolete", "wont_fix", "out_of_repo"])
+@pytest.mark.parametrize("reason", ["moot", "superseded", "wont_do"])
 def test_no_work_only_coverage_retains_size_growth(
     landed_plan: tuple[Path, _Index], reason: str
 ) -> None:
@@ -480,14 +478,13 @@ def test_no_work_only_coverage_retains_size_growth(
 
 
 @pytest.mark.parametrize("owner_count", [1, 2], ids=["single-owner", "multiple-owners"])
-def test_already_implemented_covering_leaves_are_executed(
+def test_done_covering_leaves_are_executed(
     landed_plan: tuple[Path, _Index], owner_count: int
 ) -> None:
     plan, index = landed_plan
     tasks = [_task(closed=True) for _ in range(owner_count)]
     for number, task in enumerate(tasks):
         task.id = f"implemented-{number}"
-        task.closed_reason = "already_implemented"
     result = _validate(plan, index, tasks)
     assert result["valid"] is True, result
 
@@ -501,7 +498,7 @@ def test_each_acceptance_item_requires_delivered_coverage(
     abandoned = _task(closed=True)
     abandoned.id = "abandoned-id"
     abandoned.labels = ["covers:landed-lint:1.1:1.1.3"]
-    abandoned.closed_reason = "duplicate"
+    abandoned.closed_reason = "superseded"
     manager = MagicMock(spec=LocalTaskManager)
 
     def covering_tasks(*, labels: list[str], **kwargs: Any) -> list[Task]:
@@ -533,7 +530,7 @@ def test_size_growth_checks_covering_leaves_beyond_first_page(
     for number, task in enumerate(tasks):
         task.id = f"leaf-{number}"
     tasks[-1].closed_at = datetime.now(UTC) if last_closed else None
-    tasks[-1].closed_reason = "completed" if last_closed else None
+    tasks[-1].closed_reason = "done" if last_closed else None
     manager = MagicMock(spec=LocalTaskManager)
 
     def covering_tasks(*, offset: int, limit: int, **kwargs: Any) -> list[Task]:

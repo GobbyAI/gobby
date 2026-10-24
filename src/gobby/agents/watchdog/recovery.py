@@ -21,6 +21,7 @@ from gobby.agents.watchdog.completed_turn_recovery import (
 )
 from gobby.agents.watchdog.composer_gate import composer_refuses_automation
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
+from gobby.agents.watchdog.recovery_diagnostics import WatchdogRecoveryDiagnostics
 from gobby.storage.terminals import Terminal
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.terminals.composer_ledger import composer_drain_keys
@@ -53,7 +54,6 @@ if TYPE_CHECKING:
 from .quota import ProviderQuotaExhaustion
 
 logger = logging.getLogger(__name__)
-WATCHDOG_ACTOR = "agent_idle_watchdog"
 _TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 REASONING_WATCHDOG_CONTINUATION = (
     "Gobby watchdog interrupted a long idle reasoning turn with no workflow progress. "
@@ -74,7 +74,7 @@ def pane_has_capacity_message(
     return capacity_message in " ".join(visible.split())
 
 
-class WatchdogRecoveryCoordinator:
+class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
     """Coordinate watchdog recovery policies and terminal cleanup."""
 
     def __init__(
@@ -435,34 +435,6 @@ class WatchdogRecoveryCoordinator:
             return None, False
         return step_context, True
 
-    async def _session_made_successful_mcp_call(self, run: AgentRun) -> bool | None:
-        """Whether the run's child session ever completed a successful Gobby MCP call.
-
-        Reads the session's ``mcp_calls`` variable, which the workflow observer
-        records on every successful proxied call. Returns None when the lookup
-        fails so callers fail open to the reprompt path.
-        """
-        session_id = run.child_session_id
-        if not session_id:
-            return None
-        try:
-            variables = await self._run_db(
-                SessionVariableManager(self.db).get_variables,
-                session_id,
-            )
-        except psycopg.DatabaseError:
-            logger.warning(
-                "Database error loading session variables for MCP-availability check on "
-                "run %s session %s",
-                run.id,
-                session_id,
-                exc_info=True,
-            )
-            return None
-        if not isinstance(variables, dict):
-            return None
-        return bool(variables.get("mcp_calls"))
-
     async def _idle_reprompt_message(
         self,
         run: AgentRun,
@@ -584,56 +556,6 @@ class WatchdogRecoveryCoordinator:
             detail="latest_activity_kind=reasoning",
         )
         return True
-
-    async def _record_watchdog_task_event(
-        self,
-        run: AgentRun,
-        *,
-        action: str,
-        session_id: str | None,
-        detail: str,
-    ) -> None:
-        """Append a durable task-history event for watchdog recovery actions."""
-        if self._task_manager is None or not run.task_id:
-            return
-
-        try:
-            task = await self._run_db(self._task_manager.get_task, run.task_id)
-        except (psycopg.Error, ValueError):
-            logger.warning(
-                "Failed to load task %s for idle watchdog audit on run %s",
-                run.task_id,
-                run.id,
-                exc_info=True,
-            )
-            return
-
-        try:
-            state = projected_task_state(task)
-        except Exception:
-            state = "agent_watchdog"
-
-        reason = f"agent_idle_watchdog:{action} run_id={run.id}"
-        if session_id:
-            reason = f"{reason} session_id={session_id}"
-        reason = f"{reason} {detail}"
-
-        try:
-            await self._run_db(
-                self._task_manager.lifecycle_events.record_lifecycle_event,
-                run.task_id,
-                from_state=state,
-                to_state=state,
-                reason=reason,
-                by_actor=WATCHDOG_ACTOR,
-            )
-        except (psycopg.Error, ValueError):
-            logger.warning(
-                "Failed to record idle watchdog audit for run %s task %s",
-                run.id,
-                run.task_id,
-                exc_info=True,
-            )
 
     async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
         """Fail an agent that is irrecoverably idle."""
@@ -901,90 +823,3 @@ class WatchdogRecoveryCoordinator:
             )
             return False
         return incomplete is None
-
-    async def _log_transcript_snapshot(
-        self,
-        run: AgentRun,
-        *,
-        reason: str,
-        snapshot: WatchdogTranscriptSnapshot | None = None,
-        level: int = logging.WARNING,
-    ) -> None:
-        session_id = run.child_session_id
-        if not session_id:
-            return
-
-        if snapshot is None:
-            session_manager = self._get_session_manager()
-            if session_manager is None:
-                return
-
-            try:
-                session = await self._run_db(session_manager.get, session_id)
-            except Exception:
-                logger.warning(
-                    "Failed to load session %s for watchdog idle diagnostics on run %s",
-                    session_id,
-                    run.id,
-                )
-                return
-
-            if session is None:
-                return
-
-            provider_id = session.source or run.provider
-            reader = self._watchdog_readers.for_provider(provider_id)
-            if reader is None:
-                return
-            transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
-            if transcript_path is None:
-                logger.warning(
-                    "Watchdog idle diagnostic for %s run %s (%s): "
-                    "session %s has no readable transcript path",
-                    reader.provider_id,
-                    run.id,
-                    reason,
-                    session_id,
-                )
-                return
-
-            try:
-                snapshot = await reader.read(transcript_path)
-            except OSError:
-                logger.warning(
-                    "Failed to read %s transcript for idle diagnostic on run %s (%s)",
-                    reader.provider_id,
-                    run.id,
-                    reason,
-                )
-                return
-
-        if not snapshot.tail and snapshot.latest_turn_event is None:
-            logger.warning(
-                "Watchdog idle diagnostic for %s run %s (%s): "
-                "no transcript summaries for session %s",
-                snapshot.provider,
-                run.id,
-                reason,
-                session_id,
-            )
-            return
-
-        log_args = (
-            snapshot.provider,
-            run.id,
-            reason,
-            session_id,
-            json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
-        )
-        if level == logging.WARNING:
-            logger.warning(
-                "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
-                *log_args,
-            )
-        else:
-            logger.log(
-                level,
-                "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
-                *log_args,
-            )

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
+from gobby.agents.isolation_git_hygiene import blocking_status_lines
 from gobby.utils.git import run_thread_to_completion
 from gobby.worktrees.events import WorktreeEvent, emit_worktree_event
 from gobby.worktrees.executor import DestructiveBoundary
@@ -33,6 +34,11 @@ class DeletionSurface(Enum):
     MCP = "mcp"
     HTTP = "http"
     MAINTENANCE = "maintenance"
+    TEARDOWN = "teardown"
+
+
+# Daemon-owned deletions lock the row and prove the tree's branch before Git runs.
+_DAEMON_SURFACES = frozenset({DeletionSurface.MAINTENANCE, DeletionSurface.TEARDOWN})
 
 
 @dataclass(frozen=True)
@@ -75,8 +81,11 @@ async def delete_worktree_transaction(
 ) -> WorktreeDeletionResult:
     """Perform lookup, nonblocking Git mutation, storage cleanup, and event emission."""
     context = contextvars.copy_context()
-    if request.surface is DeletionSurface.MAINTENANCE:
-        guard = worktree_storage.lock_for_cleanup(request.worktree_id)
+    if request.surface in _DAEMON_SURFACES:
+        # A closed team's tree is due at once; only maintenance waits for the expiry.
+        guard = worktree_storage.lock_for_cleanup(
+            request.worktree_id, expired_only=request.surface is DeletionSurface.MAINTENANCE
+        )
         entered = False
 
         def enter_guard() -> Worktree | None:
@@ -89,7 +98,10 @@ async def delete_worktree_transaction(
             worktree = await run_thread_to_completion(context.run, enter_guard)
             if worktree is None:
                 return WorktreeDeletionResult(
-                    success=False, git_deleted=False, error="Worktree is no longer eligible"
+                    success=False,
+                    git_deleted=False,
+                    error="Worktree is no longer eligible",
+                    error_code="worktree_not_eligible",
                 )
             return await _delete_worktree(
                 boundary,
@@ -150,7 +162,13 @@ async def _delete_worktree(
                 "the worktree record was preserved"
             ),
         )
-    if request.surface is not DeletionSurface.HTTP:
+    force = request.force or request.surface is DeletionSurface.HTTP
+    if request.surface in _DAEMON_SURFACES:
+        verdict = await _daemon_precheck(request, worktree, git_manager, worktree_exists)
+        if isinstance(verdict, WorktreeDeletionResult):
+            return verdict
+        force = verdict
+    elif request.surface is DeletionSurface.MCP:
         precheck = await _mcp_precheck(request, worktree, git_manager, worktree_exists)
         if precheck is not None:
             return precheck
@@ -158,7 +176,7 @@ async def _delete_worktree(
     if not boundary.begin_mutation():
         return WorktreeDeletionResult(success=False, abandoned=True)
 
-    git_failure = await _delete_git_worktree(request, worktree, git_manager)
+    git_failure = await _delete_git_worktree(request, worktree, git_manager, force=force)
     if git_failure is not None:
         return git_failure
 
@@ -212,27 +230,58 @@ def _finish_storage_deletion(
     )
 
 
+async def _daemon_precheck(
+    request: WorktreeDeletionRequest,
+    worktree: Worktree,
+    git_manager: WorktreeGitManager | None,
+    worktree_exists: bool,
+) -> WorktreeDeletionResult | bool:
+    """Refuse what a daemon deletion cannot prove; True when only generated files dirty the tree."""
+    if git_manager is None or request.force or request.force_delete_branch:
+        return WorktreeDeletionResult(
+            success=False, git_deleted=False, error="Cannot safely verify the worktree"
+        )
+    if not worktree_exists:
+        # Git already removed the tree (a teardown crashed after it). The missing-tree
+        # probe proves the registration and branch are gone before the record is deleted.
+        return False
+    # Git deletes the branch the tree holds, so a tree switched off its record keeps both.
+    status = await git_manager.get_worktree_status(worktree.worktree_path)
+    if status is None or status.branch != worktree.branch_name or status.branch is None:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error=f"Cannot verify the worktree is on its recorded branch {worktree.branch_name}",
+            error_code="worktree_identity_mismatch" if status else "worktree_status_unavailable",
+        )
+    porcelain = await git_manager.run_git_command(
+        ["status", "--porcelain"], cwd=worktree.worktree_path, timeout=10
+    )
+    if porcelain.returncode != 0:
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error="Cannot verify worktree cleanliness; the worktree record was preserved",
+            error_code="worktree_status_unavailable",
+        )
+    path = Path(worktree.worktree_path)
+    if blocking_status_lines(porcelain.stdout, path, git_manager.repo_path):
+        return WorktreeDeletionResult(
+            success=False,
+            git_deleted=False,
+            error="Worktree has uncommitted changes",
+            uncommitted_changes=True,
+        )
+    # Spawn-generated files left untracked block a plain `git worktree remove`.
+    return bool(porcelain.stdout.strip())
+
+
 async def _mcp_precheck(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
     git_manager: WorktreeGitManager | None,
     worktree_exists: bool,
 ) -> WorktreeDeletionResult | None:
-    if request.surface is DeletionSurface.MAINTENANCE:
-        if (
-            git_manager is None
-            or not worktree_exists
-            or request.force
-            or request.force_delete_branch
-        ):
-            return WorktreeDeletionResult(
-                success=False, git_deleted=False, error="Cannot safely verify expired worktree"
-            )
-        status = await git_manager.get_worktree_status(worktree.worktree_path)
-        if status is None or status.branch != worktree.branch_name or status.branch is None:
-            return WorktreeDeletionResult(
-                success=False, git_deleted=False, error="Cannot verify the expired worktree branch"
-            )
     if git_manager is None or not worktree_exists:
         return None
 
@@ -257,6 +306,8 @@ async def _delete_git_worktree(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
     git_manager: WorktreeGitManager | None,
+    *,
+    force: bool,
 ) -> WorktreeDeletionResult | None:
     if git_manager is None:
         logger.info(
@@ -279,7 +330,7 @@ async def _delete_git_worktree(
     try:
         result = await git_manager.delete_worktree(
             worktree.worktree_path,
-            force=True if request.surface is DeletionSurface.HTTP else request.force,
+            force=force,
             delete_branch=True,
             force_delete_branch=request.force_delete_branch,
             # Reused seats may have switched branches since registration. Git
@@ -300,12 +351,13 @@ async def _delete_git_worktree(
 
     if result.success:
         return None
-    if request.merged_into is not None or request.surface is DeletionSurface.MAINTENANCE:
+    if request.merged_into is not None or request.surface in _DAEMON_SURFACES:
         return WorktreeDeletionResult(
             success=False,
             git_deleted=False,
             error=result.message,
-            error_code=result.error,
+            # Some Git failures carry only stderr text, which is not a code.
+            error_code=result.error if result.error and result.error.isidentifier() else None,
             message=result.message,
         )
     if request.surface is DeletionSurface.HTTP:

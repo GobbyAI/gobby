@@ -864,7 +864,7 @@ async def test_node_session_end_counts_forwarded_turns(
             title="Closed by the node",
             validation_criteria="The node's run closes the task.",
         )
-        task_manager.close_task(task.id, reason="Done", closed_commit_sha="abc123")
+        task_manager.close_task(task.id, reason="done", closed_commit_sha="abc123")
         task_id = task.id
     run = _run(temp_db, sample_project["id"], remote_machine, status="running", task_id=task_id)
     session = _child_session(temp_db, sample_project["id"], remote_machine, run.id)

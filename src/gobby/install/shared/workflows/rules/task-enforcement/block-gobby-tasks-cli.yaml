@@ -15,7 +15,7 @@ rules:
         # substitution inside double quotes still executes, so a real
         # echo "$(gobby tasks close 42)" still blocks.
         mask_quoted: true
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de_escalate|claim|sync|compact|import|clean)\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de_escalate|claim|sync|compact|import|clean|restore)\\b"
         reason: |
           Use the MCP equivalents (create_task, claim_task, update_task, close_task)
           so validation gates, discovery, and hook policy remain active. For a
@@ -23,6 +23,9 @@ rules:
           tool_name='<tool>') directly, then call_tool(server_name='gobby-tasks',
           tool_name='<tool>', args={...}). Use list_tools only if the task tool
           name is unknown.
+
+          `gobby tasks restore` is operator-only and has no MCP equivalent: relay
+          the exact command to the user, who runs it in their own shell.
 
           Read-only `gobby tasks` subcommands remain available:
             - `gobby tasks list`, `ready`, `blocked`, `stats`, `show`

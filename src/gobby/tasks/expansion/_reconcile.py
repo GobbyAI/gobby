@@ -178,7 +178,7 @@ def adopt(
         return None
     binding = SectionBinding(section_id=section_id, task_id=task_id)
     if row["closed_at"] is not None:
-        if row["closed_reason"] == "obsolete":
+        if row["closed_reason"] == "moot":
             return None
         plan.preserved.append(binding)
         return AdoptedLeaf(task_id=task_id, action="preserve")

@@ -104,6 +104,7 @@ async def test_reference_contract_3_2_2(
                 "linked_commits",
                 "uncommitted_task_edits",
                 "integration_ancestry",
+                "step_records",
             ]
             assert not is_task_closed(harness.manager.get_task(harness.task.id))
             closed = await harness.registry.call(

@@ -17,6 +17,7 @@ fn isolated(test: impl FnOnce(&std::path::Path) -> anyhow::Result<()>) -> anyhow
             ("GOBBY_AGENT_RUN_ID", None),
             ("GOBBY_SESSION_ID", None),
             ("GOBBY_PROJECT_ID", None),
+            ("GOBBY_RELEASE_TOKEN", None),
         ],
         || test(home.path()),
     )
@@ -112,6 +113,7 @@ fn headless_terminal_and_agent_identity_headers() -> anyhow::Result<()> {
                         ("GOBBY_PROJECT_ID", Some("trusted-project")),
                         ("GOBBY_AGENT_RUN_ID", Some("run")),
                         ("GOBBY_MANAGED_EXECUTION_ID", Some("execution")),
+                        ("GOBBY_RELEASE_TOKEN", Some("release")),
                     ],
                     || -> anyhow::Result<()> {
                         Dialer::with_context(root, Default::default())?.request(
@@ -153,6 +155,13 @@ fn headless_terminal_and_agent_identity_headers() -> anyhow::Result<()> {
                 assert_eq!(
                     requests[3].headers["x-gobby-managed-execution-id"],
                     "execution"
+                );
+                assert_eq!(
+                    requests[3]
+                        .headers
+                        .get("x-gobby-release-token")
+                        .map(String::as_str),
+                    Some("release")
                 );
                 Ok(())
             },

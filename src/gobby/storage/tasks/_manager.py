@@ -1,10 +1,9 @@
 import logging
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks._aggregates import (
     count_blocked_tasks as _count_blocked_tasks,
 )
@@ -22,7 +21,6 @@ from gobby.storage.tasks._aggregates import (
 )
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._close import close_eligible_parent_chain
 from gobby.storage.tasks._creation import (
     create_task as _create_task,
 )
@@ -31,7 +29,6 @@ from gobby.storage.tasks._creation import (
 )
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
 from gobby.storage.tasks._delegation import delegate_task as _delegate_task
-from gobby.storage.tasks._delegation import transfer_task_authority as _transfer_task_authority
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
     add_label as _add_label,
@@ -88,11 +85,8 @@ from gobby.storage.tasks._read import (
 )
 from gobby.storage.tasks._search import TaskSearchBackend
 from gobby.storage.tasks._transitions_facade import TaskTransitionsMixin
-from gobby.storage.tasks._updates import (
-    update_task_metadata as _update_task_metadata,
-)
-from gobby.tasks.criteria_text import require_validation_criteria
-from gobby.utils.datetime import utc_now
+from gobby.storage.tasks._update_facade import TaskUpdateMixin
+from gobby.storage.tasks._updates import update_task_metadata as _update_task_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +109,7 @@ __all__ = [
 ]
 
 
-class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
+class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateMixin):
     def __init__(self, db: HubDatabase):
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
@@ -293,137 +287,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         """
         return resolve_task_reference(self.db, ref, project_id)
 
-    def update_task(
-        self,
-        task_id: str,
-        title: MaybeUnset[str | None] = UNSET,
-        description: MaybeUnset[str | None] = UNSET,
-        priority: MaybeUnset[int | None] = UNSET,
-        task_type: MaybeUnset[str | None] = UNSET,
-        claimed_by_session_id: MaybeUnset[str | None] = UNSET,
-        labels: MaybeUnset[list[str] | None] = UNSET,
-        parent_task_id: MaybeUnset[str | None] = UNSET,
-        closed_reason: MaybeUnset[str | None] = UNSET,
-        closed_at: MaybeUnset[str | None] = UNSET,
-        closed_in_session_id: MaybeUnset[str | None] = UNSET,
-        closed_commit_sha: MaybeUnset[str | None] = UNSET,
-        validation_status: MaybeUnset[str | None] = UNSET,
-        validation_feedback: MaybeUnset[str | None] = UNSET,
-        category: MaybeUnset[str | None] = UNSET,
-        validation_criteria: MaybeUnset[str | None] = UNSET,
-        validation_fail_count: MaybeUnset[int | None] = UNSET,
-        merge_in_progress: MaybeUnset[bool] = UNSET,
-        blocked_by_merge: MaybeUnset[bool] = UNSET,
-        escalated_at: MaybeUnset[datetime | str | None] = UNSET,
-        escalation_reason: MaybeUnset[str | None] = UNSET,
-        validation_override_reason: MaybeUnset[str | None] = UNSET,
-        assigned_agent: MaybeUnset[str | None] = UNSET,
-        implementation_domain: MaybeUnset[str | None] = UNSET,
-        additional_skills: MaybeUnset[list[str] | None] = UNSET,
-        start_date: MaybeUnset[str | None] = UNSET,
-        due_date: MaybeUnset[str | None] = UNSET,
-        affected_files: MaybeUnset[list[str]] = UNSET,
-        **kwargs: Any,
-    ) -> Task:
-        """Update metadata fields and optionally replace declared file scope.
-
-        Task/session ownership mutations must go through the dedicated task
-        transition methods so claim/session state stays coherent.
-        """
-        if task_type is not UNSET or validation_criteria is not UNSET:
-            current_task = self.get_task(task_id)
-            effective_task_type = (
-                current_task.task_type if task_type is UNSET else str(task_type or "")
-            )
-            if validation_criteria is UNSET:
-                effective_criteria = current_task.validation_criteria
-            else:
-                effective_criteria = (
-                    validation_criteria if isinstance(validation_criteria, str) else None
-                )
-            effective_criteria = require_validation_criteria(
-                effective_task_type,
-                effective_criteria,
-            )
-            if validation_criteria is not UNSET:
-                validation_criteria = effective_criteria
-
-        vacated_parent_id: str | None = None
-        with self.db.transaction() as conn:
-            moved_from = (
-                None
-                if parent_task_id is UNSET
-                else conn.execute(
-                    "SELECT parent_task_id, closed_at FROM tasks WHERE id = %s FOR UPDATE",
-                    (task_id,),
-                ).fetchone()
-            )
-            parent_changed = _update_task_metadata(
-                self.db,
-                task_id=task_id,
-                title=title,
-                description=description,
-                priority=priority,
-                task_type=task_type,
-                claimed_by_session_id=claimed_by_session_id,
-                labels=labels,
-                parent_task_id=parent_task_id,
-                closed_reason=closed_reason,
-                closed_at=closed_at,
-                closed_in_session_id=closed_in_session_id,
-                closed_commit_sha=closed_commit_sha,
-                validation_status=validation_status,
-                validation_feedback=validation_feedback,
-                category=category,
-                validation_criteria=validation_criteria,
-                validation_fail_count=validation_fail_count,
-                merge_in_progress=merge_in_progress,
-                blocked_by_merge=blocked_by_merge,
-                escalated_at=escalated_at,
-                escalation_reason=escalation_reason,
-                validation_override_reason=validation_override_reason,
-                assigned_agent=assigned_agent,
-                implementation_domain=implementation_domain,
-                additional_skills=additional_skills,
-                start_date=start_date,
-                due_date=due_date,
-                **kwargs,
-            )
-
-            if parent_changed:
-                self.update_descendant_paths(task_id)
-                if (
-                    moved_from is not None
-                    and moved_from["closed_at"] is None
-                    and moved_from["parent_task_id"] != parent_task_id
-                ):
-                    vacated_parent_id = moved_from["parent_task_id"]
-
-            if affected_files is not UNSET:
-                TaskAffectedFileManager(self.db).replace_declared_files(
-                    task_id,
-                    cast(list[str], affected_files),
-                )
-
-        if vacated_parent_id is not None:
-            # Moving an open child out can leave the old parent with none, and no
-            # child close will ever arrive to close it (#23384). The walk runs after
-            # the move commits: inside it, the walk waited on the old parent row while
-            # holding the proposed parent row, and an inverse move deadlocked on them.
-            with self.db.transaction() as conn:
-                close_eligible_parent_chain(
-                    conn,
-                    vacated_parent_id,
-                    db=self.db,
-                    reason=None,
-                    closed_at=utc_now(),
-                    closed_in_session_id=None,
-                    closed_ancestors=None,
-                )
-
-        self._notify_listeners()
-        return self.get_task(task_id)
-
     def set_merge_status(
         self,
         task_id: str,
@@ -467,23 +330,6 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             task_id,
             delegated_by_session_id=delegated_by_session_id,
             delegated_to_session_id=delegated_to_session_id,
-            reason=reason,
-        )
-        self._notify_listeners()
-        return result
-
-    def transfer_task_authority(
-        self,
-        task_id: str,
-        *,
-        caller_session_id: str,
-        reason: str,
-    ) -> Task:
-        """Take over activation-receipt authority from an expired creator or delegator."""
-        result = _transfer_task_authority(
-            self.db,
-            task_id,
-            caller_session_id=caller_session_id,
             reason=reason,
         )
         self._notify_listeners()
@@ -541,11 +387,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         sort_order: str = "asc",
         updated_since: datetime | None = None,
         candidate: bool | None = None,
+        state: str | None = None,
     ) -> list[Task]:
         """List tasks with filtering.
 
         Args:
-                state string, a list of states, or None to include all stage states.
+            state: Canonical task state, or None to include all states.
             sort_by: None lists closed tasks (``closed=True``) newest closure
                 first and everything else hierarchically.
 
@@ -571,6 +418,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             sort_order=sort_order,
             updated_since=updated_since,
             candidate=candidate,
+            state=state,
         )
 
     def get_candidate_sent_times(self, task_ids: list[str]) -> dict[str, datetime]:
@@ -648,6 +496,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         title_like: str | None = None,
         updated_since: datetime | None = None,
         candidate: bool | None = None,
+        state: str | None = None,
     ) -> int:
         """Count tasks with optional filters.
 
@@ -672,6 +521,7 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             title_like=title_like,
             updated_since=updated_since,
             candidate=candidate,
+            state=state,
         )
 
     def count_by_state(self, project_id: str | None = None) -> dict[str, int]:

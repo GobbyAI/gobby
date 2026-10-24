@@ -20,6 +20,8 @@ from gobby.mcp_proxy.tools.workflows._import import reload_cache
 from gobby.storage.definitions._shared import encode_json_value
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.engine.core import RuleEngine
@@ -148,7 +150,19 @@ def seat_ids(hub_db: HubDatabase) -> tuple[str, str]:
 async def test_reloaded_reviewer_ends_only_on_terminal_event(
     hub_db: HubDatabase, tmp_path: Path, recreate_engine: bool, seat_ids: tuple[str, str]
 ) -> None:
-    session_id, _ = seat_ids
+    session_id, project_id = seat_ids
+    recipient, sha = str(uuid4()), "a" * 40
+    hub_db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
+        "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, "
+        "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        (recipient, recipient, "21000000-0000-4000-8000-000000000001", "claude", project_id),
+    )
+    task = LocalTaskManager(hub_db).create_task(
+        project_id=project_id,
+        title="Reviewed unit",
+        validation_criteria="The reviewer's own verdict ends its unit.",
+    )
     current = AgentDefinitionBody.model_validate(
         yaml.safe_load((get_bundled_agents_path() / "code-reviewer.yaml").read_text())
     )
@@ -156,18 +170,21 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
     original = current.model_copy(deep=True)
     assert original.step_workflow is not None
     verdict = next(step for step in original.step_workflow.steps if step.name == "verdict")
+    # The activation snapshot never ends the unit, so only the reloaded
+    # definition's handlers can apply the reviewer's own verdict.
     for handler in verdict.on_mcp_success:
-        handler["when"] = (
-            "('VERDICT=BOUNCE' in str(tool_input.get('content')) or "
-            "'EVENT=LANDED' in str(tool_input.get('content'))) "
-            "and str(vars.candidate_task) in str(tool_input.get('content'))"
-        )
+        handler["when"] = "False"
     agents_dir = tmp_path / "agents"
     agents_dir.mkdir()
     template = agents_dir / "code-reviewer.yaml"
     template.write_text(yaml.safe_dump(original.model_dump(mode="json")), encoding="utf-8")
     instance_mgr = AgentStepInstanceManager(hub_db)
-    variables = {"candidate_task": "#42", "candidate_received": True, "verdict_ready": True}
+    variables = {
+        "candidate_task": task.id,
+        "candidate_sha": sha,
+        "candidate_received": True,
+        "verdict_ready": True,
+    }
     with (
         patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir),
         patch(
@@ -204,6 +221,15 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
 
     if recreate_engine:
         engine = RuleEngine(hub_db)
+    messages = InterSessionMessageManager(hub_db)
+    # A LAND without this reviewer's approved review record keeps the unit open,
+    # whatever its NOTE says.
+    land = messages.create_message(
+        session_id,
+        recipient,
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=LAND "
+        "NOTE=No VERDICT=BOUNCE needed",
+    )
     event = HookEvent(
         event_type=HookEventType.AFTER_TOOL,
         session_id=session_id,
@@ -214,12 +240,9 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
             "tool_input": {
                 "server_name": "gobby-agents",
                 "tool_name": "send_message",
-                "arguments": {
-                    "content": "EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND "
-                    "NOTE=No VERDICT=BOUNCE needed; EVENT=LANDED follows"
-                },
+                "arguments": {"target": "session", "target_id": recipient, "content": land.content},
             },
-            "tool_output": {"success": True},
+            "tool_output": {"success": True, "message_ids": [land.id]},
         },
     )
     await engine.evaluate(event, session_id=session_id, variables={})
@@ -233,9 +256,13 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
     assert retained.step_action_count == instance.step_action_count
     assert retained.total_action_count == instance.total_action_count
 
-    event.data["tool_input"]["arguments"]["content"] = (
-        "EVENT=LANDED TASK=#42 SHA=abc RECEIPT=receipt RETEST=PASS"
+    bounce = messages.create_message(
+        session_id,
+        recipient,
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE NOTE=fix",
     )
+    event.data["tool_input"]["arguments"]["content"] = bounce.content
+    event.data["tool_output"] = {"success": True, "message_ids": [bounce.id]}
     await engine.evaluate(event, session_id=session_id, variables={})
     completed = instance_mgr.get_for_session(session_id)
     assert completed is not None and completed.current_step == "await"

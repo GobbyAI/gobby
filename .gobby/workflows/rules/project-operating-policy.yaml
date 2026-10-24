@@ -1,9 +1,9 @@
 tags: [default, seat, project-policy]
 
-# This project's operating structure for seats: domain roots, worktrees, queue
-# caps, load and quiet hours. Bundled definitions carry roles only; this rule
-# carries how this repository runs them. Lanes are retired (Josh, 2026-10-23);
-# work groups under the domain roots in project_policy.roots.
+# This project's operating structure for seats: domain roots, worktrees, launch
+# defaults, tab layout, load and quiet hours. Bundled definitions carry roles
+# only; this rule carries how this repository runs them. Lanes are retired
+# (Josh, 2026-10-23); work groups under the domain roots in project_policy.roots.
 rules:
   project-operating-policy:
     description: "Inject this project's operating policy for seats once per context epoch"
@@ -11,9 +11,9 @@ rules:
     enabled: true
     priority: 21
     when: >
-      variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-enhancer', 'plan-adversary', 'inbox-manager',
+      variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
+        'test-writer', 'developer', 'code-reviewer', 'researcher', 'archivist',
+        'log-monitor', 'plan-writer', 'plan-enhancer', 'plan-adversary', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
       and not variables.get('_project_policy_injected')
@@ -33,10 +33,9 @@ rules:
             "integration_branch": "0.5.0",
             "operator": "Josh",
             "operator_channel": "gobby-telegram",
-            "close_backlog_cap": 20,
-            "heavy_run_cap": 6,
             "quiet_hours": "04:45–06:45 America/Chicago",
             "report_cadence_seconds": 1800,
+            "release_cadence_minutes": 120,
             "full_report_minutes": "00-29 UTC",
             "delta_report_minutes": "30-59 UTC",
             "critical_paths": [
@@ -44,39 +43,37 @@ rules:
             ],
             "role_guidance": {"reporter":"Reporter cadence: status-report runs every 1800 seconds (30 minutes). UTC minute 00-29 selects full; minute 30-59 selects delta. Explicit launch mode wins. Reports include ROADMAP progress and the Story B critical path from task dependencies.","consolidator":"Consolidator first job: #23378 Everything else and its open direct children and subtrees. Route Rust proposals to #22801 Rust. Check stale candidates #23668, #23700 and #23143 against current evidence before retirement proposals. Exclude #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees."},
             "release_guidance": "Crate releases. Every crate binary release bumps that crate's `Cargo.toml` patch version by +0.0.1 and carries the `Cargo.lock` update in the release commit. A gcode release keeps `MIN_GCODE_PRUNE_BUDGET_VERSION` in `src/gobby/code_index/gcode_gateway.py` equal to the crate version; a gdaemon release updates `MANAGED_BIN_VERSION_PINS`.",
-            "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. Developer closes after landing.",
+            "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. The Dev Manager closes after landing.",
+            "workspace_layout": {
+              "admin": "The operator's tab holds the Assistant and Orchestrator panes only. Never place another seat in it.",
+              "support": "One tab titled Support holds the support runbook's seats.",
+              "devteam": "Each DevTeam has one tab titled with its team branch, holding its four seats.",
+              "planning": "Each planning run's writer opens a tab titled for it; the other planning seats split that tab."
+            },
             "launch_defaults": {
-              "team-lane": {
+              "devteam": {
                 "developer_provider": "claude",
                 "developer_model": "claude-haiku-5-5",
                 "developer_reasoning_effort": "xhigh",
-                "reviewer_provider": "claude",
-                "reviewer_model": "claude-opus-5-5",
-                "reviewer_reasoning_effort": "xhigh",
-                "security_reviewer_provider": "codex",
-                "security_reviewer_model": "gpt-6.1-sol",
-                "security_reviewer_reasoning_effort": "xhigh",
-                "researcher_provider": "codex",
-                "researcher_model": "gpt-6.1-sol",
-                "researcher_reasoning_effort": "medium",
+                "reviewer_provider": "codex",
+                "reviewer_model": "gpt-6.1-sol",
+                "reviewer_reasoning_effort": "medium",
+                "fresh_reviewer_provider": "claude",
+                "fresh_reviewer_model": "claude-opus-5-5",
+                "fresh_reviewer_reasoning_effort": "xhigh",
                 "manager_provider": "claude",
                 "manager_model": "claude-sonnet-5-5",
                 "manager_reasoning_effort": "medium"
               },
-              "team-coordination": {
-                "archivist_provider": "claude",
-                "archivist_model": "claude-opus-5-5",
-                "archivist_reasoning_effort": "medium",
-                "log_monitor_provider": "claude",
-                "log_monitor_model": "claude-sonnet-5-5",
-                "log_monitor_reasoning_effort": "medium",
-                "metrics_monitor_provider": "claude",
-                "metrics_monitor_model": "claude-sonnet-5-5",
-                "metrics_monitor_reasoning_effort": "medium",
+              "support": {
                 "release_manager_provider": "codex",
                 "release_manager_model": "gpt-6.1-sol",
                 "release_manager_reasoning_effort": "medium",
-                "inbox_manager_provider": "claude",
+                "triage_provider": "claude",
+                "triage_model": "claude-sonnet-5-5",
+                "archivist_provider": "claude",
+                "archivist_model": "claude-opus-5-5",
+                "archivist_reasoning_effort": "medium",
                 "recovery_steward_provider": "claude",
                 "recovery_steward_model": "claude-opus-5-5",
                 "recovery_steward_reasoning_effort": "high",
@@ -107,10 +104,20 @@ rules:
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "medium"
               },
+              "log-monitor": {
+                "provider": "claude",
+                "model": "claude-sonnet-5-5",
+                "reasoning_effort": "medium"
+              },
               "memory-curator": {
                 "provider": "codex",
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "xhigh"
+              },
+              "metrics-monitor": {
+                "provider": "claude",
+                "model": "claude-sonnet-5-5",
+                "reasoning_effort": "medium"
               },
               "plan-adversary": {
                 "provider": "codex",
@@ -127,10 +134,15 @@ rules:
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "medium"
               },
-              "task-close-reviewer": {
+              "researcher": {
                 "provider": "codex",
-                "model": "gpt-6-luna",
+                "model": "gpt-6.1-sol",
                 "reasoning_effort": "medium"
+              },
+              "security-reviewer": {
+                "provider": "codex",
+                "model": "gpt-6.1-sol",
+                "reasoning_effort": "xhigh"
               },
               "tech-writer": {
                 "provider": "codex",
@@ -145,20 +157,20 @@ rules:
           ## Project Operating Policy
           - Load brevity(max) at start/compact/clear; use throughout.
           - Josh: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
-          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults. Reporter/Consolidator read role_guidance before work. Pass defaults+lane/lane_epic/worktree/first_job; bundles inherit, project-agnostic.
+          - Before routing/launch/handoff: get_variable(name="project_policy") for roots/role_launch_defaults/launch_defaults/workspace_layout. Reporter/Consolidator read role_guidance before work. Pass a runbook its launch_defaults entry plus its required inputs; bundles inherit, project-agnostic.
           - Integration 0.5.0; authorized push: git push origin <sha>:refs/heads/0.5.0.
           - Critical path first: runbooks v4 (#24818), then 1.0 hub/node (#21542); stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
           - Josh alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-josh.
-          - One task/seat includes pending candidates; read-only prep allowed. ORCH-directed reviewer-LANDed waits: escalate_task(project_policy.handoff_reason_template); de-escalate/close after landing+LM release.
+          - One task/seat includes pending candidates; read-only prep allowed. ORCH-directed reviewer-LANDed waits: escalate_task(project_policy.handoff_reason_template); the Dev Manager de-escalates and closes after landing.
           - No task rebalancing; parallel work adds developer+reviewer. Seat moves allowed.
-          - ORCH alone creates trees: lane-N-<name>[-K], retained per seat, never per task. Next task, clean+committed: git switch -c <branch> 0.5.0. Planners main; reviewers developer tree.
+          - One tree per DevTeam task: admit_team creates it and the team's seats join it. Planners main; reviewers developer tree.
           - Josh retired the backlog cap; drain candidate-sent/open tasks under the current close-only authority.
-          - close preview is deterministic only; actual close requires explicit LM release. close_review_busy: wait reviewer+release, retry.
+          - close preview is deterministic only; the Dev Manager closes after landing.
           - Hold: two consecutive 5-minute loads>60; lift: two <36; one/equality does nothing. Threshold/admission/escalation changes need Josh via Assistant. Report load only if breaching.
-          - RM grants heavy cap 6: build/clippy/full-crate/e2e/bench; cargo CARGO_BUILD_JOBS=3. Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
+          - Skip landed Rust retest if tree equals reviewed merge; build gclient in same cutover run.
           - Game Goblins04:45–06:45 CT: no restart/cutover, low load; never rerun.
           - Crate release: read project_policy.release_guidance first.
-          - Assistant/ORCH: operator panes; others: team-coordination/team-lane/team-planning.
+          - Place panes by project_policy.workspace_layout.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected

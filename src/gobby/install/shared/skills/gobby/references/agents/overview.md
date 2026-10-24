@@ -11,7 +11,7 @@ and messaging. A definition, a session, a task, and an agent run have distinct
 identities; preserve the returned run and child-session identifiers.
 
 Choose `$gobby agents references definitions`, `spawning`, `providers`, `isolation`,
-`personas`, `messaging`, `checkpoints`, or `lifecycle`. Menus only display choices.
+`personas`, `messaging`, `checkpoints`, `lifecycle`, or `gclient`. Menus only display choices.
 Tool schemas own arguments and defaults. CLI and HTTP maintenance is for
 operators/clients; agents use MCP tools within their assigned authority.
 

@@ -21,11 +21,21 @@ flowchart LR
 
 The storage row still has task metadata such as title, description, priority,
 type, category, parent, labels, and validation criteria. The workflow-facing
-state comes from closure and escalation metadata:
+state comes from closure, escalation, holds, dependencies, and ownership:
 
-- `ready`: the task is open and not escalated.
-- `closed`: the task has closure metadata.
-- `escalated`: the task needs intervention and is excluded from ready work.
+- `open`: unclaimed work with no hold or unresolved blocker.
+- `in_progress`: claimed work with no hold or unresolved blocker.
+- `blocked`: work waiting on an external dependency or merge blocker.
+- `needs_human`: work explicitly held for human input.
+- `escalated`: work escalated for intervention.
+- `deferred`: work held with a required follow-up date.
+- `closed`: work with closure metadata and a required close reason.
+
+The precedence is closed, escalated, explicit hold, blocked, in_progress, open.
+The existing `awaiting-human-review` label also projects to `needs_human`.
+Reaching a deferred task's follow-up date does not itself release the hold.
+Review results are independent of task state. Readiness remains a query for
+eligible work, rather than a task-state value.
 
 A claim records the owner session. The projected task state is not a free-form
 `status` field. Agent code should use lifecycle tools such as `claim_task` and `close_task`
@@ -116,14 +126,15 @@ validation again after changes and provide the results for independent review.
 
 ### Recover a handed-off task after a developer relaunch
 
-A fresh developer workflow may no longer have its previous handoff list. After
-the Lane Manager releases landed work, reclaim that task with `claim_task`. If
+A DevTeam task needs no recovery: its Dev Manager lands and closes it. Outside a
+DevTeam, a fresh developer workflow may no longer have its previous handoff list.
+After the Orchestrator releases landed work, reclaim that task with `claim_task`. If
 `de_escalate_task` or the close preview says "Finish only a task this developer
 handed off", repeat `escalate_task` on the reclaimed task with the original
 `Handed off: reviewer LAND ...` reason. This releases the reclaimed escalated
 task and records its handoff in the current workflow. Then call
 `de_escalate_task` and `close_task(preview=true)` through the ordinary developer
-path. The preview checks the four close invariants. Independent review remains part
+path. The preview checks the five close gates. Independent review remains part
 of the developer workflow.
 This recovery requires no workflow-variable writes.
 
@@ -142,7 +153,7 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
 ```
 
 After checking task/session/repository authorization, both leaf and epic closes
-evaluate the same four invariants:
+evaluate the same five gates:
 
 | Gate | Requirement |
 | :--- | :--- |
@@ -150,6 +161,25 @@ evaluate the same four invariants:
 | `linked_commits` | Linked or prospective commits exist, or a canonical no-work reason is supplied. |
 | `uncommitted_task_edits` | Task-attributed paths are clean in every recorded checkout, with complete attribution. |
 | `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
+| `step_records` | Every step record the project's close policy requires is approved. Implementation, review and closing records cite the latest linked commit; a test record may cite any linked commit. With no linked commit, records carry the no-work disposition. |
+
+The close policy is the `task_close_policy` key in the primary checkout's
+`.gobby/project.json`. A candidate worktree cannot relax it.
+
+```json
+"task_close_policy": {
+  "enforce_step_records": true,
+  "test_categories": [],
+  "review_categories": ["code", "docs"]
+}
+```
+
+`enforce_step_records` defaults to false, which skips the gate. When it is true,
+every non-epic task needs approved implementation and closing records. Tasks
+whose category is in `test_categories` also need a test record, and tasks whose
+category is in `review_categories` also need an independent review record.
+Epics need no records. A malformed policy refuses the close. The final close
+rechecks the records under the task lock, and `force` never bypasses them.
 
 Preview returns `gates`, `can_close`, `closed=false`, and resolved commit
 identities. It does not modify task state or commit links. Fix failed gates,
@@ -164,14 +194,14 @@ workflow before closing; preserve exact commands and results in completion
 notes. After closing, call `gobby-memory:review_task_memories` with the task and
 summary.
 
-The canonical no-work reasons are `duplicate`, `already_implemented`, `wont_fix`,
-`obsolete`, and `out_of_repo`. They allow a commitless close but do not waive
+The close reasons are `done`, `moot`, `superseded`, and `wont_do`.
+The no-work reasons `moot`, `superseded`, and `wont_do` allow a commitless close but do not waive
 child closure, attributed-file cleanliness, or ancestry checks for existing
 commit links. An epic does not receive a separate commit exemption.
 
 Human operators may disposition an unneeded leaf directly with
-`gobby tasks close '#14390' --reason already_implemented`. The CLI accepts only
-the five canonical no-work reasons for direct leaf closure and still refuses a
+`gobby tasks close '#14390' --reason moot`. The CLI accepts only
+the three canonical no-work reasons for direct leaf closure and still refuses a
 task with open children. Agent lifecycle work uses MCP.
 
 ## Dependencies and Ready Work
@@ -189,7 +219,7 @@ call_tool(server_name="gobby-tasks", tool_name="add_dependency", arguments={
 
 Readiness is hierarchical. A task appears in ready work when:
 
-1. The task is not closed or escalated.
+1. The task is open or in progress, without an explicit hold.
 2. It has no unresolved external `blocks` dependency.
 3. Its parent chain is also ready.
 
@@ -318,7 +348,7 @@ gobby tasks validation-history '#14390'
 
 Run focused checks appropriate to the change and retain their commands and
 results for independent review. Acceptance criteria are authored task data;
-the close tool enforces the four invariants described above. Historical
+the close tool enforces the five gates described above. Historical
 validation records remain readable through `validation-history`.
 
 Closing the last child may auto-close eligible organizational ancestors.
@@ -340,8 +370,8 @@ commit list or file manifest.
 
 Independent reviewers use the linked diff and complete commit/file manifests.
 Follow every `get_task_diff` page, inspect all changed paths, and run relevant
-checks. Review and activation receipts record those workflow decisions; they
-are separate from the close tool's four-invariant evaluator.
+checks. Review step records and landing receipts record those workflow
+decisions; they are separate from the close tool's gate evaluator.
 
 ## CLI Reference
 
@@ -351,7 +381,7 @@ does not interpret them as comments.
 
 ```bash
 # Listing and inspection
-gobby tasks list [--active] [--ready] [--blocked] [--closed] [--escalated]
+gobby tasks list [--state STATE] [--active] [--ready] [--blocked] [--closed] [--escalated]
 gobby tasks list [--claimed] [--unclaimed]
 gobby tasks ready [--limit N] [--priority N] [--type TYPE] [--json]
 gobby tasks blocked [--limit N] [--json]
@@ -394,14 +424,20 @@ The canonical task data lives in Gobby's PostgreSQL hub. Gobby writes a
 deterministic JSONL backup for recovery and migration:
 
 - Default project task backup: `~/.gobby/backups/<project-uuid>/tasks.jsonl`
-- Manual backup: `gobby tasks backup`
-- Explicit non-destructive restore: `gobby tasks restore`
+- Manual backup: `gobby tasks backup`, or the `gobby-tasks:backup_tasks` MCP tool,
+  which writes only the default path
+- Explicit non-destructive restore: `gobby tasks restore`, operator-only
 - Pre-push backup: installed by `gobby install`
 
 Backups contain only current live database rows, so deleting a task shrinks the
 next backup. Restore upserts by stable ID and updated timestamp; it preserves
 database-only rows and database versions newer than the backup. Restores are
 never run automatically during daemon or session startup.
+
+Restore has no MCP tool, and agent shells are refused `gobby tasks restore`. A
+backup line can carry closed state, claims and review history, so only the
+operator restores, from their own shell. Restore still validates every step
+record before it writes anything.
 
 The human-friendly task reference is `#N` within a project. Hierarchical task
 paths are dotted `seq_num` chains such as `14370.14390`. MCP tools accept `#N`,

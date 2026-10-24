@@ -10,33 +10,51 @@ from __future__ import annotations
 
 import re
 from functools import cache
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.skills.instruction_requirements import parse_instruction_requirement
 from gobby.skills.sync import get_bundled_skills_path
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import validate_workflow_definition_data
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+from gobby.workflows.templates import TemplateEngine
 
 pytestmark = pytest.mark.unit
 
 AGENTS_DIR = get_bundled_agents_path()
 SKILLS_DIR = get_bundled_skills_path()
+SEAT_GATES = AGENTS_DIR.parent / "rules/skill-discovery/require-seat-procedure.yaml"
+GCLIENT_REFERENCE = "gobby:references/agents/gclient.md"
+SEAT_REFERENCE_EXEMPT_TOOLS = [
+    ("gobby", "get_tool_schema"),
+    ("gobby", "get_variable"),
+    ("gobby-skills", "get_skill_file"),
+    ("gobby-results", "get_tool_result"),
+    ("gobby-sessions", "get_handoff"),
+    ("gobby-sessions", "set_handoff"),
+    ("gobby-memory", "get_memory"),
+    ("gobby-agents", "send_message"),
+    ("gobby-agents", "wait_for_coordination"),
+]
 
 SEAT_CATALOGUE = {
     "assistant",
     "orchestrator",
-    "lane-manager",
+    "dev-manager",
+    "test-writer",
     "developer",
     "code-reviewer",
     "researcher",
     "archivist",
     "log-monitor",
     "metrics-monitor",
-    "inbox-manager",
+    "triage",
     "release-manager",
     "reporter",
     "security-reviewer",
@@ -50,7 +68,7 @@ PERSONA_ONLY_SEATS = {"assistant", "orchestrator"}
 # A short-lived spawned run: no persona surface, a bounded one-shot run.
 SPAWN_ONLY_SEATS = {"reporter"}
 # Seats whose definitions leave `name:no-send-keys` out of the rule selection.
-SEND_KEYS_SEATS = {"default", "assistant", "orchestrator", "lane-manager", "recovery-steward"}
+SEND_KEYS_SEATS = {"default", "assistant", "orchestrator", "dev-manager", "recovery-steward"}
 RUNBOOK_AGENTS = ("plan-writer", "plan-enhancer", "plan-adversary")
 
 # Decision 8: the runbooks list every read-only seat blocks.
@@ -67,11 +85,10 @@ READ_ONLY_BLOCKED_TOOLS = {
     "write_file",
 }
 READ_ONLY_SEATS = {
-    "lane-manager",
-    "code-reviewer",
+    "dev-manager",
     "log-monitor",
     "metrics-monitor",
-    "inbox-manager",
+    "triage",
     "reporter",
     "security-reviewer",
     "debugger",
@@ -95,15 +112,16 @@ UNSUPPORTED_KEYS = {"terminal_backend", "backend", "sandbox"}
 SEND_MESSAGE_TARGETS = {
     "assistant": ["parent", "session", "agent", "project", "global"],
     "orchestrator": ["parent", "session", "agent", "project", "global"],
-    "lane-manager": ["parent", "session", "project"],
+    "dev-manager": ["parent", "session", "project"],
+    "test-writer": ["parent", "session"],
     "developer": ["parent", "session"],
     "code-reviewer": ["parent", "session"],
     "researcher": ["parent", "session"],
     "archivist": ["parent", "session"],
     "log-monitor": ["parent", "session"],
     "metrics-monitor": ["parent", "session"],
-    "inbox-manager": ["parent", "session"],
-    "release-manager": ["parent", "session", "project"],
+    "triage": ["parent", "session"],
+    "release-manager": ["parent", "session", "project", "global"],
     "reporter": ["session"],
     "security-reviewer": ["parent", "session"],
     "debugger": ["parent", "session"],
@@ -117,10 +135,10 @@ ROOT_PANE_EXCLUDES = ["name:block-update-task"]
 
 # Steps that wait on another session report and wait from the step itself.
 # #23750 adds the developer and code-reviewer load_skills and the developer
-# claim reports, so a relaunched seat can reach its Lane Manager before work.
+# claim reports, so a relaunched seat can reach its Dev Manager before work.
 WAITING_STEPS = {
     "developer": {"load_skills", "claim", "submit"},
-    "code-reviewer": {"load_skills", "await", "review", "verdict"},
+    "code-reviewer": {"load_skills", "await", "review", "verdict", "fix"},
     "log-monitor": {"tick", "report"},
     "metrics-monitor": {"tick", "report"},
     "researcher": {"serve"},
@@ -138,7 +156,7 @@ HANDLER_KEYS = ("on_enter", "on_mcp_success", "on_mcp_error", "on_exit")
 FLAG_READ_RE = re.compile(r"vars\.(?:get\(\s*['\"])?(\w+)")
 
 ROUTED_SKILLS = {"impeccable", "rust", "typescript", "tech-writer"}
-CANDIDATE_EVENT_LINE = "`LANE= EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`"
+CANDIDATE_EVENT_LINE = "`EVENT=CANDIDATE TASK=#NNNNN TASK_TITLE= RUN= WT= COMMIT= NOTE=`"
 ROUTE_LINE_RE = re.compile(r"^- [^:]+: (?P<skills>.+)$")
 # Seat flags the workflow engine writes itself (seat_transitions.py). The
 # native-variable-authority rule rejects hand writes to them, so no step needs set_variable.
@@ -149,9 +167,9 @@ ENGINE_OWNED_FLAGS = frozenset(
         "consensus",
         "implementation_complete",
         "log_monitor_reported",
-        "orchestrator_reported",
         "skills_routed",
         "tick_done",
+        "triage_reported",
         "verdict_ready",
     }
 )
@@ -269,11 +287,11 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     else:
         assert "persona" not in seat["prompts"]
     assert seat["provider"] == "inherit"
-    if name == "inbox-manager":
-        assert seat["model"] == "claude-sonnet-5-5"
+    # Launch defaults choose every seat's model; Triage keeps its own reasoning effort.
+    assert "model" not in seat
+    if name == "triage":
         assert seat["reasoning_effort"] == "medium"
     else:
-        assert "model" not in seat
         assert "reasoning_effort" not in seat
     assert seat["checkout_mode"] == "inherit"
     assert seat["timeout"] == (900 if name in SPAWN_ONLY_SEATS else 0)
@@ -287,7 +305,7 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     assert "tag:roles" not in include
     assert ("name:no-send-keys" in include) is (name not in SEND_KEYS_SEATS)
     assert not any("review-learning" in entry for value in selectors.values() for entry in value)
-    if name == "lane-manager":
+    if name in ("dev-manager", "test-writer"):
         assert "tag:worker-safety" in include
     if name in PERSONA_ONLY_SEATS:
         assert include == ROOT_PANE_INCLUDES
@@ -301,11 +319,15 @@ def test_seat_definitions_share_the_seat_contract(name: str) -> None:
     assert "## Platform Context" in prompt
     assert "## Skills" in prompt
     assert "gobby-agents:send_message" in prompt
-    assert "lesson" not in prompt.lower()
+    # Only the Dev Manager records lessons, in its closing step record.
+    assert ("lesson" in prompt.lower()) is (name == "dev-manager")
 
     blocked = set(seat.get("blocked_tools") or [])
     if name in READ_ONLY_SEATS:
         assert blocked == READ_ONLY_BLOCKED_TOOLS
+    if name == "code-reviewer":
+        # Review steps stay read-only by step; the fix step edits after a claim hand-off.
+        assert blocked == {"KillShell"}
     if name in WRITE_SCOPE_RULES:
         assert not blocked & READ_ONLY_BLOCKED_TOOLS
         assert WRITE_SCOPE_RULES[name] in prompt
@@ -362,3 +384,53 @@ def test_developer_routes_skills_by_task() -> None:
     assert ROUTED_SKILLS <= routed
     for skill in routed:
         assert (SKILLS_DIR / skill / "SKILL.md").is_file(), skill
+
+
+@pytest.mark.parametrize("name", ["orchestrator", "assistant", "dev-manager"])
+def test_seat_references_gate_required_reading(name: str) -> None:
+    raw = yaml.safe_load(SEAT_GATES.read_text())
+    rule = raw["rules"]["require-seat-references"]
+    assert rule["enabled"] and rule["event"] == "before_tool"
+    [effect] = rule["effects"]
+    assert effect["type"] == "block"
+
+    seat = _bundled()[name]
+    assert GCLIENT_REFERENCE in seat["workflows"]["variables"]["_seat_references"]
+    assert "tag:default" in _selectors(seat)["include"] and "default" in raw["tags"]
+    content = (SKILLS_DIR / "gobby" / GCLIENT_REFERENCE.split(":", 1)[1]).read_text()
+    assert len(content) < 15_000 and "{{" not in content and "{%" not in content
+    for topic in ("tab_title", "capture_output", "send_keys", "project policy"):
+        assert topic in content, topic
+
+    procedure = "gobby:references/agents/procedures/orchestrator.md"
+    variables: dict[str, Any] = {
+        "_seat_references": [procedure, GCLIENT_REFERENCE],
+        "loaded_skill_references": [],
+    }
+    event = SimpleNamespace(data={"tool_name": "Bash", "tool_input": {"command": "git status"}})
+    context = {"variables": variables, "event": event, "tool_input": event.data["tool_input"]}
+    helpers = build_condition_helpers(context=context)
+    evaluator = SafeExpressionEvaluator(context, helpers)
+
+    def reason() -> str:  # The engine adds skill_fetch_directive to the condition helpers.
+        funcs = {**helpers, "skill_fetch_directive": skill_fetch_directive}
+        return TemplateEngine(strict_undefined=False).render(effect["reason"], {**context, **funcs})
+
+    assert evaluator.evaluate(rule["when"]), "Work must wait for every listed reference"
+    assert reason() == skill_fetch_directive(procedure)
+    variables["loaded_skill_references"] = [procedure]
+    assert evaluator.evaluate(rule["when"]), "One loaded reference cannot release the rest"
+    assert reason() == skill_fetch_directive(GCLIENT_REFERENCE)
+    variables["loaded_skills"] = [GCLIENT_REFERENCE]
+    assert evaluator.evaluate(rule["when"]), "A skill entrypoint cannot replace its reference"
+    variables["loaded_skill_references"] = [procedure, GCLIENT_REFERENCE]
+    assert not evaluator.evaluate(rule["when"])
+    variables["loaded_skill_references"] = []  # Context loss clears tracked reference loads.
+    assert evaluator.evaluate(rule["when"]), "Compaction must require the references again"
+    for server, tool in SEAT_REFERENCE_EXEMPT_TOOLS:
+        event.data = {"mcp_server": server, "mcp_tool": tool}
+        assert not evaluator.evaluate(rule["when"]), f"Recovery must remain available: {tool}"
+    event.data = {"mcp_server": "gobby-agents", "mcp_tool": "spawn_agent"}
+    assert evaluator.evaluate(rule["when"]), "Pane placement must wait for the reference"
+    del variables["_seat_references"]
+    assert not evaluator.evaluate(rule["when"]), "Definitions without the list stay ungated"

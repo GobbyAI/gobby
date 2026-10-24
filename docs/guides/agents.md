@@ -207,21 +207,22 @@ catalogue is pinned by
 | --- | --- |
 | `assistant` | Runs in an operator-opened pane. Communicates with the operator and coordinates decisions; never spawned |
 | `orchestrator` | Runs in an operator-opened pane. Assigns and coordinates repository work; never spawned |
-| `lane-manager` | Routes lane work, relays landings, and releases closes |
-| `developer` | Implements one claimed task at a time in its assigned lane |
-| `code-reviewer` | Reviews candidates, lands approved commits, and reports retests |
+| `dev-manager` | Runs one task's DevTeam: moves the claim through the review loop, keeps its seats working, then lands and closes the task |
+| `test-writer` | Commits a DevTeam task's failing tests before implementation and records the test step |
+| `developer` | Implements one DevTeam task against the Test Writer's failing tests and sends its CANDIDATE to the Dev Manager and Code Reviewer |
+| `code-reviewer` | Reviews the exact candidate SHA and gives LAND or BOUNCE; after a second rejection it becomes the task's fixer |
 | `security-reviewer` | Reviews candidates for security and gives LAND or BOUNCE beside the code reviewer |
 | `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
 | `debugger` | Tests one bug hypothesis and reports CONFIRMED, REFUTED or INCONCLUSIVE with its evidence |
-| `release-manager` | Keeps the landing and activation ledger, orders closes, activates landed work, and holds heavy-run slots |
-| `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts on quiet lanes |
+| `release-manager` | Keeps the landing ledger and activates landed work in release batches under the release window |
+| `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts Triage on quiet DevTeams |
 | `researcher` | Answers bounded research requests |
 | `reporter` | Short-lived spawned run that drafts the 30-minute operator status and ends |
 | `archivist` | Maintains the operational digest |
-| `log-monitor` | Monitors health and admits heavy work and close reviews |
-| `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to the Orchestrator and Log Monitor. `team-coordination` accepts the live Log Monitor ref through `metrics_monitor_log_monitor` |
-| `inbox-manager` | Consolidates lane reports for the Orchestrator |
-| `consolidator` | Proposes task bundles, stale-item retirement and lane moves to the Orchestrator; inspects tasks read-only and excludes protected triage and plan-expanded subtrees |
+| `log-monitor` | Monitor-only check of daemon health, status and logs every ten minutes; reports to Triage |
+| `metrics-monitor` | Observe-only Prometheus watch of daemon RSS, CPU and uptime; reports to Triage and Log Monitor |
+| `triage` | Receives the reports meant for the Orchestrator and hands it one queued digest every five minutes |
+| `consolidator` | Proposes task bundles, stale-item retirement and lane moves to Triage for the Orchestrator; inspects tasks read-only and excludes protected triage and plan-expanded subtrees |
 
 These templates are global installed definitions tagged `gobby` in storage;
 their YAML `seat` tag marks the file-based catalogue. The Assistant and
@@ -236,16 +237,16 @@ additionally declares `idle_ttl_seconds: 900`.
 
 Shared seat guidance is injected by the `inject-seat-common` rule in the `roles`
 rule group. The `no-send-keys` rule blocks `send_keys` and `capture_output` for
-every seat that selects it. The Assistant, Orchestrator, Lane Manager and
+every seat that selects it. The Assistant, Orchestrator, Dev Manager and
 Recovery Steward do not select it, so the rule does not block them. Spawn and
 pipeline-launch restrictions prevent seats from bypassing their assigned role;
-the automatic task-close reviewer is the permitted managed review path.
+a Dev Manager may only resume a stalled seat of its own team.
 Definitions declare tool blocks; path-aware rules constrain seats with bounded
 write scopes. Seats with required skills or a fixed loop declare a step workflow.
 Message-driven seats need no empty serve loop. Inspect installed rows and
 selectors for effective policy; editing a bundled YAML alone does not activate it.
 
-All lanes use the single `developer` definition. After claiming, it reads the
+Every DevTeam uses the single `developer` definition. After claiming, it reads the
 task and routes additional skills by the touched paths:
 
 | Task paths | Additional skills |
@@ -256,12 +257,12 @@ task and routes additional skills by the touched paths:
 | Docs only | `tech-writer` |
 
 Task-specific skills and named methodologies are added; `tdd:required` adds
-`test-driven-development`. Required loads precede implementation. Lane identity
-comes from task and queue ownership and coordinator instructions, rather than a
-separate developer definition per language. Seat continuity is prompt guidance,
-not a schema field: seats compact in place under context pressure. Developers,
-researchers, and code reviewers also compact between units of work. Task
-completion does not end the standing seat.
+`test-driven-development`. Required loads precede implementation. The task
+comes from the DevTeam's admission, rather than a separate developer definition
+per language. Seat continuity is prompt guidance, not a schema field: seats
+compact in place under context pressure. Closing a DevTeam task ends every seat
+of that team; other standing seats outlive the tasks they work on. See
+[runbooks](runbooks.md) for the Support and DevTeam launches.
 
 ### Planning Runbook Agents
 

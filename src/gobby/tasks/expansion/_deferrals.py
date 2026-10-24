@@ -74,7 +74,7 @@ def create_placeholder_deferral_tasks(
                 (existing_id,),
             ).fetchone()
             if row is not None and not (
-                row["closed_at"] is not None and row["closed_reason"] == "obsolete"
+                row["closed_at"] is not None and row["closed_reason"] == "moot"
             ):
                 created[section_id] = existing_id
                 if row["closed_at"] is None:

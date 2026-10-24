@@ -1,13 +1,11 @@
-"""Red tests for build-agent rule audience scoping."""
+"""Rule audience scoping: autonomous-audience rules skip interactive sessions."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
@@ -25,28 +23,6 @@ def _make_event(data: dict[str, Any] | None = None) -> HookEvent:
         timestamp=datetime.now(UTC),
         data=data or {},
     )
-
-
-def test_build_rules_autonomous_only() -> None:
-    rule_dir = Path("src/gobby/install/shared/rules/build")
-    rule_files = [path for path in rule_dir.glob("*.yaml") if path.is_file()]
-
-    assert rule_files, "build rule YAML files must be bundled"
-    for path in rule_files:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert raw["audience"] == "autonomous", path
-
-
-def test_build_rules_sync_with_audience(temp_db: HubDatabase) -> None:
-    from gobby.storage.definitions.rules import RuleDefinitionManager
-    from gobby.workflows.sync_rules import sync_bundled_rules
-
-    sync_bundled_rules(temp_db)
-    manager = RuleDefinitionManager(temp_db)
-
-    row = manager.get_by_name("build-agent-block-full-pytest")
-    assert row is not None
-    assert row.definition_json["audience"] == "autonomous"
 
 
 @pytest.mark.asyncio

@@ -157,7 +157,7 @@ def _is_closed_obsolete_task(self: Any, task_id: str) -> bool:
         # reset. Treat missing rows as active blockers outside the known target
         # set so apply does not silently overwrite unrelated descendants.
         return False
-    return task.closed_at is not None and task.closed_reason == "obsolete"
+    return task.closed_at is not None and task.closed_reason == "moot"
 
 
 def _task_exists(self: Any, task_id: str) -> bool:

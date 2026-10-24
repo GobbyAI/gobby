@@ -71,7 +71,7 @@ def test_deliberate_close_of_escalated_task_succeeds_and_clears_escalation(
         )
 
 
-def test_manual_escalation_reopen_preserves_historical_validation_fail_count(
+def test_manual_escalation_reopen_preserves_historical_review_fail_count(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -81,12 +81,13 @@ def test_manual_escalation_reopen_preserves_historical_validation_fail_count(
         "Manual reopen",
         validation_criteria="Test task completion is observable.",
     )
-    manager.update_task(task.id, validation_fail_count=4)
+    # Below the rejection limit; an exhausted epoch reopens only through the audited reset.
+    manager.update_task(task.id, review_fail_count=2)
     manager.escalate_task(task.id, reason="manual review")
 
     reopened = manager.reopen_task(task.id, reason="review resolved")
 
-    assert reopened.validation_fail_count == 4
+    assert reopened.review_fail_count == 2
     assert reopened.is_escalated is False
 
 
@@ -100,9 +101,9 @@ def test_repeated_close_preserves_terminal_timestamps(
         "Idempotent close",
         validation_criteria="Test task completion is observable.",
     )
-    first = manager.close_task(task.id, reason="finished")
-    second = manager.close_task(task.id, reason="ignored retry")
+    first = manager.close_task(task.id, reason="done")
+    second = manager.close_task(task.id, reason="moot")
 
     assert second.closed_at == first.closed_at
     assert second.updated_at == first.updated_at
-    assert second.closed_reason == first.closed_reason == "finished"
+    assert second.closed_reason == first.closed_reason == "done"

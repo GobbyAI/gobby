@@ -518,6 +518,43 @@ async def test_split_axis_maps_to_storage_axis(harness: _Harness) -> None:
         assert _split_axis(layout, reserved.pane_id) == stored
 
 
+async def test_split_placement_by_tab_title(harness: _Harness) -> None:
+    h = harness
+    ws, elsewhere = _workspace(h), _workspace(h, "elsewhere")
+    lane, first = _base(h, ws, title="lane")
+    focused = _labeled_split(h, first, "manager", _terminal(h))
+    h.workspaces.set_focus_hints(ws.id, project_id=h.project_id, tab_id=lane.id, pane_id=focused.id)
+    _base(h, ws, title="reviews")
+    _base(h, elsewhere, title="lane")  # Another workspace's tab never matches.
+    split = {"workspace": ws.id, "tab_title": "lane", "axis": "right", "title": "seat"}
+
+    resolved = await h.reserver.preflight(
+        OPERATOR, h.project_id, AgentPlacement.parse({"split": split})
+    )
+    assert (resolved.tab_id, resolved.beside_pane_id) == (lane.id, focused.id)
+    reserved = await h.reserver.reserve(resolved, worktree_id=None)
+    assert reserved.tab_id == lane.id
+    assert _split_axis(_tab_row(h, ws, lane.id).layout, reserved.pane_id) == "horizontal"
+
+    _base(h, ws, title="twin")
+    _base(h, ws, title="twin")
+    before = (_tab_ids(h, ws), _pane_ids(h, ws), list(h.events))
+    for title in ("absent", "twin"):
+        placement = AgentPlacement.parse({"split": {**split, "tab_title": title}})
+        await _refused("invalid_ref", h.reserver.preflight(OPERATOR, h.project_id, placement))
+    assert (_tab_ids(h, ws), _pane_ids(h, ws), h.events) == before
+
+    for body in (
+        {**split, "pane": focused.id},
+        {"pane": focused.id, "tab_title": "lane", "axis": "right", "title": "seat"},
+        {"workspace": ws.id, "axis": "right", "title": "seat"},
+        {**split, "tab_title": "  "},
+    ):
+        with pytest.raises(AgentPlacementError) as caught:
+            AgentPlacement.parse({"split": body})
+        assert caught.value.code == "invalid_placement", body
+
+
 @pytest.mark.parametrize("columns", [80, 323])
 async def test_balanced_launches_preserve_manager_width_and_existing_tab(
     harness: _Harness, columns: int

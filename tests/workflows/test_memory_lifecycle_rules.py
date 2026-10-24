@@ -752,12 +752,12 @@ class TestReopenedClosureMemoryReview:
 
     @staticmethod
     def _close_and_queue(db: HubDatabase, tasks: LocalTaskManager, task_id: str) -> None:
-        tasks.close_task(task_id, reason="completed", closed_in_session_id=SESSION_ID)
+        tasks.close_task(task_id, reason="done", closed_in_session_id=SESSION_ID)
         candidate = classify_memory_review_close(
             tasks,
             task_id=task_id,
             changes_summary="Fixed the reopen path.",
-            reason="completed",
+            reason="done",
             commit_shas=["abc1234"],
         )
         assert candidate is not None

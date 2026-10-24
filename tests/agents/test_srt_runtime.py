@@ -36,10 +36,10 @@ from gobby.agents.srt_runtime import (
     SrtInstallation,
     SrtRuntimeError,
     prepare_sandbox_launch,
-    render_srt_settings,
     verify_srt_installation,
     verify_srt_installation_for_launch,
 )
+from gobby.agents.srt_settings import render_srt_settings
 from gobby.utils import spawn
 from gobby.utils.dependency_requirements import (
     SRT_RELEASE,

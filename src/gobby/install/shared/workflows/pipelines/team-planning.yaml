@@ -38,7 +38,7 @@ inputs:
   report_to:
     type: string
     required: true
-    description: "Live operator session ref for readiness, blockers and unassigned waits"
+    description: "Triage's live session ref for readiness, blockers and unassigned waits"
   plan_writer_provider:
     type: string
     default: null

@@ -19,6 +19,7 @@ from gobby.storage.workspaces import (
     WorkspaceManager,
     WorkspacePane,
     WorkspaceTab,
+    WorkspaceTarget,
     mint_pane_id,
 )
 from gobby.terminals.actor_scope import ActorScopeError, resolve_actor_scope
@@ -50,6 +51,7 @@ _PLACEMENT_FIELDS = {
     "tab": frozenset({"workspace", "title"}),
     "split": frozenset({"pane", "axis", "title"}),
 }
+_TITLED_SPLIT_FIELDS = frozenset({"workspace", "tab_title", "axis", "title"})
 # Terminal states release kills; an orphaned row is left for its reaper.
 _KILL_STATES = frozenset({"pending", "live"})
 _SHARED_CODES: dict[str, AgentPlacementErrorCode] = {
@@ -88,7 +90,11 @@ def _invalid(message: str) -> AgentPlacementError:
 
 @dataclass(frozen=True)
 class AgentPlacement:
-    """A validated ``placement`` input: a new tab, or a split beside a pane."""
+    """A validated ``placement`` input: a new tab, or a split beside a pane.
+
+    A split names its pane by ``ref``, or, with ``tab_title``, splits beside the
+    focused pane of the one tab with that title in workspace ``ref``.
+    """
 
     kind: Literal["tab", "split"]
     ref: str
@@ -96,24 +102,34 @@ class AgentPlacement:
     axis: str | None = None
     columns: int = 80
     rows: int | None = None
+    tab_title: str | None = None
 
     @classmethod
     def parse(cls, raw: object) -> AgentPlacement:
-        """Validate ``{"tab": {workspace, title}}`` or ``{"split": {pane, axis, title}}``."""
+        """Validate ``{"tab": {workspace, title}}`` or ``{"split": {pane, axis, title}}``.
+
+        A split may name ``workspace`` plus ``tab_title`` in place of ``pane``.
+        """
         if not isinstance(raw, Mapping) or len(raw) != 1:
             raise _invalid("placement must be an object with exactly one of 'tab' or 'split'")
         [(kind, body)] = raw.items()
         fields = _PLACEMENT_FIELDS.get(kind) if isinstance(kind, str) else None
         if fields is None:
             raise _invalid(f"placement kind must be 'tab' or 'split', got {kind!r}")
+        titled = kind == "split" and isinstance(body, Mapping) and "tab_title" in body
+        if titled:
+            fields = _TITLED_SPLIT_FIELDS
         allowed = fields | {"columns", "rows"} if kind == "split" else fields
         if not isinstance(body, Mapping) or not fields <= set(body) <= allowed:
             raise _invalid(f"placement.{kind} must have exactly the fields {sorted(fields)}")
-        title, ref = body["title"], body["workspace" if kind == "tab" else "pane"]
+        title, ref = body["title"], body["pane" if "pane" in fields else "workspace"]
         if not isinstance(title, str) or not title.strip():
             raise _invalid(f"placement.{kind}.title must be a non-blank string")
         if not isinstance(ref, str) or not ref.strip():
             raise _invalid(f"placement.{kind} must name its target")
+        tab_title = body.get("tab_title")
+        if titled and (not isinstance(tab_title, str) or not tab_title.strip()):
+            raise _invalid("placement.split.tab_title must be a non-blank string")
         if kind == "tab":
             return cls(kind="tab", ref=ref, title=title)
         axis = body["axis"]
@@ -136,7 +152,15 @@ class AgentPlacement:
                 )
         elif "rows" in body:
             raise _invalid("placement.split.rows requires balanced axis")
-        return cls(kind="split", ref=ref, title=title, axis=stored, columns=columns, rows=rows)
+        return cls(
+            kind="split",
+            ref=ref,
+            title=title,
+            axis=stored,
+            columns=columns,
+            rows=rows,
+            tab_title=tab_title,
+        )
 
 
 @dataclass(frozen=True)
@@ -209,7 +233,7 @@ class AgentPaneReserver:
     ) -> ResolvedPlacement:
         """Resolve and authorize ``placement`` read-only.
 
-        ``own_seat_resume`` admits an autonomous caller only for its own lane's seat resume.
+        ``own_seat_resume`` admits an autonomous caller only for its own team's seat resume.
         """
         return await asyncio.to_thread(
             self._preflight, actor, project_id, placement, own_seat_resume
@@ -235,7 +259,11 @@ class AgentPaneReserver:
             if placement.kind == "tab":
                 workspace = _workspace_of(target, placement.ref)
             else:
-                tab, beside = _pane_of(target, placement.ref)
+                tab, beside = (
+                    _pane_of(target, placement.ref)
+                    if placement.tab_title is None
+                    else self._titled_tab_focus(target, placement.ref, placement.tab_title)
+                )
                 if tab.project_id != project_id:
                     raise AgentPlacementError(
                         "forbidden", f"Pane {beside.id} belongs to another project"
@@ -252,6 +280,21 @@ class AgentPaneReserver:
             beside_pane_id=beside_pane_id,
             tab_id=tab_id,
         )
+
+    def _titled_tab_focus(
+        self, target: WorkspaceTarget, reference: str, tab_title: str
+    ) -> tuple[WorkspaceTab, WorkspacePane]:
+        """Resolve the focused pane of the one tab titled ``tab_title`` in the workspace."""
+        workspace = _workspace_of(target, reference)
+        tabs = [tab for tab in self._workspaces.list_tabs(workspace.id) if tab.title == tab_title]
+        focused = tabs[0].focused_pane_id if len(tabs) == 1 else None
+        if focused is None:
+            raise WorkspaceOpError(
+                "invalid_ref",
+                f"Workspace {reference!r} needs exactly one tab titled {tab_title!r} with a "
+                f"focused pane; {len(tabs)} tabs have that title",
+            )
+        return _pane_of(self._workspaces.resolve_reference(focused), focused)
 
     async def reserve(
         self, resolved: ResolvedPlacement, *, worktree_id: str | None

@@ -120,8 +120,13 @@ def _set_canonical_tool_metadata(data: dict[str, Any], *, shell_metadata: bool =
             {**record["scope"], "canonical_file_paths": list(record["paths"])}
         )
     if segments := metadata.get("canonical_code_navigation_segments"):
+        # As in the segment merge, a search with no explicit bound is broad.
         metadata["canonical_code_navigation_broad"] = any(
-            segment.get("canonical_code_navigation_broad") for segment in segments
+            segment.get(
+                "canonical_code_navigation_broad",
+                segment.get("canonical_code_navigation_action") == "search",
+            )
+            for segment in segments
         )
     apply_path_scope_metadata(data, metadata, canonical_file_paths)
     annotate_navigation(data, metadata)

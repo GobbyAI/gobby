@@ -10,6 +10,8 @@ from typing import Any, NoReturn
 import psycopg
 import pytest
 
+from gobby.storage.plans import LocalPlanManager
+
 pytestmark = pytest.mark.unit
 
 
@@ -21,14 +23,38 @@ def test_completed_plan_archived(monkeypatch: pytest.MonkeyPatch) -> None:
     def archive_plan(_self: Any, plan_id: str, **_kwargs: Any) -> None:
         archived.append(plan_id)
 
-    monkeypatch.setattr(_plan.LocalPlanManager, "archive_plan", archive_plan)
+    monkeypatch.setattr(LocalPlanManager, "archive_plan", archive_plan)
 
     _plan.on_epic_terminal(
-        SimpleNamespace(task_ref="#200", status="closed", closure_reason="completed"),
+        SimpleNamespace(task_ref="#200", status="closed", closure_reason="done"),
         db=object(),
     )
 
     assert archived == ["#200"]
+
+
+@pytest.mark.parametrize(
+    ("closure_reason", "expected"),
+    [("moot", [("#201", "closed-moot")]), ("superseded", []), ("wont_do", [])],
+)
+def test_only_done_or_moot_epics_archive_their_plan(
+    monkeypatch: pytest.MonkeyPatch, closure_reason: str, expected: list[tuple[str, str]]
+) -> None:
+    from gobby.hooks.event_handlers import _plan
+
+    archived: list[tuple[str, str]] = []
+
+    def archive_plan(_self: Any, plan_id: str, *, reason: str, **_kwargs: Any) -> None:
+        archived.append((plan_id, reason))
+
+    monkeypatch.setattr(LocalPlanManager, "archive_plan", archive_plan)
+
+    _plan.on_epic_terminal(
+        SimpleNamespace(task_ref="#201", status="closed", closure_reason=closure_reason),
+        db=object(),
+    )
+
+    assert archived == expected
 
 
 def test_plan_state_archived(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,10 +65,10 @@ def test_plan_state_archived(monkeypatch: pytest.MonkeyPatch) -> None:
     def archive_plan(*_args: Any, **_kwargs: Any) -> Any:
         return archived
 
-    monkeypatch.setattr(_plan.LocalPlanManager, "archive_plan", archive_plan)
+    monkeypatch.setattr(LocalPlanManager, "archive_plan", archive_plan)
 
     result = _plan.on_epic_terminal(
-        SimpleNamespace(task_ref="#200", status="closed", closure_reason="completed"),
+        SimpleNamespace(task_ref="#200", status="closed", closure_reason="done"),
         db=object(),
     )
 
@@ -55,10 +81,10 @@ def test_missing_plan_file_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_missing_file(*_args: Any, **_kwargs: Any) -> NoReturn:
         raise FileNotFoundError("plan file not found")
 
-    monkeypatch.setattr(_plan.LocalPlanManager, "archive_plan", raise_missing_file)
+    monkeypatch.setattr(LocalPlanManager, "archive_plan", raise_missing_file)
 
     result = _plan.on_epic_terminal(
-        SimpleNamespace(task_ref="#200", status="closed", closure_reason="completed"),
+        SimpleNamespace(task_ref="#200", status="closed", closure_reason="done"),
         db=object(),
     )
 
@@ -84,11 +110,11 @@ def test_archive_failures_are_logged_and_ignored(
     def raise_archive_error(*_args: Any, **_kwargs: Any) -> NoReturn:
         raise archive_error
 
-    monkeypatch.setattr(_plan.LocalPlanManager, "archive_plan", raise_archive_error)
+    monkeypatch.setattr(LocalPlanManager, "archive_plan", raise_archive_error)
 
     with caplog.at_level(logging.ERROR, logger=_plan.__name__):
         result = _plan.on_epic_terminal(
-            SimpleNamespace(task_ref="#200", status="closed", closure_reason="completed"),
+            SimpleNamespace(task_ref="#200", status="closed", closure_reason="done"),
             db=object(),
         )
 
@@ -102,10 +128,10 @@ def test_archive_cancellation_is_not_masked(monkeypatch: pytest.MonkeyPatch) -> 
     def raise_cancelled(*_args: Any, **_kwargs: Any) -> NoReturn:
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(_plan.LocalPlanManager, "archive_plan", raise_cancelled)
+    monkeypatch.setattr(LocalPlanManager, "archive_plan", raise_cancelled)
 
     with pytest.raises(asyncio.CancelledError):
         _plan.on_epic_terminal(
-            SimpleNamespace(task_ref="#200", status="closed", closure_reason="completed"),
+            SimpleNamespace(task_ref="#200", status="closed", closure_reason="done"),
             db=object(),
         )

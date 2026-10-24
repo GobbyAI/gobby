@@ -66,6 +66,9 @@ SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 # reached 168s on a loaded machine.
 STARTUP_READINESS_TIMEOUT_SECONDS = 300.0
 DAEMON_HEALTH_TIMEOUT_SECONDS = STARTUP_READINESS_TIMEOUT_SECONDS
+# Set in ctx.meta before restart or cutover starts the daemon it stopped. Both proved
+# the release window before stopping; refusing the start now would leave no daemon.
+START_AFTER_OWN_STOP = "gobby.start_after_own_stop"
 # The restart route's start proof is bounded at 60 s and then answers 409. This post
 # waits longer, so a slow proof reaches the caller as its refusal, not as a timeout.
 RESTART_REQUEST_TIMEOUT_SECONDS = 75.0
@@ -231,9 +234,13 @@ def _do_stop(
     native terminals) down with the daemon; by default the host survives.
     """
     from gobby.cli.runtime import get_cli_runtime
+    from gobby.releases.window import agent_activation_refusal
 
     if force and wait:
         raise click.UsageError("--force and --wait are mutually exclusive")
+    if refusal := agent_activation_refusal():
+        _step(f"Refusing to stop: {refusal}", error=True)
+        return False
 
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     pid_file = get_gobby_home() / "gobby.pid"
@@ -487,8 +494,11 @@ def restart(
 
     # Check before stopping: refusing after the stop would leave no daemon.
     from gobby.cli.runtime import get_cli_runtime
+    from gobby.releases.window import agent_activation_refusal
 
-    refusal = restart_start_refusal(get_cli_runtime(ctx), expected_identity=expected_identity)
+    refusal = agent_activation_refusal() or restart_start_refusal(
+        get_cli_runtime(ctx), expected_identity=expected_identity
+    )
     if refusal:
         _step(f"Refusing to restart: {refusal}", error=True)
         _step("The running daemon was left alone.")
@@ -524,6 +534,7 @@ def restart(
 
     from .daemon_start import start
 
+    ctx.meta[START_AFTER_OWN_STOP] = True
     ctx.invoke(start, verbose=verbose)
 
 

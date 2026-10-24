@@ -19,15 +19,7 @@ from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import TaskOrderKey, order_task_keys
 from gobby.storage.tasks._read import _escape_like_pattern
-from gobby.tasks.state_semantics import AWAITING_HUMAN_REVIEW_LABEL
-
-
-def _not_closed_or_escalated_sql(task_alias: str = "t") -> str:
-    return (
-        f"{task_alias}.closed_at IS NULL "
-        f"AND {task_alias}.escalated_at IS NULL "
-        f"AND COALESCE({task_alias}.is_escalated, FALSE) IS FALSE"
-    )
+from gobby.tasks.state_semantics import validate_task_state
 
 
 def _external_blocker_exists_sql(task_alias: str = "t") -> str:
@@ -58,15 +50,15 @@ def _external_blocker_exists_sql(task_alias: str = "t") -> str:
     """
 
 
-def _no_external_blocker_sql(task_alias: str = "t") -> str:
-    return f"NOT {_external_blocker_exists_sql(task_alias)}"
-
-
-def _awaiting_human_review_sql(task_alias: str = "t") -> str:
-    return (
-        f"COALESCE({task_alias}.labels, '[]'::jsonb) "
-        f"@> '[\"{AWAITING_HUMAN_REVIEW_LABEL}\"]'::jsonb"
-    )
+def projected_task_state_sql(task_alias: str = "t") -> str:
+    """Project external blockers over the intrinsic state mirror."""
+    return f"""CASE
+        WHEN {task_alias}.state_bucket IN ('open', 'in_progress')
+            AND (COALESCE({task_alias}.blocked_by_merge, FALSE)
+                 OR {_external_blocker_exists_sql(task_alias)})
+        THEN 'blocked'
+        ELSE {task_alias}.state_bucket
+    END"""
 
 
 def list_tasks(
@@ -88,6 +80,7 @@ def list_tasks(
     sort_order: str = "asc",
     updated_since: datetime | None = None,
     candidate: bool | None = None,
+    state: str | None = None,
 ) -> list[Task]:
     """List tasks with filtering.
 
@@ -123,6 +116,10 @@ def list_tasks(
     """
     where = "1=1"
     params: list[Any] = []
+
+    if state is not None:
+        where += f" AND ({projected_task_state_sql('tasks')}) = %s"
+        params.append(validate_task_state(state))
 
     if project_id:
         where += " AND project_id = %s"
@@ -414,19 +411,15 @@ def _ready_tasks_cte_sql() -> str:
     WITH RECURSIVE ready_tasks(id, path, depth) AS (
         -- Base case: open tasks with no parent and no external blocking deps
         SELECT t.id, ARRAY[t.id], 0 FROM tasks t
-        WHERE {_not_closed_or_escalated_sql("t")}
+        WHERE ({projected_task_state_sql("t")}) IN ('open', 'in_progress')
         AND t.parent_task_id IS NULL
-        AND {_no_external_blocker_sql("t")}
-        AND NOT {_awaiting_human_review_sql("t")}
 
         UNION ALL
 
         -- Recursive case: open tasks whose parent is ready and no external blocking deps
         SELECT t.id, rt.path || t.id, rt.depth + 1 FROM tasks t
         JOIN ready_tasks rt ON t.parent_task_id = rt.id
-        WHERE {_not_closed_or_escalated_sql("t")}
-        AND {_no_external_blocker_sql("t")}
-        AND NOT {_awaiting_human_review_sql("t")}
+        WHERE ({projected_task_state_sql("t")}) IN ('open', 'in_progress')
         AND rt.depth < 100
         AND NOT t.id = ANY(rt.path)
     )
@@ -516,13 +509,7 @@ def list_blocked_tasks(
     # instead of Postgres heap order (#20870 F1).
     query = f"""
     SELECT t.id, t.parent_task_id, t.priority, t.created_at FROM tasks t
-    WHERE t.closed_at IS NULL
-    AND (
-        t.escalated_at IS NOT NULL
-        OR COALESCE(t.is_escalated, FALSE) IS TRUE
-        OR {_external_blocker_exists_sql("t")}
-        OR {_awaiting_human_review_sql("t")}
-    )
+    WHERE ({projected_task_state_sql("t")}) = 'blocked'
     """
     params: list[Any] = []
 

@@ -19,11 +19,12 @@ from gobby.cli.installers.git_hooks import GOBBY_HOOK_END, HOOK_TEMPLATES, insta
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.close_receipts import INDEPENDENT_REVIEW_APPROVAL, record_close_receipt
 from gobby.tasks.land_commit import land_candidate
 from gobby.tasks.landing_policy import is_direct_commit_path
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.landing_case import bind_task_manager
+from tests.fixtures.review_approvals import approve_review, grant_review_writes
 
 pytestmark = pytest.mark.unit
 
@@ -361,14 +362,14 @@ async def test_land_commit_passes_installed_guard(
     candidate = repo.commit(lane, {"tests/test_a.py": "a = 1\n"})
     sha = repo.ok(lane, "rev-parse", "HEAD")
     direct = repo.git(repo.root, "merge", "-q", "--ff-only", "lane")
-    creator, claimant, reviewer = (
+    creator, claimant, reviewer, manager = (
         SessionManager(temp_db).register(
             external_id=external_id,
             machine_id=isolated.machine_id,
             source="codex",
             project_id=isolated.project.id,
         )
-        for external_id in ("creator", "claimant", "reviewer")
+        for external_id in ("creator", "claimant", "reviewer", "manager")
     )
     task = LocalTaskManager(temp_db).create_task(
         isolated.project.id,
@@ -379,17 +380,15 @@ async def test_land_commit_passes_installed_guard(
     )
     temp_db.execute("UPDATE tasks SET commits = %s WHERE id = %s", (json.dumps([sha]), task.id))
     task = LocalTaskManager(temp_db).get_task(task.id)
-    record_close_receipt(
-        temp_db,
-        task=task,
-        author_session_id=reviewer.id,
-        kind=INDEPENDENT_REVIEW_APPROVAL,
-        commit_sha=sha,
+    grant_review_writes(temp_db, reviewer.id, isolated.project.id)
+    approve_review(temp_db, task_id=task.id, reviewer_session_id=reviewer.id, commit_sha=sha)
+    bind_task_manager(
+        temp_db, manager=manager.id, parent=creator.id, project_id=isolated.project.id, task=task
     )
 
-    with session_context_for_test(reviewer.id):
+    with session_context_for_test(manager.id):
         landed = await land_candidate(
-            temp_db, task=task, caller_session_id=reviewer.id, commit_sha=sha
+            temp_db, task=task, caller_session_id=manager.id, commit_sha=sha
         )
 
     assert candidate.returncode == 0, candidate.stderr

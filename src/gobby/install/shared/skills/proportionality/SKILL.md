@@ -14,8 +14,8 @@ metadata:
 # proportionality — Anti-Rube-Goldberg Review Methodology
 
 > Internal methodology skill; loaded with `get_skill(name="proportionality")` by
-> `plan-adversary` (plan altitude), `epic-reviewer` (epic altitude), and
-> `task-close-reviewer` (leaf altitude). Not a user-facing command.
+> `plan-adversary` (plan altitude) and `epic-reviewer` (epic altitude); a leaf
+> code review applies it at leaf altitude. Not a user-facing command.
 >
 > `restraint` is the authoring-side counterpart: restraint disciplines work
 > being written; proportionality judges work already written.
@@ -141,7 +141,7 @@ The criterion is identical at every altitude; the unit under review changes.
   thing, frameworks introduced by one leaf and used by none, and product
   behavior no plan section asked for. This is the same criterion the
   epic-review `proportionality` dimension carries.
-- **Leaf altitude (`task-close-reviewer`).** Unit = a single leaf's diff. Flag a leaf
+- **Leaf altitude (leaf code review).** Unit = a single leaf's diff. Flag a leaf
   that introduces an abstraction, config knob, or indirection layer
   disproportionate to its single task, and name the simpler form. This is a
   `code_quality`-tier observation; it does **not** gate `spec_compliance` — a
@@ -149,7 +149,7 @@ The criterion is identical at every altitude; the unit under review changes.
 
 ## Boundaries
 
-- Proportionality is one criterion shared by three reviewers. Do not fork a
+- Proportionality is one criterion shared by every review altitude. Do not fork a
   per-surface copy — that fork is the drift this skill prevents.
 - This skill judges *mechanism vs. goal*. It never judges ambition, size, or
   net-new scope, and it never weakens correctness, security, or required

@@ -11,7 +11,8 @@ Finish in this order:
    definitive exit. Record exact commands and results for the reviewer. For
    changed Python tests, run the repository's test-types and test-quality audits
    over all affected tests; keep the suppression ratchet clean.
-3. Commit only task-owned paths with a task reference. Preserve foreign work.
+3. Stage only task paths and commit with a task reference. Preserve foreign work.
+   Use `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task(task_id=..., commit_sha=..., changes_summary=..., preview=true)`.
    Include validation results in the summary so completion evidence is reviewable.
 5. Repair every failed gate, then call the same close with `preview=false`.
@@ -36,8 +37,9 @@ Task, caller, machine, and repository authorization are checked before the gates
 The final close re-evaluates current state before writing. A concurrent change
 can require another preview or retry.
 
-No-work reasons are `duplicate`, `already_implemented`, `wont_fix`, `obsolete`,
-and `out_of_repo`. Explain the disposition. They permit a commitless close;
+Close reasons are `done`, `moot`, `superseded`, and `wont_do`.
+The no-work reasons `moot`, `superseded`, and `wont_do` permit a commitless close.
+Explain the disposition in `changes_summary`;
 they do not waive child closure, attributed-file cleanliness, or ancestry checks
 for commits already linked to the task.
 
@@ -49,23 +51,49 @@ activation workflow before requesting its final close.
 Use `link_commit` to attach work while keeping the task open. Include every commit
 that belongs to the task, and integrate those commits before closing. Closing the
 last child may close eligible organizational ancestors; an explicit epic close
-uses the same four gates. Never report an epic complete while children remain.
+uses the same five gates. Never report an epic complete while children remain.
 
-Peer evidence a close depends on is recorded by the peer, not the closer:
-`record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
-`independent_review_approval` (LAND of an exact commit) or `activation` receipt
-on another session's task, authorized against the locked task row.
-A session that has ever claimed the task can neither approve nor land it.
-An `activation` receipt comes only from the task's creator or delegator. When
-both have ended, or the live creator is the task's claimant and no delegator is
-live, a live session in the task's project takes over that authority with
-`transfer_task_authority(task_id, reason)`. It becomes the delegator, the
-delegation receiver is kept, and the reason is appended to the delegation reason.
-It refuses a closed task, the claimant, and any caller
-while a creator that is not the claimant, or a delegator, is still live. A paused
-holder counts as ended once every agent run linked to it ended or its recorded
-process exited on this machine; a lost terminal or wake binding alone does not.
-Re-running it is a no-op for the session already holding authority.
+When the project's `task_close_policy` sets `enforce_step_records`, a non-epic
+close also needs the approved step records that policy selects for the task's
+category: implementation and closing always, plus test and review where
+configured. Implementation, review and closing records cite the latest linked
+commit; a test record may cite any linked commit. With no linked commit, records
+carry the no-work disposition. `force` never bypasses them.
+
+Each step has one writer: `record_test_step`, `record_implementation_step`,
+`record_review_step` and `record_closing_step`. A writer accepts a session only
+when its agent definition's `task_step_writes` grants that step, and a review
+approval only from a session that never claimed, implemented or edited the task.
+
+Peer evidence a close depends on is recorded by the peer, not the closer. A
+review LAND is the reviewer's approved `record_review_step` record for the exact
+commit. `land_commit` lands that commit only for the task's Dev Manager or the
+root Orchestrator, never for the reviewer, and records a daemon-attested landing
+receipt on the task. Nothing else records a close receipt.
+
+A live release window holds every landing: `land_commit` refuses with
+`release_window_active` and does not escalate, so retry after the window ends.
+Only the Release Manager calls gobby-agents `acquire_release_window`,
+`renew_release_window(token, generation)` and
+`end_release_window(token, generation)`. The lease lasts 10 minutes from
+acquire or the last renew, and each renew returns the next generation. An
+unreadable `<git common dir>/gobby/release-window.json` refuses landings with
+`release_window_unreadable` until an operator deletes that file. The same codes
+refuse new work: `admit_team` for a team with no record, and a spawn that would
+create a fresh worktree or clone. An admitted team keeps working: its admission
+re-runs, replacement seats join its tree, an interrupted admission recovers its
+tree, and spawns that reuse a tree proceed.
+
+The Release Manager validates and activates the window's pinned candidate with
+`gobby release batch --token <token> --generation <n> [--base-sha <sha>]`, run
+in the background from its session. It refuses before touching the window
+unless the caller owns it, the main checkout HEAD is the pinned candidate, and
+the baseline (the last succeeded batch, else `--base-sha`) is an ancestor of
+it. It then renews the lease while it runs the checks the diff selects,
+activates by cutover or restart, and smokes the daemon. Each batch writes a
+record under `<git common dir>/gobby/release-batches/` and then ends the
+window if it still owns it. A success becomes the next baseline; a failure
+keeps the old one and files one regression task per candidate.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,
@@ -80,4 +108,4 @@ a lifecycle event.
 
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
-_Last verified: 2026-10-22_
+_Last verified: 2026-10-23_

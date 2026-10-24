@@ -21,11 +21,11 @@ HEADLESS_WAIT_GUIDANCE = (
     "from a later tool result."
 )
 # An agent wait has no session to message. spawn_agent subscribes the parent to its
-# child's completion and a task-close review delivers its verdict to the closing session;
-# both arrive through the hook that attaches pending notifications to tool results.
+# child's completion, which arrives through the hook that attaches pending
+# notifications to tool results.
 HEADLESS_AGENT_WAIT_GUIDANCE = (
     "Do not call a wait_for_* tool again in this run, and do not end the turn. A run this "
-    "session spawned, and a task-close reviewer, report their result as a completion "
+    "session spawned reports its result as a completion "
     "notification attached to a later tool result. Finish any remaining work, then keep "
     "the turn open with short bounded shell waits, each under a minute, until it arrives."
 )
