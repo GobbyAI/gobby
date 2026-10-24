@@ -884,8 +884,9 @@ one goes through generation, and carry stays `off` in the G and J arms.
     `label_model`, and sets `labeled_signature` to the original `member_signature`. Its
     own `member_signature` is the original plus the suffix `:carry`, so the G name is
     stale.
-  - Draw order is the per-corpus sampling order. Copies at odd positions (1st, 3rd, and
-    so on) get a mild perturbation. They drop `max(1, floor(member_count / 10))` members,
+  - A copy's position is its community's slot, 1 to 15, in that corpus's sampling order,
+    not its rank among the copies. Copies at odd positions (1st, 3rd, and so on) get a
+    mild perturbation. They drop `max(1, floor(member_count / 10))` members,
     chosen with seed 22604 from members not in `representatives`. If too few exist, the
     rest come from the remaining members.
   - Copies at even positions get a heavy perturbation. They replace
