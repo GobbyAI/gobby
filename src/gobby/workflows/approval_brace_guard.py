@@ -33,6 +33,7 @@ from gobby.hooks.provider_launch_guard import _python_name, _python_program
 from .approval_git_scripts import git_shell_scripts
 from .condition_helpers import _GIT_GLOBAL_FLAGS, _GIT_GLOBAL_VALUE_OPTIONS
 from .engine.command_matching import (
+    LanguageBodies,
     _decoded_stages,
     _shell_input_scripts,
     _wrapper_scripts,
@@ -723,6 +724,55 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
     return operands
 
 
+def _literal_language_heredoc(command: str, scan: ShellScan) -> bool:
+    """Allow source data only for one fully literal, quoted stdin-program invocation."""
+    if len(scan.heredocs) != 1:
+        return False
+    body = scan.heredocs[0]
+    if not body.quoted or not body.terminated or command[body.end :].strip():
+        return False
+    header = [
+        (token, span)
+        for token, span in zip(scan.tokens, scan.spans, strict=True)
+        if span[0] < body.start
+    ]
+    if len(header) < 4:
+        return False
+    if header[-3][0].value != "<<" or header[-1][0].value != "\n":
+        return False
+    delimiter, span = header[-2]
+    if command[span[0] : span[1]] not in (f"'{delimiter.value}'", f'"{delimiter.value}"'):
+        return False
+    cursor = 0
+    for _, (start, end) in header:
+        if command[cursor:start].strip():
+            return False
+        cursor = end
+    if cursor != body.start:
+        return False
+    argv = header[:-3]
+    if len(argv) >= 3 and argv[0][0].value == "cd" and argv[2][0].value == "&&":
+        if argv[2][0].quoted:
+            return False
+        path_span = argv[1][1]
+        raw_path = command[path_span[0] : path_span[1]]
+        if not argv[1][0].value or argv[1][0].value.startswith("-"):
+            return False
+        if command[argv[0][1][0] : argv[0][1][1]] != "cd" or any(_word_syntax(raw_path)):
+            return False
+        if any(active and char in "*?[~" for char, active in _characters(raw_path)):
+            return False
+        argv = argv[3:]
+    if any(command[start:end] != token.value for token, (start, end) in argv):
+        return False
+    words = [token.value for token, _ in argv]
+    if words[:1] in (["node"], ["nodejs"]):
+        return all(word in {"--input-type=module", "--input-type=commonjs"} for word in words[1:])
+    if words[:2] == ["uv", "run"]:
+        words = words[2:]
+    return words in (["python"], ["python", "-"], ["python3"], ["python3", "-"])
+
+
 def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:
     """Shell setup invalidates every data-head assumption in the submitted text."""
     functions = shell_function_bodies(text, scan)
@@ -742,9 +792,12 @@ def _shell_setup(text: str, scan: ShellScan, stages: list[list[str]]) -> bool:
 
 
 def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]:
-    """Preflight all bodies before choosing any data exemptions."""
+    """Collect shell subjects, exempting only whole-command literal language heredocs."""
     subjects: list[tuple[str, ShellScan]] = []
     strict = False
+    language_bodies: LanguageBodies = (
+        "data" if _literal_language_heredoc(command, scan_shell_command(command)) else "subjects"
+    )
     pending = [(command, 0)]
     seen: set[str] = set()
     while pending:
@@ -756,9 +809,9 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
             raise _AmbiguousSyntax("Shell nesting limit")
         scan = scan_shell_command(text)
         strict |= _shell_setup(text, scan, _decoded_stages(text))
-        # A Python heredoc body is source, not shell words. Its braces are code, so
+        # A known language heredoc is source, not shell words. Its braces are code, so
         # only the shell-expanded substitutions inside it stay subjects.
-        for subject in executable_command_subjects(text, python_bodies="data"):
+        for subject in executable_command_subjects(text, language_bodies=language_bodies):
             scan = scan_shell_command(subject)
             stages = _decoded_stages(subject)
             strict |= _shell_setup(subject, scan, stages)

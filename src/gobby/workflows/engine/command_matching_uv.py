@@ -1,4 +1,4 @@
-"""Program argv for ``uv run``, ``uvx`` and Python interpreter stages."""
+"""Program argv for ``uv run``, ``uvx`` and language interpreter stages."""
 
 import re
 
@@ -181,8 +181,27 @@ def _after_options(
     return words[index:]
 
 
-def _python_stage(words: list[str]) -> bool:
-    """Whether a stage runs Python reading its program from stdin, through ``uv run``."""
+def _node_stdin_program(argv: list[str]) -> bool:
+    """Recognize literal Node stdin modes; scripts, preloads and unknown flags stay strict."""
+    if not argv or shell_command_name(argv[0]) not in {"node", "nodejs"}:
+        return False
+    args = argv[1:]
+    if args[:1] == ["--input-type"]:
+        if len(args) < 2 or args[1] not in {"module", "commonjs"}:
+            return False
+        args = args[2:]
+    elif args[:1] in (["--input-type=module"], ["--input-type=commonjs"]):
+        args = args[1:]
+    if args[:1] == ["--"]:
+        args = args[1:]
+    return args in ([], ["-"])
+
+
+def _language_stage(words: list[str]) -> bool:
+    """Whether Python or Node consumes stdin as language source, including through ``uv run``."""
     unwrapped = _unwrap(words)
     argvs = _uv_run_argvs(shell_command_name(unwrapped[0]), unwrapped[1:]) if unwrapped else None
-    return any(_python_program(argv)[1] for argv in (argvs or [unwrapped]) if argv)
+    programs = argvs or [unwrapped]
+    return any(_python_program(argv)[1] for argv in programs if argv) or all(
+        _node_stdin_program(argv) for argv in programs
+    )
