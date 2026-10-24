@@ -1,6 +1,6 @@
 //! Spawned sessions pause on a refused daemon connection; operators can repair it.
 
-use crate::action::{HookAction, continue_action};
+use crate::action::{HookAction, continue_action, is_codex_interrupt};
 use crate::cli_config::CliConfig;
 use crate::planned_shutdown::is_stop_hook;
 use crate::transport::DeliveryFailureKind;
@@ -10,10 +10,13 @@ pub(crate) fn action(
     cfg: &CliConfig,
     failure_kind: DeliveryFailureKind,
 ) -> Option<HookAction> {
-    if !cfg.spawned_agent || !matches!(failure_kind, DeliveryFailureKind::Connect) {
+    if !cfg.spawned_agent
+        || !matches!(failure_kind, DeliveryFailureKind::Connect)
+        || is_codex_interrupt(cfg.source, hook_type)
+    {
         return None;
     }
-    Some(if is_stop_hook(hook_type) {
+    Some(if is_stop_like_hook(hook_type) {
         continue_action(cfg.source, hook_type)
     } else {
         HookAction {
@@ -22,4 +25,12 @@ pub(crate) fn action(
             stderr_message: Some("[Gobby] Daemon down. Please wait.".to_string()),
         }
     })
+}
+
+fn is_stop_like_hook(hook_type: &str) -> bool {
+    is_stop_hook(hook_type)
+        || matches!(
+            hook_type,
+            "subagent-stop" | "SubagentStop" | "subagent_stop"
+        )
 }

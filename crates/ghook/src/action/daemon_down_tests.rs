@@ -3,6 +3,36 @@ use crate::transport::DeliveryFailureKind;
 
 const MESSAGE: &str = "[Gobby] Daemon down. Please wait.";
 
+#[test]
+fn spawned_subagent_stop_passes_for_every_cli() {
+    let mut failures = Vec::new();
+    for (cli, hook) in [
+        ("claude", "subagent-stop"),
+        ("codex", "SubagentStop"),
+        ("droid", "SubagentStop"),
+        ("grok", "subagent_stop"),
+        ("agy", "SubagentStop"),
+    ] {
+        let cfg = CliConfig::for_cli(cli).unwrap().with_spawned_agent(true);
+        let action = action_from_failure(hook, &cfg, DeliveryFailureKind::Connect, "refused");
+        if action.exit_code != 0 || action.stderr_message.is_some() {
+            failures.push(format!("{cli} {hook}: {action:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn spawned_codex_interrupt_keeps_base_failure() {
+    let cfg = CliConfig::for_cli("codex")
+        .unwrap()
+        .with_spawned_agent(true);
+    let action = action_from_failure("Interrupt", &cfg, DeliveryFailureKind::Connect, "refused");
+    assert_eq!(action.exit_code, 1);
+    assert!(action.stdout_json.is_none());
+    assert_eq!(action.stderr_message.as_deref(), Some("Daemon unreachable"));
+}
+
 macro_rules! spawned_config {
     ($name:ident, $cli:literal, [$($hook:literal),+]) => {
         #[test]
