@@ -264,7 +264,7 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
         registered = await proxy.call_tool(
             server_name="gobby-agents",
             tool_name="wait_for_coordination",
-            arguments={"owner_session": owner_ref, "reply": True},
+            arguments={"owner_session": owner_ref, "reply": True, "brief": False},
             session_id=external_id,
         )
     else:
@@ -272,7 +272,8 @@ async def test_codex_step_gate_yields_only_for_active_mcp_reply_wait(
         try:
             with session_context_for_test(harness.waiter):
                 registered = await registry.call(
-                    "wait_for_coordination", {"owner_session": owner_ref, "reply": True}
+                    "wait_for_coordination",
+                    {"owner_session": owner_ref, "reply": True, "brief": False},
                 )
         finally:
             reset_project_context(project_token)

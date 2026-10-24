@@ -79,7 +79,11 @@ struct UiPrefs {
     _sidebar_collapsed: bool,
     sidebar_side: SidebarSide,
     sidebar_pinned: bool,
+    /// Pinned heights of the sidebar sections, a flat array in section order.
+    #[serde(deserialize_with = "lenient_section_heights")]
+    sidebar_section_heights: [u16; 4],
     nerd_glyphs: bool,
+    focus_hold_seconds: u64,
     project_order: Vec<String>,
     /// Last: TOML emits a sub-table after the plain values.
     project_labels: BTreeMap<String, String>,
@@ -110,7 +114,9 @@ impl From<&ClientPrefs> for UiPrefs {
             _sidebar_collapsed: false,
             sidebar_side: prefs.sidebar_side,
             sidebar_pinned: prefs.sidebar_pinned,
+            sidebar_section_heights: prefs.sidebar_section_heights,
             nerd_glyphs: prefs.nerd_glyphs,
+            focus_hold_seconds: prefs.focus_hold_seconds,
             project_order: prefs.project_order.clone(),
             project_labels: prefs.project_labels.clone(),
         }
@@ -158,7 +164,9 @@ impl From<PrefsFile> for ClientPrefs {
             title_scrolling: ui.title_scrolling,
             sidebar_side: ui.sidebar_side,
             sidebar_pinned: ui.sidebar_pinned,
+            sidebar_section_heights: ui.sidebar_section_heights,
             nerd_glyphs: ui.nerd_glyphs,
+            focus_hold_seconds: ui.focus_hold_seconds,
             project_order: ui.project_order,
             project_labels: ui.project_labels,
             status_left: status.left,
@@ -208,6 +216,29 @@ pub fn save_prefs(gobby_home: &Path, prefs: &ClientPrefs) -> Result<PathBuf, Pre
     Ok(path)
 }
 
+/// Stored section heights, read leniently: an entry that is not a whole
+/// number of rows in `1..=u16::MAX` loads as `0`, which leaves that section
+/// derived; a value that is not an array leaves every section derived, and
+/// missing trailing entries are derived too.
+fn lenient_section_heights<'de, D>(deserializer: D) -> Result<[u16; 4], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = toml::Value::deserialize(deserializer)?;
+    let Some(entries) = value.as_array() else {
+        return Ok([0; 4]);
+    };
+    let mut heights = [0u16; 4];
+    for (height, entry) in heights.iter_mut().zip(entries) {
+        *height = entry
+            .as_integer()
+            .and_then(|rows| u16::try_from(rows).ok())
+            .filter(|&rows| rows > 0)
+            .unwrap_or_default();
+    }
+    Ok(heights)
+}
+
 fn parse_error(text: &str, error: &toml::de::Error) -> PrefsError {
     let message = error.message();
     match error.span() {
@@ -218,3 +249,7 @@ fn parse_error(text: &str, error: &toml::de::Error) -> PrefsError {
         None => PrefsError::Parse(message.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "prefs/tests.rs"]
+mod tests;

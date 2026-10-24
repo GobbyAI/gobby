@@ -68,7 +68,7 @@ pytestmark = pytest.mark.unit
 class _GoldenRow:
     id: str = TERMINAL_ID
     backend: str = "native"
-    machine_id: str = MACHINE_ID
+    machine_id: str | None = None
     ownership: str = "gobby"
     state: str = "live"
     title: str | None = "sess"
@@ -84,6 +84,7 @@ class _GoldenRow:
 class _GoldenManager:
     def __init__(self, row: _GoldenRow | None = None) -> None:
         self.row = row or _GoldenRow()
+        self.db = None
 
     def get(self, terminal_id: str) -> _GoldenRow | None:
         return self.row if terminal_id == self.row.id else None
@@ -291,11 +292,11 @@ async def _assert_write_outcome(
 
 def test_python_matches_terminal_ws_golden_corpus() -> None:
     names = _manifest_names()
-    assert len(names) == len(set(names)) == 43
+    assert len(names) == len(set(names)) == 44
     assert "manifest.json" not in names
     on_disk = {path.name for path in GOLDEN_DIR.iterdir() if path.name != "manifest.json"}
     assert on_disk == set(names)
-    assert len(list(GOLDEN_DIR.iterdir())) == 44
+    assert len(list(GOLDEN_DIR.iterdir())) == 45
     assert not OLD_GOLDEN_DIR.exists() or not any(OLD_GOLDEN_DIR.iterdir())
 
     for name in names:

@@ -44,6 +44,8 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.hub.machine_routing import is_local_machine
+from gobby.hub.remote_runtime import remote_composer_state
 from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE
 from gobby.terminals.composer_attention import sync_composer_attention
 from gobby.terminals.composer_lock import composer_action_lock
@@ -157,7 +159,9 @@ class WakeDispatcher:
         lifecycle_refresh: LifecycleRefresh | None = None,
         activity_probe: ActivityProbe | None = None,
         attention_manager: AttentionStateManager | None = None,
+        remote_wake_sender: NativeBatchSender | None = None,
     ) -> None:
+        self._remote_wake_sender = remote_wake_sender
         self._session_manager = session_manager
         self._ism_manager = ism_manager
         self._tmux_sender = tmux_sender
@@ -776,7 +780,18 @@ class WakeDispatcher:
 
         A gap or interrupt block raises the seat's attention item naming
         ``release_composer``; any other read retires it (``composer_attention``).
+
+        A node terminal's composer is the node's report, read from the hub store.
+        Only an empty one takes the wake; the activity probe and turn checks are
+        local-only and do not run for it.
         """
+        if terminal is not None and not is_local_machine(terminal.machine_id):
+            state = remote_composer_state(str(terminal.id))
+            if state == "empty":
+                return None, True
+            if state == "draft":
+                return composer_occupied_result(session_id, method=method), False
+            return composer_unconfirmed_result(session_id, method=method), False
         if self._activity_probe is None:
             return None, False
         try:

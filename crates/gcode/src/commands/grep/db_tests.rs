@@ -527,3 +527,112 @@ fn grep_reports_incomplete_coverage_for_unindexed_path() {
     assert!(covered.matches.is_empty());
     assert_eq!(covered.coverage_gap, None);
 }
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn grep_checks_indexed_file_states_in_one_batch() {
+    let database_url = crate::test_env::postgres_test_database_url("grep PostgreSQL tests");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect grep PostgreSQL test database");
+    crate::schema::validate_runtime_schema(&mut conn).expect("grep test schema is valid");
+
+    const FILE_COUNT: usize = 12;
+    let root = tempfile::tempdir().expect("create temp project root");
+    std::fs::create_dir_all(root.path().join("src")).expect("create src dir");
+    let file_paths: Vec<String> = (0..FILE_COUNT)
+        .map(|index| format!("src/file_{index:02}.rs"))
+        .collect();
+    for file_path in &file_paths {
+        std::fs::write(root.path().join(file_path), "grepbatch marker\n")
+            .expect("write fixture file");
+    }
+
+    let project_id = unique_project_id("grep-one-batch");
+    let project_uuid = crate::db::id_param(&project_id).expect("project uuid");
+    ProjectCleanup::run(&mut conn, &project_uuid);
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_uuid,
+    };
+
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&project_uuid],
+    )
+    .expect("insert project");
+
+    let local_machine = crate::db::id_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    )
+    .expect("local machine uuid");
+    let root_path = root.path().to_string_lossy().to_string();
+    for (index, file_path) in file_paths.iter().enumerate() {
+        let content_hash = format!("hash-{index:02}");
+        insert_file_version(&mut conn, &project_uuid, file_path, &content_hash);
+        insert_machine_state(
+            &mut conn,
+            &local_machine,
+            &project_uuid,
+            &root_path,
+            file_path,
+            &content_hash,
+        );
+        insert_chunk_version(
+            &mut conn,
+            &project_uuid,
+            file_path,
+            "grepbatch marker",
+            &content_hash,
+        );
+    }
+
+    let ctx = Context {
+        database_url: database_url.clone(),
+        project_root: root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let options = GrepOptions {
+        pattern: "grepbatch",
+        paths: &[],
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: false,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+
+    super::indexed_paths::reset_lookup_count();
+    let result = grep_repo(&ctx, &mut conn, &options).expect("grep repo");
+    assert_eq!(
+        result.matches.len(),
+        FILE_COUNT,
+        "grep must return a match for every indexed file"
+    );
+    assert_eq!(
+        super::indexed_paths::lookup_count(),
+        1,
+        "grep must check indexed-file state with one set-based query, not one per candidate file"
+    );
+}

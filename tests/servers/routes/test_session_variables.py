@@ -183,6 +183,23 @@ def test_get_variable_with_session_manager(temp_db: HubDatabase) -> None:
     assert resp.status_code == 200
 
 
+@pytest.mark.parametrize(
+    ("body", "brief"),
+    [({"scope": "session"}, True), ({"scope": "session", "brief": False}, False)],
+)
+def test_get_variable_forwards_brief_to_the_workflow_tool(
+    body: dict[str, object], brief: bool
+) -> None:
+    client = _client_with_session_manager()
+    with patch(
+        "gobby.mcp_proxy.tools.workflows._variables.get_variable",
+        return_value={"success": True, "names": []},
+    ) as mock_get:
+        resp = client.post("/api/sessions/%231/variables/get", json=body)
+    assert resp.status_code == 200
+    assert mock_get.call_args.kwargs["brief"] is brief
+
+
 _OWN_SESSION = "11111111-1111-4111-8111-111111111111"
 _OTHER_SESSION = "22222222-2222-4222-8222-222222222222"
 _PROJECT = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

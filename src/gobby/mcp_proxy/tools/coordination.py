@@ -51,6 +51,7 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         statuses: list[str] | None = None,
         reply: bool = False,
         timeout: float = 900,
+        brief: bool = True,
     ) -> dict[str, Any]:
         waiter = ctx.get_current_session_id()
         if waiter is None or ctx.db is None or ctx.completion_registry is None:
@@ -73,7 +74,18 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 reply=reply,
                 timeout=timeout,
             )
-            return coordination_wait_payload(row)
+            payload = coordination_wait_payload(row)
+            if not brief:
+                return payload
+            # The caller already knows its own identity and the owner; match fields
+            # appear only once the wait has matched.
+            match_fields = ("matched_status", "message_id")
+            return {
+                "wait_id": payload["wait_id"],
+                "outcome": payload["outcome"],
+                "expires_at": payload["expires_at"],
+                **{key: payload[key] for key in match_fields if payload[key] is not None},
+            }
         except ValueError as exc:
             return {"success": False, "error": str(exc)}
 

@@ -44,6 +44,7 @@ from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.agents.test_capture import FakeCaptureStorage
 from tests.agents.test_capture import _run as capture_run
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.terminals.fakes import (
     MemoryTerminalStore,
     make_memory_terminal,
@@ -52,6 +53,12 @@ from tests.terminals.fakes import (
 from tests.terminals.test_native_runtime import FakeHostClient
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _daemon_is_machine_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The native runtimes here carry machine_id "machine-1", which is this daemon's id.
+    patch_local_machine_id(monkeypatch, "machine-1")
 
 
 @pytest.mark.asyncio

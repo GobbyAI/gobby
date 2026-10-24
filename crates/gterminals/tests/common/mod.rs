@@ -2,6 +2,7 @@
 
 //! Isolated test-hub schema and terminal row fixture shared by DB-backed tests.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -98,6 +99,19 @@ impl Hub {
         Ok(PostgresEpochAuthority::new(pool))
     }
 
+    /// A second pool over the same isolated schema, shared with the coordinator.
+    pub fn coordinator_pool(&self) -> anyhow::Result<Arc<Pool>> {
+        let pool = Pool::build(
+            &format!("{}?options=-c%20search_path%3D{}", self.url, self.schema),
+            PoolSettings {
+                max_size: 2,
+                application_name: "gobby-gdaemon-terminal-write-route-test".into(),
+                acquire_timeout: Duration::from_secs(5),
+            },
+        )?;
+        Ok(Arc::new(pool))
+    }
+
     pub async fn insert(&self, terminal: &Terminal) -> anyhow::Result<()> {
         self.pool
             .transaction(None, async |tx| {
@@ -178,5 +192,21 @@ pub fn terminal() -> Terminal {
         created_at: now,
         updated_at: now,
         liveness_at: Some(now),
+    }
+}
+
+impl Hub {
+    /// Moves the terminal's attempt generation, the row identity a held action binds to.
+    pub async fn bump_attempt_generation(&self, terminal: Uuid) -> anyhow::Result<()> {
+        self.pool
+            .transaction(None, async |tx| {
+                tx.execute(
+                    "UPDATE terminals SET attempt_generation = attempt_generation + 1 WHERE id = $1",
+                    &[&terminal],
+                )
+                .await?;
+                anyhow::Ok(())
+            })
+            .await
     }
 }

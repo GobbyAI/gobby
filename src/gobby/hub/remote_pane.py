@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from functools import lru_cache
@@ -46,6 +47,7 @@ class RemotePaneStore:
 
     def __init__(self) -> None:
         self._machines: dict[str, _MachineState] = {}
+        self._lock = threading.Lock()
         # Held across one report's store update and its attention writes, so a newer
         # report never interleaves with an older one still applying.
         self.apply_lock = asyncio.Lock()
@@ -57,32 +59,35 @@ class RemotePaneStore:
 
         Returns None when the revision is not newer than the machine's last accepted one.
         """
-        current = self._machines.get(machine_id)
-        if current is not None and revision <= current.revision:
-            return None
-        previous = current.panes if current is not None else {}
-        self._machines[machine_id] = _MachineState(
-            revision=revision,
-            panes={
-                agent.terminal_id: _entry(machine_id, agent, previous.get(agent.terminal_id))
-                for agent in agents
-            },
-        )
-        return previous
+        with self._lock:
+            current = self._machines.get(machine_id)
+            if current is not None and revision <= current.revision:
+                return None
+            previous = current.panes if current is not None else {}
+            self._machines[machine_id] = _MachineState(
+                revision=revision,
+                panes={
+                    agent.terminal_id: _entry(machine_id, agent, previous.get(agent.terminal_id))
+                    for agent in agents
+                },
+            )
+            return previous
 
     def mark_stopped(self, terminal_id: str) -> None:
         """Flag the terminal's entry as stopped on whichever machine holds it."""
-        for state in self._machines.values():
-            pane = state.panes.get(terminal_id)
-            if pane is not None:
-                state.panes[terminal_id] = replace(pane, stopped=True)
-                return
+        with self._lock:
+            for state in self._machines.values():
+                pane = state.panes.get(terminal_id)
+                if pane is not None:
+                    state.panes[terminal_id] = replace(pane, stopped=True)
+                    return
 
     def get(self, terminal_id: str) -> RemotePane | None:
-        for state in self._machines.values():
-            pane = state.panes.get(terminal_id)
-            if pane is not None:
-                return pane
+        with self._lock:
+            for state in self._machines.values():
+                pane = state.panes.get(terminal_id)
+                if pane is not None:
+                    return pane
         return None
 
 
@@ -162,6 +167,10 @@ async def apply_pane_state(
     for agent in agents:
         pane = agent.pane
         if pane is None:
+            continue
+        # A terminal stopped on the hub is no longer attended, whatever the node reports.
+        current = remote_pane_store().get(agent.terminal_id)
+        if current is not None and current.stopped:
             continue
         try:
             run = await run_db(load_reported_run, db, machine_id, agent.run_id, agent.terminal_id)

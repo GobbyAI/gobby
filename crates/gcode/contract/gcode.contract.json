@@ -332,6 +332,26 @@
       ]
     },
     {
+      "name": "pin",
+      "summary": "Pin the isolation marker's clean ancestor selectors into this overlay before indexing.",
+      "daemon_consumed": false,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": []
+    },
+    {
       "name": "status",
       "summary": "Show project index status.",
       "daemon_consumed": false,

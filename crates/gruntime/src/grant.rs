@@ -102,12 +102,12 @@ fn presented_grant(headers: &HeaderMap) -> Result<GrantBundle, Box<Response<Body
 
 /// The deployment's fencing epoch and grant-signing secret, read per request so a
 /// bumped epoch is seen at once.
-struct Fence {
-    epoch: i64,
-    secret: String,
+pub(crate) struct Fence {
+    pub(crate) epoch: i64,
+    pub(crate) secret: String,
 }
 
-async fn read_fence(
+pub(crate) async fn read_fence(
     pool: &Pool,
     token: &str,
 ) -> Result<Option<Fence>, Box<dyn std::error::Error + Send + Sync>> {
@@ -192,7 +192,7 @@ fn rejection_response(rejection: Rejection) -> Response<Body> {
     json_response(status, rejection.body())
 }
 
-fn grant_unavailable() -> Response<Body> {
+pub(crate) fn grant_unavailable() -> Response<Body> {
     json_response(
         StatusCode::SERVICE_UNAVAILABLE,
         json!({"detail": "grant service unavailable"}),
@@ -206,7 +206,7 @@ fn malformed_grant() -> Response<Body> {
     )
 }
 
-fn internal(error: impl Debug) -> Response<Body> {
+pub(crate) fn internal(error: impl Debug) -> Response<Body> {
     eprintln!("gdaemon runtime: grant presentation failed: {error:?}");
     json_response(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -214,7 +214,7 @@ fn internal(error: impl Debug) -> Response<Body> {
     )
 }
 
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs() as i64)

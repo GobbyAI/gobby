@@ -215,6 +215,20 @@
     },
     {
       "surface": "cli",
+      "command": "gcode pin",
+      "reference": "src/gobby/install/shared/skills/gobby/references/code-index/overview.md",
+      "implementation": {
+        "path": "crates/gcode/src/commands/pin.rs",
+        "symbol": "run"
+      },
+      "verification": [
+        "source-audit",
+        "rust-capability"
+      ],
+      "audience": "agent"
+    },
+    {
+      "surface": "cli",
       "command": "gcode status",
       "reference": "src/gobby/install/shared/skills/gobby/references/code-index/navigation.md",
       "implementation": {

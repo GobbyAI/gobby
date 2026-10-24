@@ -1,8 +1,10 @@
 //! The `runtime` route family: `/api/runtime/*` and `/api/config/*`, served by
 //! gdaemon from Python's published state, with Python as the proxy target.
 
+pub mod capabilities;
 pub mod config;
 mod grant;
+mod handshake;
 pub mod secrets;
 
 use std::path::PathBuf;
@@ -55,6 +57,12 @@ pub const NATIVE_ROUTES: &[NativeRoute] = &[
         callers: &[Caller::Operator],
         gate: Some(grant::interactive_gate),
     },
+    NativeRoute {
+        method: Method::POST,
+        path: "/api/runtime/handshake",
+        callers: &[Caller::Operator],
+        gate: None,
+    },
 ];
 
 /// State shared by every native handler of the family.
@@ -82,6 +90,7 @@ fn handler(row: &NativeRoute) -> MethodRouter<Arc<RuntimeState>> {
     match row.path {
         "/api/config/effective" => on(filter, config::effective),
         "/api/runtime/config" => on(filter, grant::runtime_config),
+        "/api/runtime/handshake" => on(filter, handshake::handshake),
         other => panic!("native route {other} has no handler"),
     }
 }

@@ -340,6 +340,7 @@ fn automatic(terminal: Uuid, action: &str, step: Step) -> WriteRequest {
         step,
         lease: None,
         idempotency_key: None,
+        fence: None,
     }
 }
 
@@ -794,6 +795,7 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
             SequenceStep::Write(key("enter")),
             SequenceStep::Write(text("z")),
         ],
+        fence: None,
     };
 
     // Uncertain at step 2: steps after it never run and the latch stays.
@@ -892,6 +894,7 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
                 delay_ms: 5,
             },
         ],
+        fence: None,
     };
     let batch = native.batch.as_ref().expect("batch runtime");
     batch.script.lock().unwrap().extend([
@@ -1034,6 +1037,7 @@ async fn unnamed_keys_are_refused_before_any_latch() -> anyhow::Result<()> {
                 SequenceStep::Write(text("a")),
                 SequenceStep::Write(key("ctrl_z")),
             ],
+            fence: None,
         })
         .await;
     assert_eq!(report.step, Some(1));
@@ -1057,6 +1061,7 @@ async fn unnamed_keys_are_refused_before_any_latch() -> anyhow::Result<()> {
                     delay_ms: 0,
                 },
             ],
+            fence: None,
         }])
         .await?;
     assert_eq!(results.len(), 1);
