@@ -1,7 +1,7 @@
 use postgres::Client;
 use postgres::types::ToSql;
 
-use super::{GrepOptions, grep_repo};
+use super::{GrepContextLine, GrepOptions, grep_repo};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::output::Format;
 
@@ -99,13 +99,29 @@ fn insert_chunk_version(
     content: &str,
     content_hash: &str,
 ) {
-    let id = fixture_uuid(&format!("{project_id}:{file_path}:0:{content_hash}"));
+    insert_chunk_at(conn, project_id, file_path, 0, 1, content, content_hash);
+}
+
+fn insert_chunk_at(
+    conn: &mut Client,
+    project_id: &uuid::Uuid,
+    file_path: &str,
+    chunk_index: u32,
+    line_start: u32,
+    content: &str,
+    content_hash: &str,
+) {
+    let id = fixture_uuid(&format!(
+        "{project_id}:{file_path}:{chunk_index}:{content_hash}"
+    ));
     let params: &[&(dyn ToSql + Sync)] = &[&id, project_id, &file_path, &content, &content_hash];
     conn.execute(
-        "INSERT INTO code_content_chunks
+        &format!(
+            "INSERT INTO code_content_chunks
                 (id, project_id, file_path, content_hash, chunk_index, line_start, line_end,
                  content, language, created_at)
-             VALUES ($1, $2, $3, $5, 0, 1, 1, $4, 'rust', NOW())",
+             VALUES ($1, $2, $3, $5, {chunk_index}, {line_start}, {line_start}, $4, 'rust', NOW())"
+        ),
         params,
     )
     .expect("insert content chunk version");
@@ -634,5 +650,166 @@ fn grep_checks_indexed_file_states_in_one_batch() {
         super::indexed_paths::lookup_count(),
         1,
         "grep must check indexed-file state with one set-based query, not one per candidate file"
+    );
+}
+
+fn prefilter_options(pattern: &str, fixed_strings: bool, ignore_case: bool) -> GrepOptions<'_> {
+    GrepOptions {
+        pattern,
+        paths: &[],
+        globs: &[],
+        fixed_strings,
+        ignore_case,
+        word: false,
+        context: Some(1),
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn grep_loads_chunks_of_files_containing_a_literal_with_context() {
+    let database_url = crate::test_env::postgres_test_database_url("grep PostgreSQL tests");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect grep PostgreSQL test database");
+    crate::schema::validate_runtime_schema(&mut conn).expect("grep test schema is valid");
+
+    let root = tempfile::tempdir().expect("create temp project root");
+    std::fs::create_dir_all(root.path().join("src")).expect("create src dir");
+    // (file, content hash, (chunk index, line start, content) per chunk)
+    type ChunkFixture = (u32, u32, &'static str);
+    let fixtures: [(&str, &str, &[ChunkFixture]); 3] = [
+        ("src/hit.rs", "hash-hit", &[(0, 1, "prefilterneedle here")]),
+        ("src/miss.rs", "hash-miss", &[(0, 1, "nothing relevant")]),
+        (
+            "src/context.rs",
+            "hash-context",
+            &[
+                (0, 1, "before context line"),
+                (1, 2, "prefilterneedle in second chunk"),
+            ],
+        ),
+    ];
+    for (file_path, _, _) in &fixtures {
+        std::fs::write(root.path().join(file_path), "fixture\n").expect("write fixture file");
+    }
+
+    let project_id = unique_project_id("grep-literal-prefilter");
+    let project_uuid = crate::db::id_param(&project_id).expect("project uuid");
+    ProjectCleanup::run(&mut conn, &project_uuid);
+    let _cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_uuid,
+    };
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&project_uuid],
+    )
+    .expect("insert project");
+
+    let local_machine = crate::db::id_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    )
+    .expect("local machine uuid");
+    let root_path = root.path().to_string_lossy().to_string();
+    for (file_path, content_hash, chunks) in &fixtures {
+        insert_file_version(&mut conn, &project_uuid, file_path, content_hash);
+        insert_machine_state(
+            &mut conn,
+            &local_machine,
+            &project_uuid,
+            &root_path,
+            file_path,
+            content_hash,
+        );
+        for (chunk_index, line_start, content) in chunks.iter() {
+            insert_chunk_at(
+                &mut conn,
+                &project_uuid,
+                file_path,
+                *chunk_index,
+                *line_start,
+                content,
+                content_hash,
+            );
+        }
+    }
+
+    let ctx = Context {
+        database_url: database_url.clone(),
+        project_root: root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+
+    let literal = grep_repo(
+        &ctx,
+        &mut conn,
+        &prefilter_options("prefilterneedle", true, false),
+    )
+    .expect("grep literal");
+    let mut paths: Vec<&str> = literal.matches.iter().map(|m| m.path.as_str()).collect();
+    paths.sort_unstable();
+    assert_eq!(paths, ["src/context.rs", "src/hit.rs"]);
+    let context_match = literal
+        .matches
+        .iter()
+        .find(|m| m.path == "src/context.rs")
+        .expect("match in the second chunk");
+    assert_eq!(
+        context_match.before,
+        vec![GrepContextLine {
+            line: 1,
+            text: "before context line".to_string(),
+        }],
+        "context from a chunk without the literal must survive the file-level prefilter"
+    );
+    assert_eq!(
+        literal.scanned_chunks, 3,
+        "a literal grep loads every chunk of files containing the literal, and no others"
+    );
+
+    let regex = grep_repo(
+        &ctx,
+        &mut conn,
+        &prefilter_options("prefilterneedle.*", false, false),
+    )
+    .expect("grep regex");
+    assert_eq!(regex.matches.len(), 2);
+    assert_eq!(
+        regex.scanned_chunks, 4,
+        "regex patterns keep the full chunk load"
+    );
+
+    let insensitive = grep_repo(
+        &ctx,
+        &mut conn,
+        &prefilter_options("PREFILTERNEEDLE", true, true),
+    )
+    .expect("grep case-insensitive literal");
+    assert_eq!(insensitive.matches.len(), 2);
+    assert_eq!(
+        insensitive.scanned_chunks, 4,
+        "case-insensitive greps keep the full chunk load"
     );
 }
