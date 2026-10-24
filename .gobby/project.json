@@ -73,6 +73,7 @@
         "format",
         "type_check",
         "ts_check",
+        "frontend_format",
         "frontend_tests",
         "security",
         "pip_audit"
