@@ -1,7 +1,9 @@
 //! The one gate every job outcome passes (plan A1): settle the ledger,
 //! drop what an older connection sent, then land the result.
 
-use crate::daemon::{DaemonError, LiveDaemon, WorkspaceErrorCode};
+use std::time::Duration;
+
+use crate::daemon::{DaemonError, Generation, LiveDaemon, TerminalRow, WorkspaceErrorCode};
 use crate::frame_source::FrameError;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
@@ -45,6 +47,21 @@ pub(super) fn apply_job_outcome(
         } => return apply_kills(workspace, chrome, killed, kept, result),
         // A host grant is real whichever generation asked for it, so it lands.
         result @ JobResult::HostGrant { .. } => result,
+        JobResult::Opened {
+            terminal_id,
+            elapsed,
+            ..
+        } if !current => {
+            // An earlier connection's read cannot install into this one; the
+            // terminal's next workspace event opens it again.
+            tracing::debug!(
+                terminal_id = %terminal_id,
+                generation = outcome.tag.generation.0,
+                elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+                "dropped an unresolved terminal open from an earlier daemon generation"
+            );
+            return;
+        }
         _ if !current => return,
         result => result,
     };
@@ -94,8 +111,52 @@ pub(super) fn apply_job_outcome(
             apply_response(workspace, chrome, pending, result);
         }
         JobResult::Ops { unplaced, result } => apply_ops(workspace, chrome, unplaced, result),
+        JobResult::Opened {
+            terminal_id,
+            elapsed,
+            result,
+        } => apply_open(workspace, generation, &terminal_id, elapsed, result),
     }
     jobs.start(workspace, chrome, follow_up);
+}
+
+/// Installs the row a current read returned, but only while the terminal is
+/// still unresolved: a read that outlived its pane or its focus installs
+/// nothing. A failed read is a WARN carrying what it tried and how long it
+/// ran; nothing retries it here, and the terminal's next workspace event
+/// opens it again.
+fn apply_open(
+    workspace: &mut Workspace<LiveDaemon>,
+    generation: Generation,
+    terminal_id: &str,
+    elapsed: Duration,
+    result: Result<TerminalRow, DaemonError>,
+) {
+    if !workspace.is_unresolved_terminal(terminal_id) {
+        tracing::debug!(
+            terminal_id = %terminal_id,
+            generation = generation.0,
+            "dropped an unresolved terminal open whose terminal is no longer unresolved"
+        );
+        return;
+    }
+    match result {
+        Ok(row) => {
+            workspace.install_unresolved_rows(vec![row]);
+            // The read cannot await the attach, so the render tick's
+            // `start_due_attaches` picks the new pane up.
+            if let Some(pane) = workspace.pane_for_terminal(terminal_id) {
+                workspace.pane_mut(pane).attach_retry_at = Some(tokio::time::Instant::now());
+            }
+        }
+        Err(error) => tracing::warn!(
+            terminal_id = %terminal_id,
+            generation = generation.0,
+            error_class = %error.code(),
+            elapsed_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+            "unresolved terminal open failed: {error}"
+        ),
+    }
 }
 
 /// Whether `pane` is still on the attachment a write was typed for. A

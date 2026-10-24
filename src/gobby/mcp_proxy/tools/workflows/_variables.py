@@ -173,6 +173,20 @@ def set_variable(
     return {"success": True, "value": value, "scope": "session"}
 
 
+def _variable_listing(
+    variables: dict[str, Any], session_id: str, scope: str, brief: bool
+) -> dict[str, Any]:
+    """Names only by default; the full variables map when brief is False."""
+    if brief:
+        return {
+            "success": True,
+            "session_id": session_id,
+            "names": sorted(variables),
+            "scope": scope,
+        }
+    return {"success": True, "session_id": session_id, "variables": variables, "scope": scope}
+
+
 def get_variable(
     session_manager: SessionManager,
     db: HubDatabase,
@@ -181,12 +195,14 @@ def get_variable(
     scope: Literal["session", "step"] = "session",
     instance_manager: AgentStepInstanceManager | None = None,
     session_var_manager: SessionVariableManager | None = None,
+    brief: bool = True,
 ) -> dict[str, Any]:
     """
     Get variable(s) scoped to the session or the session's agent-step instance.
 
     When `scope` is ``step``, reads from the single typed instance. When
     `scope` is ``session``, reads from session-scoped shared variables.
+    Without `name`, returns sorted names only unless `brief` is False.
     """
     # Require explicit session_id to prevent cross-session bleed
     if not session_id:
@@ -220,12 +236,7 @@ def get_variable(
                 "exists": name in variables,
                 "scope": "step",
             }
-        return {
-            "success": True,
-            "session_id": resolved_session_id,
-            "variables": variables,
-            "scope": "step",
-        }
+        return _variable_listing(variables, resolved_session_id, "step", brief)
 
     # Session-scoped: read from session_variables table
     if not session_var_manager:
@@ -243,12 +254,7 @@ def get_variable(
             "exists": name in variables,
             "scope": "session",
         }
-    return {
-        "success": True,
-        "session_id": resolved_session_id,
-        "variables": variables,
-        "scope": "session",
-    }
+    return _variable_listing(variables, resolved_session_id, "session", brief)
 
 
 def save_variable_template(

@@ -446,6 +446,28 @@ async def test_mcp_registration_and_cancellation(harness: CoordinationHarness) -
 
 
 @pytest.mark.asyncio
+async def test_brief_wait_result_carries_only_the_wait_identity(
+    harness: CoordinationHarness,
+) -> None:
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=SessionManager(harness.db),
+        db=harness.db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    arguments = {"owner_session": harness.owner, "coordination_key": "brief-shape"}
+    with session_context_for_test(harness.waiter):
+        brief = await registry.call("wait_for_coordination", arguments)
+        assert set(brief) == {"wait_id", "outcome", "expires_at"}
+        full = await registry.call("wait_for_coordination", {**arguments, "brief": False})
+
+    assert full["wait_id"] == brief["wait_id"]
+    assert full["owner_session_id"] == harness.owner
+    assert full["notification_registered"] is True
+    assert full["success"] is True
+
+
+@pytest.mark.asyncio
 async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
     harness: CoordinationHarness,
 ) -> None:
@@ -543,7 +565,7 @@ async def test_mcp_replay_contract_matches_public_guidance(
         assert rearmed["wait_id"] != original["wait_id"]
         assert rearmed["outcome"] == "waiting"
         assert rearmed["expires_at"] > original["expires_at"]
-        assert rearmed["message_id"] is None
+        assert "message_id" not in rearmed
         active_replay = await registry.call("wait_for_coordination", arguments)
         assert active_replay["wait_id"] == rearmed["wait_id"]
         assert active_replay["expires_at"] == rearmed["expires_at"]
@@ -590,7 +612,7 @@ async def test_mcp_reply_wait_defaults_to_the_spawning_parent(
             "UPDATE sessions SET parent_session_id = %s WHERE id = %s",
             (harness.owner, harness.waiter),
         )
-        row = await registry.call("wait_for_coordination", {"reply": True})
+        row = await registry.call("wait_for_coordination", {"reply": True, "brief": False})
         assert row["outcome"] == "waiting"
         assert row["owner_session_id"] == harness.owner
         harness.reply()
@@ -598,7 +620,8 @@ async def test_mcp_reply_wait_defaults_to_the_spawning_parent(
 
     with session_context_for_test(harness.stranger):
         named = await registry.call(
-            "wait_for_coordination", {"owner_session": harness.owner, "reply": True}
+            "wait_for_coordination",
+            {"owner_session": harness.owner, "reply": True, "brief": False},
         )
         assert named["outcome"] == "waiting"
         assert named["owner_session_id"] == harness.owner

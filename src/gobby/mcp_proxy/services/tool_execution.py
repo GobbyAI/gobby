@@ -33,7 +33,7 @@ from .schema_guidance import build_invalid_arguments_response, record_schema_sho
 
 logger = logging.getLogger("gobby.mcp.server")
 
-PARENT_SESSION_TOOLS = frozenset({"dispatch_batch", "evaluate_spawn", "spawn_agent"})
+PARENT_SESSION_TOOLS = frozenset({"evaluate_spawn", "spawn_agent"})
 
 
 class ProxyOutcomeClass(StrEnum):

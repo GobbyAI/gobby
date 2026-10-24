@@ -129,7 +129,8 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::Agent(_)
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
-        | Hit::SidebarDivider => {
+        | Hit::SidebarDivider
+        | Hit::SidebarSectionDivider { .. } => {
             let section = match hit {
                 Hit::Machine(_) => SidebarSection::Machines,
                 Hit::Project(_)

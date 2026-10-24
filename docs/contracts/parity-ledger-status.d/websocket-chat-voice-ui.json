@@ -175,6 +175,10 @@
     "status": "proxied",
     "note": "Python handler `TerminalWsMixin._handle_terminal_detach` at `src/gobby/servers/websocket/terminal_ws.py:303`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
   },
+  "WS message terminal_focus": {
+    "status": "proxied",
+    "note": "Python handler `TerminalControlMixin._handle_terminal_focus` at `src/gobby/servers/websocket/terminal_ws_control.py:72`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."
+  },
   "WS message terminal_input": {
     "status": "proxied",
     "note": "Python handler `TerminalWriteMixin._handle_terminal_input` at `src/gobby/servers/websocket/terminal_ws_write.py:34`. Blocked on #21565 Daemon-side gterm adoption and terminal WS (M2 #23219): port terminal message operations and relay; the registered Rust TerminalFamily retains proxy transport."

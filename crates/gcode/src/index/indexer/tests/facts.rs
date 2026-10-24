@@ -1,5 +1,6 @@
 use super::super::file::write_parsed_file_facts;
 use super::super::sink::CodeFactSink;
+use crate::db::GraphFileFacts;
 use crate::models::{
     CallRelation, CallTargetKind, ContentChunk, ImportRelation, IndexedFile, InheritanceRelation,
     ParseResult, Symbol,
@@ -98,6 +99,34 @@ impl CodeFactSink for RecordingCodeFactSink {
         self.chunks += chunks.len();
         Ok(chunks.len())
     }
+
+    fn read_version_facts(
+        &mut self,
+        _project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) -> anyhow::Result<GraphFileFacts> {
+        Ok(GraphFileFacts {
+            file_path: file_path.to_string(),
+            content_hash: content_hash.to_string(),
+            imports: Vec::new(),
+            definitions: Vec::new(),
+            calls: Vec::new(),
+            inheritance: Vec::new(),
+        })
+    }
+
+    fn dirty_version_sync(
+        &mut self,
+        _project_id: &str,
+        _file_path: &str,
+        _content_hash: &str,
+        _vectors: bool,
+        _graph: bool,
+    ) -> anyhow::Result<()> {
+        self.writes.push("dirty_version_sync");
+        Ok(())
+    }
 }
 
 #[test]
@@ -164,7 +193,8 @@ fn library_writes_all_code_facts() {
             "imports",
             "calls",
             "inheritance",
-            "chunks"
+            "chunks",
+            "dirty_version_sync"
         ]
     );
     assert_eq!(sink.files, 1);
@@ -220,7 +250,7 @@ fn inheritance_pending_status_keeps_graph_only_owner() {
 
 mod serial_db {
     use super::super::super::IndexOutcome;
-    use super::super::super::file::write_parsed_file_facts;
+    use super::super::super::file::{write_content_only_file_facts, write_parsed_file_facts};
     use super::super::super::local_imports::{
         resolve_local_import_calls, resolve_local_import_inheritance,
         resolve_project_local_import_inheritance,
@@ -2050,6 +2080,402 @@ mod serial_db {
             selector_git_blob(&mut conn, &overlay_project_id, rel),
             Some(head_blob(&overlay_root, &hooks, rel)),
             "the overlay adopt path back-fills the clean HEAD blob"
+        );
+    }
+
+    const REPARSE_REL: &str = "src/reparse.rs";
+    const ALL_SYNCED: ProjectionFlags = ProjectionFlags {
+        vectors_synced: true,
+        vector_attempted: true,
+        graph_synced: true,
+        graph_attempted: true,
+    };
+    const ALL_PENDING: ProjectionFlags = ProjectionFlags {
+        vectors_synced: false,
+        vector_attempted: false,
+        graph_synced: false,
+        graph_attempted: false,
+    };
+
+    #[derive(Debug, PartialEq)]
+    struct ProjectionFlags {
+        vectors_synced: bool,
+        vector_attempted: bool,
+        graph_synced: bool,
+        graph_attempted: bool,
+    }
+
+    fn reparse_symbol(project_id: &str, name: &str, hash: &str, docstring: Option<&str>) -> Symbol {
+        Symbol {
+            id: Symbol::make_id(project_id, REPARSE_REL, hash, name, "function", 0),
+            project_id: project_id.to_string(),
+            file_path: REPARSE_REL.to_string(),
+            name: name.to_string(),
+            qualified_name: name.to_string(),
+            kind: "function".to_string(),
+            language: "rust".to_string(),
+            byte_start: 0,
+            byte_end: name.len(),
+            line_start: 1,
+            line_end: 1,
+            signature: Some(format!("fn {name}()")),
+            docstring: docstring.map(str::to_string),
+            parent_symbol_id: None,
+            file_content_hash: hash.to_string(),
+            content_hash: hash.to_string(),
+            summary: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    fn reparse_facts(symbols: Vec<Symbol>, calls: Vec<CallRelation>) -> ParseResult {
+        ParseResult {
+            symbols,
+            imports: Vec::new(),
+            calls,
+            inheritance: Vec::new(),
+            source: b"fn body() {}\n".to_vec(),
+        }
+    }
+
+    fn stamp_version_synced(conn: &mut postgres::Client, project_id: &str, hash: &str) {
+        let project_uuid = db::id_param(project_id).expect("project uuid");
+        conn.execute(
+            "UPDATE code_indexed_files
+             SET vectors_synced = TRUE, vector_sync_attempted_at = NOW(),
+                 graph_synced = TRUE, graph_sync_attempted_at = NOW()
+             WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+            &[&project_uuid, &REPARSE_REL, &hash],
+        )
+        .expect("stamp version synced");
+    }
+
+    fn version_flags(conn: &mut postgres::Client, project_id: &str, hash: &str) -> ProjectionFlags {
+        let project_uuid = db::id_param(project_id).expect("project uuid");
+        let row = conn
+            .query_one(
+                "SELECT vectors_synced, vector_sync_attempted_at IS NOT NULL,
+                        graph_synced, graph_sync_attempted_at IS NOT NULL
+                 FROM code_indexed_files
+                 WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+                &[&project_uuid, &REPARSE_REL, &hash],
+            )
+            .expect("load version flags");
+        ProjectionFlags {
+            vectors_synced: row.get(0),
+            vector_attempted: row.get(1),
+            graph_synced: row.get(2),
+            graph_attempted: row.get(3),
+        }
+    }
+
+    fn write_content_only(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        rel: &str,
+        language: &str,
+        hash: &str,
+        source: &[u8],
+    ) {
+        let mut tx = conn.transaction().expect("tx");
+        let mut sink = PostgresCodeFactSink::new(
+            &mut tx,
+            project_id,
+            Path::new("/tmp/inherit"),
+            api::IndexWriteMode::Overlay,
+            &local_machine_id(),
+        )
+        .expect("sink");
+        write_content_only_file_facts(
+            &mut sink,
+            project_id,
+            rel,
+            language,
+            hash,
+            source.len(),
+            source,
+        )
+        .expect("write content-only facts");
+        tx.commit().expect("commit");
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn content_only_reroute_drops_graph_rows_and_dirties_graph_only() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-content-only-reroute");
+        let caller = reparse_symbol(&project_id, "caller", "hash-1", None);
+        let call = CallRelation::new(
+            caller.id.clone(),
+            "helper".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![caller], vec![call]),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        write_content_only(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            b"fn caller() {}\n",
+        );
+
+        assert_eq!(
+            version_flags(&mut conn, &project_id, "hash-1"),
+            ProjectionFlags {
+                vectors_synced: true,
+                vector_attempted: true,
+                graph_synced: false,
+                graph_attempted: false,
+            }
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn reparse_with_changed_symbol_set_dirties_both_flags() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-reparse-symbol-set");
+        let old = reparse_symbol(&project_id, "old_name", "hash-1", None);
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![old], Vec::new()),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        let new = reparse_symbol(&project_id, "new_name", "hash-1", None);
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![new], Vec::new()),
+        );
+
+        assert_eq!(version_flags(&mut conn, &project_id, "hash-1"), ALL_PENDING);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn reparse_with_identical_facts_keeps_both_flags() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-reparse-identical");
+        let stable = reparse_symbol(&project_id, "stable", "hash-1", None);
+        let call = CallRelation::new(
+            stable.id.clone(),
+            "helper".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![stable.clone()], vec![call.clone()]),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![stable], vec![call]),
+        );
+
+        assert_eq!(version_flags(&mut conn, &project_id, "hash-1"), ALL_SYNCED);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn empty_reparse_of_empty_version_keeps_flags() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-reparse-empty");
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(Vec::new(), Vec::new()),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(Vec::new(), Vec::new()),
+        );
+
+        assert_eq!(version_flags(&mut conn, &project_id, "hash-1"), ALL_SYNCED);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn reparse_that_drops_all_facts_dirties_both_flags() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-reparse-drops-all");
+        let stable = reparse_symbol(&project_id, "stable", "hash-1", None);
+        let call = CallRelation::new(
+            stable.id.clone(),
+            "helper".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![stable], vec![call]),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(Vec::new(), Vec::new()),
+        );
+
+        assert_eq!(version_flags(&mut conn, &project_id, "hash-1"), ALL_PENDING);
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn reparse_with_changed_docstring_dirties_vectors_only() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-reparse-docstring");
+        let undocumented = reparse_symbol(&project_id, "documented", "hash-1", None);
+        let call = CallRelation::new(
+            undocumented.id.clone(),
+            "helper".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![undocumented], vec![call.clone()]),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        let documented =
+            reparse_symbol(&project_id, "documented", "hash-1", Some("now documented"));
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![documented], vec![call]),
+        );
+
+        assert_eq!(
+            version_flags(&mut conn, &project_id, "hash-1"),
+            ProjectionFlags {
+                vectors_synced: false,
+                vector_attempted: false,
+                graph_synced: true,
+                graph_attempted: true,
+            }
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    fn reparse_with_changed_calls_dirties_graph_only() {
+        let (mut conn, project_id, _cleanup) = seeded_project("gcode-reparse-calls");
+        let caller = reparse_symbol(&project_id, "caller", "hash-1", None);
+        let first = CallRelation::new(
+            caller.id.clone(),
+            "first_callee".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![caller.clone()], vec![first]),
+        );
+        stamp_version_synced(&mut conn, &project_id, "hash-1");
+
+        let second = CallRelation::new(
+            caller.id.clone(),
+            "second_callee".to_string(),
+            REPARSE_REL.to_string(),
+            2,
+        );
+        write_facts(
+            &mut conn,
+            &project_id,
+            REPARSE_REL,
+            "rust",
+            "hash-1",
+            reparse_facts(vec![caller], vec![second]),
+        );
+
+        assert_eq!(
+            version_flags(&mut conn, &project_id, "hash-1"),
+            ProjectionFlags {
+                vectors_synced: true,
+                vector_attempted: true,
+                graph_synced: false,
+                graph_attempted: false,
+            }
         );
     }
 }

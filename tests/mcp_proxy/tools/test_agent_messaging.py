@@ -1124,7 +1124,57 @@ class TestSendMessage:
 
         assert result["success"] is True
         assert result["delivery_status"] == "sent_with_declined_wakes"
-        assert result["wake_declines"] == [
+        assert "wake_declines" not in result
+        assert "wake_failures" not in result
+
+    @pytest.mark.asyncio
+    async def test_full_response_keeps_wake_decline_reason(
+        self,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        mock_db: MagicMock,
+    ) -> None:
+        from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+        registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
+        wake_dispatcher = WakeDispatcher(
+            session_manager=mock_session_manager,
+            ism_manager=mock_message_manager,
+        )
+        add_messaging_tools(
+            registry=registry,
+            message_manager=mock_message_manager,
+            session_manager=mock_session_manager,
+            db=mock_db,
+            wake_dispatcher=wake_dispatcher,
+        )
+        mock_message_manager.create_message.return_value = MockMessage(id="msg-declined")
+        mock_session_manager.get.side_effect = lambda session_id: {
+            "s-from": MockSession(
+                id="s-from",
+                project_id="11111111-1111-4111-8111-111111110001",
+            ),
+            "s-to": MockSession(
+                id="s-to",
+                project_id="11111111-1111-4111-8111-111111110001",
+                status="active",
+            ),
+        }.get(session_id)
+
+        result = await registry.call(
+            "send_message",
+            {
+                "from_session": "s-from",
+                "target": "session",
+                "target_id": "s-to",
+                "wake": True,
+                "content": "hello",
+                "brief": False,
+            },
+        )
+
+        assert result["success"] is True
+        assert result["wake_results"] == [
             {
                 "session_id": "s-to",
                 "delivered": False,
@@ -1136,7 +1186,6 @@ class TestSendMessage:
                 "message_id": "msg-declined",
             }
         ]
-        assert "wake_failures" not in result
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_delivered(
