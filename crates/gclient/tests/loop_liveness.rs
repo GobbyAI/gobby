@@ -466,6 +466,7 @@ impl StallingHost {
                 &ServerMessage::Attached {
                     created: false,
                     host_terminal_id,
+                    host_attachment_id: 1,
                 },
             )
             .await

@@ -722,13 +722,16 @@ class HostClient:
             }
         )
 
-    async def grant_input(self, host_terminal_id: str, attachment_id: str) -> dict[str, Any]:
+    async def grant_input(
+        self, host_terminal_id: str, attachment_id: str, host_attachment_id: int
+    ) -> dict[str, Any]:
         """Hand the frame-stream input grant for a native terminal to one attachment."""
         return await self._roundtrip(
             {
                 "method": "grant_input",
                 "host_terminal_id": host_terminal_id,
                 "attachment_id": attachment_id,
+                "host_attachment_id": host_attachment_id,
             }
         )
 

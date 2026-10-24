@@ -59,10 +59,27 @@ class TerminalControlMixin:
         if self._leases().owned_attachment(attachment_id, websocket=websocket) is None:
             await self._refuse_unowned_control(websocket, attachment_id)
             return
+        host_attachment_id = data.get("host_attachment_id")
+        if host_attachment_id is not None and (
+            type(host_attachment_id) is not int or not 0 < host_attachment_id < 2**64
+        ):
+            await self._send_control(
+                websocket,
+                {
+                    "type": "terminal_control_result",
+                    "attachment_id": attachment_id,
+                    "granted": False,
+                    "reason": "invalid_host_attachment_id",
+                    "lease_generation": self._leases().generation(terminal_id),
+                    "host_input_granted": False,
+                },
+            )
+            return
         result = await self._leases().take_control(
             terminal_id,
             attachment_id,
             takeover=bool(data.get("takeover")),
+            host_attachment_id=host_attachment_id,
         )
         # Holding the lease is what lets a web viewer size the shared terminal. Apply
         # the decision before any socket send can stall, so a later take's size wins.

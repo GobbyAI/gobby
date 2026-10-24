@@ -257,6 +257,7 @@ def test_control_client_matches_golden_corpus() -> None:
             "method": "grant_input",
             "host_terminal_id": "ht-1",
             "attachment_id": "att-1",
+            "host_attachment_id": 42,
         }
     ) == _golden("control_grant_input.json")
     assert encode_control_line(
@@ -366,7 +367,7 @@ async def test_host_client_grant_and_revoke_match_golden_corpus() -> None:
     writer = _Writer()
     client = HostClient(reader, writer)
     try:
-        grant = asyncio.create_task(client.grant_input("ht-1", "att-1"))
+        grant = asyncio.create_task(client.grant_input("ht-1", "att-1", 42))
         sent = decode_control_line(await asyncio.wait_for(writer.lines.get(), timeout=1.0))
         reader.feed_data(encode_control_line({"ok": True, "granted": True, "id": sent["id"]}))
         assert (await grant)["granted"] is True

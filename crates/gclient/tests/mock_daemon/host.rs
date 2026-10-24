@@ -498,6 +498,7 @@ async fn serve(
         &ServerMessage::Attached {
             created: false,
             host_terminal_id: answered_terminal_id,
+            host_attachment_id: 1,
         },
     )
     .await

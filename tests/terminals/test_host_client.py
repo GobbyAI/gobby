@@ -620,11 +620,12 @@ async def test_grant_and_revoke_are_unledgered_round_trips() -> None:
     writer = _Writer()
     client = HostClient(reader, writer)
     try:
-        grant = asyncio.create_task(client.grant_input("ht-1", "att-1"))
+        grant = asyncio.create_task(client.grant_input("ht-1", "att-1", 42))
         request = await writer.next_write()
         assert request["method"] == "grant_input"
         assert request["host_terminal_id"] == "ht-1"
         assert request["attachment_id"] == "att-1"
+        assert request["host_attachment_id"] == 42
         assert "operation_seq" not in request
         reader.feed_data(
             host_client.encode_control_line(

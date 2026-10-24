@@ -243,6 +243,7 @@ fn native_verbs_refuse_tmux_terminals() {
             "method": "grant_input",
             "host_terminal_id": host_terminal_id,
             "attachment_id": "tmux-must-not-type",
+            "host_attachment_id": 1,
         }),
         json!({
             "method": "revoke_input",
@@ -697,6 +698,11 @@ fn control_surface_round_trip() {
     let dir = temp_socket_dir();
     let token = "control-token-surface";
     write_token(dir.path(), token);
+    std::fs::write(
+        dir.path().join("bootstrap.yaml"),
+        format!("api_key: {}\n", embed_support::LOCAL),
+    )
+    .unwrap();
     let (mut child, mut stream) = authed(dir.path(), token);
 
     send_json(&mut stream, &json!({"method": "ping", "id": "p1"}));
@@ -767,6 +773,7 @@ fn control_surface_round_trip() {
     let written = recv_json(&mut stream);
     assert_eq!(written["ok"], true, "{written}");
 
+    let (_frames, host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
     send_json(
         &mut stream,
         &json!({
@@ -774,6 +781,7 @@ fn control_surface_round_trip() {
             "id": "g1",
             "host_terminal_id": host_terminal_id,
             "attachment_id": "att-surface",
+            "host_attachment_id": host_attachment_id,
         }),
     );
     let granted = recv_json(&mut stream);
@@ -912,6 +920,28 @@ fn frame_reply(
     }
 }
 
+fn attach_input_frames(
+    host: &host_support::HostProc,
+    host_terminal_id: &str,
+) -> (std::os::unix::net::UnixStream, u64) {
+    use gobby_terminal::protocol::{ClientMessage, ServerMessage};
+    let mut frames = connect_ansi_frames(host);
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.into(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::Attached {
+            host_attachment_id, ..
+        } => (frames, host_attachment_id),
+        other => panic!("expected attached: {other:?}"),
+    }
+}
+
 #[test]
 fn grant_input_binds_one_holder_and_emits_input_activity() {
     use gobby_terminal::protocol::{ClientMessage, ServerMessage};
@@ -982,38 +1012,27 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     );
     assert_eq!(recv_json(&mut requests)["ok"], true);
 
-    let mut frames = connect_ansi_frames(&child);
-    embed_support::write_msg(
-        &mut frames,
-        &ClientMessage::AttachTerminal {
-            host_terminal_id: host_terminal_id.clone(),
-            reservation_id: None,
-            locator: None,
-        },
-    );
-    match frame_reply(&mut frames) {
-        ServerMessage::Attached { .. } => {}
-        other => panic!("expected attached: {other:?}"),
-    }
+    let (mut old_frames, old_host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
+    let (mut frames, host_attachment_id) = attach_input_frames(&child, &host_terminal_id);
 
     let first = rpc(
         &mut requests,
         "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a"}),
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-a", "host_attachment_id": old_host_attachment_id}),
     );
     assert_eq!(first["granted"], true, "{first}");
     assert!(first["previous"].is_null(), "{first}");
     let second = rpc(
         &mut requests,
         "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b"}),
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
     );
     assert_eq!(second["granted"], true, "{second}");
     assert_eq!(second["previous"], "att-a", "{second}");
     let missing = rpc(
         &mut requests,
         "grant_input",
-        json!({"host_terminal_id": "missing-terminal", "attachment_id": "att-b"}),
+        json!({"host_terminal_id": "missing-terminal", "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
     );
     assert_eq!(missing["error"], "not_found", "{missing}");
     let unnamed = rpc(
@@ -1025,18 +1044,18 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
 
     // The displaced holder cannot type.
     embed_support::write_msg(
-        &mut frames,
+        &mut old_frames,
         &ClientMessage::BindAttachment {
             attachment_id: "att-a".into(),
         },
     );
     embed_support::write_msg(
-        &mut frames,
+        &mut old_frames,
         &ClientMessage::Input {
             data: b"x".to_vec(),
         },
     );
-    match frame_reply(&mut frames) {
+    match frame_reply(&mut old_frames) {
         ServerMessage::InputRefused { code } => assert_eq!(code, "input_not_granted"),
         other => panic!("expected refusal: {other:?}"),
     }
@@ -1202,7 +1221,7 @@ fn grant_input_binds_one_holder_and_emits_input_activity() {
     let regranted = rpc(
         &mut requests,
         "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b"}),
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-b", "host_attachment_id": host_attachment_id}),
     );
     assert!(regranted["previous"].is_null(), "{regranted}");
     embed_support::write_msg(
@@ -2637,25 +2656,13 @@ fn mutation_gate_blocks_and_refuses_during_upgrade() {
     });
 
     // A granted frame attachment types before the upgrade.
+    let (mut frames, host_attachment_id) = attach_input_frames(&child, &id);
     let granted = rpc(
         &mut stream,
         "grant_input",
-        json!({"host_terminal_id": id, "attachment_id": "att-gate"}),
+        json!({"host_terminal_id": id, "attachment_id": "att-gate", "host_attachment_id": host_attachment_id}),
     );
     assert_eq!(granted["granted"], true, "{granted}");
-    let mut frames = connect_ansi_frames(&child);
-    embed_support::write_msg(
-        &mut frames,
-        &ClientMessage::AttachTerminal {
-            host_terminal_id: id.clone(),
-            reservation_id: None,
-            locator: None,
-        },
-    );
-    match frame_reply(&mut frames) {
-        ServerMessage::Attached { .. } => {}
-        other => panic!("expected attached: {other:?}"),
-    }
     embed_support::write_msg(
         &mut frames,
         &ClientMessage::BindAttachment {

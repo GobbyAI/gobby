@@ -177,16 +177,16 @@ impl Host {
         screen
     }
 
-    fn grant(&mut self, host_terminal_id: &str, attachment_id: &str) {
+    fn grant(&mut self, host_terminal_id: &str, attachment_id: &str, host_attachment_id: u64) {
         let granted = rpc(
             &mut self.ctrl,
             "grant_input",
-            json!({"host_terminal_id": host_terminal_id, "attachment_id": attachment_id}),
+            json!({"host_terminal_id": host_terminal_id, "attachment_id": attachment_id, "host_attachment_id": host_attachment_id}),
         );
         assert_eq!(granted["ok"], true, "{granted}");
     }
 
-    fn attach(&self, host_terminal_id: &str) -> UnixStream {
+    fn attach(&self, host_terminal_id: &str) -> (UnixStream, u64) {
         let mut stream = connect(&self.frames_path);
         write_msg(
             &mut stream,
@@ -213,7 +213,9 @@ impl Host {
         );
         loop {
             match read_msg(&mut stream) {
-                ServerMessage::Attached { .. } => return stream,
+                ServerMessage::Attached {
+                    host_attachment_id, ..
+                } => return (stream, host_attachment_id),
                 ServerMessage::Error { code, .. } => panic!("attach refused: {code}"),
                 _ => {}
             }
@@ -331,7 +333,7 @@ fn unset_theme_is_the_fallback_until_a_client_declares() {
     assert_eq!(answer.trim(), "A<>", "{screen}");
 
     // An ungranted pane takes the first declaring client's theme live.
-    let mut stream = host.attach(&pane);
+    let (mut stream, _) = host.attach(&pane);
     declare(&mut stream, &LIGHT);
     host.wait_for(&pane, "declared theme", |s| LIGHT.shown_by(s));
 }
@@ -341,9 +343,9 @@ fn live_retheme_changes_answers_without_respawn() {
     let mut host = Host::start("theme-live");
     let pane = host.spawn(Some(theme_json(&DARK))).unwrap();
     host.wait_for(&pane, "dark spawn theme", |s| DARK.shown_by(s));
-    let mut stream = host.attach(&pane);
+    let (mut stream, host_attachment_id) = host.attach(&pane);
     bind(&mut stream, "att-gclient");
-    host.grant(&pane, "att-gclient");
+    host.grant(&pane, "att-gclient", host_attachment_id);
     declare(&mut stream, &LIGHT);
     host.wait_for(&pane, "light after toggle", |s| LIGHT.shown_by(s));
     declare(&mut stream, &DARK);
@@ -356,14 +358,14 @@ fn live_retheme_changes_answers_without_respawn() {
 fn only_the_input_grant_holder_themes_a_granted_pane() {
     let mut host = Host::start("theme-grant");
     let pane = host.spawn(None).unwrap();
-    let mut holder = host.attach(&pane);
+    let (mut holder, holder_id) = host.attach(&pane);
     bind(&mut holder, "att-holder");
-    host.grant(&pane, "att-holder");
+    host.grant(&pane, "att-holder", holder_id);
     declare(&mut holder, &LIGHT);
     host.wait_for(&pane, "holder theme", |s| LIGHT.shown_by(s));
 
     // A stale or observing stream cannot undo the holder's theme.
-    let mut other = host.attach(&pane);
+    let (mut other, other_id) = host.attach(&pane);
     bind(&mut other, "att-other");
     declare(&mut other, &DARK);
     barrier(&mut other);
@@ -384,7 +386,7 @@ fn only_the_input_grant_holder_themes_a_granted_pane() {
     );
 
     // Moving the grant applies the new holder's declaration.
-    host.grant(&pane, "att-other");
+    host.grant(&pane, "att-other", other_id);
     host.wait_for(&pane, "new holder theme", |s| DARK.shown_by(s));
 }
 
@@ -395,7 +397,7 @@ fn only_the_input_grant_holder_themes_a_granted_pane() {
 fn a_declaration_never_seeds_another_clients_spawn() {
     let mut host = Host::start("theme-no-seed");
     let laptop_pane = host.spawn(None).unwrap();
-    let mut laptop = host.attach(&laptop_pane);
+    let (mut laptop, _) = host.attach(&laptop_pane);
     declare(&mut laptop, &LIGHT);
     host.wait_for(&laptop_pane, "the laptop's theme", |s| LIGHT.shown_by(s));
 
@@ -425,11 +427,11 @@ fn a_declaration_never_seeds_another_clients_spawn() {
 fn theme_from_seeds_a_spawn_with_its_parents_ground_alone() {
     let mut host = Host::start("theme-from");
     let parent = host.spawn(None).unwrap();
-    let mut desktop = host.attach(&parent);
+    let (mut desktop, _) = host.attach(&parent);
     declare(&mut desktop, &DARK);
     host.wait_for(&parent, "the desktop's theme", |s| DARK.shown_by(s));
     let other = host.spawn(None).unwrap();
-    let mut laptop = host.attach(&other);
+    let (mut laptop, _) = host.attach(&other);
     declare(&mut laptop, &LIGHT);
     host.wait_for(&other, "the laptop's theme", |s| LIGHT.shown_by(s));
 

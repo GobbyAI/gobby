@@ -154,6 +154,7 @@ async fn attach_tmux(
             truncated: false,
             user_attachments: HashSet::new(),
             input_grant: None,
+            input_grant_attachment: None,
             locator: Some(locator.clone()),
             tmux_history_bytes: 0,
             history: None,

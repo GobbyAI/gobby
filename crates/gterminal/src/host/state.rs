@@ -105,6 +105,9 @@ pub(crate) struct TerminalSlot {
     /// `grant_input` control verb. Survives control disconnects; only
     /// `revoke_input` or slot removal clears it.
     pub(crate) input_grant: Option<String>,
+    /// Only the trusted control grant selects a frame stream. A client's
+    /// daemon attachment name never grants input authority.
+    pub(crate) input_grant_attachment: Option<u64>,
     pub(crate) locator: Option<crate::protocol::PaneLocator>,
     pub(crate) tmux_history_bytes: u64,
     pub(crate) history: Option<crate::protocol::ServerMessage>,
@@ -122,8 +125,8 @@ pub struct Attachment {
     pub cols: u16,
     pub scroll: u32,
     pub reservation_id: Option<String>,
-    /// Daemon attachment id the stream bound with `BindAttachment`; compared
-    /// with the slot's `input_grant` before any `Input`/`Paste` is delivered.
+    /// Daemon attachment name used for theme relay. Input authority is bound
+    /// separately to this attachment's host-owned `id` by the control grant.
     pub client_attachment_id: Option<String>,
     pub mailbox: FrameMailbox,
     pub last_send: Instant,
@@ -497,6 +500,7 @@ impl HostState {
                 truncated: false,
                 user_attachments: HashSet::new(),
                 input_grant: None,
+                input_grant_attachment: None,
                 locator: None,
                 tmux_history_bytes: 0,
                 history: None,
@@ -616,6 +620,9 @@ impl HostState {
         if let Some(identity) = inner.by_host_id.get(&att.host_terminal_id).cloned() {
             if let Some(slot) = inner.terminals.get_mut(&identity) {
                 slot.user_attachments.remove(&attachment_id);
+                if slot.input_grant_attachment == Some(attachment_id) {
+                    slot.input_grant_attachment = None;
+                }
                 if let ObserverBind::Bound {
                     reservation_id,
                     generation,
@@ -642,10 +649,31 @@ impl HostState {
         let mut inner = self.inner.lock().await;
         let attachment = inner
             .attachments
-            .get_mut(&attachment_id)
+            .get(&attachment_id)
             .ok_or("terminal_gone")?;
-        attachment.client_attachment_id = Some(client_attachment_id);
         let host_terminal_id = attachment.host_terminal_id.clone();
+        let reserved = inner
+            .by_host_id
+            .get(&host_terminal_id)
+            .and_then(|identity| inner.terminals.get(identity))
+            .is_some_and(|slot| {
+                slot.input_grant.as_deref() == Some(client_attachment_id.as_str())
+                    && slot.input_grant_attachment != Some(attachment_id)
+            });
+        if reserved
+            || inner.attachments.iter().any(|(id, other)| {
+                *id != attachment_id
+                    && other.host_terminal_id == host_terminal_id
+                    && other.client_attachment_id.as_deref() == Some(&client_attachment_id)
+            })
+        {
+            return Err("attachment_already_bound");
+        }
+        inner
+            .attachments
+            .get_mut(&attachment_id)
+            .expect("attachment checked above")
+            .client_attachment_id = Some(client_attachment_id);
         super::theme::apply_holder_theme(&inner, &host_terminal_id);
         Ok(())
     }
@@ -801,6 +829,7 @@ pub(crate) async fn insert_native_slot(
         truncated: false,
         user_attachments: HashSet::new(),
         input_grant: None,
+        input_grant_attachment: None,
         locator: None,
         tmux_history_bytes: 0,
         history: None,

@@ -328,7 +328,7 @@ fn golden_corpus_bytes_and_fragmented_reads() {
     );
     write_json(
         "control_grant_input.json",
-        serde_json::json!({"id":"grant-1","method":"grant_input","host_terminal_id":"ht-1","attachment_id":"att-1"}),
+        serde_json::json!({"id":"grant-1","method":"grant_input","host_terminal_id":"ht-1","attachment_id":"att-1","host_attachment_id":42}),
     );
     write_json(
         "control_revoke_input.json",
@@ -370,6 +370,7 @@ fn golden_corpus_covers_pane_attach() {
         &ServerMessage::Attached {
             created: true,
             host_terminal_id: "ht-1".into(),
+            host_attachment_id: 1,
         },
     );
     write_bin(

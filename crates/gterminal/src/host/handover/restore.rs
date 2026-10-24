@@ -225,6 +225,7 @@ fn stage_pane(
         truncated: pane.truncated,
         user_attachments: HashSet::new(),
         input_grant: pane.input_grant,
+        input_grant_attachment: None,
         locator: pane.locator,
         tmux_history_bytes: 0,
         history: None,

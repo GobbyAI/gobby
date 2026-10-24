@@ -578,6 +578,18 @@ fn client_frames() -> Vec<(&'static str, ClientMessage)> {
     ]
 }
 
+#[test]
+fn attached_decoder_retains_the_host_owned_stream_identifier() -> Result<()> {
+    let bytes = std::fs::read(golden("attach_terminal_created.bin"))?;
+    let attached = frames::decode_frame::<ServerMessage>(&bytes)
+        .expect("decode the host's Attached extension without trailing bytes");
+    assert_eq!(
+        serde_json::to_value(attached)?["Attached"]["host_attachment_id"],
+        1
+    );
+    Ok(())
+}
+
 fn server_frames() -> Vec<(&'static str, ServerMessage)> {
     let error = |code: &str| ServerMessage::Error {
         code: code.into(),
@@ -595,6 +607,7 @@ fn server_frames() -> Vec<(&'static str, ServerMessage)> {
             ServerMessage::Attached {
                 created: true,
                 host_terminal_id: "ht-1".into(),
+                host_attachment_id: 1,
             },
         ),
         (

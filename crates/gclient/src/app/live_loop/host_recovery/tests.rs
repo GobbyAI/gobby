@@ -48,6 +48,7 @@ async fn restored_source(epoch: &str) -> UnixSocketFrameSource {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "terminal-1".into(),
+                host_attachment_id: 1,
             },
         )
         .await
@@ -78,6 +79,66 @@ async fn a_restore_for_a_pane_that_moved_epochs_gives_up_as_stale() {
 async fn a_restore_for_a_closed_pane_gives_up_as_stale() {
     let logs = stale_restore_logs(true).await;
     assert!(!logs.contains("frame_recovery_completed"), "{logs}");
+}
+
+#[tokio::test]
+async fn a_restored_stream_keeps_the_lease_but_requires_a_fresh_host_grant() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
+    let mut workspace = Workspace::live(daemon);
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    pane.restore_host_control();
+    workspace.panes.insert(pane.id, pane);
+    let generation = workspace.daemon.generation();
+    let recovery = workspace.apply_host_recovery(HostRecovery {
+        pane_id: PaneId(1),
+        terminal_id: "terminal-1".into(),
+        generation,
+        epoch: "epoch-1".into(),
+        started: Instant::now(),
+        outcome: HostRecoveryOutcome::Restored(restored_source("epoch-1").await),
+    });
+    assert!(recovery.is_none());
+    let pane = &workspace.panes[&PaneId(1)];
+    assert!(pane.is_held());
+    assert!(
+        !pane.host_input_granted,
+        "a new stream has no inherited host authority"
+    );
+    assert_eq!(pane.host_attachment_id(), Some(1));
+}
+
+#[tokio::test]
+async fn input_on_a_held_stream_without_a_host_grant_queues_and_requests_control() {
+    use crate::app::live_loop::{control::send_live_input, jobs::LoopJobs};
+    use crate::ui::Chrome;
+
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
+    let mut workspace = Workspace::live(daemon);
+    workspace.daemon_ready = true;
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    pane.install_frame_source(crate::frame_source::PaneFrameSource::Direct(
+        restored_source("epoch-1").await,
+    ));
+    pane.live = true;
+    pane.restore_host_control();
+    pane.host_input_granted = false;
+    workspace.panes.insert(pane.id, pane);
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    send_live_input(
+        &mut workspace,
+        &mut chrome,
+        &mut jobs,
+        PaneId(1),
+        b"queued",
+        false,
+    )
+    .expect("queue input until host grant");
+    let pane = &workspace.panes[&PaneId(1)];
+    assert_eq!(pane.pending_input.len(), 1);
+    assert_eq!(pane.pending_input[0].parts(), (b"queued".as_slice(), false));
+    assert!(workspace.awaiting_control(PaneId(1)));
+    assert!(chrome.alert_log.is_empty());
 }
 
 fn apply_recovery_and_capture(

@@ -60,7 +60,7 @@ class FakeControlClient:
     authed: bool = False
     # host_terminal_id -> attachment holding the frame-stream input grant.
     input_grants: dict[str, str] = field(default_factory=dict)
-    grant_calls: list[tuple[str, str]] = field(default_factory=list)
+    grant_calls: list[tuple[str, str, int]] = field(default_factory=list)
     revoke_calls: list[tuple[str, str | None]] = field(default_factory=list)
 
     async def dispatch(self, verb: str, **fields: Any) -> Any:
@@ -117,9 +117,11 @@ class FakeControlClient:
         self._require_open()
         self.kill_calls.append(host_terminal_id)
 
-    async def grant_input(self, host_terminal_id: str, attachment_id: str) -> dict[str, Any]:
+    async def grant_input(
+        self, host_terminal_id: str, attachment_id: str, host_attachment_id: int
+    ) -> dict[str, Any]:
         self._require_open()
-        self.grant_calls.append((host_terminal_id, attachment_id))
+        self.grant_calls.append((host_terminal_id, attachment_id, host_attachment_id))
         previous = self.input_grants.get(host_terminal_id)
         self.input_grants[host_terminal_id] = attachment_id
         return {"ok": True, "granted": True, "previous": previous}
