@@ -676,7 +676,7 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`landed_by_session_id` names another session" in prompt
     assert "neither your current session ID nor `unknown`" in prompt
     assert (
-        "EVENT=ALREADY_LANDED TASK=#NNNNN SHA= TASK_TITLE= RECEIPT= LANDED_BY_SESSION_ID= NOTE="
+        "EVENT=ALREADY_LANDED TASK=#NNNNN SHA= RECEIPT= LANDED_BY_SESSION_ID= TASK_TITLE= NOTE="
     ) in prompt
     assert "original `receipt_id` and original `landed_by_session_id`" in prompt
     assert "Never send your own `EVENT=LANDED` for another reviewer's landing." in prompt
@@ -697,9 +697,9 @@ def test_code_reviewer_lands_its_verdicts_and_reports_the_landing() -> None:
     assert "`notification_pending`" in prompt
     assert "`Landed #N ...` line" in prompt
     assert (
-        "EVENT=LANDED TASK=#NNNNN SHA= TASK_TITLE= BRANCH= RECEIPT= MODE= LANDED_TIP= "
+        "EVENT=LANDED TASK=#NNNNN SHA= BRANCH= RECEIPT= MODE= LANDED_TIP= "
         "ACTIVATION= PROJECT_SYNC_REQUIRED= PROVENANCE= "
-        "RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED NOTE="
+        "RETEST=PASS|FAIL|UNAVAILABLE|NOT_REQUIRED TASK_TITLE= NOTE="
     ) in prompt
     assert "project workflow sync is also required" in prompt
     assert "including when a stronger activation class is reported" in prompt
