@@ -201,63 +201,8 @@ pub(crate) fn load_project_inputs(
 
 /// Import rows covering every file `visibility::visible_tree` reports.
 ///
-/// `read_active_imports` is single-project, so an overlay context reads both
-/// source projects and merges them under the same shadow rule `visible_tree`
-/// applies; reading only the overlay's id would leave every parent-only file
-/// edgeless.
 fn visible_import_rows(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<(String, String)>> {
-    let project_ids = visibility::visible_project_ids(ctx);
-    let Some((overlay_id, parent_ids)) = project_ids.split_first() else {
-        return Ok(Vec::new());
-    };
-    let mut rows = import_rows(conn, overlay_id, &ctx.machine_id)?;
-    if parent_ids.is_empty() {
-        return Ok(rows);
-    }
-    let overlay_paths = crate::db::list_indexed_file_paths(conn, overlay_id, &ctx.machine_id)?
-        .into_iter()
-        .collect::<HashSet<_>>();
-    for parent_id in parent_ids {
-        rows = merge_visible_imports(
-            rows,
-            import_rows(conn, parent_id, &ctx.machine_id)?,
-            &overlay_paths,
-        );
-    }
-    Ok(rows)
-}
-
-fn import_rows(
-    conn: &mut Client,
-    project_id: &str,
-    machine_id: &str,
-) -> anyhow::Result<Vec<(String, String)>> {
-    Ok(
-        crate::db::read_active_imports(conn, project_id, machine_id)?
-            .into_iter()
-            .map(|row| (row.file_path, row.module_name))
-            .collect(),
-    )
-}
-
-/// Drop the parent rows the overlay shadows, keeping every other parent row.
-///
-/// `overlay_paths` is the overlay project's indexed file paths, tombstones
-/// included, which is exactly what `visible_tree`'s anti-join tests: an overlay
-/// row for a path replaces the parent's file, so the parent's imports for that
-/// path describe content nobody can see.
-fn merge_visible_imports(
-    overlay_rows: Vec<(String, String)>,
-    parent_rows: Vec<(String, String)>,
-    overlay_paths: &HashSet<String>,
-) -> Vec<(String, String)> {
-    let mut merged = overlay_rows;
-    merged.extend(
-        parent_rows
-            .into_iter()
-            .filter(|(file_path, _)| !overlay_paths.contains(file_path)),
-    );
-    merged
+    visibility::catalog::visible_imports(conn, ctx)
 }
 
 #[cfg(test)]

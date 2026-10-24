@@ -29,6 +29,7 @@ struct ProjectCleanup {
 impl ProjectCleanup {
     fn run(conn: &mut Client, project_id: &uuid::Uuid) {
         for sql in [
+            "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             "DELETE FROM code_indexed_project_states WHERE project_id = $1",
             "DELETE FROM code_content_chunks WHERE project_id = $1",
@@ -270,6 +271,14 @@ fn overlay_grep_hides_parent_rows_shadowed_by_overlay_state() {
         "grepmarker overlay_tombstoned",
         tombstone_hash,
     );
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         SELECT machine_id, $1, file_path, project_id, content_hash
+         FROM code_indexed_file_states WHERE project_id = $2 AND machine_id = $3",
+        &[&overlay_uuid, &parent_uuid, &machine],
+    )
+    .expect("pin parent fixture versions");
 
     let ctx = Context {
         database_url: database_url.clone(),
