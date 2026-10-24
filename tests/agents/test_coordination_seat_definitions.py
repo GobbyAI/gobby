@@ -94,8 +94,12 @@ def _prompt(name: str) -> str:
     reference = body.workflows.variables.get("_seat_procedure")
     if reference:
         assert reference in prompt
-        path = get_bundled_agents_path().parents[1] / "skills/gobby" / reference.split(":", 1)[1]
-        prompt += "\n" + path.read_text()
+        skill_root = get_bundled_agents_path().parents[1] / "skills/gobby"
+        procedure = (skill_root / reference.split(":", 1)[1]).read_text()
+        prompt += "\n" + procedure
+        # Follow the further references the procedure tells the seat to load.
+        for path in re.findall(r'get_skill_file\(name="gobby", path="([^"]+)"\)', procedure):
+            prompt += "\n" + (skill_root / path).read_text()
     return flat(prompt)
 
 

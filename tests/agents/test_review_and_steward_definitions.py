@@ -75,10 +75,10 @@ def _copied_sections(name: str) -> dict[str, str]:
     return {heading: flat(_section(prompt, heading)) for heading in COPIED_HEADINGS}
 
 
-def _reporter_procedure() -> str:
+def _reporter_procedure(name: str = "reporter") -> str:
     return (
         get_bundled_agents_path().parents[1]
-        / "skills/gobby/references/agents/procedures/reporter.md"
+        / f"skills/gobby/references/agents/procedures/{name}.md"
     ).read_text()
 
 
@@ -288,7 +288,7 @@ def test_recovery_steward_resumes_idle_composers_with_literal_keystrokes() -> No
 
 
 def test_reporter_drafts_the_status_delivers_it_and_ends_its_run() -> None:
-    prompt = flat(_reporter_procedure())
+    prompt = flat(_reporter_procedure() + "\n" + _reporter_procedure("reporter-full-report"))
 
     for phrase in (
         "gobby-agents:list_running_agents",
