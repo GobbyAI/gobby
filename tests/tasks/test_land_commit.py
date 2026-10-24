@@ -29,6 +29,7 @@ from gobby.tasks.close_receipts import (
     INDEPENDENT_REVIEW_APPROVAL,
     LANDING,
     LANDING_APPROVAL,
+    CloseReceiptError,
     list_close_receipts,
     record_close_receipt,
 )
@@ -163,6 +164,14 @@ def case(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -
         )
         identities.append(session_id)
     creator, claimant, reviewer, delegator, security = identities
+    temp_db.execute(
+        """
+        INSERT INTO agent_runs (id, parent_session_id, child_session_id, machine_id, status,
+                                provider, prompt, agent_name)
+        VALUES (%s, %s, %s, %s, 'running', 'claude', 'seat', 'security-reviewer')
+        """,
+        (str(uuid4()), creator, security, require_machine_id()),
+    )
     fixture = LandingCase(
         temp_db, repo, sample_project["id"], creator, claimant, reviewer, delegator, security, ""
     )
@@ -416,11 +425,13 @@ async def test_security_approval_on_another_sha_does_not_satisfy(case: LandingCa
     assert case.git("rev-parse", "trunk") == case.base
 
 
-async def test_security_approval_from_the_lander_does_not_satisfy(case: LandingCase) -> None:
+async def test_security_approval_from_a_non_security_seat_is_refused(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "land me"})
     task = case.task(labels=["security-review"])
     case.link(task, sha)
-    case.approve(task, sha, facts={"review": "security"})
+    for seat in (case.reviewer, case.creator):
+        with pytest.raises(CloseReceiptError, match="security-reviewer"):
+            case.approve(task, sha, author=seat, facts={"review": "security"})
     refused = await case.land(task, sha)
     assert refused["landed"] is False
     assert refused["missing_approvals"] == ["security"]

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
     from gobby.storage.tasks import Task
 
 __all__ = [
@@ -33,6 +33,7 @@ __all__ = [
     "LANDING",
     "LANDING_APPROVAL",
     "LANDING_APPROVAL_REASONS",
+    "SECURITY_REVIEW_FACT",
     "CloseReceipt",
     "CloseReceiptError",
     "close_receipt_facts",
@@ -50,6 +51,7 @@ CLOSE_RECEIPT_KINDS = frozenset(
 )
 CALLER_RECEIPT_KINDS = CLOSE_RECEIPT_KINDS - {LANDING}
 LANDING_APPROVAL_REASONS = frozenset({"restart", "freeze", "overlap"})
+SECURITY_REVIEW_FACT = "security"
 
 _APPROVAL_VERDICT = "LAND"
 _FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -85,7 +87,8 @@ def record_close_receipt(
     """Record a receipt, returning a replay with the same author, kind and commit.
 
     Landing approvals match the reason set and independent approvals match their review
-    fact; a changed one appends a receipt.
+    fact; a changed one appends a receipt. A Security approval is recorded only by a running
+    security-reviewer seat.
 
     The caller has already verified that ``commit_sha`` names a commit in the
     task's repository. Authority comes from the task row as locked here, so
@@ -133,6 +136,14 @@ def record_close_receipt(
         }:
             raise CloseReceiptError(
                 f"{kind} receipts come only from the task's creator or delegator"
+            )
+        if (
+            kind == INDEPENDENT_REVIEW_APPROVAL
+            and bounded_facts.get("review") == SECURITY_REVIEW_FACT
+            and not _is_security_reviewer_seat(conn, author_session_id)
+        ):
+            raise CloseReceiptError(
+                "a security review approval comes only from a running security-reviewer seat"
             )
         rows = conn.execute(
             """
@@ -228,6 +239,18 @@ def _author_role(task: Task, author_session_id: str) -> str:
     if author_session_id == task.delegated_by_session_id:
         return "task_delegator"
     return "independent_session"
+
+
+def _is_security_reviewer_seat(conn: Transaction, session_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM agent_runs
+        WHERE child_session_id = %s AND agent_name = 'security-reviewer' AND status = 'running'
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _landing_approval_reasons(facts: Mapping[str, str | int | bool]) -> frozenset[str]:
