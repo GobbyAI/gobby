@@ -289,7 +289,8 @@ def advance_seat(
             )
         elif role == "plan-adversary" and message.from_session == session_id:
             match = re.match(
-                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)", message.content
+                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?: |$)",
+                message.content.partition("\n")[0],
             )
             if match and step == "review" and match[1] == "CONSENSUS":
                 changes = {"consensus": True, "consensus_sha": match[2], "bounced": False}

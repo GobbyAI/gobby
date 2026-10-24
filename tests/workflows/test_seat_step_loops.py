@@ -1077,6 +1077,8 @@ async def test_plan_adversary_consensus_variables_are_handler_owned(
         f"EVENT=CONSENSUS SHA={SHA[:39]}",
         f"EVENT=CONSENSUS SHA={SHA}a",
         f"EVENT=CONSENSUS\nSHA={SHA}",
+        f"Evidence follows.\nEVENT=CONSENSUS SHA={SHA}",
+        f"EVENT=CONSENSUS SHA={SHA}\tNOTE=invalid delimiter",
     ],
 )
 async def test_plan_adversary_rejects_malformed_consensus(
@@ -1088,6 +1090,18 @@ async def test_plan_adversary_rejects_malformed_consensus(
     assert run.step == "review"
     assert run.vars["consensus"] is False
     assert not await run.admits(*DERIVE)
+
+
+async def test_plan_adversary_rejects_withdrawal_tab_delimiter(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+    assert run.step == "stamp"
+    await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA}\tNOTE=invalid delimiter")
+    assert run.step == "stamp"
+    assert run.vars["consensus"] is True
+    assert run.vars["consensus_sha"] == SHA
+    assert run.vars["bounced"] is False
 
 
 async def test_plan_adversary_failed_consensus_send_stays_in_review(temp_db: HubDatabase) -> None:
