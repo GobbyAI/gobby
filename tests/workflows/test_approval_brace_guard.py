@@ -611,6 +611,62 @@ def test_git_shell_values_preserve_data_operands(command: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "template",
+    [
+        'git rebase -qx "{body}" HEAD~1',
+        'git rebase --exe="{body}" HEAD~1',
+        'git rebase --exe "{body}" HEAD~1',
+        'git clone --upload "{body}" /r',
+        'git clone -qu "{body}" /r',
+        'git push --receive "{body}" /r',
+        'git difftool --extc "{body}" HEAD',
+        'git difftool -qx "{body}" HEAD',
+        'git grep -qO"{body}" foo',
+        pytest.param('git rebase -Xx -x "{body}" HEAD~1', id="later_exec_rebase_X"),
+        pytest.param('git rebase -sx -x "{body}" HEAD~1', id="later_exec_rebase_s"),
+        pytest.param('git clone -ou -u "{body}" /r', id="later_exec_clone"),
+        pytest.param('git difftool -tx -x "{body}" HEAD', id="later_exec_difftool"),
+        pytest.param('git grep -eO -O"{body}" foo', id="later_exec_grep"),
+        'git -c credential.https://x.helper="!{body}" fetch o',
+        'git -c credential.https://x.example.com.helper="{body}" fetch o',
+        'git -c diff.x.command="{body}" diff',
+        'git -c diff.x.textconv="{body}" diff',
+        'git -c difftool.x.cmd="{body}" difftool',
+        'git -c mergetool.x.cmd="{body}" mergetool',
+        'git -c merge.x.driver="{body}" merge x',
+        'git -c filter.x.clean="{body}" add .',
+        'git -c filter.x.smudge="{body}" checkout .',
+        'git -c filter.x.process="{body}" add .',
+        'git -c remote.origin.uploadpack="{body}" fetch origin',
+        'git -c remote.origin.receivepack="{body}" push origin',
+        'git -c core.gitProxy="{body}" fetch o',
+        'git -c core.askpass="{body}" fetch o',
+        'GIT_ASKPASS="{body}" git fetch o',
+        'env GIT_ASKPASS="{body}" git fetch o',
+        'GIT_PROXY_COMMAND="{body}" git fetch o',
+        'env GIT_PROXY_COMMAND="{body}" git fetch o',
+    ],
+)
+def test_git_shell_value_spellings_block_dynamic_gobby_slots(template: str) -> None:
+    assert approval_command_word_expansion(template.format(body="gobby $S approve-dirty-paths s7"))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git rebase --onto main HEAD~2",
+        "git clean -fdx",
+        "git -c alias.st=status st",
+        "git -c diff.x.textconv=cat diff",
+        "git push --receive-pack=git-receive-pack /r",
+        "git grep -e foo -- gobby",
+    ],
+)
+def test_git_shell_value_spellings_preserve_data_operands(command: str) -> None:
+    assert not approval_command_word_expansion(command)
+
+
+@pytest.mark.parametrize(
     "command",
     [
         '{ echo "a $f"; }',
