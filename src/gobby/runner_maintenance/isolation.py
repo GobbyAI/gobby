@@ -14,6 +14,7 @@ from typing import Any
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.clones.git import CloneGitManager, GitOperationResult
+from gobby.hub.remote_workspaces import expire_remote_workspaces
 from gobby.runner_maintenance.isolation_reconciliation import reconcile_isolation_registry
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_tmux_repair import (
@@ -252,6 +253,8 @@ async def cleanup_expired_isolation_loop(
                         "Failed to clean up expired clone %s",
                         clone.id,
                     )
+
+            await expire_remote_workspaces(db, run_db=run_db)
 
             await _cleanup_missing_isolation_records_async(
                 worktree_storage,
