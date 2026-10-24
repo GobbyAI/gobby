@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.57"
+version = "1.9.58"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.88"
+version = "0.4.89"
 dependencies = [
  "anyhow",
  "assert_cmd",
