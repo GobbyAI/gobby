@@ -13,10 +13,10 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::control::MAX_CONTROL_LINE;
-use crate::hold::{ActionGate, EffectId, HoldError, HoldToken, UncertainCause};
+use crate::hold::{ActionGate, EffectId, HoldError, HoldToken, QUEUE_MAX_AGE, UncertainCause};
 use crate::write::{
-    Coordinator, Kind, LeaseClaim, Origin, Outcome, Refusal, SequenceReport, SequenceRequest,
-    SequenceStep, Stage, Step, WriteRequest,
+    BatchOp, Coordinator, Kind, LeaseClaim, Origin, Outcome, Refusal, SequenceReport,
+    SequenceRequest, SequenceStep, Stage, Step, WakeRequest, WakeResult, WakeStep, WriteRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -59,16 +59,68 @@ impl TokenSlot {
             .clone()
     }
 
-    pub fn authorize(&self, presented: Option<&str>) -> Result<(), WriteRefused> {
+    /// Whether `token` is still the token in force. A retired token never is.
+    pub fn is_current(&self, token: &Arc<str>) -> bool {
+        self.current
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, token))
+    }
+
+    /// Admits a presented token, returning the in-force token it matched.
+    pub fn admit(&self, presented: Option<&str>) -> Result<Arc<str>, WriteRefused> {
         let current = self.current.read().unwrap_or_else(PoisonError::into_inner);
-        let current = current.as_deref().ok_or(WriteRefused::NoBackend)?;
+        let current = current.as_ref().ok_or(WriteRefused::NoBackend)?;
         match presented {
             None | Some("") => Err(WriteRefused::MissingToken),
-            Some(presented) if constant_time_eq(presented.as_bytes(), current.as_bytes()) => Ok(()),
+            Some(presented) if constant_time_eq(presented.as_bytes(), current.as_bytes()) => {
+                Ok(Arc::clone(current))
+            }
             Some(_) => Err(WriteRefused::WrongToken),
         }
     }
+
+    pub fn authorize(&self, presented: Option<&str>) -> Result<(), WriteRefused> {
+        self.admit(presented).map(|_| ())
+    }
 }
+
+/// The token an admitted call was authorized under. The coordinator checks it
+/// immediately before each effect dispatches, so a token retired while the call
+/// waited, or during a sequence delay, fences that effect.
+#[derive(Clone)]
+pub struct Fence {
+    slot: TokenSlot,
+    token: Arc<str>,
+}
+
+impl Fence {
+    pub fn new(slot: TokenSlot, token: Arc<str>) -> Self {
+        Self { slot, token }
+    }
+
+    /// Whether the token this fence was admitted under is still in force.
+    pub fn holds(&self) -> bool {
+        self.slot.is_current(&self.token)
+    }
+}
+
+impl std::fmt::Debug for Fence {
+    // The token is omitted so that it never reaches a log line.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Fence").finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for Fence {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.token, &other.token)
+            && Arc::ptr_eq(&self.slot.current, &other.slot.current)
+    }
+}
+
+impl Eq for Fence {}
 
 impl Drop for TokenLease {
     fn drop(&mut self) {
@@ -131,7 +183,8 @@ enum Call {
     },
     AcquireAction {
         terminal_id: Uuid,
-        lease: LeaseClaim,
+        #[serde(default)]
+        lease: Option<LeaseClaim>,
     },
     ReleaseAction {
         hold: WireHold,
@@ -145,6 +198,35 @@ enum Call {
         terminal_id: Uuid,
         action_key: String,
     },
+    RunWakeBatch {
+        requests: Vec<WireWake>,
+    },
+    ObserveResolved {
+        terminal_id: Uuid,
+        action_key: String,
+    },
+    ObserveOperatorInput {
+        terminal_id: Uuid,
+    },
+    ClearOnExit {
+        terminal_id: Uuid,
+    },
+}
+
+#[derive(Deserialize)]
+struct WireWake {
+    result_id: String,
+    terminal_id: Uuid,
+    clear_action_key: String,
+    wake_action_key: String,
+    operations: Vec<WireBatchOp>,
+}
+
+#[derive(Deserialize)]
+struct WireBatchOp {
+    kind: Kind,
+    payload: String,
+    delay_ms: u64,
 }
 
 #[derive(Deserialize)]
@@ -189,14 +271,17 @@ struct Pending {
 enum Work {
     Write(WriteRequest),
     Sequence(SequenceRequest),
+    Wake(Vec<WakeRequest>),
 }
 
-/// What an acquired hold is bound to: its lease, the backend token in force
-/// and the row's generation when the hold was taken.
+/// What an acquired hold is bound to: the lease claim it named (if any), the
+/// registry's control state when the hold was taken, the backend token it was
+/// admitted under and the row's generation.
 #[derive(Clone)]
 struct HeldAction {
     terminal_id: Uuid,
-    lease: LeaseClaim,
+    lease: Option<LeaseClaim>,
+    control: (Option<Uuid>, u64),
     token: Arc<str>,
     attempt_generation: i32,
     host_epoch: Option<String>,
@@ -221,7 +306,7 @@ impl Route {
         self.shared.active.load(Ordering::SeqCst)
     }
 
-    pub async fn handle(&self, call: Value) -> Value {
+    pub async fn handle(&self, token: &Arc<str>, call: Value) -> Value {
         let Ok(call) = serde_json::from_value::<Call>(call) else {
             return refused(
                 Stage::None,
@@ -251,6 +336,7 @@ impl Route {
                     step,
                     lease,
                     idempotency_key,
+                    fence: Some(self.fence(token)),
                 };
                 match hold {
                     Some(hold) => self.held_write(hold.id, request).await,
@@ -276,11 +362,14 @@ impl Route {
                     lease,
                     latch,
                     steps,
+                    fence: Some(self.fence(token)),
                 };
                 self.enqueue(terminal_id, Work::Sequence(request), bytes)
                     .await
             }
-            Call::AcquireAction { terminal_id, lease } => self.acquire(terminal_id, lease).await,
+            Call::AcquireAction { terminal_id, lease } => {
+                self.acquire(terminal_id, lease, token).await
+            }
             Call::ReleaseAction { hold } => self.release(hold.id).await,
             Call::RetainUnresolved {
                 terminal_id,
@@ -301,7 +390,32 @@ impl Route {
                     .quarantine(terminal_id, &action_key)
                     .await,
             ),
+            Call::RunWakeBatch { requests } => self.wake_batch(requests, token).await,
+            Call::ObserveResolved {
+                terminal_id,
+                action_key,
+            } => settled(
+                self.shared
+                    .coordinator
+                    .observe_resolved(terminal_id, &action_key)
+                    .await,
+            ),
+            Call::ObserveOperatorInput { terminal_id } => settled(
+                self.shared
+                    .coordinator
+                    .observe_operator_input(terminal_id)
+                    .await,
+            ),
+            Call::ClearOnExit { terminal_id } => {
+                settled(self.shared.coordinator.clear_on_exit(terminal_id).await)
+            }
         }
+    }
+
+    /// The fence for a call admitted under `token`: its effects dispatch only
+    /// while that token is still the one in force.
+    fn fence(&self, token: &Arc<str>) -> Fence {
+        Fence::new(self.token.clone(), Arc::clone(token))
     }
 
     /// Queues an unheld operation and waits for its reply.
@@ -329,7 +443,10 @@ impl Route {
             return stale_hold();
         };
         if held.terminal_id != request.terminal_id
-            || request.lease != Some(held.lease)
+            || request
+                .lease
+                .as_ref()
+                .is_some_and(|lease| Some(lease) != held.lease.as_ref())
             || !self.token_is(&held.token)
         {
             return stale_hold();
@@ -341,6 +458,11 @@ impl Route {
         };
         if row.attempt_generation != held.attempt_generation || row.host_epoch != held.host_epoch {
             return stale_hold();
+        }
+        // Every held operation re-reads the control state the hold bound, for
+        // any origin, so control moving under a hold refuses its writes.
+        if self.shared.coordinator.control(terminal).await != held.control {
+            return encode_refusal(&Refusal::StaleLease);
         }
         let begun = lock(&self.shared.gates)
             .entry(terminal)
@@ -364,11 +486,18 @@ impl Route {
         }
     }
 
-    async fn acquire(&self, terminal: Uuid, lease: LeaseClaim) -> Value {
+    async fn acquire(&self, terminal: Uuid, lease: Option<LeaseClaim>, token: &Arc<str>) -> Value {
+        if !self.token_is(token) {
+            return refused(Stage::None, "retired_token", "the write token was retired");
+        }
         let coordinator = &self.shared.coordinator;
-        if let Err(error) = coordinator
-            .revalidate(terminal, Origin::Operator, Some(lease))
-            .await
+        // Read before the lease is revalidated and before any wait, so the hold
+        // never binds a control state newer than the lease it was checked under.
+        let control = coordinator.control(terminal).await;
+        if let Some(claim) = lease
+            && let Err(error) = coordinator
+                .revalidate(terminal, Origin::Operator, Some(claim))
+                .await
         {
             return encode_refusal(&error);
         }
@@ -376,28 +505,69 @@ impl Route {
             Ok(row) => row,
             Err(error) => return encode_refusal(&error),
         };
-        let Some(token) = self.token.current() else {
-            return refused(Stage::None, "no_backend", "no backend child is attached");
+        // Unheld work in flight or queued makes acquire wait for it to drain. An
+        // active hold, or an uncertain effect that only proof can settle, refuses at once.
+        let deadline = Instant::now() + QUEUE_MAX_AGE;
+        let hold = loop {
+            let taken = {
+                let mut gates = lock(&self.shared.gates);
+                let gate = gates.entry(terminal).or_default();
+                gate.acquire(Instant::now())
+                    .map_err(|error| (error, !gate.is_held() && gate.uncertainty().is_none()))
+            };
+            match taken {
+                Ok(hold) => break hold,
+                Err((HoldError::Busy, true)) if Instant::now() < deadline => {
+                    tokio::time::sleep(ADMIT_POLL).await;
+                    pump(&self.shared, terminal);
+                }
+                Err((error, _)) => return hold_refusal(error),
+            }
         };
-        let taken = lock(&self.shared.gates)
-            .entry(terminal)
-            .or_default()
-            .acquire(Instant::now());
-        let hold = match taken {
-            Ok(hold) => hold,
-            Err(error) => return hold_refusal(error),
-        };
-        let id = Uuid::new_v4();
         let held = HeldAction {
             terminal_id: terminal,
             lease,
-            token,
+            control,
+            token: Arc::clone(token),
             attempt_generation: row.attempt_generation,
             host_epoch: row.host_epoch,
             hold,
         };
+        let id = Uuid::new_v4();
         lock(&self.shared.holds).insert(id, held);
         json!({"status": "held", "hold": {"id": id}})
+    }
+
+    async fn wake_batch(&self, requests: Vec<WireWake>, token: &Arc<str>) -> Value {
+        let Some(lane) = requests.first().map(|request| request.terminal_id) else {
+            return json!({"results": []});
+        };
+        let bytes: usize = requests
+            .iter()
+            .flat_map(|request| &request.operations)
+            .map(|operation| operation.payload.len())
+            .sum();
+        let fence = self.fence(token);
+        let requests = requests
+            .into_iter()
+            .map(|request| WakeRequest {
+                result_id: request.result_id,
+                terminal_id: request.terminal_id,
+                clear_action_key: request.clear_action_key,
+                wake_action_key: request.wake_action_key,
+                operations: request
+                    .operations
+                    .into_iter()
+                    .map(|op| BatchOp {
+                        kind: op.kind,
+                        payload: op.payload,
+                        delay_ms: op.delay_ms,
+                    })
+                    .collect(),
+                fence: Some(fence.clone()),
+            })
+            .collect();
+        self.enqueue(lane, Work::Wake(requests), bytes).await
     }
 
     async fn release(&self, id: Uuid) -> Value {
@@ -443,26 +613,106 @@ fn spawn_execute(shared: &Arc<Shared>, terminal: Uuid, effect: EffectId, pending
     let shared = Arc::clone(shared);
     tokio::spawn(async move {
         let Pending { work, reply } = pending;
-        let value = match work {
-            Work::Write(request) => encode_write(shared.coordinator.write(request).await),
-            Work::Sequence(request) => {
-                encode_sequence(shared.coordinator.run_sequence(request).await)
-            }
+        let mut admitted = Admitted {
+            shared: Arc::clone(&shared),
+            terminal,
+            effect: Some(effect),
         };
-        {
-            let mut gates = lock(&shared.gates);
-            if let Some(gate) = gates.get_mut(&terminal) {
-                let settled = if reply.send(value).is_ok() {
-                    gate.finish(effect, Instant::now())
-                } else {
-                    gate.uncertain(effect, UncertainCause::Disconnected)
-                };
-                debug_assert!(settled.is_ok(), "the admitted effect is in flight");
+        // A caller that gave up before admission never dispatches its effect.
+        let value = if reply.is_closed() {
+            None
+        } else {
+            Some(match work {
+                Work::Write(request) => encode_write(shared.coordinator.write(request).await),
+                Work::Sequence(request) => {
+                    encode_sequence(shared.coordinator.run_sequence(request).await)
+                }
+                Work::Wake(requests) => run_wake(&shared, terminal, requests).await,
+            })
+        };
+        let mut gates = lock(&shared.gates);
+        if let Some(gate) = gates.get_mut(&terminal) {
+            let effect = admitted
+                .effect
+                .take()
+                .expect("the admitted effect settles once");
+            let settled = match value {
+                None => gate.finish(effect, Instant::now()),
+                Some(value) => {
+                    if reply.send(value).is_ok() {
+                        gate.finish(effect, Instant::now())
+                    } else {
+                        gate.uncertain(effect, UncertainCause::Disconnected)
+                    }
+                }
+            };
+            debug_assert!(settled.is_ok(), "the admitted effect is in flight");
+        }
+    });
+}
+
+/// Settles an admitted effect when its work ends, even by panic. An effect that
+/// ends without a verdict is uncertain; the route's active count drops either way.
+struct Admitted {
+    shared: Arc<Shared>,
+    terminal: Uuid,
+    effect: Option<EffectId>,
+}
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        if let Some(effect) = self.effect.take() {
+            let mut gates = lock(&self.shared.gates);
+            if let Some(gate) = gates.get_mut(&self.terminal) {
+                let _ = gate.uncertain(effect, UncertainCause::Panicked);
             }
         }
-        pump(&shared, terminal);
-        shared.active.fetch_sub(1, Ordering::SeqCst);
-    });
+        pump(&self.shared, self.terminal);
+        self.shared.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Runs one native wake batch under its lane's admitted effect. Every other
+/// target is reserved without waiting, so a hold or unheld write there cannot
+/// interleave with the batch; a busy target refuses the whole batch.
+async fn run_wake(shared: &Arc<Shared>, lane: Uuid, requests: Vec<WakeRequest>) -> Value {
+    let mut targets: Vec<Uuid> = requests
+        .iter()
+        .map(|request| request.terminal_id)
+        .filter(|id| *id != lane)
+        .collect();
+    targets.sort();
+    targets.dedup();
+    let mut reserved = Vec::new();
+    for id in targets {
+        let taken = lock(&shared.gates)
+            .entry(id)
+            .or_default()
+            .acquire(Instant::now());
+        match taken {
+            Ok(hold) => reserved.push((id, hold)),
+            Err(error) => {
+                release_reserved(shared, reserved);
+                return hold_refusal(error);
+            }
+        }
+    }
+    let result = shared.coordinator.run_native_wake_batch(requests).await;
+    release_reserved(shared, reserved);
+    encode_wake(result)
+}
+
+fn release_reserved(shared: &Arc<Shared>, reserved: Vec<(Uuid, HoldToken)>) {
+    for (id, hold) in reserved {
+        let released = lock(&shared.gates)
+            .get_mut(&id)
+            .map(|gate| gate.release(hold, Instant::now()));
+        debug_assert!(
+            matches!(released, Some(Ok(()))),
+            "a reservation taken in this batch is still held"
+        );
+        pump(shared, id);
+    }
 }
 
 /// Waits for the admitted reply. A lapsed hold sends no wake-up, so the wait
@@ -561,6 +811,28 @@ fn encode_sequence(report: SequenceReport) -> Value {
     json!({"failed_step": report.step, "outcome": encode_write(report.result)})
 }
 
+fn encode_wake(result: Result<Vec<WakeResult>, Refusal>) -> Value {
+    match result {
+        Ok(results) => json!({
+            "results": results.into_iter().map(encode_wake_result).collect::<Vec<_>>(),
+        }),
+        Err(error) => encode_refusal(&error),
+    }
+}
+
+fn encode_wake_result(result: WakeResult) -> Value {
+    let step = match result.step {
+        WakeStep::Preflight => "preflight",
+        WakeStep::Prelude => "prelude",
+        WakeStep::Enter => "enter",
+    };
+    json!({
+        "result_id": result.result_id,
+        "step": step,
+        "outcome": encode_write(result.outcome.map_err(Refusal::Write)),
+    })
+}
+
 fn settled(result: Result<(), Refusal>) -> Value {
     match result {
         Ok(()) => json!({"status": "ok"}),
@@ -577,6 +849,7 @@ fn encode_refusal(error: &Refusal) -> Value {
             "detail": failure.detail,
         }),
         Refusal::StaleLease => refused(Stage::None, "stale_lease", error.to_string()),
+        Refusal::RetiredToken => refused(Stage::None, "retired_token", error.to_string()),
         Refusal::TerminalNotFound(_) => {
             refused(Stage::None, "terminal_not_found", error.to_string())
         }

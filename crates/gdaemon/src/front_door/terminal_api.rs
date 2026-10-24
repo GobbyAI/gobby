@@ -32,14 +32,17 @@ pub async fn handle(
         .headers()
         .get(TOKEN_HEADER)
         .and_then(|value| value.to_str().ok());
-    if let Err(error) = runtime.write_token.authorize(presented) {
-        let (status, code) = match error {
-            WriteRefused::NoBackend => (StatusCode::SERVICE_UNAVAILABLE, "no_backend"),
-            WriteRefused::MissingToken => (StatusCode::UNAUTHORIZED, "missing_token"),
-            WriteRefused::WrongToken => (StatusCode::UNAUTHORIZED, "wrong_token"),
-        };
-        return refusal(status, code, &error.to_string());
-    }
+    let token = match runtime.write_token.admit(presented) {
+        Ok(token) => token,
+        Err(error) => {
+            let (status, code) = match error {
+                WriteRefused::NoBackend => (StatusCode::SERVICE_UNAVAILABLE, "no_backend"),
+                WriteRefused::MissingToken => (StatusCode::UNAUTHORIZED, "missing_token"),
+                WriteRefused::WrongToken => (StatusCode::UNAUTHORIZED, "wrong_token"),
+            };
+            return refusal(status, code, &error.to_string());
+        }
+    };
     let Ok(body) = to_bytes(request.into_body(), MAX_ROUTE_BODY).await else {
         return refusal(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -47,6 +50,14 @@ pub async fn handle(
             "the body exceeds the route's bound",
         );
     };
+    // A token retired while the body arrived never reaches the route.
+    if !runtime.write_token.is_current(&token) {
+        return refusal(
+            StatusCode::UNAUTHORIZED,
+            "retired_token",
+            "the write token was retired",
+        );
+    }
     let route = runtime
         .terminal_route
         .read()
@@ -66,7 +77,7 @@ pub async fn handle(
             "the body is not JSON",
         );
     };
-    json_response(StatusCode::OK, route.handle(call).await, false)
+    json_response(StatusCode::OK, route.handle(&token, call).await, false)
 }
 
 fn refusal(status: StatusCode, code: &str, detail: &str) -> Response<Body> {

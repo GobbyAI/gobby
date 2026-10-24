@@ -31,6 +31,7 @@ use uuid::Uuid;
 
 use crate::leases::Registry;
 use crate::repository::{self, Backend, RepositoryError, Terminal};
+use crate::write_api::Fence;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -135,6 +136,8 @@ pub struct WriteRequest {
     pub step: Step,
     pub lease: Option<LeaseClaim>,
     pub idempotency_key: Option<String>,
+    /// Checked before each dispatch; `None` fences nothing.
+    pub fence: Option<Fence>,
 }
 
 /// What a runtime can report for bytes it attempted.
@@ -186,6 +189,8 @@ pub enum Refusal {
     TerminalNotFound(Uuid),
     #[error("lease is no longer current")]
     StaleLease,
+    #[error("the write token was retired before the effect was dispatched")]
+    RetiredToken,
     #[error("no runtime is registered for backend {0:?}")]
     RuntimeUnavailable(Backend),
     #[error("idempotency key was already used with a different payload")]
@@ -278,6 +283,8 @@ pub struct SequenceRequest {
     pub lease: Option<LeaseClaim>,
     pub latch: bool,
     pub steps: Vec<SequenceStep>,
+    /// Checked before each dispatch, so a delay can end the sequence.
+    pub fence: Option<Fence>,
 }
 
 /// `step` is the index of the step that ended the sequence, or `None` when it
@@ -297,6 +304,8 @@ pub struct WakeRequest {
     pub clear_action_key: String,
     pub wake_action_key: String,
     pub operations: Vec<BatchOp>,
+    /// Checked immediately before the batch dispatches.
+    pub fence: Option<Fence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +388,12 @@ impl Coordinator {
             )
             .await?;
         }
+        if !request.fence.as_ref().is_none_or(Fence::holds) {
+            if latch {
+                self.clear(request.terminal_id, &request.action_key).await?;
+            }
+            return Err(Refusal::RetiredToken);
+        }
         match runtime.write(&terminal, &request.step).await {
             Ok(Delivery::Delivered) => {
                 if latch {
@@ -451,6 +466,11 @@ impl Coordinator {
             };
             if let Err(refusal) = self.revalidate(id, request.origin, request.lease).await {
                 return Err(self.stop(id, key, !dispatched, index, refusal).await);
+            }
+            if !request.fence.as_ref().is_none_or(Fence::holds) {
+                return Err(self
+                    .stop(id, key, !dispatched, index, Refusal::RetiredToken)
+                    .await);
             }
             let result = runtime.write(&terminal, step).await;
             let earlier = dispatched;
@@ -609,6 +629,17 @@ impl Coordinator {
         }
 
         if let Some(batch) = chosen.and_then(|runtime| runtime.batch()) {
+            if requests
+                .iter()
+                .any(|r| !r.fence.as_ref().is_none_or(Fence::holds))
+            {
+                for p in prepared.iter().filter(|p| !p.had_latch) {
+                    let request = &requests[p.index];
+                    self.clear(request.terminal_id, &request.wake_action_key)
+                        .await?;
+                }
+                return Err(Refusal::RetiredToken);
+            }
             let dispatched = dispatch_wake(batch, &prepared).await;
             for (prepared, (step, outcome)) in prepared.iter().zip(dispatched) {
                 let request = &requests[prepared.index];
@@ -630,6 +661,12 @@ impl Coordinator {
         }
         drop(held);
         Ok(results.into_iter().flatten().collect())
+    }
+
+    /// The lease registry's control state: the holder and its generation.
+    pub async fn control(&self, terminal_id: Uuid) -> (Option<Uuid>, u64) {
+        let view = self.leases.snapshot(terminal_id).await;
+        (view.holder, view.generation)
     }
 
     /// Persist: keep an action latched, replacing only its own entry.
