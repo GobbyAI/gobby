@@ -25,6 +25,8 @@ blocked_tools:
   - "write_file"
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
+# A Security approval is this seat's approved review step record.
+task_step_writes: [review]
 
 prompts:
   agent: &seat |
@@ -42,6 +44,7 @@ prompts:
     - Evidence. Locate code with `gcode symbol-at`, `gcode grep` and `gcode outline`, read the change with `git diff`, and cite each claim about what specific code does through `gcode evidence`, as `gobby:references/code-index/evidence.md` describes.
     - Findings. Rate each finding HIGH, MEDIUM or LOW. Give each one its file:line evidence, the exploit path (who can reach it and what they gain) and the smallest fix that closes it.
     - Verdict. Send the verdict as a first-line envelope, `EVENT=CANDIDATE_VERDICT TASK=#NNNNN SHA=<full 40-hex> VERDICT=LAND|BOUNCE TASK_TITLE= NOTE=`, with the findings after it. Send it to the author, the task's Code Reviewer and the task's Dev Manager. Give LAND or BOUNCE on security grounds. BOUNCE when a finding has a concrete exploit path. Findings without one are recorded for the author and do not block.
+    - Security approval. On LAND, before you send the verdict, record your approval from your own session: `gobby-tasks:record_review_step(task_id=<candidate task>, status="approved", commit_sha=<full 40-hex SHA>, epoch=<review_epoch>, round_number=<review_fail_count + 1>, feedback=<your evidence>)`, reading epoch and round from `gobby-tasks:get_task`. Record only approvals; a BOUNCE is your verdict alone. Only a running security-reviewer seat's approval counts, and it never stands in for the Code Reviewer's. Never call land_commit; the task's Dev Manager lands.
     - Never fix what you review. A fix goes back to the author through the task's Dev Manager, and the revised commit gets a fresh security review.
     - Secrets stay secret. Never copy a secret, token or credential value into a message, a finding or a log. Name the variable, file or path instead.
 

@@ -18,10 +18,16 @@ from gobby.tasks.land_commit import LandingResult, land_candidate
 from gobby.tasks.step_records import TASK_STEPS
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
-from tests.fixtures.review_approvals import approve_review, grant_review_writes, grant_step_writes
+from tests.fixtures.review_approvals import (
+    approve_review,
+    grant_review_writes,
+    grant_step_writes,
+    reject_review,
+)
 
 DEV_MANAGER = "fixture-dev-manager"
 ORCHESTRATOR = "orchestrator"
+SECURITY_REVIEWER = "security-reviewer"
 
 
 def bind_task_manager(
@@ -110,12 +116,13 @@ class LandingCase:
         )
         return session_id
 
-    def task(self, title: str = "Reviewed candidate") -> Task:
+    def task(self, title: str = "Reviewed candidate", labels: list[str] | None = None) -> Task:
         task = LocalTaskManager(self.db).create_task(
             self.project_id,
             title,
             created_in_session_id=self.creator,
             claimed_by_session_id=self.claimant,
+            labels=labels,
             validation_criteria="Land the reviewed SHA.",
         )
         self.db.execute(
@@ -130,6 +137,34 @@ class LandingCase:
         reviewer = author or self.reviewer
         grant_review_writes(self.db, reviewer, self.project_id)
         approve_review(self.db, task_id=task.id, reviewer_session_id=reviewer, commit_sha=sha)
+
+    def reject(self, task: Task, sha: str) -> None:
+        grant_review_writes(self.db, self.reviewer, self.project_id)
+        reject_review(self.db, task_id=task.id, reviewer_session_id=self.reviewer, commit_sha=sha)
+
+    def security_seat(self) -> str:
+        """A session running as the installed security-reviewer definition, with no agent run."""
+        session = self.session("security-reviewer", parent=self.creator)
+        grant_step_writes(self.db, session, self.project_id, SECURITY_REVIEWER, ("review",))
+        return session
+
+    def security_reviewer(self) -> str:
+        """A running Security Reviewer seat: its definition plus a running agent run."""
+        session = self.security_seat()
+        runs = LocalAgentRunManager(self.db)
+        run = runs.create(
+            parent_session_id=self.creator,
+            provider="claude",
+            prompt="Review the candidate for security.",
+            agent_name=SECURITY_REVIEWER,
+            child_session_id=session,
+        )
+        runs.start(run.id)
+        return session
+
+    def approve_as(self, task: Task, sha: str, session: str) -> None:
+        """Record an approval from a session that already runs its own definition."""
+        approve_review(self.db, task_id=task.id, reviewer_session_id=session, commit_sha=sha)
 
     def reviewed(self, sha: str, title: str = "Reviewed candidate") -> Task:
         task = self.task(title)

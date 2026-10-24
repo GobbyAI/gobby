@@ -46,6 +46,8 @@ TASK_STEPS: tuple[TaskStep, ...] = ("test", "implementation", "review", "closing
 _TERMINAL = frozenset({"approved", "rejected"})
 # Test evidence may precede implementation; these steps attest the task tip.
 _TIP_BOUND: frozenset[TaskStep] = frozenset({"implementation", "review", "closing"})
+# Security approvals are their own review track; they never stand in for the code review.
+SECURITY_REVIEWER = "security-reviewer"
 
 
 class StepRecordError(ValueError):
@@ -160,7 +162,11 @@ def list_task_step_records(db: HubDatabase, task_id: str) -> list[TaskStepRecord
 
 def current_task_steps(records: list[TaskStepRecord], epoch: int) -> dict[TaskStep, TaskStepRecord]:
     """Project the latest record per step without discarding historical evidence."""
-    return {record.step: record for record in records if record.epoch == epoch}
+    return {
+        record.step: record
+        for record in records
+        if record.epoch == epoch and record.agent_definition != SECURITY_REVIEWER
+    }
 
 
 def approved_task_step(
@@ -311,6 +317,18 @@ def _writer(
     return body, digest
 
 
+def _is_security_reviewer_seat(conn: Transaction, session_id: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM agent_runs
+        WHERE child_session_id = %s AND agent_name = 'security-reviewer' AND status = 'running'
+        LIMIT 1
+        """,
+        (session_id,),
+    ).fetchone()
+    return row is not None
+
+
 def _require_independent_reviewer(
     db: HubDatabase,
     conn: Transaction,
@@ -377,6 +395,7 @@ def record_task_step(
                 raise StepRecordError("step progress cannot move backwards")
         # Replays return before this check: the fixer's grant ends with its claim.
         body, digest = _writer(db, task, session_id, step, records)
+        security = step == "review" and body.name == SECURITY_REVIEWER
         if task.closed_at is not None:
             raise StepRecordError("closed tasks cannot receive new step records")
         rejections = {
@@ -396,9 +415,16 @@ def record_task_step(
         elif submission.status == "approved" and task.commits:
             raise StepRecordError("linked work requires commit evidence, not a no-work disposition")
         if step == "review":
+            if security and not _is_security_reviewer_seat(conn, session_id):
+                raise StepRecordError(
+                    "a security approval comes only from a running security-reviewer seat"
+                )
+            if security and submission.status != "approved":
+                raise StepRecordError("a security-reviewer seat records only approvals")
             review_key = (submission.epoch, submission.round_number, submission.commit_sha)
             if submission.status in _TERMINAL and any(
                 record.step == "review"
+                and record.agent_definition != SECURITY_REVIEWER
                 and (record.epoch, record.round_number, record.commit_sha) == review_key
                 and record.status in _TERMINAL
                 and record.status != submission.status
@@ -429,7 +455,7 @@ def record_task_step(
             "VALUES (%s, %s, %s, %s, %s)",
             (record.id, task_id, session_id, STEP_RECORD_AUTHOR_TYPE, record.model_dump_json()),
         )
-        if step == "review":
+        if step == "review" and not security:
             # Pending and in_progress (including infrastructure errors) never count.
             count = len(rejections) + int(submission.status == "rejected")
             review_status = {"approved": "valid", "rejected": "invalid"}.get(

@@ -210,6 +210,20 @@ def test_security_reviewer_bounces_on_exploit_paths_and_never_fixes() -> None:
         assert phrase in prompt, phrase
 
 
+def test_security_reviewer_records_its_approval_and_never_lands() -> None:
+    raw = _raw("security-reviewer")
+    prompt = flat(raw["prompts"]["agent"])
+
+    assert raw["task_step_writes"] == ["review"]
+    for phrase in (
+        'record_review_step(task_id=<candidate task>, status="approved"',
+        "only approvals",
+        "running security-reviewer seat",
+        "Never call land_commit",
+    ):
+        assert phrase in prompt, phrase
+
+
 def test_security_reviewer_verdict_is_a_candidate_verdict_envelope_to_the_dev_manager() -> None:
     prompt = flat(_raw("security-reviewer")["prompts"]["agent"])
     verdict = prompt[prompt.index("- Verdict.") : prompt.index("- Never fix what you review")]

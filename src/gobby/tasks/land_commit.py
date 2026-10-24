@@ -38,6 +38,7 @@ from gobby.tasks.landing_policy import (
 )
 from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
 from gobby.tasks.step_records import (
+    SECURITY_REVIEWER,
     TaskStepRecord,
     independent_review_approval,
     list_task_step_records,
@@ -56,6 +57,7 @@ _LANDING_ACTION = re.compile(
 )
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
+_SECURITY_REVIEW_LABEL = "security-review"
 # Conflicts go to Triage; every other blocker is the caller's to fix.
 _CONFLICTS = frozenset({"base_update_required", "merge_conflict"})
 _ORCHESTRATOR = frozenset({"orchestrator"})
@@ -346,7 +348,9 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     return is_operator_coordinator(LocalTaskManager(db), caller, roles=_ORCHESTRATOR)
 
 
-def _review_blockers(task: Task, records: list[TaskStepRecord], sha: str, caller: str) -> list[str]:
+def _review_blockers(
+    task: Task, records: list[TaskStepRecord], sha: str, caller: str, claimants: set[str]
+) -> list[str]:
     blockers: list[str] = []
     if any(
         record.step == "review"
@@ -357,6 +361,16 @@ def _review_blockers(task: Task, records: list[TaskStepRecord], sha: str, caller
         blockers.append("caller_is_reviewer")
     if independent_review_approval(task, records, sha, caller) is None:
         blockers.append("review_approval_missing")
+    if _SECURITY_REVIEW_LABEL in (task.labels or []) and not any(
+        record.step == "review"
+        and record.status == "approved"
+        and record.epoch == task.review_epoch
+        and record.commit_sha == sha
+        and record.agent_definition == SECURITY_REVIEWER
+        and record.session_id not in {caller, *claimants}
+        for record in records
+    ):
+        blockers.append("security_review_missing")
     return blockers
 
 
@@ -451,7 +465,9 @@ async def land_candidate(
                     blockers.append("caller_is_claimant")
                 elif caller_session_id in claimants:
                     blockers.append("caller_was_claimant")
-                blockers += _review_blockers(current_task, records, sha, caller_session_id)
+                blockers += _review_blockers(
+                    current_task, records, sha, caller_session_id, claimants
+                )
                 if not linked:
                     blockers.append("candidate_not_linked")
                 if await _ancestor(main, sha, tip):

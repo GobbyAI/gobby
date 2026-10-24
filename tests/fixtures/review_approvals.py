@@ -7,7 +7,13 @@ from collections.abc import Sequence
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
-from gobby.tasks.step_records import StepSubmission, TaskStep, TaskStepRecord, record_task_step
+from gobby.tasks.step_records import (
+    StepStatus,
+    StepSubmission,
+    TaskStep,
+    TaskStepRecord,
+    record_task_step,
+)
 from gobby.workflows.state_manager import SessionVariableManager
 
 REVIEW_WRITER = "fixture-review-writer"
@@ -42,6 +48,38 @@ def approve_review(
     db: HubDatabase, *, task_id: str, reviewer_session_id: str, commit_sha: str
 ) -> TaskStepRecord:
     """Record a LAND for the task's latest linked commit in its current review round."""
+    return _review(
+        db,
+        task_id,
+        reviewer_session_id,
+        commit_sha,
+        "approved",
+        "LAND: reviewed against the integration head.",
+    )
+
+
+def reject_review(
+    db: HubDatabase, *, task_id: str, reviewer_session_id: str, commit_sha: str
+) -> TaskStepRecord:
+    """Record a BOUNCE for the task's latest linked commit in its current review round."""
+    return _review(
+        db,
+        task_id,
+        reviewer_session_id,
+        commit_sha,
+        "rejected",
+        "BOUNCE: a blocking finding remains.",
+    )
+
+
+def _review(
+    db: HubDatabase,
+    task_id: str,
+    reviewer_session_id: str,
+    commit_sha: str,
+    status: StepStatus,
+    feedback: str,
+) -> TaskStepRecord:
     task = LocalTaskManager(db).get_task(task_id)
     record, _ = record_task_step(
         db,
@@ -49,10 +87,10 @@ def approve_review(
         session_id=reviewer_session_id,
         step="review",
         submission=StepSubmission(
-            status="approved",
+            status=status,
             epoch=task.review_epoch,
             round_number=task.review_fail_count + 1,
-            feedback="LAND: reviewed against the integration head.",
+            feedback=feedback,
             commit_sha=commit_sha,
         ),
     )

@@ -25,12 +25,14 @@ from gobby.tasks import land_commit
 from gobby.tasks.close_receipts import LANDING, list_close_receipts
 from gobby.tasks.commits import extract_task_ids_from_message
 from gobby.tasks.landing_policy import write_freeze
+from gobby.tasks.step_records import StepRecordError
 from gobby.utils.daemon_git import GitOk, GitResult, GitTimeout, daemon_git
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 from tests.fixtures.landing_case import LandingCase, make_landing_case
+from tests.fixtures.review_approvals import reject_review
 
 pytestmark = pytest.mark.unit
 
@@ -135,6 +137,113 @@ async def test_former_claimant_cannot_land_its_own_task(case: LandingCase, relea
     landed = await case.land(task, sha)
     assert landed["landed"] is True
     assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_security_review_task_refuses_code_only_approval(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["security_review_missing"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_security_review_task_lands_with_code_and_security_approvals(
+    case: LandingCase,
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.approve_as(task, sha, case.security_reviewer())
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_security_approval_alone_is_not_the_code_review(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task()
+    case.link(task, sha)
+    case.approve_as(task, sha, case.security_reviewer())
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["review_approval_missing"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_security_approval_after_a_code_bounce_keeps_the_bounce(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.reject(task, sha)
+    case.approve_as(task, sha, case.security_reviewer())
+    stored = LocalTaskManager(case.db).get_task(task.id)
+    assert (stored.review_status, stored.review_feedback, stored.review_fail_count) == (
+        "invalid",
+        "BOUNCE: a blocking finding remains.",
+        1,
+    )
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["review_approval_missing"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_code_reviewer_bounces_a_sha_the_security_reviewer_approved(
+    case: LandingCase,
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve_as(task, sha, case.security_reviewer())
+    case.reject(task, sha)
+    assert LocalTaskManager(case.db).get_task(task.id).review_status == "invalid"
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["review_approval_missing"]
+
+
+async def test_security_reviewer_records_only_approvals(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    with pytest.raises(StepRecordError, match="security-reviewer"):
+        reject_review(
+            case.db, task_id=task.id, reviewer_session_id=case.security_reviewer(), commit_sha=sha
+        )
+    assert LocalTaskManager(case.db).get_task(task.id).review_fail_count == 0
+
+
+async def test_security_approval_needs_a_running_security_reviewer_seat(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    with pytest.raises(StepRecordError, match="running security-reviewer seat"):
+        case.approve_as(task, sha, case.security_seat())
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["security_review_missing"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_security_approval_from_a_later_claimant_does_not_satisfy(
+    case: LandingCase,
+) -> None:
+    sha = case.candidate("lane", {"docs/change.md": "land me"})
+    task = case.task(labels=["security-review"])
+    case.link(task, sha)
+    case.approve(task, sha)
+    security = case.security_reviewer()
+    case.approve_as(task, sha, security)
+    LocalTaskManager(case.db).claim_task(task.id, security, force=True)
+    refused = await case.land(task, sha)
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["security_review_missing"]
+    assert case.git("rev-parse", "trunk") == case.base
 
 
 @pytest.mark.parametrize(
