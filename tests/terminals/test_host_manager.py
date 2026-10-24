@@ -7,7 +7,6 @@ import logging
 import os
 import signal
 import stat
-import tempfile
 import threading
 import tomllib
 import uuid
@@ -44,13 +43,6 @@ from tests.terminals.host_fakes import (
 )
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture
-def tmp_path() -> Iterator[Path]:
-    """Host-start doubles still need a socket directory within the platform limit."""
-    with tempfile.TemporaryDirectory(prefix="h") as directory:
-        yield Path(directory)
 
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -107,7 +99,7 @@ def _live(
 
 
 def _host(
-    tmp_path: Path,
+    short_socket_dir: Path,
     terminal_manager: TerminalManager,
     client: FakeControlClient,
     *,
@@ -130,7 +122,7 @@ def _host(
     return TerminalHostManager(
         config=TerminalHostConfig(
             enabled=True,
-            socket_dir=str(tmp_path),
+            socket_dir=str(short_socket_dir),
             shutdown_grace_seconds=0.2,
             health_interval_seconds=3600.0,
         ),
@@ -175,11 +167,11 @@ async def _stop_terminal_lifecycle_capture(
 
 
 def test_health_state_observes_recorded_host_pid(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     client = FakeControlClient(host_pid=9100)
-    host = _host(tmp_path, TerminalManager(temp_db), client, pid_ok=False)
+    host = _host(short_socket_dir, TerminalManager(temp_db), client, pid_ok=False)
     host.running = True
     host.host_pid = client.host_pid
 
@@ -201,7 +193,7 @@ class _ControlledSleep:
 
 @pytest.mark.asyncio
 async def test_gap_settles_indeterminate_from_list(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -246,7 +238,7 @@ async def test_gap_settles_indeterminate_from_list(
         ],
     )
     client.authed = True
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     host._client = client
 
     await host_event_reader.recover_event_gap(host, cast(host_events.HostEventStream, GapStream()))
@@ -260,13 +252,13 @@ async def test_gap_settles_indeterminate_from_list(
 
 @pytest.mark.asyncio
 async def test_reconcile_catches_only_typed_errors(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     terminals = TerminalManager(temp_db)
     client = FakeControlClient(host_epoch="epoch-errors")
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     host._client = client
 
     with patch(
@@ -302,11 +294,11 @@ async def test_reconcile_catches_only_typed_errors(
 
 @pytest.mark.asyncio
 async def test_reap_runs_off_loop(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     terminals = TerminalManager(temp_db)
-    host = _host(tmp_path, terminals, FakeControlClient())
+    host = _host(short_socket_dir, terminals, FakeControlClient())
     started = threading.Event()
     release = threading.Event()
 
@@ -329,7 +321,7 @@ async def test_reap_runs_off_loop(
 
 @pytest.mark.asyncio
 async def test_gap_recovery_converges_under_ring_churn(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -391,7 +383,7 @@ async def test_gap_recovery_converges_under_ring_churn(
         subscriptions += 1
         return stream
 
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     host._client = client
     host.host_epoch = epoch
     host._event_connector = connect_events
@@ -412,7 +404,7 @@ async def test_gap_recovery_converges_under_ring_churn(
 
 
 def _typed_replay_host(
-    tmp_path: Path, terminals: TerminalManager, typed: Terminal, epoch: str, typed_seq: int
+    short_socket_dir: Path, terminals: TerminalManager, typed: Terminal, epoch: str, typed_seq: int
 ) -> tuple[Any, list[int | None], list[InputActivityEvent]]:
     """A host whose stream replays one input on ``typed`` at the inventory cut."""
 
@@ -456,7 +448,7 @@ def _typed_replay_host(
         subscriptions.append(since)
         return ReplayStream()
 
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     host._client = client
     host.host_epoch = epoch
     host._event_connector = connect_events
@@ -467,7 +459,7 @@ def _typed_replay_host(
 
 @pytest.mark.asyncio
 async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledger(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -475,7 +467,7 @@ async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledge
     terminals = TerminalManager(temp_db)
     typed = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-typed")
     # Typed while the daemon was down, at or before the inventory cut.
-    host, subscriptions, seen = _typed_replay_host(tmp_path, terminals, typed, epoch, 5)
+    host, subscriptions, seen = _typed_replay_host(short_socket_dir, terminals, typed, epoch, 5)
     # The ledger restored from the previous daemon's state file.
     ledger = host.composer_ledger
     ledger.observe_host_event(TerminalExitedEvent("gone", "ht-gone", 0, epoch, 4))
@@ -491,7 +483,7 @@ async def test_event_reader_replays_input_the_inventory_cut_hides_into_the_ledge
 
 @pytest.mark.asyncio
 async def test_event_reader_replays_a_new_host_from_its_start_for_a_seat_spawned_first(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -499,7 +491,7 @@ async def test_event_reader_replays_a_new_host_from_its_start_for_a_seat_spawned
     terminals = TerminalManager(temp_db)
     typed = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-typed")
     # Typed into the seat after it spawned on the new host, before the reader resubscribed.
-    host, subscriptions, _ = _typed_replay_host(tmp_path, terminals, typed, epoch, 1)
+    host, subscriptions, _ = _typed_replay_host(short_socket_dir, terminals, typed, epoch, 1)
     ledger = host.composer_ledger
     ledger.observe_host_event(TerminalExitedEvent("gone", "ht-gone", 0, "epoch-dead", 9))
     ledger.record_spawn(typed.id, epoch)
@@ -513,7 +505,7 @@ async def test_event_reader_replays_a_new_host_from_its_start_for_a_seat_spawned
 
 @pytest.mark.asyncio
 async def test_gap_buffer_overflow_repeats_cut(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -563,7 +555,7 @@ async def test_gap_buffer_overflow_repeats_cut(
 
     client = InventoryClient(host_epoch=epoch)
     client.authed = True
-    host = _host(tmp_path, TerminalManager(temp_db), client)
+    host = _host(short_socket_dir, TerminalManager(temp_db), client)
     host._client = client
     monkeypatch.setattr(host_events, "GAP_BUFFER_ENTRIES", 2)
 
@@ -575,7 +567,7 @@ async def test_gap_buffer_overflow_repeats_cut(
 
 @pytest.mark.asyncio
 async def test_input_activity_reaches_sink_not_settle_exit(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -597,7 +589,7 @@ async def test_input_activity_reaches_sink_not_settle_exit(
     assert row is not None
     client = FakeControlClient(host_epoch=epoch)
     client.authed = True
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     host._client = client
     host.host_epoch = epoch
     host.last_event_epoch = epoch
@@ -637,7 +629,7 @@ async def test_input_activity_reaches_sink_not_settle_exit(
 
 @pytest.mark.asyncio
 async def test_host_terminal_exited_event_broadcasts_exited(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -658,7 +650,7 @@ async def test_host_terminal_exited_event_broadcasts_exited(
     )
     assert row is not None
     client = FakeControlClient(host_epoch=epoch)
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     host.last_event_epoch = epoch
     events, emitted, registry = _capture_terminal_lifecycle(terminals)
 
@@ -765,7 +757,7 @@ async def test_reconcile_exits_dead_epoch_orphan_with_absent_process_group(
 
 @pytest.mark.asyncio
 async def test_event_reader_joins_singleflight_and_stops_cleanly(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     terminals = TerminalManager(temp_db)
@@ -774,7 +766,7 @@ async def test_event_reader_joins_singleflight_and_stops_cleanly(
     async def crash_stream(_since: int | None) -> Any:
         raise ConnectionError("host crashed")
 
-    host = _host(tmp_path, terminals, client, pid_ok=False)
+    host = _host(short_socket_dir, terminals, client, pid_ok=False)
     host.host_epoch = client.host_epoch
     host.host_pid = client.host_pid
     host._event_connector = crash_stream
@@ -793,7 +785,9 @@ async def test_event_reader_joins_singleflight_and_stops_cleanly(
     async def stopped_stream(_since: int | None) -> Any:
         raise HostManagerStopped()
 
-    stopped = _host(tmp_path, terminals, client, process=FakeHostProcess(pid=client.host_pid))
+    stopped = _host(
+        short_socket_dir, terminals, client, process=FakeHostProcess(pid=client.host_pid)
+    )
     stopped._spawner = spawn
     stopped._event_connector = stopped_stream
     stopped.last_event_epoch = "epoch-before-stop"
@@ -818,7 +812,7 @@ async def test_fake_host_has_no_attach_verb() -> None:
 
 @pytest.mark.asyncio
 async def test_host_shutdown_escalates(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -832,7 +826,7 @@ async def test_host_shutdown_escalates(
     for index, (exit_results, expected_signals, rung) in enumerate(cases):
         pid = 7_400 + index
         client = FakeControlClient(host_pid=pid, authed=True)
-        host = _host(tmp_path, terminals, client)
+        host = _host(short_socket_dir, terminals, client)
         host._client = client
         host.host_pid = pid
         wait_for_exit = AsyncMock(side_effect=exit_results)
@@ -850,7 +844,7 @@ async def test_host_shutdown_escalates(
 
 @pytest.mark.asyncio
 async def test_host_shutdown_escalates_when_the_control_socket_is_not_bound(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -859,8 +853,8 @@ async def test_host_shutdown_escalates_when_the_control_socket_is_not_bound(
     from gobby.terminals.host_protocol import write_pidfile
 
     pid = 7_450
-    write_pidfile(tmp_path, pid)
-    host = _host(tmp_path, TerminalManager(temp_db), FakeControlClient(host_pid=pid))
+    write_pidfile(short_socket_dir, pid)
+    host = _host(short_socket_dir, TerminalManager(temp_db), FakeControlClient(host_pid=pid))
     monkeypatch.setattr(
         host, "_connect", AsyncMock(side_effect=HostUnavailableError("gterm host unavailable"))
     )
@@ -875,7 +869,7 @@ async def test_host_shutdown_escalates_when_the_control_socket_is_not_bound(
 
 @pytest.mark.asyncio
 async def test_crash_orphans_and_interrupts(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -886,8 +880,8 @@ async def test_crash_orphans_and_interrupts(
     old_epoch = str(uuid.uuid4())
     row = _live(terminals, sample_project["id"], old_epoch)
     client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=9100)
-    write_pidfile(tmp_path, client.host_pid)
-    host = _host(tmp_path, terminals, client, run_manager=runs)
+    write_pidfile(short_socket_dir, client.host_pid)
+    host = _host(short_socket_dir, terminals, client, run_manager=runs)
     await host.start()
     await host.handle_host_death()
     updated = terminals.get(row.id)
@@ -898,7 +892,7 @@ async def test_crash_orphans_and_interrupts(
 
 
 @pytest.mark.asyncio
-async def test_degraded_startup_without_host(tmp_path: Path, temp_db: HubDatabase) -> None:
+async def test_degraded_startup_without_host(short_socket_dir: Path, temp_db: HubDatabase) -> None:
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.terminals.host_manager import TerminalHostManager
 
@@ -909,7 +903,7 @@ async def test_degraded_startup_without_host(tmp_path: Path, temp_db: HubDatabas
         raise FileNotFoundError("gterm")
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(enabled=True, socket_dir=str(tmp_path)),
+        config=TerminalHostConfig(enabled=True, socket_dir=str(short_socket_dir)),
         terminal_config=TerminalConfig(),
         terminal_manager=TerminalManager(temp_db),
         connector=boom,
@@ -929,7 +923,7 @@ async def test_degraded_startup_without_host(tmp_path: Path, temp_db: HubDatabas
 
 @pytest.mark.asyncio
 async def test_startup_settles_after_start_even_when_degraded(
-    tmp_path: Path, temp_db: HubDatabase
+    short_socket_dir: Path, temp_db: HubDatabase
 ) -> None:
     """Attach paths wait on startup settling, so a degraded start settles too (#22002)."""
     from gobby.config.terminal_host import TerminalHostConfig
@@ -942,7 +936,7 @@ async def test_startup_settles_after_start_even_when_degraded(
         raise FileNotFoundError("gterm")
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(enabled=True, socket_dir=str(tmp_path)),
+        config=TerminalHostConfig(enabled=True, socket_dir=str(short_socket_dir)),
         terminal_config=TerminalConfig(),
         terminal_manager=TerminalManager(temp_db),
         connector=boom,
@@ -957,7 +951,7 @@ async def test_startup_settles_after_start_even_when_degraded(
 
 @pytest.mark.asyncio
 async def test_restart_adopts_host_preserving_epoch_pid_and_row(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -979,8 +973,8 @@ async def test_restart_adopts_host_preserving_epoch_pid_and_row(
             )
         ],
     )
-    write_pidfile(tmp_path, 7777)
-    host = _host(tmp_path, terminals, client)
+    write_pidfile(short_socket_dir, 7777)
+    host = _host(short_socket_dir, terminals, client)
     await host.start()
     assert host.adopted is True
     assert host.spawned_this_construction is False
@@ -995,7 +989,7 @@ async def test_restart_adopts_host_preserving_epoch_pid_and_row(
 
 @pytest.mark.asyncio
 async def test_start_adopts_surviving_host_with_live_terminals(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1022,8 +1016,8 @@ async def test_start_adopts_surviving_host_with_live_terminals(
             ),
         ],
     )
-    write_pidfile(tmp_path, 7001)
-    host = _host(tmp_path, terminals, client)
+    write_pidfile(short_socket_dir, 7001)
+    host = _host(short_socket_dir, terminals, client)
     token_before = host.ensure_control_token()
     await host.start()
 
@@ -1034,7 +1028,7 @@ async def test_start_adopts_surviving_host_with_live_terminals(
     assert host.preserved_host_pid() == 7001
     assert client.shutdown_calls == []
     assert client.kill_calls == []
-    assert (tmp_path / CONTROL_TOKEN_FILE_NAME).read_text() == token_before
+    assert (short_socket_dir / CONTROL_TOKEN_FILE_NAME).read_text() == token_before
     assert _loaded(terminals, first.id).state == "live"
     assert _loaded(terminals, second.id).state == "live"
 
@@ -1042,7 +1036,7 @@ async def test_start_adopts_surviving_host_with_live_terminals(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mismatch", ["protocol", "token", "pid_identity"])
 async def test_protocol_mismatch_keeps_existing_host_alive(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     mismatch: str,
@@ -1065,7 +1059,7 @@ async def test_protocol_mismatch_keeps_existing_host_alive(
         client.token = "rotated-by-someone-else"
     else:
         pid_ok = False
-    write_pidfile(tmp_path, 7002)
+    write_pidfile(short_socket_dir, 7002)
     spawn_calls = {"n": 0}
 
     def refuse_spawn() -> FakeHostProcess:
@@ -1076,7 +1070,7 @@ async def test_protocol_mismatch_keeps_existing_host_alive(
     from gobby.terminals.host_manager import TerminalHostManager
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), shutdown_grace_seconds=0.2),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
         run_manager=FakeRunManager(),
@@ -1094,7 +1088,7 @@ async def test_protocol_mismatch_keeps_existing_host_alive(
     assert host.native_available is False
     assert client.shutdown_calls == []
     assert client.kill_calls == []
-    assert (tmp_path / CONTROL_TOKEN_FILE_NAME).read_text() == token_before, "no rotation"
+    assert (short_socket_dir / CONTROL_TOKEN_FILE_NAME).read_text() == token_before, "no rotation"
     health = host.health_state()
     assert health["host_mismatch"], health
     assert host.last_error
@@ -1113,7 +1107,7 @@ def _connector_for(client: FakeControlClient) -> Any:
 
 @pytest.mark.asyncio
 async def test_drain_stops_a_host_this_daemon_never_adopted(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1128,8 +1122,8 @@ async def test_drain_stops_a_host_this_daemon_never_adopted(
     client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=7311)
     # The pidfile disagrees with ping.host_pid: the host is alive but not
     # adoptable, which is the state the operator is told to drain.
-    write_pidfile(tmp_path, 4111)
-    host = _host(tmp_path, terminals, client, pid_ok=True)
+    write_pidfile(short_socket_dir, 4111)
+    host = _host(short_socket_dir, terminals, client, pid_ok=True)
     await host.start()
     assert host.adopted is False
     assert host.health_state()["host_mismatch"]
@@ -1146,7 +1140,7 @@ async def test_drain_stops_a_host_this_daemon_never_adopted(
 
 @pytest.mark.asyncio
 async def test_drain_reports_a_host_that_outlived_the_rpc(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1155,8 +1149,8 @@ async def test_drain_reports_a_host_that_outlived_the_rpc(
 
     terminals = TerminalManager(temp_db)
     client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=7312)
-    write_pidfile(tmp_path, 7312)
-    host = _host(tmp_path, terminals, client, pid_ok=True)
+    write_pidfile(short_socket_dir, 7312)
+    host = _host(short_socket_dir, terminals, client, pid_ok=True)
     await host.start()
     assert host.adopted is True
 
@@ -1175,7 +1169,7 @@ async def test_drain_reports_a_host_that_outlived_the_rpc(
 
 @pytest.mark.asyncio
 async def test_adoption_requires_ping_host_pid_proof(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     from gobby.terminals.host_protocol import write_pidfile
@@ -1185,16 +1179,16 @@ async def test_adoption_requires_ping_host_pid_proof(
 
     # Matching live pidfile plus matching host_pid adopts.
     client = FakeControlClient(host_epoch=epoch, host_pid=4242)
-    write_pidfile(tmp_path, 4242)
-    host = _host(tmp_path, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
+    write_pidfile(short_socket_dir, 4242)
+    host = _host(short_socket_dir, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
     await host.start()
     assert host.adopted is True
 
     # Unrelated live gterm PID (pidfile != ping.host_pid) refuses adoption and
     # degrades instead of spawning over whatever answered on the socket.
     client2 = FakeControlClient(host_epoch=epoch, host_pid=9999)
-    write_pidfile(tmp_path, 1111)
-    host2 = _host(tmp_path, terminals, client2, pid_ok=True)
+    write_pidfile(short_socket_dir, 1111)
+    host2 = _host(short_socket_dir, terminals, client2, pid_ok=True)
     await host2.start()
     assert host2.adopted is False
     assert host2.spawned_this_construction is False
@@ -1217,7 +1211,7 @@ async def test_adoption_requires_ping_host_pid_proof(
         return fresh
 
     host3 = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), shutdown_grace_seconds=0.2),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
         run_manager=FakeRunManager(),
@@ -1233,7 +1227,7 @@ async def test_adoption_requires_ping_host_pid_proof(
 
 @pytest.mark.asyncio
 async def test_unknown_host_rechecks_before_kill(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1248,7 +1242,7 @@ async def test_unknown_host_rechecks_before_kill(
     client = FakeControlClient(terminals=[row], host_pid=5001)
     from gobby.terminals.host_protocol import write_pidfile
 
-    write_pidfile(tmp_path, 5001)
+    write_pidfile(short_socket_dir, 5001)
     lookups = {"n": 0}
 
     class RecheckingManager(TerminalManager):
@@ -1267,7 +1261,7 @@ async def test_unknown_host_rechecks_before_kill(
             return found
 
     manager = RecheckingManager(temp_db)
-    host = _host(tmp_path, manager, client)
+    host = _host(short_socket_dir, manager, client)
     await host.start()
     await host.reconcile()
     assert "ht-unknown" not in client.kill_calls
@@ -1362,7 +1356,7 @@ async def test_cancelled_orphan_transition_still_interrupts_agent_run() -> None:
 
 @pytest.mark.asyncio
 async def test_adoption_reconciliation_matrix(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1415,10 +1409,10 @@ async def test_adoption_reconciliation_matrix(
             unknown,
         ],
     )
-    write_pidfile(tmp_path, 6001)
+    write_pidfile(short_socket_dir, 6001)
     runs = FakeRunManager()
     host = _host(
-        tmp_path,
+        short_socket_dir,
         terminals,
         client,
         run_manager=runs,
@@ -1449,7 +1443,7 @@ async def test_adoption_reconciliation_matrix(
 
 @pytest.mark.asyncio
 async def test_reconcile_skips_tmux_observer_slots(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1477,8 +1471,8 @@ async def test_reconcile_skips_tmux_observer_slots(
             observer,
         ],
     )
-    write_pidfile(tmp_path, 8001)
-    host = _host(tmp_path, terminals, client)
+    write_pidfile(short_socket_dir, 8001)
+    host = _host(short_socket_dir, terminals, client)
     await host.start()
     await host.reconcile()
     assert host.running is True
@@ -1489,22 +1483,22 @@ async def test_reconcile_skips_tmux_observer_slots(
 
 @pytest.mark.asyncio
 async def test_control_token_is_minted_scoped_and_rotated(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     from gobby.terminals.host_protocol import CONTROL_TOKEN_FILE_NAME
 
     terminals = TerminalManager(temp_db)
     client = FakeControlClient(token="will-be-replaced")
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     token = host.ensure_control_token()
-    path = tmp_path / CONTROL_TOKEN_FILE_NAME
+    path = short_socket_dir / CONTROL_TOKEN_FILE_NAME
     assert path.read_text() == token
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     client.token = token
     from gobby.terminals.host_protocol import write_pidfile
 
-    write_pidfile(tmp_path, client.host_pid)
+    write_pidfile(short_socket_dir, client.host_pid)
     await host.start()
     assert host.adopted is True
     same = host.ensure_control_token()
@@ -1520,7 +1514,7 @@ async def test_control_token_is_minted_scoped_and_rotated(
 
 @pytest.mark.asyncio
 async def test_reconcile_does_not_exit_inflight_spawn(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1530,9 +1524,9 @@ async def test_reconcile_does_not_exit_inflight_spawn(
     inflight = _pending(terminals, sample_project["id"])
     epoch = str(uuid.uuid4())
     client = FakeControlClient(host_epoch=epoch, host_pid=7001, terminals=[])
-    write_pidfile(tmp_path, 7001)
+    write_pidfile(short_socket_dir, 7001)
     host = _host(
-        tmp_path,
+        short_socket_dir,
         terminals,
         client,
         spawn_in_doubt_seconds=150.0,
@@ -1552,7 +1546,7 @@ async def test_reconcile_does_not_exit_inflight_spawn(
 
     overdue = _pending(terminals, sample_project["id"])
     host_overdue = _host(
-        tmp_path,
+        short_socket_dir,
         terminals,
         FakeControlClient(host_epoch=epoch, host_pid=7001, terminals=[]),
         spawn_in_doubt_seconds=0.001,
@@ -1564,7 +1558,7 @@ async def test_reconcile_does_not_exit_inflight_spawn(
 
 @pytest.mark.asyncio
 async def test_host_crash_reaps_sighup_ignoring_tree(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1634,8 +1628,8 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
         assert live is not None
 
         client = FakeControlClient(host_epoch=epoch, host_pid=os.getpid())
-        write_pidfile(tmp_path, os.getpid())
-        host = _host(tmp_path, terminals, client)
+        write_pidfile(short_socket_dir, os.getpid())
+        host = _host(short_socket_dir, terminals, client)
         await host.handle_host_death()
         await host.reap_recorded_process({"pgid": os.getpid(), "start_time": 0.0})
 
@@ -1662,14 +1656,14 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
 
 @pytest.mark.asyncio
 async def test_prepare_commit_persists_before_commit(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     terminals = TerminalManager(temp_db)
     row = _pending(terminals, sample_project["id"])
     client = FakeControlClient()
-    host = _host(tmp_path, terminals, client)
+    host = _host(short_socket_dir, terminals, client)
     await host.handle_spawn_prepared(
         {
             "terminal_id": row.id,
@@ -1722,7 +1716,7 @@ async def test_prepare_commit_persists_before_commit(
 
 @pytest.mark.asyncio
 async def test_reconcile_does_not_promote_uncommitted_prepare(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1746,8 +1740,8 @@ async def test_reconcile_does_not_promote_uncommitted_prepare(
             )
         ],
     )
-    write_pidfile(tmp_path, 8001)
-    host = _host(tmp_path, terminals, client)
+    write_pidfile(short_socket_dir, 8001)
+    host = _host(short_socket_dir, terminals, client)
     await host.start()
     await host.reconcile()
     stored = terminals.get(row.id)
@@ -1759,7 +1753,7 @@ async def test_reconcile_does_not_promote_uncommitted_prepare(
 
 @pytest.mark.asyncio
 async def test_observation_state_reconverges_after_daemon_downtime(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1781,8 +1775,8 @@ async def test_observation_state_reconverges_after_daemon_downtime(
             )
         ],
     )
-    write_pidfile(tmp_path, 9300)
-    host = _host(tmp_path, terminals, client)
+    write_pidfile(short_socket_dir, 9300)
+    host = _host(short_socket_dir, terminals, client)
     await host.start()
     await host.reconcile()
     held = _loaded(terminals, row.id)
@@ -1808,7 +1802,7 @@ def test_gterm_bin_requires_vt_engine() -> None:
     assert gterm.get("required-features") == ["vt-engine"]
 
 
-def test_host_spawn_forwards_attachment_pool_args(tmp_path: Path) -> None:
+def test_host_spawn_forwards_attachment_pool_args(short_socket_dir: Path) -> None:
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.terminals.host_manager import TerminalHostManager
 
@@ -1822,7 +1816,7 @@ def test_host_spawn_forwards_attachment_pool_args(tmp_path: Path) -> None:
 
     host = TerminalHostManager(
         config=TerminalHostConfig(
-            socket_dir=str(tmp_path),
+            socket_dir=str(short_socket_dir),
             binary_path="/bin/echo",
             max_attachments_total=8,
             max_attachments_per_terminal=4,
@@ -1838,7 +1832,7 @@ def test_host_spawn_forwards_attachment_pool_args(tmp_path: Path) -> None:
 
 
 def test_host_spawn_drops_the_daemons_tmux_pane(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Native agents inherit the host env; a daemon started in tmux must not
     hand them its own pane as their terminal context."""
@@ -1856,7 +1850,7 @@ def test_host_spawn_drops_the_daemons_tmux_pane(
             raise OSError("boom")
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), binary_path="/bin/echo"),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), binary_path="/bin/echo"),
         terminal_config=TerminalConfig(),
     )
     with patch("subprocess.Popen", _BoomPopen):
@@ -1869,7 +1863,7 @@ def test_host_spawn_drops_the_daemons_tmux_pane(
 
 
 def test_host_spawn_drops_daemon_internal_supervisor_fd(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The supervisor fd belongs to the daemon; seat shells inherit the host env,
     so the spawn must not pass it on."""
@@ -1887,7 +1881,7 @@ def test_host_spawn_drops_daemon_internal_supervisor_fd(
             raise OSError("boom")
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), binary_path="/bin/echo"),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), binary_path="/bin/echo"),
         terminal_config=TerminalConfig(),
     )
     with patch("subprocess.Popen", _BoomPopen):
@@ -1900,12 +1894,12 @@ def test_host_spawn_drops_daemon_internal_supervisor_fd(
 
 @pytest.mark.asyncio
 async def test_ensure_restart_is_singleflight_with_backoff(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     terminal_manager = TerminalManager(temp_db)
     client = FakeControlClient()
-    manager = _host(tmp_path, terminal_manager, client)
+    manager = _host(short_socket_dir, terminal_manager, client)
     manager._client = None
     manager._stop_requested = False
     controlled = _ControlledSleep()
@@ -1929,7 +1923,7 @@ async def test_ensure_restart_is_singleflight_with_backoff(
     async def instant_sleep(delay: float) -> None:
         failure_delays.append(delay)
 
-    failed = _host(tmp_path, terminal_manager, FakeControlClient())
+    failed = _host(short_socket_dir, terminal_manager, FakeControlClient())
     failed._client = None
     failed._stop_requested = False
     failed._sleep = instant_sleep
@@ -1941,7 +1935,7 @@ async def test_ensure_restart_is_singleflight_with_backoff(
     assert failed.native_available is False
 
     ceiling_delays: list[float] = []
-    ceiling = _host(tmp_path, terminal_manager, FakeControlClient())
+    ceiling = _host(short_socket_dir, terminal_manager, FakeControlClient())
     ceiling.config = ceiling.config.model_copy(
         update={"restart_max_attempts": 7, "restart_backoff_ceiling_seconds": 30.0}
     )
@@ -1976,12 +1970,12 @@ async def test_ensure_restart_is_singleflight_with_backoff(
 
 @pytest.mark.asyncio
 async def test_drained_host_is_never_respawned(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     terminal_manager = TerminalManager(temp_db)
     client = FakeControlClient()
-    manager = _host(tmp_path, terminal_manager, client)
+    manager = _host(short_socket_dir, terminal_manager, client)
     spawner = MagicMock(return_value=FakeHostProcess(pid=client.host_pid))
     manager._spawner = spawner
     manager.host_drained = True
@@ -1997,12 +1991,12 @@ async def test_drained_host_is_never_respawned(
 
 @pytest.mark.asyncio
 async def test_waiter_cancellation_does_not_cancel_shared_restart(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     terminal_manager = TerminalManager(temp_db)
     client = FakeControlClient()
-    manager = _host(tmp_path, terminal_manager, client)
+    manager = _host(short_socket_dir, terminal_manager, client)
     manager._client = None
     manager._stop_requested = False
     controlled = _ControlledSleep()
@@ -2024,13 +2018,13 @@ async def test_waiter_cancellation_does_not_cancel_shared_restart(
 
 @pytest.mark.asyncio
 async def test_shutdown_start_stops_host_respawn(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     from gobby import runner_lifecycle_shutdown as shutdown
 
     client = FakeControlClient()
-    manager = _host(tmp_path, TerminalManager(temp_db), client)
+    manager = _host(short_socket_dir, TerminalManager(temp_db), client)
     manager._client = client
     manager.host_epoch = client.host_epoch
     manager.host_pid = client.host_pid
@@ -2071,7 +2065,9 @@ async def test_shutdown_start_stops_host_respawn(
                 "_shutdown_database_concurrency_under_cancellation",
                 AsyncMock(return_value=None),
             ),
-            patch.object(shutdown, "get_shutdown_marker_path", return_value=tmp_path / "shutdown"),
+            patch.object(
+                shutdown, "get_shutdown_marker_path", return_value=short_socket_dir / "shutdown"
+            ),
             patch("gobby.agents.sandbox_policy.shutdown_pre_commit_store_spare"),
         ):
             await shutdown.shutdown_daemon_services(
@@ -2093,11 +2089,11 @@ async def test_shutdown_start_stops_host_respawn(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("producer", ["health", "restart"])
 async def test_shutdown_fences_sleeping_host_producers(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     producer: str,
 ) -> None:
-    manager = _host(tmp_path, TerminalManager(temp_db), FakeControlClient())
+    manager = _host(short_socket_dir, TerminalManager(temp_db), FakeControlClient())
     controlled = _ControlledSleep()
     manager._sleep = controlled
     spawner = MagicMock(return_value=FakeHostProcess(pid=42))
@@ -2123,10 +2119,10 @@ async def test_shutdown_fences_sleeping_host_producers(
 
 @pytest.mark.asyncio
 async def test_shutdown_fences_candidate_before_token_rotation(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
-    manager = _host(tmp_path, TerminalManager(temp_db), FakeControlClient())
+    manager = _host(short_socket_dir, TerminalManager(temp_db), FakeControlClient())
     manager.rotate_control_token = MagicMock()
     manager._spawner = MagicMock()
     manager.begin_shutdown()
@@ -2138,12 +2134,12 @@ async def test_shutdown_fences_candidate_before_token_rotation(
 
 @pytest.mark.asyncio
 async def test_stop_fences_restart_creation_and_publication(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     terminal_manager = TerminalManager(temp_db)
     client = FakeControlClient()
-    manager = _host(tmp_path, terminal_manager, client)
+    manager = _host(short_socket_dir, terminal_manager, client)
     manager._client = None
     manager._stop_requested = False
     controlled = _ControlledSleep()
@@ -2228,7 +2224,7 @@ class _NullWriter:
 
 
 async def test_mismatch_retries_and_adopts_after_pidfile_recovers(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     """A stale pidfile at start mismatches; the next health tick adopts in place."""
@@ -2237,12 +2233,12 @@ async def test_mismatch_retries_and_adopts_after_pidfile_recovers(
     terminals = TerminalManager(temp_db)
     epoch = str(uuid.uuid4())
     client = FakeControlClient(host_epoch=epoch, host_pid=4242)
-    write_pidfile(tmp_path, 1111)
-    host = _host(tmp_path, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
+    write_pidfile(short_socket_dir, 1111)
+    host = _host(short_socket_dir, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
 
     def pidfile_recovers(tick: int) -> None:
         if tick == 1:
-            write_pidfile(tmp_path, 4242)
+            write_pidfile(short_socket_dir, 4242)
 
     ticks = _Ticks(count=2, before_tick=pidfile_recovers)
     host._sleep = ticks
@@ -2265,7 +2261,7 @@ async def test_mismatch_retries_and_adopts_after_pidfile_recovers(
 
 
 async def test_mismatch_retry_never_spawns_second_host(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2276,7 +2272,7 @@ async def test_mismatch_retry_never_spawns_second_host(
 
     terminals = TerminalManager(temp_db)
     client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4242)
-    write_pidfile(tmp_path, 1111)
+    write_pidfile(short_socket_dir, 1111)
     spawn_calls = {"n": 0}
 
     def refuse_spawn() -> FakeHostProcess:
@@ -2284,7 +2280,7 @@ async def test_mismatch_retry_never_spawns_second_host(
         raise AssertionError("a live host must never be replaced")
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), shutdown_grace_seconds=0.2),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
         run_manager=FakeRunManager(),
@@ -2309,7 +2305,7 @@ async def test_mismatch_retry_never_spawns_second_host(
     assert host.health_state()["host_mismatch"]
     assert client.shutdown_calls == []
     assert client.kill_calls == []
-    assert (tmp_path / CONTROL_TOKEN_FILE_NAME).read_text() == token_before, "no rotation"
+    assert (short_socket_dir / CONTROL_TOKEN_FILE_NAME).read_text() == token_before, "no rotation"
     reported = [r for r in caplog.records if "not adoptable" in r.getMessage()]
     assert len(reported) == 1, "an unchanged mismatch is reported once, not every tick"
     await host.stop()
@@ -2317,7 +2313,7 @@ async def test_mismatch_retry_never_spawns_second_host(
 
 
 async def test_mismatch_warning_does_not_advise_draining_terminals(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2325,8 +2321,8 @@ async def test_mismatch_warning_does_not_advise_draining_terminals(
 
     terminals = TerminalManager(temp_db)
     client = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4242)
-    write_pidfile(tmp_path, 1111)
-    host = _host(tmp_path, terminals, client, pid_ok=True)
+    write_pidfile(short_socket_dir, 1111)
+    host = _host(short_socket_dir, terminals, client, pid_ok=True)
 
     with caplog.at_level(logging.WARNING):
         await host.start()
@@ -2341,7 +2337,7 @@ async def test_mismatch_warning_does_not_advise_draining_terminals(
 
 
 async def test_stale_pidfile_at_start_recovers_without_restart(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     """The 2026-09-14 07:10 outage end to end, minus the daemon restart it needed."""
@@ -2350,12 +2346,12 @@ async def test_stale_pidfile_at_start_recovers_without_restart(
     terminals = TerminalManager(temp_db)
     # welcome.bin carries host epoch "epoch-1"; the live host reports the same.
     client = FakeControlClient(host_epoch="epoch-1", host_pid=4242)
-    write_pidfile(tmp_path, 1111)
-    host = _host(tmp_path, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
+    write_pidfile(short_socket_dir, 1111)
+    host = _host(short_socket_dir, terminals, client, pid_ok=True, process=FakeHostProcess(4242))
 
     def pidfile_recovers(tick: int) -> None:
         if tick == 1:
-            write_pidfile(tmp_path, 4242)
+            write_pidfile(short_socket_dir, 4242)
 
     ticks = _Ticks(count=1, before_tick=pidfile_recovers)
     host._sleep = ticks
@@ -2379,7 +2375,7 @@ async def test_stale_pidfile_at_start_recovers_without_restart(
 
 
 async def test_stale_control_socket_spawns_host(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     """A socket file nobody listens on spawns a host instead of degrading (#22425)."""
@@ -2389,7 +2385,7 @@ async def test_stale_control_socket_spawns_host(
     from gobby.terminals.host_protocol import control_socket_path
 
     # The file a host that died without unlinking its socket leaves behind.
-    control_socket_path(tmp_path).touch()
+    control_socket_path(short_socket_dir).touch()
     terminals = TerminalManager(temp_db)
     fresh = FakeControlClient(host_epoch=str(uuid.uuid4()), host_pid=4343)
     spawns: list[FakeHostProcess] = []
@@ -2408,7 +2404,7 @@ async def test_stale_control_socket_spawns_host(
         return process
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), shutdown_grace_seconds=0.2),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
         run_manager=FakeRunManager(),
@@ -2429,7 +2425,7 @@ async def test_stale_control_socket_spawns_host(
 
 
 async def test_spawn_failure_retries_from_health_loop(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
 ) -> None:
     """A start that spawned nothing recovers on a health tick, not a restart (#22425)."""
@@ -2457,7 +2453,7 @@ async def test_spawn_failure_retries_from_health_loop(
         return process
 
     host = TerminalHostManager(
-        config=TerminalHostConfig(socket_dir=str(tmp_path), shutdown_grace_seconds=0.2),
+        config=TerminalHostConfig(socket_dir=str(short_socket_dir), shutdown_grace_seconds=0.2),
         terminal_config=TerminalConfig(),
         terminal_manager=terminals,
         run_manager=FakeRunManager(),
@@ -2493,7 +2489,7 @@ async def test_spawn_failure_retries_from_health_loop(
 
 @pytest.mark.asyncio
 async def test_control_probe_reports_each_distinct_outage_after_recovery(
-    tmp_path: Path,
+    short_socket_dir: Path,
     temp_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2502,8 +2498,8 @@ async def test_control_probe_reports_each_distinct_outage_after_recovery(
     epoch = str(uuid.uuid4())
     clients = [FakeControlClient(host_epoch=epoch) for _ in range(3)]
     remaining = iter(clients)
-    write_pidfile(tmp_path, clients[0].host_pid)
-    host = _host(tmp_path, TerminalManager(temp_db), clients[0])
+    write_pidfile(short_socket_dir, clients[0].host_pid)
+    host = _host(short_socket_dir, TerminalManager(temp_db), clients[0])
 
     async def connect() -> FakeControlClient:
         return next(remaining)
@@ -2535,13 +2531,13 @@ async def test_control_probe_reports_each_distinct_outage_after_recovery(
 
 @pytest.mark.asyncio
 async def test_typed_failure_reason_recorded_and_cleared(
-    tmp_path: Path, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+    short_socket_dir: Path, temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gobby.terminals import host_manager as host_manager_module
 
     monkeypatch.setattr(host_manager_module, "HOST_READY_DEADLINE_SECONDS", 0.05)
     client = FakeControlClient()
-    host = _host(tmp_path, TerminalManager(temp_db), client)
+    host = _host(short_socket_dir, TerminalManager(temp_db), client)
 
     async def absent() -> FakeControlClient:
         raise ConnectionRefusedError("no socket")
