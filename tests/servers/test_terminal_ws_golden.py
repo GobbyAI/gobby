@@ -68,7 +68,7 @@ pytestmark = pytest.mark.unit
 class _GoldenRow:
     id: str = TERMINAL_ID
     backend: str = "native"
-    machine_id: str = MACHINE_ID
+    machine_id: str | None = None
     ownership: str = "gobby"
     state: str = "live"
     title: str | None = "sess"
@@ -84,6 +84,7 @@ class _GoldenRow:
 class _GoldenManager:
     def __init__(self, row: _GoldenRow | None = None) -> None:
         self.row = row or _GoldenRow()
+        self.db = None
 
     def get(self, terminal_id: str) -> _GoldenRow | None:
         return self.row if terminal_id == self.row.id else None

@@ -10,11 +10,12 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.events.live_wake import wake_debounced_result, wake_failure
 from gobby.events.wake import NativeWakeTarget
+from gobby.hub.machine_routing import is_local_machine
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    from gobby.events.wake import WakeDispatcher
+    from gobby.events.wake import NativeBatchSender, WakeDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ async def dispatch_live_wakes(
 
         fallback: list[tuple[str, Any]] = []
         native_targets: list[NativeWakeTarget] = []
+        remote_targets: list[NativeWakeTarget] = []
         for session_id in session_ids:
             if session_id in results:
                 continue
@@ -111,19 +113,26 @@ async def dispatch_live_wakes(
             if blocked is not None:
                 results[session_id] = blocked
                 continue
-            native_targets.append(
-                NativeWakeTarget(
-                    session_id=session_id,
-                    terminal_id=str(terminal.id),
-                    cli_source=getattr(session, "source", None),
-                    drain=not confirmed_empty,
-                )
+            target = NativeWakeTarget(
+                session_id=session_id,
+                terminal_id=str(terminal.id),
+                cli_source=getattr(session, "source", None),
+                drain=not confirmed_empty,
             )
+            if is_local_machine(terminal.machine_id):
+                native_targets.append(target)
+            else:
+                remote_targets.append(target)
 
         async with asyncio.TaskGroup() as group:
             native_task = (
                 group.create_task(_send_native(dispatcher, native_targets))
                 if native_targets
+                else None
+            )
+            remote_task = (
+                group.create_task(_send_remote(dispatcher, remote_targets))
+                if remote_targets
                 else None
             )
             fallback_tasks = {
@@ -136,6 +145,9 @@ async def dispatch_live_wakes(
             for result in native_task.result():
                 session_id = str(result["session_id"])
                 results[session_id] = result
+        if remote_task is not None:
+            for result in remote_task.result():
+                results[str(result["session_id"])] = result
         for session_id, task in fallback_tasks.items():
             results[session_id] = task.result()
         return [results[session_id] for session_id in session_ids]
@@ -147,6 +159,35 @@ async def _send_native(
 ) -> list[dict[str, Any]]:
     sender = dispatcher._native_batch_sender
     assert sender is not None
+    return await _send_batch(dispatcher, sender, targets, failure_code="native_wake_batch_failed")
+
+
+async def _send_remote(
+    dispatcher: WakeDispatcher,
+    targets: list[NativeWakeTarget],
+) -> list[dict[str, Any]]:
+    # Never falls back to the local native host: a node terminal's wake has no local route.
+    sender = dispatcher._remote_wake_sender
+    if sender is None:
+        return [
+            wake_failure(
+                target.session_id,
+                method="terminal",
+                error_code="remote_wake_unavailable",
+                error_message="No route delivers wakes to node terminals",
+            )
+            for target in targets
+        ]
+    return await _send_batch(dispatcher, sender, targets, failure_code="remote_wake_batch_failed")
+
+
+async def _send_batch(
+    dispatcher: WakeDispatcher,
+    sender: NativeBatchSender,
+    targets: list[NativeWakeTarget],
+    *,
+    failure_code: str,
+) -> list[dict[str, Any]]:
     try:
         raw_results = await sender(targets)
     except asyncio.CancelledError:
@@ -158,7 +199,7 @@ async def _send_native(
             wake_failure(
                 target.session_id,
                 method="terminal",
-                error_code="native_wake_batch_failed",
+                error_code=failure_code,
                 error_message=detail,
             )
             for target in targets

@@ -133,6 +133,7 @@ async def _complete_self_terminated_run(
 
     if run.terminal_id and not debug:
         from gobby.agents.capture import terminate_managed_runtime_async
+        from gobby.hub.remote_runtime import resolve_terminal_runtime
         from gobby.storage.agents import LocalAgentRunManager, TerminalAction
         from gobby.storage.terminals import TerminalManager
         from gobby.terminals.runtime import UnregisteredBackendError
@@ -156,7 +157,7 @@ async def _complete_self_terminated_run(
                 "error_code": "terminal_runtime_unavailable",
             }
         try:
-            runtime = registry.resolve(terminal.backend)
+            runtime = resolve_terminal_runtime(registry, terminal, kill_db)
         except UnregisteredBackendError:
             return {
                 "success": False,

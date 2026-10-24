@@ -74,7 +74,7 @@ def _seat(
     sessions = MagicMock()
     sessions.get.return_value = session
     terminals = MagicMock()
-    terminals.resolve_live_for_session.return_value = MagicMock(id=TERMINAL_ID)
+    terminals.resolve_live_for_session.return_value = MagicMock(id=TERMINAL_ID, machine_id=None)
     notifications: list[dict[str, object]] = []
     attention = AttentionStateManager(
         temp_db, notification_publisher=notifications.append, epoch="test-epoch"

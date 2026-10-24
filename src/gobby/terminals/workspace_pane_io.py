@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.detection.safe_regex import InvalidPatternError, RegexOutcome, compile_safe_regex
+from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.storage.workspaces import WorkspacePane
@@ -183,7 +184,7 @@ class WorkspacePaneIOMixin:
 
     def _runtime(self, terminal: Terminal) -> TerminalRuntime:
         try:
-            return self._registry.resolve(terminal.backend)
+            return resolve_terminal_runtime(self._registry, terminal, self._terminals.db)
         except UnregisteredBackendError as exc:
             raise WorkspaceOpError(
                 "terminal_failed", f"No runtime serves {terminal.backend} terminals"

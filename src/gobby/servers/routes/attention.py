@@ -18,6 +18,7 @@ from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError
+from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.hub.remote_terminal import NodeTerminalWriteError
 from gobby.servers.routes.attention_roster import (
     _load_roster_entries,
@@ -757,7 +758,7 @@ async def _resolve_attention_pane(
         if row is not None:
             if not is_local_machine(row.machine_id):
                 return _remote_pane(row.id, row.machine_id)
-            runtime = registry.resolve(row.backend)
+            runtime = resolve_terminal_runtime(registry, row, manager.db)
 
             async def capture_session_pane() -> str | None:
                 snapshot = await runtime.snapshot(row, 15)
@@ -781,7 +782,7 @@ async def _resolve_attention_pane(
         return None
     if not is_local_machine(row.machine_id):
         return _remote_pane(row.id, row.machine_id)
-    runtime = registry.resolve(row.backend)
+    runtime = resolve_terminal_runtime(registry, row, manager.db)
 
     async def capture_run_pane() -> str | None:
         snapshot = await runtime.snapshot(row, 15)

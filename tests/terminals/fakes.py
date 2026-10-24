@@ -90,8 +90,9 @@ def make_memory_terminal(
 class MemoryTerminalStore:
     """Latch-aware TerminalManager stand-in for coordinator and spawn unit tests."""
 
-    def __init__(self, terminal: Terminal | None = None) -> None:
+    def __init__(self, terminal: Terminal | None = None, *, db: Any = None) -> None:
         self.rows: dict[str, Terminal] = {} if terminal is None else {terminal.id: terminal}
+        self.db = db
         self._settlement_locks: dict[str, tuple[asyncio.Lock, int]] = {}
         self.attempt_settled = asyncio.Event()
 
@@ -156,7 +157,7 @@ class MemoryTerminalStore:
             backend=backend,
             ownership=ownership,
             state="pending",
-            machine_id=machine_id or str(uuid4()),
+            machine_id=machine_id or require_machine_id(),
             project_id=project_id,
             created_at=now,
             updated_at=now,
