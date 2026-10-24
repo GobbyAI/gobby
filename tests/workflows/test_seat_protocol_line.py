@@ -104,6 +104,10 @@ def test_landed_with_title_before_sha_names_sha() -> None:
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} TASK_TITLE=t VERDICT=BOUNCE", "VERDICT"),
         (f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} VERDICT=BOUNCE SHA={SHA}", "SHA"),
+        (f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA}ab RETEST=PASS", "SHA"),
+        ("EVENT=PROOF_RESULT TASK=#7 RETEST=PASS NOTE=green", "SHA"),
+        ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA"),
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
     ],
 )
 def test_malformed_consumed_envelopes_name_the_offending_field(line: str, field: str) -> None:
@@ -136,7 +140,6 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
     "line",
     [
         f"EVENT=LAND_PENDING TASK=#7 SHA={SHA} TASK_TITLE=t NOTE=receipt_pending",
-        "EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now",
         f"Prose EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA}",
         "plain message with no protocol line",
         # Retired park/resume grammar is not validated at send time.
@@ -145,6 +148,21 @@ def test_candidate_stray_word_after_metadata_names_that_key() -> None:
 )
 def test_lines_without_a_consumed_event_are_unaffected(line: str) -> None:
     assert _parse(line) is None
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} NOTE=prove it now",
+        f"EVENT=PROOF_RESULT TASK=#7 SHA={SHA} RETEST=PASS NOTE=green",
+    ],
+)
+def test_well_formed_proof_envelopes_parse(line: str) -> None:
+    fields = _parse(line)
+
+    assert fields is not None
+    assert fields["SHA"] == SHA
+    assert fields["TASK"] == "#7"
 
 
 TEMPLATE = Path(__file__).resolve().parents[2] / (
