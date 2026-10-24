@@ -723,3 +723,63 @@ def test_list_remote_applies_session_filter_and_limit_in_query(
 
     assert len(rows) == 2
     assert {row.agent_session_id for row in rows} == {session_id}
+
+
+@pytest.mark.parametrize("kind", ["worktree", "clone"])
+def test_list_remote_matches_local_defaults(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    node_machine: str,
+    kind: remote_workspaces.WorkspaceKind,
+) -> None:
+    create = _worktree if kind == "worktree" else _clone
+    table = WORKSPACE[kind]["table"]
+    created_at = datetime(2020, 1, 1, tzinfo=UTC)
+    for index in range(51):
+        row_id = create(temp_db, sample_project)
+        temp_db.execute(
+            f"UPDATE {table} SET created_at = %s WHERE id = %s",
+            (created_at + timedelta(seconds=index), row_id),
+        )
+    if kind == "worktree":
+        expected_ids = [
+            row.id
+            for row in LocalWorktreeManager(temp_db).list_worktrees(project_id=sample_project["id"])
+        ]
+    else:
+        cleanup_id = _clone(temp_db, sample_project)
+        temp_db.execute(
+            "UPDATE clones SET status = 'cleanup', created_at = %s WHERE id = %s",
+            (created_at + timedelta(seconds=51), cleanup_id),
+        )
+        expected_ids = [
+            row.id
+            for row in LocalCloneManager(temp_db).list_clones(project_id=sample_project["id"])
+        ]
+    temp_db.execute(
+        f"UPDATE {table} SET machine_id = %s WHERE project_id = %s",
+        (node_machine, sample_project["id"]),
+    )
+
+    rows = remote_workspaces.list_remote(
+        temp_db, kind, node_machine, project_id=sample_project["id"]
+    )
+
+    assert len(rows) == 50
+    assert [row.id for row in rows] == expected_ids
+
+
+@pytest.mark.parametrize("status", [None, "cleanup", "active"])
+def test_list_remote_excludes_cleanup_clones(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    node_machine: str,
+    status: str | None,
+) -> None:
+    active = _clone(temp_db, sample_project, machine_id=node_machine)
+    cleanup = _clone(temp_db, sample_project, machine_id=node_machine)
+    temp_db.execute("UPDATE clones SET status = 'cleanup' WHERE id = %s", (cleanup,))
+
+    rows = remote_workspaces.list_remote(temp_db, "clone", node_machine, status=status)
+
+    assert [row.id for row in rows] == ([] if status == "cleanup" else [active])

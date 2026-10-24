@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -26,7 +24,7 @@ pytestmark = pytest.mark.unit
 _SEAT = "seat-session"
 
 
-def _release_tool() -> tuple[Callable[..., Any], Terminal]:
+def _release_tool() -> tuple[InternalToolRegistry, Terminal]:
     seat = make_memory_terminal()
     seat.session_id = _SEAT
     sessions = MagicMock()
@@ -45,14 +43,14 @@ def _release_tool() -> tuple[Callable[..., Any], Terminal]:
         )
     tool = registry.get_tool("release_composer")
     assert tool is not None
-    return tool, seat
+    return registry, seat
 
 
 def test_another_session_releases_a_pre_ledger_seat(composer_ledger: ComposerLedger) -> None:
     tool, seat = _release_tool()
 
     with session_context_for_test("assistant-session"):
-        result = asyncio.run(tool(session_id=_SEAT))
+        result = asyncio.run(tool.call("release_composer", {"session_id": _SEAT}))
 
     assert result == {"success": True, "session_id": _SEAT, "terminal_id": seat.id}
     assert composer_ledger.read(seat.id) == LedgerRead("empty")
@@ -62,7 +60,7 @@ def test_a_seat_cannot_release_its_own_composer(composer_ledger: ComposerLedger)
     tool, seat = _release_tool()
 
     with session_context_for_test(_SEAT):
-        result = asyncio.run(tool(session_id=_SEAT))
+        result = asyncio.run(tool.call("release_composer", {"session_id": _SEAT}))
 
     assert result["success"] is False
     assert result["error_code"] == "self_release"

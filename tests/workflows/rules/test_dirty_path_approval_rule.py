@@ -148,6 +148,61 @@ BRACE_REFUSED = (
     "eval 'gobby tasks {list,}'",
     "find . -exec gobby tasks {list,} \\;",
     "echo $(gobby tasks {list,})",
+    """uv run python - <<PY
+print("$(gobby sessions {approve,list}-dirty-paths s7)")
+PY""",
+    """docker exec -i c sh <<'EOF'
+gobby sessions {approve,list}-dirty-paths s7
+EOF""",
+    """uv run bash -s python <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 - <<'PY'
+print(1)
+PY
+gobby sessions {approve,list}-dirty-paths s7""",
+    """(uv run python - <<PY
+print("$(gobby sessions {approve,list}-dirty-paths s7)")
+PY
+)""",
+    """(bash <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E
+)""",
+    'for d in a b; do echo "$d $(gobby sessions {approve,list}-dirty-paths s7)"; done',
+    """python3 -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """uv run python -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """env python3 -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 -Ic 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 -c 'import os,sys;os.system(sys.stdin.read())' <<E
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """(python3 -c 'import os,sys;os.system(sys.stdin.read())' <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E
+)""",
+    """uv run python -m runner <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    """python3 run.py <<'E'
+gobby sessions {approve,list}-dirty-paths s7
+E""",
+    "C=/x/gobby; git bisect run a..$C",
+    "git grep --open-files-in-pager {gobby,x} pattern",
+    "git log --oneline {gobby,x}",
+    "C=/x/gobby; git -C log bisect run a..$C",
+    "C=/x/gobby; git --namespace show bisect run a..$C",
+    "C=/x/gobby; git -C log rebase -x a..$C HEAD~1",
+    "C=/x/gobby; git --attr-source log bisect run a..$C",
+    "C=/x/gobby; git --git-dir diff submodule foreach a..$C",
 )
 
 
@@ -185,6 +240,27 @@ BRACE_ALLOWED = (
     "ls ${HOME}",
     'echo "gobby {tasks,x} list"',
     "git commit -m 'gobby {tasks,} list'",
+    """uv run python - <<'PY'
+import subprocess
+queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
+for q in queries:
+    subprocess.run(["gcode", "grep", "-w", q["pattern"], "-m", "50", "--project", "/repo"])
+PY""",
+    """uv run python -c 'import subprocess; subprocess.run(["gcode", "grep", "-w", "x", "-m", "50"])'""",
+    """(uv run python - <<'PY'
+queries = [{"op": "grep", "pattern": "resolve_operator_conversation"}]
+PY
+)""",
+    r"""for d in task-23678-dispatch-batch-retirement task-24244-decision-service; do echo "$d $(lsof -t +D /Users/josh/.gobby/worktrees/gobby/$d 2>/dev/null | tr '\n' ' ')"; done""",
+    """python3 <<'PY'
+print({"op": "grep"})
+PY""",
+    """python3 - <<'PY'
+queries = [{"op": "grep", "pattern": "x"}]
+PY""",
+    "C=2894b82caa4be295eae44877b08f302d2d381afb; git log --oneline 0.5.0..$C",
+    "git log a..$C",
+    "C=/x/gobby; git -C repo log a..$C",
 )
 
 
