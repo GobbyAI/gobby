@@ -21,6 +21,9 @@ FROM tasks
 WHERE closed_at IS NOT NULL
   AND (closed_reason IS NULL OR closed_reason NOT IN ('done', 'moot', 'superseded', 'wont_do'));
 
+-- Legacy rows without criteria fail this NOT VALID check on any UPDATE, so lift it
+-- for the backfills and restore it unchanged; their criteria stay as recorded.
+ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria;
 UPDATE tasks SET closed_reason = CASE
     WHEN closed_reason IN ('obsolete', 'moot') THEN 'moot'
     WHEN closed_reason IN ('duplicate', 'superseded') THEN 'superseded'
@@ -52,6 +55,8 @@ $$;
 ALTER TABLE tasks DROP CONSTRAINT tasks_state_bucket_check;
 ALTER TABLE tasks ALTER COLUMN state_bucket SET DEFAULT 'open';
 UPDATE tasks SET state_bucket = compute_task_state_bucket(id);
+ALTER TABLE tasks ADD CONSTRAINT tasks_require_validation_criteria
+    CHECK (task_type = 'epic' OR NULLIF(btrim(validation_criteria), '') IS NOT NULL) NOT VALID;
 ALTER TABLE tasks ADD CONSTRAINT tasks_state_bucket_check
     CHECK (state_bucket IN ('open', 'in_progress', 'needs_human', 'escalated', 'deferred', 'closed'));
 

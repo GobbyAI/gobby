@@ -156,9 +156,19 @@ def gcode_targets(parts: list[str], command: str) -> list[str]:
 
 def _ignore_decision(path: Path, root: Path | None) -> Path | bool:
     """Decide without Git where possible; otherwise return the root Git must ask."""
+    if checkout_reads.node_origin():
+        try:
+            fact = checkout_reads.path_facts([str(path)]).files[0]
+        except checkout_reads.CheckoutReadUnavailable:
+            return root if root is not None else False
+        if fact.checkout_root is None:
+            return False
+        root = Path(fact.checkout_root)
     if root is None:
         return False
     if not path.is_relative_to(root):
+        if checkout_reads.node_origin():
+            return False
         # Repository scope also includes linked checkouts. Their exclusions
         # must be resolved against their own root and .gitignore.
         root = next((parent for parent in path.parents if (parent / ".git").exists()), None)
@@ -177,7 +187,19 @@ def _ignore_decision(path: Path, root: Path | None) -> Path | bool:
     # directory request, any overlapping allowlist prefix retains enforcement.
     prefixes = [Path(".gobby/plans"), Path(".github/workflows")]
     try:
-        config = json.loads((root / ".gobby/gcode.json").read_text())
+        if checkout_reads.node_origin():
+            config_fact = checkout_reads.path_facts(
+                [str(root / ".gobby/gcode.json")], read_limit=65_536
+            ).files[0]
+            config = (
+                json.loads(config_fact.data)
+                if config_fact.kind == "file"
+                and not config_fact.truncated
+                and config_fact.data is not None
+                else {}
+            )
+        else:
+            config = json.loads((root / ".gobby/gcode.json").read_text())
     except (OSError, ValueError):
         config = {}
     if isinstance(config, dict) and isinstance(config.get("index"), dict):
@@ -257,6 +279,27 @@ def _verified_source_line_count(paths: Sequence[Path | None]) -> int | None:
     A whole-file read is only provably narrow when each operand is verifiable;
     anything missing, oversized, or beyond the scan limit stays unverified.
     """
+    if checkout_reads.node_origin():
+        if any(path is None for path in paths):
+            return None
+        try:
+            facts = checkout_reads.path_facts(
+                [str(path) for path in paths], read_limit=_LINE_COUNT_SCAN_LIMIT + 1
+            )
+        except checkout_reads.CheckoutReadUnavailable:
+            return None
+        total = 0
+        for fact in facts.files:
+            data = fact.data
+            if (
+                fact.kind != "file"
+                or fact.truncated
+                or data is None
+                or len(data) > _LINE_COUNT_SCAN_LIMIT
+            ):
+                return None
+            total += data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+        return total if total <= MAX_NARROW_SOURCE_LINES else None
     total = 0
     for path in paths:
         if path is None:

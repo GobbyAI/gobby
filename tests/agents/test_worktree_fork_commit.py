@@ -149,7 +149,7 @@ async def test_detached_handler_refuses_before_storage_effects(
 
 
 async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) -> None:
-    from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
+    from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
 
     child = tmp_path / "conflicted"
     git(repo, "worktree", "add", "-b", "candidate", str(child), "main")
@@ -159,7 +159,7 @@ async def test_reuse_conflict_preserves_candidate(repo: Path, tmp_path: Path) ->
     (repo / "modified.txt").write_text("new base bytes\n")
     git(repo, "commit", "-am", "base changes")
     selected = git(repo, "rev-parse", "HEAD")
-    with pytest.raises(ReusedWorktreeRebaseConflict) as error:
+    with pytest.raises(ReusedWorktreeSyncConflict) as error:
         await sync_reused_worktree_to_base(
             git_manager=WorktreeGitManager(repo),
             worktree_path=str(child),
@@ -280,6 +280,7 @@ async def test_refresh_preserves_workspace_ancestry(repo: Path, tmp_path: Path) 
     (child / "candidate.txt").write_text("candidate work")
     git(child, "add", ".")
     git(child, "commit", "-m", "candidate")
+    candidate = git(child, "rev-parse", "HEAD")
     (repo / "base.txt").write_text("selected base")
     git(repo, "add", ".")
     git(repo, "commit", "-m", "base advances")
@@ -292,7 +293,8 @@ async def test_refresh_preserves_workspace_ancestry(repo: Path, tmp_path: Path) 
         base_commit_sha=selected,
     )
     assert result.base_commit_sha == selected
-    assert git(child, "rev-parse", "HEAD^") == selected
+    assert git(child, "rev-parse", "HEAD^1") == candidate
+    assert git(child, "rev-parse", "HEAD^2") == selected
     assert (child / "candidate.txt").read_text() == "candidate work"
 
 

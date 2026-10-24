@@ -243,8 +243,11 @@ state inconsistent.
   Every shipped binary whose crate or recursive path dependencies changed gets
   a `0.0.1` patch-version bump in its shipping commit, with `Cargo.lock` updated.
   Keep managed version pins and the gcode maintenance version floor in step.
-  Apply this to `gcode`, `gdaemon`, `ghook`, `gclient`, and `gterm` only when
-  released. Workspace promotion records each binary's version and source identity
+  Apply this to `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm` only when
+  released. Unpublished binaries (`UNPUBLISHED_MANAGED_BINS` in
+  `src/gobby/install/version_pins.py`) rebuild from the checkout on every
+  `gobby install`, so a changed source without a bump keeps the stale installed
+  binary. Workspace promotion records each binary's version and source identity
   in `.<binary>-release-identity.json`; same-version changed-source promotion is
   refused by the shared promotion guard, including cutover preflight before stop.
   Same-source re-promotion is permitted. Component installs use the same guard.
