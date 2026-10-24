@@ -156,6 +156,41 @@ def test_restart_recovers_handoff_before_dispatch_was_claimed(
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_pending"] is True
 
 
+@pytest.mark.parametrize("delivered", [False, True])
+def test_restart_leaves_web_chat_handoffs_unchanged(
+    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, delivered: bool
+) -> None:
+    session_manager = _session_manager(hub_db, "claude")
+    hub_db.execute("UPDATE sessions SET session_type = 'web_chat' WHERE id = %s", (SESSION_ID,))
+    staged = stage_handoff_attempt(
+        hub_db,
+        SESSION_ID,
+        attempt_id=ATTEMPT_ID,
+        handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
+        clear_session=False,
+        delivery_mode="in_process" if delivered else "queued_in_process",
+    )
+    if delivered:
+        record_handoff_delivery(
+            hub_db,
+            handoff_id=staged.handoff_record_id,
+            attempt_id=ATTEMPT_ID,
+            boundary_kind="compact",
+            continuation_session_id=SESSION_ID,
+        )
+    variables = SessionVariableManager(hub_db)
+    before = variables.get_variables(SESSION_ID)
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in before
+    _restart_daemon(monkeypatch)
+
+    with patch(f"{_DELIVERY}._schedule_claimed_delivery", return_value=True) as schedule:
+        assert _sweep(session_manager, MagicMock()) == 0
+
+    schedule.assert_not_called()
+    assert variables.get_variables(SESSION_ID) == before
+    assert _receipts(hub_db) == int(delivered)
+
+
 def _sweep(session_manager: SessionManager, loop: Any) -> int:
     return resume_dead_handoff_dispatches(
         MACHINE_ID,

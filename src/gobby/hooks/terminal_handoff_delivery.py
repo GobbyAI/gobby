@@ -464,6 +464,7 @@ def resume_dead_handoff_dispatches(
         SELECT s.id, v.variables -> 'set_handoff_pending' ->> 'attempt_id' AS attempt_id
           FROM sessions s JOIN session_variables v ON v.session_id = s.id
          WHERE s.machine_id = %s
+           AND s.session_type = 'terminal'
            AND s.status NOT IN ('expired', 'deleted')
            AND jsonb_typeof(v.variables -> 'set_handoff_pending') = 'object'
            AND (v.variables -> 'set_handoff_pending' ->> 'dispatch_owner') IS DISTINCT FROM %s
