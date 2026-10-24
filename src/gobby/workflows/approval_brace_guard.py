@@ -22,13 +22,14 @@ from gobby.hooks._normalization_shell import (
 )
 from gobby.hooks._shell_execution_words import _unwrap
 
+from .condition_helpers import _GIT_GLOBAL_FLAGS, _GIT_GLOBAL_VALUE_OPTIONS
 from .engine.command_matching import (
     _decoded_stages,
     _shell_input_scripts,
-    _uv_run_argvs,
     _wrapper_scripts,
     executable_command_subjects,
 )
+from .engine.command_matching_uv import _uv_run_argvs
 
 _TARGETS = ("gobby", "approve-dirty-paths")
 _MAX_DEPTH = 32
@@ -36,7 +37,27 @@ _DATA_COMMANDS = frozenset(
     {"echo", "printf", "rg", "grep", "gcode", "cat", "ls", "wc", "git", "cp"}
 )
 _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
+# Git subcommands whose operands are revisions or pathspecs. Git runs a program
+# from a positional only for subcommands such as `bisect run`, so these stay data.
+_GIT_READ_ONLY_SUBCOMMANDS = frozenset(
+    {
+        "blame",
+        "cat-file",
+        "describe",
+        "diff",
+        "log",
+        "ls-files",
+        "ls-tree",
+        "rev-list",
+        "rev-parse",
+        "show",
+        "shortlog",
+        "status",
+    }
+)
 _ASSIGNMENT_HEADS = frozenset({"export", "declare", "local", "readonly", "typeset"})
+# Reserved words that introduce a simple command, so the command word follows them.
+_COMPOUND_PREFIXES = frozenset({"!", "{", "do", "else", "elif", "if", "then", "until", "while"})
 type _Character = tuple[str, bool]
 # Literal input contributes one character at a time, so this marker cannot
 # collide with a glob star or any other character from the command text.
@@ -526,10 +547,12 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
     operands: dict[tuple[int, int], int] = {}
     head: str | None = None
     redirection_value = False
+    git_read_only: bool | None = None
+    git_value_pending = False
     for token, span in zip(scan.tokens, scan.spans, strict=True):
         raw = subject[span[0] : span[1]]
         if not token.quoted and token.value in {"|", "&&", "||", ";", "&", "\n"}:
-            head, redirection_value = None, False
+            head, redirection_value, git_read_only, git_value_pending = None, False, None, False
             continue
         if redirection_value:
             redirection_value = False
@@ -547,7 +570,23 @@ def _data_operands(subject: str, scan: ShellScan) -> dict[tuple[int, int], int]:
             literal = not any(_word_syntax(raw)) and not any(
                 active and char in "*?[" for char, active in _characters(raw)
             )
+            if literal and not token.quoted and token.value in _COMPOUND_PREFIXES:
+                # `do echo` runs `echo`: a compound keyword is not the command word.
+                continue
             head = token.value if literal else ""
+        elif head == "git":
+            # Global options precede the subcommand; a read-only one's later operands are data.
+            if git_read_only is not None:
+                if git_read_only and not raw.startswith("-"):
+                    operands[span] = 0
+            elif git_value_pending:
+                git_value_pending = False
+            elif token.value in _GIT_GLOBAL_VALUE_OPTIONS:
+                git_value_pending = True
+            elif token.value not in _GIT_GLOBAL_FLAGS and not any(
+                token.value.startswith(f"{option}=") for option in _GIT_GLOBAL_VALUE_OPTIONS
+            ):
+                git_read_only = token.value in _GIT_READ_ONLY_SUBCOMMANDS
         elif head in _DATA_BASENAME_HEADS:
             operands[span] = 0
     return operands
@@ -586,7 +625,9 @@ def _approval_subjects(command: str) -> tuple[list[tuple[str, ShellScan]], bool]
             raise _AmbiguousSyntax("Shell nesting limit")
         scan = scan_shell_command(text)
         strict |= _shell_setup(text, scan, _decoded_stages(text))
-        for subject in executable_command_subjects(text):
+        # A Python heredoc body is source, not shell words. Its braces are code, so
+        # only the shell-expanded substitutions inside it stay subjects.
+        for subject in executable_command_subjects(text, python_bodies="data"):
             scan = scan_shell_command(subject)
             stages = _decoded_stages(subject)
             strict |= _shell_setup(subject, scan, stages)
