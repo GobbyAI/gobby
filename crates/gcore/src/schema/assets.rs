@@ -389,20 +389,20 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 476,
         filename: "476_runbook_review_state.sql",
-        checksum: "312351fc7cd41c66d8cc3c35d9db9c06e25e09accf1faf96080cc0758754b041",
+        checksum: "96e78d126ce515203ed4484682389e2ab99360cb107f30c40ed652645d0c374a",
         sql: include_str!("../../assets/schema/migrations/476_runbook_review_state.sql"),
     },
     EmbeddedMigration {
         version: 477,
         filename: "477_runbook_task_states.sql",
-        checksum: "5898d9726be534c13aa9d0764188918b38a8b37288738f21a106fdff84f0e099",
+        checksum: "dd1caa8e162f9e3535bd21d527d0d9c8a9687aae129974cba78e3f379a1edcf9",
         sql: include_str!("../../assets/schema/migrations/477_runbook_task_states.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");
 
-/// Earlier baseline receipts whose numbered migrations converge to the current schema.
+/// Earlier receipts whose applied SQL converges to the current schema.
 pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
     (
         419,
@@ -412,6 +412,16 @@ pub(crate) const PRIOR_RECEIPT_CHECKSUMS: &[(i32, &str)] = &[
     (
         420,
         "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55",
+    ),
+    // The first 476/477 release, before they lifted the criteria check for legacy rows.
+    // A hub that applied them reached the same schema.
+    (
+        476,
+        "312351fc7cd41c66d8cc3c35d9db9c06e25e09accf1faf96080cc0758754b041",
+    ),
+    (
+        477,
+        "5898d9726be534c13aa9d0764188918b38a8b37288738f21a106fdff84f0e099",
     ),
 ];
 
