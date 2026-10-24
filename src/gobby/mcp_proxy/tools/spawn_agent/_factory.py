@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.team_lifecycle import SeatTarget
+
+# A module reference: remote_spawn imports this package, so its names may not exist yet.
+from gobby.hub import remote_spawn
 from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.node_client import NodeCommandError
-from gobby.hub.remote_spawn import RemoteSpawnRequest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.agent_resolver import AgentResolutionError
@@ -690,7 +692,7 @@ def create_spawn_agent_registry(
                 daemon_config=config_resolver() if config_resolver is not None else None,
                 placement=placement,
                 completion_registry=completion_registry,
-                request=RemoteSpawnRequest(
+                request=remote_spawn.RemoteSpawnRequest(
                     parent_session_id=resolved_parent_session_id,
                     project_id=project_id,
                     prompt=effective_prompt,

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -245,6 +247,17 @@ def _owner_http_client(db: HubDatabase, user_id: str, runner: MagicMock) -> Iter
         hook_manager.return_value.shutdown_async = AsyncMock()
         with TestClient(server.app, headers=TEST_FRONT_DOOR_IDENTITY) as client:
             yield client
+
+
+def test_remote_spawn_imports_before_the_spawn_tool() -> None:
+    # A fresh interpreter, so no earlier import of the spawn tool package hides a cycle.
+    loaded = subprocess.run(
+        [sys.executable, "-c", "import gobby.hub.remote_spawn"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert loaded.returncode == 0, loaded.stderr
 
 
 async def test_spawn_routes_to_requesting_machine(

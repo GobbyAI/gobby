@@ -11,13 +11,15 @@ project slot before any row is written.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.session import ChildSessionManager
 from gobby.config.app import DaemonConfig
+
+# A module reference: remote_spawn imports this package, so its names may not exist yet.
+from gobby.hub import remote_spawn
 from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.machine_routing import RoutedMachine, is_local_machine, resolve_target_machine
-from gobby.hub.remote_spawn import RemoteSpawnRequest, spawn_remote_agent
 from gobby.mcp_proxy.tools.spawn_agent._launch_settings import (
     LaunchRefused,
     resolve_launch_model,
@@ -37,6 +39,9 @@ from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+
+if TYPE_CHECKING:
+    from gobby.hub.remote_spawn import RemoteSpawnRequest
 
 
 def session_machine_id(
@@ -222,7 +227,7 @@ async def spawn_remote_route(
     ) as slot:
         if slot is not None:
             return {**slot, "error_code": "project_cap_reached", "stage": "none"}
-        return await spawn_remote_agent(
+        return await remote_spawn.spawn_remote_agent(
             db,
             routed=routed,
             request=request,
