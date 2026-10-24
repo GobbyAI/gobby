@@ -11,7 +11,8 @@ Finish in this order:
    definitive exit. Record exact commands and results for the reviewer. For
    changed Python tests, run the repository's test-types and test-quality audits
    over all affected tests; keep the suppression ratchet clean.
-3. Commit only task-owned paths with a task reference. Preserve foreign work.
+3. Stage only task paths and commit with a task reference. Preserve foreign work.
+   Use `git commit --only -m '[<project_name>-#<task_number>] fix: describe the change' -- <task paths>`.
 4. Call `close_task(task_id=..., commit_sha=..., changes_summary=..., preview=true)`.
    Include validation results in the summary so completion evidence is reviewable.
 5. Repair every failed gate, then call the same close with `preview=false`.
