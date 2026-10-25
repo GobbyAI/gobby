@@ -1,0 +1,1283 @@
+header:
+  plan_id: gdaemon-ai-providers-family
+  plan_hash: ca93753ecc798fd002e4e53029d0c6e87f0088d7b7cd99ca97e25afbf793f97e
+  root_task_ref: '21587'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-25T18:35:38Z'
+  task_tree_source: db
+  task_tree_source_hash: b77647a049aa4b7e35dd4a0d8700f4f0c355f2e3ad90d0380a6465ad788c9e22
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '0.1'
+  item_id: 0.1.1
+  plan_node_hash: b61aa7826704bf6105945c4101c013721eb252b7874940e1a823744c7484b06a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25093'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 19-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_ai_parity_corpus.py::test_inventory_matches_ai_ledger
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.2
+  plan_node_hash: bda733dca1a9e390cb2de4b4791d25db46fadc6b0c9d286230f0150801133969
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25093'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 19-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_ai_parity_corpus.py::test_collection_is_reproducible
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.3
+  plan_node_hash: 030cc4b130598abe30bd5a136bf7d88faa09c0a43e79ae4bc2cb9c02a60fd108
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25093'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 19-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_ai_parity_corpus.py::test_http_admission_matrix
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.4
+  plan_node_hash: e3bd4e74691d6fca3c532e24cc3bf3c81536096d43bcd986dbf9b64b1e7608c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25093'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 19-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_ai_parity_corpus.py::test_debt_waivers_are_behavior_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.5
+  plan_node_hash: 3decbc871e7ed3bcce57f3ddbcffb8b9cc2d5cf0b5000dae092ceeab1881acd9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25093'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 19-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_ai_parity_corpus.py::test_waiver_does_not_hide_unrelated_diff
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: acbf13ebcf640dddfe28c7f1b304a4ce8072d8aecc324d63d7ba6282fd499499
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25094'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/embeddings/status` matches
+      Python''s payload for configured, unconfigured, cloud-default and endpoint cases.
+      test: `crates/gai/tests/statu...'
+    matched_artifact_ref: crates/gai/tests/status.rs::embeddings_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 751ed9a823cc3cc19ba5555970a29475c8e1ac2d2306b538a3fd4db8e7f765ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25094'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/embeddings/status` matches
+      Python''s payload for configured, unconfigured, cloud-default and endpoint cases.
+      test: `crates/gai/tests/statu...'
+    matched_artifact_ref: crates/gai/tests/status.rs::embeddings_doctor_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 2564bfb3e7374ebfe325ddab2ed33989e94b7322d50f364d492eb2b6ffdc5153
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25094'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/embeddings/status` matches
+      Python''s payload for configured, unconfigured, cloud-default and endpoint cases.
+      test: `crates/gai/tests/statu...'
+    matched_artifact_ref: crates/gai/tests/status.rs::vision_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 2b48695a40a2e074c94885bebe8b2812ba42d0936345e78522251e48505326d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25094'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/embeddings/status` matches
+      Python''s payload for configured, unconfigured, cloud-default and endpoint cases.
+      test: `crates/gai/tests/statu...'
+    matched_artifact_ref: crates/gai/tests/status.rs::registry_matches_python_builder
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: e018de856fad65d7674fc4255a59587756f4ccaa2dc33bfdfd219a5f5a9011a1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25094'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/embeddings/status` matches
+      Python''s payload for configured, unconfigured, cloud-default and endpoint cases.
+      test: `crates/gai/tests/statu...'
+    matched_artifact_ref: crates/gai/tests/status.rs::families_are_scoped_and_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: e383233428b0d79f5ff4dc314db2e702c9ef9bb83eee404e119db7dc4147b4c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25095'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/embeddings` matches Python
+      for string and list input, query and document prefixes, the default model and
+      the reserved fields. test: `cra...'
+    matched_artifact_ref: crates/gai/tests/embed.rs::embed_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 68a97bda424fc0ee863a019dc6ae68944240081a9137adce7f32ae6f00d620df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25095'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/embeddings` matches Python
+      for string and list input, query and document prefixes, the default model and
+      the reserved fields. test: `cra...'
+    matched_artifact_ref: crates/gai/tests/embed.rs::embed_errors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: dfb5ba8d8bc5506ff26e36f9cd05d6c9d4aba52f576c5e5ba01451941a1e596b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25096'
+    validation_criteria_snippet: '2.1.1: The contract equals `DEFAULT_PROFILE_CANDIDATES`
+      in order, candidates and reasoning pins, and a changed entry on either side
+      fails. test: `tests/ai/test...'
+    matched_artifact_ref: tests/ai/test_profile_candidates_contract.py::test_contract_matches_python_defaults
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 53929e8d1644f0dcaa5408d9f640de5faa46b4fca1939c32512fd389b9059a47
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25096'
+    validation_criteria_snippet: '2.1.1: The contract equals `DEFAULT_PROFILE_CANDIDATES`
+      in order, candidates and reasoning pins, and a changed entry on either side
+      fails. test: `tests/ai/test...'
+    matched_artifact_ref: crates/gai/tests/profiles.rs::profile_candidates_match_contract
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: b0f3884ffef925870c48d4322a3300bb4782fbb3ae492365827ba324fe0441f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25097'
+    validation_criteria_snippet: '2.2.1: Candidate order matches Python for explicit
+      candidates, provider and model, configured and contract profile defaults, and
+      a bare provider. test: `crates...'
+    matched_artifact_ref: crates/gai/tests/generation.rs::candidate_order_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 8113eeb2642ba750f07a25232d6a0907b9c65a586647028f37be194d03c552b4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25097'
+    validation_criteria_snippet: '2.2.1: Candidate order matches Python for explicit
+      candidates, provider and model, configured and contract profile defaults, and
+      a bare provider. test: `crates...'
+    matched_artifact_ref: crates/gai/tests/generation.rs::fallback_and_breaker_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 2b3ccd96b01927e7076a5b045a065fbdd1837c86a65245188c0e4178e7a312b4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25097'
+    validation_criteria_snippet: '2.2.1: Candidate order matches Python for explicit
+      candidates, provider and model, configured and contract profile defaults, and
+      a bare provider. test: `crates...'
+    matched_artifact_ref: crates/gai/tests/generation.rs::timeouts_and_cold_spawn_limit_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 7e1aeb3136d3640b1b7a3ef9db9aff53b5ebc87ab17b7096813ca4c56a66e930
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25097'
+    validation_criteria_snippet: '2.2.1: Candidate order matches Python for explicit
+      candidates, provider and model, configured and contract profile defaults, and
+      a bare provider. test: `crates...'
+    matched_artifact_ref: crates/gai/tests/generation.rs::request_gates_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 9f366be6381c452f59b93538111d9bfea6c41b32107ff625a8b375909181d110
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25097'
+    validation_criteria_snippet: '2.2.1: Candidate order matches Python for explicit
+      candidates, provider and model, configured and contract profile defaults, and
+      a bare provider. test: `crates...'
+    matched_artifact_ref: crates/gai/tests/generation.rs::endpoint_adapters_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: ac962ba22fa1dc0b4da7ad5f3bfaab2405348e5dd345af83e0c88e5b72918253
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25098'
+    validation_criteria_snippet: '2.3.1: The runner reproduces Python''s environment,
+      working directory, session, exit-error text, timeout and process-group cleanup,
+      and leaves no orphan process...'
+    matched_artifact_ref: crates/gai/tests/cli_adapters.rs::runner_isolation_and_cleanup_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: ef4714b9f964ab2b7d605095098937aa398eb973ebbac28ee96bd1fe07ccffc2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25098'
+    validation_criteria_snippet: '2.3.1: The runner reproduces Python''s environment,
+      working directory, session, exit-error text, timeout and process-group cleanup,
+      and leaves no orphan process...'
+    matched_artifact_ref: crates/gai/tests/cli_adapters.rs::claude_adapter_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: d52b7d79f4b6b28810d24d205fea36827e5eecf5bca8d16289d9962d0465fc9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25098'
+    validation_criteria_snippet: '2.3.1: The runner reproduces Python''s environment,
+      working directory, session, exit-error text, timeout and process-group cleanup,
+      and leaves no orphan process...'
+    matched_artifact_ref: crates/gai/tests/cli_adapters.rs::codex_adapter_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: b7704d6ec2ec7b8ec2817f330649a3dc2589f31734722f412588f3490c768211
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25098'
+    validation_criteria_snippet: '2.3.1: The runner reproduces Python''s environment,
+      working directory, session, exit-error text, timeout and process-group cleanup,
+      and leaves no orphan process...'
+    matched_artifact_ref: crates/gai/tests/cli_adapters.rs::droid_adapter_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 384385c988f10efc3bb0aabe32a3b54969c06e01c07debb87a8090dc7ed74afa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25098'
+    validation_criteria_snippet: '2.3.1: The runner reproduces Python''s environment,
+      working directory, session, exit-error text, timeout and process-group cleanup,
+      and leaves no orphan process...'
+    matched_artifact_ref: crates/gai/tests/cli_adapters.rs::grok_adapter_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: c5e8db99c02baa0b1344bf8a7dfdc78af8841fc7f04234398f3ef2310fd60425
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25098'
+    validation_criteria_snippet: '2.3.1: The runner reproduces Python''s environment,
+      working directory, session, exit-error text, timeout and process-group cleanup,
+      and leaves no orphan process...'
+    matched_artifact_ref: crates/gai/tests/cli_adapters.rs::agy_adapter_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 10af10d469c6f76d3c350a458968a2556142510694fc123022b613a7078de0c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25099'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/llm/generate` matches Python''s
+      routing, defaults, timeout caps, images and response fields. test: `crates/gai/tests/generate.rs::generat...'
+    matched_artifact_ref: crates/gai/tests/generate.rs::generate_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 8c8e25be0ca4f6fe7e4bdf811965cadce96c31e274b71038ea6b03167d4fa183
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25099'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/llm/generate` matches Python''s
+      routing, defaults, timeout caps, images and response fields. test: `crates/gai/tests/generate.rs::generat...'
+    matched_artifact_ref: crates/gai/tests/generate.rs::generate_errors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: eed9bc2c22a1aaa3221097be8a48cf13c6df5902660ece70c131ceec5e1dda8b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25099'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/llm/generate` matches Python''s
+      routing, defaults, timeout caps, images and response fields. test: `crates/gai/tests/generate.rs::generat...'
+    matched_artifact_ref: crates/gai/tests/generate.rs::unused_cwd_is_waived
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: 690a8f65722b68d48fb0b0a602d7ceb7b5754b1187595fe64b581f8e91355234
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25100'
+    validation_criteria_snippet: '2.5.1: Endpoint routes, fingerprints and refresh
+      keys match Python for every protocol and configuration change. test: `crates/gai/tests/local_context.rs::endpo...'
+    matched_artifact_ref: crates/gai/tests/local_context.rs::endpoint_routes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: dbab5ec2ef181bed0804da9097c2d40f787848b18f945cca0c1143fe552e90e3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25100'
+    validation_criteria_snippet: '2.5.1: Endpoint routes, fingerprints and refresh
+      keys match Python for every protocol and configuration change. test: `crates/gai/tests/local_context.rs::endpo...'
+    matched_artifact_ref: crates/gai/tests/local_context.rs::collectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 0e15f1b8ba5e95155634a80fe9ab4d1217559d8756a828b9c06a4c1b52403de6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25100'
+    validation_criteria_snippet: '2.5.1: Endpoint routes, fingerprints and refresh
+      keys match Python for every protocol and configuration change. test: `crates/gai/tests/local_context.rs::endpo...'
+    matched_artifact_ref: crates/gai/tests/local_context.rs::store_interoperates_with_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 18aa6362f09e0b3b45d4711b3b3328512883e2f861579fe34fa2446e34fa7734
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25100'
+    validation_criteria_snippet: '2.5.1: Endpoint routes, fingerprints and refresh
+      keys match Python for every protocol and configuration change. test: `crates/gai/tests/local_context.rs::endpo...'
+    matched_artifact_ref: crates/gai/tests/local_context.rs::refresh_service_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: ae19e373f220cab6af8645eefe57504420534b3ab537ba20a123c213c7a31af5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25100'
+    validation_criteria_snippet: '2.5.1: Endpoint routes, fingerprints and refresh
+      keys match Python for every protocol and configuration change. test: `crates/gai/tests/local_context.rs::endpo...'
+    matched_artifact_ref: crates/gai/tests/local_context.rs::generation_refresh_is_best_effort
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: b4639a938affd02bf0eee831aea47feda75290d9b927a752b3cbacbaed4dd076
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25101'
+    validation_criteria_snippet: '3.1.1: Policy validation matches Python for read-only,
+      allowed, nested and unknown tools and for every rejected metacharacter. test:
+      `crates/gai/tests/tool_run...'
+    matched_artifact_ref: crates/gai/tests/tool_runtime.rs::policy_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 080823a01ee2d9d7528820f3e8a2893c7523c0bd716f2933100f2cde6882cd84
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25101'
+    validation_criteria_snippet: '3.1.1: Policy validation matches Python for read-only,
+      allowed, nested and unknown tools and for every rejected metacharacter. test:
+      `crates/gai/tests/tool_run...'
+    matched_artifact_ref: crates/gai/tests/tool_runtime.rs::gcode_execution_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 75d61b9f2447080190fffb734ef3a098ecd00c98ec9eb0e6815879b9e84c84fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25101'
+    validation_criteria_snippet: '3.1.1: Policy validation matches Python for read-only,
+      allowed, nested and unknown tools and for every rejected metacharacter. test:
+      `crates/gai/tests/tool_run...'
+    matched_artifact_ref: crates/gai/tests/tool_runtime.rs::endpoint_tool_loop_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 6168622b04145ee2d66e9e9bd6c2b923f471bc64e7ce6baca23b49cf57c4fffb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25102'
+    validation_criteria_snippet: '3.2.1: The loopback MCP server matches Python''s
+      protocol version, bearer check, request bound, loopback bind, budgets and teardown.
+      test: `crates/gai/tests/too...'
+    matched_artifact_ref: crates/gai/tests/tool_chat_styles.rs::loopback_mcp_server_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 52e06387e1f7fe7356496c5c2ba9ad17a937012fe009fe3efa2fc4b9b4843b61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25102'
+    validation_criteria_snippet: '3.2.1: The loopback MCP server matches Python''s
+      protocol version, bearer check, request bound, loopback bind, budgets and teardown.
+      test: `crates/gai/tests/too...'
+    matched_artifact_ref: crates/gai/tests/tool_chat_styles.rs::claude_style_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: a088d51e40cd52ac9e274c9e82425ecfb0113fda3ed19b3ff435f01f307b94cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25102'
+    validation_criteria_snippet: '3.2.1: The loopback MCP server matches Python''s
+      protocol version, bearer check, request bound, loopback bind, budgets and teardown.
+      test: `crates/gai/tests/too...'
+    matched_artifact_ref: crates/gai/tests/tool_chat_styles.rs::codex_style_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: a4e4972beafe21f572413d9fb0d7260ea61da44faec07e086ced289dfd2a1756
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25102'
+    validation_criteria_snippet: '3.2.1: The loopback MCP server matches Python''s
+      protocol version, bearer check, request bound, loopback bind, budgets and teardown.
+      test: `crates/gai/tests/too...'
+    matched_artifact_ref: crates/gai/tests/tool_chat_styles.rs::droid_style_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 4ea7a86c81becca76157356ec590fc1d66e515df29f13b536f8273bce8f1a000
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25102'
+    validation_criteria_snippet: '3.2.1: The loopback MCP server matches Python''s
+      protocol version, bearer check, request bound, loopback bind, budgets and teardown.
+      test: `crates/gai/tests/too...'
+    matched_artifact_ref: crates/gai/tests/tool_chat_styles.rs::grok_style_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: aa75502ff2a7392a91c7377eaaebf6ee1e94aa4944700adf3072b7bf0e91d591
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25102'
+    validation_criteria_snippet: '3.2.1: The loopback MCP server matches Python''s
+      protocol version, bearer check, request bound, loopback bind, budgets and teardown.
+      test: `crates/gai/tests/too...'
+    matched_artifact_ref: crates/gai/tests/tool_chat_styles.rs::fallback_and_deadline_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: c851a480c9b16d219b340a3e0b899ce2a034c2da6e3045f872b2dfcde964d8b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25103'
+    validation_criteria_snippet: '3.3.1: `HTTP POST /api/llm/chat/completions` matches
+      Python''s request validation, message split, response, `finish_reason` map and
+      investigation fields. test: ...'
+    matched_artifact_ref: crates/gai/tests/chat.rs::chat_completions_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 47258c6fae90f108677f81ac14ee37e6e05e130941d14422be4c127c66d8cdb9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25103'
+    validation_criteria_snippet: '3.3.1: `HTTP POST /api/llm/chat/completions` matches
+      Python''s request validation, message split, response, `finish_reason` map and
+      investigation fields. test: ...'
+    matched_artifact_ref: crates/gai/tests/chat.rs::managed_tool_credential_lifecycle
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 2c989ebe1dffee70234192322f69c7bf307ffe221f8dbf0b2b0ddba20ddfb15f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25103'
+    validation_criteria_snippet: '3.3.1: `HTTP POST /api/llm/chat/completions` matches
+      Python''s request validation, message split, response, `finish_reason` map and
+      investigation fields. test: ...'
+    matched_artifact_ref: crates/gai/tests/chat.rs::chat_errors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: b2057de17377d84a90fb6d20d579384f6971dd024aee953e5f72cb7b53cdcb62
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25104'
+    validation_criteria_snippet: '4.1.1: `HTTP POST /api/llm/vision/extract` matches
+      Python for Claude, endpoint and responses-wire bindings. test: `crates/gai/tests/vision.rs::extract_matches_...'
+    matched_artifact_ref: crates/gai/tests/vision.rs::extract_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 2d7b6147c5e0e684d24bc9ff8a0a91a526ac226e0360e4547bd154632b2292ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25104'
+    validation_criteria_snippet: '4.1.1: `HTTP POST /api/llm/vision/extract` matches
+      Python for Claude, endpoint and responses-wire bindings. test: `crates/gai/tests/vision.rs::extract_matches_...'
+    matched_artifact_ref: crates/gai/tests/vision.rs::upload_bounds_and_errors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: a5de4470121bbb520a228d38c64c3fe0a2d52c6c2c1192acc8da111881d10d3d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25104'
+    validation_criteria_snippet: '4.1.1: `HTTP POST /api/llm/vision/extract` matches
+      Python for Claude, endpoint and responses-wire bindings. test: `crates/gai/tests/vision.rs::extract_matches_...'
+    matched_artifact_ref: crates/gai/tests/vision.rs::temp_files_are_private_and_swept
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: a7037bb1083352ac2b8b002556e80e8da422a1712f11a9bc39b3355f233905e7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25105'
+    validation_criteria_snippet: '4.2.1: `HTTP GET /api/llm/status` matches Python''s
+      full snapshot across the fixture configurations. test: `crates/gai/tests/llm_status.rs::llm_status_matches_p...'
+    matched_artifact_ref: crates/gai/tests/llm_status.rs::llm_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 2fbbb9f684d1203662fb815b19f0b93edd8cc23ec9d5bfd0630fec5951c48dc8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25105'
+    validation_criteria_snippet: '4.2.1: `HTTP GET /api/llm/status` matches Python''s
+      full snapshot across the fixture configurations. test: `crates/gai/tests/llm_status.rs::llm_status_matches_p...'
+    matched_artifact_ref: crates/gai/tests/llm_status.rs::audio_bindings_use_voice_seam
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: b6239ae0485986b867746017e04d23c7110a349883887b7b12de6c69909a510d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25106'
+    validation_criteria_snippet: '5.1.1: The eight `ai` rows declare exactly Python''s
+      grant capability, mode and effectful flag, and grant callers are admitted or
+      refused with Python''s codes be...'
+    matched_artifact_ref: crates/gai/tests/admission.rs::grant_rows_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 3fae01fa926d0574a72529f9d3da4469a49455488012b566651f8fed360ce67f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25106'
+    validation_criteria_snippet: '5.1.1: The eight `ai` rows declare exactly Python''s
+      grant capability, mode and effectful flag, and grant callers are admitted or
+      refused with Python''s codes be...'
+    matched_artifact_ref: crates/gai/tests/admission.rs::agent_token_classes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: b6cc911adf301f7dda5e5ef2cc5111250fa1b4268d3dfaf8c7811dcbf2b907e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25106'
+    validation_criteria_snippet: '5.1.1: The eight `ai` rows declare exactly Python''s
+      grant capability, mode and effectful flag, and grant callers are admitted or
+      refused with Python''s codes be...'
+    matched_artifact_ref: crates/gai/tests/admission.rs::operator_and_browser_classes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: fa1b63b74d0d715b6e0ad99b07c8bae4384c16ee63c7249e1f49924a8cf0e062
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25106'
+    validation_criteria_snippet: '5.1.1: The eight `ai` rows declare exactly Python''s
+      grant capability, mode and effectful flag, and grant callers are admitted or
+      refused with Python''s codes be...'
+    matched_artifact_ref: crates/gai/tests/admission.rs::admission_fails_closed_without_shared_seam
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: 5c2cb35fee8f4990bf42fb385d6fc24b8096f6dccd9c1899edbe6b96a80ae214
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25106'
+    validation_criteria_snippet: '5.1.1: The eight `ai` rows declare exactly Python''s
+      grant capability, mode and effectful flag, and grant callers are admitted or
+      refused with Python''s codes be...'
+    matched_artifact_ref: AI admission security gate
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: c489170c679767fc89f0601912ff48c8b2ef9091864448f77766454ff942d897
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25107'
+    validation_criteria_snippet: '5.2.1: Proxy, compare and native states affect only
+      the eight `ai` rows; compare runs read rows only, effectful rows run once, and
+      rollback to Proxy preserves ...'
+    matched_artifact_ref: crates/gdaemon/tests/ai_cutover.rs::ai_cutover_is_scoped_and_single_effect
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 276f6c4f2df844a4ea3ce86050378c89979b0da1dcb393ed50608bda4d084c9c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25107'
+    validation_criteria_snippet: '5.2.1: Proxy, compare and native states affect only
+      the eight `ai` rows; compare runs read rows only, effectful rows run once, and
+      rollback to Proxy preserves ...'
+    matched_artifact_ref: tests/e2e/test_ai_native.py::test_ai_rows_work_without_python_backend
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 673b27ac6f34f88db214392b8b139ddea7bd536b7d428fbd66ec6025e02f9655
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25107'
+    validation_criteria_snippet: '5.2.1: Proxy, compare and native states affect only
+      the eight `ai` rows; compare runs read rows only, effectful rows run once, and
+      rollback to Proxy preserves ...'
+    matched_artifact_ref: crates/gdaemon/tests/ai_cutover.rs::waiver_readiness_gates_ai_activation
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: 9b36a08a07a4c5367e7aea921672858cb189bbc573e45306ece80bce267e0673
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25107'
+    validation_criteria_snippet: '5.2.1: Proxy, compare and native states affect only
+      the eight `ai` rows; compare runs read rows only, effectful rows run once, and
+      rollback to Proxy preserves ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 4f52485cc780d2197f3d199b92de6765f580947408071b7b5cb0e5490f33aad0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25107'
+    validation_criteria_snippet: '5.2.1: Proxy, compare and native states affect only
+      the eight `ai` rows; compare runs read rows only, effectful rows run once, and
+      rollback to Proxy preserves ...'
+    matched_artifact_ref: ai activation evidence
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.1
+  plan_node_hash: 6658c59da659ca5e18d639d4aff509db2d50d880c35b3c4869308c927946ab8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25108'
+    validation_criteria_snippet: '6.0.1: Without a health source the providers family
+      claims no row; with a stub source, each provider''s `available` and `startup_error`
+      reach the caller unchang...'
+    matched_artifact_ref: crates/gai/tests/provider_health.rs::web_chat_health_seam_contract
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: 4a4808047900047cd1c9943e3e33cfc1e22c270100ee647f5440383bddffa403
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25109'
+    validation_criteria_snippet: '6.1.1: `HTTP GET /api/providers` matches Python
+      for installed, missing, deprecated and unsupported providers, every health branch
+      and the endpoint rows. test: ...'
+    matched_artifact_ref: crates/gai/tests/providers.rs::provider_list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: a3f1f5c3d9e1fe81f0d39547974afcae0ca86050c95d22e76ae74e1ea45119bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25109'
+    validation_criteria_snippet: '6.1.1: `HTTP GET /api/providers` matches Python
+      for installed, missing, deprecated and unsupported providers, every health branch
+      and the endpoint rows. test: ...'
+    matched_artifact_ref: crates/gai/tests/providers.rs::provider_models_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: 33d51e5484d7cac342566132fcf7af107a6cbc7133be1154974c9215319fee8c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25109'
+    validation_criteria_snippet: '6.1.1: `HTTP GET /api/providers` matches Python
+      for installed, missing, deprecated and unsupported providers, every health branch
+      and the endpoint rows. test: ...'
+    matched_artifact_ref: crates/gai/tests/providers.rs::local_model_groups_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.4
+  plan_node_hash: c412196b61c8cff23f295fe34025493952896b912f1230a102d8f0e173bb4937
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25109'
+    validation_criteria_snippet: '6.1.1: `HTTP GET /api/providers` matches Python
+      for installed, missing, deprecated and unsupported providers, every health branch
+      and the endpoint rows. test: ...'
+    matched_artifact_ref: crates/gai/tests/providers.rs::provider_health_uses_native_runtime
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: eea80f82e4447d020f2ddd274f59b07b24c6ac098d43541db442334be5d0208a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25110'
+    validation_criteria_snippet: '6.2.1: Fresh, stale, missing, unsupported, no-reporter
+      and transient failure cases match Python''s snapshot and persisted row. test:
+      `crates/gai/tests/usage.rs:...'
+    matched_artifact_ref: crates/gai/tests/usage.rs::usage_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: bcd049c563c7ad6482e31a7d70a42bf6364cf15e35089f02af45f517bc9c193d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25110'
+    validation_criteria_snippet: '6.2.1: Fresh, stale, missing, unsupported, no-reporter
+      and transient failure cases match Python''s snapshot and persisted row. test:
+      `crates/gai/tests/usage.rs:...'
+    matched_artifact_ref: crates/gai/tests/usage.rs::usage_refresh_is_single_flight
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: 21179909659888348e139bdef015f187a46ba21bdb297f9d8a7ffa76456920fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25110'
+    validation_criteria_snippet: '6.2.1: Fresh, stale, missing, unsupported, no-reporter
+      and transient failure cases match Python''s snapshot and persisted row. test:
+      `crates/gai/tests/usage.rs:...'
+    matched_artifact_ref: crates/gai/tests/usage.rs::usage_details_match_capacity_contract
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.1
+  plan_node_hash: d278becc0ea49b591db66cb6c9220ab49f9c7c28ee576530219f861fca48f852
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25111'
+    validation_criteria_snippet: '6.3.1: Proxy and native states affect only the three
+      providers rows, the family stays on Proxy without #21592''s runtime, and rollback
+      to Proxy restores Python ...'
+    matched_artifact_ref: crates/gdaemon/tests/providers_cutover.rs::providers_cutover_is_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.2
+  plan_node_hash: 72fee6d5857e8be6fe107923f729238daa5daa28bd33ac9d270d52dacc3f43ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25111'
+    validation_criteria_snippet: '6.3.1: Proxy and native states affect only the three
+      providers rows, the family stays on Proxy without #21592''s runtime, and rollback
+      to Proxy restores Python ...'
+    matched_artifact_ref: tests/e2e/test_providers_native.py::test_provider_rows_work_without_python_backend
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.3
+  plan_node_hash: 4832ef6021fa4fcdcff8786d3ef839ed18f06b5865498eb490e01bae42b8b8b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25111'
+    validation_criteria_snippet: '6.3.1: Proxy and native states affect only the three
+      providers rows, the family stays on Proxy without #21592''s runtime, and rollback
+      to Proxy restores Python ...'
+    matched_artifact_ref: crates/gdaemon/tests/providers_cutover.rs::readiness_gates_providers_activation
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.4
+  plan_node_hash: f3f8d056c517bce25fe38e3b19a1bd3c7510d767b54263ad37f5c1dea75a839e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25111'
+    validation_criteria_snippet: '6.3.1: Proxy and native states affect only the three
+      providers rows, the family stays on Proxy without #21592''s runtime, and rollback
+      to Proxy restores Python ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.5
+  plan_node_hash: ae367ff53aac8e63b8b8acc50cd23f536f9af82a90ba35721241fe25f3c5b432
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25111'
+    validation_criteria_snippet: '6.3.1: Proxy and native states affect only the three
+      providers rows, the family stays on Proxy without #21592''s runtime, and rollback
+      to Proxy restores Python ...'
+    matched_artifact_ref: providers activation evidence
+  deferral_target: null
+  detail: ''
+- section_id: '7.0'
+  item_id: 7.0.1
+  plan_node_hash: 143a259161ce2f7c16674a20ae22832f2bc47a83916d1ced552294bf672bdef8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25112'
+    validation_criteria_snippet: '7.0.1: Alias create, list and delete round-trip
+      against a Qdrant stub, and the atomic switch sends every alias action in one
+      request. test: `crates/gcore/src/q...'
+    matched_artifact_ref: crates/gcore/src/qdrant/tests.rs::alias_operations_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.1
+  plan_node_hash: 3b0683e7a9b1397355dd5cc9b7ddef7e0dc166596c077d9f91dc6b78bbd2ab55
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25113'
+    validation_criteria_snippet: '7.1.1: The contract round-trips to Python data identical
+      to the baseline catalog, and the generator''s `--check` passes. test: `tests/ai/test_embedding_catalog_...'
+    matched_artifact_ref: tests/ai/test_embedding_catalog_contract.py::test_generated_catalog_is_current
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.2
+  plan_node_hash: 8bd0335c30649c18811ed185da4897470c2f9677e4270efdf96f6e62bd18080b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25113'
+    validation_criteria_snippet: '7.1.1: The contract round-trips to Python data identical
+      to the baseline catalog, and the generator''s `--check` passes. test: `tests/ai/test_embedding_catalog_...'
+    matched_artifact_ref: crates/gai/tests/catalog.rs::catalog_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.1
+  plan_node_hash: 8dc03ed9402befb28ae5f6450591a4ee367d68efacba7b371af28f7742a58d3a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25114'
+    validation_criteria_snippet: '7.2.1: The four switch routes match Python''s status
+      codes, payloads and `too_late` detail. test: `crates/gai/tests/switch_routes.rs::switch_routes_match_python...'
+    matched_artifact_ref: crates/gai/tests/switch_routes.rs::switch_routes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.2
+  plan_node_hash: 0da8eac750d235269dd8af38618eae6b55e8bb957913be865c027bf01d8e79d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25114'
+    validation_criteria_snippet: '7.2.1: The four switch routes match Python''s status
+      codes, payloads and `too_late` detail. test: `crates/gai/tests/switch_routes.rs::switch_routes_match_python...'
+    matched_artifact_ref: crates/gai/tests/switch_routes.rs::journal_interoperates_with_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.3
+  plan_node_hash: 60a19ce97f19be6bff1fefecdcc70d3a57a48064299990d6f2c9c93dd8932feb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25114'
+    validation_criteria_snippet: '7.2.1: The four switch routes match Python''s status
+      codes, payloads and `too_late` detail. test: `crates/gai/tests/switch_routes.rs::switch_routes_match_python...'
+    matched_artifact_ref: crates/gai/tests/switch_routes.rs::coordinator_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.4
+  plan_node_hash: 238cd2369965ee5cb8e871175ee5b926aa3641526de447fca1b70b78b96bd56e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25114'
+    validation_criteria_snippet: '7.2.1: The four switch routes match Python''s status
+      codes, payloads and `too_late` detail. test: `crates/gai/tests/switch_routes.rs::switch_routes_match_python...'
+    matched_artifact_ref: crates/gai/tests/switch_routes.rs::start_resolves_provider_like_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.1
+  plan_node_hash: a32dc79bfd1a485544ef85ab2c01eb015f3f16d44b24a5d8cc7548c13e6096ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25115'
+    validation_criteria_snippet: '7.3.1: LM Studio setup checks the exact key, reports
+      404 as a typed LM Studio 0.4.0 requirement, downloads by repository link and
+      quantization, polls within 60...'
+    matched_artifact_ref: crates/gai/tests/switch_stage.rs::lmstudio_setup_uses_provider_api
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.2
+  plan_node_hash: 8842ccfdcc865c263f99cc102d4210ed63faa8eb5a24dde6497f4b6a59ba8ff7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25115'
+    validation_criteria_snippet: '7.3.1: LM Studio setup checks the exact key, reports
+      404 as a typed LM Studio 0.4.0 requirement, downloads by repository link and
+      quantization, polls within 60...'
+    matched_artifact_ref: crates/gai/tests/switch_stage.rs::ollama_and_passthrough_setup
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.3
+  plan_node_hash: 4c68d90881ac557ee2ed50d61de23984addd91928710a773db0f7927098b0483
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25115'
+    validation_criteria_snippet: '7.3.1: LM Studio setup checks the exact key, reports
+      404 as a typed LM Studio 0.4.0 requirement, downloads by repository link and
+      quantization, polls within 60...'
+    matched_artifact_ref: crates/gai/tests/switch_stage.rs::stage_validation_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.4
+  plan_node_hash: c62f7035e5c6972bd7c3db904d338c481c3e87534f32f45232faa0e3f6505903
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25115'
+    validation_criteria_snippet: '7.3.1: LM Studio setup checks the exact key, reports
+      404 as a typed LM Studio 0.4.0 requirement, downloads by repository link and
+      quantization, polls within 60...'
+    matched_artifact_ref: crates/gai/tests/switch_stage.rs::model_setup_cases_are_waived
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.5
+  plan_node_hash: d47da293f36314de4565d845718976d18df21275c68c32d3e2f47745017b50a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25115'
+    validation_criteria_snippet: '7.3.1: LM Studio setup checks the exact key, reports
+      404 as a typed LM Studio 0.4.0 requirement, downloads by repository link and
+      quantization, polls within 60...'
+    matched_artifact_ref: crates/gai/tests/switch_stage.rs::abort_during_staging_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.4'
+  item_id: 7.4.1
+  plan_node_hash: 6d0db18fb69b9401ef8c6753412ba25747b7b96ca65210573d613f43ea744a1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25116'
+    validation_criteria_snippet: '7.4.1: Build matches Python''s physical names, dimensions,
+      mismatch recreation, seam calls, watermark and bounded replay. test: `crates/gai/tests/switch_build.r...'
+    matched_artifact_ref: crates/gai/tests/switch_build.rs::build_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.4'
+  item_id: 7.4.2
+  plan_node_hash: af069cabb71ba1d5f22745a788cef64b1b4b13dc3f4a075e2e028bfce17094c6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25116'
+    validation_criteria_snippet: '7.4.1: Build matches Python''s physical names, dimensions,
+      mismatch recreation, seam calls, watermark and bounded replay. test: `crates/gai/tests/switch_build.r...'
+    matched_artifact_ref: crates/gai/tests/switch_build.rs::flip_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.4'
+  item_id: 7.4.3
+  plan_node_hash: d1456469d1142bc08104e4fc4d8e0d6dab3a0a46304292f6bc587bfa45e917bd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25116'
+    validation_criteria_snippet: '7.4.1: Build matches Python''s physical names, dimensions,
+      mismatch recreation, seam calls, watermark and bounded replay. test: `crates/gai/tests/switch_build.r...'
+    matched_artifact_ref: crates/gai/tests/switch_build.rs::gc_and_abort_cleanup_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.4'
+  item_id: 7.4.4
+  plan_node_hash: 70e3ab2c09b41abcf7f44d4a71561ec05adb5d9c03630888903e674d203d1a4e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25116'
+    validation_criteria_snippet: '7.4.1: Build matches Python''s physical names, dimensions,
+      mismatch recreation, seam calls, watermark and bounded replay. test: `crates/gai/tests/switch_build.r...'
+    matched_artifact_ref: crates/gai/tests/switch_build.rs::resume_matches_python_per_phase
+  deferral_target: null
+  detail: ''
+- section_id: '7.4'
+  item_id: 7.4.5
+  plan_node_hash: e2392651fc72f94c5dd4d0729da259ec7f752751598b2afae6c9dd908375fc8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25116'
+    validation_criteria_snippet: '7.4.1: Build matches Python''s physical names, dimensions,
+      mismatch recreation, seam calls, watermark and bounded replay. test: `crates/gai/tests/switch_build.r...'
+    matched_artifact_ref: crates/gai/tests/switch_build.rs::build_publishes_names_before_watermark
+  deferral_target: null
+  detail: ''
+- section_id: '7.5'
+  item_id: 7.5.1
+  plan_node_hash: 857526297efd9f1731021e64eed438f662525ef77f03317ace608cd72d7a7099
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25117'
+    validation_criteria_snippet: '7.5.1: `catalog` prints 7.1''s summary byte-identical
+      to Python''s output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+      7.5.2: `switch`...'
+    matched_artifact_ref: crates/gai/tests/switch_cli.rs::catalog_output_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.5'
+  item_id: 7.5.2
+  plan_node_hash: 100b76f9af0cf3bb237cb4e54689825c62a2963bb1c5184db8e1b6b298baabe7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25117'
+    validation_criteria_snippet: '7.5.1: `catalog` prints 7.1''s summary byte-identical
+      to Python''s output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+      7.5.2: `switch`...'
+    matched_artifact_ref: crates/gai/tests/switch_cli.rs::switch_cli_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.5'
+  item_id: 7.5.3
+  plan_node_hash: 18269d9458b8d8f913796b5d820c7864f35c35c07b8399ae736fcc71d9784da1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25117'
+    validation_criteria_snippet: '7.5.1: `catalog` prints 7.1''s summary byte-identical
+      to Python''s output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+      7.5.2: `switch`...'
+    matched_artifact_ref: crates/gai/tests/switch_cli.rs::switch_transport_failure_is_waived
+  deferral_target: null
+  detail: ''
+- section_id: '7.5'
+  item_id: 7.5.4
+  plan_node_hash: 758508928d391a6cb966e7e9afb11d7ffcb122573207a5d65b85d72b9eb405d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25117'
+    validation_criteria_snippet: '7.5.1: `catalog` prints 7.1''s summary byte-identical
+      to Python''s output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+      7.5.2: `switch`...'
+    matched_artifact_ref: crates/gai/tests/switch_cli.rs::doctor_forwards_to_gcode
+  deferral_target: null
+  detail: ''
+- section_id: '7.5'
+  item_id: 7.5.5
+  plan_node_hash: b4564bf78356cdcb4f796f6d2226b1dfdb3df63e35ac628a8eb8947aecc3dfe0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25117'
+    validation_criteria_snippet: '7.5.1: `catalog` prints 7.1''s summary byte-identical
+      to Python''s output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+      7.5.2: `switch`...'
+    matched_artifact_ref: crates/gai/tests/switch_cli.rs::group_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.5'
+  item_id: 7.5.6
+  plan_node_hash: a09bb92746dbff0993db85032996e3c2b892b835c0d57d2775ccc1691655b224
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25117'
+    validation_criteria_snippet: '7.5.1: `catalog` prints 7.1''s summary byte-identical
+      to Python''s output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+      7.5.2: `switch`...'
+    matched_artifact_ref: crates/gai/tests/switch_cli.rs::cli_readiness_requires_exact_waivers
+  deferral_target: null
+  detail: ''
+- section_id: '7.6'
+  item_id: 7.6.1
+  plan_node_hash: 633af577c4bbe8f17fd45e9e2620971cdc481a26a7e57ba2220ff50250a12398
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25118'
+    validation_criteria_snippet: '7.6.1: Proxy and native states affect only the four
+      HTTP switch rows, other `/api/embeddings` paths stay with `ai`, and rollback
+      to Proxy restores Python servi...'
+    matched_artifact_ref: crates/gdaemon/tests/embedding_switch_cutover.rs::switch_cutover_is_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '7.6'
+  item_id: 7.6.2
+  plan_node_hash: 628815529fbf850ed75d9cc639d19101b92fbe9ddacfd3788ca1f298dbfd09bf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25118'
+    validation_criteria_snippet: '7.6.1: Proxy and native states affect only the four
+      HTTP switch rows, other `/api/embeddings` paths stay with `ai`, and rollback
+      to Proxy restores Python servi...'
+    matched_artifact_ref: tests/e2e/test_embedding_switch_native.py::test_switch_rows_work_without_python_backend
+  deferral_target: null
+  detail: ''
+- section_id: '7.6'
+  item_id: 7.6.3
+  plan_node_hash: ca9cc794360606868e56f035bb4665f8f8febef7783a55af616ab746fc4105ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25118'
+    validation_criteria_snippet: '7.6.1: Proxy and native states affect only the four
+      HTTP switch rows, other `/api/embeddings` paths stay with `ai`, and rollback
+      to Proxy restores Python servi...'
+    matched_artifact_ref: crates/gdaemon/tests/embedding_switch_cutover.rs::readiness_gates_switch_activation
+  deferral_target: null
+  detail: ''
+- section_id: '7.6'
+  item_id: 7.6.4
+  plan_node_hash: ef83787e3344d4f18d2af67831fe17168fb9158cb54f06cb7541b695220550c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25118'
+    validation_criteria_snippet: '7.6.1: Proxy and native states affect only the four
+      HTTP switch rows, other `/api/embeddings` paths stay with `ai`, and rollback
+      to Proxy restores Python servi...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '7.6'
+  item_id: 7.6.5
+  plan_node_hash: 501337d95615ee7a983922d2d3982826238ace82719b77dcf3a14055b7af4075
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25118'
+    validation_criteria_snippet: '7.6.1: Proxy and native states affect only the four
+      HTTP switch rows, other `/api/embeddings` paths stay with `ai`, and rollback
+      to Proxy restores Python servi...'
+    matched_artifact_ref: embedding switch activation evidence
+  deferral_target: null
+  detail: ''
+- section_id: '7.6'
+  item_id: 7.6.6
+  plan_node_hash: e63c726d8c48503d8a3b0682d2d272cd1ef22f5cad75629d15f15d10f3ca3726
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25118'
+    validation_criteria_snippet: '7.6.1: Proxy and native states affect only the four
+      HTTP switch rows, other `/api/embeddings` paths stay with `ai`, and rollback
+      to Proxy restores Python servi...'
+    matched_artifact_ref: tests/e2e/test_embedding_switch_native.py::test_route_flip_ends_the_outgoing_switch_run
+  deferral_target: null
+  detail: ''
+- section_id: '7.7'
+  item_id: 7.7.1
+  plan_node_hash: 6cf751b2021c4c9aaa645d3d4f55d8d929efea7004baa0c99fa80381a3e5b6dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25119'
+    validation_criteria_snippet: '7.7.1: The launcher forwards literal arguments,
+      working directory, environment, streams and exit status, including help, unknown
+      options, Unicode and errors, t...'
+    matched_artifact_ref: tests/cli/test_embeddings_native_forwarding.py::test_launcher_only_forwards
+  deferral_target: null
+  detail: ''
+- section_id: '7.7'
+  item_id: 7.7.2
+  plan_node_hash: 68242a96d48e3156fbe7b5cb3d772b00fa65864d7c51f469d63add4447779945
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25119'
+    validation_criteria_snippet: '7.7.1: The launcher forwards literal arguments,
+      working directory, environment, streams and exit status, including help, unknown
+      options, Unicode and errors, t...'
+    matched_artifact_ref: tests/cli/test_embeddings_native_forwarding.py::test_retired_cli_tests_have_native_coverage
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.1
+  plan_node_hash: 10128ffccd9284693d263c6fa200163d7f3c08e1c6f22b77756b04706c958722
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25120'
+    validation_criteria_snippet: '8.1.1: The 16 AI rows in the remainder shard are
+      `delegated` with notes citing their leaf, tests and waiver IDs, and every other
+      record is unchanged. behavior:...'
+    matched_artifact_ref: 16 delegated AI parity rows
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.2
+  plan_node_hash: 125795ba3adcdb67ee811f18543a27e82591da083caad4bc31d0a4edafe5f5c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25120'
+    validation_criteria_snippet: '8.1.1: The 16 AI rows in the remainder shard are
+      `delegated` with notes citing their leaf, tests and waiver IDs, and every other
+      record is unchanged. behavior:...'
+    matched_artifact_ref: 3 delegated providers parity rows
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.3
+  plan_node_hash: 9eb1490b53d4649902af704dd2dba60606b0879b142e8cda186d8f997f98be7a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25120'
+    validation_criteria_snippet: '8.1.1: The 16 AI rows in the remainder shard are
+      `delegated` with notes citing their leaf, tests and waiver IDs, and every other
+      record is unchanged. behavior:...'
+    matched_artifact_ref: tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.4
+  plan_node_hash: 187720ad8c61b0c40db043c9771fb03150bbe97b024a32dbb05ad638d69c5809
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25120'
+    validation_criteria_snippet: '8.1.1: The 16 AI rows in the remainder shard are
+      `delegated` with notes citing their leaf, tests and waiver IDs, and every other
+      record is unchanged. behavior:...'
+    matched_artifact_ref: native AI operation
+  deferral_target: null
+  detail: ''

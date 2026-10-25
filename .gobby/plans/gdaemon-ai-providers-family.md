@@ -94,8 +94,9 @@ edits. The two landings serialize, and the second rebases onto the first.
 
 1. The Orchestrator assigned planning task #25066 under epic #21587. Plan
    Writer gobby#17712 and Plan Adversary gobby#17713 reach consensus; Triage
-   gobby#17480 is the coordination route. No enhancer has sent edits. The 19-row
-   inventory above is the confirmed scope.
+   gobby#17480 is the coordination route. Plan Enhancer session cb658b79 sent
+   edits. The Orchestrator ruled on each one, and 27c530f985 applied the accepted
+   ones. The 19-row inventory above is the confirmed scope.
 2. **Model setup during an embedding switch (Josh, 2026-10-25, decision
    button `25066-d1v2-a`).** Josh retired memory c0ba0b7c. The native switch
    stage manages models through each provider's own HTTP API. It never starts
