@@ -10,7 +10,9 @@ from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES
+from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspaces import WorkspaceManager
+from gobby.tasks.state_semantics import is_task_actionable
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
@@ -254,3 +256,19 @@ def resumed_seat_lane(session: Session | None, run_storage: Any) -> str | None:
     run = run_storage.get(session.agent_run_id)
     lane = (run.resume_metadata_json or {}).get("lane") if run is not None else None
     return lane if isinstance(lane, str) and lane else None
+
+
+def resumed_seat_task_id(task_manager: Any, resume_target: Session, run_storage: Any) -> str | None:
+    """The open task the seat's last run was bound to, inherited when the resume names none."""
+    if task_manager is None or resume_target.agent_run_id is None:
+        return None
+    run: AgentRun | None = run_storage.get(resume_target.agent_run_id)
+    if run is None or not run.task_id:
+        return None
+    try:
+        task = task_manager.get_task(run.task_id)
+    except (TaskNotFoundError, ValueError):
+        return None
+    if task is None or not is_task_actionable(task):
+        return None
+    return run.task_id

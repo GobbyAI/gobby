@@ -68,6 +68,8 @@ class TeamWorld:
     spawns: InternalToolRegistry
     tools: InternalToolRegistry
     launches: list[dict[str, Any]] = field(default_factory=list)
+    # Replies the next spawns return in place of a launch, for a spawn that fails.
+    spawn_replies: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def executions(self) -> LocalPipelineExecutionManager:
@@ -116,6 +118,12 @@ class TeamWorld:
         for step in self.executions.get_steps_for_execution(execution_id(child)):
             self.executions.update_step_execution(step.id, status=StepStatus.COMPLETED)
         self.executions.update_execution_status(execution_id(child), ExecutionStatus.COMPLETED)
+
+    def fail(self, child: Session) -> None:
+        """Fail the execution as a runbook does when a seat step raises before it launches."""
+        for step in self.executions.get_steps_for_execution(execution_id(child)):
+            self.executions.update_step_execution(step.id, status=StepStatus.FAILED)
+        self.executions.update_execution_status(execution_id(child), ExecutionStatus.FAILED)
 
     async def admit(
         self,
@@ -214,6 +222,8 @@ def make_team_world(
 
     async def launch(**kwargs: Any) -> dict[str, Any]:
         """The ordinary spawn path: record the launch the team check let through."""
+        if world.spawn_replies:
+            return world.spawn_replies.pop(0)
         world.launches.append(kwargs)
         return {"success": True, "run_id": kwargs["reserved_run_id"]}
 
