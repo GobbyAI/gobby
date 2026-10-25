@@ -817,3 +817,110 @@ async def test_candidate_from_non_claimant_non_manager_stays_refused(
     assert result.get("candidate_binding_error") == NOT_CLAIMANT
     assert instance.current_step == "await"
     assert instance.variables["candidate_received"] is False
+
+
+async def _rejected_twice_and_handed_over(world: TeamWorld) -> ReviewTeam:
+    """A team whose Sol reviewer holds the claim after the second rejection."""
+    db = world.case.db
+    team = await team_in_review(world)
+    submit(db, team.sol, team.task.id, "review", "rejected", 1, team.candidate)
+    submit(db, team.sol, team.task.id, "review", "rejected", 2, team.candidate)
+    moved = await hand_off(
+        create_task_registry(LocalTaskManager(db)),
+        team.manager,
+        team.task,
+        team.developer,
+        team.sol,
+    )
+    assert moved.get("success") is True, moved
+    return team
+
+
+@pytest.mark.asyncio
+async def test_failed_fresh_reviewer_spawn_frees_the_epoch_slot(world: TeamWorld) -> None:
+    db = world.case.db
+    team = await _rejected_twice_and_handed_over(world)
+    task_id, team_id = team.task.id, execution_id(team.runbook)
+    epoch = LocalTaskManager(db).get_task(task_id).review_epoch
+    fresh_inputs = {
+        "task": task_id,
+        "team_id": team_id,
+        "fresh_reviewer": True,
+        "exclude_reviewers": session_ref(db, team.sol),
+    }
+
+    # The first fresh-reviewer execution admits; its code-reviewer spawn fails, and its pipeline
+    # fails with it.
+    first_run = world.child(team.task, DEVTEAM)
+    admitted_first = await world.admit(
+        first_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    assert admitted_first == team.binding
+    reviewer = launch(first_run, await admitted(world, first_run, fresh_inputs))["code-reviewer"]
+    world.spawn_replies.append(
+        {
+            "success": False,
+            "error": "Workspace needs exactly one tab titled 'task-24824'; 0 tabs have that title.",
+        }
+    )
+    failed = await spawn_seat(world, first_run, reviewer)
+    assert failed.get("success") is False, failed
+    world.fail(first_run)
+
+    # The failed execution holds no live reviewer, so a relaunch for the same epoch admits and
+    # spawns the one fresh reviewer.
+    second_run = world.child(team.task, DEVTEAM)
+    admitted_second = await world.admit(
+        second_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    assert admitted_second == team.binding
+    assert world.admit_step_output(team.runbook)["fresh_reviewers"] == {
+        str(epoch): execution_id(second_run)
+    }
+    relaunch = launch(second_run, await admitted(world, second_run, fresh_inputs))["code-reviewer"]
+    spawned = await spawn_seat(world, second_run, relaunch)
+    assert spawned.get("success") is True, spawned
+    (launched,) = world.launches
+    assert identity(launched) == OPUS
+    assert launched["reserved_run_id"] == step_invocation_id(
+        execution_id(second_run), "code-reviewer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_fresh_reviewer_still_blocks_a_second_one(world: TeamWorld) -> None:
+    db = world.case.db
+    team = await _rejected_twice_and_handed_over(world)
+    task_id, team_id = team.task.id, execution_id(team.runbook)
+    fresh_inputs = {
+        "task": task_id,
+        "team_id": team_id,
+        "fresh_reviewer": True,
+        "exclude_reviewers": session_ref(db, team.sol),
+    }
+
+    # The first fresh reviewer spawns and runs; its runbook then completes as a fire-and-forget
+    # runbook does, so the live reviewer, not the execution status, holds the epoch's slot.
+    first_run = world.child(team.task, DEVTEAM)
+    await world.admit(
+        first_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    reviewer = launch(first_run, await admitted(world, first_run, fresh_inputs))["code-reviewer"]
+    spawned = await spawn_seat(world, first_run, reviewer)
+    assert spawned.get("success") is True, spawned
+    runs = LocalAgentRunManager(db)
+    runs.create(
+        parent_session_id=first_run.id,
+        provider=OPUS["provider"],
+        prompt="Review the fixed candidate.",
+        agent_name="code-reviewer",
+        run_id=reviewer["reserved_run_id"],
+    )
+    runs.start(reviewer["reserved_run_id"])
+    world.finish(first_run)
+
+    second_run = world.child(team.task, DEVTEAM)
+    refused = world.admit(
+        second_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    assert await refusal(refused) == "fresh_reviewer_exists"
