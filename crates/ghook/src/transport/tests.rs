@@ -458,8 +458,20 @@ fn post_and_cleanup_sends_droid_source_to_unified_hooks_endpoint() {
         assert!(request.contains("\"source\":\"droid\""));
         assert!(request.contains("\"schema_version\":1"));
         assert!(request.contains("\"critical\":false"));
-        assert!(request.contains("\"input_data\":{\"hook_event_name\":\"PreToolUse\""));
-        assert!(request.contains("\"tool_input\":{\"file_path\":\"src/main.rs\"}"));
+        let body = request
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(
+            body["input_data"],
+            serde_json::json!({
+                "session_id": "droid-session",
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Read",
+                "tool_input": {"file_path": "src/main.rs"}
+            })
+        );
         stream
             .write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
