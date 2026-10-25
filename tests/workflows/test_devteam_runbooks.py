@@ -18,9 +18,11 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
+from gobby.config.tasks import TaskClosePolicyConfig
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.step_records import required_task_steps
 from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition
 from tests.agents._yaml_helpers import flat
 
@@ -245,6 +247,21 @@ def test_procedures_match_runtime_authority() -> None:
         "review",
         "closing",
     }
+    # A researcher closes its own research spike but never reviews or tests.
+    spike_steps = required_task_steps(
+        TaskClosePolicyConfig(enforce_step_records=True),
+        task_type="research_spike",
+        category="research",
+    )
+    # The spike's review record comes from research-reviewer, never the researcher.
+    assert set(spike_steps) == {"closing", "implementation", "review"}
+    researcher = _agent("researcher")
+    assert set(spike_steps) - {"review"} <= set(researcher.task_step_writes)
+    assert {"review", "test"}.isdisjoint(researcher.task_step_writes)
+    researcher_text = _guidance("researcher")
+    for step in set(spike_steps) - {"review"}:
+        assert f"record_{step}_step" in researcher_text, step
+    assert "close_task" in researcher_text
 
     manager = _agent("dev-manager")
     assert manager.workflows.variables.get("team_manager") is True

@@ -195,12 +195,18 @@ async def finalize_executed_spawn(
         except Exception as e:
             logger.debug("Failed to fire agent_started event for %s: %s", run_id, e)
 
+        # Closing-capable managers need the run's task binding, but must stay out
+        # of claimant history so they can independently land their team's work.
         if resolved_task_id and task_manager and _is_team_manager(agent_body):
             logger.info(
                 "Skipping auto-claim for task %s; team managers hold no claim",
                 f"#{task_seq_num}" if task_seq_num else resolved_task_id,
             )
-        elif resolved_task_id and task_manager:
+        elif (
+            resolved_task_id
+            and task_manager
+            and (agent_body is None or "closing" not in agent_body.task_step_writes)
+        ):
             try:
                 task_obj = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
                 if not task_obj or not is_task_actionable(task_obj):

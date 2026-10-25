@@ -108,7 +108,7 @@ fn checks_run_in_python_order() {
             "invalid_signature",
         ),
         (
-            "zeroed checksum under a valid signature",
+            "zeroed checksum with a stale signature",
             edited(|grant| grant.payload_checksum = "00".repeat(32)),
             "invalid_signature",
         ),
