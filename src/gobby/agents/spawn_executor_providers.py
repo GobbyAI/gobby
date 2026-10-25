@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,8 @@ from gobby.agents.constants import (
     MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
+from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_policy import canonical_path
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
@@ -138,6 +141,16 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     )
 
 
+def _ensure_sandbox_write_directories(config: SandboxConfig, workspace: str) -> None:
+    """Create directory grants before SRT pins their absent control-file children."""
+    for raw_path in config.extra_write_paths:
+        if has_magic(raw_path):
+            continue
+        path = Path(canonical_path(raw_path, base=Path(workspace)))
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+
+
 async def _prepare_provider_sandbox(
     request: SpawnRequest,
     spawn_context: PreparedSpawn,
@@ -209,6 +222,8 @@ async def _prepare_provider_sandbox(
         daemon_port = int(getattr(request.daemon_config, "daemon_port", 60887))
         websocket = getattr(request.daemon_config, "websocket", None)
         websocket_port = int(getattr(websocket, "port", 60888))
+        if config.enabled:
+            await asyncio.to_thread(_ensure_sandbox_write_directories, config, request.cwd)
         launch = await prepare_sandbox_launch(
             config=config,
             provider=provider,
