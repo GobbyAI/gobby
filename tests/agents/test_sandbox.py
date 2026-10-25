@@ -43,6 +43,7 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn,
 )
 from gobby.cli.installers.agy import _agy_config_dir
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -1032,30 +1033,22 @@ class TestComputeSandboxPaths:
         assert _resolve_from(worktree, common_dir) in paths.write_paths
         assert len(paths.write_paths) == len(set(paths.write_paths))
 
-    async def test_isolated_mcp_project_root_is_readable_but_not_writable(
-        self, tmp_path: Path
-    ) -> None:
-        """The MCP server's `uv run --project <main repo>` target must be readable.
+    async def test_isolated_gmcp_entry_adds_no_project_read_root(self, tmp_path: Path) -> None:
+        """An isolated workspace's `gmcp` entry grants no main-repo read root.
 
-        Without it the proxy subprocess dies on the main repo's pyproject.toml
-        and the agent starts with no gobby tools at all (#19097).
+        `_patch_mcp_config_for_isolation` writes the native `gmcp` binary as the
+        gobby entry with no arguments, so the sandbox has no project to read
+        for the MCP server. The retired `uv run --project` wrapper grant
+        (`mcp_config_read_exceptions`, #19097) must not come back.
         """
         main_repo = tmp_path / "main-repo"
         main_repo.mkdir()
         (main_repo / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
         workspace = tmp_path / "worktree"
         workspace.mkdir()
+        gmcp_entry = {"command": gmcp_command(), "args": []}
         (workspace / ".mcp.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "gobby": {
-                            "command": "uv",
-                            "args": ["run", "--project", str(main_repo), "gobby", "mcp-server"],
-                        }
-                    }
-                }
-            ),
+            json.dumps({"mcpServers": {"gobby": gmcp_entry}}),
             encoding="utf-8",
         )
 
@@ -1064,8 +1057,9 @@ class TestComputeSandboxPaths:
             workspace_path=str(workspace),
         )
 
-        assert str(main_repo.resolve()) in paths.read_paths
+        assert str(main_repo.resolve()) not in paths.read_paths
         assert str(main_repo.resolve()) not in paths.write_paths
+        assert not hasattr(sandbox_policy, "mcp_config_read_exceptions")
 
     async def test_missing_or_malformed_mcp_config_grants_nothing_extra(
         self, tmp_path: Path
