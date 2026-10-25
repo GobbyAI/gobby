@@ -44,6 +44,7 @@ from gobby.agents.srt_runtime import (
     prepare_sandbox_launch,
 )
 from gobby.agents.trust import pre_approve_directory
+from gobby.utils.terminal_output import redact_terminal_output
 
 if TYPE_CHECKING:
     from gobby.providers.version_gate import AgySupportRecord
@@ -66,6 +67,15 @@ class ProviderSpawnPlan:
     title: str | None = None
     codex_prompt: str | None = None
     inject_persona: bool = False
+
+
+def code_index_warning(cwd: str, message: str) -> dict[str, str]:
+    """Build the sanitized warning shared by local and node launch outcomes."""
+    return {
+        "preflight": "code_index",
+        "cwd": redact_terminal_output(cwd),
+        "message": redact_terminal_output(message),
+    }
 
 
 def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
@@ -277,11 +287,7 @@ async def _prepare_managed_code_index(
         spawn_context.env_vars.update(preflight.env)
         return None
     except Exception as exc:
-        warning = {
-            "preflight": "code_index",
-            "cwd": request.cwd,
-            "message": str(exc),
-        }
+        warning = code_index_warning(request.cwd, str(exc))
         request.code_index_preflight_warning = warning
         request.prompt = _append_code_index_warning(request.prompt, warning)
         if request.initial_variables is not None:
@@ -302,8 +308,8 @@ async def _prepare_managed_code_index(
                 )
         logging.getLogger(__name__).warning(
             "Continuing spawn after scoped code index preflight failed for cwd=%s: %s",
-            request.cwd,
-            exc,
+            warning["cwd"],
+            warning["message"],
         )
         return None
 
