@@ -808,7 +808,19 @@ fn overlay_index_reports_parent_projection_failure_for_parsed_parent_files() {
 #[test]
 #[cfg(gcode_postgres_tests)]
 #[serial_test::serial(serial_db, serial_env)]
-fn overlay_index_refuses_missing_parent_under_overlay_grant() {
+fn overlay_index_cli_refuses_missing_parent_under_overlay_grant() {
+    assert_overlay_index_cli_refuses_missing_parent(false);
+}
+
+#[test]
+#[cfg(gcode_postgres_tests)]
+#[serial_test::serial(serial_db, serial_env)]
+fn overlay_index_cli_explicit_path_refuses_missing_parent_under_overlay_grant() {
+    assert_overlay_index_cli_refuses_missing_parent(true);
+}
+
+#[cfg(gcode_postgres_tests)]
+fn assert_overlay_index_cli_refuses_missing_parent(explicit_path: bool) {
     use crate::cli_error::CliError;
     use crate::communities::serial_db::{managed_overlay_principal, seeded_project};
     use crate::config::ServiceConfigSelection;
@@ -897,17 +909,16 @@ fn overlay_index_refuses_missing_parent_under_overlay_grant() {
                 ctx.can_refresh_index().expect("overlay write authority"),
                 "the grant writes its own overlay"
             );
-            let error = index_files(
-                IndexRequest {
-                    project_root: overlay_root.clone(),
-                    path_filter: None,
-                    explicit_files: Vec::new(),
-                    full: false,
-                    require_cpp_semantics: false,
-                    sync_projections: false,
-                },
+            let error = crate::commands::index::run(
                 &ctx,
-                IndexOptions::default(),
+                &overlay_root,
+                explicit_path.then(|| overlay_root.to_string_lossy().into_owned()),
+                None,
+                false,
+                false,
+                false,
+                false,
+                crate::output::Format::Json,
             )
             .expect_err("managed overlay grant cannot index its missing parent");
             let typed = error
