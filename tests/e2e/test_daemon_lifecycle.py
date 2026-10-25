@@ -27,6 +27,7 @@ import psycopg
 import pytest
 import yaml
 
+from gobby.cli.install_setup_gmcp import write_daemon_start_command
 from gobby.cli.install_setup_impeccable import (
     _activate_generation,
     _publish_launcher,
@@ -37,7 +38,7 @@ from gobby.install.bin_set_coherence import probe_set_member_identity
 from gobby.storage.schema_identity_pin import stamp_bytes
 from gobby.utils.dependency_requirements import IMPECCABLE_RELEASE
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME, NATIVE_BIN_DIR_ENV, native_bin_name
-from tests._timing import wait_for_condition
+from tests._timing import wait_for_awaited_condition, wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
     authenticated_daemon_client,
@@ -51,6 +52,7 @@ from tests.e2e.conftest import (
     terminate_process_tree,
     wait_for_daemon_health,
 )
+from tests.e2e.gmcp_client import gmcp_session
 from tests.e2e.lifecycle_processes import LifecycleProcesses, wait_for_retiring_backend
 
 pytestmark = pytest.mark.e2e
@@ -442,32 +444,6 @@ def _real_cli_env(config_path: Path) -> dict[str, str]:
     return env
 
 
-# The stdio bridge's auto-start as `gobby mcp-server` runs it. The launch is
-# recorded, then served by the same CLI with managed services faked (argv[1]).
-_BRIDGE_AUTO_START = """
-import asyncio
-import logging
-import sys
-
-from gobby.mcp_proxy import daemon_control
-from gobby.mcp_proxy.stdio_daemon import ensure_daemon_running
-
-logging.basicConfig(level=logging.INFO)
-spawn = asyncio.create_subprocess_exec
-launched = []
-
-
-async def cli_without_managed_services(*argv, **kwargs):
-    launched.append(list(argv))
-    return await spawn(sys.executable, "-c", sys.argv[1], *argv[3:], **kwargs)
-
-
-daemon_control.asyncio.create_subprocess_exec = cli_without_managed_services
-asyncio.run(ensure_daemon_running())
-assert launched == [[sys.executable, "-m", "gobby.cli", "start"]], launched
-"""
-
-
 def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[bytes]:
     gobby_home = config_path.parent
     env = _daemon_env(config_path)
@@ -686,30 +662,42 @@ class TestFrontDoor:
 
 
 class TestBridgeAutoStart:
-    """The stdio bridge starts a stopped daemon through `gobby start`."""
+    """`gmcp` starts a stopped daemon through the home's recorded `gobby start`."""
 
-    def test_bridge_starts_a_stopped_daemon(
+    async def test_gmcp_starts_a_stopped_daemon(
         self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
     ) -> None:
         config_path, http_port, _ws_port = e2e_config
-        pid_file = config_path.parent / "gobby.pid"
+        gobby_home = config_path.parent
         env = _real_cli_env(config_path)
-        # A managed run never auto-starts, and the bridge dials the bootstrap port.
+        # A managed run never auto-starts, and gmcp dials the bootstrap port.
         env.pop("GOBBY_AGENT_RUN_ID", None)
         env.pop("GOBBY_DAEMON_URL", None)
+        # The real CLI with managed services faked, recorded the way install records it.
+        write_daemon_start_command(
+            gobby_home, [sys.executable, "-c", _CLI_WITHOUT_MANAGED_SERVICES, "start"]
+        )
         assert daemon_health_unavailable(http_port)
 
-        with LifecycleProcesses(pid_file) as owned:
-            bridge = owned.run(
-                [sys.executable, "-c", _BRIDGE_AUTO_START, _CLI_WITHOUT_MANAGED_SERVICES],
-                env=env,
-                cwd=e2e_project_dir,
-                timeout=300,
-            )
-            output = bridge.stdout + bridge.stderr
-            assert bridge.returncode == 0, output
-            health = httpx.get(f"http://localhost:{http_port}/api/health")
-            assert health.status_code == 200, output
+        with LifecycleProcesses(gobby_home / "gobby.pid") as owned:
+
+            async def healthy() -> bool:
+                owned.record_daemon()
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    try:
+                        response = await client.get(f"http://localhost:{http_port}/api/health")
+                    except httpx.TransportError:
+                        return False
+                return response.status_code == 200
+
+            # gmcp's start command inherits its environment, so it carries the real CLI's.
+            async with gmcp_session(home=gobby_home, cwd=e2e_project_dir, identity_env=env):
+                await wait_for_awaited_condition(
+                    healthy,
+                    timeout=300.0,
+                    interval=1.0,
+                    description="gmcp's recorded start to bring /api/health to 200",
+                )
 
 
 def _is_terminal_host(process: psutil.Process) -> bool:
