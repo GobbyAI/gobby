@@ -154,6 +154,8 @@ class AgentDefinitionBody(BaseModel):
     checkout_mode: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
+    # One workspace folder survives the /clear successors of this definition (addendum 9.3).
+    persistent_workspace: StrictBool = False
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True

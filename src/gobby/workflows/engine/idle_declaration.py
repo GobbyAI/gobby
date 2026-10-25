@@ -40,6 +40,12 @@ def native_variable_write_error(
         not isinstance(role, str) or role not in NATIVE_VARIABLE_ROLES
     ):
         return prefix + f"Native set_variable is blocked for agent definition {role!r}."
+    # The workspace binding is written by the daemon at session start and clear, never by a seat.
+    from gobby.agents.agent_workspaces import WORKSPACE_VARIABLE_NAMES
+
+    name = tool_input.get("name") if isinstance(tool_input, dict) else None
+    if isinstance(name, str) and name in WORKSPACE_VARIABLE_NAMES:
+        return prefix + f"Native set_variable may not rebind the agent workspace {name!r}."
     if not caller_id or sessions is None:
         return prefix + "Native set_variable requires a resolved calling session."
     caller = sessions.get(caller_id)

@@ -144,7 +144,12 @@ async def test_researcher_serve_step_allows_closing_its_research_spike(
         task_type="research_spike",
         category="research",
     )
-    close_path = ["link_commit", *(f"record_{step}_step" for step in spike_steps), "close_task"]
+    researcher_steps = [step for step in spike_steps if step != "review"]
+    close_path = [
+        "link_commit",
+        *(f"record_{step}_step" for step in researcher_steps),
+        "close_task",
+    ]
     for tool in close_path:
         response = await engine.evaluate(
             _make_event(
@@ -161,6 +166,23 @@ async def test_researcher_serve_step_allows_closing_its_research_spike(
             variables=variables,
         )
         assert response.decision != "block", (tool, response.reason)
+
+    # The reviewer records the spike's review step; the researcher's serve step never does.
+    refused = await engine.evaluate(
+        _make_event(
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "record_review_step",
+                    "arguments": {"task_id": "#1"},
+                },
+            }
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert refused.decision == "block", refused.reason
 
     # Source code stays read-only while the close path opens.
     code = str(tmp_path / "src/app.py")

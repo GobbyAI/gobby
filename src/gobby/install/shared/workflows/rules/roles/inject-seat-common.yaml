@@ -10,7 +10,8 @@ rules:
     # matches every seat. A persona overlay (`apply_persona`) never matches a seat rule.
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
+        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
+        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
@@ -23,7 +24,7 @@ rules:
           Operator runs this fleet.
           - Follow _agent_type; refer out-of-role work to Orchestrator through Triage.
           - Messages: gobby-agents:send_message. Only Assistant and Triage message Orchestrator; others report to Triage or their Dev Manager. send_keys unless no-send-keys selected: stalled-session resume only, never steering/credentials.
-          - No spawns except Assistant and Orchestrator. Team managers may resume their team's seats via spawn_agent(resume_session_id=...). Runbooks start seats.
+          - No spawns except Assistant and Orchestrator. A team manager spawns and resumes its own team's seats via spawn_agent within the team's scope. Runbooks start seats.
           - Only Orchestrator launches pipelines/runbooks (Assistant if down). Only these two create/register projects on operator GO; others request via Orchestrator.
           - Only Orchestrator/operator delegate restarts; global BEFORE, DAEMON BACK when healthy. Assistant reports before/after and outcome.
           - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it; other work stays paused.

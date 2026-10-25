@@ -1,0 +1,37 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+# Agent workspace scope (addendum P9.2). A write under the workspace root goes only to the
+# caller's own session folder or its epic folder, never into a `.git` or `.gobby` component.
+# A read there is allowed in those folders, in the project README, and, for a persistent seat,
+# in the eligible predecessor folders of its own definition.
+rules:
+  agent-workspace-write-scope:
+    description: "Agent workspace writes stay in the seat's own session folder and its epic folder"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      agent_workspace_write_violation(event.data, tool_input, variables)
+    effects:
+      - type: block
+        reason: >-
+          Agent workspace writes go only to this session's folder under the agent
+          workspace, or to the epic folder for an epic seat. Name the target with a
+          literal path inside one of them. Git metadata and `.gobby` config are not
+          writable there.
+
+  agent-workspace-read-scope:
+    description: "Agent workspace reads stay within the seat's folders, the project README and eligible predecessor folders"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      agent_workspace_read_violation(event.data, tool_input, variables,
+        event.metadata.get('_platform_session_id'))
+    effects:
+      - type: block
+        reason: >-
+          This agent workspace folder is outside what this seat may read. A seat reads
+          its own session folder, its epic folder and the project README; a persistent
+          seat also reads the earlier session folders of its own definition. Read the
+          path inside one of those.

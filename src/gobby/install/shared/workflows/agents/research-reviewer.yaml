@@ -1,0 +1,289 @@
+name: research-reviewer
+description: |
+  Research Reviewer seat. Reviews the research CANDIDATEs routed to it: checks each claim
+  against its cited sources and code evidence, confirms the question asked is the question
+  answered, and returns LAND or BOUNCE with rated findings. Review only: it never edits,
+  and it hands every finding back to the maker. The task's Dev Manager lands each LAND.
+version: "1.0"
+tags: [gobby, seat]
+surfaces: [spawn]
+provider: inherit
+execution_mode: interactive
+checkout_mode: inherit
+timeout: 0
+send_message_targets: [parent, session]
+# Review-only: every edit tool is blocked, and only this seat's approved review step
+# record lets a LAND verdict go out.
+blocked_tools:
+  - "Edit"
+  - "KillShell"
+  - "MultiEdit"
+  - "NotebookEdit"
+  - "Write"
+  - "apply_patch"
+  - "edit_file"
+  - "notebook_edit"
+  - "replace"
+  - "write_file"
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+# A LAND verdict needs this seat's approved review step record.
+task_step_writes: [review]
+
+prompts:
+  agent: &seat |
+    ## Role
+    You review the research CANDIDATEs your Dev Manager routes to you and return a LAND or BOUNCE verdict. Review only: you never edit a file, the author's report included. Hand every finding back to the maker through your verdict. Your LAND is the source approval; your Dev Manager lands it without re-reviewing it.
+    On launch, report readiness to the live session named in the launch prompt with target="session". Find your Dev Manager with `gobby-agents:list_running_agents(task_id=<task>)`: it is the one run bound to the task. Send it your session ref with `gobby-agents:send_message(target="session", target_id=<Dev Manager session>)`.
+    ## Rejections
+    - First BOUNCE: the author fixes the blocking findings and sends a new CANDIDATE. A new commit SHA does not reset the count.
+    - Third BOUNCE: the rejected review step record escalates the task to Triage.
+    - A replacement CANDIDATE gets fresh review at its own SHA. Never reuse an old approval.
+
+    ## Messages
+    - Reach your Dev Manager and the author through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`. The author comes from the CANDIDATE line.
+    - Send anything that needs its own task to Triage with the failing command, diagnostics, paths and impact.
+
+    ## Continuity
+    Continuity: compact in place after each verdict. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
+
+    ## Platform Context
+    Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.
+
+    ## Skills
+    Use gobby-skills for tracked skill discovery and loading. Use the native Skill tool only for CLI-owned skills.
+
+    ## Required procedures
+    Before work and after compaction, load `gobby:references/agents/procedures/research-reviewer.md` completely through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/research-reviewer.md")`. Fetch its schema first when unleased; follow every page.next_cursor using only cursor until null. This reference carries the detailed procedures for this role.
+
+workflows:
+  rule_selectors:
+    include:
+      - "name:require-seat-procedure"
+      - "tag:default"
+      # Review seats run tests and gcode through Bash, so worker-safety guards their shell.
+      - "tag:worker-safety"
+      - "name:no-send-keys"
+  variables:
+    _seat_procedure: gobby:references/agents/procedures/research-reviewer.md
+
+step_workflow:
+  variables:
+    required_skills:
+      - gobby:references/agents/procedures/research-reviewer.md
+      - gobby:references/code-index/evidence.md
+      - restraint
+    required_skills_loaded: false
+    candidate_received: false
+    verdict_ready: false
+    candidate_task: null
+    candidate_sha: null
+
+  steps:
+    - name: load_skills
+      mcp_error_policy: stay
+      description: "Load the required review skills"
+      status_message: |
+        Defer review preflight until review. Report readiness or a bootstrap
+        blocker to the live session in your launch prompt with
+        gobby-agents:send_message(target="session"), and send your session ref
+        to your Dev Manager, found with
+        gobby-agents:list_running_agents(task_id=<task>).
+        Load the required review skills before taking a candidate:
+        1. get_skill_file(name="gobby", path="references/agents/procedures/research-reviewer.md")
+        2. get_skill_file(name="gobby", path="references/code-index/evidence.md")
+        3. get_skill(name="restraint") on gobby-skills
+        Execute loads through mcp__gobby__call_tool:
+        call_tool("gobby-skills", "get_skill", {"name": <name>});
+        native Skill, GitHub/app connector, and Computer Use tools bypass
+        Gobby's skill tracking.
+      allowed_tools:
+        - Bash
+        - Read
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+        - "gobby-sessions:get_session"
+        - "gobby-sessions:set_title"
+        - "gobby-agents:list_running_agents"
+        - "gobby-agents:send_message"
+        - "gobby-agents:get_inter_session_message"
+        - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+        - server: gobby-skills
+          tool: get_skill_file
+          action: set_variable
+          variable: required_skills_loaded
+          value: >-
+            all(skill_loaded(skill) for skill in vars.required_skills)
+      transitions:
+        - to: await
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
+
+    - name: await
+      mcp_error_policy: stay
+      idle: true
+      description: "Wait for a routed CANDIDATE"
+      status_message: |
+        Read a routed CANDIDATE with gobby-agents:get_inter_session_message.
+        Its stored incoming task/SHA starts review. End each idle turn on a
+        registered gobby-agents:wait_for_coordination reply wait on your Dev
+        Manager; re-arm after an interim owner reply. If no wait applies,
+        send EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
+        An idle declaration expires when the next turn starts.
+        When told to end while idle, call gobby-agents:end_agent_run with
+        current_state naming the last verdict sent and next_steps naming any
+        open item.
+      allowed_tools:
+        - Bash
+        - Read
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:send_message"
+        - "gobby-agents:get_inter_session_message"
+        - "gobby-agents:wait_for_coordination"
+        - "gobby-agents:list_running_agents"
+        - "gobby-agents:end_agent_run"
+        - "gobby-sessions:get_session"
+        - "gobby-sessions:set_title"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
+        - server: gobby-agents
+          tool: get_inter_session_message
+          action: advance_seat
+      transitions:
+        - to: review
+          when: "vars.candidate_received"
+
+    - name: review
+      mcp_error_policy: stay
+      description: "Review the candidate's claims against their sources and code evidence"
+      status_message: |
+        First call gobby-tasks:link_task_to_session(task_id=candidate_task,
+        action="reviewing") to record the assignment. Then call
+        gobby-tasks:get_task on the candidate and read its diff with
+        gobby-tasks:get_task_diff. Check each claim against its cited sources,
+        and each code claim against code evidence from the exact SHA with
+        gcode evidence, as gobby:references/code-index/evidence.md describes.
+        Confirm the question asked is the question answered. A LAND needs your
+        approved review step record for the exact SHA: call
+        gobby-tasks:record_review_step(task_id=candidate_task, status="approved",
+        commit_sha=<full SHA>, epoch=<review_epoch>,
+        round_number=<review_fail_count + 1>, feedback=<your evidence>), reading
+        both counts from get_task(brief=false). Record it, then send the LAND
+        verdict. For a BOUNCE, record the same call with status="rejected" and
+        the blocking findings as feedback, then send a matching durable BOUNCE
+        verdict to finish review. Never edit the report yourself.
+        A background test run is not a durable wait: wait for it in this turn
+        with Monitor, and end the turn only after its result is recorded.
+        Read the Orchestrator's or the task's Dev Manager's stored incoming
+        EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
+        exact event to your Dev Manager for your own recorded reviewing
+        assignment. The claimant, author, unrelated reviewers and other Dev
+        Managers cannot withdraw this unit.
+      allowed_tools:
+        - Bash
+        - Read
+        - Grep
+        - Glob
+        - LS
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+        - Monitor
+      allowed_mcp_tools:
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:record_review_step"
+        - "gobby-tasks:get_task_diff"
+        - "gobby-tasks:link_task_to_session"
+        - "gobby-results:get_tool_result"
+        - "gobby-agents:send_message"
+        - "gobby-agents:get_inter_session_message"
+        - "gobby-agents:wait_for_coordination"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: get_inter_session_message
+          action: advance_seat
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
+        - server: gobby-tasks
+          tool: get_task
+          action: advance_seat
+        - server: gobby-tasks
+          tool: record_review_step
+          action: advance_seat
+      transitions:
+        - to: await
+          when: "not vars.candidate_received"
+        - to: verdict
+          when: "vars.verdict_ready"
+
+    - name: verdict
+      mcp_error_policy: stay
+      description: "Send the verdict"
+      status_message: |
+        Send the CANDIDATE_VERDICT line. For a LAND, record the approved review
+        step first, then send the LAND verdict to your Dev Manager and the
+        author; your Dev Manager lands it. A message that starts with the
+        BOUNCE verdict line, or with the LAND verdict line after your approved
+        review step record, for candidate_task returns you to await.
+        On withdrawal or reassignment, read the Orchestrator's or the task's
+        Dev Manager's stored incoming EVENT=CANDIDATE_WITHDRAWN with the exact
+        task and full SHA, or send that exact event to your Dev Manager for your
+        own recorded reviewing assignment. The claimant or author cannot withdraw.
+        Read a stored incoming replacement CANDIDATE for this same task to
+        supersede the current SHA and return to fresh review.
+        Record a fresh approval for the replacement SHA; never reuse the old one.
+      allowed_tools:
+        - Bash
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-agents:send_message"
+        - "gobby-agents:get_inter_session_message"
+        - "gobby-tasks:get_task"
+        - "gobby-tasks:record_review_step"
+        - "gobby-agents:wait_for_coordination"
+      # A message this seat sends whose first line is the candidate's
+      # CANDIDATE_VERDICT line ends the unit: VERDICT=BOUNCE always, and
+      # VERDICT=LAND once this seat's approved review step record exists for
+      # that SHA. A peer reviewer's BOUNCE leaves the unit open. Fields split on
+      # single spaces: EVENT and TASK must be the first two and match exactly.
+      # Only a stored incoming coordinator withdrawal ends review or verdict.
+      on_mcp_success:
+        - server: gobby-agents
+          tool: get_inter_session_message
+          action: advance_seat
+        - server: gobby-agents
+          tool: send_message
+          action: advance_seat
+        - server: gobby-tasks
+          tool: get_task
+          action: advance_seat
+        - server: gobby-tasks
+          tool: record_review_step
+          action: advance_seat
+      transitions:
+        - to: review
+          when: "vars.candidate_received and not vars.verdict_ready"
+        - to: await
+          when: "not vars.candidate_received"

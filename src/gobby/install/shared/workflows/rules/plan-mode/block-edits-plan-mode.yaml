@@ -9,6 +9,7 @@ rules:
     when: >
       variables.get('plan_mode')
       and not plan_write_paths_allowed(tool_input, source)
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
     effects:
       - type: block
         tools: [Edit, Write, NotebookEdit]

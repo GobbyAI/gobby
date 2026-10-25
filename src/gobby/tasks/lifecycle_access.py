@@ -50,6 +50,13 @@ def session_agent_definition(
     return body, digest
 
 
+def session_grants(db: HubDatabase, session_id: str, step: str) -> bool:
+    """Whether the enabled definition a session runs as grants ``step`` records."""
+    session = SessionManager(db).get(session_id)
+    resolved = session_agent_definition(db, session) if session is not None else None
+    return resolved is not None and step in resolved[0].task_step_writes
+
+
 def is_operator_coordinator(
     tasks: LocalTaskManager, caller: Session, roles: frozenset[str] = OPERATOR_ROLES
 ) -> bool:

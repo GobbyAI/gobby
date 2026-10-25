@@ -1,0 +1,417 @@
+"""Agent workspace write and read scope rules (addendum 9.2)."""
+
+from __future__ import annotations
+
+import tempfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from uuid import uuid4
+
+import pytest
+import yaml
+
+from gobby.agents.agent_workspaces import predecessor_folder_readable
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
+from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.engine.idle_declaration import native_variable_write_error
+from gobby.workflows.state_manager import SessionVariableManager
+
+pytestmark = pytest.mark.unit
+
+RULES_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules"
+PROJECT = "11111111-1111-4111-8111-111111111111"
+SESSION_ID = "33333333-3333-4333-8333-333333333333"
+
+
+@pytest.fixture
+def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The workspaces root under a temporary home, so ``~/`` paths resolve to it."""
+    home = (tmp_path / "home").resolve()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("GOBBY_HOME", raising=False)
+    # The test home sits under the OS temp root; move that root so plan mode's temp
+    # allowance does not cover the workspace.
+    os_temp = tmp_path / "os-temp"
+    os_temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(os_temp))
+    return home / ".gobby" / "agents_workspaces"
+
+
+@pytest.fixture
+def engine(temp_db: HubDatabase) -> RuleEngine:
+    manager = RuleDefinitionManager(temp_db)
+    for rule_file in sorted([*RULES_DIR.glob("roles/*.yaml"), *RULES_DIR.glob("plan-mode/*.yaml")]):
+        document = yaml.safe_load(rule_file.read_text())
+        for name, rule_data in document["rules"].items():
+            body_data, metadata = split_rule_definition_data(rule_data)
+            manager.create(
+                name=name,
+                definition_json=RuleDefinitionBody.model_validate(body_data).model_dump_json(),
+                priority=metadata["priority"],
+                enabled=metadata["enabled"],
+                tags=document["tags"],
+            )
+    return RuleEngine(temp_db)
+
+
+def _event(data: dict[str, Any], session_id: str) -> HookEvent:
+    # The platform session id rides in metadata, as the hook handlers stamp it in production.
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=session_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"_platform_session_id": session_id},
+    )
+
+
+async def _decide(
+    engine: RuleEngine,
+    data: dict[str, Any],
+    variables: dict[str, Any],
+    session_id: str = SESSION_ID,
+) -> HookResponse:
+    return await engine.evaluate(
+        _event(data, session_id), session_id=session_id, variables=variables
+    )
+
+
+def _write(path: Path, project: Path) -> dict[str, Any]:
+    return {
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(path), "content": "x"},
+        "cwd": str(project),
+        "project_path": str(project),
+    }
+
+
+def _read(path: Path, project: Path) -> dict[str, Any]:
+    return {
+        "tool_name": "Read",
+        "tool_input": {"file_path": str(path)},
+        "cwd": str(project),
+        "project_path": str(project),
+    }
+
+
+def _grep(path: Path, project: Path) -> dict[str, Any]:
+    return {
+        "tool_name": "Grep",
+        "tool_input": {"pattern": "lesson", "path": str(path)},
+        "cwd": str(project),
+        "project_path": str(project),
+    }
+
+
+def _shell(command: str, project: Path) -> dict[str, Any]:
+    return {
+        "tool_name": "Bash",
+        "tool_input": {"command": command},
+        "cwd": str(project),
+        "project_path": str(project),
+    }
+
+
+def _seat(
+    anchor: Path, agent_type: str | None, seq: int, *, persistent: bool = False
+) -> dict[str, Any]:
+    definition = agent_type or "default"
+    variables: dict[str, Any] = {
+        "_agent_workspace_dir": str(anchor / definition / f"session-{seq}"),
+        "_agent_workspace_epic_dir": str(anchor / "epics" / "epic-5"),
+        "_agent_workspace_persistent": persistent,
+    }
+    if agent_type is not None:
+        variables["_agent_type"] = agent_type
+    return variables
+
+
+def _register(
+    db: HubDatabase,
+    project_id: str,
+    *,
+    seq: int,
+    status: str,
+    agent_type: str,
+    folder: Path,
+    persistent: bool,
+) -> str:
+    """A session of ``agent_type`` numbered ``seq`` whose bound folder is ``folder``."""
+    session_id = str(uuid4())
+    db.execute(
+        """
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id, title,
+                              status, agent_depth, seq_num)
+        VALUES (%s, %s, %s, 'test', %s, %s, %s, 0, %s)
+        """,
+        (
+            session_id,
+            f"ext-{session_id}",
+            require_machine_id(),
+            project_id,
+            agent_type,
+            status,
+            seq,
+        ),
+    )
+    SessionVariableManager(db).merge_variables(
+        session_id,
+        {
+            "_agent_type": agent_type,
+            "_agent_workspace_dir": str(folder),
+            "_agent_workspace_persistent": persistent,
+        },
+    )
+    return session_id
+
+
+SEATS = ("researcher", "assistant", "archivist", "developer", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", SEATS, ids=lambda seat: seat or "plan-mode")
+async def test_write_isolation(
+    engine: RuleEngine, root: Path, tmp_path: Path, agent_type: str | None
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, agent_type, 12)
+    if agent_type is None:
+        variables["plan_mode"] = True
+    own = Path(variables["_agent_workspace_dir"])
+    epic = Path(variables["_agent_workspace_epic_dir"])
+
+    for allowed in (own / "notes.md", own / "nested" / "draft.md", epic / "decisions.md"):
+        response = await _decide(engine, _write(allowed, project), dict(variables))
+        assert response.decision == "allow", (allowed, response.reason)
+
+    for refused in (
+        root / PROJECT / (agent_type or "default") / "session-99" / "notes.md",
+        root / PROJECT / "epics" / "epic-6" / "decisions.md",
+        root / PROJECT / "README.md",
+        root / f"{PROJECT}.git" / "config",
+        own / ".git" / "config",
+        own / ".gobby" / "project.json",
+        epic / ".gobby" / "state.json",
+    ):
+        response = await _decide(engine, _write(refused, project), dict(variables))
+        assert response.decision == "block", refused
+
+
+@pytest.mark.asyncio
+async def test_read_scope_by_persistence(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+
+    def tilde(path: Path) -> str:
+        return "~/" + str(path.relative_to(root.parents[1]))
+
+    # A non-persistent developer: its own folder, its epic folder and the README.
+    developer = _seat(anchor, "developer", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="developer",
+        folder=anchor / "developer" / "session-50",
+        persistent=False,
+    )
+    ended_earlier = anchor / "developer" / "session-10"
+    _register(
+        temp_db,
+        project_id,
+        seq=10,
+        status="expired",
+        agent_type="developer",
+        folder=ended_earlier,
+        persistent=False,
+    )
+    for allowed in (
+        anchor / "developer" / "session-50" / "notes.md",
+        anchor / "epics" / "epic-5" / "plan.md",
+        anchor / "README.md",
+    ):
+        for data in (
+            _read(allowed, project),
+            _grep(allowed, project),
+            _shell(f"cat {allowed}", project),
+            _shell(f"cat {tilde(allowed)}", project),
+        ):
+            response = await _decide(engine, data, dict(developer), caller)
+            assert response.decision == "allow", (data, response.reason)
+    for refused in (
+        ended_earlier / "notes.md",
+        anchor / "developer" / "session-51" / "notes.md",
+        anchor / "orchestrator" / "session-3" / "notes.md",
+        anchor / "developer",
+    ):
+        for data in (
+            _read(refused, project),
+            _grep(refused, project),
+            _shell(f"cat {refused}", project),
+            _shell(f"grep -r lesson {tilde(refused)}", project),
+        ):
+            response = await _decide(engine, data, dict(developer), caller)
+            assert response.decision == "block", data
+
+    # A persistent seat also reads its definition's eligible predecessor folders.
+    assistant_folder = anchor / "assistant" / "session-40"
+    assistant = _seat(anchor, "assistant", 40, persistent=True)
+    successor = _register(
+        temp_db,
+        project_id,
+        seq=40,
+        status="active",
+        agent_type="assistant",
+        folder=assistant_folder,
+        persistent=True,
+    )
+    predecessor = anchor / "assistant" / "session-30"
+    _register(
+        temp_db,
+        project_id,
+        seq=30,
+        status="expired",
+        agent_type="assistant",
+        folder=predecessor,
+        persistent=True,
+    )
+    for data in (
+        _read(predecessor / "lessons.md", project),
+        _grep(predecessor, project),
+        _shell(f"cat {predecessor / 'lessons.md'}", project),
+        _shell(f"cat {tilde(predecessor / 'lessons.md')}", project),
+    ):
+        response = await _decide(engine, data, dict(assistant), successor)
+        assert response.decision == "allow", (data, response.reason)
+    # Never the whole definition directory, and never another definition's folders.
+    for refused in (anchor / "assistant", anchor / "orchestrator" / "session-30" / "notes.md"):
+        for data in (_grep(refused, project), _shell(f"cat {refused}", project)):
+            response = await _decide(engine, data, dict(assistant), successor)
+            assert response.decision == "block", data
+
+
+@pytest.mark.asyncio
+async def test_exemptions_and_variable_protection(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    variables = _seat(root / PROJECT, "developer", 12)
+    own = Path(variables["_agent_workspace_dir"])
+
+    # Workspace writes sit outside every checkout: no repo mutation, so no edit-ledger entry.
+    for data in (
+        _write(own / "notes.md", project),
+        _shell(f"echo x > {own / 'notes.md'}", project),
+    ):
+        event = _event(data, SESSION_ID)
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables=dict(variables))
+        assert response.decision == "allow", (data, response.reason)
+        assert not event.data.get("canonical_repo_mutation"), data
+
+    # No session can repoint its own scope through native set_variable.
+    caller = _register(
+        temp_db,
+        sample_project["id"],
+        seq=7,
+        status="active",
+        agent_type="assistant",
+        folder=root / sample_project["id"] / "assistant" / "session-7",
+        persistent=True,
+    )
+    sessions = SessionManager(temp_db)
+    for role in ("assistant", "orchestrator", "default"):
+        for key in (
+            "_agent_workspace_dir",
+            "_agent_workspace_epic_dir",
+            "_agent_workspace_persistent",
+        ):
+            error = native_variable_write_error(
+                "mcp__gobby__set_variable",
+                {"name": key, "value": "/elsewhere", "session_id": caller},
+                caller,
+                {"_agent_type": role},
+                sessions,
+            )
+            assert error is not None and key in error, (role, key)
+        ordinary = native_variable_write_error(
+            "mcp__gobby__set_variable",
+            {"name": "note", "value": "kept", "session_id": caller},
+            caller,
+            {"_agent_type": role},
+            sessions,
+        )
+        assert ordinary is None, role
+
+
+def test_predecessor_eligibility(
+    root: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    sessions = SessionManager(temp_db)
+
+    def folder(definition: str, seq: int) -> Path:
+        return anchor / definition / f"session-{seq}"
+
+    def register(definition: str, seq: int, status: str, bound: Path | None = None) -> str:
+        return _register(
+            temp_db,
+            project_id,
+            seq=seq,
+            status=status,
+            agent_type=definition,
+            folder=bound or folder(definition, seq),
+            persistent=definition != "developer",
+        )
+
+    caller = register("assistant", 40, "active")
+    register("assistant", 30, "expired")
+    register("assistant", 35, "active")
+    register("assistant", 45, "expired")
+    resumed = register("assistant", 32, "active")
+    register("assistant", 28, "expired")
+    # A live clear successor inherited the session-28 lineage folder.
+    register("assistant", 39, "active", bound=folder("assistant", 28))
+    register("orchestrator", 20, "expired")
+
+    def readable(path: Path, who: str = caller) -> bool:
+        return predecessor_folder_readable(sessions, who, str(path))
+
+    assert readable(folder("assistant", 30)) is True
+    assert readable(folder("assistant", 35)) is False, "a live sibling is not a predecessor"
+    assert readable(folder("assistant", 45)) is False, "a later lineage is not a predecessor"
+    assert readable(folder("assistant", 32)) is False, "a resumed predecessor is live"
+    assert readable(folder("assistant", 28)) is False, "a live successor holds the lineage"
+    assert readable(folder("orchestrator", 20)) is False, "another definition's folder"
+    assert readable(anchor / "assistant") is False, "never the whole definition directory"
+    assert readable(folder("assistant", 30) / ".." / "session-35") is False
+
+    sessions.update_status(resumed, "expired")
+    assert readable(folder("assistant", 32)) is True
+
+    # A non-persistent seat reads no predecessor folder at all.
+    developer = register("developer", 50, "active")
+    register("developer", 10, "expired")
+    assert readable(folder("developer", 10), developer) is False

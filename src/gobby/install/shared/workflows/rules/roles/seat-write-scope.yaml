@@ -12,6 +12,7 @@ rules:
       variables.get('_agent_type') == 'researcher'
       and event.data.get('canonical_tool_kind') == 'write'
       and not write_paths_within(event.data, tool_input, ['.gobby/plans/research/'])
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
     effects:
       - type: block
         reason: >-
@@ -27,6 +28,7 @@ rules:
       variables.get('_agent_type') == 'assistant'
       and event.data.get('canonical_tool_kind') == 'write'
       and not write_paths_within(event.data, tool_input, ['docs/'])
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
     effects:
       - type: block
         reason: >-
@@ -45,6 +47,7 @@ rules:
         write_paths_match(event.data, tool_input,
           './\\.gobby/reports/gobby-digest-[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md(?:\\.tmp\\.[0-9]{1,10}\\.[0-9a-f]{12})?')
       )
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
     effects:
       - type: block
         reason: >-

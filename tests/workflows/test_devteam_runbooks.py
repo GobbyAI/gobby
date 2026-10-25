@@ -180,7 +180,8 @@ def test_runbook_seat_catalogues() -> None:
     devteam_spawns = _spawns(devteam)
     assert list(devteam_spawns) == DEVTEAM_SEATS
     for seat, arguments in devteam_spawns.items():
-        assert arguments["agent"] == seat
+        expected = "${{ inputs.reviewer_agent }}" if seat == "code-reviewer" else seat
+        assert arguments["agent"] == expected
         assert arguments["checkout_mode"] == "none"
         assert arguments["project_path"] == "${{ steps.admit.output.project_path }}"
     assert [seat for seat, arguments in devteam_spawns.items() if "task_id" in arguments] == [
@@ -252,11 +253,13 @@ def test_procedures_match_runtime_authority() -> None:
         task_type="research_spike",
         category="research",
     )
+    # The spike's review record comes from research-reviewer, never the researcher.
+    assert set(spike_steps) == {"closing", "implementation", "review"}
     researcher = _agent("researcher")
-    assert set(spike_steps) <= set(researcher.task_step_writes)
+    assert set(spike_steps) - {"review"} <= set(researcher.task_step_writes)
     assert {"review", "test"}.isdisjoint(researcher.task_step_writes)
     researcher_text = _guidance("researcher")
-    for step in spike_steps:
+    for step in set(spike_steps) - {"review"}:
         assert f"record_{step}_step" in researcher_text, step
     assert "close_task" in researcher_text
 
@@ -360,3 +363,12 @@ def test_only_the_assistant_and_triage_send_to_the_orchestrator() -> None:
         assert phrase in orchestrator, phrase
     support_inputs = yaml.safe_load((PIPELINES / "support.yaml").read_text())["inputs"]
     assert "Triage" in support_inputs["report_to"]["description"]
+
+
+def test_research_spike_closes_only_after_a_devteam_reviewer_approves() -> None:
+    # The spike's approval comes from a DevTeam bound to it, so the researcher routes the
+    # review through Triage and never closes on its own record.
+    researcher_text = _guidance("researcher")
+    route = researcher_text.index("reviewer_agent=research-reviewer")
+    assert "close_task" in researcher_text[route:]
+    assert "then close your spike" not in researcher_text
