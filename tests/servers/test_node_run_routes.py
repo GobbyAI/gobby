@@ -20,7 +20,7 @@ from starlette.testclient import TestClient
 from gobby.agents.agent_health import bootstrap_accounting_stall_error, session_never_initialized
 from gobby.agents.spawn_executor_providers import _append_code_index_warning
 from gobby.config.tmux import TmuxConfig
-from gobby.hub import remote_pane
+from gobby.hub import remote_cancel, remote_pane
 from gobby.hub.node_commands import CONTRACT_VERSION
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
@@ -107,7 +107,9 @@ def _headers(machine: str = NODE) -> dict[str, str]:
     }
 
 
-def _harness(db: HubDatabase, session_manager: SessionManager) -> Harness:
+def _harness(
+    db: HubDatabase, session_manager: SessionManager, *, real_runtime: bool = False
+) -> Harness:
     from gobby.servers.routes import node_runs
 
     auth = AuthService(lambda: db)
@@ -116,10 +118,15 @@ def _harness(db: HubDatabase, session_manager: SessionManager) -> Harness:
     )
     runtime = SpyRuntime()
     cleanup = AsyncMock()
+    terminals = (
+        TerminalServices(manager=TerminalManager(db), registry=None)
+        if real_runtime
+        else SpyTerminalServices(db, runtime)
+    )
     services = SimpleNamespace(
         database=db,
         session_manager=session_manager,
-        terminal_services=SpyTerminalServices(db, runtime),
+        terminal_services=terminals,
         agent_lifecycle_monitor=SimpleNamespace(get_cleanup_agent=lambda: cleanup),
     )
     config = SimpleNamespace(tmux=TmuxConfig())
@@ -580,6 +587,112 @@ def test_terminate_stall_and_loop_record_checkpoint(
     row = rows[0]
     assert (row.run_id, row.session_id, row.task_id) == (run_id, child, task_id)
     assert {key: getattr(row, key) for key in checkpoint} == checkpoint
+
+
+def _checkpoint(task_id: str, run_id: str) -> dict[str, Any]:
+    return {
+        "ref_name": f"refs/gobby/ckpt/{task_id}/{run_id}",
+        "commit_sha": "c" * 40,
+        "parent_sha": "d" * 40,
+        "files_changed": 3,
+        "message": "checkpoint before terminate",
+    }
+
+
+def test_terminate_retries_failed_cleanup_on_the_bound_terminal(
+    session_manager: SessionManager,
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    run_id = _run(db, parent, child, timeout_seconds=60)
+    _backdate(db, run_id, 120)
+    db.execute("UPDATE sessions SET turn_count = %s WHERE id = %s", (1, child))
+    # The node confirms the kill, so the terminal settles before the first cleanup fails.
+    node = SimpleNamespace(send=AsyncMock(return_value={"stopped": True}))
+    monkeypatch.setattr(remote_cancel, "node_command_client", lambda: node)
+    manager = LocalAgentRunManager(db)
+    harness = _harness(db, session_manager, real_runtime=True)
+    cleanup_calls = 0
+
+    async def cleanup_once(
+        run: AgentRun, *, terminal_payload: str, is_success: bool, is_timeout: bool
+    ) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            raise RuntimeError("cleanup lost")
+        manager.fail(run.id, error=terminal_payload)
+
+    harness.cleanup.side_effect = cleanup_once
+    body = _terminate_body(run_id, pane_tail="working")
+    with harness.client as client:
+        first = client.post(TERMINATE, headers=_headers(), json=body)
+        assert (first.status_code, first.json()) == (200, {"terminated": False, "retry": True})
+        stored = manager.get(run_id)
+        assert stored is not None and stored.terminal_id is not None
+        assert stored.pending_terminal_action == "timeout"
+        terminal = TerminalManager(db).get(stored.terminal_id)
+        assert terminal is not None and terminal.state == "exited"
+        second = client.post(TERMINATE, headers=_headers(), json=body)
+    assert (second.status_code, second.json()) == (200, {"terminated": True, "retry": False})
+    assert harness.cleanup.await_count == 2
+    await_args = harness.cleanup.await_args
+    assert await_args is not None
+    assert await_args.kwargs["is_timeout"] is True
+    assert await_args.kwargs["terminal_payload"].startswith(
+        "Agent exceeded 60s timeout\n\n--- Last terminal output ---\nworking"
+    )
+    final = manager.get(run_id)
+    assert final is not None and final.status == "error"
+
+
+def test_terminate_failed_kill_retries_record_one_checkpoint(
+    session_manager: SessionManager, sample_project: dict[str, Any], node_sessions: tuple[str, str]
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    body = _terminate_body(run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id))
+    harness = _harness(db, session_manager)
+    harness.runtime.kill_succeeds = False
+    with harness.client as client:
+        responses = [client.post(TERMINATE, headers=_headers(), json=body) for _ in range(3)]
+    assert [response.json() for response in responses] == [{"terminated": False, "retry": True}] * 3
+    assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
+
+
+def test_terminate_retry_after_intent_failure_records_one_checkpoint(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    original = LocalAgentRunManager.record_termination_intent
+    intent_calls = 0
+
+    def lose_first_intent(self: LocalAgentRunManager, run: str, **kwargs: Any) -> AgentRun | None:
+        nonlocal intent_calls
+        intent_calls += 1
+        if intent_calls == 1:
+            raise RuntimeError("intent write lost")
+        return original(self, run, **kwargs)
+
+    monkeypatch.setattr(LocalAgentRunManager, "record_termination_intent", lose_first_intent)
+    body = _terminate_body(run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id))
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        first = client.post(TERMINATE, headers=_headers(), json=body)
+        second = client.post(TERMINATE, headers=_headers(), json=body)
+    assert (first.status_code, first.json()) == (200, {"terminated": False, "retry": True})
+    assert (second.status_code, second.json()) == (200, {"terminated": True, "retry": False})
+    assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
 
 
 @pytest.mark.parametrize(

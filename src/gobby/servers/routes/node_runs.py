@@ -29,12 +29,14 @@ from gobby.hub.node_commands import (
     CodeIndexWarningBody,
     PromptDeliveryFailureBody,
     TerminateBody,
+    TerminateCheckpoint,
 )
 from gobby.hub.remote_pane import remote_pane_store
 from gobby.servers.routes.node_hooks import _node_machine
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
 from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.utils.terminal_output import redact_terminal_output
 from gobby.workflows.state_manager import SessionVariableManager
@@ -55,6 +57,14 @@ class _Verdict:
     error: str | None = None
     action: TerminalAction = "fail"
     retry: bool = False
+
+
+@dataclass(frozen=True)
+class _Intent:
+    """The termination a run is running: its action and the error its cleanup records."""
+
+    action: TerminalAction
+    error: str
 
 
 def _kill_error(text: str, pane_tail: str) -> str:
@@ -131,6 +141,37 @@ def _terminalizer(
         return await asyncio.to_thread(manager.get, run.id)
 
     return terminalize
+
+
+def _persisted_intent(run: AgentRun) -> _Intent | None:
+    action, error = run.pending_terminal_action, run.pending_terminal_reason
+    if action is None or error is None:
+        return None
+    return _Intent(action, error)
+
+
+def _record_checkpoint(
+    db: HubDatabase, run: AgentRun, task_id: str, checkpoint: TerminateCheckpoint
+) -> None:
+    # The id keys the run and commit, so a retried post finds the record instead of adding one.
+    manager = LocalCheckpointManager(db)
+    record_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{run.id}:{checkpoint.commit_sha}"))
+    if manager.get(record_id) is not None:
+        return
+    manager.create(
+        Checkpoint(
+            id=record_id,
+            task_id=task_id,
+            session_id=run.child_session_id,
+            run_id=run.id,
+            ref_name=checkpoint.ref_name,
+            commit_sha=checkpoint.commit_sha,
+            parent_sha=checkpoint.parent_sha,
+            files_changed=checkpoint.files_changed,
+            message=checkpoint.message,
+            created_at=datetime.now(UTC),
+        )
+    )
 
 
 async def _body[T: BaseModel](request: Request, model: type[T]) -> T:
@@ -242,32 +283,25 @@ def create_node_runs_router(server: HTTPServer) -> APIRouter:
         ):
             return {"terminated": False, "retry": True}
         terminals = server.services.terminal_services
-        terminal = await asyncio.to_thread(terminals.terminal_for, run) if terminals else None
-        if terminals is None or terminal is None:
+        if terminals is None:
             return {"terminated": False, "retry": True}
-        verdict = await _terminate_verdict(server, run, body, detail, pane_tail)
-        error = verdict.error
-        if error is None:
-            return {"terminated": False, "retry": verdict.retry}
-        if body.checkpoint is not None and run.task_id is not None:
-            checkpoint = body.checkpoint
-            record = Checkpoint(
-                id=str(uuid.uuid4()),
-                task_id=run.task_id,
-                session_id=run.child_session_id,
-                run_id=run.id,
-                ref_name=checkpoint.ref_name,
-                commit_sha=checkpoint.commit_sha,
-                parent_sha=checkpoint.parent_sha,
-                files_changed=checkpoint.files_changed,
-                message=checkpoint.message,
-                created_at=datetime.now(UTC),
+        # A retry finishes the termination an earlier post persisted, on the terminal it bound.
+        intent = _persisted_intent(run)
+        lookup = terminals.terminal_for if intent is None else terminals.bound_terminal_for
+        terminal = await asyncio.to_thread(lookup, run)
+        if terminal is None:
+            return {"terminated": False, "retry": True}
+        if intent is None:
+            verdict = await _terminate_verdict(server, run, body, detail, pane_tail)
+            if verdict.error is None:
+                return {"terminated": False, "retry": verdict.retry}
+            intent = _Intent(verdict.action, verdict.error)
+            if body.checkpoint is not None and run.task_id is not None:
+                await asyncio.to_thread(_record_checkpoint, db, run, run.task_id, body.checkpoint)
+            # The capture reads this tail from the store, so it lands before the kill.
+            remote_pane_store().record_tail(
+                terminal.id, terminal.machine_id, run.id, pane_tail[-_TAIL_LIMIT:]
             )
-            await asyncio.to_thread(LocalCheckpointManager(db).create, record)
-        # The capture reads this tail from the store, so it lands before the kill.
-        remote_pane_store().record_tail(
-            terminal.id, terminal.machine_id, run.id, pane_tail[-_TAIL_LIMIT:]
-        )
         monitor = server.services.agent_lifecycle_monitor
         cleanup = monitor.get_cleanup_agent() if monitor is not None else None
         if cleanup is None:
@@ -277,9 +311,11 @@ def create_node_runs_router(server: HTTPServer) -> APIRouter:
             run=run,
             terminal=terminal,
             runtime=terminals.runtime_for(terminal),
-            action=verdict.action,
-            reason=error,
-            terminalize=None if cleanup is None else _terminalizer(manager, cleanup, run, error),
+            action=intent.action,
+            reason=intent.error,
+            terminalize=None
+            if cleanup is None
+            else _terminalizer(manager, cleanup, run, intent.error),
         )
         if not result.success:
             logger.error("Terminate kill failed for run %s: %s", run.id, result.error_code)

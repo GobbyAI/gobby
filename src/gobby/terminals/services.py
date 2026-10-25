@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from gobby.hub.remote_runtime import resolve_terminal_runtime
 from gobby.storage.terminals import Terminal
-from gobby.terminals.lookup import active_terminal_for_run
+from gobby.terminals.lookup import active_terminal_for_run, bound_terminal_for_run
 from gobby.terminals.runtime import (
     SnapshotMode,
     SnapshotResult,
@@ -27,6 +27,9 @@ class TerminalServices:
 
     def terminal_for(self, run: Any) -> Terminal | None:
         return active_terminal_for_run(self.manager, run)
+
+    def bound_terminal_for(self, run: Any) -> Terminal | None:
+        return bound_terminal_for_run(self.manager, run)
 
     def runtime_for(self, terminal: Terminal) -> TerminalRuntime:
         return resolve_terminal_runtime(self.registry, terminal, self.manager.db)
