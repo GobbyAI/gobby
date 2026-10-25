@@ -72,7 +72,7 @@ fn resolve_pending_local_import_calls(
     for call in &pending {
         let candidate_files = call.local_import_candidate_files();
         let resolved_id = if call.local_import_uses_default_export_fallback() {
-            db::resolve_default_import_symbol_id(conn, project_id, &candidate_files)?
+            db::resolve_default_import_symbol_id(conn, project_id, machine_id, &candidate_files)?
         } else if let Some(qualifier) = call.local_import_type_member_qualifier() {
             db::resolve_local_type_member_symbol_id(
                 conn,

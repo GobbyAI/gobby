@@ -7,7 +7,7 @@ use super::super::overlay::{
 };
 use super::super::types::IndexRequest;
 use super::super::{IndexOptions, index_files};
-use super::fixtures::{git, write_file};
+use super::fixtures::{git, git_output, write_file, write_isolation_marker};
 use super::serial_db::{
     cleanup_summary_preservation_project, connect_summary_preservation_test_db, machine_context,
     test_symbol, unique_test_uuid, write_postgres_parsed_file_facts_with_root,
@@ -89,6 +89,8 @@ fn owned_rows_leave_divergence_without_discovery() {
     // overlay tree is clean against its base.
     write_file(&parent_root, dirty, b"pub fn pinned_dirty() {}\n");
     write_file(&parent_root, reappear, b"pub fn pinned_reappear() {}\n");
+    // The overlay's isolation marker is untracked, so the parent ignores it.
+    write_file(&parent_root, ".gitignore", b".gobby/\n");
     git(&parent_root, &hooks, &["init", "-q"]);
     git(&parent_root, &hooks, &["add", "."]);
     git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
@@ -115,6 +117,10 @@ fn owned_rows_leave_divergence_without_discovery() {
         overlay: overlay_project_id.clone(),
         parent: parent_project_id.clone(),
     };
+    // Setup only: the overlay's isolation marker names the seed its pins were
+    // taken at, so the candidate-only path runs. Assertions below are unchanged.
+    let base_sha = git_output(&overlay_root, &hooks, &["rev-parse", "HEAD"]);
+    write_isolation_marker(&overlay_root, &parent_root, &parent_project_id, &base_sha);
 
     // The parent indexes the pinned content, the pins reference it, then the
     // parent moves on to newer content for both paths.
@@ -316,7 +322,7 @@ fn reconcile_uses_child_candidates_only() {
     }
     // Indexed in the parent but invisible to git in both trees: a generated
     // vault the parent gitignores and the worktree never checks out.
-    write_file(&parent, ".gitignore", b"/generated/\n");
+    write_file(&parent, ".gitignore", b"/generated/\n/.gobby/\n");
     write_file(&parent, "generated/page.md", b"# generated\n");
     git(&parent, &hooks, &["init", "-q"]);
     git(&parent, &hooks, &["add", "."]);
@@ -333,6 +339,11 @@ fn reconcile_uses_child_candidates_only() {
             overlay.to_str().expect("utf-8 overlay path"),
         ],
     );
+
+    // Setup only: the overlay's isolation marker names the seed its pins were
+    // taken at, so the candidate-only path runs. Assertions below are unchanged.
+    let base_sha = git_output(&overlay, &hooks, &["rev-parse", "HEAD"]);
+    write_isolation_marker(&overlay, &parent, "parent-project", &base_sha);
 
     // The parent moves on after the overlay branched: a commit, a dirty edit,
     // and an untracked file. None of it is the overlay's divergence.
@@ -372,7 +383,6 @@ fn reconcile_uses_child_candidates_only() {
         overlay_reconcile_candidates(
             &incremental_request(&overlay),
             &overlay,
-            &parent,
             &no_paths,
             &no_paths,
             &parent_files,
@@ -400,9 +410,7 @@ fn reconcile_uses_child_candidates_only() {
 #[test]
 fn reconcile_falls_back_to_full_discovery() {
     let base = tempfile::tempdir().expect("create temp base");
-    let parent = base.path().join("parent");
     let overlay = base.path().join("overlay");
-    std::fs::create_dir_all(&parent).expect("create parent root");
     std::fs::create_dir_all(&overlay).expect("create overlay root");
 
     let ast_by_rel = HashMap::from([("src/lib.rs".to_string(), overlay.join("src/lib.rs"))]);
@@ -428,7 +436,6 @@ fn reconcile_falls_back_to_full_discovery() {
     let rels = overlay_reconcile_candidates(
         &full,
         &overlay,
-        &parent,
         &ast_by_rel,
         &content_by_rel,
         &parent_files,
@@ -436,12 +443,11 @@ fn reconcile_falls_back_to_full_discovery() {
     );
     assert_eq!(rels, every_source);
 
-    // Git failure: neither tree is a repository, so divergence is unknowable
-    // and every source is reconciled.
+    // No isolation marker: the pin base is unknowable, so divergence is too and
+    // every source is reconciled.
     let rels = overlay_reconcile_candidates(
         &incremental_request(&overlay),
         &overlay,
-        &parent,
         &ast_by_rel,
         &content_by_rel,
         &parent_files,

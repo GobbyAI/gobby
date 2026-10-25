@@ -2,7 +2,7 @@ use self::serial_db::{ProjectCleanup, cleanup, local_machine_id, unique_id};
 use super::super::file::write_parsed_file_facts;
 use super::super::sink::CodeFactSink;
 use super::super::{IndexOptions, IndexRequest, index_files};
-use super::fixtures::{git, write_file};
+use super::fixtures::{git, write_file, write_isolation_marker};
 use super::serial_db::machine_context;
 use crate::config::ProjectIndexScope;
 use crate::db;
@@ -30,6 +30,7 @@ fn candidate_imports_keep_unchanged_providers() {
 
     // The provider is unchanged in both trees. Only the importer diverges, by a
     // commit on the overlay branch, so the provider is not a candidate.
+    write_file(&parent_root, ".gitignore", b".gobby/\n");
     write_file(
         &parent_root,
         "src/util.js",
@@ -119,6 +120,11 @@ fn candidate_imports_keep_unchanged_providers() {
         "precondition: the parent resolves its importer call to the provider it serves"
     );
 
+    // Setup only: the overlay's isolation marker names the base its pins were
+    // taken at, so the candidate-only path runs. Assertions below are unchanged.
+    let base_sha = super::fixtures::git_output(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    write_isolation_marker(&overlay_root, &parent_root, &parent_project_id, &base_sha);
+
     // Setup only: the overlay serves its unchanged provider through a pin at the
     // parent's content, as C1.4 pins its paths. Assertions below are unchanged.
     let provider_hash = crate::index::hasher::file_content_hash(&parent_root.join("src/util.js"))
@@ -176,6 +182,329 @@ fn candidate_imports_keep_unchanged_providers() {
         (target_kind.as_str(), symbol_id),
         ("symbol", Some(helper_id)),
         "the importer's call resolves to the unchanged provider the parent serves"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn candidate_default_imports_resolve_pinned_provider() {
+    let database_url =
+        crate::test_env::postgres_test_database_url("candidate default import providers");
+    let mut conn = db::connect_readwrite(&database_url).expect("connect");
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+
+    // The default export is unchanged in both trees. Only the importer diverges,
+    // by a commit on the overlay branch, so the provider is not a candidate.
+    write_file(&parent_root, ".gitignore", b".gobby/\n");
+    write_file(
+        &parent_root,
+        "src/util.js",
+        b"export default function helper() { return 1; }\n",
+    );
+    write_file(
+        &parent_root,
+        "src/app.js",
+        b"import helper from './util.js';\nexport function run() { return helper(); }\n",
+    );
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    let base_sha = super::fixtures::git_output(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    write_file(
+        &overlay_root,
+        "src/app.js",
+        b"import helper from './util.js';\nexport function run() { return helper() + 1; }\n",
+    );
+    git(
+        &overlay_root,
+        &hooks,
+        &["commit", "-q", "-am", "importer change"],
+    );
+
+    let parent_project_id = unique_id("gcode-default-provider-parent");
+    let overlay_project_id = unique_id("gcode-default-provider-overlay");
+    cleanup(&mut conn, &parent_project_id).expect("pre-clean parent");
+    cleanup(&mut conn, &overlay_project_id).expect("pre-clean overlay");
+    let _parent_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let machine_id = local_machine_id();
+    super::serial_db::seed_primary_checkout(&mut conn, &parent_project_id, &parent_root)
+        .expect("seed parent checkout");
+
+    let parent_ctx = machine_context(&database_url, &parent_project_id, &parent_root, &machine_id);
+    index_files(
+        IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &parent_ctx,
+        IndexOptions::default(),
+    )
+    .expect("index parent");
+
+    let helper_id: uuid::Uuid = conn
+        .query_one(
+            "SELECT id FROM code_symbols WHERE project_id = $1 AND name = 'helper'",
+            &[&db::id_param(&parent_project_id).expect("parent id")],
+        )
+        .expect("parent provider symbol")
+        .get(0);
+    let parent_call = conn
+        .query_one(
+            "SELECT callee_target_kind, callee_symbol_id FROM code_calls
+             WHERE project_id = $1 AND callee_name = 'helper'",
+            &[&db::id_param(&parent_project_id).expect("parent id")],
+        )
+        .expect("parent importer call");
+    let parent_kind: String = parent_call.get(0);
+    let parent_symbol: Option<uuid::Uuid> = parent_call.get(1);
+    assert_eq!(
+        (parent_kind.as_str(), parent_symbol),
+        ("symbol", Some(helper_id)),
+        "precondition: the parent resolves its default-import call to the provider it serves"
+    );
+
+    // The overlay serves its unchanged default provider through a pin at the
+    // parent's content and base commit. Its own rows never hold the provider.
+    let provider_hash = crate::index::hasher::file_content_hash(&parent_root.join("src/util.js"))
+        .expect("hash parent provider");
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &db::id_param(&machine_id).expect("machine id"),
+            &db::id_param(&overlay_project_id).expect("overlay id"),
+            &"src/util.js",
+            &db::id_param(&parent_project_id).expect("parent id"),
+            &provider_hash,
+        ],
+    )
+    .expect("pin parent provider");
+    write_isolation_marker(&overlay_root, &parent_root, &parent_project_id, &base_sha);
+
+    let mut overlay_ctx = machine_context(
+        &database_url,
+        &overlay_project_id,
+        &overlay_root,
+        &machine_id,
+    );
+    overlay_ctx.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_project_id.clone(),
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_project_id.clone(),
+        parent_root: parent_root.clone(),
+    };
+    index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &overlay_ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay index");
+
+    let call = conn
+        .query_one(
+            "SELECT callee_target_kind, callee_symbol_id FROM code_calls
+             WHERE project_id = $1 AND callee_name = 'helper'",
+            &[&db::id_param(&overlay_project_id).expect("overlay id")],
+        )
+        .expect("overlay importer call");
+    let target_kind: String = call.get(0);
+    let symbol_id: Option<uuid::Uuid> = call.get(1);
+    assert_eq!(
+        (target_kind.as_str(), symbol_id),
+        ("symbol", Some(helper_id)),
+        "a changed importer resolves its default import to the pinned provider"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn candidate_reconcile_diffs_from_pin_base_commit() {
+    let database_url = crate::test_env::postgres_test_database_url("candidate pin base commit");
+    let mut conn = db::connect_readwrite(&database_url).expect("connect");
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+
+    // The overlay pins src/lib.js at the seed commit. The parent then changes
+    // that file and the overlay merges the change, so its HEAD equals the
+    // parent's HEAD. Only the pin's base commit still records the divergence.
+    write_file(&parent_root, ".gitignore", b".gobby/\n");
+    write_file(
+        &parent_root,
+        "src/lib.js",
+        b"export function value() { return 1; }\n",
+    );
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    let base_sha = super::fixtures::git_output(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    let seed_hash = crate::index::hasher::file_content_hash(&parent_root.join("src/lib.js"))
+        .expect("hash seed content");
+
+    let parent_project_id = unique_id("gcode-pin-base-parent");
+    let overlay_project_id = unique_id("gcode-pin-base-overlay");
+    cleanup(&mut conn, &parent_project_id).expect("pre-clean parent");
+    cleanup(&mut conn, &overlay_project_id).expect("pre-clean overlay");
+    let _parent_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let machine_id = local_machine_id();
+    super::serial_db::seed_primary_checkout(&mut conn, &parent_project_id, &parent_root)
+        .expect("seed parent checkout");
+    let parent_ctx = machine_context(&database_url, &parent_project_id, &parent_root, &machine_id);
+    index_files(
+        IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &parent_ctx,
+        IndexOptions::default(),
+    )
+    .expect("index parent at the seed commit");
+
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    write_file(
+        &parent_root,
+        "src/lib.js",
+        b"export function renamed() { return 2; }\n",
+    );
+    git(
+        &parent_root,
+        &hooks,
+        &["commit", "-q", "-am", "parent changes lib"],
+    );
+    let parent_head = super::fixtures::git_output(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    git(
+        &overlay_root,
+        &hooks,
+        &["merge", "-q", "--ff-only", parent_head.as_str()],
+    );
+
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &db::id_param(&machine_id).expect("machine id"),
+            &db::id_param(&overlay_project_id).expect("overlay id"),
+            &"src/lib.js",
+            &db::id_param(&parent_project_id).expect("parent id"),
+            &seed_hash,
+        ],
+    )
+    .expect("pin parent lib at the seed commit");
+    write_isolation_marker(&overlay_root, &parent_root, &parent_project_id, &base_sha);
+
+    let mut overlay_ctx = machine_context(
+        &database_url,
+        &overlay_project_id,
+        &overlay_root,
+        &machine_id,
+    );
+    overlay_ctx.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_project_id.clone(),
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_project_id.clone(),
+        parent_root: parent_root.clone(),
+    };
+    let served_names = |conn: &mut postgres::Client| -> Vec<String> {
+        crate::visibility::visible_symbols_for_file(conn, &overlay_ctx, "src/lib.js")
+            .expect("overlay visible symbols")
+            .into_iter()
+            .map(|symbol| symbol.name)
+            .collect()
+    };
+    assert_eq!(
+        served_names(&mut conn),
+        vec!["value".to_string()],
+        "precondition: the overlay serves its pin at the seed commit"
+    );
+
+    index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &overlay_ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay index");
+
+    assert_eq!(
+        served_names(&mut conn),
+        vec!["renamed".to_string()],
+        "a path the overlay's HEAD changed since the pin's base serves the overlay's content"
     );
 }
 

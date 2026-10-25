@@ -12,6 +12,7 @@ use crate::db;
 use crate::index::api;
 use crate::index::{parser, walker};
 use crate::models::IndexedFile;
+use crate::project::read_isolation_marker;
 use crate::visibility;
 
 use super::file::{
@@ -146,8 +147,9 @@ pub(super) fn index_overlay_files(
     let parent_files = pinned_base_states(conn, machine_id, overlay_project_id, state_filter)?;
     let overlay_files = indexed_file_states(conn, machine_id, overlay_project_id, state_filter)?;
 
-    // `None` means complete discovery is required: `--full` or a Git failure.
-    let divergence = overlay_divergence(request, root_path, parent_root);
+    // `None` means complete discovery is required: `--full`, no pin provenance,
+    // or a Git failure.
+    let divergence = overlay_divergence(request, root_path);
     let candidate_only = !explicit_request && divergence.is_some();
     let (mut ast_by_rel, mut content_by_rel, mut import_candidates) = if explicit_request {
         let (ast_by_rel, content_by_rel) = explicit_overlay_file_maps(
@@ -423,18 +425,16 @@ pub(super) fn index_overlay_files(
     Ok(outcome)
 }
 
-/// The overlay's divergence from its parent, or `None` when complete discovery
-/// is required: explicit files are judged directly, `--full` walks everything,
-/// and an unknowable divergence (Git failure) falls back to the same walk.
-fn overlay_divergence(
-    request: &IndexRequest,
-    root_path: &Path,
-    parent_root: &Path,
-) -> Option<HashSet<String>> {
+/// The overlay's divergence from the base commit its pins were taken at, or
+/// `None` when complete discovery is required: explicit files are judged
+/// directly, `--full` walks everything, and a divergence that cannot be named
+/// (no pin provenance, or a Git failure) falls back to the same walk.
+fn overlay_divergence(request: &IndexRequest, root_path: &Path) -> Option<HashSet<String>> {
     if !request.explicit_files.is_empty() || request.full {
         return None;
     }
-    overlay_divergent_relative_paths(root_path, parent_root).ok()
+    let base_commit = read_isolation_marker(root_path)?.pin?.base_commit;
+    overlay_divergent_relative_paths(root_path, &base_commit).ok()
 }
 
 /// Paths to reconcile. Divergence plus owned rows when Git can name the
@@ -503,13 +503,12 @@ fn route_candidates(
 pub(super) fn overlay_reconcile_candidates(
     request: &IndexRequest,
     root_path: &Path,
-    parent_root: &Path,
     ast_by_rel: &HashMap<String, PathBuf>,
     content_by_rel: &HashMap<String, PathBuf>,
     parent_files: &HashMap<String, IndexedFileState>,
     overlay_files: &HashMap<String, IndexedFileState>,
 ) -> Vec<String> {
-    let divergence = overlay_divergence(request, root_path, parent_root);
+    let divergence = overlay_divergence(request, root_path);
     overlay_reconcile_paths(
         request,
         root_path,
@@ -658,37 +657,17 @@ fn file_states_from_rows(
     Ok(files)
 }
 
-/// Paths the overlay changed relative to its fork point with the parent: its
-/// working-tree changes plus every path its own commits touch since their
-/// merge base with the parent's HEAD. The parent's movement after the fork is
-/// not overlay divergence, so it never makes a path a candidate.
+/// Paths the overlay changed since the base commit its pins were taken at: its
+/// working-tree changes plus every path its HEAD touches since that base. A
+/// path the parent changed and the overlay merged still counts, because the
+/// overlay's HEAD changed it relative to the pinned content.
 fn overlay_divergent_relative_paths(
     root_path: &Path,
-    parent_root: &Path,
+    base_commit: &str,
 ) -> anyhow::Result<HashSet<String>> {
     let mut paths = git_status_relative_paths(root_path)?;
-    let parent_head = git_head_commit(parent_root)?;
-    let base = git_merge_base(root_path, &parent_head)?;
-    paths.extend(git_diff_relative_paths(root_path, &base)?);
+    paths.extend(git_diff_relative_paths(root_path, base_commit)?);
     Ok(paths)
-}
-
-fn git_merge_base(root_path: &Path, parent_head: &str) -> anyhow::Result<String> {
-    let stdout = run_git_with_timeout(root_path, &["merge-base", "HEAD", parent_head])?;
-    let base = String::from_utf8_lossy(&stdout).trim().to_string();
-    if base.is_empty() {
-        anyhow::bail!("git merge-base resolved no common commit");
-    }
-    Ok(base)
-}
-
-fn git_head_commit(root_path: &Path) -> anyhow::Result<String> {
-    let stdout = run_git_with_timeout(root_path, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let head = String::from_utf8_lossy(&stdout).trim().to_string();
-    if head.is_empty() {
-        anyhow::bail!("git rev-parse resolved no HEAD commit");
-    }
-    Ok(head)
 }
 
 fn git_diff_relative_paths(root_path: &Path, base: &str) -> anyhow::Result<HashSet<String>> {
