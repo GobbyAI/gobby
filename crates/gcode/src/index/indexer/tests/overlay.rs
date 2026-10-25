@@ -808,19 +808,23 @@ fn overlay_index_reports_parent_projection_failure_for_parsed_parent_files() {
 #[test]
 #[cfg(gcode_postgres_tests)]
 #[serial_test::serial(serial_db, serial_env)]
-fn overlay_index_cli_refuses_missing_parent_under_overlay_grant() {
-    assert_overlay_index_cli_refuses_missing_parent(false);
+fn overlay_index_refuses_missing_parent_under_overlay_grant() {
+    let refusal = overlay_index_cli_missing_parent_refusal(false);
+    assert_eq!(refusal.code, "parent_index_required");
+    assert_eq!(refusal.exit_status, 2);
 }
 
 #[test]
 #[cfg(gcode_postgres_tests)]
 #[serial_test::serial(serial_db, serial_env)]
 fn overlay_index_cli_explicit_path_refuses_missing_parent_under_overlay_grant() {
-    assert_overlay_index_cli_refuses_missing_parent(true);
+    let refusal = overlay_index_cli_missing_parent_refusal(true);
+    assert_eq!(refusal.code, "parent_index_required");
+    assert_eq!(refusal.exit_status, 2);
 }
 
 #[cfg(gcode_postgres_tests)]
-fn assert_overlay_index_cli_refuses_missing_parent(explicit_path: bool) {
+fn overlay_index_cli_missing_parent_refusal(explicit_path: bool) -> crate::cli_error::CliError {
     use crate::cli_error::CliError;
     use crate::communities::serial_db::{managed_overlay_principal, seeded_project};
     use crate::config::ServiceConfigSelection;
@@ -885,7 +889,7 @@ fn assert_overlay_index_cli_refuses_missing_parent(explicit_path: bool) {
     // user's daemon, including inherited daemon URL overrides.
     let daemon = std::net::TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
     let daemon_url = format!("http://{}", daemon.local_addr().expect("endpoint address"));
-    temp_env::with_vars(
+    let refusal = temp_env::with_vars(
         [
             ("GOBBY_HOME", Some(home.as_os_str())),
             (
@@ -924,8 +928,6 @@ fn assert_overlay_index_cli_refuses_missing_parent(explicit_path: bool) {
             let typed = error
                 .downcast_ref::<CliError>()
                 .unwrap_or_else(|| panic!("typed parent refusal, got {error:#}"));
-            assert_eq!(typed.code, "parent_index_required", "{error:#}");
-            assert_eq!(typed.exit_status, 2);
             let parent_root_text = parent_root.to_str().expect("UTF-8 parent root");
             assert!(
                 typed.message.contains(parent_root_text),
@@ -940,6 +942,7 @@ fn assert_overlay_index_cli_refuses_missing_parent(explicit_path: bool) {
                 "{:?}",
                 typed.recovery
             );
+            typed.clone()
         },
     );
 
@@ -954,4 +957,5 @@ fn assert_overlay_index_cli_refuses_missing_parent(explicit_path: bool) {
         parent_file_states, 0,
         "a refused overlay index writes no parent rows"
     );
+    refusal
 }

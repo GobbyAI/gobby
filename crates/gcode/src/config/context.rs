@@ -420,7 +420,8 @@ impl Context {
             runtime_config_capture_degraded: self.runtime_config_capture_degraded(),
             indexing: self.indexing.clone(),
             daemon_url: self.daemon_url.clone(),
-            grant_ai: None,
+            // Rebasing changes the target checkout, not the credential's authority.
+            grant_ai: self.grant_ai.clone(),
             index_scope,
         }
     }
