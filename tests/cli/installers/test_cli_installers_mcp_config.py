@@ -24,6 +24,8 @@ from gobby.cli.installers.mcp_config_shared import (
     _remove_toml_table_block,
     _resolved_gobby_mcp_command,
 )
+from gobby.paths import get_gobby_home
+from gobby.utils.native_bin import native_bin_name
 
 pytestmark = pytest.mark.unit
 
@@ -142,20 +144,6 @@ class TestConfigureMCPServerJSON:
             "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
         }
-
-    def test_keeps_uv_run_project_existing_server(self, tmp_path: Path) -> None:
-        settings = tmp_path / "settings.json"
-        stale = {
-            "command": "uv",
-            "args": ["run", "--project", "/repo/gobby", "gobby", "mcp-server"],
-        }
-        settings.write_text(json.dumps({"mcpServers": {"gobby": stale}}))
-        result = configure_mcp_server_json(settings)
-
-        assert result["success"] is True
-        assert result["already_configured"] is True
-        data = json.loads(settings.read_text())
-        assert data["mcpServers"]["gobby"] == stale
 
     def test_invalid_json(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
@@ -807,3 +795,111 @@ class TestRemoveProjectMCPServer:
             result = remove_project_mcp_server(project_path)
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
+
+
+def test_fresh_install_writes_gmcp_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    gmcp = str(get_gobby_home() / "bin" / native_bin_name("gmcp"))
+
+    settings = tmp_path / "settings.json"
+    assert configure_mcp_server_json(settings)["success"] is True
+    json_entry = json.loads(settings.read_text())["mcpServers"]["gobby"]
+    assert json_entry == {"command": gmcp, "args": []}
+
+    config = tmp_path / "config.toml"
+    assert configure_mcp_server_toml(config)["success"] is True
+    toml_entry = tomllib.loads(config.read_text())["mcp_servers"]["gobby"]
+    assert toml_entry == {
+        "command": gmcp,
+        "args": [],
+        "required": True,
+        "startup_timeout_sec": 120,
+        "tool_timeout_sec": 360,
+        "default_tools_approval_mode": "approve",
+    }
+
+
+_WRAPPER_SHAPES = [
+    pytest.param("uv", ["run", "gobby", "mcp-server"], id="uv-run"),
+    pytest.param(
+        "uv", ["run", "--directory", "/repo/gobby", "gobby", "mcp-server"], id="uv-directory"
+    ),
+    pytest.param("uv", ["run", "--project", "/repo/gobby", "gobby", "mcp-server"], id="uv-project"),
+    pytest.param(
+        "uv",
+        ["run", "--no-sync", "--project", "/repo/gobby", "gobby", "mcp-server"],
+        id="uv-no-sync-project",
+    ),
+    pytest.param("gobby", ["mcp-server"], id="bare-gobby"),
+    pytest.param("/usr/local/bin/gobby", ["mcp-server"], id="absolute-gobby"),
+]
+
+
+@pytest.mark.parametrize(("command", "args"), _WRAPPER_SHAPES)
+@pytest.mark.parametrize("config_format", ["json", "toml"])
+def test_repair_rewrites_wrapper_entries_to_gmcp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config_format: str,
+    command: str,
+    args: list[str],
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    gmcp = str(get_gobby_home() / "bin" / native_bin_name("gmcp"))
+    other = {"command": "npx", "args": ["-y", "other-server"]}
+
+    if config_format == "json":
+        settings = tmp_path / "settings.json"
+        stale = {
+            "command": command,
+            "args": args,
+            "env": {"MCP_CONNECT_TIMEOUT_MS": "10000"},
+            "alwaysLoad": True,
+        }
+        settings.write_text(json.dumps({"mcpServers": {"gobby": stale, "other": other}}))
+
+        result = configure_mcp_server_json(settings)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        data = json.loads(settings.read_text())
+        assert data["mcpServers"]["gobby"] == {
+            "command": gmcp,
+            "args": [],
+            "env": {"MCP_CONNECT_TIMEOUT_MS": "10000"},
+            "alwaysLoad": True,
+        }
+        assert data["mcpServers"]["other"] == other
+        return
+
+    config = tmp_path / "config.toml"
+    other_block = '[mcp_servers.other]\ncommand = "npx"\nargs = ["-y", "other-server"]\n'
+    config.write_text(
+        "[mcp_servers.gobby]\n"
+        f"command = {json.dumps(command)}\n"
+        f"args = {json.dumps(args)}\n"
+        "required = true\n"
+        "startup_timeout_sec = 120\n"
+        "tool_timeout_sec = 360\n"
+        'default_tools_approval_mode = "approve"\n\n'
+        "[mcp_servers.gobby.env]\n"
+        'MCP_CONNECT_TIMEOUT_MS = "10000"\n\n' + other_block
+    )
+
+    result = configure_mcp_server_toml(config)
+
+    assert result["success"] is True
+    assert result["updated"] is True
+    text = config.read_text()
+    assert other_block in text
+    data = tomllib.loads(text)
+    assert data["mcp_servers"]["gobby"] == {
+        "command": gmcp,
+        "args": [],
+        "required": True,
+        "startup_timeout_sec": 120,
+        "tool_timeout_sec": 360,
+        "default_tools_approval_mode": "approve",
+        "env": {"MCP_CONNECT_TIMEOUT_MS": "10000"},
+    }
+    assert data["mcp_servers"]["other"] == other

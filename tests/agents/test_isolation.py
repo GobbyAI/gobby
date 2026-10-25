@@ -46,6 +46,7 @@ from gobby.runtime_grants.service import DeploymentGrantContext
 from gobby.storage.managed_credentials import ManagedCredential
 from gobby.storage.schema_contract import expected_schema_identity
 from gobby.utils.local_token import derive_managed_signing_key, verify_agent_api_token
+from gobby.utils.native_bin import native_bin_name
 from gobby.worktrees.git import WorktreeGitManager
 from tests.runtime_grants.support import config_snapshot, daemon_config
 
@@ -2718,3 +2719,38 @@ class TestProviderMcpConfigPreflight:
 
         assert error is not None
         assert error.startswith("provider_mcp_config_missing:")
+
+
+@pytest.mark.asyncio
+async def test_isolation_writes_and_accepts_gmcp_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
+    main_repo = "/path/to/main/repo"
+    isolated = tmp_path / "worktree"
+    isolated.mkdir()
+    mcp_json = isolated / ".mcp.json"
+
+    await _patch_mcp_config_for_isolation(main_repo, str(isolated), "codex")
+
+    fresh = json.loads(mcp_json.read_text())["mcpServers"]["gobby"]
+    assert fresh["command"] == gmcp
+    assert fresh["args"] == []
+    assert provider_mcp_config_error(str(isolated), "codex") is None
+
+    stale = {
+        "command": "uv",
+        "args": ["run", "--project", main_repo, "gobby", "mcp-server"],
+    }
+    mcp_json.write_text(json.dumps({"mcpServers": {"gobby": stale}}))
+    await _patch_mcp_config_for_isolation(main_repo, str(isolated), "codex")
+
+    repatched = json.loads(mcp_json.read_text())["mcpServers"]["gobby"]
+    assert repatched["command"] == gmcp
+    assert repatched["args"] == []
+    assert provider_mcp_config_error(str(isolated), "codex") is None
+
+    mcp_json.write_text(json.dumps({"mcpServers": {"gobby": stale}}))
+    assert provider_mcp_config_error(str(isolated), "codex") is not None

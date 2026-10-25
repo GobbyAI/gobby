@@ -1,17 +1,20 @@
 """Focused tests for provider-specific spawn configuration."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from gobby.agents.spawn_executor_support import (
+    _CODEX_PREAPPROVED_GOBBY_TOOLS,
     _codex_mcp_config_overrides,
     _record_resume_launch_details,
     persisted_sandbox_metadata,
 )
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.utils.native_bin import native_bin_name
 from tests.agents.prepared_spawn import prepared_spawn
 
 if TYPE_CHECKING:
@@ -146,3 +149,29 @@ def test_codex_close_reviewer_resume_keeps_execution_wrappers_disabled() -> None
     ]
 
     assert filter_resume_config_overrides(overrides) == overrides
+
+
+def test_codex_overrides_launch_gmcp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import tomllib
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
+    cache_env = {
+        "UV_CACHE_DIR": "/sandbox/cache/uv",
+        "CARGO_HOME": "/sandbox/shared/cargo-home",
+    }
+
+    config = tomllib.loads(
+        "\n".join(_codex_mcp_config_overrides("/main/repo", managed_identity_env=cache_env))
+    )
+    server = config["mcp_servers"]["gobby"]
+
+    assert server["command"] == gmcp
+    assert server["args"] == []
+    assert server["required"] is True
+    assert server["startup_timeout_sec"] == 120
+    assert server["tool_timeout_sec"] == 360
+    for name, path in cache_env.items():
+        assert server["env"][name] == path
+    for tool_name in _CODEX_PREAPPROVED_GOBBY_TOOLS:
+        assert server["tools"][tool_name]["approval_mode"] == "approve"
