@@ -1245,3 +1245,82 @@ fn merged_worktree_grep_survives_a_filtered_overlay_index() {
     invalidate_test_project(&overlay_ctx);
     invalidate_test_project(&parent_ctx);
 }
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn path_filtered_primary_index_keeps_unindexed_changes_visible() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).expect("create src");
+    let lib = root.join("src/lib.rs");
+    let other = root.join("src/other.rs");
+    std::fs::write(&lib, "pub fn before() {}\n").expect("write lib.rs");
+    std::fs::write(&other, "pub fn other() {}\n").expect("write other.rs");
+    // Both files are an hour old, so the pre-gate judges only what the test changes.
+    let an_hour_ago = SystemTime::now() - std::time::Duration::from_secs(3600);
+    set_mtime(&lib, an_hour_ago);
+    set_mtime(&other, an_hour_ago);
+
+    let ctx =
+        postgres_context_with_root(&test_project_id("gcode-freshness-filtered-primary"), root);
+    invalidate_test_project(&ctx);
+    full_index(&ctx);
+
+    // lib.rs changes after the whole-tree index but before a path-scoped run
+    // advances the watermark: a whole-tree-current index would still refresh it.
+    backdate_project_index(&ctx, 3600.0);
+    std::fs::write(&lib, "pub fn after() {}\n").expect("rewrite lib.rs");
+    set_mtime(
+        &lib,
+        SystemTime::now() - std::time::Duration::from_secs(1800),
+    );
+
+    // A path-scoped index of one unrelated file, the way `gcode index <dir>` runs it.
+    let request = crate::index::api::IndexRequest {
+        project_root: root.to_path_buf(),
+        path_filter: Some(std::path::PathBuf::from("src/other.rs")),
+        explicit_files: Vec::new(),
+        full: false,
+        require_cpp_semantics: false,
+        sync_projections: false,
+    };
+    crate::index::api::index_files(request, &ctx, crate::index::api::IndexOptions::default())
+        .expect("filtered primary index");
+
+    ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
+    let mut conn = db::connect_readonly(&ctx.database_url).expect("connect readonly");
+    let options = GrepOptions {
+        pattern: "after",
+        paths: &[],
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: true,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+    let result = grep_repo(&ctx, &mut conn, &options).expect("grep rewritten lib.rs");
+    let lines: Vec<usize> = result
+        .matches
+        .iter()
+        .filter(|found| found.path == "src/lib.rs")
+        .map(|found| found.line)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![1],
+        "a path-scoped index must not hide a whole-tree change from the next read"
+    );
+
+    invalidate_test_project(&ctx);
+}
