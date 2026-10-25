@@ -1,0 +1,16 @@
+{
+  "model": "user-model",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/user-pre-tool-audit"
+          }
+        ]
+      }
+    ]
+  }
+}
