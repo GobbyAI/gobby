@@ -1,5 +1,6 @@
 //! Ranked text and symbol retrieval through the effective workspace scope.
 
+use super::content_page::{ContentQuery, content_candidates, page_content};
 use super::*;
 
 pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
@@ -67,7 +68,6 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         })
         .collect();
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -75,6 +75,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         warnings: &[],
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -84,7 +85,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     if matches!(options.format, Format::Text) {
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_exact_results(rows, options.verbose)
     })
 }
@@ -175,7 +176,6 @@ fn search_symbol_with_graph(
     let hint = token_budget::combine_hints(lane_hint, path_hint);
     output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -183,6 +183,7 @@ fn search_symbol_with_graph(
         warnings: &[],
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -192,7 +193,7 @@ fn search_symbol_with_graph(
     if matches!(options.format, Format::Text) {
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_exact_results(rows, options.verbose)
     })
 }
@@ -248,7 +249,6 @@ pub fn search_text(
     let hint = token_budget::combine_hints(lane_hint, hint);
     output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -256,6 +256,7 @@ pub fn search_text(
         warnings: &[],
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -265,7 +266,7 @@ pub fn search_text(
     if matches!(options.format, Format::Text) {
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_search_results(rows, options.verbose)
     })
 }
@@ -276,66 +277,52 @@ pub fn search_content(
     options: TextSearchOptions<'_>,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let expanded_paths = fts::expand_paths(options.paths);
-    let path_patterns = fts::compile_patterns(&expanded_paths)?;
-    let has_path_filters = !expanded_paths.is_empty();
-    let fetch_limit = if has_path_filters {
-        fts::FILTERED_FETCH_CAP
-    } else {
-        ((options.offset + options.limit) * 3).max(200)
-    };
-    let all_results = fts::search_content_visible(
+    let candidates = content_candidates(
         &mut conn,
-        query,
         ctx,
-        options.language,
-        &expanded_paths,
-        fetch_limit,
+        query,
+        ContentQuery {
+            language: options.language,
+            paths: options.paths,
+            limit: options.limit,
+            offset: options.offset,
+        },
     )?;
-    let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
-        .then(filtered_fetch_cap_hint);
-    let path_hint =
-        fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-    let hint = token_budget::combine_hints(cap_hint, path_hint);
-    let all_results: Vec<_> = all_results
-        .into_iter()
-        .filter(|r| {
-            options
-                .language
-                .is_none_or(|lang| r.language.as_deref() == Some(lang))
-                && path_matches_filters(&path_patterns, &r.file_path)
-        })
-        .collect();
-    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |r| r.file_path.as_str());
-    let total = if has_path_filters {
-        all_results.len()
-    } else {
-        fts::count_content_visible(&mut conn, query, ctx, options.language, &expanded_paths)?
-    };
-    let results: Vec<_> = all_results
-        .into_iter()
-        .skip(options.offset)
-        .take(options.limit)
-        .collect();
+    let page = page_content(candidates, options.offset, options.limit, |file_path| {
+        scope::path_exists_in_current_project(ctx, file_path)
+    });
 
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total, None);
+    output::print_empty_diagnostic(
+        ctx,
+        page.results.is_empty(),
+        options.offset,
+        page.total,
+        None,
+    );
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
-        total,
+        total: page.total,
         offset: options.offset,
         limit: options.limit,
-        hint: hint.as_deref(),
+        hint: page.hint.as_deref(),
         warnings: &[],
     };
-    let page = output::paginate(
-        results,
+    let rendered = output::paginate_with_more(
+        ctx,
+        page.results,
         meta,
+        page.next_offset.is_some(),
         options.token_budget,
         options.format,
         output::render_content_results,
     );
     if matches!(options.format, Format::Text) {
-        output::print_search_warning(ctx, options.verbose, hint.as_deref());
+        output::print_search_warning(ctx, options.verbose, page.hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, output::render_content_results)
+    output::print_page(
+        ctx,
+        &rendered,
+        meta,
+        options.format,
+        output::render_content_results,
+    )
 }

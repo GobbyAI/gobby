@@ -1,5 +1,5 @@
 use postgres::Client;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::postgres_errors;
 
@@ -11,23 +11,23 @@ pub const REQUIRED_INDEXES: [&str; 2] = [
 
 const CORRUPTION_SQLSTATES: [&str; 3] = ["XX000", "XX001", "XX002"];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Bm25Health {
     pub healthy: bool,
-    pub repair_command: &'static str,
+    pub repair_command: String,
     pub indexes: Vec<Bm25IndexHealth>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Bm25IndexHealth {
-    pub name: &'static str,
-    pub state: &'static str,
+    pub name: String,
+    pub state: String,
     pub repaired: bool,
     pub checks: Vec<Bm25IndexCheck>,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Bm25IndexCheck {
     pub name: String,
     pub passed: bool,
@@ -41,7 +41,7 @@ pub fn verify(conn: &mut Client) -> Bm25Health {
         .collect::<Vec<_>>();
     Bm25Health {
         healthy: indexes.iter().all(|index| index.state == "healthy"),
-        repair_command: REPAIR_COMMAND,
+        repair_command: REPAIR_COMMAND.to_string(),
         indexes,
     }
 }
@@ -112,8 +112,8 @@ fn verify_index(conn: &mut Client, name: &'static str) -> Bm25IndexHealth {
                     .join("; ")
             });
             Bm25IndexHealth {
-                name,
-                state: if healthy { "healthy" } else { "damaged" },
+                name: name.to_string(),
+                state: if healthy { "healthy" } else { "damaged" }.to_string(),
                 repaired: false,
                 checks,
                 error,
@@ -137,8 +137,8 @@ fn verification_error(name: &'static str, error: &postgres::Error) -> Bm25IndexH
 
 fn index_health(name: &'static str, state: &'static str, error: Option<String>) -> Bm25IndexHealth {
     Bm25IndexHealth {
-        name,
-        state,
+        name: name.to_string(),
+        state: state.to_string(),
         repaired: false,
         checks: Vec::new(),
         error,
@@ -153,7 +153,7 @@ mod tests {
     fn degraded_text_includes_repair_command_and_error() {
         let health = Bm25Health {
             healthy: false,
-            repair_command: REPAIR_COMMAND,
+            repair_command: REPAIR_COMMAND.to_string(),
             indexes: vec![index_health(
                 REQUIRED_INDEXES[0],
                 "damaged",

@@ -1,7 +1,7 @@
-"""Tests for the sandboxed-Droid ``ps`` shim.
+"""Tests for the sandboxed-SRT ``ps`` shim.
 
-TODO(#22407): delete this module together with ``gobby.agents.droid_ps_shim``
-once Factory fixes ``factory-execute-supervisor``.
+TODO(#22407, #25069): delete this module together with ``gobby.agents.droid_ps_shim``
+once no sandboxed seat needs a ``ps`` binary.
 """
 
 from __future__ import annotations
