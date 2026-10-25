@@ -65,7 +65,9 @@ async def test_fast_forward_landing_refreshes_index_for_landed_paths(case: Landi
     _dirty_tracked_file(case)
     refreshes = _Refreshes()
 
-    with patch.object(GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes):
+    with patch.object(
+        GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes.__call__
+    ):
         result = await case.land(task, sha)
 
     assert result["landed"] is True, result
@@ -80,7 +82,9 @@ async def test_merge_landing_refreshes_index_for_candidate_paths(case: LandingCa
     _dirty_tracked_file(case)
     refreshes = _Refreshes()
 
-    with patch.object(GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes):
+    with patch.object(
+        GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes.__call__
+    ):
         result = await case.land(task, sha)
 
     assert result["landed"] is True, result
@@ -100,7 +104,9 @@ async def test_index_refresh_failure_is_logged_and_keeps_the_landing(
 
     with (
         caplog.at_level(logging.WARNING, logger="gobby.tasks.land_commit"),
-        patch.object(GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes),
+        patch.object(
+            GcodeGateway, "incremental_index", autospec=True, side_effect=refreshes.__call__
+        ),
     ):
         result = await case.land(task, sha)
 
