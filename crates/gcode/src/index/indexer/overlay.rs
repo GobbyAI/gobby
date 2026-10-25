@@ -187,8 +187,12 @@ pub(super) fn index_overlay_files(
     let overlay_files = indexed_file_states(conn, machine_id, overlay_project_id, state_filter)?;
 
     // `None` means complete discovery is required: `--full`, no pin provenance,
-    // or a Git failure.
-    let divergence = overlay_divergence(request, root_path);
+    // or a Git failure. Persisted pin gaps are tracked but unpinned, so no diff
+    // names them; they join the divergent candidates to be indexed.
+    let mut divergence = overlay_divergence(request, root_path);
+    if let Some(paths) = divergence.as_mut() {
+        paths.extend(db::persisted_gaps(conn, machine_id, overlay_project_id)?);
+    }
     let candidate_only = !explicit_request && divergence.is_some();
     let (mut ast_by_rel, mut content_by_rel, mut import_candidates) = if explicit_request {
         let (ast_by_rel, content_by_rel) = explicit_overlay_file_maps(

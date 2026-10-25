@@ -1121,6 +1121,18 @@
       "definition": "uuid|uuid|YES||NEVER"
     },
     {
+      "name": "code_overlay_pin_gaps.file_path",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pin_gaps.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "code_overlay_pin_gaps.overlay_project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "code_overlay_pins.content_hash",
       "definition": "text|text|NO||NEVER"
     },
@@ -5991,6 +6003,10 @@
       "definition": "UNIQUE NULLS NOT DISTINCT (project_id, file_path, content_hash, source_symbol_id, source_name, source_kind, source_external_module, target_symbol_id, target_name, target_kind, target_external_module, heritage_kind, line)"
     },
     {
+      "name": "code_overlay_pin_gaps.code_overlay_pin_gaps_pkey",
+      "definition": "PRIMARY KEY (machine_id, overlay_project_id, file_path)"
+    },
+    {
       "name": "code_overlay_pins.code_overlay_pins_pkey",
       "definition": "PRIMARY KEY (machine_id, overlay_project_id, file_path)"
     },
@@ -7857,6 +7873,10 @@
     {
       "name": "code_inheritance_unique_target",
       "definition": "CREATE UNIQUE INDEX code_inheritance_unique_target ON $schema.code_inheritance USING btree (project_id, file_path, content_hash, source_symbol_id, source_name, source_kind, source_external_module, target_symbol_id, target_name, target_kind, target_external_module, heritage_kind, line) NULLS NOT DISTINCT"
+    },
+    {
+      "name": "code_overlay_pin_gaps_pkey",
+      "definition": "CREATE UNIQUE INDEX code_overlay_pin_gaps_pkey ON $schema.code_overlay_pin_gaps USING btree (machine_id, overlay_project_id, file_path)"
     },
     {
       "name": "code_overlay_pins_pkey",

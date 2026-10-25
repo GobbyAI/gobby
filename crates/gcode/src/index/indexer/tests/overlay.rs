@@ -13,6 +13,7 @@ use super::serial_db::{
     connect_summary_preservation_test_db, machine_context, seed_primary_checkout, test_symbol,
     test_uuid_param, unique_test_uuid, write_postgres_parsed_file_facts_with_root,
 };
+use crate::commands::pin::{PinSource, apply_pin};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::db;
 use crate::index::hasher;
@@ -958,4 +959,204 @@ fn overlay_index_cli_missing_parent_refusal(explicit_path: bool) -> crate::cli_e
         "a refused overlay index writes no parent rows"
     );
     refusal
+}
+
+/// Seeds `rel` as an indexed parent file whose selector records `blob`, and returns its content hash.
+fn seed_parent_selector(
+    conn: &mut postgres::Client,
+    machine_id: &str,
+    parent_project_id: &str,
+    parent_root: &Path,
+    rel: &str,
+    blob: Option<&str>,
+) -> String {
+    let content_hash = hasher::file_content_hash(&parent_root.join(rel)).expect("hash parent file");
+    let file = crate::models::IndexedFile {
+        id: crate::models::IndexedFile::make_id(parent_project_id, rel, &content_hash),
+        project_id: parent_project_id.to_string(),
+        file_path: rel.to_string(),
+        language: "rust".to_string(),
+        content_hash: content_hash.clone(),
+        symbol_count: 0,
+        byte_size: 0,
+        indexed_at: String::new(),
+    };
+    crate::index::api::upsert_file(conn, &file).expect("seed parent file");
+    crate::index::api::file_state::upsert_file_state(
+        conn,
+        machine_id,
+        &file,
+        parent_root,
+        crate::index::api::IndexWriteMode::Overlay,
+    )
+    .expect("seed parent file state");
+    crate::index::api::file_state::set_selector_git_blob(
+        conn,
+        machine_id,
+        parent_project_id,
+        rel,
+        &content_hash,
+        blob,
+    )
+    .expect("seed parent selector blob");
+    content_hash
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_index_indexes_persisted_pin_gaps() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+    let clean = "src/clean.rs";
+    let dirty = "src/dirty.rs";
+    write_file(&parent_root, clean, b"pub fn clean() {}\n");
+    write_file(&parent_root, dirty, b"pub fn dirty() {}\n");
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    let base_sha = git_output(&overlay_root, &hooks, &["rev-parse", "HEAD"]);
+    let clean_blob = git_output(&parent_root, &hooks, &["rev-parse", "HEAD:src/clean.rs"]);
+
+    let overlay_project_id = unique_test_uuid("gcode-overlay-pin-gaps");
+    let parent_project_id = unique_test_uuid("gcode-overlay-pin-gaps-root");
+    cleanup_summary_preservation_project(&mut conn, &overlay_project_id)
+        .expect("pre-clean overlay rows");
+    cleanup_summary_preservation_project(&mut conn, &parent_project_id)
+        .expect("pre-clean parent rows");
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &parent_project_id, &parent_root)
+        .expect("seed parent checkout");
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    crate::index::api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &crate::models::IndexedProject {
+            id: parent_project_id.clone(),
+            root_path: parent_root.display().to_string(),
+            total_files: 0,
+            total_symbols: 0,
+            last_indexed_at: String::new(),
+            index_duration_ms: 0,
+            total_eligible_files: None,
+            indexer_version: None,
+        },
+        crate::index::api::IndexWriteMode::Overlay,
+        true,
+    )
+    .expect("seed parent project state");
+    // The parent indexed both files at the base commit. Its working tree then edits `dirty`,
+    // and the selector for `dirty` has no blob ID, so the pin leaves `dirty` as a gap.
+    seed_parent_selector(
+        &mut conn,
+        &machine_id,
+        &parent_project_id,
+        &parent_root,
+        clean,
+        Some(&clean_blob),
+    );
+    seed_parent_selector(
+        &mut conn,
+        &machine_id,
+        &parent_project_id,
+        &parent_root,
+        dirty,
+        None,
+    );
+    write_file(&parent_root, dirty, b"pub fn dirty_edited() {}\n");
+    write_isolation_marker(&overlay_root, &parent_root, &parent_project_id, &base_sha);
+
+    let report = apply_pin(
+        &mut conn,
+        &machine_id,
+        &overlay_project_id,
+        Some(PinSource {
+            project_id: &parent_project_id,
+            root: &parent_root,
+            base_commit: &base_sha,
+        }),
+    )
+    .expect("pin overlay");
+    assert_eq!(report.gaps, vec![dirty.to_string()]);
+
+    let ctx = Context {
+        database_url,
+        project_root: overlay_root.clone(),
+        project_id: overlay_project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: machine_id.clone(),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Overlay {
+            overlay_project_id: overlay_project_id.clone(),
+            overlay_root: overlay_root.clone(),
+            parent_project_id: parent_project_id.clone(),
+            parent_root: parent_root.clone(),
+        },
+    };
+    index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay index reads the persisted gaps");
+
+    let overlay_states: Vec<String> = conn
+        .query(
+            "SELECT file_path FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2
+             ORDER BY file_path",
+            &[
+                &test_uuid_param(&machine_id),
+                &test_uuid_param(&overlay_project_id),
+            ],
+        )
+        .expect("load overlay file states")
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert!(
+        overlay_states.contains(&dirty.to_string()),
+        "the persisted gap is indexed into the overlay, got {overlay_states:?}"
+    );
 }

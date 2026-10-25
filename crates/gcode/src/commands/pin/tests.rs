@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use postgres::error::SqlState;
 
-use super::{PinSource, apply_pin, derive_gaps};
+use super::{PinSource, apply_pin, derive_gaps, persisted_gaps};
 use crate::db;
 use crate::index::api;
 use crate::models::{IndexedFile, IndexedProject};
@@ -532,6 +532,110 @@ fn derive_gaps_lists_tracked_paths_without_pins() {
             "src/b.rs".to_string(),
             "src/c.rs".to_string(),
         ]
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn pin_persists_gaps_for_overlay_indexing() {
+    let repo = Repo::new(&[
+        ("src/clean.rs", "pub fn clean() {}\n"),
+        ("src/dirty.rs", "pub fn dirty() {}\n"),
+        ("src/never.rs", "pub fn never() {}\n"),
+    ]);
+    write_file(repo.root(), "src/dirty.rs", "pub fn dirty_edited() {}\n");
+
+    let mut fx = Fixture::new();
+    let ancestor = fx.project("pin-ancestor");
+    let child = fx.project("pin-child");
+    fx.checkout(&ancestor, repo.root());
+    fx.index_selector(
+        &ancestor,
+        repo.root(),
+        "src/clean.rs",
+        "hash-clean",
+        Some(&repo.blob("src/clean.rs")),
+    );
+    fx.index_selector(&ancestor, repo.root(), "src/dirty.rs", "hash-dirty", None);
+    let machine_id = fx.machine_id.clone();
+
+    let report = apply_pin(
+        &mut fx.conn,
+        &machine_id,
+        &child,
+        Some(source_of(&ancestor, &repo)),
+    )
+    .expect("pin child");
+    let gaps = vec!["src/dirty.rs".to_string(), "src/never.rs".to_string()];
+    assert_eq!(report.gaps, gaps);
+    assert_eq!(
+        persisted_gaps(&mut fx.conn, &machine_id, &child).expect("read persisted gaps"),
+        gaps,
+        "the pin persists its gap paths for the overlay indexer"
+    );
+}
+
+#[test]
+#[serial_test::serial(serial_db)]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+fn pin_gap_is_removed_when_repin_pins_it() {
+    let repo = Repo::new(&[
+        ("src/clean.rs", "pub fn clean() {}\n"),
+        ("src/dirty.rs", "pub fn dirty() {}\n"),
+    ]);
+    let mut fx = Fixture::new();
+    let ancestor = fx.project("pin-ancestor");
+    let child = fx.project("pin-child");
+    fx.checkout(&ancestor, repo.root());
+    fx.index_selector(
+        &ancestor,
+        repo.root(),
+        "src/clean.rs",
+        "hash-clean",
+        Some(&repo.blob("src/clean.rs")),
+    );
+    fx.index_selector(&ancestor, repo.root(), "src/dirty.rs", "hash-dirty", None);
+    let machine_id = fx.machine_id.clone();
+
+    apply_pin(
+        &mut fx.conn,
+        &machine_id,
+        &child,
+        Some(source_of(&ancestor, &repo)),
+    )
+    .expect("first pin");
+    assert_eq!(
+        persisted_gaps(&mut fx.conn, &machine_id, &child).expect("read persisted gaps"),
+        vec!["src/dirty.rs".to_string()],
+        "the unpinned dirty path is persisted as a gap"
+    );
+
+    fx.set_blob(
+        &ancestor,
+        "src/dirty.rs",
+        "hash-dirty",
+        Some(&repo.blob("src/dirty.rs")),
+    );
+    let repinned = apply_pin(
+        &mut fx.conn,
+        &machine_id,
+        &child,
+        Some(source_of(&ancestor, &repo)),
+    )
+    .expect("re-pin");
+    assert!(repinned.gaps.is_empty(), "got {repinned:?}");
+    assert!(
+        persisted_gaps(&mut fx.conn, &machine_id, &child)
+            .expect("read persisted gaps")
+            .is_empty(),
+        "re-pinning the path removes its persisted gap"
     );
 }
 

@@ -6,12 +6,14 @@ use crate::schema;
 mod communities;
 mod ids;
 mod local_callee;
+mod pin_gaps;
 mod queries;
 mod resolution;
 
 pub use communities::*;
 pub use ids::*;
 pub use local_callee::*;
+pub use pin_gaps::*;
 pub use queries::*;
 pub use resolution::*;
 
