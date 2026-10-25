@@ -73,6 +73,13 @@ This plan owns skill-specific behavior and its own activation after #24841.
    Commit its resolution in `Cargo.lock`. Native scanning uses committed
    ClawCare 0.9.0 rules and license attribution, including Gobby's POST-boundary
    correction; no Python interpreter remains in a native execution path.
+9. #24659 owns the single native browser-cookie verifier for both ordinary
+   AuthStore sessions and `browser-testing.` managed sessions. Skills 6.0
+   registers only the exact 20 Skills HTTP rows through it. The Orchestrator
+   applies `security-review` to that leaf immediately after expansion, verifies
+   the persisted label before dispatch, and holds cookie activation until a
+   Security Reviewer records an approved step for the exact implementation
+   SHA. This approved expansion obligation needs no manifest-emitter change.
 
 ## Constraints
 `kind: framing`
@@ -159,8 +166,14 @@ each implementation leaf still owns its new tests.
 - 0.1.3 - Safety fixtures cover all 39 effective rules, safe near-matches,
   companion files with arbitrary text extensions, POST versus postgres, and
   unavailable/erroring scanners. file: `crates/gskills/tests/fixtures/safety.json`.
+- 0.1.4 - For each of the 20 HTTP rows, the corpus records ordinary and managed
+  browser-cookie admission, body/query/header selector effects, missing/invalid
+  credentials, cookie GET and mutation outcomes, and observed credentialed CORS
+  and preflight behavior. Managed-cookie loopback and safe-method restrictions
+  remain distinct from ordinary sessions.
+  test: `tests/contracts/test_skills_parity_corpus.py::test_http_cookie_admission_matrix`.
 
-Planned verification: the two named tests with the protected Python test prefix;
+Planned verification: the three named tests with the protected Python test prefix;
 collector invocations use temporary homes and an isolated test database. No
 characterization test has been run during drafting.
 
@@ -1214,7 +1227,121 @@ its existing owner.
 ## P6: Family activation and native evidence
 `kind: framing`
 
-### 6.1 Skills-only activation and coherent release [category: code] (depends: 5.4, #24841)
+### 6.0 Skills browser admission through the shared verifier [category: code] (depends: 5.4, #24659)
+`kind: deliverable`
+
+Targets:
+- `crates/gskills/src/http.rs`
+- `crates/gdaemon/src/front_door/skills.rs`
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gdaemon/tests/skills_browser.rs`
+- `docs/contracts/skills-native.md`
+
+**Research context:** The Orchestrator's shared-verifier ruling assigns all
+cookie parsing, verification, credential precedence, revocation, caller-class
+and selector extraction to #24659. Consume its landed typed caller/selector
+result and family admission seam. This leaf adds only the Skills route
+registration and context projection; it adds no verifier, session store,
+issuer, cache, general auth policy or new Python code. Node requests relay to
+the hub's same verifier without creating node-local browser authority.
+
+The compatibility references are
+`src/gobby/servers/auth_service.py::AuthService.authenticate`,
+`AuthService._legacy_rejection`, `AuthService._cookie_user`,
+`src/gobby/servers/browser_sessions.py::browser_route_allowed`, and
+`src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`.
+The observed authenticate excerpt_hash is
+`5446a360254d1560903cc90fbf627e5ca101d65f38d32725d63d8fed11a9b79e`;
+the middleware excerpt_hash is
+`65ab26e9e827b274251c9a8fff4d58cdd22cdd3cefebf6c0acc267245831f5fb`.
+Ordinary `gobby_session` cookies resolve through AuthStore and retain current
+read/mutation admission. `browser-testing.` cookies additionally require live
+managed capability, loopback peer and URL host, and safe-method admission;
+POST/PUT/DELETE Skills mutations are refused with the existing 403 outcome.
+Project/session headers, repeated query selectors and JSON body selectors must
+match the verified managed session; preserve current body-media and malformed
+JSON rejection. Carry the verified project context into Skills handlers rather
+than accepting a caller-supplied replacement identity.
+
+Use the existing Skills method/path inventory and its matcher for both
+admission and claims, with explicit `Caller::Browser` registration. Match these
+nine GET rows only: `/api/skills`, `/api/skills/{skill_id}`,
+`/api/skills/stats`, `/api/skills/search`, `/api/skills/{skill_id}/files`,
+`/api/skills/{skill_id}/files/{file_path:path}`,
+`/api/skills/{skill_id}/export`, `/api/skills/hubs`, and
+`/api/skills/hubs/search`. Ordinary-session admission also covers exactly these
+eleven mutation rows: `POST /api/skills`, `PUT /api/skills/{skill_id}`,
+`DELETE /api/skills/{skill_id}`, `POST /api/skills/{skill_id}/restore`,
+`POST /api/skills/{skill_id}/move-to-project`,
+`POST /api/skills/{skill_id}/move-to-installed`, `POST /api/skills/scan`,
+`POST /api/skills/import`, `POST /api/skills/hubs/install`,
+`POST /api/skills/restore-defaults`, and
+`PUT /api/skills/{skill_id}/files/{file_path:path}`. Managed callers receive
+only the existing permitted reads; a blanket Browser registration must never
+turn their denied mutations into native successes. Preserve reserved-path
+ordering, encoded file-path matching, and existing API-key caller behavior.
+No sibling family, wildcard prefix, MCP/CLI method, WebSocket or unlisted
+HEAD/OPTIONS handler gains a Skills browser claim.
+
+`src/gobby/servers/app_factory.py::create_app` installs outermost credentialed
+CORS with configured exact/wildcard origins, all configured methods/headers,
+and unauthenticated preflight. It also adds CORS headers to auth refusals.
+Preserve that observed behavior through #24659's shared boundary. Do not invent
+a stricter Origin/CSRF admission rule, a new token, or a new browser credential.
+The isolated 0.1 HTTP corpus and the existing middleware fixtures supply the
+route-by-route baseline for both cookie classes, including absent/disallowed
+Origin, preflight and auth-failure response headers.
+
+Before this leaf and its Security-approved exact SHA ship, every Skills cookie
+request stays proxied to Python in all family switch states; document that
+cookie remainder even if API-key requests use native handlers. Once admitted,
+the shared verifier's denials never fall through to a native handler or a
+second verifier. 6.1's full native/default switch is gated on this leaf and its
+Security approval. Existing caller lists and other families remain unchanged.
+
+**Expansion obligation:** Immediately after expansion, the Orchestrator applies
+`security-review` to the leaf for source section 6.0 and checks the persisted
+label before dispatch. Missing label holds dispatch. Cookie activation remains
+held until a Security Reviewer records an approved step for the exact
+implementation SHA; a later implementation change needs renewed approval.
+This is the Orchestrator-confirmed labeling route because server-derived M1
+emits coverage labels and accepts no arbitrary-label routing override. Keep M1
+server-derived and make no emitter change.
+
+**Acceptance:**
+
+- 6.0.1 - Ordinary AuthStore cookies reproduce Python admission and payload/error
+  outcomes on every one of the exact nine GET and eleven mutation rows, through
+  the shared #24659 verifier only.
+  test: `crates/gdaemon/tests/skills_browser.rs::ordinary_cookie_routes_match_python`.
+- 6.0.2 - Managed browser-testing cookies preserve loopback safe-read admission,
+  live-capability and project/session/body selector checks; all eleven mutations
+  and off-loopback requests are refused before Skills effects.
+  test: `crates/gdaemon/tests/skills_browser.rs::managed_cookie_authority_matches_python`.
+- 6.0.3 - A caller with neither cookie nor key, invalid/expired cookies and
+  unsupported identity headers gain no Skills authority; API-key callers and
+  neighboring/unlisted routes retain their existing behavior.
+  test: `crates/gdaemon/tests/skills_browser.rs::browser_admission_is_exact_and_fails_closed`.
+- 6.0.4 - Both cookie classes retain observed credentialed CORS, preflight and
+  refusal-header behavior without new Origin/CSRF policy.
+  test: `crates/gdaemon/tests/skills_browser.rs::cors_and_cookie_mutation_parity`.
+- 6.0.5 - Until the approved leaf ships, cookie traffic remains proxied in every
+  switch state with the remainder explicit; after activation, verified browser
+  requests use native handlers and denied requests invoke no handler/fallback.
+  test: `crates/gdaemon/tests/skills_browser.rs::cookie_takeover_waits_for_shared_verifier`.
+- 6.0.6 - The activation record identifies the persisted `security-review` label,
+  pre-dispatch check and Security Reviewer's approved step for the exact shipping
+  SHA; absent or stale approval holds cookie activation.
+  behavior: "Skills browser admission security gate" in `docs/contracts/skills-native.md`.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test skills_browser`;
+0.1's HTTP-cookie corpus test with the protected Python prefix. Rust integration
+tests compose the actual front door, shared verifier and Skills handlers with
+isolated session/capability state and a counting Python backend stub. Assert
+exact route coverage and zero effects for denied mutations; no production
+credentials, daemon or database is used.
+
+### 6.1 Skills-only activation and coherent release [category: code] (depends: 6.0, #24841)
 `kind: deliverable`
 
 Targets:
@@ -1264,6 +1391,12 @@ Compare safe read operations only; test mutating HTTP operations and
 completed-load/script/source MCP tools against isolated cloned state, never by
 duplicating production effects. Clear mismatches before native becomes the
 family default. Keep other internal server states unchanged.
+The switch records the cookie remainder until 6.0 and the shared #24659 verifier
+ship with Security approval for the exact SHA. Earlier native/compare selection
+for API-key traffic never claims cookie traffic. Full native activation and the
+backend-unavailable smoke require both cookie classes' route-by-route parity,
+including managed-cookie mutation refusals; cookie takeover is never inferred
+from API-key success alone.
 
 The production closure changes gdaemon and the new family crate, with no gcore
 source modification. `src/gobby/install/bin_release_identity.py::workspace_source_identity`
@@ -1309,7 +1442,8 @@ remains external; 6.2 separately records the final ledger evidence.
   patch increment.
   test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 6.1.6 - The runbook records exact build/installed hashes, compared cases,
-  rollback command, announcement, health and native smoke evidence without
+  rollback command, announcement, health, cookie remainder/security approval
+  and native smoke evidence without
   claiming the shared compatibility backend removed.
   behavior: "Skills activation evidence" in `docs/contracts/skills-native.md`.
 
@@ -1340,6 +1474,9 @@ test/evidence reference and #21580 ownership, then regenerate the ledger.
 Document native CLI, family/backend controls, paging/load tracking, provider
 bounds, hub/node filesystem placement and operational rollback. The global
 naming switch and shared MCP compatibility removal remain their existing owners.
+The 20 HTTP rows become delegated only after cookie admission and Security
+approval are complete; API-key-only native proof leaves their cookie remainder
+documented as proxied and cannot certify this final ledger change.
 
 **Acceptance:**
 
@@ -1363,6 +1500,10 @@ rows. 0.1 rejects missing or extra keys. 6.1 proves transport integration and
 Python-backend independence; 6.2 records the resulting status. Shared target
 files are dependency-ordered throughout. No plan section delegates a product
 choice to its executor.
+6.0 owns browser admission for the same 20 HTTP rows through #24659's one
+verifier, preserving both cookie classes and current credentialed CORS. The
+Orchestrator's persisted security-review label check gates dispatch, and exact-SHA
+Security approval gates cookie activation and the final delegated ledger state.
 
 Draft validation command:
 `uv run gobby plans validate .gobby/plans/gdaemon-skills-family.md -p /Users/josh/Projects/gobby`.
