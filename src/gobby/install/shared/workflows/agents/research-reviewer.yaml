@@ -189,6 +189,8 @@ step_workflow:
         verdict. For a BOUNCE, record the same call with status="rejected" and
         the blocking findings as feedback, then send a matching durable BOUNCE
         verdict to finish review. Never edit the report yourself.
+        A background test run is not a durable wait: wait for it in this turn
+        with Monitor, and end the turn only after its result is recorded.
         Read the Orchestrator's or the task's Dev Manager's stored incoming
         EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
         exact event to your Dev Manager for your own recorded reviewing
@@ -204,6 +206,7 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
+        - Monitor
       allowed_mcp_tools:
         - "gobby-tasks:get_task"
         - "gobby-tasks:record_review_step"

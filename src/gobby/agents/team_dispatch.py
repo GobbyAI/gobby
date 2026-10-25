@@ -5,10 +5,10 @@ here. A maker takes an open, unclaimed leaf of the epic. A primary leaf works in
 and holds its implementation domain (``fullstack`` when unset): one live primary per domain. A
 sub-worktree leaf gets ``epic/<seq>/<leaf-seq>`` off the epic branch and holds no primary slot.
 A reviewer works in the team tree and is recorded on the team, one live seat per definition. A
-resumed reviewer keeps the definition its session was stored under and rebinds that definition to
-the resumed run. A team manager's other fresh spawn is refused, and every other caller takes the
-ordinary path. A resumed maker or other seat takes no scope here: spawn admission bounds it to the
-manager's own team's seats.
+resumed seat keeps the definition its session was stored under. A resumed reviewer rebinds that
+definition to the resumed run, and a resumed primary takes its domain slot back. A team manager's
+other fresh spawn is refused, and every other caller takes the ordinary path. Any other resumed
+seat takes no scope here: spawn admission bounds it to the manager's own team's seats.
 """
 
 from __future__ import annotations
@@ -137,17 +137,47 @@ def _maker(
     )
 
 
-def _resumed_definition(db: HubDatabase, project_id: str, ref: str) -> str | None:
-    """The definition a resumed session was stored under; None when the ref names no session.
+def _resumed_session(db: HubDatabase, project_id: str, ref: str) -> str | None:
+    """The session a resume names; None when the ref names no session.
 
     An unknown ref falls through to the resume path, which reports it.
     """
     try:
-        session_id = SessionManager(db).resolve_session_reference(ref, project_id)
+        return SessionManager(db).resolve_session_reference(ref, project_id)
     except ValueError:
         return None
+
+
+def _stored_definition(db: HubDatabase, session_id: str) -> str:
+    """The definition a session was stored under."""
     stored = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
     return str(stored.get("_agent_type") or "default")
+
+
+def _resumed_maker(
+    db: HubDatabase, binding: TeamBinding, parent: str, session_id: str | None
+) -> DispatchScope | None:
+    """A resumed primary takes its domain slot back; any other resumed maker takes no scope.
+
+    A run counts as a primary when it worked the team tree on a leaf. Its leaf's domain must
+    hold no other live primary.
+    """
+    session = SessionManager(db).get(session_id) if session_id is not None else None
+    last = session.agent_run_id if session is not None else None
+    run = LocalAgentRunManager(db).get(last) if last else None
+    if run is None or run.task_id is None or run.worktree_id != binding.worktree_id:
+        return None
+    domain = LocalTaskManager(db).get_task(run.task_id).implementation_domain or _UNDOMAINED_DOMAIN
+    if _live(db, binding.primaries.get(domain)):
+        raise TeamAdmissionRefused(
+            "primary_live", f"team {binding.team_id} already has a live {domain} primary"
+        )
+    return DispatchScope(
+        team_id=binding.team_id,
+        project_id=binding.project_id,
+        parent_session_id=parent,
+        primary_domain=domain,
+    )
 
 
 def _reviewer(
@@ -179,13 +209,6 @@ def _reviewer(
         raise TeamAdmissionRefused(
             "reviewer_seat_live", f"{agent} is already live on team {binding.team_id}"
         )
-    if resume_session_id is not None:
-        stored = _resumed_definition(db, binding.project_id, resume_session_id)
-        if stored is not None and stored != agent:
-            raise TeamAdmissionRefused(
-                "reviewer_definition_mismatch",
-                f"seat {resume_session_id} is {stored}; it resumes as {stored}, not {agent}",
-            )
     # A resumed seat reuses the tree it recorded, which is the team tree for a reviewer.
     return DispatchScope(
         team_id=binding.team_id,
@@ -235,9 +258,9 @@ def dispatch_for_caller(
 
     Only the epic's bound Dev Manager dispatches, and it holds no claim. A fresh spawn from any
     other team manager is refused, since a single-task team's runbook starts its seats. A resumed
-    reviewer is checked against its stored definition and the team's live seats, then rebinds; any
-    other resumed seat falls through. A team's leaf seats and every other caller take the ordinary
-    path.
+    seat must keep its stored definition. A resumed reviewer is checked against the team's live
+    seats and rebinds; a resumed primary takes its domain slot; any other resumed seat falls
+    through. A team's leaf seats and every other caller take the ordinary path.
     """
     resumed = resume_session_id is not None
     binding = seat_team(db, caller_session_id)
@@ -266,10 +289,22 @@ def dispatch_for_caller(
         "base_branch": base_branch,
         "worktree_id": worktree_id,
     }
+    session_id = (
+        _resumed_session(db, binding.project_id, resume_session_id)
+        if resume_session_id is not None
+        else None
+    )
+    if session_id is not None:
+        stored = _stored_definition(db, session_id)
+        if stored != agent:
+            raise TeamAdmissionRefused(
+                "seat_definition_mismatch",
+                f"seat {resume_session_id} is {stored}; it resumes as {stored}, not {agent}",
+            )
     if _REVIEWER_GRANT in grants:
         return _reviewer(db, binding, agent, parent, resume_session_id=resume_session_id, **options)
     if resumed:
-        return None
+        return _resumed_maker(db, binding, parent, session_id) if _MAKER_GRANT in grants else None
     if _MAKER_GRANT in grants:
         return _maker(db, binding, epic, parent, **options)
     raise TeamAdmissionRefused(

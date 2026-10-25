@@ -34,7 +34,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "src/gobby/install/shared"
 SKILLS = SHARED / "skills/gobby"
 AGENTS = get_bundled_agents_path()
-REVIEWER_PROCEDURE = SKILLS / "references/agents/procedures/code-reviewer.md"
+PROCEDURES = SKILLS / "references/agents/procedures"
+# Every definition that holds a review grant takes the same base-drift and background-run rules.
+REVIEW_DEFINITIONS = ("code-reviewer", "docs-reviewer", "research-reviewer")
 # A bare CANDIDATE line: the grammar refuses it, so no source may teach it.
 BARE_CANDIDATE = re.compile(r"(?<![=\w])CANDIDATE (?:TASK|TASK_TITLE|RUN|WT|COMMIT)=")
 
@@ -63,13 +65,15 @@ def _guidance(name: str) -> str:
 # (a) Base drift: a conflicting merge with the integration head is a PROOF_REQUEST, never a BOUNCE.
 
 
-def test_reviewer_procedure_routes_base_drift_to_proof_request() -> None:
-    text = flat(REVIEWER_PROCEDURE.read_text())
+@pytest.mark.parametrize("name", REVIEW_DEFINITIONS)
+def test_reviewer_procedure_routes_base_drift_to_proof_request(name: str) -> None:
+    procedure = PROCEDURES / f"{name}.md"
+    text = flat(procedure.read_text())
     drift = next(
-        (line for line in REVIEWER_PROCEDURE.read_text().splitlines() if "base drift" in line),
+        (line for line in procedure.read_text().splitlines() if "base drift" in line),
         None,
     )
-    assert drift is not None, "code-reviewer.md has no base-drift step"
+    assert drift is not None, f"{name}.md has no base-drift step"
     drift = flat(drift)
     assert "EVENT=PROOF_REQUEST" in drift
     assert "conflict" in drift
@@ -103,6 +107,12 @@ async def test_reviewer_proof_request_keeps_review_until_replacement(
     assert run.vars["verdict_ready"] is False
 
 
+def test_developer_answers_base_drift_with_a_merge_and_replacement() -> None:
+    text = _guidance("developer")
+    # Only a base-drift request needs the merge and a replacement CANDIDATE with its new SHA.
+    assert re.search(r"base-drift request[^.]*\bmerge\b[^.]*replacement CANDIDATE", text)
+
+
 # (b) A reviewer waiting on a background test run may wait in-turn with Monitor.
 
 
@@ -117,6 +127,15 @@ async def test_review_step_admits_monitor_for_background_runs(temp_db: HubDataba
     assert await run.admits_native("Monitor", monitor)
     # Only the review step waits on a run in-turn; idle await ends turns on durable waits.
     assert "Monitor" not in _step("code-reviewer", "await")["allowed_tools"]
+
+
+@pytest.mark.parametrize("name", REVIEW_DEFINITIONS)
+def test_review_steps_admit_monitor_for_background_runs(name: str) -> None:
+    review = _step(name, "review")
+    assert "Monitor" in review["allowed_tools"]
+    status = flat(review["status_message"])
+    assert re.search(r"background test run is not a durable wait", status) is not None
+    assert "Monitor" not in _step(name, "await")["allowed_tools"]
 
 
 # (c) A developer launched with task_id already holds its claim.

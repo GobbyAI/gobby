@@ -330,6 +330,26 @@ def stored_reviewer_seat(world: TeamWorld, team: EpicTeam, agent: str) -> str:
     return seat
 
 
+def stored_primary_seat(world: TeamWorld, team: EpicTeam, leaf: Task, tree: str) -> str:
+    """An ended developer seat whose run worked the leaf in the team tree, which a resume names."""
+    seat = world.case.session("developer", parent=team.runbook.id)
+    runs = LocalAgentRunManager(world.case.db)
+    run = runs.create(
+        parent_session_id=team.runbook.id,
+        provider="claude",
+        prompt="Work the leaf.",
+        agent_name="developer",
+        child_session_id=seat,
+        task_id=leaf.id,
+        worktree_id=tree,
+    )
+    runs.start(run.id)
+    runs.complete(run.id)
+    world.case.db.execute("UPDATE sessions SET agent_run_id = %s WHERE id = %s", (run.id, seat))
+    SessionVariableManager(world.case.db).merge_variables(seat, {"_agent_type": "developer"})
+    return seat
+
+
 @pytest.mark.asyncio
 async def test_resumed_reviewer_is_refused_beside_a_live_seat(world: TeamWorld) -> None:
     """A resume joins the team's one live seat per definition, as a fresh spawn does."""
@@ -378,9 +398,60 @@ async def test_resumed_reviewer_keeps_its_stored_definition(world: TeamWorld) ->
     resumed = await team.spawn("docs-reviewer", resume_session_id=seat)
 
     assert resumed.get("success") is not True, resumed
-    assert resumed.get("error_code") == "reviewer_definition_mismatch"
+    assert resumed.get("error_code") == "seat_definition_mismatch"
     assert len(world.launches) == before
     assert reviewer_bindings(team) == {}
+
+
+@pytest.mark.asyncio
+async def test_resumed_reviewer_cannot_be_retyped_as_a_maker(world: TeamWorld) -> None:
+    """A bound Dev Manager may not resume a reviewer seat as a developer."""
+    epic = new_task(world, TITLE, epic=True)
+    new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    seat = stored_reviewer_seat(world, team, "code-reviewer")
+    before = len(world.launches)
+
+    resumed = await team.spawn("developer", resume_session_id=seat)
+
+    assert resumed.get("error_code") == "seat_definition_mismatch", resumed
+    assert len(world.launches) == before
+    assert reviewer_bindings(team) == {}
+    assert primary_bindings(team) == {}
+
+
+@pytest.mark.asyncio
+async def test_resumed_primary_takes_its_domain_slot(world: TeamWorld) -> None:
+    """A resumed primary rebinds its implementation domain when no live primary holds it."""
+    epic = new_task(world, TITLE, epic=True)
+    backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
+    team = await epic_team(world, epic)
+    seat = stored_primary_seat(world, team, backend, team.binding.worktree_id)
+
+    resumed = await team.spawn("developer", resume_session_id=seat)
+
+    assert resumed.get("success") is True, resumed
+    assert primary_bindings(team) == {"backend": resumed["run_id"]}
+
+
+@pytest.mark.asyncio
+async def test_resumed_primary_refused_beside_a_live_domain_primary(world: TeamWorld) -> None:
+    """A resume may not add a second live primary to a domain another seat holds."""
+    epic = new_task(world, TITLE, epic=True)
+    backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
+    second_backend = new_task(world, "Second backend leaf", parent=epic, domain="backend")
+    team = await epic_team(world, epic)
+    tree = team.binding.worktree_id
+    seat = stored_primary_seat(world, team, backend, tree)
+    live = await team.spawn("developer", task_id=second_backend.id, worktree_id=tree)
+    assert live.get("success") is True, live
+    before = len(world.launches)
+
+    resumed = await team.spawn("developer", resume_session_id=seat)
+
+    assert resumed.get("error_code") == "primary_live", resumed
+    assert len(world.launches) == before
+    assert primary_bindings(team) == {"backend": live["run_id"]}
 
 
 @pytest.mark.asyncio

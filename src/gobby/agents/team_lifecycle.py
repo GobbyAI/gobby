@@ -271,13 +271,8 @@ def _binding(record: dict[str, Any] | None) -> TeamBinding | None:
     values: dict[str, Any] = {}
     for item in fields(TeamBinding):
         value = record.get(item.name)
-        if item.name == "reviewers":
-            if not isinstance(value, dict):
-                return None
-            values[item.name] = dict(value)
-            continue
-        if item.name == "primaries":
-            # The admission intent carries no primaries until a primary binds.
+        if item.name in ("reviewers", "primaries"):
+            # The admission intent carries neither map until a seat binds.
             values[item.name] = dict(value) if isinstance(value, dict) else {}
             continue
         if item.name == "mode":
