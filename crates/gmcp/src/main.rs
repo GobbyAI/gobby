@@ -31,7 +31,8 @@ fn main() -> ExitCode {
         }
     };
     let served = runtime.block_on(async {
-        let dialer = Dialer::new()?;
+        let dialer = Arc::new(Dialer::new()?);
+        tokio::spawn(gobby_mcp::daemon_start::run_startup(Arc::clone(&dialer)));
         let (read, write) = stdio();
         let ended = Arc::new(Notify::new());
         let transport = CompleteResults::new(

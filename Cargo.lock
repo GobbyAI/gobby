@@ -2579,7 +2579,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -2592,6 +2592,7 @@ dependencies = [
  "tokio",
  "unicode_names2",
  "ureq",
+ "url",
 ]
 
 [[package]]
