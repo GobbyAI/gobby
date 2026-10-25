@@ -64,6 +64,7 @@ class _Repo:
         self.env = {
             "PATH": os.pathsep.join([str(bin_dir), "/usr/bin", "/bin"]),
             "HOME": str(tmp_path / "home"),
+            "TMPDIR": str(tmp_path),
             "GIT_CONFIG_GLOBAL": os.devnull,
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_AUTHOR_NAME": "Test",
@@ -116,9 +117,10 @@ def _baseline(tmp_path: Path, *init_args: str) -> _Repo:
     return repo
 
 
-def _assert_refused(result: subprocess.CompletedProcess[str], path: str) -> None:
+def _assert_refused(result: subprocess.CompletedProcess[str], path: str | None = None) -> None:
     assert result.returncode != 0
-    assert f"{path} is not a direct-commit path" in result.stderr
+    if path is not None:
+        assert f"{path} is not a direct-commit path" in result.stderr
     assert LAND_COMMIT_TEXT in result.stderr
 
 
@@ -172,8 +174,9 @@ def test_protected_branch_refuses_writes_from_any_worktree(tmp_path: Path) -> No
     branch_force = repo.git(lane, "branch", "-f", "main", "lane")
 
     assert lane_commit.returncode == 0, lane_commit.stderr
-    for result in (merge, reset, update_ref):
-        _assert_refused(result, "src/gobby/a.py")
+    for result in (merge, reset):
+        _assert_refused(result)
+    _assert_refused(update_ref, "src/gobby/a.py")
     assert delete_ref.returncode != 0
     assert "the protected branch cannot be deleted" in delete_ref.stderr
     assert branch_force.returncode != 0
@@ -206,7 +209,7 @@ def test_refused_fast_forward_leaves_the_checkout_untouched(
     result = repo.git(repo.root, *command)
 
     assert lane_commit.returncode == 0, lane_commit.stderr
-    _assert_refused(result, "src/gobby/a.py")
+    _assert_refused(result)
     assert repo.ok(repo.root, "rev-parse", "HEAD") == head_before
     assert repo.ok(repo.root, "ls-files", "-s") == index_before
     assert repo.ok(repo.root, "status", "--porcelain", "--untracked-files=all") == status_before
@@ -214,6 +217,43 @@ def test_refused_fast_forward_leaves_the_checkout_untouched(
     assert (repo.root / "src/gobby/base.py").read_text(encoding="utf-8") == "x = 1\n"
     assert (repo.root / BASE_PLAN).read_text(encoding="utf-8") == "plan edited\n"
     assert (repo.root / "scratch.txt").read_text(encoding="utf-8") == "untracked\n"
+
+
+@pytest.mark.parametrize("checkout_kind", ["main", "linked-main", "locked-main"])
+def test_refused_fast_forward_preserves_staged_and_ignored_paths(
+    tmp_path: Path, checkout_kind: str
+) -> None:
+    repo = _baseline(tmp_path)
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    candidate = repo.commit(lane, {"src/gobby/base.py": "x = 2\n", "ignored.py": "incoming\n"})
+    assert candidate.returncode == 0, candidate.stderr
+    checkout = repo.root
+    if checkout_kind != "main":
+        checkout = tmp_path / "main-view"
+        lock_args = ["--lock"] if checkout_kind == "locked-main" else []
+        repo.ok(repo.root, "worktree", "add", "-q", "--force", *lock_args, str(checkout), "main")
+    (repo.root / ".git/info/exclude").write_text("ignored.py\n", encoding="utf-8")
+    (checkout / "ignored.py").write_text("local ignored content\n", encoding="utf-8")
+    # Git permits staged changes matching the incoming commit. A reverse diff
+    # would lose this staged edit, and Git may overwrite ignored files outright.
+    (checkout / "src/gobby/base.py").write_text("x = 2\n", encoding="utf-8")
+    (checkout / BASE_PLAN).write_text("staged plan\n", encoding="utf-8")
+    repo.ok(checkout, "add", "src/gobby/base.py", BASE_PLAN)
+    (checkout / BASE_PLAN).write_text("unstaged plan\n", encoding="utf-8")
+    head_before = repo.ok(checkout, "rev-parse", "HEAD")
+    index_before = repo.ok(checkout, "ls-files", "-s")
+    status_before = repo.ok(checkout, "status", "--porcelain", "--untracked-files=all")
+
+    result = repo.git(checkout, "merge", "-q", "--ff-only", "lane")
+
+    _assert_refused(result)
+    assert repo.ok(checkout, "rev-parse", "HEAD") == head_before
+    assert repo.ok(checkout, "ls-files", "-s") == index_before
+    assert repo.ok(checkout, "status", "--porcelain", "--untracked-files=all") == status_before
+    assert (checkout / "ignored.py").read_text(encoding="utf-8") == "local ignored content\n"
+    assert (checkout / "src/gobby/base.py").read_text(encoding="utf-8") == "x = 2\n"
+    assert (checkout / BASE_PLAN).read_text(encoding="utf-8") == "unstaged plan\n"
 
 
 def test_pack_refs_prunes_the_protected_ref_but_deletions_stay_refused(tmp_path: Path) -> None:
@@ -428,6 +468,6 @@ async def test_land_commit_passes_installed_guard(
         )
 
     assert candidate.returncode == 0, candidate.stderr
-    _assert_refused(direct, "tests/test_a.py")
+    _assert_refused(direct)
     assert landed["landed"] is True, landed
     assert repo.ok(repo.root, "rev-parse", "main") == sha
