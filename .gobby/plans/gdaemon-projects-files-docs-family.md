@@ -166,12 +166,14 @@ The contract specifies the new namespaces, local-versus-hub routing,
 credential rules, publication/deletion states and migration refusal/retry matrix.
 
 **Acceptance:**
-- 1.1.1 - The inventory contains exactly the 35 scoped source keys and a unique acceptance owner for each; API-docs UI rows remain excluded. test: `tests/contracts/test_projects_files_corpus.py::inventory_is_complete`.
-- 1.1.2 - Characterization cases execute the existing Python handlers and record exact response/state outcomes, with security, failure and cancellation cases and no production I/O. test: `tests/contracts/test_projects_files_corpus.py::python_cases_match`.
+- 1.1.1 - The inventory contains exactly the 35 scoped source keys and a unique acceptance owner for each; API-docs UI rows remain excluded. test: `tests/contracts/test_projects_files_corpus.py::test_inventory_is_complete`.
+- 1.1.2 - Characterization cases execute the existing Python handlers and record exact response/state outcomes, with security, failure and cancellation cases and no production I/O. test: `tests/contracts/test_projects_files_corpus.py::test_python_cases_match`.
 - 1.1.3 - The contract specifies namespace replacements, node-write authority, layout, migration retry states and #21592/#21576 ownership. file: `docs/contracts/projects-files-hub.md`.
 
 **Verification:** planned:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_projects_files_corpus.py -v`.
+Also collect both exact proposed node IDs before execution:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/contracts/test_projects_files_corpus.py::test_inventory_is_complete tests/contracts/test_projects_files_corpus.py::test_python_cases_match`.
 
 ### 1.2 Statically linked Projects family [category: code] (depends: 1.1, #21558)
 `kind: deliverable`
@@ -270,21 +272,24 @@ Routing: backend code; tdd true.
 release carriers plus one authority lifecycle, not independent features.
 
 **Acceptance:**
-- 2.1.1 - Issue/lookup/evict/revoke and epoch replacement agree with the active-session contract, and no row stores raw credentials or signing keys. test: `tests/servers/test_browser_admission.py::authority_lifecycle_is_atomic`.
-- 2.1.2 - Carrier failures never report a successful grant or revocation; restart invalidates predecessor cookies, while backend loss alone preserves valid published admission. test: `tests/servers/test_browser_admission.py::failure_and_restart_are_fail_closed`.
+- 2.1.1 - Issue/lookup/evict/revoke and epoch replacement agree with the active-session contract, and no row stores raw credentials or signing keys. test: `tests/servers/test_browser_admission.py::test_authority_lifecycle_is_atomic`.
+- 2.1.2 - Carrier failures never report a successful grant or revocation; restart invalidates predecessor cookies, while backend loss alone preserves valid published admission. test: `tests/servers/test_browser_admission.py::test_failure_and_restart_are_fail_closed`.
 - 2.1.3 - All required schema identity carriers and affected managed version pins regenerate consistently. test: `crates/gcore/tests/schema_contract.rs::browser_admission_schema_is_consistent`.
 
 **Verification:** planned: the isolated-hub pytest command for
 tests/servers/test_browser_admission.py; schema contract nextest and the named
 version-pin test. Run generated-carrier checks, not hand-edited hashes.
+Collect the exact proposed Python node IDs:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/servers/test_browser_admission.py::test_authority_lifecycle_is_atomic tests/servers/test_browser_admission.py::test_failure_and_restart_are_fail_closed`.
 
-### 2.2 Reusable native admission and confinement [category: code] (depends: 2.1)
+### 2.2 Reusable native admission and confinement [category: code] (depends: 2.1, #24452)
 `kind: deliverable`
 
 Targets:
 - `crates/gdaemon/src/front_door/auth.rs::*` — scope-reason: share native admission while retaining API-key header sanitization
 - `crates/gdaemon/src/front_door/admission.rs`
 - `crates/gdaemon/src/nodes/admission_api.rs`
+- `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: export the new admission handler in the existing native node module
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: bind verified admission once before family dispatch
 - `crates/gdaemon/tests/project_admission.rs`
 - `crates/gprojects/src/family.rs`
@@ -298,6 +303,16 @@ AuthService.authenticate/_legacy_rejection owns the remaining trust boundary;
 browser_route_allowed and browser_selectors_match own confinement. The existing
 gcore local_token and loopback modules supply local credential/peer checks.
 The native verifier consumes 2.1's authoritative carrier, not Python RPC.
+Native managed capability verification is the runtime plan's #24452 API
+(gdaemon-runtime-family section 4.2); reuse its signature, claims and durable
+revocation checks rather than writing another token verifier. #24452 is an
+external prerequisite, with no Projects back-edge. The current nodes/mod.rs
+exports agents/channel/hooks/internal_api/machines_api/registry explicitly;
+export the new admission_api module there and register its exact POST path in
+FrontDoor::handle after API-key authentication and before generic dispatch.
+The endpoint is hub-only; the node listener refuses it rather than relaying an
+untrusted internal request. Existing family-local reads on a node still enter
+the confined admission path before local I/O.
 
 Expose a reusable verified-admission type to every native family: API-key
 identity, local operator/break-glass authority under the existing loopback
@@ -425,13 +440,15 @@ Port the existing migration classes into a fixed Rust operation, extending the d
 **Granularity:** more than six production targets form one offline migration lifecycle plus its necessary entrypoints and release carriers; publication and ordinary attachment I/O are separately owned.
 
 **Acceptance:**
-- 3.4.1 - The source row CLI gobby files delegates group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding.py::group_delegates_to_rust`.
+- 3.4.1 - The source row CLI gobby files delegates group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding.py::test_group_delegates_to_rust`.
 - 3.4.2 - The source row CLI gobby files migrate delegates to the native hub-local migration and preserves report/error/exit semantics. test: `crates/gprojects/tests/files_migration.rs::command_matches_python`.
 - 3.4.3 - Preflight collision/special-type/overlap/root-swap refusals leave all sources, destinations and database locators byte-for-byte unchanged. test: `crates/gprojects/tests/files_migration.rs::preflight_has_zero_mutations`.
 - 3.4.4 - Same-device, cross-device and crash/rerun states converge to one verified final locator per attachment with no lost or duplicated divergent bytes. test: `crates/gprojects/tests/files_migration.rs::rerun_converges_after_each_boundary`.
 - 3.4.5 - Retained wiki bytes remain available as archived bytes, no wiki API appears, and comms_attachments is neither read nor moved. test: `crates/gprojects/tests/files_migration.rs::scope_preserves_retired_and_downstream_data`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test files_migration` and isolated pytest for tests/cli/test_native_files_forwarding.py.
+Collect the exact proposed Python node ID:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/cli/test_native_files_forwarding.py::test_group_delegates_to_rust`.
 
 ### 3.5 Atomic namespace cutover and all current consumers [category: code] (depends: 3.4)
 `kind: deliverable`
@@ -472,11 +489,13 @@ After migration is proven, change every listed producer/consumer and contract to
 **Granularity:** the large consumer inventory is one inseparable namespace/layout release: independently shipping a producer or consumer would create broken URLs or a split byte owner. Publication, deletion and migration are already separate leaves; this leaf owns no new state machine.
 
 **Acceptance:**
-- 3.5.1 - Every enumerated profile/upload/download/delete consumer uses the canonical hub routes; browser rendered links, restore and proxy tests remain functional. test: `tests/contracts/test_hub_namespace_cutover.py::all_consumers_use_hub_namespace`.
-- 3.5.2 - Old route paths and retired wiki paths return normal 404, and a node without local copies reads/writes hub USER.md and attachments through the authenticated owner relay. test: `tests/contracts/test_hub_namespace_cutover.py::cutover_has_one_owner_and_no_aliases`.
-- 3.5.3 - Current Python cleanup/binding consumers and native publication/content/deletion all resolve the same final locator after migration, with no second byte migration. test: `tests/contracts/test_hub_namespace_cutover.py::mixed_runtime_consumers_share_layout`.
+- 3.5.1 - Every enumerated profile/upload/download/delete consumer uses the canonical hub routes; browser rendered links, restore and proxy tests remain functional. test: `tests/contracts/test_hub_namespace_cutover.py::test_all_consumers_use_hub_namespace`.
+- 3.5.2 - Old route paths and retired wiki paths return normal 404, and a node without local copies reads/writes hub USER.md and attachments through the authenticated owner relay. test: `tests/contracts/test_hub_namespace_cutover.py::test_cutover_has_one_owner_and_no_aliases`.
+- 3.5.3 - Current Python cleanup/binding consumers and native publication/content/deletion all resolve the same final locator after migration, with no second byte migration. test: `tests/contracts/test_hub_namespace_cutover.py::test_mixed_runtime_consumers_share_layout`.
 
 **Verification:** planned: isolated pytest for tests/contracts/test_hub_namespace_cutover.py and the listed focused Python tests, plus the listed Vitest files using the web package's existing test command.
+Collect the exact proposed Python node IDs:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/contracts/test_hub_namespace_cutover.py::test_all_consumers_use_hub_namespace tests/contracts/test_hub_namespace_cutover.py::test_cutover_has_one_owner_and_no_aliases tests/contracts/test_hub_namespace_cutover.py::test_mixed_runtime_consumers_share_layout`.
 
 ## P4: Projects and local checkout browsing
 `kind: framing`
@@ -504,9 +523,11 @@ Port the shared query/serialization once, including hidden/deleted/sentinel beha
 - 4.1.2 - The source row HTTP GET /api/projects/{project_id} matches detail and not-found behavior natively. test: `crates/gprojects/tests/project_reads.rs::detail_matches_python`.
 - 4.1.3 - The source row HTTP GET /api/projects/{project_id}/checkouts matches object-or-null local checkout behavior. test: `crates/gprojects/tests/project_reads.rs::checkout_matches_python`.
 - 4.1.4 - The source row HTTP GET /api/files/projects matches checkout-shaped browser inventory, including Personal and no repo_path. test: `crates/gprojects/tests/project_reads.rs::file_inventory_matches_python`.
-- 4.1.5 - The source row MCP gobby-hub:list_all_projects delegates to the native include_system-filtered cross-project query with its existing envelope. test: `tests/mcp_proxy/tools/test_native_hub_projects.py::listing_delegates_to_rust`.
+- 4.1.5 - The source row MCP gobby-hub:list_all_projects delegates to the native include_system-filtered cross-project query with its existing envelope. test: `tests/mcp_proxy/tools/test_native_hub_projects.py::test_listing_delegates_to_rust`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_reads` and isolated pytest for tests/mcp_proxy/tools/test_native_hub_projects.py.
+Collect the exact proposed Python node ID:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/mcp_proxy/tools/test_native_hub_projects.py::test_listing_delegates_to_rust`.
 
 ### 4.2 Native local file tree, text and image reads [category: code] (depends: 4.1)
 `kind: deliverable`
@@ -590,11 +611,33 @@ Targets:
 - `crates/gprojects/src/projects/checkouts.rs`
 - `crates/gprojects/src/projects/repository.rs`
 - `crates/gprojects/tests/project_checkouts.rs`
+- `crates/gdaemon/src/nodes/checkouts_api.rs`
+- `crates/gdaemon/src/nodes/mod.rs::*` — scope-reason: export the native checkout handler after the admission export owned by 2.2
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: register the key-bound checkout route in the shared front-door dispatch module after 2.2
+- `crates/gdaemon/tests/node_project_checkouts.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
 
 **Research context:** projects.init_project calls initialize_project and distinguishes an existing checkout before broadcasting checkout_registered. register_checkout validates root/marker and returns 201 on creation or 200 on same-root retry. rebind_checkout preserves soft deletion, validates machine/root/marker and broadcasts checkout_rebound. LocalProjectCheckoutManager has unique-root, sentinel and overlay guards and clears index state on rebind. nodes._register_checkout is the existing key-bound foreign-machine path.
+
+The exact foreign-machine oracle is
+src/gobby/servers/routes/nodes.py::_register_checkout, called by
+create_nodes_router's checkout POST. FrontDoor::handle currently relays ordinary
+node HTTP and only recognizes selected hub node handlers; nodes/mod.rs requires
+explicit exports. Add checkouts_api as a hub-only native POST /api/nodes/checkouts
+handler backed by the same gprojects checkout service, export it from nodes/mod.rs,
+and dispatch it in FrontDoor::handle after verified API-key authentication and
+before the generic family/proxy fallback. 2.2 precedes this section transitively
+through 4.4, ordering both shared export/dispatch targets. The existing node
+caller continues to use this key-bound hub endpoint; the hub derives machine_id
+from that key, and validates marker claims without opening the node's filesystem.
+The node listener rejects this hub-only registration endpoint locally.
+
+**Granularity:** the shared checkout transaction and its public and node-key
+entries are one atomic registration outcome. The additional export, dispatch,
+test and release targets close that route's complete call path; they do not
+introduce another checkout owner or an independently closable behavior.
 
 Port initialization's marker/config seeding and checkout registry transaction, including identity/name attach safeguards and isolated-worktree rejection. Reuse gcore project marker readers. Local mutations validate normalized absolute root, on-disk marker and this daemon's machine; a node registers only through the existing authenticated /api/nodes/checkouts semantics. Port that handler to the shared native checkout service without accepting body-supplied machine identity or checking node paths on the hub. Rebind clears machine/project index state and retains deletion status. Emit native WebSocket project events once after commit, never on rolled-back or same-root retries. Routing: backend code; tdd true.
 
@@ -603,8 +646,9 @@ Port initialization's marker/config seeding and checkout registry transaction, i
 - 4.5.2 - The source row HTTP POST /api/projects/{project_id}/checkouts gives 201 insert/200 retry and matching conflicts without restoring a deleted project. test: `crates/gprojects/tests/project_checkouts.rs::register_matches_python`.
 - 4.5.3 - The source row HTTP POST /api/projects/{project_id}/checkouts/{machine_id}/rebind preserves machine scope, validation, index invalidation and event semantics. test: `crates/gprojects/tests/project_checkouts.rs::rebind_matches_python`.
 - 4.5.4 - Node-key authority writes only its own machine rows, and marker/root/overlay conflicts or transaction failure leave no partial checkout or event. test: `crates/gprojects/tests/project_checkouts.rs::machine_authority_and_atomicity_hold`.
+- 4.5.5 - The registered native POST /api/nodes/checkouts works with Python unavailable, derives machine identity from the key, refuses body/header machine forgery, and cannot be served as a local node authority. test: `crates/gdaemon/tests/node_project_checkouts.rs::registration_is_native_and_key_bound`.
 
-**Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_checkouts`.
+**Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_checkouts` and `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test node_project_checkouts`.
 
 ### 4.6 Native project updates and soft deletion [category: code] (depends: 4.5)
 `kind: deliverable`
@@ -637,7 +681,9 @@ Port omitted/null/empty update semantics, uniqueness/protected-name checks and v
 
 Targets:
 - `crates/gcore/src/project_fence.rs`
+- `crates/gcore/src/postgres_pool/mod.rs::*` — scope-reason: pool-owned bounded fence checkout admission must share capacity across every fence instance
 - `crates/gcore/src/lib.rs::*` — scope-reason: export the shared cross-family fence API
+- `src/gobby/storage/hub/postgres.py::*` — scope-reason: add the pool-owned fence connection lease while preserving ordinary transaction and resize contracts
 - `src/gobby/projects/write_fence.py::*` — scope-reason: preserve writer/global_writer/exclusive APIs while sharing their authority across processes
 - `src/gobby/runner_init/services.py::*` — scope-reason: pass the hub database at both fence-construction sites
 - `tests/projects/test_write_fence.py::*` — scope-reason: provide isolated shared lock storage to every fence fixture
@@ -655,34 +701,91 @@ Targets:
 
 Implement a shared PostgreSQL advisory-lock contract in gcore and the existing Python fence API. Use namespaced stable keys for a project and global-writer gate. Writers hold shared project locks; global writers hold the shared global gate; purge acquires exclusive global then exclusive project in a fixed order. Pin a dedicated pooled connection for lock lifetime; cancellation releases or discards it before reuse. Preserve task-level reentrancy and deleted/absent-project admission checks. Serialize purges at the global gate as the minimum correct cross-runtime mechanism; do not invent a lock service or lease table. Existing Python consumers keep their API and gain shared exclusion. Every future native derived writer uses this same public gcore fence. Routing: backend code; tdd true.
 
+The pin is a lease from the existing operation pool, not a second pool or an
+unbounded side connection. Native PoolSettings.max_size is at least two and
+PostgresHubDatabase owns the Python pool and its resize API. Add pool-owned
+admission using the existing Tokio/asyncio semaphore mechanisms: lock holders
+and acquisitions waiting for an advisory lock together consume at most
+max_size minus one leases. One connection remains available for admitted work's
+ordinary queries, including fetch_all_project_memories. Acquire this permit
+before checking out a lock connection; never hold an operation connection while
+waiting for the permit. All fence instances sharing a pool share this cap.
+Nested ownership reuses the task's lease/connection, including global admission,
+so nesting never waits for another capacity permit it already blocks. Release
+locks/connection before the permit on every exit. Resize/shutdown must drain or
+fail within the existing deadline before reducing capacity below live leases;
+never silently eliminate the operation reserve. This uses no new service,
+connection-budget setting or configuration knob.
+
 **Granularity:** the two runtime implementations and release carriers form one cross-process lock contract. Purge itself remains a separate outcome.
 
 **Acceptance:**
-- 5.1.1 - A Python writer blocks Rust purge and a Rust writer blocks Python purge until drain; deleted/absent projects refuse new writers. test: `tests/projects/test_cross_runtime_write_fence.py::both_runtimes_share_exclusion`.
+- 5.1.1 - A Python writer blocks Rust purge and a Rust writer blocks Python purge until drain; deleted/absent projects refuse new writers. test: `tests/projects/test_cross_runtime_write_fence.py::test_both_runtimes_share_exclusion`.
 - 5.1.2 - Reentrancy, global writers, concurrent purge, timeout/cancellation and dropped connections preserve safety without leaked locks or pool contamination. test: `crates/gcore/tests/project_fence.rs::lock_lifecycle_is_safe`.
 - 5.1.3 - Required shared-core binary bumps, maintenance floor, lockfile and managed pins agree. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 5.1.4 - With the minimum two-slot operation pool, concurrent fenced writers, a waiting purge, nested ownership, resize and cancellation make bounded progress without starving ordinary queries or leaking permits/connections. test: `crates/gcore/tests/project_fence.rs::small_pool_progress_is_bounded`.
+- 5.1.5 - The Python pool uses the same reserve and releases capacity on failure/cancellation; concurrent writers and purge finish under a bounded saturation test. test: `tests/projects/test_cross_runtime_write_fence.py::test_small_pool_progress_is_bounded`.
 
 **Verification:** planned: isolated pytest for tests/projects/test_cross_runtime_write_fence.py and focused gobby-core project_fence nextest.
+Collect both exact proposed Python node IDs:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/projects/test_cross_runtime_write_fence.py::test_both_runtimes_share_exclusion tests/projects/test_cross_runtime_write_fence.py::test_small_pool_progress_is_bounded`.
 
-### 5.2 Native lifecycle-safe hard purge [category: code] (depends: 5.1)
+### 5.2 Native lifecycle-safe hard purge [category: code] (depends: 5.1, #24454)
 `kind: deliverable`
 
 Targets:
 - `crates/gprojects/src/projects/purge.rs`
 - `crates/gprojects/src/projects/purge_rows.rs`
 - `crates/gprojects/tests/project_purge.rs`
+- `crates/gprojects/Cargo.toml`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
 
 **Research context:** ProjectPurgeService._purge_project soft-deletes, refuses active terminals, resolves cleaners before disabling jobs, drains active cron runs, then exclusively invalidates code, clears vectors/graph and deletes hub rows. _delete_hub_rows appends embedding-ledger tombstones in batches of 100, detaches foreign references and rechecks terminals under a parent-row lock. _drain_cron_runs is a bounded state query, not a Python-only cancellation API.
 
+The code child also crosses a credential boundary:
+src/gobby/projects/purge.py::ProjectPurgeService._maintenance_env enters
+src/gobby/runtime_grants/maintenance.py::HandshakeMaintenanceLaunchFactory.open_async;
+its open method calls HandshakeService.issue_for_maintenance and
+materialize_managed_launch, then revokes the invocation and removes its secrets.
+src/gobby/runner_init/servers.py::maintenance_target_admitted permits an indexed
+project ID or a soft-deleted project even after checkout release. A normal
+interactive grant is intentionally refused for that target. The native runtime
+plan's #24454 (Managed credential issuance) supplies issue_maintenance, revoke,
+private bootstrap materialization, scoped DSN and issuance rollback; its
+prerequisites supply signing, capability verification and the native challenge.
+Those APIs are planned external dependencies, not existing gprojects symbols.
+Reuse them through a gobby-runtime crate dependency, with no duplicate issuer,
+database role schema, token verifier or grant framework.
+
 Port this exact sequence with gcore's pool, fence and existing native datastore clients. Enumerate managed active/staged/aliased Qdrant collections and strict project graph cleanup using the current ProjectVectorCleaner and graph cleaner contracts; invalidate code through the installed native gcode command. Read/disable/drain/delete project cron rows using their current schema and bounded deadline; no cron scheduler port is required. Preserve projection tombstones, cross-project detach rules, terminal guards and transaction boundaries. External cleanup failure leaves the project soft-deleted and retryable; never delete the parent first. Repeated purge is safe and gives existing status/error shapes. This leaf does not remove project source checkouts or comms byte storage. Routing: backend code; tdd true.
+
+Inside purge.rs, port only the per-invocation maintenance launch orchestration:
+admit the exact indexed-or-soft-deleted target, bind the local daemon machine
+and a fresh execution UUID with no session/checkout, and call #24454's issuer.
+Reuse the runtime grant signer and capability format to materialize a private
+0700 temporary launch directory and 0600 grant.json, with the matching scoped
+bootstrap and maintenance bearer expiring at the bounded child deadline.
+Pass only the explicit managed execution/project/bootstrap environment to the
+installed gcode invalidate command; clear inherited interactive/agent grant
+variables and never borrow the daemon's ambient grant. Bound argv, output and
+runtime with the existing subprocess facility. On success, spawn/child failure,
+timeout or cancellation, stop and reap the child, revoke that invocation's
+credential generation through the native API, and remove its temporary secrets.
+Keep cancellation-safe teardown alive until cleanup completes or the existing
+bounded revoke failure contract records a durable retry; a cleanup failure is
+a purge failure and cannot report success or advance to parent-row deletion.
+Retry records contain no secrets and reuse #24454's format. Exercise the real
+installed gcode against isolated state with Python unavailable and no ambient
+interactive grant, not only a fake child which ignores its environment.
 
 **Acceptance:**
 - 5.2.1 - The source row HTTP POST /api/projects/{project_id}/purge matches purged/not_found/protected/failed statuses and dependent-resource cleanup without Python. test: `crates/gprojects/tests/project_purge.rs::purge_matches_python`.
 - 5.2.2 - Active terminals, draining cron, derived writers and concurrent terminal insertion cannot race a destructive purge; timeouts leave retryable state. test: `crates/gprojects/tests/project_purge.rs::lifecycle_guards_hold`.
 - 5.2.3 - Injected code/vector/graph/database failures and retries preserve tombstone/detach ordering and never delete another project's resources or source checkout. test: `crates/gprojects/tests/project_purge.rs::failures_are_retryable_and_scoped`.
+- 5.2.4 - A real isolated gcode child invalidates the intended soft-deleted and indexed-only targets through fresh project-scoped maintenance authority with Python down and no interactive grant; foreign project/machine claims are refused. test: `crates/gprojects/tests/project_purge.rs::maintenance_child_authority_is_scoped`.
+- 5.2.5 - Success, spawn failure, child failure, timeout and cancellation revoke the invocation and remove private launch secrets; injected revoke failure records the native retry and prevents purge success or hub-row deletion. test: `crates/gprojects/tests/project_purge.rs::maintenance_child_teardown_is_bounded`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_purge`.
 
@@ -715,9 +818,11 @@ Implement gdaemon projects group/help, list/show, rename/delete/purge/rebind/rep
 - 5.3.6 - The source row CLI gobby projects purge preserves confirmation and native purge outcomes. test: `crates/gprojects/tests/projects_cli.rs::purge_matches_python`.
 - 5.3.7 - The source row CLI gobby projects rebind validates local root/marker, uses key-bound machine authority and retains the cache hint. test: `crates/gprojects/tests/projects_cli.rs::rebind_matches_python`.
 - 5.3.8 - The source row CLI gobby projects repair preserves dry-run/fix/no-drift/conflict outcomes and never silently rebinds. test: `crates/gprojects/tests/projects_cli.rs::repair_matches_python`.
-- 5.3.9 - The Click shims forward argv/stdout/stderr/exit status to Rust and execute no Python project business logic. test: `tests/cli/test_native_projects_forwarding.py::all_verbs_delegate_to_rust`.
+- 5.3.9 - The Click shims forward argv/stdout/stderr/exit status to Rust and execute no Python project business logic. test: `tests/cli/test_native_projects_forwarding.py::test_all_verbs_delegate_to_rust`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test projects_cli` and isolated pytest for tests/cli/test_native_projects_forwarding.py.
+Collect the exact proposed Python node ID:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/cli/test_native_projects_forwarding.py::test_all_verbs_delegate_to_rust`.
 
 ### 5.4 Native verification-command refresh [category: code] (depends: 5.3, #21587)
 `kind: deliverable`
@@ -786,12 +891,14 @@ Targets:
 Replay the complete corpus against isolated native hub and node processes. Exercise all 35 row owners, renamed replacement routes, each admitted/refused principal class, migration reruns and current consumer serializers. Kill the Python backend after issuing test browser admission and prove local reads, hub docs, attachment publication/content/deletion, project operations and native command execution still respond correctly. For refused operations, assert the native typed outcome and no side effect. Test an independent node with no copied hub bytes and no datastore credentials. Run a bounded compare window containing every required method/outcome class; zero mismatches and zero unaccounted skips are required. Pre-switch rollback restores the same binary routing setting only; migrated byte layout is never reverted. No production daemon is touched.
 
 **Acceptance:**
-- 6.2.1 - All 35 inventory rows pass their named native parity acceptance, with explicit native replacement coverage for renamed routes. test: `tests/e2e/test_projects_files_family.py::all_owned_rows_have_native_parity`.
-- 6.2.2 - Killing isolated Python leaves API-key/local/browser-admitted native operations serving and preserves refusal/transaction semantics. test: `tests/e2e/test_projects_files_family.py::family_survives_python_loss`.
-- 6.2.3 - A second machine without local hub bytes or DB credentials accesses hub documents and only its own local checkout, refusing cross-machine root and identity forgery. test: `tests/e2e/test_projects_files_family.py::two_machine_ownership_is_correct`.
-- 6.2.4 - Representative compare has zero mismatches and accounted coverage; pre-switch routing rollback uses the same binaries and never remigrates bytes. test: `tests/e2e/test_projects_files_family.py::compare_and_routing_rollback_are_safe`.
+- 6.2.1 - All 35 inventory rows pass their named native parity acceptance, with explicit native replacement coverage for renamed routes. test: `tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity`.
+- 6.2.2 - Killing isolated Python leaves API-key/local/browser-admitted native operations serving and preserves refusal/transaction semantics. test: `tests/e2e/test_projects_files_family.py::test_family_survives_python_loss`.
+- 6.2.3 - A second machine without local hub bytes or DB credentials accesses hub documents and only its own local checkout, refusing cross-machine root and identity forgery. test: `tests/e2e/test_projects_files_family.py::test_two_machine_ownership_is_correct`.
+- 6.2.4 - Representative compare has zero mismatches and accounted coverage; pre-switch routing rollback uses the same binaries and never remigrates bytes. test: `tests/e2e/test_projects_files_family.py::test_compare_and_routing_rollback_are_safe`.
 
 **Verification:** planned: the isolated-hub protected pytest command for tests/contracts/test_projects_files_corpus.py and tests/e2e/test_projects_files_family.py; obtain fleet admission for E2E.
+Collect the exact proposed E2E node IDs in isolated state:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity tests/e2e/test_projects_files_family.py::test_family_survives_python_loss tests/e2e/test_projects_files_family.py::test_two_machine_ownership_is_correct tests/e2e/test_projects_files_family.py::test_compare_and_routing_rollback_are_safe`.
 
 ### 6.3 Ledger evidence and downstream cutover contract [category: docs] (depends: 6.2)
 `kind: deliverable`
@@ -812,11 +919,13 @@ Targets:
 After 6.2 passes, record delegated status with exact native symbols/tests for every surviving source key and canonical replacement. Preserve removed namespace keys as dropped by decision #24951 with their replacement and proof; retain no proxied claim for completed owned service work. Regenerate the ledger and assert no new unclassified row. Record #21592's dependency on the shared service outcome in the contract for the coordinator to wire at expansion; do not expand/edit other task trees here. Document #21576's destination/API and strict exclusion of comms byte migration from this plan. Describe the announced migration/native flip, crash recovery and pre-naming routing rollback, and the naming-switch deletion of transitional shims with no supervised Python mode.
 
 **Acceptance:**
-- 6.3.1 - Each of the 35 exact source keys has proven delegated or explicit renamed-route decision status and a native replacement/test; no scoped key is silently omitted and no unrelated shard row changes ownership. test: `tests/contracts/test_projects_files_ledger.py::owned_rows_are_complete`.
-- 6.3.2 - Regeneration yields the checked-in ledger, canonical new routes are classified and the eight API-docs UI rows remain #21589-owned. test: `tests/contracts/test_projects_files_ledger.py::generated_ledger_matches_inventory`.
+- 6.3.1 - Each of the 35 exact source keys has proven delegated or explicit renamed-route decision status and a native replacement/test; no scoped key is silently omitted and no unrelated shard row changes ownership. test: `tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete`.
+- 6.3.2 - Regeneration yields the checked-in ledger, canonical new routes are classified and the eight API-docs UI rows remain #21589-owned. test: `tests/contracts/test_projects_files_ledger.py::test_generated_ledger_matches_inventory`.
 - 6.3.3 - The contract states #21592's shared-service dependency, #21576's comms boundary, admission reuse, once-only migration and naming-switch shim removal. file: `docs/contracts/projects-files-hub.md`.
 
 **Verification:** planned: `uv run python scripts/generate_parity_ledger.py`, isolated protected pytest for tests/contracts/test_projects_files_ledger.py and tests/test_parity_ledger.py.
+Collect the exact proposed Python node IDs:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete tests/contracts/test_projects_files_ledger.py::test_generated_ledger_matches_inventory`.
 
 ## E1 Verification and review gates
 `kind: verification`
@@ -847,4 +956,10 @@ deliverables. No planned success is claimed as validation evidence.
 #24951. Scope, wiki retirement, transitional native command entry and shared
 admission ownership follow the coordinator's confirmed Decision Record.
 No consensus or manifest is claimed in this initial draft.
+
+2026-10-24 — Writer accepted adversary findings PA-001 through PA-004 and
+repaired Python test collection, native node export/dispatch ownership,
+project-scoped maintenance-child authority and bounded fence pool progress.
+Runtime prerequisites #24452 and #24454 reuse the existing capability and
+managed-credential contracts. Review of the revised bytes is pending.
 
