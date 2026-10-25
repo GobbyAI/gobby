@@ -14,6 +14,7 @@ import pytest
 
 from gobby.agents import agent_workspaces
 from gobby.agents.agent_workspaces import (
+    bind_session_workspace,
     commit_workspace,
     drain_workspace_commits,
     ensure_workspace,
@@ -27,6 +28,8 @@ from gobby.mcp_proxy.tools.sessions import _terminal
 from gobby.runner_init import orchestration
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
 pytestmark = pytest.mark.unit
 
@@ -197,3 +200,37 @@ async def test_trigger_failures_are_non_blocking(
     await handler(job)
     assert "orchestrator/log.md" in _tracked(PROJECT)
     assert _subjects(PROJECT)[0] == "agents-ws: timer orchestrator"
+
+
+@pytest.mark.asyncio
+async def test_timer_bootstraps_the_first_workspace(
+    gobby_home: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A session's first write reaches Git through the timer alone, with no prior ensure."""
+    project_id = sample_project["id"]
+    session = SessionManager(temp_db).register(
+        external_id="workspace-first-write",
+        machine_id=AGENT_TEST_MACHINE_ID,
+        source="claude",
+        project_id=project_id,
+    )
+    folder = bind_session_workspace(temp_db, session.id)
+    assert folder is not None
+    assert not workspace_anchor(project_id).exists()
+    folder.mkdir(parents=True)
+    (folder / "notes.md").write_text("first finding\n")
+
+    storage = CronJobStorage(temp_db)
+    executor = _Executor()
+    assert register_agent_workspace_cron(cron_storage=storage, cron_executor=executor) == 1
+    (handler_name, handler), *_ = executor.handlers.items()
+    (job,) = [
+        job
+        for job in storage.list_jobs(is_system=True)
+        if job.action_config.get("handler") == handler_name
+    ]
+    assert await handler(job) == "agent workspaces: 1 committed, 0 failed"
+
+    relative = folder.relative_to(workspace_anchor(project_id)).as_posix()
+    assert {"README.md", f"{relative}/notes.md"} <= _tracked(project_id)
+    assert _subjects(project_id) == ["agents-ws: timer default"]

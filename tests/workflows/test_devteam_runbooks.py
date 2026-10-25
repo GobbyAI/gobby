@@ -363,3 +363,12 @@ def test_only_the_assistant_and_triage_send_to_the_orchestrator() -> None:
         assert phrase in orchestrator, phrase
     support_inputs = yaml.safe_load((PIPELINES / "support.yaml").read_text())["inputs"]
     assert "Triage" in support_inputs["report_to"]["description"]
+
+
+def test_research_spike_closes_only_after_a_devteam_reviewer_approves() -> None:
+    # The spike's approval comes from a DevTeam bound to it, so the researcher routes the
+    # review through Triage and never closes on its own record.
+    researcher_text = _guidance("researcher")
+    route = researcher_text.index("reviewer_agent=research-reviewer")
+    assert "close_task" in researcher_text[route:]
+    assert "then close your spike" not in researcher_text

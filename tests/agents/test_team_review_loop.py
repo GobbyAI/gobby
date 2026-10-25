@@ -65,6 +65,7 @@ LAUNCH_DEFAULTS = {
     **{f"fresh_reviewer_{key}": value for key, value in OPUS.items()},
 }
 WORKSPACE = "pilot-workspace-id"
+FRESH_TEAM_SEATS = ["dev-manager", "test-writer", "developer", "code-reviewer"]
 RENDERER = StepRenderer(TemplateEngine())
 
 
@@ -225,9 +226,11 @@ def devteam_context(inputs: dict[str, Any]) -> dict[str, Any]:
     values = {name: spec.get("default") for name, spec in DEVTEAM.inputs.items()}
     values.update(LAUNCH_DEFAULTS, workspace="pilot-workspace", report_to="gobby#14972")
     values.update(inputs)
+    # check_runbook_seats reports the seats to start: a fresh reviewer starts only itself.
+    launch = ["code-reviewer"] if values["fresh_reviewer"] else FRESH_TEAM_SEATS
     return {
         "inputs": values,
-        "steps": {"guard": {"output": {"workspace_id": WORKSPACE}}},
+        "steps": {"guard": {"output": {"workspace_id": WORKSPACE, "launch": launch}}},
         "_string_inputs": frozenset(
             name for name, spec in DEVTEAM.inputs.items() if spec.get("type") == "string"
         ),

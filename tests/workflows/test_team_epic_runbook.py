@@ -15,6 +15,7 @@ import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
 from gobby.mcp_proxy.tools.spawn_agent import _factory
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -135,6 +136,15 @@ def test_epic_procedures() -> None:
     assert _missing(guide, (r"epic mode", r"epic/<seq>/main", r"wt-epic-<seq>")) == []
 
 
+def test_runbook_guide_says_the_dev_manager_never_claims_the_epic() -> None:
+    # No claim on the epic: the Dev Manager lands and closes it, and land_commit refuses a
+    # session that ever claimed the task. The runtime skip is pinned by
+    # test_team_manager_spawn_takes_no_task_claim in tests/mcp_proxy/tools/spawn_agent/test_execution.py.
+    guide = flat(RUNBOOKS_GUIDE.read_text())
+    assert "The Dev Manager holds the epic claim" not in guide
+    assert "The Dev Manager never claims the epic" in guide
+
+
 @pytest.fixture
 def world(
     temp_db: HubDatabase,
@@ -153,6 +163,18 @@ def world(
             workflows=AgentWorkflows(rule_selectors=AgentSelector()),
         )
 
+    # admit_team binds only an enabled reviewer definition with the review grant.
+    AgentDefinitionManager(temp_db).create(
+        "code-reviewer",
+        {
+            "name": "code-reviewer",
+            "version": "1.0",
+            "prompts": {"agent": "Review the leaf."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "task_step_writes": ["review"],
+        },
+        project_id=world.case.project_id,
+    )
     monkeypatch.setattr(_factory, "_load_agent_body", seat_body)
     return world
 
@@ -188,6 +210,13 @@ async def _dry_run(world: TeamWorld, task: Task) -> tuple[dict[str, Any], dict[s
         reply = cast(dict[str, Any], await world.tools.call("admit_team", arguments))
     assert reply.get("success") is True, reply
     context["steps"]["admit"] = {"output": reply}
+    # A fresh team launches every seat; check_runbook_seats reports them as ``launch``.
+    context["steps"]["guard"]["output"]["launch"] = [
+        "dev-manager",
+        "test-writer",
+        "developer",
+        "code-reviewer",
+    ]
     seats: dict[str, str] = {}
     for step in DEVTEAM.steps:
         rendered = _render(run, step.id, context)

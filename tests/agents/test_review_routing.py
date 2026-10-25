@@ -11,7 +11,7 @@ from gobby.config.tasks import TaskClosePolicyConfig
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.step_records import required_task_steps
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.landing_case import make_landing_case
@@ -33,6 +33,7 @@ def world(
     for name, grants in (
         ("code-reviewer", ["review"]),
         ("docs-reviewer", ["review"]),
+        ("research-reviewer", ["review"]),
         ("developer", ["implementation"]),
     ):
         AgentDefinitionManager(temp_db).create(
@@ -113,3 +114,20 @@ async def test_reviewer_agent_admission(world: TeamWorld) -> None:
     reply = await admit(world, replacement, task, "docs-reviewer", team_id=team["team_id"])
     assert reply["success"] is True, reply
     assert world.admit_step_output(replacement)["team"]["reviewers"] == {"docs-reviewer": None}
+
+
+@pytest.mark.asyncio
+async def test_research_spike_admits_a_research_reviewer_devteam(world: TeamWorld) -> None:
+    # The researcher claims its spike; the DevTeam bound to it takes research-reviewer.
+    spike = LocalTaskManager(world.case.db).create_task(
+        world.case.project_id,
+        "Research the debt",
+        task_type="research_spike",
+        category="research",
+        validation_criteria="The committed report answers the question.",
+        claimed_by_session_id=world.case.claimant,
+    )
+    owner = world.child(spike)
+    reply = await admit(world, owner, spike, "research-reviewer")
+    assert reply["success"] is True, reply
+    assert world.admit_step_output(owner)["team"]["reviewers"] == {"research-reviewer": None}
