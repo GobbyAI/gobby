@@ -178,7 +178,7 @@ fn upgrade_record(state: &HostState) -> Value {
 fn outcome_json(record: &UpgradeRecord) -> Option<Value> {
     let (outcome, reason, errno) = match record.outcome? {
         UpgradeOutcome::Succeeded => ("succeeded", None, None),
-        UpgradeOutcome::Fallback => ("fallback", None, None),
+        UpgradeOutcome::Fallback(reason) => ("fallback", Some(reason.as_str()), None),
         UpgradeOutcome::Refused => ("refused", None, None),
         UpgradeOutcome::Deferred(reason) => ("deferred", Some(reason.as_str()), None),
         UpgradeOutcome::Aborted(reason) => ("aborted", Some(reason.as_str()), None),

@@ -113,7 +113,9 @@ pub async fn run() -> io::Result<()> {
     })();
     #[cfg(all(unix, feature = "vt-engine"))]
     let setup = match (setup, &restoring) {
-        (Err(err), Some((_, _, fallback, _))) => fallback.fail(&err),
+        (Err(err), Some((_, _, fallback, _))) => {
+            fallback.fail(handover::RestoreFailure::SetupFailed, &err)
+        }
         (setup, _) => setup,
     };
     let (token, host_config) = setup?;
@@ -139,11 +141,12 @@ pub async fn run() -> io::Result<()> {
                     &args.pid_file,
                     host_config.native_scrollback_max_bytes as usize,
                     host_config.event_queue_bytes as usize,
-                    resume.fallback,
+                    fallback.resumed_from(),
                 )?;
                 io::Result::Ok((running_image, staged))
             })();
-            let (running_image, staged) = staged.unwrap_or_else(|err| fallback.fail(&err));
+            let (running_image, staged) = staged
+                .unwrap_or_else(|err| fallback.fail(handover::RestoreFailure::StageFailed, &err));
             let state = HostState::restored(
                 host_config,
                 token,
@@ -381,7 +384,10 @@ impl HostArgs {
                 #[cfg(all(unix, feature = "vt-engine"))]
                 if let Some(resume) = Resume::scan(std::env::args().skip(2)) {
                     let (_, fallback) = handover::fallback::begin(&resume.state, resume.fallback);
-                    fallback.fail(&io::Error::new(io::ErrorKind::InvalidInput, message));
+                    fallback.fail(
+                        handover::RestoreFailure::ArgsRejected,
+                        &io::Error::new(io::ErrorKind::InvalidInput, message),
+                    );
                 }
                 eprint!("{HOST_USAGE}");
                 std::process::exit(2);

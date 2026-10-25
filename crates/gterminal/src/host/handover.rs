@@ -25,6 +25,11 @@ pub const SUPPORTED_FORMAT_VERSIONS: &[u32] = &[FORMAT_VERSION];
 /// The state file's name inside the socket directory.
 pub const STATE_FILE: &str = "gterm-handover.json";
 
+/// The handover runs between the running release and its successor, so this
+/// image must read what the previous release writes. A field added here needs
+/// a `serde` default derived from the carried state until that release ships;
+/// `tests/fixtures/handover_state/` holds the previous release's file, and
+/// `read_state_accepts_the_previous_release_state` fails without the default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandoverState {
     pub format_version: u32,
@@ -42,9 +47,17 @@ pub struct HandoverState {
     pub frames_listener_fd: RawFd,
     pub next_host_id: u64,
     /// Physical stream IDs cannot be reused while this host epoch survives.
+    /// gterm 0.1.15 writes none: no carried pane names an attachment id, and
+    /// that release never told a client one, so 1 is past every restored id.
+    #[serde(default = "first_attachment")]
     pub next_attachment: u64,
     pub events: CarriedEvents,
     pub panes: Vec<CarriedPane>,
+}
+
+/// One past the highest restored attachment id; a host starts at the same id.
+fn first_attachment() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +150,8 @@ pub struct CarriedIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpgradeOutcome {
     Succeeded,
-    Fallback,
+    /// The new image failed its restore and this earlier image resumed.
+    Fallback(RestoreFailure),
     /// The candidate failed its resume probe; nothing was quiesced.
     Refused,
     /// The write guard was not free within its retry, or the recheck under
@@ -176,6 +190,57 @@ impl UpgradeReason {
             UpgradeReason::StateWriteFailed => "state_write_failed",
             UpgradeReason::PinMismatch => "pin_mismatch",
         }
+    }
+}
+
+/// Why a new image's restore failed, as the fallback's outcome names it. The
+/// failing image hands it to the earlier one through [`RESTORE_FAILURE_ENV`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestoreFailure {
+    /// The state file did not parse as this image's handover state.
+    StateUnreadable,
+    /// The image rejected the argv the earlier image recorded.
+    ArgsRejected,
+    /// The control token or host config was unusable.
+    SetupFailed,
+    /// Verifying the state or staging a pane, listener, or pin failed.
+    StageFailed,
+    Panicked,
+    /// The failing image named no reason, as releases before 0.1.17 do.
+    Unreported,
+}
+
+/// The environment variable carrying a [`RestoreFailure`] across the fallback
+/// exec. An argument would not do: the earlier image refuses unknown ones.
+pub(crate) const RESTORE_FAILURE_ENV: &str = "GTERM_RESTORE_FAILURE";
+
+impl RestoreFailure {
+    const ALL: [RestoreFailure; 6] = [
+        RestoreFailure::StateUnreadable,
+        RestoreFailure::ArgsRejected,
+        RestoreFailure::SetupFailed,
+        RestoreFailure::StageFailed,
+        RestoreFailure::Panicked,
+        RestoreFailure::Unreported,
+    ];
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            RestoreFailure::StateUnreadable => "state_unreadable",
+            RestoreFailure::ArgsRejected => "args_rejected",
+            RestoreFailure::SetupFailed => "setup_failed",
+            RestoreFailure::StageFailed => "stage_failed",
+            RestoreFailure::Panicked => "restore_panicked",
+            RestoreFailure::Unreported => "restore_failed",
+        }
+    }
+
+    /// The reason a failing image reported, or [`RestoreFailure::Unreported`].
+    pub(crate) fn reported(value: Option<&str>) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|failure| Some(failure.as_str()) == value)
+            .unwrap_or(RestoreFailure::Unreported)
     }
 }
 
@@ -250,9 +315,16 @@ pub fn write_state(path: &Path, state: &HandoverState) -> io::Result<()> {
 
 /// Reads a state file, refusing a format this image does not support.
 pub fn read_state(path: &Path) -> io::Result<HandoverState> {
-    let bytes = fs::read(path)?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    parse_state(state_value(path)?)
+}
+
+/// A state file as JSON, before it is checked against this image's types.
+pub(crate) fn state_value(path: &Path) -> io::Result<Value> {
+    serde_json::from_slice(&fs::read(path)?)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+pub(crate) fn parse_state(value: Value) -> io::Result<HandoverState> {
     let version = value.get("format_version").and_then(Value::as_u64);
     if !version.is_some_and(|version| {
         SUPPORTED_FORMAT_VERSIONS
