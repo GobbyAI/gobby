@@ -8,9 +8,10 @@ Plan artifact: `.gobby/plans/gdaemon-projects-files-docs-family.md`
 `kind: framing`
 
 Port #21585's complete service surface to a statically linked family crate,
-`crates/gprojects` (package `gobby-projects`). This plan owns 35 existing
+`crates/gprojects` (package `gobby-projects`). This plan owns 36 existing
 parity-ledger rows: 12 assigned solely to #21585, 19 Projects rows formerly
-assigned only to #21568, and four attachment rows shared with #21592. It also
+assigned only to #21568, four attachment rows shared with #21592, and
+HTTP POST /api/nodes/checkouts transferred from #24151. It also
 owns the once-only hub namespace and attachment-layout cutover.
 
 The result is native project and checkout management, local checkout browsing,
@@ -24,7 +25,10 @@ hub datastore or infer that another machine's checkout is local.
 The Orchestrator confirmed these dispositions through Triage on 2026-10-24,
 recorded under planning task #24951:
 
-- **D1, scope:** all 35 rows above belong here. The eight GET/HEAD API-docs UI
+- **D1, scope:** all 36 source rows above belong here. Coordinator review
+  transfers HTTP POST /api/nodes/checkouts from #24151 to4.5/4.5.5 and6.3's
+  ledger ownership update. The two additive routes in2.2/4.1 have separate
+  native-extension entries. The eight GET/HEAD API-docs UI
   rows for /docs, /redoc and /openapi.json remain with #21589.
 - **D2, wiki:** wiki retirement supersedes the historical /api/hub/wiki/*
   clause. Preserve ordinary 404 responses and retained bytes; recreate no wiki API.
@@ -51,7 +55,7 @@ recorded under planning task #24951:
   #21576 alone migrates machine-local comms_attachments and its comms producers
   onto this established destination. #21592 consumes this family's attachment API;
   it does not create another storage implementation.
-- **D7, restraint:** the port is required because all 35 rows are currently
+- **D7, restraint:** the port is required because all 36 source rows are currently
   proxied. Reuse RouteFamily, the async pool/transaction seam, existing native
   node relay, local-token verification, compare reporting, and contract harness.
   Stdlib/locked crates supply filesystem, HTTP, crypto and JSON work. Add no
@@ -65,7 +69,8 @@ current Python/Rust coexistence and trust/data-loss boundaries.
 Josh's ruling in memory 9066f1eb requires this pass before approval. Research
 #24960, .gobby/plans/research/projects-files-docs-family-debt.md at
 e5063a4e34, supplies the static evidence; proposed race/failure tests have not
-run. Retain all 35 surface owners and all prior safety/functional obligations.
+run. Retain all 35 original surface owners, the transferred node-checkout row,
+and all prior safety/functional obligations.
 
 - D1 DROP pathname check-then-reopen. Sections 3.3/4.2/4.3 retain admitted
   descriptors through I/O; ordinary in-root links remain usable, escaping or
@@ -92,6 +97,13 @@ run. Retain all 35 surface owners and all prior safety/functional obligations.
 S1 belongs to #24963: docs/contracts/parity-waivers.json has required id,
 surface, behaviour, decision and replacement fields. IDs below are stable
 projects.<surface-slug>.<behaviour-slug>; surface is an exact ledger key.
+The decision field is exactly a task ref #N or a canonical plan citation
+.gobby/plans/<plan>.md#<section>; no task-plus-section prose is accepted.
+Additive public routes without a Python counterpart use an exact
+projects.<surface-slug>.native-extension entry. Their native contract tests
+supply readiness; ledger/corpus/compare report native-extension with its
+citation and never synthesize Python success evidence. Any other newly added
+surface is explicitly non-ledger internal, or receives the same provenance.
 Owning implementation leaves add their entries and depend on #24963. Ledger,
 corpus/replay and compare consume that one registry. A waiver is a tested
 replacement contract, never a mask or Skipped case. Readiness requires at least
@@ -109,15 +121,18 @@ Every derived writer port adopts it before concurrent native purge; Memory,
 Code index and AI/vector producers cannot retain a private native lock. Section
 6.3 records adoption/dependency obligations for all downstream producers.
 
-S4 convention, aligned with Cron: service errors classify as validation,
-missing, forbidden, conflict, capacity, unavailable or internal. Explicit
-HTTP/CLI/MCP adapters retain each existing wire envelope; private diagnostics
+S4 owner: #24970 supplies the one shared native domain-error classification
+and HTTP/MCP/CLI adapters for every family. Its seven classes are validation,
+missing, forbidden, conflict, capacity, unavailable and internal, each with a
+safe message and optional structured detail. Projects maps its domain outcomes
+onto that API; it defines no error framework or transport mapping. Intentional
+existing envelopes are declared through the shared adapters. Private diagnostics
 stay in bounded redacted logs, never anyhow/OS/SQL strings on the wire. Exact
 waivers alone change a public message/status/state. Shared corpus fixtures assert
 both response and state/recovery. Updates use Absent/Clear/Set(value); null is
 valid only under the field's nullable contract, and the merged candidate is
-validated under one row lock. This is a convention reused across families,
-not a new global response envelope or distributed transaction framework.
+validated under one row lock. #24970 owns its public API and shared contract
+documentation; this plan consumes them without choosing another owner crate.
 
 ## Constraints
 `kind: framing`
@@ -151,6 +166,10 @@ not a new global response envelope or distributed transaction framework.
 - Initial drafts are narrative only. M1 belongs exclusively to the adversary.
   Base validation is required before review; expansion validation is unrun
   until the adversary applies M1.
+- The two additive HTTP routes in2.2/4.1 require native-extension provenance.
+  Canonical hub namespace and gdaemon command names replace named Python
+  surfaces under their explicit contracts. Rust library capabilities, lock/
+  recovery helpers and assembly exports are non-ledger internal surfaces.
 
 ## Research evidence
 `kind: framing`
@@ -198,7 +217,7 @@ and include newly landed consumers in the same owning outcome.
 ## P1: Contract and family assembly
 `kind: framing`
 
-### 1.1 Executable parity inventory and isolated corpus [category: test] (depends: #24963)
+### 1.1 Executable parity inventory and isolated corpus [category: test] (depends: #24963, #24970)
 `kind: deliverable`
 
 Targets:
@@ -208,7 +227,7 @@ Targets:
 - `docs/contracts/projects-files-hub.md`
 
 **Research context:** The ledger is generated from registered FastAPI/Click/MCP
-surfaces and shard status maps. The 35-row inventory was read from
+surfaces and shard status maps. The original 35-row inventory was read from
 comms-cron-hub-nodes, git-workspaces, plans-stages-projects and
 websocket-chat-voice-ui. Existing route oracles are create_projects_router,
 create_files_router, create_hub_files_proxy_router and create_chat_attachments_router.
@@ -217,8 +236,10 @@ test_hub_files_proxy, test_servers_routes_chat_attachments and tests/cli.
 The corpus is standalone cross-language characterization infrastructure, not
 a duplicate TDD leaf.
 
-Record all 35 exact source keys, their native replacement/unchanged key,
-owning section and acceptance ID. Add stable fixtures for status, JSON,
+Record all 36 exact source keys, including the node-checkout row transferred
+from #24151 to4.5/4.5.5, their native replacement/unchanged key, owning section
+and acceptance ID. Separately inventory the two additive routes in2.2/4.1 and
+their exact native-extension entries. Add stable fixtures for status, JSON,
 headers, bytes and resulting database/filesystem state; normalize only generated
 IDs, times and temporary roots, never errors or security decisions. Capture
 the current Python contract before cutover and explicitly mark the planned
@@ -228,18 +249,19 @@ case-specific assertions with their stable IDs, exact source surfaces and
 decision/replacement contracts; never normalize away errors, paths or state.
 Use temporary roots and deterministic barriers for ancestor swaps, and injected
 publication/commit failures rather than racing live Python against user files.
-Common fixtures classify service errors using validation/missing/forbidden/
-conflict/capacity/unavailable/internal, then verify the existing route envelope
+Common fixtures consume #24970's seven-class API and shared transport adapters,
+then verify the declared existing route envelope
 and all SQL/file effects. At least one real Passed case is required; exact
 Waived cases must prove their replacement, and unwaived Skipped cases fail.
 The contract specifies the new namespaces, local-versus-hub routing,
 credential rules, publication/deletion states and migration refusal/retry matrix.
 
 **Acceptance:**
-- 1.1.1 - The inventory contains exactly the 35 scoped source keys and a unique acceptance owner for each; API-docs UI rows remain excluded. test: `tests/contracts/test_projects_files_corpus.py::test_inventory_is_complete`.
+- 1.1.1 - The inventory contains exactly 36 scoped source keys with unique acceptance owners, including the transferred node-checkout row, plus separately identified native-extension routes; API-docs UI rows remain excluded. test: `tests/contracts/test_projects_files_corpus.py::test_inventory_is_complete`.
 - 1.1.2 - Characterization cases execute the existing Python handlers and record exact response/state outcomes, with security, failure and cancellation cases and no production I/O. test: `tests/contracts/test_projects_files_corpus.py::test_python_cases_match`.
 - 1.1.3 - The contract specifies namespace replacements, node-write authority, layout, migration retry states and #21592/#21576 ownership. file: `docs/contracts/projects-files-hub.md`.
 - 1.1.4 - Every D1-D7 divergence resolves an exact shared waiver and replacement assertion; missing citations, broad masks, all-skipped reports and unwaived skips fail while ordinary KEEP contracts remain exact. test: `tests/contracts/test_projects_files_corpus.py::test_waivers_are_specific_and_keep_cases_exact`.
+- 1.1.5 - Additive route cases require exact native-extension entries and native tests, reject malformed decision citations or missing entries, and produce no invented Python parity result. test: `tests/contracts/test_projects_files_corpus.py::test_native_extensions_have_explicit_provenance`.
 
 **Verification:** planned:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_projects_files_corpus.py -v`.
@@ -278,7 +300,11 @@ The family owns /api/projects, /api/files and the selected hub document paths;
 attachment routing uses a narrower explicit subprefix than the future chat family.
 Provide an exact method/path/principal inventory used by tests and compare
 coverage. NativeUnavailable is a typed 503, never an automatic Python fallback.
-No handler executes Python. Routing: backend code; tdd true.
+No handler executes Python. Consume #24970's public shared error type and
+HTTP/MCP/CLI adapters from family assembly onward; service code maps domain
+outcomes to the seven classes and declares intentional existing envelopes.
+No family error framework or independent transport table is introduced.
+Routing: backend code; tdd true.
 
 **Granularity:** assembly touches more than six production targets because the
 new crate, composition and mandatory release metadata form one compileable seam;
@@ -307,6 +333,10 @@ At expansion, the coordinator binds existing #24968 as blocked-by the concrete
 implementation task generated from Projects section1.2, before admitting the
 capability for work. Record that section-to-task mapping in the expansion
 handoff and verify the edge; plan approval alone does not satisfy crate assembly.
+Before any Projects or Cron #24968 consumer is admitted, verify that producer
+edge and the consumer's blocked-by#24968 edge in the expansion graph. If either
+is absent, hold capability and consumer admission and route the graph repair
+through Triage;6.3's later evidence check cannot substitute for this gate.
 Consumer tasks are then blocked by #24968. Create no1.3 task, no second crate
 assembly owner, and no dependency on either whole plan root or retirement.
 
@@ -377,7 +407,7 @@ No stricter Origin or CSRF rule is invented. Routing: backend code; tdd true.
 **Verification:** planned:
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test projects_browser_admission`.
 
-### 2.2 Reusable native admission and confinement [category: code] (depends: 2.1, #24452, #24964, #24967)
+### 2.2 Reusable native admission and confinement [category: code] (depends: 2.1, #24452, #24963, #24964, #24967)
 `kind: deliverable`
 
 Targets:
@@ -388,6 +418,7 @@ Targets:
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: bind verified admission once before family dispatch
 - `crates/gdaemon/tests/project_admission.rs`
 - `crates/gprojects/src/family.rs`
+- `docs/contracts/parity-waivers.json`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
@@ -437,14 +468,22 @@ file content or a new machine identity. The hub derives the node machine from
 its verified key, checks current authority and returns only the scoped admission
 result. The node checks that result against its own machine and requested
 project before local I/O. Hub unavailability refuses the operation; there is no
-cached-authority or anonymous fallback. The endpoint is internal to this shared
-admission seam and enters the parity inventory as a new delegated route.
+cached-authority or anonymous fallback. This is a new public node-key-bound
+surface, not a Python parity case. This leaf adds
+projects.nodes-admission.native-extension under #24963, exact surface
+HTTP POST /api/nodes/admission, decision
+.gobby/plans/gdaemon-projects-files-docs-family.md#2.2. Its behaviour states
+that it is additive; replacement records the hub-only, current-authority,
+scoped-result and fail-closed contract above. Ledger/corpus/compare cite
+native-extension provenance and require native contract tests alone, without
+inventing a Python response. Domain refusals use #24970's shared adapters.
 
 **Acceptance:**
 - 2.2.1 - API keys, local credentials and managed callers receive the same admitted/refused outcomes as Python; forged identity headers and revoked principals are refused. test: `crates/gdaemon/tests/project_admission.rs::credentials_match_python`.
 - 2.2.2 - Browser expiry, epoch/revoke, peer/Host, method and every project/session selector restriction survive Python loss; absent authority fails closed. test: `crates/gdaemon/tests/project_admission.rs::browser_confinement_is_native`.
 - 2.2.3 - The shared verifier protects user docs, file reads and attachments, and cookie requests stay proxied until the admission dependency is installed. test: `crates/gdaemon/tests/project_admission.rs::family_never_skips_admission`.
 - 2.2.4 - Missing, malformed, wrong-class, expired/revoked, forged-selector and Python-loss requests cannot convert unauthenticated continuation into native admission; shared outer preflight/CORS applies to success and errors. test: `crates/gdaemon/tests/project_admission.rs::admission_is_explicit_and_cors_is_outer`.
+- 2.2.5 - POST /api/nodes/admission proves its exact native-extension contract, key-bound machine/current-authority scope and unavailable refusal; missing provenance or invented Python evidence fails readiness. test: `crates/gdaemon/tests/project_admission.rs::node_admission_extension_is_scoped`.
 
 **Verification:** planned:
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test project_admission`.
@@ -558,7 +597,7 @@ Targets:
 Port the existing migration classes into a fixed Rust operation, extending the destination once to attachments/<project-id>/. Include the existing legacy personal/project roots and already provisioned _personal/attachments, plus retained wiki bytes without recreating wiki behavior. Preserve existing non-attachment destinations and recognized retry states. Before any mutation, prewalk all sources/destinations, refuse overlaps, divergent collisions, symlinks, special entries and root/ancestor identity changes. Gate family uploads/deletes with the migration's exclusive lock; hold the daemon singleton/offline lock for offline CLI use. Publish using rename or cross-device copy/fsync/hash verification; retire source only after durable destination. Commit locator rewrites only after bytes exist. A crash after publication is reconciled by content equality on rerun; never overwrite divergent data or roll a locator forward to absent bytes. The report retains migrated/skipped/rewritten/unrewritten details and typed partial failure. The existing Click shim forwards to gdaemon files migrate and propagates stdout/stderr/exit status. Routing: backend code; tdd true.
 
 This leaf adds projects.files-migrate.final-layout under #24963 for exact
-surface CLI gobby files migrate, decision #24951 section3.4. Replacement: only
+surface CLI gobby files migrate, decision .gobby/plans/gdaemon-projects-files-docs-family.md#3.4. Replacement: only
 chat-attachment destination strings in published/report entries and the matching
 persisted locators change from _personal/attachments/... to the final
 attachments/<project-id>/<prefix>/<id>/<filename> layout. Report field names,
@@ -621,7 +660,7 @@ Targets:
 After migration is proven, change every listed producer/consumer and contract to the canonical hub namespaces/layout in one release. Preserve the existing relay's hop-loop guard and bounded headers/body streaming; node requests reach the owner without local files_home access. Old /api/files/user-md and /api/chat/attachments paths must receive ordinary missing-route responses from the native dispatcher even while Python remains available; they must not fall through to old Python handlers. Do not install compatibility aliases. Keep the retired wiki path missing. Rendered content_url values change at serialization, so old stored conversation metadata is normalized through the canonical serializer rather than moving bytes again. Repeat exact-literal sweeps across src, web, tests and docs and account for any new hits. No visual design changes are involved. Routing: fullstack code; tdd true.
 
 D7 retains this cutover and all byte/lease/relay guarantees. This leaf adds
-the following #24963 entries, each citing #24951 and canonical section3.5 as its decision:
+the following #24963 entries, each citing .gobby/plans/gdaemon-projects-files-docs-family.md#3.5 as its decision:
 projects.user-get.hub-namespace for HTTP GET /api/files/user-md;
 projects.user-put.hub-namespace for HTTP PUT /api/files/user-md;
 projects.attachment-upload.hub-namespace-layout for HTTP POST /api/chat/attachments;
@@ -653,8 +692,17 @@ Collect the exact proposed Python node IDs:
 ## P4: Projects and local checkout browsing
 `kind: framing`
 
-### 4.1 Native project inventory, detail and cross-project MCP listing [category: code] (depends: 3.5, #24265, #24592)
+### 4.1 Native project inventory, detail and cross-project MCP listing [category: code] (depends: 3.5, #24265, #24592, #24963)
 `kind: deliverable`
+
+This leaf adds projects.projects-inventory.native-extension under #24963 for
+exact surface HTTP GET /api/projects/_inventory, decision
+.gobby/plans/gdaemon-projects-files-docs-family.md#4.1. Behaviour states that
+the HTTP surface is additive; replacement is the admitted, include_system-
+filtered query contract below with the existing MCP envelope and scope.
+Native tests supply HTTP readiness with native-extension provenance; Python
+parity still covers the existing MCP surface, never a synthesized HTTP oracle.
+Domain refusals map onto #24970 and its shared transport adapters.
 
 Targets:
 - `crates/gprojects/src/projects/read.rs`
@@ -663,6 +711,7 @@ Targets:
 - `crates/gprojects/tests/project_reads.rs`
 - `src/gobby/mcp_proxy/tools/hub.py::*` — scope-reason: delegate project listing while preserving the remaining hub registry
 - `tests/mcp_proxy/tools/test_native_hub_projects.py`
+- `docs/contracts/parity-waivers.json`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
@@ -677,12 +726,13 @@ Port the shared query/serialization once, including hidden/deleted/sentinel beha
 - 4.1.3 - The source row HTTP GET /api/projects/{project_id}/checkouts matches object-or-null local checkout behavior. test: `crates/gprojects/tests/project_reads.rs::checkout_matches_python`.
 - 4.1.4 - The source row HTTP GET /api/files/projects matches checkout-shaped browser inventory, including Personal and no repo_path. test: `crates/gprojects/tests/project_reads.rs::file_inventory_matches_python`.
 - 4.1.5 - The source row MCP gobby-hub:list_all_projects delegates to the native include_system-filtered cross-project query with its existing envelope. test: `tests/mcp_proxy/tools/test_native_hub_projects.py::test_listing_delegates_to_rust`.
+- 4.1.6 - GET /api/projects/_inventory proves admission, include_system filtering, route precedence and exact native-extension provenance without invented Python HTTP evidence. test: `crates/gprojects/tests/project_reads.rs::inventory_extension_has_native_contract`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_reads` and isolated pytest for tests/mcp_proxy/tools/test_native_hub_projects.py.
 Collect the exact proposed Python node ID:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/mcp_proxy/tools/test_native_hub_projects.py::test_listing_delegates_to_rust`.
 
-### 4.2 Native local file tree, text and image reads [category: code] (depends: 4.1, #24963)
+### 4.2 Native local file tree, text and image reads [category: code] (depends: 4.1, #24963, #24970)
 `kind: deliverable`
 
 Targets:
@@ -718,7 +768,7 @@ stream and assert only admitted objects or safe403, never foreign I/O. Add
 projects.files-tree.held-descriptor, projects.files-read.held-descriptor and
 projects.files-image.held-descriptor for the exact HTTP GET /api/files/tree,
 /api/files/read and /api/files/image surfaces, respectively; decisions cite
-#24951 section4.2 and replacements state that descriptor/refusal contract.
+.gobby/plans/gdaemon-projects-files-docs-family.md#4.2 and replacements state that descriptor/refusal contract.
 
 D5 replaces _get_git_tracked_files' strip/splitlines with git ls-files -z and
 git ls-files --others --exclude-standard -z, parsed as raw NUL records. Newline,
@@ -727,17 +777,18 @@ cannot be represented as valid UTF-8 JSON, refuse that tree response with
 422 {"detail":"Filename is not valid UTF-8"}; never omit or lossily collide
 names. Add projects.files-tree.nul-membership and
 projects.files-tree.non-utf8-refusal for HTTP GET /api/files/tree, decision
-#24951 section4.2. Preserve directories-first/case-insensitive ordering, .git hiding,
+.gobby/plans/gdaemon-projects-files-docs-family.md#4.2. Preserve directories-first/case-insensitive ordering, .git hiding,
 ignore policy and the existing no-Git-information fallback.
 
 D6's projects.files-read.safe-io-error entry targets HTTP GET /api/files/read,
-decision #24951 section4.2: host read failures keep500 and the detail envelope but
+decision .gobby/plans/gdaemon-projects-files-docs-family.md#4.2: host read failures keep500 and the detail envelope but
 return exactly {"detail":"Failed to read file"}, without interpolated paths or
-OS text. Add errors.rs with the agreed validation/missing/forbidden/conflict/
-capacity/unavailable/internal service classes and explicit route-envelope
-adapters; preserve useful traversal/missing/bounds refusals. Keep private causes
-in bounded redacted logs. This same convention and helper serve later mutation
-and Git adapters, without a new universal wire shape. All entries use #24963.
+OS text. errors.rs contains only thin domain-to-#24970 mapping functions;
+reuse its seven-class type and shared HTTP/MCP/CLI adapters, declaring the
+intentional existing route envelope through that API. Define no family error
+class framework, transport table or parallel adapter. Preserve useful traversal/
+missing/bounds refusals and keep private causes in bounded redacted logs.
+Later mutation/Git operations use the same shared owner. All waivers use #24963.
 
 **Granularity:** root admission, local-node assembly, descriptor reads and their
 shared safe-error adapter form this checkout-read capability; additional module
@@ -750,6 +801,7 @@ text and image assertions remain individually identified below.
 - 4.2.3 - The source row HTTP GET /api/files/image matches content/range/cache behavior and SVG security headers. test: `crates/gprojects/tests/checkout_reads.rs::image_matches_python`.
 - 4.2.4 - Traversal, deterministic ancestor swaps and cross-machine substitutions cannot cause foreign I/O; all three held-descriptor waivers are proved while ordinary in-root links still work and nodes open no datastore. test: `crates/gprojects/tests/checkout_reads.rs::locality_and_paths_are_enforced`.
 - 4.2.5 - Only projects.files-read.safe-io-error changes the listed host-error detail; useful public refusals and every normal read/image/header case remain exact, and no private diagnostic leaks. test: `crates/gprojects/tests/checkout_reads.rs::safe_error_waiver_keeps_public_refusals`.
+- 4.2.6 - All seven domain-error classes and declared existing envelopes use #24970's shared type and HTTP/MCP/CLI adapters; no transport exposes OS/SQL/driver details or uses a family-local error framework. test: `crates/gprojects/tests/checkout_reads.rs::domain_errors_use_shared_adapters`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test checkout_reads`.
 
@@ -770,7 +822,7 @@ Targets:
 Port the write response and validation/error contract, including Unicode byte size, missing parent and .git component refusal. Use the held validated parent descriptor and a durable replace to avoid traversal races and partial successful writes. Retain file mode and existing permissions; do not create parent trees or redirect to hub document storage. Before publication, failures preserve old bytes. Routing: backend code; tdd true.
 
 This leaf adds three entries for exact surface HTTP POST /api/files/write,
-each with decision #24951 section4.3. projects.files-write.held-descriptor (D1)
+each with decision .gobby/plans/gdaemon-projects-files-docs-family.md#4.3. projects.files-write.held-descriptor (D1)
 retains the admitted parent through staging/rename, including the same safe
 in-root link policy as 4.2. A safe link write updates the admitted target while
 preserving the link entry; lexical/resolved .git guards both apply.
@@ -817,7 +869,7 @@ Use an argv-only bounded subprocess through Tokio, explicit checkout cwd and tim
 Keep the existing NUL-aware status parser and literal diff contract. D6 adds
 projects.files-git-status.safe-spawn-error for HTTP GET /api/files/git-status
 and projects.files-git-diff.safe-spawn-error for HTTP GET /api/files/git-diff,
-both citing #24951 section4.4. Only host spawn failures use the replacement
+both citing .gobby/plans/gdaemon-projects-files-docs-family.md#4.4. Only host spawn failures use the replacement
 503 {"detail":"Git unavailable"}; retain every intentional public validation,
 missing-HEAD and non-host command-result envelope. Reuse 4.2's typed service
 errors and route adapters; no raw exception/path/argv secrets enter responses
@@ -862,6 +914,13 @@ caller continues to use this key-bound hub endpoint; the hub derives machine_id
 from that key, and validates marker claims without opening the node's filesystem.
 The node listener rejects this hub-only registration endpoint locally.
 
+Coordinator ownership transfer: HTTP POST /api/nodes/checkouts moves from
+#24151 to this Projects outcome, with acceptance4.5.5. #24151's task description
+already records its release of the row. This existing Python surface belongs
+in the 36-source inventory and retains real parity evidence; it is not an
+additive native extension. Section6.3 reassigns its ledger owner and records
+this plan's implementation/test provenance, removing the former owner.
+
 **Granularity:** the shared checkout transaction and its public and node-key
 entries are one atomic registration outcome. The additional export, dispatch,
 test and release targets close that route's complete call path; they do not
@@ -874,7 +933,7 @@ Port initialization's marker/config seeding and checkout registry transaction, i
 - 4.5.2 - The source row HTTP POST /api/projects/{project_id}/checkouts gives 201 insert/200 retry and matching conflicts without restoring a deleted project. test: `crates/gprojects/tests/project_checkouts.rs::register_matches_python`.
 - 4.5.3 - The source row HTTP POST /api/projects/{project_id}/checkouts/{machine_id}/rebind preserves machine scope, validation, index invalidation and event semantics. test: `crates/gprojects/tests/project_checkouts.rs::rebind_matches_python`.
 - 4.5.4 - Node-key authority writes only its own machine rows, and marker/root/overlay conflicts or transaction failure leave no partial checkout or event. test: `crates/gprojects/tests/project_checkouts.rs::machine_authority_and_atomicity_hold`.
-- 4.5.5 - The registered native POST /api/nodes/checkouts works with Python unavailable, derives machine identity from the key, refuses body/header machine forgery, and cannot be served as a local node authority. test: `crates/gdaemon/tests/node_project_checkouts.rs::registration_is_native_and_key_bound`.
+- 4.5.5 - The transferred source row HTTP POST /api/nodes/checkouts has this unique Projects owner, works with Python unavailable, derives machine identity from the key, refuses body/header machine forgery, and cannot be served as local node authority. test: `crates/gdaemon/tests/node_project_checkouts.rs::registration_is_native_and_key_bound`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_checkouts` and `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test node_project_checkouts`.
 
@@ -966,6 +1025,15 @@ directory is0700 and records0600. This leaf recognizes evidence and refuses;
 flock then project row lock; never wait for flock while holding a row lock.
 File-only Python writers merge owned fields under the same exclusive lock,
 preserve unrelated keys and refuse pending recovery without a SQL transaction.
+In particular, save_project_approval_rules and save_project_validation_detection
+use a strict read-for-merge path: malformed JSON, a non-object JSON root or an
+unreadable existing file refuses before staging or publication. They never
+substitute an empty payload and overwrite the corrupt file. Approval/validation
+clear and migration helpers use the same strict path. Return a safe invalid-
+metadata or unavailable-metadata failure through the existing boundary; preserve
+original bytes and permissions, with no journal or SQL mutation. The explicitly
+specified identity/verification repair operations retain their own guarded
+repair contracts; a policy-field save cannot activate them.
 Missing metadata keeps each operation's existing initialization contract;
 ordinary no-ops create no metadata file. Pass an already-held guard explicitly
 through nested helpers to avoid recursive flock acquisition.
@@ -1029,7 +1097,7 @@ Consumers unchanged:
 - 4.5a.1 - Python/native use the same stable secure sidecar, bounded deadline and lock order, without check/open gaps, link substitution, async-loop stalls or recursive-lock deadlocks. test: `crates/gprojects/tests/project_metadata_barrier.rs::python_native_lock_protocol_matches`.
 - 4.5a.2 - Every inventoried policy reader refuses pending recovery/timeout without exposing candidate fields or substituting empty/default policy. test: `tests/contracts/test_project_metadata_barrier.py::test_all_policy_readers_refuse_pending_recovery`.
 - 4.5a.3 - Chat requires approval, hook and provider callbacks refuse, merge/transcript/close/stop/verification cannot pass unavailable policy, and sandbox resolution refuses before launch; stated ordinary modes and envelopes remain exact. test: `tests/contracts/test_project_metadata_barrier.py::test_policy_boundaries_fail_closed`.
-- 4.5a.4 - Approval/validation/hook/verification/init writers preserve unrelated keys, refuse journals, and retain identity-checked cleanup and missing/no-op behavior. test: `tests/contracts/test_project_metadata_barrier.py::test_cooperating_writers_merge_under_one_lock`.
+- 4.5a.4 - Approval/validation/hook/verification/init writers preserve unrelated keys, refuse journals and retain cleanup/missing/no-op behavior; save_project_approval_rules and save_project_validation_detection refuse malformed, non-object or unreadable JSON without overwriting corrupt bytes, changing permissions or staging mutation. test: `tests/contracts/test_project_metadata_barrier.py::test_cooperating_writers_merge_under_one_lock`.
 - 4.5a.5 - Isolation copies and personal identity repair cannot consume/overwrite/delete a pending candidate; reversed copies terminate without deadlock. test: `tests/contracts/test_project_metadata_barrier.py::test_copy_and_identity_repair_obey_barrier`.
 - 4.5a.6 - Specified extractions preserve helper imports, config carrier parity and ordinary overrides; both originals finish below850 and every production file below1,000 lines. test: `tests/contracts/test_project_metadata_barrier.py::test_helper_facades_and_size_boundaries`.
 - 4.5a.7 - Native journal-producing mutations remain disabled until all guard integrations are active; pending recovery cannot reactivate an unguarded legacy writer. test: `crates/gprojects/tests/project_metadata_barrier.rs::activation_requires_all_consumers_guarded`.
@@ -1385,6 +1453,10 @@ lease changes may record Skipped diagnostically, but unwaived Skipped fails
 readiness; no debt waiver represents concurrency as a successful skipped case.
 Require at least one Passed case plus representative method/outcome coverage,
 valid case-specific Waived assertions and zero mismatches/unwaived skips.
+The two additive surfaces in2.2/4.1 instead require exact native-extension
+entries and their native contract proofs; they never run a fictitious Python
+leg or manufacture a Passed parity case. They cannot satisfy the requirement
+for at least one real Python/native Passed case elsewhere in the family.
 Redact content, credentials and host paths; report structural locations only.
 
 Before activating native project-config mutations, drain legacy writers, recover
@@ -1402,6 +1474,7 @@ no Python. Routing: backend code; tdd true.
 - 6.1.2 - Default Native dispatch serves all owned principals and methods; explicit pre-switch proxy/compare selection and unknown-family fallback remain correct. test: `crates/gdaemon/tests/projects_routing.rs::native_default_is_complete`.
 - 6.1.3 - Compare logs/report contain no profile content, attachment bytes, credentials or user path secrets and reject an incomplete representative route window. test: `crates/gprojects/tests/compare.rs::reports_are_bounded_and_complete`.
 - 6.1.4 - Zero-Passed/all-skipped reports, missing or stale waiver citations and over-broad replacements fail; ordinary KEEP cases remain exact, and config-writer handoff/rollback preserves recovery ownership. test: `crates/gprojects/tests/compare.rs::waiver_readiness_and_writer_handoff_are_enforced`.
+- 6.1.5 - Both additive endpoints require exact native-extension provenance and native tests; missing entries or fabricated Python successes fail compare readiness. test: `crates/gprojects/tests/compare.rs::native_extensions_have_no_python_oracle`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test compare` and focused gobby-daemon projects_routing nextest.
 
@@ -1414,12 +1487,12 @@ Targets:
 - `tests/contracts/projects_files_cases.json`
 - `tests/contracts/projects_files_inventory.json`
 
-**Research context:** 1.1 records the exact 35 source rows and planned namespace/layout deltas. The family now has native auth, service, migration and CLI/MCP adapters. Existing contract/E2E isolation fixtures provide temporary hub state and backend process control. This is a standalone end-to-end parity/failure suite, not another unit-test wrapper.
+**Research context:** 1.1 records the 36 source rows and two additive routes and planned namespace/layout deltas. The family now has native auth, service, migration and CLI/MCP adapters. Existing contract/E2E isolation fixtures provide temporary hub state and backend process control. This is a standalone end-to-end parity/failure suite, not another unit-test wrapper.
 
-Replay the complete corpus against isolated native hub and node processes. Exercise all 35 row owners, renamed replacement routes, both shared cookie classes and every admitted/refused principal, migration reruns and current consumer serializers. Kill Python after issuing test admission and prove native local/hub/attachment/project/command behaviour, including refusals and #24964 CORS. Inject deterministic ancestor swaps, short writes/fsync/rename/SQL failures, process loss, malformed/unreadable metadata and unusual filename cases. Each D1-D7 divergence proves its exact #24963 Waived replacement and citation; KEEP cases remain exact Passed obligations. No live vulnerable Python race or duplicate mutation is used. Test an independent node with no hub bytes or DB credentials. Representative readiness requires at least one Passed, zero mismatches, no unwaived Skipped and all required method/outcome classes. Rollback uses the same binaries and never remigrates bytes or reactivates unsafe config mutation while recovery is pending. No production daemon is touched.
+Replay the complete corpus against isolated native hub and node processes. Exercise all 36 source owners and both native extensions, renamed replacement routes, both shared cookie classes and every admitted/refused principal, migration reruns and current consumer serializers. Kill Python after issuing test admission and prove native local/hub/attachment/project/command behaviour, including refusals and #24964 CORS. Inject deterministic ancestor swaps, short writes/fsync/rename/SQL failures, process loss, malformed/unreadable metadata and unusual filename cases. Each D1-D7 divergence proves its exact #24963 Waived replacement and citation; KEEP cases remain exact Passed obligations. No live vulnerable Python race or duplicate mutation is used. Test an independent node with no hub bytes or DB credentials. Representative readiness requires at least one Passed, zero mismatches, no unwaived Skipped and all required method/outcome classes. Rollback uses the same binaries and never remigrates bytes or reactivates unsafe config mutation while recovery is pending. No production daemon is touched.
 
 **Acceptance:**
-- 6.2.1 - All 35 inventory rows pass their named native parity acceptance, with explicit native replacement coverage for renamed routes. test: `tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity`.
+- 6.2.1 - All 36 source rows satisfy their named parity acceptance; both additive routes prove native-extension contracts, with explicit native replacement coverage for renamed routes. test: `tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity`.
 - 6.2.2 - Killing isolated Python leaves API-key/local/browser-admitted native operations serving and preserves refusal/transaction semantics. test: `tests/e2e/test_projects_files_family.py::test_family_survives_python_loss`.
 - 6.2.3 - A second machine without local hub bytes or DB credentials accesses hub documents and only its own local checkout, refusing cross-machine root and identity forgery. test: `tests/e2e/test_projects_files_family.py::test_two_machine_ownership_is_correct`.
 - 6.2.4 - Representative compare has zero mismatches and accounted coverage; pre-switch routing rollback uses the same binaries and never remigrates bytes. test: `tests/e2e/test_projects_files_family.py::test_compare_and_routing_rollback_are_safe`.
@@ -1429,7 +1502,7 @@ Replay the complete corpus against isolated native hub and node processes. Exerc
 Collect the exact proposed E2E node IDs in isolated state:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity tests/e2e/test_projects_files_family.py::test_family_survives_python_loss tests/e2e/test_projects_files_family.py::test_two_machine_ownership_is_correct tests/e2e/test_projects_files_family.py::test_compare_and_routing_rollback_are_safe`.
 
-### 6.3 Ledger evidence and downstream cutover contract [category: docs] (depends: 6.2, #24963)
+### 6.3 Ledger evidence and downstream cutover contract [category: docs] (depends: 6.2, #24963, #24970)
 `kind: deliverable`
 
 Targets:
@@ -1443,14 +1516,25 @@ Targets:
 - `docs/architecture/hub-owned-files-home.md`
 - `tests/contracts/test_projects_files_ledger.py`
 
-**Research context:** parity-ledger.md is generated by scripts/generate_parity_ledger.py. The supported success status is delegated, not an invented native status. Removed route keys stay as dropped-by-decision evidence; other keys must identify current registrations. D1 gives this plan 35 source keys. #21592 consumes the shared attachment service, while #21576 owns comms producers and their separate byte migration.
+**Research context:** parity-ledger.md is generated by scripts/generate_parity_ledger.py. The supported success status is delegated, not an invented native status. Removed route keys stay as dropped-by-decision evidence; other keys must identify current registrations. The original 35 source keys plus the transferred node-checkout row give 36 source owners. #21592 consumes the shared attachment service, while #21576 owns comms producers and their separate byte migration.
 
 After 6.2 passes, record delegated status with exact native symbols/tests for every surviving source key and canonical replacement. Preserve removed namespace keys as dropped by decision #24951 with their replacement and proof; retain no proxied claim for completed owned service work. Regenerate the ledger and assert no new unclassified row. Record #21592's dependency on the shared service outcome in the contract for the coordinator to wire at expansion; do not expand/edit other task trees here. Document #21576's destination/API and strict exclusion of comms byte migration from this plan. Describe the announced migration/native flip, crash recovery and pre-naming routing rollback, and the naming-switch deletion of transitional shims with no supervised Python mode.
+
+Explicitly reassign HTTP POST /api/nodes/checkouts in the comms-cron-hub-nodes
+shard: replace the old #24151 ownership note with Projects #21585, this plan's
+decision #24951, implementation section4.5 and acceptance4.5.5 plus its native
+symbol/test evidence. #24151's recorded transfer is the authority; it retains
+no duplicate checkout-registration owner. Include the row in the 36-source
+inventory and generated ledger. Record the two exact native-extension entries
+from2.2/4.1 in the appropriate shard rows with delegated implementation evidence
+and native-extension provenance; the shared consumers report that provenance
+without a Python parity leg. Every decision value uses the #24963 canonical
+task-ref or plan-path#section grammar.
 
 Publish the D1-D7 disposition/waiver ID and exact replacement inventory using
 #24963's shared registry; no family-local waiver file or skipped-only proof.
 Document S2's explicit admitted-authority convention with #24967/#24452 and
-#24964, and S4's common typed errors, existing envelope adapters and
+#24964, and S4's #24970-owned classification/shared adapters and
 Absent/Clear/Set merged validation. For S3, inventory current Python fence
 injection at runner_init/services.py and consumers in runner_init/orchestration.py,
 runner_init/project_purge.py and memory/vector services. Every native derived
@@ -1467,10 +1551,11 @@ Specifically, record and verify the concrete1.2 implementation-task to existing
 a reference to the Projects root cannot substitute for that dependency graph.
 
 **Acceptance:**
-- 6.3.1 - Each of the 35 exact source keys has proven delegated or explicit renamed-route decision status and a native replacement/test; no scoped key is silently omitted and no unrelated shard row changes ownership. test: `tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete`.
+- 6.3.1 - Each of the 36 exact source keys has proven delegated or explicit renamed-route decision status and a native replacement/test; no scoped key is silently omitted and no unrelated shard row changes ownership. test: `tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete`.
 - 6.3.2 - Regeneration yields the checked-in ledger, canonical new routes are classified and the eight API-docs UI rows remain #21589-owned. test: `tests/contracts/test_projects_files_ledger.py::test_generated_ledger_matches_inventory`.
 - 6.3.3 - The contract states #21592's shared-service dependency, #21576's comms boundary, admission reuse, once-only migration and naming-switch shim removal. file: `docs/contracts/projects-files-hub.md`.
-- 6.3.4 - Ledger/replay/compare cite the same exact D1-D7 waiver entries, S2-S4 conventions and downstream fence/files_home ownership; stale citations or unwaived skips cannot close the family. test: `tests/contracts/test_projects_files_ledger.py::test_debt_and_shared_capability_ownership_is_complete`.
+- 6.3.4 - Ledger/replay/compare cite the same exact D1-D7 entries, native extensions, #24970 ownership and downstream fence/files_home contracts; malformed/stale citations or unwaived skips cannot close the family. test: `tests/contracts/test_projects_files_ledger.py::test_debt_and_shared_capability_ownership_is_complete`.
+- 6.3.5 - The node-checkout source row has exactly the transferred Projects owner and4.5.5 proof, both additive routes have exact native-extension citations/native tests, and no #24151 or fabricated Python ownership remains. test: `tests/contracts/test_projects_files_ledger.py::test_checkout_transfer_and_extensions_have_single_owners`.
 
 **Verification:** planned: `uv run python scripts/generate_parity_ledger.py`, isolated protected pytest for tests/contracts/test_projects_files_ledger.py and tests/test_parity_ledger.py.
 Collect the exact proposed Python node IDs:
@@ -1479,8 +1564,10 @@ Collect the exact proposed Python node IDs:
 ## E1 Verification and review gates
 `kind: verification`
 
-Observed during planning: ledger inventory reads yielded exactly 35 scoped rows;
-source/evidence reads resolved the named existing seams. Implementation,
+Observed during original research: ledger reads yielded 35 scoped source rows;
+coordinator review then transferred the existing node-checkout row from #24151,
+giving 36 current source owners plus two separately identified additive routes.
+Source/evidence reads resolved the named existing seams. Implementation,
 migration, runtime parity and E2E commands above are planned checks.
 
 Before each review, run:
@@ -1558,3 +1645,10 @@ two native extensions, transfer the node-checkout ledger row, verify capability
 producer ordering before consumer admission, and use canonical waiver citations.
 Withdraw the entire superseded M1 from526ed38 under memory f5577ae0 before
 narrative repair; renewed adversary consensus and derivation are required.
+
+2026-10-24 — Applied all coordinator amendments: #24970 supplies shared error
+classification/adapters; policy-field saves refuse corrupt/non-object/unreadable
+metadata unchanged; two additive HTTP routes have exact native-extension entries;
+the node-checkout transfer yields36 source owners;1.3 verifies producer/consumer
+edges before admission; waiver decisions use canonical task or plan citations.
+Fresh validation and adversary recheck precede renewed consensus and M1.
