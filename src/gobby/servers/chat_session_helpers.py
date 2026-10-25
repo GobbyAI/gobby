@@ -11,7 +11,6 @@ import logging
 import os
 import re
 import shutil
-import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -28,6 +27,7 @@ from gobby.adapters.degradation import (
     AdditionalContextPersistKwargs,
     persist_kwargs_from_mapping,
 )
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.hooks.events import ContextPart, HookResponse
 from gobby.llm.sdk_utils import truncate_additional_context as _truncate
 
@@ -135,18 +135,8 @@ def _find_mcp_config() -> str | None:
 
 
 def _build_gobby_mcp_entry() -> McpStdioServerConfig:
-    """Build gobby MCP server config for ClaudeAgentOptions.mcp_servers.
-
-    Resolves the gobby binary using the same pattern as the installer
-    (sys.executable sibling → shutil.which → bare command).
-    """
-    gobby_bin = Path(sys.executable).parent / "gobby"
-    if gobby_bin.exists():
-        return {"command": str(gobby_bin), "args": ["mcp-server"]}
-    gobby_path = shutil.which("gobby")
-    if gobby_path:
-        return {"command": gobby_path, "args": ["mcp-server"]}
-    return {"command": "gobby", "args": ["mcp-server"]}
+    """Build the managed gmcp server config for ClaudeAgentOptions.mcp_servers."""
+    return {"command": gmcp_command(), "args": []}
 
 
 def build_codex_web_chat_mcp_overrides() -> list[str]:

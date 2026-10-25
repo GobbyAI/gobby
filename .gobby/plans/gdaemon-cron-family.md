@@ -110,6 +110,10 @@ another plan or on a family's whole retirement root:
   file/directory fsync, durable replace, descriptor range reads and expected-
   object conditional unlink. Runtime injects this shared capability; gcron
   gains no dependency on gprojects, Projects' root or its retirement.
+- **Shared domain errors and transport adapters, #24970.** This external owner
+  resolves Cron debt S3. Map repository/executor errors onto its seven classes
+  and consume its HTTP/MCP/CLI adapters. Cron implements no competing error
+  framework. Its fixture and service outcomes depend on this owner explicitly.
 
 The headings bind #24967 and #24964 directly. Before Cron expansion, the
 Orchestrator checks the full cross-plan graph for cycles and carries each
@@ -179,14 +183,17 @@ normalization mask nor Skipped is a waiver. Sequential cases outside the named
 correction remain equal. Native race/cleanup assertions supplement the Python
 oracle where reproducing its bug would be unsafe or nondeterministic.
 
-Use one **native domain-error convention** across family adapters: validation,
+Use #24970 as the external owner of the **native domain-error convention** and
+shared HTTP/MCP/CLI transport adapters; Cron debt S3 resolves to that task: validation,
 missing, forbidden, conflict, capacity, unavailable and internal are distinct
 typed classes. Preserve intentional existing wire envelopes with explicit
 transport adapters; Cron's corrected schedule validation uses 400 with
 `{"detail":"Invalid cron schedule"}`, forbidden remains 403, and unexpected
 internal errors reveal no database diagnostics. Changed envelopes require an
-exact #24963 waiver. Reuse shared runtime error facilities where sufficient;
-this plan creates no Cron exception framework or unrelated envelope migration.
+exact #24963 waiver. Map Cron domain errors onto #24970 and invoke its shared adapters directly.
+Internal errors expose only the shared safe message and optional structured
+detail, never raw ValueError, database, driver or connection text. Cron creates
+no exception framework, per-family transport mapper or unrelated envelope migration.
 
 Use one **presence-preserving partial-update convention** across HTTP, MCP and
 CLI service adapters: Absent leaves a field unchanged, Clear is explicit null,
@@ -314,7 +321,7 @@ an unimplemented new adapter is proxied through a nonexistent Python handler.
 ## P1: Portable schedule and storage contracts
 `kind: framing`
 
-### 1.1 Characterize Cron behavior before takeover [category: test] (depends: #24963)
+### 1.1 Characterize Cron behavior before takeover [category: test] (depends: #24963, #24970)
 `kind: deliverable`
 
 Targets:
@@ -411,6 +418,39 @@ key, including the HTTP/CLI/MCP prefix) is:
   report native-extension with citation and native provenance, never Waived
   Python success. Missing registry entries fail the shared gates.
 
+S3 uses #24970's shared classification and transport adapters. This leaf also
+adds the following exact safe-error waivers to #24963's shared manifest, each
+with decision `.gobby/plans/gdaemon-cron-family.md#3.4`:
+- `cron.mcp-create-job.safe-errors`: MCP gobby-cron:create_cron_job.
+- `cron.mcp-delete-job.safe-errors`: MCP gobby-cron:delete_cron_job.
+- `cron.mcp-get-job.safe-errors`: MCP gobby-cron:get_cron_job.
+- `cron.mcp-list-jobs.safe-errors`: MCP gobby-cron:list_cron_jobs.
+- `cron.mcp-list-runs.safe-errors`: MCP gobby-cron:list_cron_runs.
+- `cron.mcp-run-job.safe-errors`: MCP gobby-cron:run_cron_job.
+- `cron.mcp-toggle-job.safe-errors`: MCP gobby-cron:toggle_cron_job.
+- `cron.mcp-update-job.safe-errors`: MCP gobby-cron:update_cron_job.
+- `cron.cli-add.safe-errors`: CLI gobby cron add.
+- `cron.cli-edit.safe-errors`: CLI gobby cron edit.
+- `cron.cli-list.safe-errors`: CLI gobby cron list.
+- `cron.cli-park.safe-errors`: CLI gobby cron park.
+- `cron.cli-remove.safe-errors`: CLI gobby cron remove.
+- `cron.cli-run.safe-errors`: CLI gobby cron run.
+- `cron.cli-runs.safe-errors`: CLI gobby cron runs.
+- `cron.cli-toggle.safe-errors`: CLI gobby cron toggle.
+- `cron.cli-wake.safe-errors`: CLI gobby cron wake.
+
+Each replacement is the exact operation's #24970 class and safe message on its
+shared transport adapter: MCP uses the shared error-result shape, CLI uses the
+shared class-specific exit code and safe stderr. Record the Python envelope
+unchanged and enumerate the affected validation/missing/forbidden/conflict/
+capacity/unavailable/internal failure vectors that operation can reach. Assert
+those native replacements and no unintended write/dispatch; successful results
+and unrelated errors receive no waiver. Inject ValueError and database/driver
+diagnostics to prove their raw text never escapes on MCP or CLI. Group/help and
+argument-parser behavior of CLI gobby cron remains unchanged; it adds no domain
+operation or error waiver. The new output tool/verb's shared safe-error behavior
+belongs to its existing exact native-extension entry, with no Python counterpart.
+
 Record ordinary and browser-testing gobby_session cookies separately across all
 nine existing /api/cron routes, including mutation rows/effects, selector mismatches,
 expiry/revocation, absent/invalid Authorization and missing credentials. Pin
@@ -436,7 +476,7 @@ interface, with no implementation or domain ownership transferred by this leaf.
 - 1.1.3 - Lifecycle vectors reproduce admission conflicts, durable children, backoff and recovery; D5-D7 native race/cleanup/resource assertions cite exact waivers. test: `tests/contracts/test_cron_oracle.py::test_lifecycle_vectors_match_python`.
 - 1.1.4 - The original ten HTTP routes/error branches retain Python origin; the additive raw-output read has explicit approved native-extension provenance, bounded range/auth/failure/retention cases and no fabricated Python equality. file: `tests/contracts/http/cron.json`; file: `tests/contracts/http/cron-output.json`.
 - 1.1.5 - Browser vectors record both cookie classes for the nine Python Cron routes plus explicit native-extension authority for the tenth output read; selectors, credentials, effects and CORS/CSRF policy are not normalized. test: `tests/contracts/test_cron_oracle.py::test_browser_vectors_match_python`.
-- 1.1.6 - Every D1-D7 Cron waiver has its real stable per-surface ID, exact ledger surface, behaviour, approved decision and replacement in the one shared manifest; the oracle binds both Python observations and native assertions to it. file: `docs/contracts/parity-waivers.json`.
+- 1.1.6 - Every D1-D7/S3 waiver and native extension has its exact stable ID, ledger surface, behaviour, approved decision and replacement in the shared manifest; all seventeen changed MCP/CLI safe-error envelopes bind Python observations to #24970's native class/message/adapter assertions without raw exception text. file: `docs/contracts/parity-waivers.json`.
 
 ### 1.1a Durable bounded-output metadata schema [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -468,7 +508,7 @@ evidence `crates/gcore/assets/schema/baseline.sql:2384-2400`, excerpt_hash
 `4c7dee8671d3b18caef2b66518a0b7f82c738002b8ac6b913038923f993e8f55`,
 shows `2392|     output text,` and `2393|     error text,` with no capture
 metadata. Add output_bytes_seen BIGINT, output_truncated BOOLEAN and
-output_overflow_ref TEXT to cron_runs through one additive migration. Leave old
+output_raw_ref TEXT to cron_runs through one additive migration. Leave old
 rows NULL/NULL/NULL; add no backfill, table, storage service or config knob.
 The runtime role's existing table grants cover these columns. A new shell
 completion writes all three together. The reference is a files_home-relative
@@ -495,7 +535,7 @@ change's mandatory identity, signed-fixture and release carriers. They must
 commit together; model/executor changes remain separately owned below.
 
 **Acceptance:**
-- 1.1a.1 - Fresh and upgraded schemas expose nullable BIGINT output_bytes_seen, BOOLEAN output_truncated and TEXT output_overflow_ref; old rows retain NULL/NULL/NULL and existing output is unchanged. test: `crates/gcore/tests/cron_output_capture.rs::output_capture_migration_preserves_existing_runs`.
+- 1.1a.1 - Fresh and upgraded schemas expose nullable BIGINT output_bytes_seen, BOOLEAN output_truncated and TEXT output_raw_ref; old rows retain NULL/NULL/NULL and existing output is unchanged. test: `crates/gcore/tests/cron_output_capture.rs::output_capture_migration_preserves_existing_runs`.
 - 1.1a.2 - Embedded schema, catalog, Python expectation, CLI identity and signed grants all identify the same migration bytes. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 1.1a.3 - gcode, gdaemon and ghook receive this leaf's patch bumps, lock and pins. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -528,7 +568,7 @@ calendar compatibility in this module. Restrict the parser's additional syntax
 to what the Python API accepted. A vector difference requires a compatibility
 fix, never silent schedule widening or loss. UTF-8/JSON/timestamps retain Python
 wire formatting. Carry 1.1a's nullable output_bytes_seen, output_truncated and
-output_overflow_ref as typed optional fields. Omit unknown metadata from
+output_raw_ref as typed optional fields. Omit unknown metadata from
 old/non-shell full and brief JSON. For newly captured shell output emit byte
 count/truncation, including zero/false, plus output_url pointing to
 /api/cron/runs/{run_id}/output; retain the storage locator internally. The output
@@ -547,7 +587,7 @@ required release carriers. One pure schedule/value contract remains the outcome.
 - 1.2.2 - Job/run/child full and brief JSON preserve aware UTC/null values; shell metadata follows the four exact D7 surface waivers while old/non-shell payloads remain unchanged. test: `crates/gcron/tests/schedule.rs::models_match_python_wire`.
 - 1.2.3 - gcode, gdaemon and ghook receive this leaf's patch bumps, lock and pins. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 1.3 Native job repository and system-row mutations [category: code] (depends: 1.2)
+### 1.3 Native job repository and system-row mutations [category: code] (depends: 1.2, #24970)
 `kind: deliverable`
 
 Targets:
@@ -588,6 +628,10 @@ orders created_at DESC,id DESC and supports 50-default/1..200 keyset pages
 under `cron.list-jobs.pagination`; its HTTP contract belongs to 3.1.
 Read existing project deletion callers before preserving their batch contract;
 native bindings are owned by 2.7. No new generic repository layer is needed.
+Map Jobs failures directly onto #24970's shared seven-class type. Preserve
+typed field information and safe messages; neither a repository exception
+framework nor HTTP/MCP/CLI rendering lives in Jobs. Transport owners consume
+the shared adapters through 3.4's service contract.
 Planned: isolated `cargo test -p gobby-cron --test jobs` and release-pin pytest.
 
 **Acceptance:**
@@ -753,7 +797,7 @@ also cannot exceed it. Output at/below the decoded budget stays exact and
 output_truncated=false. Above it sets true; even after the limit, continue
 draining to avoid a blocked child. No unbounded intermediate buffer, output
 storage service or configurable cap is introduced. Persist output_bytes_seen,
-output_truncated and output_overflow_ref with output/error in one completion
+output_truncated and output_raw_ref with output/error in one completion
 write to 1.1a's columns. New shell runs retain all three facts, including a
 published empty raw file for zero bytes/false; historical/non-shell unknowns
 stay NULL. The cap affects only the inline copy and never discards raw bytes.
@@ -1056,22 +1100,22 @@ The existing storage mechanism is src/gobby/paths.py::open_files_home_descendant
 at lines 173-198, excerpt_hash
 `507d158e62195fcbee805760a6e82c2c408aef3e13d37d77b79b5d0715616955`;
 the native implementation is external #24968, not a Python runtime dependency.
-Use the stored output_overflow_ref only after run/job/project authorization.
+Use the stored output_raw_ref only after run/job/project authorization.
 Validate the expected run-UUID namespace and regular-file identity through the
 shared capability. Never accept a filesystem path or locator from the request,
 reopen a pathname, load the complete file, or give a node local storage access.
 
-Without Range, offset defaults to 0 and limit to 65,536 (range 1..1,048,576);
-return 200 raw application/octet-stream bytes, X-Output-Bytes-Seen and
-X-Next-Offset headers, omitting the latter at EOF. Support one standard bytes
-Range including closed/open/suffix forms, clamp its end at EOF, and return 206
-with Content-Range and Accept-Ranges. A requested span beyond 1,048,576 bytes
-is 400 rather than an unbounded read; a wholly out-of-bounds range is 416 with
-Content-Range: bytes */total. Reject
-multipart ranges, malformed ranges or mixed Range and explicit offset/limit
-with 400. Invalid numeric query bounds use 422. An active unpublished capture is
-409, missing run/output or historical/non-shell unknown raw bytes is 404, and
-known capture/storage failure is 503; do not substitute the lossy inline string.
+The HTTP endpoint uses byte Range only, with no offset/limit query contract
+or custom continuation header. Without Range, return the first at most 65,536
+raw bytes with 200, application/octet-stream, Accept-Ranges:bytes and
+X-Output-Bytes-Seen; an empty finalized stream returns an empty 200. Every
+continuation uses a standard single bytes Range. Support closed/open/suffix
+forms, clamp the end at EOF and return 206 with Content-Range and Accept-Ranges.
+Reject a span beyond 1,048,576 bytes with 400; a wholly out-of-bounds range is
+416 with Content-Range: bytes */total. Reject malformed/multipart ranges and
+any offset/limit query parameter with 400. An active unpublished capture is 409,
+missing run/output or historical/non-shell unknown raw bytes is 404, and known
+capture/storage failure is 503; never substitute the lossy inline string.
 Use Cache-Control:no-store and nosniff, preserve raw invalid UTF-8, and close
 the held descriptor on completion/cancellation. An unbounded HTTP download is
 not a hidden second path around the read limit.
@@ -1092,7 +1136,7 @@ Release carriers account for the inventory threshold.
 
 **Acceptance:**
 - 3.1a.1 - Raw reads reconstruct the complete shell byte stream beyond the inline cap, including invalid UTF-8, while each response stays within the approved default/max bound. test: `crates/gcron/tests/http_output.rs::raw_output_is_complete_and_bounded`.
-- 3.1a.2 - Single ranges, EOF, malformed/oversized/multipart requests, query bounds and active/missing/failed capture errors follow the specified statuses and headers. test: `crates/gcron/tests/http_output.rs::range_and_capture_states_are_explicit`.
+- 3.1a.2 - Default reads, single ranges, EOF, malformed/oversized/multipart requests, rejected offset/limit queries and active/missing/failed capture errors follow the specified statuses and headers. test: `crates/gcron/tests/http_output.rs::range_and_capture_states_are_explicit`.
 - 3.1a.3 - Project/caller substitution, forged locators, symlink/ancestor swaps and cancellation never reveal another run's bytes or reopen an unsafe path; node reads use the hub relay. test: `crates/gcron/tests/http_output.rs::raw_output_authority_and_descriptor_are_bounded`.
 - 3.1a.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -1178,7 +1222,7 @@ gobby-daemon --test cron_protection` with a fake clock and isolated restart.
 Cooperative handoff needs a separate predicate: all pending/running cron rows
 for the daemon's local machine, irrespective of restart_protected, elapsed
 time or scheduler_owner. Reuse Runs::count_running from 2.1. Add exactly
-`GET /api/admin/cron/active-run-count` to the existing native lease-admin control
+`GET /api/admin/cron/active-run-count` to the existing non-ledger internal lease-admin control
 seam, independently of the switchable Cron family router, so it stays native
 while that family is Proxy/Compare. Require the existing authenticated operator
 or backend control principal; accept no machine-id selector. Return
@@ -1203,7 +1247,7 @@ carriers exceed the file-count inspection threshold.
 - 3.3.3 - The authenticated control query counts ordinary unprotected local active runs, excludes foreign-machine work and fails closed on unavailable identity/database; it stays native in Proxy/Compare until its documented S3.2 removal with `_lease.py`. test: `crates/gdaemon/tests/cron_protection.rs::active_count_is_local_complete_and_fail_closed`.
 - 3.3.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 3.4 Native service contract for CLI and MCP owners [category: code] (depends: 3.3)
+### 3.4 Native service contract for CLI and MCP owners [category: code] (depends: 3.3, #24970)
 `kind: deliverable`
 
 Targets:
@@ -1237,14 +1281,31 @@ helpers remain only until their last live Python caller is ported. Neither
 owner leaves a supervised daemon dependency after the naming switch.
 Carry #24961 D1-D7's exact #24963 IDs from 1.1 into every affected operation
 mapping, distinguishing ordinary Passed cases from explicit native replacements.
-Use the single native domain-error classification (validation/missing/forbidden/
-conflict/capacity/unavailable/internal) and preserve each adapter's intentional
-envelope. HTTP's corrected schedule failure is safe 400; MCP and CLI expose
+Consume #24970's single native classification (validation/missing/forbidden/
+conflict/capacity/unavailable/internal) and its HTTP/MCP/CLI adapters. Preserve
+intentional envelopes by declaring them through that shared adapter; no local
+transport mapping is implemented here. MCP and CLI always use #24970's class
+and safe text, never raw ValueError or database/driver/connection messages. HTTP's corrected schedule failure is safe 400; MCP and CLI expose
 the same typed validation without copying the accidental PATCH server failure.
 Apply Absent/Clear/Set at the service boundary with the field-specific nullable
 contract from 1.3; adapter defaults never turn omitted values into Clear.
 The D2/D4/D5 entries for MCP/CLI explicitly bind merged-candidate, atomic edit
 and toggle-on invariants to their exact ledger surfaces.
+All changed legacy MCP/CLI error envelopes use the seventeen exact S3 entries
+owned by 1.1. MCP IDs are cron.mcp-create-job.safe-errors,
+cron.mcp-delete-job.safe-errors, cron.mcp-get-job.safe-errors,
+cron.mcp-list-jobs.safe-errors, cron.mcp-list-runs.safe-errors,
+cron.mcp-run-job.safe-errors, cron.mcp-toggle-job.safe-errors and
+cron.mcp-update-job.safe-errors. CLI IDs are cron.cli-add.safe-errors,
+cron.cli-edit.safe-errors, cron.cli-list.safe-errors, cron.cli-park.safe-errors,
+cron.cli-remove.safe-errors, cron.cli-run.safe-errors, cron.cli-runs.safe-errors,
+cron.cli-toggle.safe-errors and cron.cli-wake.safe-errors. Each names its exact
+operation's ledger key and decision `.gobby/plans/gdaemon-cron-family.md#3.4`.
+Only the enumerated failed-operation envelope/class/safe text is changed;
+success and unrelated effects remain unwaived. The new output surfaces use
+their exact native-extension entries. Tests inject raw ValueError and SQL/
+driver/connection diagnostics and assert that neither MCP output nor CLI stderr
+contains them; invoke #24970's adapters rather than sanitizing locally.
 
 D3 traversal is fixed: HTTP and MCP return one page, default 50, limit 1..200,
 optional cursor and next_cursor null at end. #21570 adds optional limit/cursor
@@ -1260,10 +1321,15 @@ The #21570 descriptor consumer also runs
 `--test mcp_contract` target once #24949 lands), never a module-name filter.
 The approved additive adapters are MCP get_cron_run_output (#21570) and CLI
 gobby cron output (#21571), both calling 3.1a's same native bounded service.
-Use offset default 0 and limit default 65,536/max 1,048,576. HTTP/CLI return raw
+The bounded service takes offset default 0 and length default 65,536/max
+1,048,576. HTTP adapters express non-default reads with byte Range only, never
+query parameters. HTTP/CLI return raw
 bytes; MCP returns run_id, offset, data_base64, bytes_returned, total_bytes and
 next_offset (null at EOF), preserving invalid UTF-8 exactly. CLI accepts the run
-ID plus optional --offset/--limit and writes the selected chunk to stdout.
+ID plus optional --offset/--limit, translates them into the bounded service/
+HTTP Range and writes the selected chunk to stdout. MCP numeric arguments
+likewise map to that service/Range, not an HTTP query. The default read handles
+a finalized empty stream as successful empty output.
 Neither adapter silently fetches unbounded data; repeated bounded reads can
 reconstruct the full raw stream. Transfer the exact
 `cron.mcp-get-run-output.native-extension` and `cron.cli-output.native-extension`
@@ -1272,7 +1338,7 @@ handoff. The original eighteen adapter rows remain owned as before; these two
 new surfaces become delegated ledger rows when their owners deliver them.
 
 **Acceptance:**
-- 3.4.1 - Every CLI/MCP operation maps to one native service, preserving ordinary defaults/results/errors and asserting exact D1-D7 native replacements, field presence, atomic edit/toggle guards, bounded MCP pages and CLI traversal; park/wake and ID-or-name lookup remain intact. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
+- 3.4.1 - Every CLI/MCP operation uses the native service and #24970's shared safe-error adapters, with exact D1-D7/S3 waiver assertions and no raw exception text; field presence, atomic edits/toggles, bounded MCP pages, CLI traversal, park/wake and ID-or-name lookup remain covered. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
 - 3.4.2 - Restricted-caller shell/protection, per-surface waivers, shared conventions, explicit #21570/#21571 cleanup, bounded list traversal and new raw-output adapter/ledger handoffs are complete. file: `docs/contracts/cron-services.md`.
 - 3.4.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -1722,8 +1788,13 @@ expansion plan validation after the adversary stamps M1.
 
 Authoring validation is `uv run gobby plans validate
 .gobby/plans/gdaemon-cron-family.md -p /Users/josh/Projects/gobby`.
-Expansion validation is unrun for a narrative-only draft. Once the adversary
-derives/applies M1, both base validation and `--mode expansion` must pass.
+Both base validation and `--mode expansion` are mandatory for the final
+adversary-rendered bytes. The stamped handoff records their exact commit/hash
+and exit results. Earlier stamped 945bbe4a2a5716dc6f0984134ac135452da35e22
+passed both checks; those results cover only that superseded revision and are
+not reused for these amendments. Narrative-only repair validation uses base
+mode; expansion validation requires the freshly derived M1. Implementation
+checks below remain planned.
 
 Implementation checks remain planned: isolated focused Python oracle/retirement
 tests, package-scoped native suites, native HTTP replay and the controlled
@@ -1734,7 +1805,7 @@ task expansion; this planning seat neither expands nor dispatches work.
 After approved future expansion, the Orchestrator applies and verifies
 `security-review` on 4.1b before dispatch. Native cookie activation requires a
 Security Reviewer's approved step for the exact implementation SHA.
-Cron expansion requires cycle-checked concrete #24963/#24964/#24967/#24968
+Cron expansion requires cycle-checked concrete #24963/#24964/#24967/#24968/#24970
 implementation edges in freshly reviewed/validated bytes. Dispatch/activation
 requires landed shared-capability proof. The #24961 debt report is folded into
 D1-D7 exact-surface waivers and K1 is retained; #24963 readiness rejects zero-
@@ -1743,6 +1814,25 @@ three nullable schema columns are explicit, separately verified outcomes.
 
 ## V1 Plan Changelog
 `kind: framing`
+
+2026-10-25: Writer and Plan Adversary reached renewed consensus on all 23
+deliverables after review of 1029acc61d30a2a5d30e3218cda2ab4a3fe4a1be, with
+no blocking or nit findings and no unresolved decisions. The coordinator
+amendments preserve the shared error owner and exact safe-error waivers,
+Range-only HTTP output, complete raw capture, internal count boundary and
+security gates. Fresh adversary-derived M1 must bind these narrative bytes.
+
+2026-10-25: Withdrew the superseded M1 whole after the coordinator-repair
+commit, preserving its bytes in Git history. This narrative requires fresh
+adversary consensus, derivation and base/expansion checks before handoff.
+
+2026-10-25: Applied the coordinator review: #24970 owns shared error classes
+and HTTP/MCP/CLI adapters, with seventeen exact legacy safe-error waivers;
+HTTP output reads use byte Range without a query or custom continuation
+protocol; output_raw_ref names the complete raw capture retained on every
+shell run. Verification wording distinguishes prior stamped checks from the
+fresh repair/stamp checks. The previous M1 is superseded and will be withdrawn
+whole before fresh adversary review and derivation.
 
 2026-10-24: Writer and Plan Adversary reached fresh consensus on all 23
 deliverables after review of 1933fe8b40d66913a57a54ea52fdee963c0085cc, with
@@ -1826,9 +1916,11 @@ dependency, Cron Python retirement and explicit CLI/MCP naming-switch handoffs.
     plus explicit native-extension authority for the tenth output read; selectors,
     credentials, effects and CORS/CSRF policy are not normalized. test: `tests/contracts/test_cron_oracle.py::test_browser_vectors_match_python`.
 
-    1.1.6: Every D1-D7 Cron waiver has its real stable per-surface ID, exact ledger
-    surface, behaviour, approved decision and replacement in the one shared manifest;
-    the oracle binds both Python observations and native assertions to it. file: `docs/contracts/parity-waivers.json`.'
+    1.1.6: Every D1-D7/S3 waiver and native extension has its exact stable ID, ledger
+    surface, behaviour, approved decision and replacement in the shared manifest;
+    all seventeen changed MCP/CLI safe-error envelopes bind Python observations to
+    #24970''s native class/message/adapter assertions without raw exception text.
+    file: `docs/contracts/parity-waivers.json`.'
   labels:
   - covers:gdaemon-cron-family:1.1:1.1.1
   - covers:gdaemon-cron-family:1.1:1.1.2
@@ -1845,8 +1937,8 @@ dependency, Cron Python retirement and explicit CLI/MCP naming-switch handoffs.
   depends_on:
   - '1.1'
   validation_criteria: '1.1a.1: Fresh and upgraded schemas expose nullable BIGINT
-    output_bytes_seen, BOOLEAN output_truncated and TEXT output_overflow_ref; old
-    rows retain NULL/NULL/NULL and existing output is unchanged. test: `crates/gcore/tests/cron_output_capture.rs::output_capture_migration_preserves_existing_runs`.
+    output_bytes_seen, BOOLEAN output_truncated and TEXT output_raw_ref; old rows
+    retain NULL/NULL/NULL and existing output is unchanged. test: `crates/gcore/tests/cron_output_capture.rs::output_capture_migration_preserves_existing_runs`.
 
     1.1a.2: Embedded schema, catalog, Python expectation, CLI identity and signed
     grants all identify the same migration bytes. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
@@ -2149,9 +2241,9 @@ dependency, Cron Python retirement and explicit CLI/MCP naming-switch handoffs.
     beyond the inline cap, including invalid UTF-8, while each response stays within
     the approved default/max bound. test: `crates/gcron/tests/http_output.rs::raw_output_is_complete_and_bounded`.
 
-    3.1a.2: Single ranges, EOF, malformed/oversized/multipart requests, query bounds
-    and active/missing/failed capture errors follow the specified statuses and headers.
-    test: `crates/gcron/tests/http_output.rs::range_and_capture_states_are_explicit`.
+    3.1a.2: Default reads, single ranges, EOF, malformed/oversized/multipart requests,
+    rejected offset/limit queries and active/missing/failed capture errors follow
+    the specified statuses and headers. test: `crates/gcron/tests/http_output.rs::range_and_capture_states_are_explicit`.
 
     3.1a.3: Project/caller substitution, forged locators, symlink/ancestor swaps and
     cancellation never reveal another run''s bytes or reopen an unsafe path; node
@@ -2229,10 +2321,10 @@ dependency, Cron Python retirement and explicit CLI/MCP naming-switch handoffs.
   task_type: feature
   depends_on:
   - '3.3'
-  validation_criteria: '3.4.1: Every CLI/MCP operation maps to one native service,
-    preserving ordinary defaults/results/errors and asserting exact D1-D7 native replacements,
-    field presence, atomic edit/toggle guards, bounded MCP pages and CLI traversal;
-    park/wake and ID-or-name lookup remain intact. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
+  validation_criteria: '3.4.1: Every CLI/MCP operation uses the native service and
+    #24970''s shared safe-error adapters, with exact D1-D7/S3 waiver assertions and
+    no raw exception text; field presence, atomic edits/toggles, bounded MCP pages,
+    CLI traversal, park/wake and ID-or-name lookup remain covered. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
 
     3.4.2: Restricted-caller shell/protection, per-surface waivers, shared conventions,
     explicit #21570/#21571 cleanup, bounded list traversal and new raw-output adapter/ledger

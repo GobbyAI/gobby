@@ -1,0 +1,1372 @@
+header:
+  plan_id: gdaemon-projects-files-docs-family
+  plan_hash: e2d7473945544163344068302861d406becf2334d75a19d1a04d6381c77a272f
+  root_task_ref: '21585'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-25T08:01:08Z'
+  task_tree_source: db
+  task_tree_source_hash: 3983a16e1a083f0b385d8655b70dc0927fd28e592dfafd92bfd107ee48d0bcba
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: b76fea655c70f7b009a42d475b39c971138a80cdc15d9edd895e13e1cc616b79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25043'
+    validation_criteria_snippet: '1.1.1: The inventory contains exactly 36 scoped
+      source keys with unique acceptance owners, including the transferred node-checkout
+      row, plus separately identif...'
+    matched_artifact_ref: tests/contracts/test_projects_files_corpus.py::test_inventory_is_complete
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 93632d0eafb349869bcd803304d0cc242c00a3b918b642fbc7ee986e7e7b3e7d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25043'
+    validation_criteria_snippet: '1.1.1: The inventory contains exactly 36 scoped
+      source keys with unique acceptance owners, including the transferred node-checkout
+      row, plus separately identif...'
+    matched_artifact_ref: tests/contracts/test_projects_files_corpus.py::test_python_cases_match
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: e582acd6d62389e73fa8076a80c7792e052e961755ba1a225b2dcad8bd014222
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25043'
+    validation_criteria_snippet: '1.1.1: The inventory contains exactly 36 scoped
+      source keys with unique acceptance owners, including the transferred node-checkout
+      row, plus separately identif...'
+    matched_artifact_ref: docs/contracts/projects-files-hub.md
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 92b2e4827ee7d47b6603beb67a4cb3698f3f20fee1caa7e1c29ff6abcb61dc5c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25043'
+    validation_criteria_snippet: '1.1.1: The inventory contains exactly 36 scoped
+      source keys with unique acceptance owners, including the transferred node-checkout
+      row, plus separately identif...'
+    matched_artifact_ref: tests/contracts/test_projects_files_corpus.py::test_waivers_are_specific_and_keep_cases_exact
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: bd895b8bd5780293624677197cd86b51340638bb8f4adeeee58aefced41165d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25043'
+    validation_criteria_snippet: '1.1.1: The inventory contains exactly 36 scoped
+      source keys with unique acceptance owners, including the transferred node-checkout
+      row, plus separately identif...'
+    matched_artifact_ref: tests/contracts/test_projects_files_corpus.py::test_native_extensions_have_explicit_provenance
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 2bfd6b2fb053d139991736ef04f40ceb0bc6e8d2e058913d9a23bf30149f9c43
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25044'
+    validation_criteria_snippet: '1.2.1: Proxy/native/compare dispatch, longest-prefix
+      ownership and unknown-method fallback are preserved for the registered Projects
+      family. test: `crates/gpro...'
+    matched_artifact_ref: crates/gprojects/tests/family.rs::dispatch_is_exact
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 09e7041477c68f94ce901386cdda852a5f3f9635590df0f09e4f9fad02d3ec43
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25044'
+    validation_criteria_snippet: '1.2.1: Proxy/native/compare dispatch, longest-prefix
+      ownership and unknown-method fallback are preserved for the registered Projects
+      family. test: `crates/gpro...'
+    matched_artifact_ref: crates/gprojects/tests/family.rs::mode_assembly_is_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 3ac0e49191eafa981af999eebcb85070c5365cd9da776c15af5b3c4129d3b172
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25044'
+    validation_criteria_snippet: '1.2.1: Proxy/native/compare dispatch, longest-prefix
+      ownership and unknown-method fallback are preserved for the registered Projects
+      family. test: `crates/gpro...'
+    matched_artifact_ref: crates/gprojects/tests/family.rs::composition_preserves_startup
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 0359b312f37b6705195f75a99d7c413e5ac440a50c087ba2a410e7203485e1fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25044'
+    validation_criteria_snippet: '1.2.1: Proxy/native/compare dispatch, longest-prefix
+      ownership and unknown-method fallback are preserved for the registered Projects
+      family. test: `crates/gpro...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 310da12523888e14ab634e2aaca7c5652afc55c3a2a60c3a39a11af31f7d46d0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25045'
+    validation_criteria_snippet: '2.1.1: Ordinary AuthStore cookies and confined managed-browser
+      cookies enter the family only through #24967''s verifier, with matching valid/expired/unknown/rev...'
+    matched_artifact_ref: crates/gdaemon/tests/projects_browser_admission.rs::shared_verifier_is_the_only_cookie_authority
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 9aff118299a746264115752209ff8711e097226bfb64a04fceac5aaba49727dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25045'
+    validation_criteria_snippet: '2.1.1: Ordinary AuthStore cookies and confined managed-browser
+      cookies enter the family only through #24967''s verifier, with matching valid/expired/unknown/rev...'
+    matched_artifact_ref: crates/gdaemon/tests/projects_browser_admission.rs::python_loss_never_weakens_cookie_admission
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: ce96cc3c6baaf80989c67cae450ea57a618a583953eeed33201a9920f7b7bcdf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25045'
+    validation_criteria_snippet: '2.1.1: Ordinary AuthStore cookies and confined managed-browser
+      cookies enter the family only through #24967''s verifier, with matching valid/expired/unknown/rev...'
+    matched_artifact_ref: crates/gdaemon/tests/projects_browser_admission.rs::cookie_classes_keep_route_permissions
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 8490c057878b8ae903fb3ae209eb1ecdec16a043c105172388602ee824d1ded0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25046'
+    validation_criteria_snippet: '2.2.1: API keys, local credentials and managed callers
+      receive the same admitted/refused outcomes as Python; forged identity headers
+      and revoked principals are...'
+    matched_artifact_ref: crates/gdaemon/tests/project_admission.rs::credentials_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 381b00658aa9ff47e893b562528e5a9a7a62dcffaa98c8a57fa82c8dd87a7c93
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25046'
+    validation_criteria_snippet: '2.2.1: API keys, local credentials and managed callers
+      receive the same admitted/refused outcomes as Python; forged identity headers
+      and revoked principals are...'
+    matched_artifact_ref: crates/gdaemon/tests/project_admission.rs::browser_confinement_is_native
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: bcfd2feba682ca3f746a0a4c21d86fe7b8e184edff73c5281d480f9aa6a962f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25046'
+    validation_criteria_snippet: '2.2.1: API keys, local credentials and managed callers
+      receive the same admitted/refused outcomes as Python; forged identity headers
+      and revoked principals are...'
+    matched_artifact_ref: crates/gdaemon/tests/project_admission.rs::family_never_skips_admission
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 242d3ec288f023f5349ec620eef8b61cf5776409e7051c9055623b0667eaf836
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25046'
+    validation_criteria_snippet: '2.2.1: API keys, local credentials and managed callers
+      receive the same admitted/refused outcomes as Python; forged identity headers
+      and revoked principals are...'
+    matched_artifact_ref: crates/gdaemon/tests/project_admission.rs::admission_is_explicit_and_cors_is_outer
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: b310d6cc015c43def730de1240ec8dd2bd1dbd07afb86b8bafb7b1b4d3737a6b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25046'
+    validation_criteria_snippet: '2.2.1: API keys, local credentials and managed callers
+      receive the same admitted/refused outcomes as Python; forged identity headers
+      and revoked principals are...'
+    matched_artifact_ref: crates/gdaemon/tests/project_admission.rs::node_admission_extension_is_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: ee5f8159eb9567238ec5caa93355f3918452201154af30f2a3d52672b0974c05
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25047'
+    validation_criteria_snippet: '3.1.1: GET''s source row HTTP GET /api/files/user-md
+      is implemented as native GET /api/hub/user, including empty/missing profiles
+      and remote forwarding. test: `...'
+    matched_artifact_ref: crates/gprojects/tests/user_document.rs::get_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 63481434307a6a2e6865bc75c2e91f56862213a09c016ea96c0c8f380a50bc66
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25047'
+    validation_criteria_snippet: '3.1.1: GET''s source row HTTP GET /api/files/user-md
+      is implemented as native GET /api/hub/user, including empty/missing profiles
+      and remote forwarding. test: `...'
+    matched_artifact_ref: crates/gprojects/tests/user_document.rs::put_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 843e335adddfbc262b51be03621cd8dafee372078846fc11ee881f8da6f4e1f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25047'
+    validation_criteria_snippet: '3.1.1: GET''s source row HTTP GET /api/files/user-md
+      is implemented as native GET /api/hub/user, including empty/missing profiles
+      and remote forwarding. test: `...'
+    matched_artifact_ref: crates/gprojects/tests/user_document.rs::storage_refusals_preserve_bytes
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 1cb913e9ad2361c0639a740afbea03f278750c5566d16b5d272a588d5d31ddcb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25048'
+    validation_criteria_snippet: '3.2.1: The source row HTTP GET /api/chat/attachments/limits
+      becomes native GET /api/hub/chat/attachments/limits and returns the current
+      configured max_file_byt...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_upload.rs::limits_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: b37ffb14623a2e13a2a09f314a2cd25f323cd1985fd6d7588416d9a2efc5b6fb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25048'
+    validation_criteria_snippet: '3.2.1: The source row HTTP GET /api/chat/attachments/limits
+      becomes native GET /api/hub/chat/attachments/limits and returns the current
+      configured max_file_byt...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_upload.rs::upload_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 10aee903cff780d6d66125be51347769402373a41c1695c686cdc52ebd3de6c2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25048'
+    validation_criteria_snippet: '3.2.1: The source row HTTP GET /api/chat/attachments/limits
+      becomes native GET /api/hub/chat/attachments/limits and returns the current
+      configured max_file_byt...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_upload.rs::publication_is_failure_atomic
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: 3aad03f44fc52bc58e546458efc1c5b7473dbdc1f6d2d5d4924c9566162c0ec2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25049'
+    validation_criteria_snippet: '3.3.1: The source row HTTP GET /api/chat/attachments/{attachment_id}/content
+      becomes the native hub content route with 200/206/304, missing-record/bytes
+      and ra...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_content_delete.rs::content_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: b310a03a6de6ae7547545409928bac9f4630abb9c1cc65f4cd9427d7f3d27905
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25049'
+    validation_criteria_snippet: '3.3.1: The source row HTTP GET /api/chat/attachments/{attachment_id}/content
+      becomes the native hub content route with 200/206/304, missing-record/bytes
+      and ra...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_content_delete.rs::delete_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: b814d6adacd33b78c2536463fc4d1460c2dc829c81c1de3eadec16976bef55ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25049'
+    validation_criteria_snippet: '3.3.1: The source row HTTP GET /api/chat/attachments/{attachment_id}/content
+      becomes the native hub content route with 200/206/304, missing-record/bytes
+      and ra...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_content_delete.rs::claims_and_descriptors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: 596370e71e7a533549b71703d1a3351ee7499ae2fa7e2baebed28ee66251fa10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25049'
+    validation_criteria_snippet: '3.3.1: The source row HTTP GET /api/chat/attachments/{attachment_id}/content
+      becomes the native hub content route with 200/206/304, missing-record/bytes
+      and ra...'
+    matched_artifact_ref: crates/gprojects/tests/attachment_content_delete.rs::held_descriptor_waiver_is_narrow
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: 52cea04292cd8dc33f13a99eff4ad35033f76dc3c32412e5acb5f26a9a372238
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25050'
+    validation_criteria_snippet: '3.4.1: The source row CLI gobby files delegates
+      group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding...'
+    matched_artifact_ref: tests/cli/test_native_files_forwarding.py::test_group_delegates_to_rust
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.2
+  plan_node_hash: 4777083939e550b869e7541172ed2cd6bace3ef8a3bba50b111a47f4a953cbae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25050'
+    validation_criteria_snippet: '3.4.1: The source row CLI gobby files delegates
+      group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding...'
+    matched_artifact_ref: crates/gprojects/tests/files_migration.rs::command_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.3
+  plan_node_hash: de12667fb3497c229ed9f8134887b8ac5830f83c50b26e60a6b596a0928b49fb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25050'
+    validation_criteria_snippet: '3.4.1: The source row CLI gobby files delegates
+      group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding...'
+    matched_artifact_ref: crates/gprojects/tests/files_migration.rs::preflight_has_zero_mutations
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.4
+  plan_node_hash: 563fa49f6919b466a93a75133b5a5d1baa2983f04967b327a7c2832551c8320f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25050'
+    validation_criteria_snippet: '3.4.1: The source row CLI gobby files delegates
+      group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding...'
+    matched_artifact_ref: crates/gprojects/tests/files_migration.rs::rerun_converges_after_each_boundary
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.5
+  plan_node_hash: a480a9327164c54f561be0590249d9cc473f13fd17fa8bcea77e8952869f1819
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25050'
+    validation_criteria_snippet: '3.4.1: The source row CLI gobby files delegates
+      group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding...'
+    matched_artifact_ref: crates/gprojects/tests/files_migration.rs::scope_preserves_downstream_data
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.6
+  plan_node_hash: 638ec9b1a41de7991740a9fb7a1d81109f47976f4843a377e0416f7d3e83309e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25050'
+    validation_criteria_snippet: '3.4.1: The source row CLI gobby files delegates
+      group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding...'
+    matched_artifact_ref: crates/gprojects/tests/files_migration.rs::layout_waiver_is_case_specific
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: 66630c4ff5059c50cc8fb2dd1a98b9d01e57c2226bc1c1e278fdc401c06fc6ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25051'
+    validation_criteria_snippet: '3.5.1: Every enumerated profile/upload/download/delete
+      consumer uses the canonical hub routes; browser rendered links, restore and
+      proxy tests remain functiona...'
+    matched_artifact_ref: tests/contracts/test_hub_namespace_cutover.py::test_all_consumers_use_hub_namespace
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: b97d17ba26b8f9ddef29f865117984ca05eca9f2b38288c4396ebe19dcf6a539
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25051'
+    validation_criteria_snippet: '3.5.1: Every enumerated profile/upload/download/delete
+      consumer uses the canonical hub routes; browser rendered links, restore and
+      proxy tests remain functiona...'
+    matched_artifact_ref: tests/contracts/test_hub_namespace_cutover.py::test_cutover_has_one_owner_and_no_aliases
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.3
+  plan_node_hash: 15c0577a0e955d422f5cb4601e2835667c163a7f6847d7a33946c5e8b566a888
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25051'
+    validation_criteria_snippet: '3.5.1: Every enumerated profile/upload/download/delete
+      consumer uses the canonical hub routes; browser rendered links, restore and
+      proxy tests remain functiona...'
+    matched_artifact_ref: tests/contracts/test_hub_namespace_cutover.py::test_mixed_runtime_consumers_share_layout
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.4
+  plan_node_hash: 480a4299fc4687257a63bd31d210bfaef4194104348c21e22208f39cee3f8d50
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25051'
+    validation_criteria_snippet: '3.5.1: Every enumerated profile/upload/download/delete
+      consumer uses the canonical hub routes; browser rendered links, restore and
+      proxy tests remain functiona...'
+    matched_artifact_ref: tests/contracts/test_hub_namespace_cutover.py::test_cutover_waivers_preserve_functional_contracts
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 7e9c953b84b6f0f082e903b680bbb609a0c70416c469faa3fd3ead9bf392e500
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25052'
+    validation_criteria_snippet: '4.1.1: The source row HTTP GET /api/projects matches
+      listing, machine scope, statistics and hidden/deleted rules natively. test:
+      `crates/gprojects/tests/projec...'
+    matched_artifact_ref: crates/gprojects/tests/project_reads.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 4bde5dc65821afeafe0768b8f2545eb9a9b58add6a1c844d517dd7e1415718fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25052'
+    validation_criteria_snippet: '4.1.1: The source row HTTP GET /api/projects matches
+      listing, machine scope, statistics and hidden/deleted rules natively. test:
+      `crates/gprojects/tests/projec...'
+    matched_artifact_ref: crates/gprojects/tests/project_reads.rs::detail_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 030876cb420477a38a340c2af6ef1ece5a73fbcb158fc433ab64a34eac5a7e59
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25052'
+    validation_criteria_snippet: '4.1.1: The source row HTTP GET /api/projects matches
+      listing, machine scope, statistics and hidden/deleted rules natively. test:
+      `crates/gprojects/tests/projec...'
+    matched_artifact_ref: crates/gprojects/tests/project_reads.rs::checkout_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: dc877935dc32bdbce884b397d3ae0bd3964b4660c4f4c71da9e6444bb1a82bdb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25052'
+    validation_criteria_snippet: '4.1.1: The source row HTTP GET /api/projects matches
+      listing, machine scope, statistics and hidden/deleted rules natively. test:
+      `crates/gprojects/tests/projec...'
+    matched_artifact_ref: crates/gprojects/tests/project_reads.rs::file_inventory_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 66cf564a22c5dc316799c9cae701e2b873af2f8944febcce6c90faf96906e71f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25052'
+    validation_criteria_snippet: '4.1.1: The source row HTTP GET /api/projects matches
+      listing, machine scope, statistics and hidden/deleted rules natively. test:
+      `crates/gprojects/tests/projec...'
+    matched_artifact_ref: tests/mcp_proxy/tools/test_native_hub_projects.py::test_listing_delegates_to_rust
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: 55c0e9557d9b950261a47fdb552b265b7ebb90d50c2452f3dbdff8a70ad25d05
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25052'
+    validation_criteria_snippet: '4.1.1: The source row HTTP GET /api/projects matches
+      listing, machine scope, statistics and hidden/deleted rules natively. test:
+      `crates/gprojects/tests/projec...'
+    matched_artifact_ref: crates/gprojects/tests/project_reads.rs::inventory_extension_has_native_contract
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: aaa4721690b95f85ae6c0bc09b6fcd52e572a9a0127b5854e8d912acb7fd16bf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25053'
+    validation_criteria_snippet: '4.2.1: HTTP GET /api/files/tree keeps ordering/ignore/fallback
+      contracts and proves exact NUL filename membership plus the cited non-UTF8 refusal
+      waivers for n...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_reads.rs::tree_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: fa4ec05eefd3cc5fec88df536fcd047485862c04c82589d09c27571f55d3e7cb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25053'
+    validation_criteria_snippet: '4.2.1: HTTP GET /api/files/tree keeps ordering/ignore/fallback
+      contracts and proves exact NUL filename membership plus the cited non-UTF8 refusal
+      waivers for n...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_reads.rs::read_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 39c3d7f424f806249ce1753bc2c2f432283af0a043130ea64b108de45744cdba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25053'
+    validation_criteria_snippet: '4.2.1: HTTP GET /api/files/tree keeps ordering/ignore/fallback
+      contracts and proves exact NUL filename membership plus the cited non-UTF8 refusal
+      waivers for n...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_reads.rs::image_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: 467e621ed38fbb048290c99554e7c5fa83f72d9b0cc26d02bac971aa86819b1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25053'
+    validation_criteria_snippet: '4.2.1: HTTP GET /api/files/tree keeps ordering/ignore/fallback
+      contracts and proves exact NUL filename membership plus the cited non-UTF8 refusal
+      waivers for n...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_reads.rs::locality_and_paths_are_enforced
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: a0235cb792af191923ce8585bdcd31c2dea11cf63d10985840a0a2a75fbab3fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25053'
+    validation_criteria_snippet: '4.2.1: HTTP GET /api/files/tree keeps ordering/ignore/fallback
+      contracts and proves exact NUL filename membership plus the cited non-UTF8 refusal
+      waivers for n...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_reads.rs::safe_error_waiver_keeps_public_refusals
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: fc610538e8ddcba0d612cf6af060ec821576c5d38292c0bfc0dbe312697aa19a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25053'
+    validation_criteria_snippet: '4.2.1: HTTP GET /api/files/tree keeps ordering/ignore/fallback
+      contracts and proves exact NUL filename membership plus the cited non-UTF8 refusal
+      waivers for n...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_reads.rs::domain_errors_use_shared_adapters
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: 9cd0fe703a7ab4096195f4816b62b84b0c4964b39b09d3a369e3758c3e6c2471
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25054'
+    validation_criteria_snippet: '4.3.1: The source row HTTP POST /api/files/write
+      writes only the admitted local checkout and returns the Python success/size/path
+      shape. test: `crates/gproject...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_write.rs::write_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 6ea89b9b07960c5fd7babc865fb7e19f446f3867b46767a9f459a41be33ebaad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25054'
+    validation_criteria_snippet: '4.3.1: The source row HTTP POST /api/files/write
+      writes only the admitted local checkout and returns the Python success/size/path
+      shape. test: `crates/gproject...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_write.rs::refusals_and_failures_preserve_bytes
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 6203c76f13f876a4ec7e191f9c94cca127c60224581b15bda5a4cd96d027b82b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25054'
+    validation_criteria_snippet: '4.3.1: The source row HTTP POST /api/files/write
+      writes only the admitted local checkout and returns the Python success/size/path
+      shape. test: `crates/gproject...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_write.rs::publication_commit_point_is_explicit
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.1
+  plan_node_hash: 639c84aeb4cbfed4e6a1e2a2c2875db9da32be9f28296121cbdc089ffaf85eb3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25055'
+    validation_criteria_snippet: '4.4.1: The source row HTTP GET /api/files/git-status
+      matches branch/status mapping, rename/untracked cases and unavailable responses.
+      test: `crates/gprojects/t...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_git.rs::status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.2
+  plan_node_hash: ee04d2239e34124b62a2e3cb49c23ed17a61aaeaec02fd9d2f8c041dbb2f0cf5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25055'
+    validation_criteria_snippet: '4.4.1: The source row HTTP GET /api/files/git-status
+      matches branch/status mapping, rename/untracked cases and unavailable responses.
+      test: `crates/gprojects/t...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_git.rs::diff_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.3
+  plan_node_hash: a792b6d32b261ff94954abed11c0630e97f7e0240c6781f65ea1e124fed78e8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25055'
+    validation_criteria_snippet: '4.4.1: The source row HTTP GET /api/files/git-status
+      matches branch/status mapping, rename/untracked cases and unavailable responses.
+      test: `crates/gprojects/t...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_git.rs::subprocess_boundaries_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.4
+  plan_node_hash: 1f3acbeaa86d579a7c7ae540e90c89ed9943064b505ddf3494dd1222c8c221ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25055'
+    validation_criteria_snippet: '4.4.1: The source row HTTP GET /api/files/git-status
+      matches branch/status mapping, rename/untracked cases and unavailable responses.
+      test: `crates/gprojects/t...'
+    matched_artifact_ref: crates/gprojects/tests/checkout_git.rs::safe_spawn_errors_preserve_git_contracts
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.1
+  plan_node_hash: 5aeb676afc8a51733c17823880dfe65228e3c69e18c1e5a6a6244fd57fe4996d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25056'
+    validation_criteria_snippet: '4.5.1: The source row HTTP POST /api/projects/init
+      initializes/reattaches with Python''s identity/marker/checkout behavior and
+      event rule. test: `crates/gprojec...'
+    matched_artifact_ref: crates/gprojects/tests/project_checkouts.rs::init_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.2
+  plan_node_hash: 13558f0168fa8087ede55d6a3a3266c57e093468b3deb280e6c1b84e7fc07a25
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25056'
+    validation_criteria_snippet: '4.5.1: The source row HTTP POST /api/projects/init
+      initializes/reattaches with Python''s identity/marker/checkout behavior and
+      event rule. test: `crates/gprojec...'
+    matched_artifact_ref: crates/gprojects/tests/project_checkouts.rs::register_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.3
+  plan_node_hash: 2da40fcde3e8dbbb232e42c259a1e320fc712c4c6acf18ca5f81b6e7e139cddb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25056'
+    validation_criteria_snippet: '4.5.1: The source row HTTP POST /api/projects/init
+      initializes/reattaches with Python''s identity/marker/checkout behavior and
+      event rule. test: `crates/gprojec...'
+    matched_artifact_ref: crates/gprojects/tests/project_checkouts.rs::rebind_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.4
+  plan_node_hash: fe16c76c0751c7f86d41ba56f3166a193ac80eb93ab22b7a183aaf19d332802c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25056'
+    validation_criteria_snippet: '4.5.1: The source row HTTP POST /api/projects/init
+      initializes/reattaches with Python''s identity/marker/checkout behavior and
+      event rule. test: `crates/gprojec...'
+    matched_artifact_ref: crates/gprojects/tests/project_checkouts.rs::machine_authority_and_atomicity_hold
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.5
+  plan_node_hash: ce3d1127972470f2400082b155d83098c18c27cfcf6d4be00503ab41e4404b3d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25056'
+    validation_criteria_snippet: '4.5.1: The source row HTTP POST /api/projects/init
+      initializes/reattaches with Python''s identity/marker/checkout behavior and
+      event rule. test: `crates/gprojec...'
+    matched_artifact_ref: crates/gdaemon/tests/node_project_checkouts.rs::registration_is_native_and_key_bound
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.1
+  plan_node_hash: 0ef95d79f80da212ae2a81c9f45c8d96109ce6872544c3e821a2cc426a1809fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: crates/gprojects/tests/project_metadata_barrier.rs::python_native_lock_protocol_matches
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.2
+  plan_node_hash: da4aa59a352cf718040bb564f1babf0a0a1eece162a0fa2fe62c0f62a4678812
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: tests/contracts/test_project_metadata_barrier.py::test_all_policy_readers_refuse_pending_recovery
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.3
+  plan_node_hash: fe471bf4013d75f26cb920dd8698f9992cbc704592ab9cb8cd26de0a450a8d69
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: tests/contracts/test_project_metadata_barrier.py::test_policy_boundaries_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.4
+  plan_node_hash: fb758de51c23e8322b027b479d9dab7f02dd80cf515bb0530591d49dfcb46721
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: tests/contracts/test_project_metadata_barrier.py::test_cooperating_writers_merge_under_one_lock
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.5
+  plan_node_hash: 26466dcee4c109753661632b06386284b40458e26c3caddd105ade31fa92d774
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: tests/contracts/test_project_metadata_barrier.py::test_copy_and_identity_repair_obey_barrier
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.6
+  plan_node_hash: 3223af783d966f353823769d0f747ae38111ca5d329a620989d164ae842095e2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: tests/contracts/test_project_metadata_barrier.py::test_helper_facades_and_size_boundaries
+  deferral_target: null
+  detail: ''
+- section_id: 4.5a
+  item_id: 4.5a.7
+  plan_node_hash: 4802152516bf19433c8aad508b457df7044c848abf8fc3b9ce71a2b6bbf40f14
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25057'
+    validation_criteria_snippet: '4.5a.1: Python/native use the same stable secure
+      sidecar, bounded deadline and lock order, without check/open gaps, link substitution,
+      async-loop stalls or rec...'
+    matched_artifact_ref: crates/gprojects/tests/project_metadata_barrier.rs::activation_requires_all_consumers_guarded
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.1
+  plan_node_hash: 14abdb88ed6de3aafe1a399262df19f62cede1da1cc2fa7ae2657baeb6e737d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::put_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.2
+  plan_node_hash: d535c0d9287e5fed01ff76fc5e83e93682f8980174d5424cc1b2dac7e09fdeeb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::patch_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.3
+  plan_node_hash: 41ae1dde0531159d922cbdc58b22d86a3a8411e14a63686cedf1167ed0de2eab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::soft_delete_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.4
+  plan_node_hash: 9b41dfed58a74d02fe27090a0fba9babbb22fa69fc20c4420d7d8906e09c33a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::update_rolls_back_as_a_unit
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.5
+  plan_node_hash: 8752640c640a328329df13d5a4f2c99a5989a5aba2b61b4096e8a7882a3a1f0b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::crash_recovery_is_durable_and_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.6
+  plan_node_hash: 066d862c113fda3471602ca90c1532ea8648fb68decf95a8fdd18d3b1e66a7b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::metadata_refusal_waivers_are_narrow
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.7
+  plan_node_hash: c60aab398b0eb9b72a6cee5c3a684a7eeaeee689ac3f70e4eb9fbb1a6cdee720
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::mixed_runtime_consumers_wait_for_recovery
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.8
+  plan_node_hash: f42b41909fb0661f2e1ef65a4ada2c9a479bd76ac047556ea0503bc0ae8491ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25058'
+    validation_criteria_snippet: '4.6.1: HTTP PUT /api/projects/{project_id} keeps
+      valid update/validation/no-op/null/empty contracts and owning-checkout scope,
+      except the exact cited D3/D4 fai...'
+    matched_artifact_ref: crates/gprojects/tests/project_updates.rs::all_metadata_writers_share_serialization
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 1aaf4dc2a6f59925939ba96513272551fffeedeb1fd7e784483d1a07245d8124
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25059'
+    validation_criteria_snippet: '5.1.1: A Python writer blocks Rust purge and a Rust
+      writer blocks Python purge until drain; deleted/absent projects refuse new writers.
+      test: `tests/projects/t...'
+    matched_artifact_ref: tests/projects/test_cross_runtime_write_fence.py::test_both_runtimes_share_exclusion
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 6d631435dc9d6f23ec73009b40780160f5f01b00417d62beedc663055595189f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25059'
+    validation_criteria_snippet: '5.1.1: A Python writer blocks Rust purge and a Rust
+      writer blocks Python purge until drain; deleted/absent projects refuse new writers.
+      test: `tests/projects/t...'
+    matched_artifact_ref: crates/gcore/tests/project_fence.rs::lock_lifecycle_is_safe
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: 9f9dd5c7f108d2d8c270ad94a2a120f11edf94a05b1ace5ba8a8af6215e9ce81
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25059'
+    validation_criteria_snippet: '5.1.1: A Python writer blocks Rust purge and a Rust
+      writer blocks Python purge until drain; deleted/absent projects refuse new writers.
+      test: `tests/projects/t...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: 4eaf879d7e7fe38f4e6e3632f7640df1dc84d5dec285c2be6e592ba234d0e29f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25059'
+    validation_criteria_snippet: '5.1.1: A Python writer blocks Rust purge and a Rust
+      writer blocks Python purge until drain; deleted/absent projects refuse new writers.
+      test: `tests/projects/t...'
+    matched_artifact_ref: crates/gcore/tests/project_fence.rs::small_pool_progress_is_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: b6fc100a8abee81eccc2568a6ec947f19871383b44f7aa73b93bc3cd4b345be0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25059'
+    validation_criteria_snippet: '5.1.1: A Python writer blocks Rust purge and a Rust
+      writer blocks Python purge until drain; deleted/absent projects refuse new writers.
+      test: `tests/projects/t...'
+    matched_artifact_ref: tests/projects/test_cross_runtime_write_fence.py::test_small_pool_progress_is_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: 8774f12e4c8b1883345adbcd80c30f99d2c5efe98b5a03e8ab28f23c2459492a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25060'
+    validation_criteria_snippet: '5.2.1: The source row HTTP POST /api/projects/{project_id}/purge
+      matches purged/not_found/protected/failed statuses and dependent-resource cleanup
+      without Pyth...'
+    matched_artifact_ref: crates/gprojects/tests/project_purge.rs::purge_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 1f1d3175b9a58e437788c1c655e580f58fd05d507443891d126fe983bb4ccedd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25060'
+    validation_criteria_snippet: '5.2.1: The source row HTTP POST /api/projects/{project_id}/purge
+      matches purged/not_found/protected/failed statuses and dependent-resource cleanup
+      without Pyth...'
+    matched_artifact_ref: crates/gprojects/tests/project_purge.rs::lifecycle_guards_hold
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 43cd4b0a4b040d0f3c88822ef5601a4557b0763e0592ad5e15a0c7637d56338c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25060'
+    validation_criteria_snippet: '5.2.1: The source row HTTP POST /api/projects/{project_id}/purge
+      matches purged/not_found/protected/failed statuses and dependent-resource cleanup
+      without Pyth...'
+    matched_artifact_ref: crates/gprojects/tests/project_purge.rs::failures_are_retryable_and_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: 3444edb42cf0b48fe797152e067f7d136d3798585958dbf19f8a872c32225212
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25060'
+    validation_criteria_snippet: '5.2.1: The source row HTTP POST /api/projects/{project_id}/purge
+      matches purged/not_found/protected/failed statuses and dependent-resource cleanup
+      without Pyth...'
+    matched_artifact_ref: crates/gprojects/tests/project_purge.rs::maintenance_child_authority_is_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 3b0ea7088c66da13b9959049990f770d66342a6cfc35c513884e325e085906a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25060'
+    validation_criteria_snippet: '5.2.1: The source row HTTP POST /api/projects/{project_id}/purge
+      matches purged/not_found/protected/failed statuses and dependent-resource cleanup
+      without Pyth...'
+    matched_artifact_ref: crates/gprojects/tests/project_purge.rs::maintenance_child_teardown_is_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.1
+  plan_node_hash: bd1068a5ed15933017d3ace4aec81570443121fae5bc2450235909c0a181aede
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::group_usage_matches
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.2
+  plan_node_hash: 7f1f3e7d35a9af85ed5e96d4ec12d4ae2c422e6881a9f9505fd39cb61b6c0675
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.3
+  plan_node_hash: f0be1f29fa4443fb4bb7de084fb374642b7652b25eb0e1e06627c23ccf4ce914
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::show_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.4
+  plan_node_hash: 2de12ee2af9b065bb6d6f9a532291fed28e391e9a5f6762dcfba8fc071067f86
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::rename_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.5
+  plan_node_hash: 32742bfc930f07c9fc8239cda700900a75da546f0ec3c10900718fefa108e689
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::delete_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.6
+  plan_node_hash: 915389e65ae79fdbf06612c01c08e86e742229e8d508270565b07f5c2cfc6494
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::purge_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.7
+  plan_node_hash: 78e7f33a531922b049232d56b24603519d7e4ff6d5f86ec25936b866953ca71b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::rebind_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.8
+  plan_node_hash: fdf68ccdcfc6d050e78047fe9d9a613069b37e7a4c451d2bdc6670b7507ae584
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::repair_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.9
+  plan_node_hash: 8518d256a98d287670958d35bf09c81d20521a7d43c87dd132a8b5952ec3b1c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: tests/cli/test_native_projects_forwarding.py::test_all_verbs_delegate_to_rust
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.10
+  plan_node_hash: 4259bd305c6bace29abbae7f25ece9e2b057f3fb6a5aba24a80010efa50fb66e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25061'
+    validation_criteria_snippet: '5.3.1: The source row CLI gobby projects delegates
+      help/group/usage to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_u...'
+    matched_artifact_ref: crates/gprojects/tests/projects_cli.rs::updates_require_native_recovery_owner
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.1
+  plan_node_hash: 730031018c866b658051307d87084eb5b2c30c6672e5d1cf60be4eb9383e6abb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25062'
+    validation_criteria_snippet: '5.4.1: The source row CLI gobby projects refresh-verification
+      delegates entirely to Rust and preserves every mode, override, result and exit
+      behavior. test: `c...'
+    matched_artifact_ref: crates/gprojects/tests/verification_refresh.rs::command_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.2
+  plan_node_hash: 74c45f89a98e6cbd5687beadeda07b28f5866efc0b3685a30b560cc595de7a7b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25062'
+    validation_criteria_snippet: '5.4.1: The source row CLI gobby projects refresh-verification
+      delegates entirely to Rust and preserves every mode, override, result and exit
+      behavior. test: `c...'
+    matched_artifact_ref: crates/gprojects/tests/verification_refresh.rs::selection_and_ai_policy_match
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.3
+  plan_node_hash: 59ca24ca1355ae3d86151b5ea3f065262c3fc67c9cbd346d5f1145135822adfa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25062'
+    validation_criteria_snippet: '5.4.1: The source row CLI gobby projects refresh-verification
+      delegates entirely to Rust and preserves every mode, override, result and exit
+      behavior. test: `c...'
+    matched_artifact_ref: crates/gprojects/tests/verification_refresh.rs::publication_is_atomic
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.4
+  plan_node_hash: 0d1a3f0b1d60af0b219f2b311d1ad5c3ff3d20fda1264bc24ffcceba4779c81b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25062'
+    validation_criteria_snippet: '5.4.1: The source row CLI gobby projects refresh-verification
+      delegates entirely to Rust and preserves every mode, override, result and exit
+      behavior. test: `c...'
+    matched_artifact_ref: crates/gprojects/tests/verification_refresh.rs::refresh_and_policy_updates_share_recovery
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: 30047ce0bc2cccb6209848537a218c132e55454435c31e936e2bac4441b390fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25063'
+    validation_criteria_snippet: '6.1.1: Every read/mutation has single-execution
+      verification, all exact D1-D7 waivers prove their replacement, and concurrent/unavailable
+      unwaived Skipped resu...'
+    matched_artifact_ref: crates/gprojects/tests/compare.rs::every_route_has_safe_verification
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: c4e8f86c0b602ea7428185ab160d2d20a1398f380ce044e8a2e309e2877e0a38
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25063'
+    validation_criteria_snippet: '6.1.1: Every read/mutation has single-execution
+      verification, all exact D1-D7 waivers prove their replacement, and concurrent/unavailable
+      unwaived Skipped resu...'
+    matched_artifact_ref: crates/gdaemon/tests/projects_routing.rs::native_default_is_complete
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: 688b04956f8bdd1f638a40ee1f468455d33505ac226f777a5cc6b568b53c1d38
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25063'
+    validation_criteria_snippet: '6.1.1: Every read/mutation has single-execution
+      verification, all exact D1-D7 waivers prove their replacement, and concurrent/unavailable
+      unwaived Skipped resu...'
+    matched_artifact_ref: crates/gprojects/tests/compare.rs::reports_are_bounded_and_complete
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.4
+  plan_node_hash: c82e7c89ab12c6866ea44491217d3b33e370b4c4a003c556f4dd37640bc5a29f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25063'
+    validation_criteria_snippet: '6.1.1: Every read/mutation has single-execution
+      verification, all exact D1-D7 waivers prove their replacement, and concurrent/unavailable
+      unwaived Skipped resu...'
+    matched_artifact_ref: crates/gprojects/tests/compare.rs::waiver_readiness_and_writer_handoff_are_enforced
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.5
+  plan_node_hash: 3ebc9f6621503f7d91f91fce96dfc5f6857cf58abeabc0321604e39df2a98206
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25063'
+    validation_criteria_snippet: '6.1.1: Every read/mutation has single-execution
+      verification, all exact D1-D7 waivers prove their replacement, and concurrent/unavailable
+      unwaived Skipped resu...'
+    matched_artifact_ref: crates/gprojects/tests/compare.rs::native_extensions_have_no_python_oracle
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: 1938fe6fb2bcd94ad42df9e51cccf16375e7ac2a7a666ad813bbc2c38baff7e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25064'
+    validation_criteria_snippet: '6.2.1: All 36 source rows satisfy their named parity
+      acceptance; both additive routes prove native-extension contracts, with explicit
+      native replacement covera...'
+    matched_artifact_ref: tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: 6df34f0edc5d5beec9f1c6ecdf3f8343b56132ef1413956047105544f07d03aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25064'
+    validation_criteria_snippet: '6.2.1: All 36 source rows satisfy their named parity
+      acceptance; both additive routes prove native-extension contracts, with explicit
+      native replacement covera...'
+    matched_artifact_ref: tests/e2e/test_projects_files_family.py::test_family_survives_python_loss
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: 26763e12135e3120b040123246c87116637f42d0094b6eef1095f351bb95b922
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25064'
+    validation_criteria_snippet: '6.2.1: All 36 source rows satisfy their named parity
+      acceptance; both additive routes prove native-extension contracts, with explicit
+      native replacement covera...'
+    matched_artifact_ref: tests/e2e/test_projects_files_family.py::test_two_machine_ownership_is_correct
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.4
+  plan_node_hash: 75b192659b559d134ded42ed67f0dd12913ebefd7820231ac45e4998ef547f27
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25064'
+    validation_criteria_snippet: '6.2.1: All 36 source rows satisfy their named parity
+      acceptance; both additive routes prove native-extension contracts, with explicit
+      native replacement covera...'
+    matched_artifact_ref: tests/e2e/test_projects_files_family.py::test_compare_and_routing_rollback_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.5
+  plan_node_hash: 64417fca1c8f4b1c846a105be431d9ebde25256797446d80be06fb0fbc76a438
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25064'
+    validation_criteria_snippet: '6.2.1: All 36 source rows satisfy their named parity
+      acceptance; both additive routes prove native-extension contracts, with explicit
+      native replacement covera...'
+    matched_artifact_ref: tests/e2e/test_projects_files_family.py::test_debt_waivers_assert_recovery_and_keeps
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.1
+  plan_node_hash: 9420b3c7af681f37c35de3f4b530235c689d25ea7345dba671c411b60017721f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25065'
+    validation_criteria_snippet: '6.3.1: Each of the 36 exact source keys has proven
+      delegated or explicit renamed-route decision status and a native replacement/test;
+      no scoped key is silently...'
+    matched_artifact_ref: tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.2
+  plan_node_hash: d5f9201056762ff83f4d8b88c446d2cb7407c62c2af9f060e730992b91cec61d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25065'
+    validation_criteria_snippet: '6.3.1: Each of the 36 exact source keys has proven
+      delegated or explicit renamed-route decision status and a native replacement/test;
+      no scoped key is silently...'
+    matched_artifact_ref: tests/contracts/test_projects_files_ledger.py::test_generated_ledger_matches_inventory
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.3
+  plan_node_hash: 9642c281b803d04234021f246724beff59535d48afe8bd4904f7fb7a2e1397f6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25065'
+    validation_criteria_snippet: '6.3.1: Each of the 36 exact source keys has proven
+      delegated or explicit renamed-route decision status and a native replacement/test;
+      no scoped key is silently...'
+    matched_artifact_ref: docs/contracts/projects-files-hub.md
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.4
+  plan_node_hash: 005ad01d4c70d4232518b91dd025e4bb8cebc7a28931c3f5446a544095c4a4d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25065'
+    validation_criteria_snippet: '6.3.1: Each of the 36 exact source keys has proven
+      delegated or explicit renamed-route decision status and a native replacement/test;
+      no scoped key is silently...'
+    matched_artifact_ref: tests/contracts/test_projects_files_ledger.py::test_debt_and_shared_capability_ownership_is_complete
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.5
+  plan_node_hash: 092efa8f3fffaedb14e4749ee62a6a938c753c9289f30c7b80001b6ff097c437
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25065'
+    validation_criteria_snippet: '6.3.1: Each of the 36 exact source keys has proven
+      delegated or explicit renamed-route decision status and a native replacement/test;
+      no scoped key is silently...'
+    matched_artifact_ref: tests/contracts/test_projects_files_ledger.py::test_checkout_transfer_and_extensions_have_single_owners
+  deferral_target: null
+  detail: ''

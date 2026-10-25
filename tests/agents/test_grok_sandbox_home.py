@@ -10,9 +10,14 @@ from gobby.agents import srt_runtime
 from gobby.agents.grok_sandbox_home import prepare_grok_sandbox_home
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.srt_runtime import SandboxLaunch, SrtInstallation, prepare_sandbox_launch
-from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
+from gobby.paths import get_gobby_home
+from gobby.utils.native_bin import native_bin_name
 
 pytestmark = pytest.mark.unit
+
+
+def _gmcp_path() -> str:
+    return str(get_gobby_home() / "bin" / native_bin_name("gmcp"))
 
 
 @pytest.fixture
@@ -57,9 +62,7 @@ def test_managed_config_declares_gobby_mcp_server(grok_source: Path, tmp_path: P
 
     config = tomllib.loads((prepared.home / "config.toml").read_text())
     assert config["compat"] == {"claude": {"hooks": False}}
-    assert config["mcp_servers"] == {
-        "gobby": {"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]}
-    }
+    assert config["mcp_servers"] == {"gobby": {"command": _gmcp_path(), "args": []}}
     assert (grok_source / "config.toml").read_bytes() == host_config
 
 
@@ -75,7 +78,7 @@ def test_operator_gobby_mcp_server_is_replaced_and_others_kept(
 
     servers = tomllib.loads((prepared.home / "config.toml").read_text())["mcp_servers"]
     assert servers == {
-        "gobby": {"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]},
+        "gobby": {"command": _gmcp_path(), "args": []},
         "other": {"command": "other"},
     }
 

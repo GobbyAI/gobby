@@ -454,6 +454,24 @@ fn reconcile_falls_back_to_full_discovery() {
         &overlay_files,
     );
     assert_eq!(rels, every_source);
+
+    // A marker names a base, but the overlay is not a repository: the Git
+    // read fails, divergence is unknowable, and every source is reconciled.
+    write_isolation_marker(
+        &overlay,
+        base.path(),
+        "parent-project",
+        "0123456789abcdef0123456789abcdef01234567",
+    );
+    let rels = overlay_reconcile_candidates(
+        &incremental_request(&overlay),
+        &overlay,
+        &ast_by_rel,
+        &content_by_rel,
+        &parent_files,
+        &overlay_files,
+    );
+    assert_eq!(rels, every_source);
 }
 
 #[test]

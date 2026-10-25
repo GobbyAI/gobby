@@ -86,7 +86,7 @@ def test_install_droid_global_writes_hooks_and_mcp(
 
     mcp = _load_json(droid_env / ".factory" / "mcp.json")
     assert mcp["mcpServers"]["gobby"]["type"] == "stdio"
-    assert mcp["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+    assert mcp["mcpServers"]["gobby"]["args"] == []
 
 
 def test_install_droid_project_mode_writes_project_hooks(

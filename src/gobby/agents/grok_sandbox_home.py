@@ -161,13 +161,13 @@ def _declare_gobby_mcp_server(config_path: Path) -> None:
     import tomlkit
     from tomlkit.exceptions import ParseError
 
-    from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
+    from gobby.cli.installers.mcp_config_shared import gmcp_command
 
     try:
         config = tomlkit.parse(config_path.read_text() if config_path.is_file() else "")
     except ParseError as exc:
         raise ValueError(f"Grok config is not valid TOML: {config_path}") from exc
     servers = config.setdefault("mcp_servers", tomlkit.table())
-    servers["gobby"] = {"command": _resolved_gobby_mcp_command(), "args": ["mcp-server"]}
+    servers["gobby"] = {"command": gmcp_command(), "args": []}
     config_path.write_text(tomlkit.dumps(config))
     config_path.chmod(0o600)

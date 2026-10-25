@@ -21,6 +21,10 @@ at `crates/gskills`, one injected service shared by REST, MCP, and native CLI,
 the existing PostgreSQL pool, and the existing hub-to-node command channel.
 No separate skills process, plugin framework, second database, schema compiler,
 or new executable is required.
+`gdaemon skills`, `gdaemon skills-internal`, and the node `skills.local` and
+`skills.cancel` frames are non-ledger internal implementation surfaces. The
+public contract remains the existing 54 CLI/HTTP/MCP rows; these internal
+surfaces require no native-extension waiver and add no public ledger key.
 
 The `.gobby/plans/gdaemon-runtime-family.md` precedent supplies `RouteFamily`,
 shared pool, active-config and secret-store contracts. The
@@ -185,8 +189,9 @@ depends on #24963. Entry fields are `id`, `surface`, `behaviour`,
 `decision`, and `replacement`, all required; the shared schema, loader and
 three consumers belong to #24963, never this family. IDs use stable
 `<family>.<surface-slug>.<behaviour-slug>` names. Each `surface` is exactly
-the key above; each `decision` cites this plan's owning section, for example
-`.gobby/plans/gdaemon-skills-family.md#1.2`. The behaviour sentence and
+the key above; each `decision` is a plan-section citation such as
+`.gobby/plans/gdaemon-skills-family.md#1.2` or an owning task ref `#N`.
+The behaviour sentence and
 replacement identify the bounded changed branch. Corpus/native vectors retain
 the old Python outcome/effects and assert the chosen native outcome/effects;
 overlapping corrections receive their separate behavior citations.
@@ -210,14 +215,18 @@ Use existing serde/JSON key-presence facilities and shared request conventions;
 do not add a schema compiler or a per-family update framework. API-specific
 empty-update and nullable-field rules remain explicit in the owning leaf.
 
-**S3 shared error convention:** validation, missing, forbidden, conflict,
-capacity, unavailable and internal are distinct typed domain-error classes.
-Existing HTTP/MCP/CLI envelopes are projected by explicit transport adapters;
-reuse `gobby_core::mcp::ToolError` at the MCP boundary. Safe intentional
-domain details stay public. Unexpected diagnostics are logged privately and
-the existing public detail/message/error field receives the stable safe text;
-no extra code/envelope field is invented. Only an exact #24963 waiver changes
-an observed wire contract; this is not a family sanitizer framework.
+**S3 shared error owner:** #24970 supplies the single native classification
+and shared HTTP/MCP/CLI transport adapters. Its exactly seven classes are
+validation, missing, forbidden, conflict, capacity, unavailable and internal,
+with a safe message and optional structured detail. Skills maps domain errors
+onto that contract and declares its intentional existing transport envelopes
+through those adapters; it defines no family-local error framework or transport
+mapping. Safe intentional domain details stay public. Internal diagnostics
+remain private on every transport; the existing detail/message/error field
+receives `Internal server error`. Preserve observed status/code/envelope and
+CLI exit behavior unless an exact #24963 waiver authorizes the change; expose
+no unwaived class/code field. Shared classification, adapter implementation
+and owning-crate selection belong to #24970, not this plan.
 
 These presence, error and readiness conventions match the Cron proposal
 (#24952). No contrary convention was found in the current Projects plan
@@ -229,6 +238,8 @@ is not a Skills implementation prerequisite.
 
 ## Constraints
 `kind: framing`
+
+#24968 does not apply: Skills has no `files_home` consumer.
 
 - Observed research baseline: HEAD `3b3480dda67abc46c04977808c3e530b52fd8222`.
   Existing files and symbols below were inspected with `gcode outline`,
@@ -351,7 +362,7 @@ characterization test has been run during drafting.
 ## P1: Native registry and content services
 `kind: framing`
 
-### 1.1 Native scoped repository and HTTP reads [category: code] (depends: 0.1, #24443, #24963)
+### 1.1 Native scoped repository and HTTP reads [category: code] (depends: 0.1, #24443, #24963, #24970)
 `kind: deliverable`
 
 Targets:
@@ -384,14 +395,18 @@ the corpus. Claim only implemented method/path combinations while proxy remains
 the default; do not absorb neighboring route prefixes.
 Keep native PostgreSQL/provider work asynchronous with the existing pool,
 timeouts and cancellation; D6 rejects synchronous waits on the request executor,
-not ordering or successful response semantics. Use the shared typed error
-classes validation/missing/forbidden/conflict/capacity/unavailable/internal and
-existing transport envelopes. Safe domain errors remain exact; unexpected
+not ordering or successful response semantics. Consume #24970's shared typed
+classification and HTTP adapter: map Skills domain errors onto validation,
+missing, forbidden, conflict, capacity, unavailable or internal, declaring the
+existing HTTP envelope through that adapter without a local transport mapping.
+Safe domain errors remain exact; unexpected
 diagnostics stay private and return `Internal server error` in the existing
 detail field. This leaf adds only the D5 `skills.http-list`, `skills.http-get`
 and `skills.http-stats` entries (suffix `.internal-error-redaction`) to the
 shared waiver file, with decision citations to this section. #24963 owns the
-loader/schema/readiness mechanics; no family exception registry is added.
+loader/schema/readiness mechanics; #24970 owns shared classification/adapters.
+No family exception registry is added. Waiver decisions use
+`.gobby/plans/gdaemon-skills-family.md#1.1` or an owning task ref `#N`.
 
 **Granularity:** The crate, repository, service injection and three read
 endpoints establish one usable registry-read outcome. The production-file
@@ -465,6 +480,8 @@ executor. Preserve all response/state ordering. Also add the six D5 HTTP mutatio
 entries owned here (create/update/delete/restore/move-to-project/move-to-installed),
 with existing envelopes and safe domain messages intact. Every entry cites this
 section and has a concrete old/new vector; no error-class wildcard is a waiver.
+Map lifecycle errors onto #24970's shared seven-class type and consume its
+HTTP adapter with the existing envelope; no local transport mapping is added.
 
 **Granularity:** The acceptance items represent operations of one registry
 lifecycle. The same transaction boundary and companion-file invariants make a
@@ -581,6 +598,8 @@ entry `skills.http-scan.internal-error-redaction` for
 id/surface/behaviour/decision/replacement fields and decision
 `.gobby/plans/gdaemon-skills-family.md#1.4`. Assert native errors/effects in
 Waived vectors rather than masking text or skipping the case.
+Map scanner failures onto #24970's shared classification/HTTP adapter while
+declaring the existing scan status/envelope; add no family mapping framework.
 
 **Granularity:** The data, evaluator, cache and HTTP adapter form one scanner
 contract across more than six production targets; acquisition and persistence
@@ -639,6 +658,8 @@ required id/surface/behaviour/decision/replacement fields and decision
 changes to `Internal server error`; status/envelope and safe domain errors
 stay parity. Log internal diagnostics privately; assert responses and absence
 of file/event writes in Waived vectors, never masks or Skipped cases.
+Map file-operation errors through #24970's shared classification/HTTP adapter,
+declaring the existing envelope rather than defining a local transport mapping.
 
 **Acceptance:**
 
@@ -822,6 +843,8 @@ internal text change; retain response/ranking/freshness and intentional
 degradation/errors. Unexpected text becomes `Internal server error` in the
 existing envelope, with diagnostics private. Assert each replacement and
 effect in Waived vectors; no masks, Skipped case or MCP scheduling waiver.
+Map search errors onto #24970's shared classification and HTTP adapter with
+the intentional existing envelope; shared adapter code stays with that owner.
 
 **Acceptance:**
 
@@ -886,9 +909,11 @@ both from the caller's remaining budget. On receipt the node rejects expired
 deadlines and starts a monotonic timer bounded by both the remaining deadline
 and max_run_ms; wall-clock skew can shorten or reject work, never remove the
 monotonic bound. This is private transport metadata, not a new public MCP input
-or configurable job system. The proposed `skills.cancel` control command names
+or configurable job system. The `skills.cancel` control command names
 an existing request ID on the same connection; repeated/unknown cancellations
 are idempotent and cannot cancel another connection's work.
+Both `skills.local` and `skills.cancel` are non-ledger internal node frames,
+not new public CLI/HTTP/MCP surfaces; no native-extension entry is needed.
 
 Keep a Skills-only supervisor for each outbound request in
 `crates/gdaemon/src/nodes/skills.rs`. A caller drop closes its response receiver;
@@ -1010,7 +1035,8 @@ fields and decision `.gobby/plans/gdaemon-skills-family.md#2.3`. Only
 unexpected internal text becomes `Internal server error`; existing
 status/envelope and safe provider/domain errors remain parity. Log private
 diagnostics and assert the replacement/no effects as Waived, never masked
-or skipped. Use the shared typed error classes and explicit HTTP adapter.
+or skipped. Map provider errors onto #24970's shared typed classification and
+HTTP adapter with the existing envelope; add no family-local transport mapping.
 
 **Acceptance:**
 
@@ -1052,7 +1078,8 @@ Add `skills.http-search-hubs.internal-error-redaction` for exactly
 fields and decision `.gobby/plans/gdaemon-skills-family.md#2.4`. Unexpected
 route-level failures receive `Internal server error` in the existing envelope;
 safe per-provider partial errors/status remain parity. Private diagnostics
-use the shared typed-error convention. Waived vectors assert the safe response
+use #24970's shared classification/HTTP adapter with the existing envelope.
+Waived vectors assert the safe response
 and no unauthorized cache/state publication; no masks or Skipped cases.
 
 **Granularity:** The three GitHub-shaped adapters share acquisition and
@@ -1124,6 +1151,9 @@ assert honest result flags and real before/after timestamps, events, metadata
 and files under exact Waived citations. No timestamp mask, compensating write
 or Skipped case hides failure effects. HTTP import already uses safe generic
 unexpected text and keeps ordinary parity without a D5 waiver.
+Map install/update domain errors onto #24970's seven shared classes; consume
+its HTTP/MCP/CLI adapters through the owning transport leaves, with no local
+transport mapping or unwaived status/code/envelope change.
 
 **Acceptance:**
 
@@ -1202,6 +1232,8 @@ id/surface/behaviour/decision/replacement and decision
 source-integrity and override/domain diagnostics stay parity. Log private
 diagnostics and assert the native response and unchanged rows/events in an
 exact Waived vector, never masks or Skipped cases.
+Map restoration errors through #24970's shared classification/HTTP adapter,
+declaring existing domain/status/envelope behavior rather than a local mapping.
 
 The lifecycle trigger is explicit. In hub/standalone authority modes,
 serve composition calls the native bundled service directly, after database,
@@ -1250,6 +1282,8 @@ opens the shared pool, verifies schema identity, calls the Rust bundled service
 directly and exits with the existing aggregate result fields. It never starts
 serve, calls the Python aggregator, or dispatches through the public Skills CLI,
 so delegation cannot recurse and works with the daemon/Python backend absent.
+The `gdaemon skills-internal` command is a non-ledger internal installation
+surface with no new public parity row or native-extension entry.
 Missing or incompatible native binaries fail explicitly without Python fallback.
 
 For first install or explicit non-dev sync, use the embedded generated asset;
@@ -1403,7 +1437,7 @@ Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test runt
 ## P4: Publish the native internal-tool family
 `kind: framing`
 
-### 4.1 Skills descriptor, schemas and MCP behavior [category: code] (depends: 3.2, #24883, #24963)
+### 4.1 Skills descriptor, schemas and MCP behavior [category: code] (depends: 3.2, #24883, #24963, #24970)
 `kind: deliverable`
 
 Targets:
@@ -1433,9 +1467,11 @@ The landed descriptor integration suite is
 entire `--test mcp_contract` target, including the two tests outside the
 similarly named module; the `-E 'test(mcp_contract)'` filter is insufficient.
 
-Reuse `gobby_core::mcp::ToolError` for typed validation/missing/forbidden/
-conflict/capacity/unavailable/internal projection into the existing MCP
-envelope. Unexpected text alone becomes `Internal server error`; preserve
+Consume #24970's shared seven-class classification and MCP adapter; map Skills
+domain errors onto validation/missing/forbidden/conflict/capacity/unavailable/
+internal and declare the existing MCP error-result envelope through that
+adapter. No family-local ToolError mapping or transport framework is added.
+Unexpected text alone becomes `Internal server error`; preserve
 existing codes/status/envelope and safe deliberate errors, logging diagnostics
 privately. Add these exact D5 entries to #24963's shared manifest, each bound
 to the existing `MCP gobby-skills:<tool>` surface named by its slug:
@@ -1529,7 +1565,7 @@ Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test mcp`
 ## P5: Native CLI callbacks
 `kind: framing`
 
-### 5.1 Native command tree and registry commands [category: code] (depends: 4.1)
+### 5.1 Native command tree and registry commands [category: code] (depends: 4.1, #24970)
 `kind: deliverable`
 
 Targets:
@@ -1552,6 +1588,11 @@ standalone/hub-authority behavior through the same service and pool; nodes
 use authenticated hub transport without a database credential. Read-only
 formatting does not mutate loaded-skills state. Preserve flags, help tree,
 JSON/text/null distinctions, metadata dotted paths and enable/disable semantics.
+`gdaemon skills` is the non-ledger internal dispatcher for the existing public
+`gobby skills` contract; it adds no public surface or native-extension entry.
+Map Skills domain errors onto #24970's seven shared classes and use its CLI
+adapter for exit codes and safe stderr, declaring intentional current behavior
+without a family transport mapping. Unwaived output/exit changes fail parity.
 
 **Granularity:** Nine ledger rows share command parsing and registry projection;
 all are callbacks over the same service. Source/scaffold and hub configuration
@@ -2033,6 +2074,10 @@ exactly cited, native-asserted Waived cases; skipped-only/unwaived reports must
 fail. D1–D6 waive only their named behaviors and retain their KEEP obligations.
 The six changed-behavior contracts, concurrency/fault proofs and finalization
 fence are planned execution gates; none is claimed implemented in this revision.
+Shared seven-class classification and HTTP/MCP/CLI adapters must come from
+#24970; the owning transport leaves map Skills domain errors and declare
+existing envelopes through them. The internal native dispatchers/node frames
+add no public ledger surface. #24968 has no Skills consumer.
 
 Draft validation command:
 `uv run gobby plans validate .gobby/plans/gdaemon-skills-family.md -p /Users/josh/Projects/gobby`.
@@ -2069,7 +2114,7 @@ Orchestrator's revision request. The delegated ledger status, backend-unavailabl
 wording, verification separation, scoped pin criterion, naming-switch cleanup,
 source-identity evidence and complete MCP-contract test target are resolved.
 The new 6.0 admits exactly nine Skills GET and eleven mutation rows through
-#24659's one verifier, preserving ordinary and managed cookie classes, selector
+#24967's one verifier, preserving ordinary and managed cookie classes, selector
 and loopback restrictions, current credentialed CORS, and the cookie proxy
 remainder. The Orchestrator's persisted security-review label check gates
 dispatch; Security approval for the exact SHA gates cookie activation. No
@@ -2092,6 +2137,22 @@ finding, nit, disagreement or unresolved decision remains. Fresh project-aware
 base validation passed; the superseded M1 was withdrawn whole. Fresh manifest
 derivation, coordinator review and Josh's approval remain subsequent gates;
 no implementation, expansion, dispatch, cutover or push is authorized here.
+
+2026-10-25 — Plan Writer gobby#17576 and Plan Adversary gobby#17577 renewed
+consensus after exact coordinator-amendment comparison of
+0394d396838802227fca5ee887a57f2e4501d9fb. All shared and Skills amendments
+are present: #24970 owns the seven-class classification and HTTP/MCP/CLI
+adapters, with explicit prerequisite edges and family-operation mappings;
+waiver decisions use plan-section citations or task refs; native dispatchers
+and node frames are non-ledger internal surfaces; #24968 has no Skills
+consumer; verifier history names #24967; and cancellation is a settled contract.
+No acceptance scope changed, and no finding, disagreement or unresolved
+question remains. Fresh project-aware base validation passed; the superseded
+M1 was withdrawn whole for fresh derivation. The Orchestrator recorded Josh's
+approval of the family plans through the Assistant; that approval persists
+for these authorized amendments, with no second approval round. The Writer
+will commit the freshly derived manifest bytes unchanged and report the stamp
+to Triage. Expansion and dispatch remain coordinator-owned work.
 
 ## M1 Task Manifest
 `kind: manifest`

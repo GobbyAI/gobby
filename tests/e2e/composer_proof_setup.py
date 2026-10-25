@@ -35,12 +35,15 @@ def main() -> None:
     for result in (install_claude(project), install_codex_project_hooks(project)):
         if result.get("success") is not True:
             raise ProofRefused("isolated hook installation failed")
-    # Pin stdio to the reviewed source interpreter, inheriting only the sealed
-    # proof environment. Installer discovery must never choose a production shim.
-    mcp = {
-        "command": sys.executable,
-        "args": ["-c", "from gobby.cli import cli; cli()", "mcp-server"],
-    }
+    from gobby.agents.cargo_target import cargo_release_dir
+    from gobby.utils.native_bin import native_bin_name
+
+    # Pin stdio to the checkout's built gmcp, so installer discovery never chooses a
+    # production binary. A missing build refuses instead of falling back.
+    gmcp = cargo_release_dir(Path(__file__).resolve().parents[2]) / native_bin_name("gmcp")
+    if not gmcp.is_file():
+        raise ProofRefused("built gmcp required")
+    mcp = {"command": str(gmcp), "args": []}
     claude_file = home / ".claude.json"
     claude = json.loads(claude_file.read_text())
     claude.setdefault("mcpServers", {})["gobby"] = mcp
