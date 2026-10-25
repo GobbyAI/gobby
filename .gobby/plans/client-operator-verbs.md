@@ -30,6 +30,9 @@ This plan carries the verbs that need no lifecycle change now:
 - the command inventory, as `docs/contracts/cli-inventory.toml`, in 1.5;
 - the client docs in 1.6.
 
+Section 1.7 owns the final operator-inventory parity gate, after the family
+owners listed in its cross-plan dependencies have delivered their carriers.
+
 `start`, `stop`, `restart` and `lease status|promote|recover` are deferred to
 D1. Their meaning changes when #21554 (Singleton lease and Python backend
 lifecycle in Rust) lands, so they are planned against the landed lifecycle.
@@ -45,7 +48,7 @@ family owners own the implementations. HTTP/MCP route parity alone does not
 fulfil a CLI row. Before the switch, S3.1 verifies every retained command is
 carried, and S3.2 blocks on any remaining gap. No command is newly dropped.
 
-All six deliverables change only the client, its tests, one contract file, one
+All seven deliverables change only the client, its tests, one contract file, one
 Python test and docs. No daemon route, schema or config key changes.
 
 ## Decision Record
@@ -1043,7 +1046,7 @@ command = [
 ]
 
 helper = [
-  { module = "gobby.cli.__main__", disposition = "keep", ref = "#21573", reason = "python -m entry; is removed at S3.2 #21573 with deletion child #21574." },
+  { module = "gobby.cli.__main__", disposition = "keep", ref = "#21573", reason = "Entry-point role carried by the Rust gobby binary at S3.2 #21573; deletion child #21574 removes the Python module." },
   { module = "gobby.cli._build_", disposition = "keep", ref = "#21567", reason = "build command support.", members = [
       "gobby.cli._build_daemon", "gobby.cli._build_options", "gobby.cli._build_output",
   ] },
@@ -1233,6 +1236,73 @@ with the same verbs, one example each, and the exit codes.
   verbs and the exit codes. behavior: "## Operator commands" in
   `docs/guides/gclient-user-guide.md`.
 
+### 1.7 Operator inventory parity gate [category: code] (depends: 1.5, #21555, #21559, #21560, #21562, #21563, #21564, #21565, #21566, #21567, #21569, #21580, #21581, #21582, #21583, #21584, #21585, #21587, #21589, #21590, #21591, #23275)
+`kind: deliverable`
+
+Targets:
+- `docs/contracts/cli-inventory.toml`
+- `crates/gclient/tests/operator_inventory_parity.rs`
+- `crates/gclient/tests/support/operator_inventory.rs`
+
+**Research context:**
+- 1.5 defines the complete inventory and its exact members. Its
+  `cli_inventory.rs` check examines only rows already marked `carried = true`
+  and checks a top-level help verb; it cannot prove switch readiness.
+- The 46 former Python carriers remain `carried = false` until their owning
+  family supplies Rust CLI parity. The heading names each family owner as a
+  cross-plan prerequisite, so expansion creates blocked-by edges on those
+  tasks rather than leaving the wait in prose. Lifecycle rows from D1 must
+  also pass this gate; no retained row is exempt.
+- `gclient` becomes `gobby` at S3.2. Other retained carriers include
+  `gdaemon schema apply` and the native MCP transport executable. The gate
+  verifies the Rust carrier actually named by each row, preserving absorbed
+  spellings such as `panes send` into `gclient send-keys`.
+- The two Rust test files above are new. Existing owner CLI fixtures and
+  command-mode tests supply the request/response and exit contracts; reuse
+  those fixtures rather than implementing another command parser.
+
+**Implementation:**
+- Load 1.5's inventory with `toml`. Fail with the path, member and owner ref
+  of every `keep` or `absorb` command row whose `carried` flag is false.
+  Set a row true only after all its exact members pass the execution check
+  below. Drop rows remain explicit decisions and are excluded from execution.
+- The support module maps each retained exact member to its Rust carrier
+  invocation, isolated fixture and expected output or request. Rows without
+  `members` use their own `path`. Compare the full retained-member set with
+  the proof-case keys; missing, duplicated or stale cases fail. Absorbed
+  members name the replacement invocation explicitly, not by prefix.
+- Execute every proof case through its Rust command entry point with valid
+  arguments. Assert its documented exit/result and the expected handler
+  request or local operation, so an unknown nested command, a top-level help
+  response or a successful no-op cannot satisfy a member. HTTP fixtures use
+  isolated native-service contracts; local/lifecycle fixtures use temporary
+  state, ports and binaries from the same checkout. No proof invokes Python
+  or touches the operator's daemon, credentials or stores.
+- Include negative fixtures: a retained false row, a missing proof member,
+  and a command rejected by its carrier all fail with the exact member and
+  owner ref. A false row cannot disappear from the execution set by filtering
+  on `carried`; readiness and execution are independent checks.
+- This leaf owns the final inventory flags and the executable gate. S3.2
+  requires its successful completion before handing the name to the client.
+
+**Focused verification (planned):**
+`cargo nextest run -p gobby-client --test operator_inventory_parity` must
+pass against the completed inventory, including every retained member and
+the negative fixtures. Run `cargo clippy -p gobby-client --all-targets -- -D warnings`.
+
+**Acceptance:**
+
+- 1.7.1 - Every keep/absorb command row is carried; a false flag fails with
+  the member and owning ref instead of being skipped. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::retained_rows_have_no_uncarried_commands`.
+- 1.7.2 - Every exact retained member has a passing Rust execution proof
+  for its declared carrier; missing, duplicate, stale or unserved members
+  fail, including nested commands and absorbed replacements. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::every_retained_member_has_rust_execution_proof`.
+- 1.7.3 - Negative fixtures prove that an uncarried row, missing member and
+  carrier rejection each fail with the member and owner ref. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::parity_gate_rejects_incomplete_inventory`.
+
 ## D1 Lifecycle and lease verbs on the client (depends: 1.6)
 `kind: deferred`
 
@@ -1284,7 +1354,8 @@ Orchestrator carries them into that task's plan; this plan does not edit
    and the stamped coherent set, so cutover builds, signs, stamps and
    promotes the renamed client with the other binaries (found work, 02:36 CT).
    This obligation survives deletion of the Python cutover implementation.
-3. Require S3.1's complete operator inventory proof: every retained command
+3. Require completion of S3.1 section 1.7, the operator inventory parity
+   gate and its cross-plan prerequisites: every retained command
    row, including all 46 additional family-owned Rust CLI carriers, must be
    `carried = true` with its exact members served by Rust. A planned name or
    native HTTP/MCP route alone is insufficient. Rename `gclient` carriers to
@@ -1311,10 +1382,17 @@ intermediate Python command or supervised runtime after the switch.
   helper module, even inside a known family, also adds it to an inventory
   row's `members`; the test failure names it and the file.
 - D1 is expanded as a needs-planning task and waits for #21554.
+- 1.7 follows 1.5 and its explicit family-owner dependencies. Its passing
+  execution gate is required before S3.2; 1.5's help-only check is insufficient.
 
 ## V1 Plan Changelog
 `kind: verification`
 
+- 2026-10-24: #24954 review round 1 repaired. Section 1.7 now owns the
+  executable parity gate with family-owner cross-plan dependencies, exact
+  member proofs, negative fixtures and acceptance items. V2 and the S3.2
+  handoff require that gate. The entry-point helper row names the Rust
+  `gobby` binary as the role's carrier while the Python module is deleted.
 - 2026-10-24: #24954 amendment follows Josh's ROADMAP ruling in #24953
   (f207ff6). S3.2 #21573 removes Python, with #21574 as its deletion child.
   All 46 former Python command carriers now name planned Rust client
@@ -1402,6 +1480,9 @@ Observed on this draft:
 
 Planned checks (not run; the files they test do not exist yet):
 
+- `cargo nextest run -p gobby-client --test operator_inventory_parity`
+  must pass for every retained inventory member, with no uncarried rows or
+  unserved members, before the S3.2 naming switch (section 1.7).
 - `cargo nextest run -p gobby-client --test status_verb --test projects_verb --test tasks_verb --test config_verb --test command_mode --test cli_inventory --test source_size`
   must pass.
 - `cargo clippy -p gobby-client --all-targets -- -D warnings` must pass.
