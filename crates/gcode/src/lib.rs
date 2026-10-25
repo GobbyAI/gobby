@@ -17,6 +17,7 @@ mod graph;
 pub mod index;
 pub(crate) mod index_lock;
 mod models;
+pub mod node;
 mod output;
 pub(crate) mod postgres_errors;
 mod project;

@@ -5,11 +5,27 @@ use crate::bm25_health;
 use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::models::IndexedProject;
+use crate::node::StatusReport;
 use crate::output::{self, Format};
 use crate::utils::short_id;
 use crate::visibility;
 
 use super::shared::{format_coverage, format_timestamp, indexed_project_from_row};
+
+/// Collects the status report from the database. Reads no file on disk.
+pub fn collect(_conn: &mut postgres::Client, _ctx: &Context) -> anyhow::Result<StatusReport> {
+    todo!("1.3: move the reads out of run")
+}
+
+/// Renders the JSON status object, without a trailing newline.
+pub fn render_json(_report: &StatusReport) -> anyhow::Result<String> {
+    todo!("1.3: render from StatusReport")
+}
+
+/// Renders the text status, without a trailing newline.
+pub fn render_text(_report: &StatusReport) -> String {
+    todo!("1.3: render from StatusReport")
+}
 
 pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;

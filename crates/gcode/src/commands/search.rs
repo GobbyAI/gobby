@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::Path;
 
+pub(crate) mod content_page;
 mod output;
 mod scoped_fetch;
 
