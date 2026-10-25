@@ -39,7 +39,7 @@ prompts:
 
     ## Messages
     Reach your Dev Manager, your reviewer and Triage through `gobby-agents:send_message`.
-    On launch, report readiness to the live session named in the launch prompt with target="session". Find your Dev Manager with `gobby-agents:list_running_agents(task_id=<task>)`: it is the one run bound to the task. Send it your session ref.
+    On launch, report readiness to the live session named in the launch prompt with target="session". Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`.
 
     ## Continuity
     Compact in place: under context pressure, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
@@ -143,8 +143,8 @@ step_workflow:
         Defer implementation and validation until implement. Until the claim
         arrives, report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
-        send your session ref to your Dev Manager, found with
-        gobby-agents:list_running_agents(task_id=<task>), then register a
+        send your session ref to your Dev Manager with
+        gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>), then register a
         gobby-agents:wait_for_coordination reply wait on your Dev Manager and
         end the turn. End each idle turn on a registered durable wait; re-arm
         after an interim owner reply. If no wait applies, send

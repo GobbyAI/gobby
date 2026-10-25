@@ -224,3 +224,26 @@ async def test_relaunched_seats_name_the_live_dev_manager_session(world: TeamWor
     assert launched == ["test-writer", "developer", "code-reviewer"]
     for seat in launched:
         assert _names_dev_manager(_seat_prompt(run, seat, context), dev_manager), seat
+
+
+@pytest.mark.asyncio
+async def test_fresh_reviewer_names_the_live_dev_manager_session(world: TeamWorld) -> None:
+    """A fresh reviewer launched into a live team names the Dev Manager's session.
+
+    The fresh reviewer requests only the code reviewer and replaces a rejected one, so no Dev
+    Manager is skipped. The guard still reports the team's live Dev Manager, which the prompt
+    names. The guard reruns with ``fresh_reviewer`` set; the admit output is the team's own.
+    """
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    team_id = await _team_with_live(world, task, workspace, ("dev-manager",))
+    rerun = _inputs(task, workspace, world.case.creator, team_id)
+    run = _execution(world, task, rerun)
+    context = await _admit(world, run, rerun)
+    context["inputs"]["fresh_reviewer"] = True
+    await _call(world, run, "guard", context)
+    live = context["steps"]["guard"]["output"]["live"]
+    assert "dev-manager" in live
+
+    assert _launched(run, context) == ["code-reviewer"]
+    assert _names_dev_manager(_seat_prompt(run, "code-reviewer", context), live["dev-manager"])
