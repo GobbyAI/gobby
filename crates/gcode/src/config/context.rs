@@ -593,6 +593,58 @@ pub(super) fn identity_for_resolved_root(
     }
 }
 
+impl Context {
+    /// Builds the read context for one machine's indexed state. Services are off and
+    /// warnings are quiet, the way a grant without service capabilities reads.
+    pub fn for_machine(
+        database_url: &str,
+        machine_id: &str,
+        project_id: &str,
+        project_root: PathBuf,
+        index_scope: ProjectIndexScope,
+    ) -> Self {
+        Self {
+            machine_id: machine_id.to_string(),
+            database_url: database_url.to_string(),
+            project_root,
+            project_id: project_id.to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: CodeVectorSettings::default(),
+            runtime_config_capture_degraded: false,
+            indexing: IndexingSettings::default(),
+            daemon_url: None,
+            grant_ai: None,
+            index_scope,
+        }
+    }
+}
+
+/// The read inputs the search and status renderers take from a project context.
+pub trait ProjectView {
+    fn project_root(&self) -> &Path;
+    fn project_id(&self) -> &str;
+    fn index_scope(&self) -> &ProjectIndexScope;
+    fn quiet(&self) -> bool;
+}
+
+impl ProjectView for Context {
+    fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+    fn project_id(&self) -> &str {
+        &self.project_id
+    }
+    fn index_scope(&self) -> &ProjectIndexScope {
+        &self.index_scope
+    }
+    fn quiet(&self) -> bool {
+        self.quiet
+    }
+}
+
 /// An implicit (cwd-derived) root without a registered identity reports
 /// `project_required`; the `checkout_required` detail stays in the chain.
 fn is_checkout_required(error: &anyhow::Error) -> bool {

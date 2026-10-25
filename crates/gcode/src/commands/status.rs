@@ -1,5 +1,5 @@
 mod content_gc;
-mod current;
+pub(crate) mod current;
 mod invalidate;
 mod projects;
 mod prune;
