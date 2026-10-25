@@ -67,6 +67,7 @@ from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND, TerminalLifetime
 from gobby.terminals.native_runtime import HostManagerControl
 from gobby.terminals.runtime import Delivered, SnapshotMode, SnapshotResult
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
+from gobby.utils.native_bin import native_bin_name
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.terminals.fakes import (
     FakeRuntime,
@@ -801,8 +802,11 @@ class TestExecuteSpawn:
             assert request.prepared_spawn is not None
 
     @pytest.mark.asyncio
-    async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery: MagicMock) -> None:
+    async def test_codex_terminal_direct_spawn(
+        self, mock_codex_prompt_delivery: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Codex spawns directly (no preflight); command is `codex ...`, never `codex resume ...`."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
         mock_session_manager = MagicMock()
         run_manager = MagicMock()
         request = SpawnRequest(
@@ -872,11 +876,9 @@ class TestExecuteSpawn:
             assert "resume" not in command
             assert command[1:3] == ["--ask-for-approval", "never"]
             assert command[3:5] == ["--disable", "guardian_approval"]
-            assert 'mcp_servers.gobby.command="uv"' in command
-            assert (
-                'mcp_servers.gobby.args=["run","--no-sync","--project","/main/repo","gobby","mcp-server"]'
-                in command
-            )
+            gmcp = tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp")
+            assert f"mcp_servers.gobby.command={json.dumps(str(gmcp))}" in command
+            assert "mcp_servers.gobby.args=[]" in command
             assert "mcp_servers.gobby.startup_timeout_sec=120" in command
             assert "mcp_servers.gobby.tool_timeout_sec=360" in command
             assert 'mcp_servers.gobby.tools.list_mcp_servers.approval_mode="approve"' in command

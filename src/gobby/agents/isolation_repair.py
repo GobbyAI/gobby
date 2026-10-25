@@ -15,6 +15,7 @@ from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.claude_config import claude_config_path, update_claude_config
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.utils.daemon_git import GitOk, daemon_git
 
 logger = logging.getLogger("gobby.agents.isolation")
@@ -252,14 +253,13 @@ async def _patch_mcp_config_for_isolation(
     isolated_path: str,
     provider: str,
 ) -> None:
-    """Patch MCP server config so isolated agents use the main repo's gobby code.
+    """Point isolated agents' ``gobby`` MCP entry at the managed ``gmcp`` binary.
 
-    Without this, ``uv run gobby mcp-server`` resolves from the isolated
-    environment's ``pyproject.toml``/``uv.lock``, which may be on an old
-    branch and missing recent fixes.
+    The managed binary serves every workspace, so an isolated checkout's
+    code never serves the proxy. ``main_repo_path`` is kept for the caller
+    contract; the entry does not depend on it.
 
-    Writes a ``.mcp.json`` in the isolated directory that forces
-    ``--project <main_repo_path>`` so ``uv`` resolves from the main repo.
+    Writes a ``.mcp.json`` in the isolated directory with that entry.
 
     For Claude provider, also patches ``~/.claude.json`` to register the
     isolated path as a project with the correct MCP server config.
@@ -269,20 +269,7 @@ async def _patch_mcp_config_for_isolation(
     Repair never replaces malformed selected config with the parent's config.
     """
 
-    mcp_config = {
-        "mcpServers": {
-            "gobby": {
-                "command": "uv",
-                "args": [
-                    "run",
-                    "--project",
-                    main_repo_path,
-                    "gobby",
-                    "mcp-server",
-                ],
-            }
-        }
-    }
+    mcp_config = {"mcpServers": {"gobby": {"command": gmcp_command(), "args": []}}}
 
     mcp_json_path = Path(isolated_path) / ".mcp.json"
     try:
@@ -338,7 +325,7 @@ def provider_mcp_config_error(isolated_path: str, provider: str) -> str | None:
         args = gobby_server.get("args", [])
     except (OSError, KeyError, TypeError, AttributeError, json.JSONDecodeError) as exc:
         return f"provider_mcp_config_invalid:{mcp_json_path}:{exc}"
-    if gobby_server.get("command") != "uv" or "mcp-server" not in args:
+    if gobby_server.get("command") != gmcp_command() or args != []:
         return f"provider_mcp_config_invalid:{mcp_json_path}:gobby server not configured"
 
     if provider != "claude":

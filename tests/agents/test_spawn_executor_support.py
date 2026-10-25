@@ -118,26 +118,38 @@ def test_codex_shell_and_mcp_use_provisioned_cache_paths() -> None:
         assert config["mcp_servers"]["gobby"]["env"][name] == path
 
 
-def test_managed_codex_requires_gobby_before_first_turn() -> None:
+def test_managed_codex_requires_gobby_before_first_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tomllib
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
 
     config = tomllib.loads("\n".join(_codex_mcp_config_overrides("/main/repo")))
     server = config["mcp_servers"]["gobby"]
 
     assert server["required"] is True
-    assert server["args"] == ["run", "--no-sync", "--project", "/main/repo", "gobby", "mcp-server"]
+    assert server["command"] == gmcp
+    assert server["args"] == []
 
 
-def test_resume_retains_required_gobby_server() -> None:
+def test_resume_retains_required_gobby_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import tomllib
 
     from gobby.agents.resume_metadata import filter_resume_config_overrides
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
 
     restored = filter_resume_config_overrides(_codex_mcp_config_overrides("/main/repo"))
     config = tomllib.loads("\n".join(restored))
 
     assert config["mcp_servers"]["gobby"]["required"] is True
-    assert "--no-sync" in config["mcp_servers"]["gobby"]["args"]
+    assert config["mcp_servers"]["gobby"]["command"] == gmcp
+    assert config["mcp_servers"]["gobby"]["args"] == []
 
 
 def test_codex_close_reviewer_resume_keeps_execution_wrappers_disabled() -> None:

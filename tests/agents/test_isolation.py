@@ -2573,8 +2573,10 @@ class TestPatchMcpConfigForIsolation:
     """Tests for _patch_mcp_config_for_isolation."""
 
     @pytest.mark.asyncio
-    async def test_writes_mcp_json(self, tmp_path: Path) -> None:
-        """Writes .mcp.json with --project pointing to main repo."""
+    async def test_writes_mcp_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Writes .mcp.json that launches the managed gmcp binary with no args."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
         isolated_path = str(tmp_path / "worktree")
         Path(isolated_path).mkdir()
         main_repo = "/path/to/main/repo"
@@ -2584,12 +2586,7 @@ class TestPatchMcpConfigForIsolation:
         mcp_json = Path(isolated_path) / ".mcp.json"
         assert mcp_json.exists()
         data = json.loads(mcp_json.read_text())
-        gobby_server = data["mcpServers"]["gobby"]
-        assert gobby_server["command"] == "uv"
-        assert "--project" in gobby_server["args"]
-        assert main_repo in gobby_server["args"]
-        assert "gobby" in gobby_server["args"]
-        assert "mcp-server" in gobby_server["args"]
+        assert data["mcpServers"]["gobby"] == {"command": gmcp, "args": []}
 
     @pytest.mark.asyncio
     async def test_patches_claude_json_for_claude_provider(self, tmp_path: Path) -> None:
@@ -2684,34 +2681,24 @@ class TestProviderMcpConfigPreflight:
         assert error is not None
         assert error.startswith("provider_mcp_config_missing:")
 
-    def test_accepts_non_claude_mcp_json(self, tmp_path: Path) -> None:
+    def test_accepts_non_claude_mcp_json(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
         (tmp_path / ".mcp.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "gobby": {
-                            "command": "uv",
-                            "args": ["run", "--project", "/main", "gobby", "mcp-server"],
-                        }
-                    }
-                }
-            )
+            json.dumps({"mcpServers": {"gobby": {"command": gmcp, "args": []}}})
         )
 
         assert provider_mcp_config_error(str(tmp_path), "codex") is None
 
-    def test_requires_claude_project_config(self, tmp_path: Path) -> None:
+    def test_requires_claude_project_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
         (tmp_path / ".mcp.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "gobby": {
-                            "command": "uv",
-                            "args": ["run", "--project", "/main", "gobby", "mcp-server"],
-                        }
-                    }
-                }
-            )
+            json.dumps({"mcpServers": {"gobby": {"command": gmcp, "args": []}}})
         )
 
         with patch("pathlib.Path.home", return_value=tmp_path):

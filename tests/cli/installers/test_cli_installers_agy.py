@@ -154,7 +154,7 @@ def test_install_agy_global_writes_vendor_hooks_and_mcp(
 
     mcp = _load_json(agy_env / ".gemini" / "config" / "mcp_config.json")
     assert mcp["mcpServers"]["gobby"]["type"] == "stdio"
-    assert mcp["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+    assert mcp["mcpServers"]["gobby"]["args"] == []
 
 
 def test_install_agy_rejects_project_mode(

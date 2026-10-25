@@ -1,6 +1,5 @@
 """Tests for chat_session_helpers."""
 
-import sys
 import tomllib
 from pathlib import Path
 from unittest.mock import patch
@@ -22,6 +21,7 @@ from gobby.servers.chat_session_helpers import (
     build_codex_web_chat_mcp_overrides,
     build_compaction_context,
 )
+from gobby.utils.native_bin import native_bin_name
 
 pytestmark = pytest.mark.unit
 
@@ -84,28 +84,11 @@ class TestFinders:
             cwd_config.touch()
             assert _find_mcp_config() == str(cwd_config)
 
-    def test_build_gobby_mcp_entry(self) -> None:
-        # 1. sibling path exists
-        sibling = Path(sys.executable).parent / "gobby"
-        with patch("pathlib.Path.exists", return_value=True):
-            res = _build_gobby_mcp_entry()
-            assert res == {"command": str(sibling), "args": ["mcp-server"]}
+    def test_build_gobby_mcp_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        gmcp = str(tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp"))
 
-        # 2. fallback to which
-        with (
-            patch("pathlib.Path.exists", return_value=False),
-            patch("shutil.which", return_value="/usr/bin/gobby"),
-        ):
-            res = _build_gobby_mcp_entry()
-            assert res == {"command": "/usr/bin/gobby", "args": ["mcp-server"]}
-
-        # 3. fallback to bare string
-        with (
-            patch("pathlib.Path.exists", return_value=False),
-            patch("shutil.which", return_value=None),
-        ):
-            res = _build_gobby_mcp_entry()
-            assert res == {"command": "gobby", "args": ["mcp-server"]}
+        assert _build_gobby_mcp_entry() == {"command": gmcp, "args": []}
 
 
 class TestHookResponseConverters:

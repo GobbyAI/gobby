@@ -22,7 +22,7 @@ from gobby.cli.installers.mcp_config import (
 )
 from gobby.cli.installers.mcp_config_shared import (
     _remove_toml_table_block,
-    _resolved_gobby_mcp_command,
+    gmcp_command,
 )
 from gobby.paths import get_gobby_home
 from gobby.utils.native_bin import native_bin_name
@@ -82,8 +82,8 @@ class TestConfigureMCPServerJSON:
         assert result["backup_path"] is None  # no backup for new file
         data = json.loads(settings.read_text())
         assert "gobby" in data["mcpServers"]
-        assert data["mcpServers"]["gobby"]["command"].endswith("gobby")
-        assert data["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+        assert data["mcpServers"]["gobby"]["command"].endswith("gmcp")
+        assert data["mcpServers"]["gobby"]["args"] == []
 
     def test_creates_new_file_with_extra_server_fields(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
@@ -91,7 +91,7 @@ class TestConfigureMCPServerJSON:
         assert result["success"] is True
         data = json.loads(settings.read_text())
         assert data["mcpServers"]["gobby"]["type"] == "stdio"
-        assert data["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+        assert data["mcpServers"]["gobby"]["args"] == []
 
     def test_merges_extra_server_fields_into_existing_server(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
@@ -141,8 +141,8 @@ class TestConfigureMCPServerJSON:
         assert result["updated"] is True
         data = json.loads(settings.read_text())
         assert data["mcpServers"]["gobby"] == {
-            "command": _resolved_gobby_mcp_command(),
-            "args": ["mcp-server"],
+            "command": gmcp_command(),
+            "args": [],
         }
 
     def test_invalid_json(self, tmp_path: Path) -> None:
@@ -304,8 +304,8 @@ class TestConfigureMCPServerTOML:
         assert "[mcp_servers.gobby]" in content
         parsed = tomllib.loads(content)
         assert parsed["mcp_servers"]["gobby"] == {
-            "command": _resolved_gobby_mcp_command(),
-            "args": ["mcp-server"],
+            "command": gmcp_command(),
+            "args": [],
             "required": True,
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
@@ -336,23 +336,18 @@ class TestConfigureMCPServerTOML:
         assert result["success"] is True
         assert result["already_configured"] is True
 
-    @pytest.mark.parametrize(
-        "resolved",
-        ["/opt/gobby/bin/gobby", "gobby"],
-        ids=["resolvable", "unresolvable"],
-    )
-    def test_repairs_bare_optional_gobby_server(self, tmp_path: Path, resolved: str) -> None:
-        """A required server must not depend on the launching CLI's PATH when gobby resolves."""
+    def test_repairs_bare_gmcp_command_to_managed_path(self, tmp_path: Path) -> None:
+        """A required server must not depend on the launching CLI's PATH to find gmcp."""
         config = tmp_path / "config.toml"
         config.write_text(
-            '[mcp_servers.gobby]\ncommand = "gobby"\nargs = ["mcp-server"]\n'
+            '[mcp_servers.gobby]\ncommand = "gmcp"\nargs = []\n'
             "startup_timeout_sec = 120\n"
             "tool_timeout_sec = 360\n"
             'default_tools_approval_mode = "approve"\n'
         )
         with patch(
-            "gobby.cli.installers.mcp_config_shared._resolved_gobby_mcp_command",
-            return_value=resolved,
+            "gobby.cli.installers.mcp_config_shared.gmcp_command",
+            return_value="/managed/bin/gmcp",
         ):
             result = configure_mcp_server_toml(config)
 
@@ -360,7 +355,7 @@ class TestConfigureMCPServerTOML:
         assert result["updated"] is True
         server = tomllib.loads(config.read_text())["mcp_servers"]["gobby"]
         assert server["required"] is True
-        assert server["command"] == resolved
+        assert server["command"] == "/managed/bin/gmcp"
 
     def test_adds_missing_tool_timeout_to_existing_config(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
@@ -437,8 +432,8 @@ class TestConfigureMCPServerTOML:
         assert result["backup_path"] is not None
         parsed = tomllib.loads(config.read_text())
         assert parsed["mcp_servers"]["gobby"] == {
-            "command": _resolved_gobby_mcp_command(),
-            "args": ["mcp-server"],
+            "command": gmcp_command(),
+            "args": [],
             "required": True,
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
@@ -457,29 +452,13 @@ class TestConfigureMCPServerTOML:
         assert result["updated"] is True
         parsed = tomllib.loads(config.read_text())
         assert parsed["mcp_servers"]["gobby"] == {
-            "command": _resolved_gobby_mcp_command(),
-            "args": ["mcp-server"],
+            "command": gmcp_command(),
+            "args": [],
             "required": True,
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
             "default_tools_approval_mode": "approve",
         }
-
-    def test_keeps_uv_run_project_config(self, tmp_path: Path) -> None:
-        config = tmp_path / "config.toml"
-        config.write_text(
-            '[mcp_servers.gobby]\ncommand = "uv"\n'
-            'args = ["run", "--project", "/repo/gobby", "gobby", "mcp-server"]\n'
-            "required = true\n"
-            "startup_timeout_sec = 120\n"
-            "tool_timeout_sec = 360\n"
-            'default_tools_approval_mode = "approve"\n'
-        )
-        result = configure_mcp_server_toml(config)
-
-        assert result["success"] is True
-        assert result["already_configured"] is True
-        assert result["updated"] is False
 
     def test_read_error(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
@@ -609,8 +588,8 @@ class TestConfigureProjectMCPServer:
         abs_path = str(project_path.resolve())
         assert data["projects"][abs_path]["mcpServers"]["gobby"] == {
             "type": "stdio",
-            "command": _resolved_gobby_mcp_command(),
-            "args": ["mcp-server"],
+            "command": gmcp_command(),
+            "args": [],
         }
 
     def test_already_configured(self, tmp_path: Path) -> None:
@@ -656,8 +635,8 @@ class TestConfigureProjectMCPServer:
         data = json.loads(settings_path.read_text())
         assert data["projects"][abs_path]["mcpServers"]["gobby"] == {
             "type": "stdio",
-            "command": _resolved_gobby_mcp_command(),
-            "args": ["mcp-server"],
+            "command": gmcp_command(),
+            "args": [],
         }
 
     def test_invalid_json(self, tmp_path: Path) -> None:

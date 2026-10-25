@@ -29,7 +29,7 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_json,
     remove_mcp_server_toml,
 )
-from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.cli.installers.shared import (
     install_cli_content,
     install_global_hooks,
@@ -341,8 +341,8 @@ class TestConfigureMcpServerJson:
         settings = json.loads(settings_path.read_text())
         assert "mcpServers" in settings
         assert "gobby" in settings["mcpServers"]
-        assert settings["mcpServers"]["gobby"]["command"].endswith("gobby")
-        assert settings["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+        assert settings["mcpServers"]["gobby"]["command"].endswith("gmcp")
+        assert settings["mcpServers"]["gobby"]["args"] == []
 
     def test_configure_existing_settings_no_mcp(self, temp_dir: Path) -> None:
         """Test adding MCP server to existing settings without mcpServers."""
@@ -582,8 +582,8 @@ class TestConfigureMcpServerToml:
 
         content = config_path.read_text()
         assert "[mcp_servers.gobby]" in content
-        assert f"command = {json.dumps(_resolved_gobby_mcp_command())}" in content
-        assert 'args = ["mcp-server"]' in content
+        assert f"command = {json.dumps(gmcp_command())}" in content
+        assert "args = []" in content
 
     def test_configure_existing_toml_no_mcp(self, temp_dir: Path) -> None:
         """Test adding MCP server to existing TOML without mcp_servers."""
