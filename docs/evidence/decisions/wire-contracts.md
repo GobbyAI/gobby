@@ -76,8 +76,10 @@ Recorded from plan Decisions 2, 8 and 10. Not re-read from source this seat.
 - Choice answers: OpenRouter's reference marks `probabilities` and `confidence`
   optional. The parser requires them, the stricter reading, so a Choice answer without them
   raises `parse`.
-- Gobby defaults follow TypeSafe's documented normal context: 64,000 tokens for
-  state plus all questions, and 32,000 for state plus any one question.
+- On `openrouter-decisions`, Gobby defaults follow TypeSafe's documented normal
+  context: 64,000 tokens for state plus all questions, and 32,000 for state plus
+  any one question. These defaults apply to this wire only: `systemone` and
+  `workers-ai` keep a 65,536-token request default with no per-question default.
   `ai.decisions.backend_max_state_tokens` configures the whole-request maximum;
   `backend_max_question_tokens` configures the latter. `max_input_tokens` remains
   the application request budget (8,192 by default), strictly below the request
