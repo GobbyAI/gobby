@@ -243,6 +243,9 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     # first, or a fresh worktree cannot create .nextest or .gobby/tmp (#24949).
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    # Provider runtime roots exist on any provisioned host; only declared grants are fresh.
+    for runtime_root in (".codex", ".gobby/hooks/inbox"):
+        (tmp_path / "home" / runtime_root).mkdir(parents=True)
     lane = tmp_path.resolve() / "lane"
     (lane / ".gobby").mkdir(parents=True)
     (lane / "notes.txt").write_text("kept")
@@ -265,6 +268,7 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     denied: list[str] = []
     # Disk state SRT sees when the seat starts.
     at_launch: dict[str, bool] = {}
+    absent_roots: list[str] = []
 
     async def launch(
         *, config: SandboxConfig, workspace_path: str, env: dict[str, str], **_kwargs: object
@@ -279,6 +283,13 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
             file_grant_is_file=(lane / "notes.txt").is_file(),
             glob_parent_exists=(lane / "logs").exists(),
         )
+        # No denyWrite entry may sit below an allowWrite root that is absent at launch.
+        absent_roots.extend(
+            root
+            for root in filesystem["allowWrite"]
+            if not Path(root).exists()
+            and any(Path(deny).is_relative_to(root) for deny in filesystem["denyWrite"])
+        )
         return SandboxLaunch(backend="srt", enforced=True)
 
     monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", launch)
@@ -290,6 +301,7 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     assert str(lane / ".gobby/tmp/.codex/hooks.json") in denied
     assert (lane / "notes.txt").read_text() == "kept"
     assert {str(lane / ".nextest"), str(lane / ".gobby/tmp")} <= set(granted)
+    assert absent_roots == []
     assert at_launch == {
         "nextest_dir": True,
         "tmp_dir": True,
