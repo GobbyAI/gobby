@@ -1,20 +1,25 @@
-"""DecisionService: the Choice call path over the decision wires (task #24244)."""
+"""Strict Choice, Noul, Score and Box decisions over the supported wires."""
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import logging
 import math
 import re
+import struct
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import uuid4
 
 import httpx
 
 from gobby.config.ai import DecisionsConfig
 from gobby.llm.claude_runtime import retry_async
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +169,7 @@ class DecisionService:
         """Return validated Choice answers, or raise ``DecisionsUnavailable``."""
         return await self._request(consumer, state, questions, _parse_choice, timeout_seconds)
 
-    async def _request[Q: (ChoiceQuestion, str, ScoreQuestion), A](
+    async def _request[Q: (ChoiceQuestion, str, ScoreQuestion, BoxQuestion), A](
         self,
         consumer: str,
         state: Mapping[str, Any],
@@ -180,9 +185,9 @@ class DecisionService:
             base, model = config.api_base, config.model
             if base is None or model is None:
                 raise DecisionsUnavailable("unconfigured", "decisions api_base is unset")
-            _check_request(questions)
+            _check_request(questions, config.wire_api)
             body = _request_body(model, config.wire_api, state, questions)
-            estimated = estimate_tokens(body)
+            estimated = _estimate_body_tokens(body)
             if estimated > config.max_input_tokens:
                 raise DecisionsUnavailable(
                     "oversize", f"~{estimated} tokens exceeds {config.max_input_tokens}"
@@ -242,7 +247,7 @@ class DecisionService:
         timeout_seconds: float | None = None,
     ) -> DecisionResult[BoxAnswer]:
         """Return validated Box answers, or raise ``DecisionsUnavailable``."""
-        raise NotImplementedError("community-label-decisions 1.3")
+        return await self._request(consumer, state, questions, _parse_box, timeout_seconds)
 
     def estimate_request_tokens(
         self,
@@ -253,7 +258,7 @@ class DecisionService:
         | Mapping[str, BoxQuestion],
     ) -> int:
         """Return the estimate the ``oversize`` guard compares with ``max_input_tokens``."""
-        return estimate_tokens(
+        return _estimate_body_tokens(
             _request_body(self._config.model or "", self._config.wire_api, state, questions)
         )
 
@@ -276,6 +281,8 @@ class DecisionService:
         deadline = loop.time() + budget
         url = _endpoint(config.wire_api, base, model)
         headers = {"authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+        if config.wire_api == "systemone" and "assets" in body:
+            headers["TypeSafe-Danger-Zone-Images"] = "true"
         card: asyncio.Task[str | None] | None = None
         try:
             async with asyncio.timeout(budget):
@@ -331,11 +338,18 @@ class DecisionService:
                 await asyncio.wait({card})
 
 
-def _check_request(questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion]) -> None:
+def _check_request(
+    questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion | BoxQuestion], wire_api: str
+) -> None:
     if not 1 <= len(questions) <= _MAX_QUESTIONS:
         raise DecisionsUnavailable(
             "invalid_request", f"{len(questions)} questions; 1 to {_MAX_QUESTIONS} allowed"
         )
+    images = [q.image for q in questions.values() if isinstance(q, BoxQuestion)]
+    if images:
+        if wire_api == "workers-ai":
+            raise DecisionsUnavailable("invalid_request", "Workers AI does not support Box")
+        _check_images(images)
     for key, question in questions.items():
         if _KEY_PATTERN.fullmatch(key) is None:
             raise DecisionsUnavailable(
@@ -371,11 +385,119 @@ def _request_body(
     body: dict[str, Any] = {
         "model": model,
         "state": dict(state),
-        "questions": {key: _question_body(question) for key, question in questions.items()},
+        "questions": {},
     }
+    for key, question in questions.items():
+        if isinstance(question, BoxQuestion):
+            image = question.image
+            part: str | dict[str, Any]
+            if wire_api == "systemone":
+                part = f"gobby-image-{uuid4().hex}"
+                body.setdefault("assets", {})[part] = {
+                    "type": "image",
+                    "format": image.mime_type.removeprefix("image/"),
+                    "data_base64": image.data_base64,
+                }
+            else:
+                part = {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image.mime_type};base64,{image.data_base64}"},
+                }
+            body["questions"][key] = {"type": "box", "instructions": [question.instructions, part]}
+        else:
+            body["questions"][key] = _question_body(question)
     if wire_api == "openrouter-decisions":
         body["provider"] = {"zdr": True, "data_collection": "deny"}
     return body
+
+
+def _estimate_body_tokens(body: dict[str, Any]) -> int:
+    """Image tokens are unknown until capture; estimate the textual payload only."""
+    text_body = dict(body)
+    if "assets" in body:
+        text_body["assets"] = {
+            key: {**asset, "data_base64": ""} for key, asset in body["assets"].items()
+        }
+    text_body["questions"] = dict(body["questions"])
+    for key, question in body["questions"].items():
+        if question["type"] == "box" and isinstance(question["instructions"][1], dict):
+            instruction, image = question["instructions"]
+            url = image["image_url"]["url"].split(",", 1)[0] + ","
+            text_body["questions"][key] = {
+                **question,
+                "instructions": [instruction, {"type": "image_url", "image_url": {"url": url}}],
+            }
+    return estimate_tokens(text_body)
+
+
+def _check_images(images: list[BoxImage]) -> None:
+    if len(images) > MAX_REQUEST_IMAGES:
+        raise DecisionsUnavailable("invalid_request", "too many request images")
+    total = 0
+    for image in images:
+        if len(image.data_base64) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
+            raise DecisionsUnavailable("invalid_request", "image exceeds byte limit")
+        try:
+            data = base64.b64decode(image.data_base64, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise DecisionsUnavailable("invalid_request", "invalid image base64") from error
+        total += len(data)
+        if len(data) > MAX_IMAGE_BYTES or total > MAX_REQUEST_IMAGE_BYTES:
+            raise DecisionsUnavailable("invalid_request", "images exceed byte limit")
+        width, height = _image_dimensions(data, image.mime_type)
+        if not (
+            280 <= width <= 1568 and 280 <= height <= 1568 and 78400 <= width * height <= 2458624
+        ):
+            raise DecisionsUnavailable("invalid_request", "image dimensions exceed Box limits")
+
+
+def _image_dimensions(data: bytes, mime_type: str) -> tuple[int, int]:
+    if (
+        mime_type == "image/png"
+        and len(data) >= 33
+        and data[:16] == (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+    ):
+        width, height = struct.unpack_from(">II", data, 16)
+        return width, height
+    if mime_type == "image/jpeg" and data.startswith(b"\xff\xd8"):
+        offset = 2
+        while offset < len(data) and data[offset] == 0xFF:
+            while offset < len(data) and data[offset] == 0xFF:
+                offset += 1
+            if offset >= len(data):
+                break
+            marker = data[offset]
+            offset += 1
+            if marker in (0xD9, 0xDA):
+                break
+            if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+                continue
+            if offset + 2 > len(data):
+                break
+            length = int.from_bytes(data[offset : offset + 2], "big")
+            if length < 2 or offset + length > len(data):
+                break
+            if marker in {
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            }:
+                if length < 8:
+                    break
+                height, width = struct.unpack_from(">HH", data, offset + 3)
+                return width, height
+            offset += length
+    raise DecisionsUnavailable("invalid_request", "missing PNG IHDR or JPEG SOF dimensions")
 
 
 def _question_body(question: ChoiceQuestion | str | ScoreQuestion | BoxQuestion) -> dict[str, Any]:
@@ -466,6 +588,20 @@ def _parse_noul(raw: Any, proposition: str) -> NoulAnswer:
     if not isinstance(raw, dict) or raw.get("type") != "noul":
         raise _parse_error("answer is not a noul")
     return NoulAnswer(probability=_unit(raw.get("noul")))
+
+
+def _parse_box(raw: Any, question: BoxQuestion) -> BoxAnswer:
+    if (
+        not isinstance(raw, dict)
+        or raw.get("type") != "box"
+        or not isinstance(raw.get("box"), dict)
+    ):
+        raise _parse_error("answer is not a box")
+    box = raw["box"]
+    top, bottom, left, right = (_unit(box.get(edge)) for edge in ("top", "bottom", "left", "right"))
+    if left >= right or top >= bottom:
+        raise _parse_error("box edges are not ordered")
+    return BoxAnswer(top, bottom, left, right, _unit(raw.get("confidence")))
 
 
 def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
@@ -572,12 +708,16 @@ def _card_identity(payload: Any, model: str, backend_max: int) -> str | None:
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _schema_hash(questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion]) -> str:
+def _schema_hash(
+    questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion | BoxQuestion],
+) -> str:
     shape: dict[str, dict[str, object]] = {
         key: {"type": "choice", "options": sorted(question.criteria)}
         if isinstance(question, ChoiceQuestion)
         else {"type": "score", "levels": len(question.levels)}
         if isinstance(question, ScoreQuestion)
+        else {"type": "box"}
+        if isinstance(question, BoxQuestion)
         else {"type": "noul"}
         for key, question in questions.items()
     }

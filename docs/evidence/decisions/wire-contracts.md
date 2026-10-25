@@ -228,3 +228,37 @@ requires only `type` and `score` in answers, so omission of its optional legend,
 probabilities or confidence fails Gobby's profile. Cloudflare and the
 [llama.cpp systemone reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1systemone-typesafe-compatible-system-one-api)
 specify 2 to 10 levels. Fixtures do not establish runtime compatibility.
+
+## 9. Strict Box profile and image transports (retrieved 2026-10-24)
+
+Box requires Jev 1.14. Gobby sends non-empty instructions and one PNG or JPEG per
+question. Before dialing it checks the decoded signature and PNG IHDR or JPEG SOF
+dimensions: 280 to 1568 pixels per side, area 78,400 to 2,458,624. Gobby's shared image
+bounds apply: 5 MiB per image, 8 images and 24 MiB decoded bytes per request. These are
+stricter than TypeSafe's documented 16 MiB per-image limit. Invalid input never opens
+the service cooldown.
+
+- OpenRouter carries `[instructions, {type: image_url, image_url: {url: data URL}}]`
+  inside each Box question. It receives no top-level assets or images map.
+- Systemone carries `[instructions, reference]` with a fresh `gobby-image-<uuid4 hex>`
+  whole-value reference. Its top-level `assets` entry carries `type: image`,
+  `format: png|jpeg`, and `data_base64`. The request sets
+  `TypeSafe-Danger-Zone-Images: true`.
+- Workers AI's Clef schema has no Box; Gobby refuses it before dialing. The documented
+  llama.cpp and LM Studio systemone surfaces list Choice, Noul and Score only; Box
+  runtime support remains unverified there.
+
+The strict answer requires `type: box`, finite `top`, `bottom`, `left`, `right` edges
+in [0,1], `left < right`, `top < bottom`, and finite confidence in [0,1]. Missing or
+null confidence fails closed, even though OpenRouter marks it optional and TypeSafe
+allows null. There is no probability-sum check. The two `*_box_response.json` fixtures
+exercise both transports with keyed answers. The text estimate removes image data;
+image token cost is unknown until capture, and the response truncation guard remains.
+
+Sources transcribed by researcher gobby#17515 in the 2026-10-24 working note:
+[TypeSafe Box](https://docs.typesafe.ai/primitives/box),
+[TypeSafe images](https://docs.typesafe.ai/images),
+[TypeSafe OpenAPI 0.2.0](https://api.typesafe.ai/openapi.json),
+[OpenRouter OpenAPI](https://openrouter.ai/openapi.json), and the Cloudflare and
+llama.cpp schemas linked above. These fixtures establish documented wire conformance,
+not a live Box consumer or backend capture.
