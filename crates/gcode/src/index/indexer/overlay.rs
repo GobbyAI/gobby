@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use postgres::Client;
 use wait_timeout::ChildExt;
 
-use crate::config::{Context, ProjectIndexScope};
+use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::index::api;
 use crate::index::{parser, walker};
@@ -19,10 +19,10 @@ use super::file::{
 };
 use super::lifecycle::{attach_projection_sync, refresh_communities, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
-use super::pipeline::explicit_route_with_discovery_options;
+use super::pipeline::{explicit_route_with_discovery_options, index_discovered_files};
 use super::selector_blob::{self, HeadBlobs};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
-use super::types::{IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
+use super::types::{IndexOptions, IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
 use super::util::{
     effective_excludes, epoch_secs_str, relative_path, requested_relative_path,
     unsupported_file_types,
@@ -89,8 +89,9 @@ pub(super) fn index_overlay_files(
     conn: &mut Client,
     request: &IndexRequest,
     ctx: &Context,
+    options: &mut IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
-    let mut timings = super::IndexTimings::new("overlay.parent_validation");
+    let mut timings = super::IndexTimings::new("overlay.parent_index");
     let ProjectIndexScope::Overlay {
         overlay_project_id,
         overlay_root,
@@ -101,7 +102,24 @@ pub(super) fn index_overlay_files(
         anyhow::bail!("overlay indexer requires an overlay project context");
     };
 
-    crate::config::validate_parent_code_index(conn, &ctx.index_scope, &ctx.machine_id)?;
+    if !parent_code_index_exists(conn, parent_project_id, &ctx.machine_id)? {
+        // Index the parent first so the overlay pass has its rows to read. Fully
+        // projected unchanged parent files are adopted rather than re-parsed.
+        let parent_ctx = ctx.rebased(
+            parent_root.clone(),
+            parent_project_id.clone(),
+            ProjectIndexScope::Single,
+        );
+        let parent_request = IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: request.require_cpp_semantics,
+            sync_projections: request.sync_projections,
+        };
+        index_discovered_files(conn, &parent_request, &parent_ctx, options)?;
+    }
 
     timings.phase("overlay.seed");
 

@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::bm25_health;
-use crate::config::Context;
+use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::models::IndexedProject;
 use crate::output::{self, Format};
@@ -14,9 +14,17 @@ use super::shared::{format_coverage, format_timestamp, indexed_project_from_row}
 pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let code_index = bm25_health::verify(&mut conn);
+    // A missing parent index reads as unindexed, the same report an empty overlay gets.
+    let parent_indexed = match &ctx.index_scope {
+        ProjectIndexScope::Overlay {
+            parent_project_id, ..
+        } => parent_code_index_exists(&mut conn, parent_project_id, &ctx.machine_id)?,
+        ProjectIndexScope::Single => true,
+    };
 
     let stats: Option<IndexedProject> = db::id_param(&ctx.project_id)
         .ok()
+        .filter(|_| parent_indexed)
         .and_then(|project_id| {
             let machine_id = db::id_param(&ctx.machine_id).ok()?;
             conn.query_opt(
