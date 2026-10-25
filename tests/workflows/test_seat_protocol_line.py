@@ -38,6 +38,8 @@ def _parse(text: str) -> dict[str, str] | None:
         f"EVENT=CANDIDATE TASK=#7 RUN=run WT=tree COMMIT={SHA.upper()}",
         f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} NOTE=reassigned",
         f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} VERDICT=BOUNCE TASK_TITLE=Seat NOTE=HIGH",
+        "EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=BOUNCE TASK_TITLE=Seat NOTE=HIGH",
+        "EVENT=CANDIDATE_WITHDRAWN TASK=#7 DISPOSITION=wont_do NOTE=reassigned",
     ],
 )
 def test_consumed_well_formed_envelopes_parse(line: str) -> None:
@@ -78,6 +80,12 @@ def test_candidate_run_with_whitespace_names_run() -> None:
         ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA"),
         (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it now", "SHA"),
         (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
+        (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} DISPOSITION=moot VERDICT=BOUNCE", "SHA"),
+        (f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} DISPOSITION=moot", "SHA"),
+        ("EVENT=CANDIDATE_WITHDRAWN TASK=#7 NOTE=reassigned", "SHA"),
+        ("EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=bogus VERDICT=BOUNCE", "DISPOSITION"),
+        ("EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=LAND", "VERDICT"),
+        ("EVENT=PROOF_REQUEST TASK=#7 DISPOSITION=moot NOTE=prove it now", "DISPOSITION"),
     ],
 )
 def test_malformed_consumed_envelopes_name_the_offending_field(line: str, field: str) -> None:
@@ -175,6 +183,29 @@ def test_candidate_lane_prefix_is_read_by_the_receiver(
 
     assert parsed is not None
     assert parsed.sha == SHA
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot",
+        "EVENT=CANDIDATE_WITHDRAWN TASK=#7 DISPOSITION=moot NOTE=reassigned",
+    ],
+)
+def test_no_work_verdict_and_withdrawal_bind_the_disposition_without_a_sha(
+    line: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A no-work unit is identified by its task and disposition, never by a commit."""
+    from gobby.workflows.engine import seat_messages
+
+    monkeypatch.setattr(seat_messages, "SessionManager", _Sessions)
+    monkeypatch.setattr(seat_messages, "LocalTaskManager", _Tasks)
+
+    parsed = candidate_event(MagicMock(), cast(InterSessionMessage, _Message(line)))
+
+    assert parsed is not None
+    assert parsed.sha is None
+    assert parsed.fields["DISPOSITION"] == "moot"
 
 
 @pytest.mark.parametrize("event", ["CANDIDATE_UPDATE", "CANDIDATE_VERDICT_EXTRA", "CANDIDATE_"])

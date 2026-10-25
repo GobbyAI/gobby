@@ -272,6 +272,60 @@ async def test_well_formed_withdrawal_sends_unchanged(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "content",
+    [
+        "EVENT=CANDIDATE_WITHDRAWN TASK=#7 DISPOSITION=moot NOTE=reassigned",
+        "EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot",
+    ],
+)
+async def test_well_formed_no_work_coordination_sends_unchanged(
+    content: str, registry: InternalToolRegistry, message_manager: MagicMock
+) -> None:
+    result = await _send(registry, content)
+
+    assert result["success"] is True
+    assert _stored_content(message_manager) == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "field", "canonical"),
+    [
+        (
+            f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} DISPOSITION=moot VERDICT=BOUNCE",
+            "SHA",
+            "SHA|DISPOSITION VERDICT TASK_TITLE NOTE",
+        ),
+        (
+            "EVENT=CANDIDATE_VERDICT TASK=#7 DISPOSITION=moot VERDICT=LAND",
+            "VERDICT",
+            "SHA|DISPOSITION VERDICT TASK_TITLE NOTE",
+        ),
+        (
+            "EVENT=CANDIDATE_WITHDRAWN TASK=#7 DISPOSITION=bogus",
+            "DISPOSITION",
+            "SHA|DISPOSITION NOTE",
+        ),
+    ],
+)
+async def test_malformed_no_work_coordination_is_refused_and_nothing_is_stored(
+    content: str,
+    field: str,
+    canonical: str,
+    registry: InternalToolRegistry,
+    message_manager: MagicMock,
+) -> None:
+    result = await _send(registry, content)
+
+    assert result["success"] is False
+    assert result["error_code"] == "protocol_line_rejected"
+    assert result["field"] == field
+    assert result["canonical_order"] == canonical
+    message_manager.create_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     ("content", "field", "canonical"),
     [
         (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it", "SHA", "SHA NOTE"),
