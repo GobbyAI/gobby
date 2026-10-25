@@ -228,6 +228,20 @@ impl TestDb {
         Ok(())
     }
 
+    /// Moves the published row to `revision`, as an activation landing would.
+    pub async fn set_revision(&self, token: &str, revision: i64) -> Result<()> {
+        self.admin
+            .execute(
+                &format!(
+                    "UPDATE \"{}\".config_active_state SET revision = $2 WHERE deployment_token = $1",
+                    self.schema
+                ),
+                &[&token, &revision],
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn unpublish(&self, token: &str) -> Result<()> {
         self.admin
             .execute(
