@@ -511,7 +511,6 @@ fn read_marker(path: &Path, id: &str) -> io::Result<Option<Value>> {
 }
 
 fn encode(record: &Value) -> io::Result<Vec<u8>> {
-    // serde_json's default map is a BTreeMap, matching Python's sort_keys=True.
     let mut bytes = serde_json::to_vec(record).map_err(io::Error::other)?;
     bytes.push(b'\n');
     Ok(bytes)

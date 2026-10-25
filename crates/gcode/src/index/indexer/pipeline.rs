@@ -59,7 +59,7 @@ fn index_files_with_connection(
     mut options: IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
     if matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. }) {
-        return index_overlay_files(conn, &request, ctx);
+        return index_overlay_files(conn, &request, ctx, &mut options);
     }
     if request.explicit_files.is_empty() {
         index_discovered_files(conn, &request, ctx, &mut options)
@@ -68,7 +68,7 @@ fn index_files_with_connection(
     }
 }
 
-fn index_discovered_files(
+pub(super) fn index_discovered_files(
     conn: &mut Client,
     request: &IndexRequest,
     ctx: &Context,

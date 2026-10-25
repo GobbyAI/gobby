@@ -138,9 +138,9 @@ fn service_config_selection(
     use config::ServiceConfigSelection;
 
     match command {
-        Command::Index { .. } => ServiceConfigSelection::all(),
+        Command::Index { .. } => ServiceConfigSelection::all().parent_optional(),
         Command::Repair => ServiceConfigSelection::falkordb_only(),
-        Command::Status => ServiceConfigSelection::projection_cleanup(),
+        Command::Status => ServiceConfigSelection::projection_cleanup().parent_optional(),
         Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
         | Command::Callers { .. }

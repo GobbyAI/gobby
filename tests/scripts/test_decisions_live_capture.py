@@ -275,17 +275,32 @@ def test_capture_records_bounded_redacted_http_errors(
     assert "x-private" not in section
 
 
+def _is_probe(request: httpx.Request) -> bool:
+    return request.method == "POST" and "probe" in json.loads(request.content)["questions"]
+
+
+@pytest.mark.parametrize(
+    ("error", "finding"),
+    [
+        (httpx.ReadTimeout, "ReadTimeout: probe timed out"),
+        (httpx.ConnectError, "ConnectError: probe transport failed"),
+    ],
+)
 def test_capture_transport_failure_has_no_http_status(
-    tmp_path: Path, openrouter_wire: OpenRouterWire, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    openrouter_wire: OpenRouterWire,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[httpx.TransportError],
+    finding: str,
 ) -> None:
     original = openrouter_wire.handle
 
-    def timeout(request: httpx.Request) -> httpx.Response:
-        if request.method == "POST" and "probe" in json.loads(request.content)["questions"]:
-            raise httpx.ReadTimeout("local timeout", request=request)
+    def fail(request: httpx.Request) -> httpx.Response:
+        if _is_probe(request):
+            raise error("local transport failure", request=request)
         return original(request)
 
-    monkeypatch.setattr(openrouter_wire, "handle", timeout)
+    monkeypatch.setattr(openrouter_wire, "handle", fail)
     code, section = _capture(tmp_path)
 
     assert code == 0
@@ -293,7 +308,69 @@ def test_capture_transport_failure_has_no_http_status(
     assert len(capture["probes"]) == 6
     for probe in capture["probes"]:
         assert "status" not in probe
-        assert probe["finding"] == "ReadTimeout: probe did not return valid JSON"
+        assert probe["finding"] == finding
+
+
+def test_capture_invalid_probe_json_keeps_its_status(
+    tmp_path: Path, openrouter_wire: OpenRouterWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = openrouter_wire.handle
+
+    def not_json(request: httpx.Request) -> httpx.Response:
+        if _is_probe(request):
+            return httpx.Response(200, content=b"<html>busy</html>")
+        return original(request)
+
+    monkeypatch.setattr(openrouter_wire, "handle", not_json)
+    code, section = _capture(tmp_path)
+
+    assert code == 0
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    assert len(capture["probes"]) == 6
+    for probe in capture["probes"]:
+        assert probe["status"] == 200
+        assert probe["finding"] == "JSONDecodeError: probe did not return valid JSON"
+
+
+@pytest.mark.parametrize(
+    ("extra", "probe_timeout"),
+    [((), 30.0), (("--probe-timeout-seconds", "900"), 900.0)],
+)
+def test_capture_probe_timeout_applies_only_to_raw_probes(
+    tmp_path: Path,
+    openrouter_wire: OpenRouterWire,
+    extra: tuple[str, ...],
+    probe_timeout: float,
+) -> None:
+    code, section = _capture(tmp_path, "systemone", *extra)
+
+    assert code == 0
+    probe_reads = [
+        r.extensions["timeout"]["read"] for r in openrouter_wire.requests if _is_probe(r)
+    ]
+    shape_reads = [
+        r.extensions["timeout"]["read"] for r in openrouter_wire.requests if not _is_probe(r)
+    ]
+    assert probe_reads == [probe_timeout] * 6
+    assert len(shape_reads) == 4
+    assert set(shape_reads) == {30.0}
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    assert capture["probe_timeout_seconds"] == probe_timeout
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "nan", "inf"])
+def test_capture_rejects_non_positive_or_non_finite_probe_timeout(
+    tmp_path: Path,
+    openrouter_wire: OpenRouterWire,
+    capsys: pytest.CaptureFixture[str],
+    value: str,
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        _capture(tmp_path, "systemone", "--probe-timeout-seconds", value)
+
+    assert exit_info.value.code == 2
+    assert "--probe-timeout-seconds must be a positive finite number" in capsys.readouterr().err
+    assert openrouter_wire.requests == []
 
 
 def test_catalog_lists_only_matching_public_identifiers(

@@ -1,9 +1,9 @@
 header:
   plan_id: gdaemon-ai-providers-family
-  plan_hash: ca93753ecc798fd002e4e53029d0c6e87f0088d7b7cd99ca97e25afbf793f97e
+  plan_hash: 735e5d4194d0eaee8384a2bb215ee32e2246043a8e03f6f45bfdb496112f5c5c
   root_task_ref: '21587'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-25T18:35:38Z'
+  generated_at: '2026-10-25T18:52:03Z'
   task_tree_source: db
   task_tree_source_hash: b77647a049aa4b7e35dd4a0d8700f4f0c355f2e3ad90d0380a6465ad788c9e22
   evidence_summary: []

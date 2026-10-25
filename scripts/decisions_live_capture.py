@@ -144,7 +144,11 @@ async def _probe(
         tokens = usage.get("input_tokens", 0)
         if tokens > 0:
             record["chars_per_token"] = chars / tokens
-    except (httpx.HTTPError, ValueError) as error:
+    except httpx.TimeoutException as error:
+        record["finding"] = f"{type(error).__name__}: probe timed out"
+    except httpx.HTTPError as error:
+        record["finding"] = f"{type(error).__name__}: probe transport failed"
+    except ValueError as error:
         record["finding"] = f"{type(error).__name__}: probe did not return valid JSON"
     return record
 
@@ -354,8 +358,12 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         headers["TypeSafe-Danger-Zone-Long-Context"] = "true"
     probes: list[dict[str, Any]] = []
     model = config.model or ""
+    # A local backend's full-context prefill can outlast the hosted service timeout.
+    probe_timeout = (
+        config.timeout_seconds if args.probe_timeout_seconds is None else args.probe_timeout_seconds
+    )
     async with httpx.AsyncClient(
-        headers=headers, timeout=config.timeout_seconds, trust_env=False, follow_redirects=False
+        headers=headers, timeout=probe_timeout, trust_env=False, follow_redirects=False
     ) as client:
         for chars in (4096, 8192):
             probes.append(
@@ -405,6 +413,7 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         "backend_max_state_tokens": limit,
         "backend_max_question_tokens": config.resolved_backend_max_question_tokens,
         "long_context": config.long_context,
+        "probe_timeout_seconds": probe_timeout,
         "shapes": shapes,
         "probes": probes,
         "measured_chars_per_token": measured_ratio,
@@ -430,7 +439,15 @@ def main(
     parser.add_argument("--alias")
     parser.add_argument("--box-image", type=Path)
     parser.add_argument("--out", type=Path)
+    parser.add_argument(
+        "--probe-timeout-seconds",
+        type=float,
+        help="HTTP timeout for raw probes; defaults to the service timeout",
+    )
     args = parser.parse_args(argv)
+    # NaN fails both comparisons, so it is rejected with the non-positive values.
+    if args.probe_timeout_seconds is not None and not 0 < args.probe_timeout_seconds < math.inf:
+        parser.error("--probe-timeout-seconds must be a positive finite number")
     if args.list_catalog:
         if args.wire_api != "openrouter-decisions" or not args.api_key_secret:
             parser.error(

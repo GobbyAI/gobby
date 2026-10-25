@@ -454,15 +454,12 @@ fn post_and_cleanup_sends_droid_source_to_unified_hooks_endpoint() {
         let request = read_http_request(&mut stream);
         assert!(request.contains("POST /api/hooks/execute HTTP/1.1"));
         assert!(request.contains(&format!("{ENVELOPE_ID_HEADER}: {envelope_id}")));
-        assert!(request.contains("\"hook_type\":\"PreToolUse\""));
-        assert!(request.contains("\"source\":\"droid\""));
-        assert!(request.contains("\"schema_version\":1"));
-        assert!(request.contains("\"critical\":false"));
-        let body = request
-            .split_once("\r\n\r\n")
-            .map(|(_, body)| body)
-            .unwrap();
+        let (_, body) = request.split_once("\r\n\r\n").expect("HTTP request body");
         let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(body["hook_type"], "PreToolUse");
+        assert_eq!(body["source"], "droid");
+        assert_eq!(body["schema_version"], 1);
+        assert_eq!(body["critical"], false);
         assert_eq!(
             body["input_data"],
             serde_json::json!({

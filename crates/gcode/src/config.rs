@@ -16,6 +16,8 @@ pub use context::{
     resolve_project_identity, warn_project_identity,
 };
 
+pub(crate) use context::parent_code_index_exists;
+#[cfg(test)]
 pub(crate) use context::validate_parent_code_index;
 pub(crate) use layers::read_config_layers;
 pub(crate) use services::{EmbeddingConfigDetails, resolve_embedding_config_details};

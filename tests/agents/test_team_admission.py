@@ -16,6 +16,7 @@ import pytest
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.landing_case import make_landing_case
@@ -232,3 +233,59 @@ async def test_short_team_id_resolves_or_names_the_full_uuid(world: TeamWorld) -
         outcome = refused
 
     assert outcome == team or re.search(r"full.*uuid|uuid.*full", str(outcome), re.I), outcome
+
+
+async def _land_team_commit(world: TeamWorld, task: Task, team: TeamBinding, name: str) -> str:
+    """Commit ``name`` in the team tree and land that commit on ``task``."""
+    tree = Path(team.worktree_path)
+    (tree / name).write_text(f"{name}\n")
+    git_in(tree, "add", name)
+    git_in(tree, "commit", "-m", f"Add {name}")
+    sha = git_in(tree, "rev-parse", "HEAD")
+    world.case.link(task, sha)
+    world.case.approve(task, sha)
+    landed = await world.case.land(task, sha)
+    assert landed["landed"] is True, landed
+    return sha
+
+
+async def test_landed_open_task_keeps_its_team_tree_admissible(world: TeamWorld) -> None:
+    """A landing on a task that stays open leaves the task's admitted tree admissible."""
+    task = world.case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    await _land_team_commit(world, task, team, "landed.txt")
+    assert LocalTaskManager(world.case.db).get_task(task.id).closed_at is None
+
+    # The team keeps working after the landing, so its HEAD holds a commit the landing lacks.
+    tree = Path(team.worktree_path)
+    (tree / "follow_up.txt").write_text("follow-up after the landing\n")
+    git_in(tree, "add", "follow_up.txt")
+    git_in(tree, "commit", "-m", "Follow-up after the landing")
+
+    assert await world.admit(original, task) == team
+    rejoined = await world.admit(world.child(task), task, team_id=team.team_id)
+    assert rejoined == team
+    assert world.tree_ids() == [team.worktree_id]
+    assert world.task_branches() == [team.branch]
+
+    # A fresh execution without team_id is refused as a second team, not given a new tree.
+    with pytest.raises(TeamAdmissionRefused) as again:
+        await world.admit(world.child(task), task)
+    assert again.value.code == "team_exists"
+    assert world.tree_ids() == [team.worktree_id]
+
+
+async def test_closed_task_refuses_its_landed_team(world: TeamWorld) -> None:
+    """Once its landed task closes, the task's team is refused rather than re-admitted."""
+    task = world.case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    sha = await _land_team_commit(world, task, team, "landed.txt")
+    LocalTaskManager(world.case.db).close_task(
+        task.id, reason="done", closed_in_session_id=original.id, closed_commit_sha=sha
+    )
+
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(world.child(task), task, team_id=team.team_id)
+    assert refused.value.code == "team_task_closed"
