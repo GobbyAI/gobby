@@ -2,6 +2,7 @@
 #[cfg(unix)]
 pub mod host;
 pub mod repair;
+pub mod sandbox;
 pub mod state;
 pub mod workspace;
 
