@@ -23,14 +23,18 @@ pub struct HubScope {
 impl HubScope {
     /// Builds the read context for a node request, after the overlay claims check.
     pub fn context(&self, scope: &NodeScope) -> Result<Context, RouteError> {
-        let index_scope = match (&scope.parent_root, &self.overlay_project_id) {
-            (None, None) => ProjectIndexScope::Single,
-            (Some(parent_root), Some(overlay_project_id)) => ProjectIndexScope::Overlay {
-                overlay_project_id: overlay_project_id.clone(),
-                overlay_root: PathBuf::from(&scope.root),
-                parent_project_id: self.project_id.clone(),
-                parent_root: PathBuf::from(parent_root),
-            },
+        // A local overlay context carries the overlay's own id; the parent sits in the scope.
+        let (project_id, index_scope) = match (&scope.parent_root, &self.overlay_project_id) {
+            (None, None) => (self.project_id.clone(), ProjectIndexScope::Single),
+            (Some(parent_root), Some(overlay_project_id)) => (
+                overlay_project_id.clone(),
+                ProjectIndexScope::Overlay {
+                    overlay_project_id: overlay_project_id.clone(),
+                    overlay_root: PathBuf::from(&scope.root),
+                    parent_project_id: self.project_id.clone(),
+                    parent_root: PathBuf::from(parent_root),
+                },
+            ),
             _ => {
                 return Err(RouteError {
                     code: "claims_mismatch".to_string(),
@@ -42,7 +46,7 @@ impl HubScope {
         Ok(Context::for_machine(
             &self.database_url,
             &self.machine_id,
-            &self.project_id,
+            &project_id,
             PathBuf::from(&scope.root),
             index_scope,
         ))

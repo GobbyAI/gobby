@@ -622,6 +622,29 @@ impl Context {
     }
 }
 
+/// The read inputs the search and status renderers take from a project context.
+pub trait ProjectView {
+    fn project_root(&self) -> &Path;
+    fn project_id(&self) -> &str;
+    fn index_scope(&self) -> &ProjectIndexScope;
+    fn quiet(&self) -> bool;
+}
+
+impl ProjectView for Context {
+    fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+    fn project_id(&self) -> &str {
+        &self.project_id
+    }
+    fn index_scope(&self) -> &ProjectIndexScope {
+        &self.index_scope
+    }
+    fn quiet(&self) -> bool {
+        self.quiet
+    }
+}
+
 /// An implicit (cwd-derived) root without a registered identity reports
 /// `project_required`; the `checkout_required` detail stays in the chain.
 fn is_checkout_required(error: &anyhow::Error) -> bool {

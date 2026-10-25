@@ -1,13 +1,12 @@
 use serde::Serialize;
 
 use crate::commands::token_budget;
-use crate::config::Context;
+use crate::config::{Context, ProjectView};
 use crate::models::{SearchResult, SearchWarning};
 use crate::output::{self, Format};
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchPageMeta<'a> {
-    pub project_id: &'a str,
     pub total: usize,
     pub offset: usize,
     pub limit: usize,
@@ -32,7 +31,8 @@ struct SearchPage<'a, T: Serialize> {
     warnings: &'a [SearchWarning],
 }
 
-pub(super) fn paginate<T, F>(
+pub(super) fn paginate<V, T, F>(
+    view: &V,
     results: Vec<T>,
     meta: SearchPageMeta<'_>,
     token_budget: Option<usize>,
@@ -40,16 +40,26 @@ pub(super) fn paginate<T, F>(
     render_rows: F,
 ) -> token_budget::TokenBudgetPage<T>
 where
+    V: ProjectView,
     T: Serialize,
     F: Fn(&[T]) -> String,
 {
     let has_more = meta.total > meta.offset.saturating_add(results.len());
-    paginate_with_more(results, meta, has_more, token_budget, format, render_rows)
+    paginate_with_more(
+        view,
+        results,
+        meta,
+        has_more,
+        token_budget,
+        format,
+        render_rows,
+    )
 }
 
 /// Paginates with a caller-owned `has_more`, for pages whose cursor the caller
 /// already computed (content search carries `next_offset` on its page).
-pub(super) fn paginate_with_more<T, F>(
+pub(super) fn paginate_with_more<V, T, F>(
+    view: &V,
     results: Vec<T>,
     meta: SearchPageMeta<'_>,
     has_more: bool,
@@ -58,6 +68,7 @@ pub(super) fn paginate_with_more<T, F>(
     render_rows: F,
 ) -> token_budget::TokenBudgetPage<T>
 where
+    V: ProjectView,
     T: Serialize,
     F: Fn(&[T]) -> String,
 {
@@ -69,7 +80,7 @@ where
         |rows, next_offset, budget_exceeded| match format {
             Format::Json => {
                 // Search page fields use only derived serializers with string map keys.
-                serde_json::to_string(&page(meta, rows, next_offset, budget_exceeded))
+                serde_json::to_string(&page(view, meta, rows, next_offset, budget_exceeded))
                     .expect("derived search page serialization cannot fail")
             }
             Format::Text => token_budget::render_text_page(&render_rows(rows), next_offset),
@@ -77,18 +88,21 @@ where
     )
 }
 
-pub(super) fn print_page<T, F>(
+pub(super) fn print_page<V, T, F>(
+    view: &V,
     page_result: &token_budget::TokenBudgetPage<T>,
     meta: SearchPageMeta<'_>,
     format: Format,
     render_rows: F,
 ) -> anyhow::Result<()>
 where
+    V: ProjectView,
     T: Serialize,
     F: Fn(&[T]) -> String,
 {
     match format {
         Format::Json => output::print_json(&page(
+            view,
             meta,
             &page_result.results,
             page_result.next_offset,
@@ -108,14 +122,15 @@ where
     }
 }
 
-fn page<'a, T: Serialize>(
+fn page<'a, V: ProjectView, T: Serialize>(
+    view: &'a V,
     meta: SearchPageMeta<'a>,
     results: &'a [T],
     next_offset: Option<usize>,
     budget_exceeded: bool,
 ) -> SearchPage<'a, T> {
     SearchPage {
-        project_id: meta.project_id,
+        project_id: view.project_id(),
         total: meta.total,
         offset: meta.offset,
         limit: meta.limit,
@@ -211,9 +226,9 @@ pub(super) fn compact_snippet(snippet: &str) -> String {
     snippet.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub(super) fn print_search_warning(ctx: &Context, verbose: bool, hint: Option<&str>) {
+pub(super) fn print_search_warning(view: &impl ProjectView, verbose: bool, hint: Option<&str>) {
     if verbose
-        && !ctx.quiet
+        && !view.quiet()
         && let Some(hint) = hint
     {
         eprintln!("Hint: {hint}");
@@ -230,17 +245,26 @@ fn search_hint_text(quiet: bool, is_empty: bool, hint: Option<&str>) -> Option<&
     (!quiet && !is_empty).then_some(hint).flatten()
 }
 
+/// The diagnostic an empty page prints, read from any project view.
+pub(super) fn empty_diagnostic_for(
+    view: &impl ProjectView,
+    is_empty: bool,
+    offset: usize,
+    total: usize,
+    hint: Option<&str>,
+) -> Option<String> {
+    let has_identity = crate::project::has_identity_file(view.project_root());
+    empty_diagnostic_text(is_empty, view.quiet(), has_identity, offset, total, hint)
+}
+
 pub(super) fn print_empty_diagnostic(
-    ctx: &Context,
+    view: &impl ProjectView,
     is_empty: bool,
     offset: usize,
     total: usize,
     hint: Option<&str>,
 ) {
-    let has_identity = crate::project::has_identity_file(&ctx.project_root);
-    if let Some(diagnostic) =
-        empty_diagnostic_text(is_empty, ctx.quiet, has_identity, offset, total, hint)
-    {
+    if let Some(diagnostic) = empty_diagnostic_for(view, is_empty, offset, total, hint) {
         eprintln!("{diagnostic}");
     }
 }
@@ -275,6 +299,7 @@ fn empty_diagnostic_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ProjectIndexScope;
 
     #[test]
     fn compact_search_omits_ids_scores_and_lanes() {
@@ -315,10 +340,43 @@ mod tests {
         );
     }
 
+    /// A project view that is not a `Context`, to show the renderers read only the trait.
+    struct AltView {
+        root: std::path::PathBuf,
+        project_id: String,
+        index_scope: ProjectIndexScope,
+        quiet: bool,
+    }
+
+    impl ProjectView for AltView {
+        fn project_root(&self) -> &std::path::Path {
+            &self.root
+        }
+        fn project_id(&self) -> &str {
+            &self.project_id
+        }
+        fn index_scope(&self) -> &ProjectIndexScope {
+            &self.index_scope
+        }
+        fn quiet(&self) -> bool {
+            self.quiet
+        }
+    }
+
+    fn alt_view(root: &std::path::Path, quiet: bool) -> AltView {
+        AltView {
+            root: root.to_path_buf(),
+            project_id: "alt-project".to_string(),
+            index_scope: ProjectIndexScope::Single,
+            quiet,
+        }
+    }
+
     #[test]
     fn json_page_keeps_existing_hint_field() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let view = alt_view(root.path(), false);
         let meta = SearchPageMeta {
-            project_id: "project-id",
             total: 0,
             offset: 0,
             limit: 10,
@@ -326,9 +384,35 @@ mod tests {
             warnings: &[],
         };
 
-        let value = serde_json::to_value(page::<SearchResult>(meta, &[], None, false))
+        let value = serde_json::to_value(page::<_, SearchResult>(&view, meta, &[], None, false))
             .expect("serialize search page");
         assert_eq!(value["hint"], "use gcode search-content");
+    }
+
+    #[test]
+    fn render_helpers_read_any_project_view() {
+        let root = tempfile::tempdir().expect("tempdir");
+        // A root with no identity file reports the missing index for an empty first page.
+        assert_eq!(
+            empty_diagnostic_for(&alt_view(root.path(), false), true, 0, 0, None),
+            Some("No index found for this project. Run `gcode index` first.".to_string())
+        );
+        assert_eq!(
+            empty_diagnostic_for(&alt_view(root.path(), true), true, 0, 0, None),
+            None
+        );
+
+        let view = alt_view(root.path(), false);
+        let meta = SearchPageMeta {
+            total: 0,
+            offset: 0,
+            limit: 10,
+            hint: None,
+            warnings: &[],
+        };
+        let value = serde_json::to_value(page::<_, SearchResult>(&view, meta, &[], None, false))
+            .expect("serialize search page");
+        assert_eq!(value["project_id"], "alt-project");
     }
 
     #[test]

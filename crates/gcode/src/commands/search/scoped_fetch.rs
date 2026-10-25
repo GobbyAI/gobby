@@ -68,7 +68,6 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         })
         .collect();
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -76,6 +75,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         warnings: &[],
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -85,7 +85,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     if matches!(options.format, Format::Text) {
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_exact_results(rows, options.verbose)
     })
 }
@@ -176,7 +176,6 @@ fn search_symbol_with_graph(
     let hint = token_budget::combine_hints(lane_hint, path_hint);
     output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -184,6 +183,7 @@ fn search_symbol_with_graph(
         warnings: &[],
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -193,7 +193,7 @@ fn search_symbol_with_graph(
     if matches!(options.format, Format::Text) {
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_exact_results(rows, options.verbose)
     })
 }
@@ -249,7 +249,6 @@ pub fn search_text(
     let hint = token_budget::combine_hints(lane_hint, hint);
     output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -257,6 +256,7 @@ pub fn search_text(
         warnings: &[],
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -266,7 +266,7 @@ pub fn search_text(
     if matches!(options.format, Format::Text) {
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_search_results(rows, options.verbose)
     })
 }
@@ -300,7 +300,6 @@ pub fn search_content(
         None,
     );
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total: page.total,
         offset: options.offset,
         limit: options.limit,
@@ -308,6 +307,7 @@ pub fn search_content(
         warnings: &[],
     };
     let rendered = output::paginate_with_more(
+        ctx,
         page.results,
         meta,
         page.next_offset.is_some(),
@@ -319,6 +319,7 @@ pub fn search_content(
         output::print_search_warning(ctx, options.verbose, page.hint.as_deref());
     }
     output::print_page(
+        ctx,
         &rendered,
         meta,
         options.format,

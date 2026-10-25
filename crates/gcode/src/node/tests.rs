@@ -2,7 +2,7 @@
 //!
 //! The status and content goldens were captured from the pre-split CLI output.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -579,5 +579,268 @@ fn wire_types_round_trip() -> anyhow::Result<()> {
         "project_id": "p1",
     }))?;
     assert_round_trip(&unindexed)?;
+    Ok(())
+}
+
+/// A parent and an overlay on a foreign machine. Their roots do not exist on this disk.
+struct OverlayPair {
+    database_url: String,
+    machine_id: String,
+    parent_id: String,
+    overlay_id: String,
+    parent_root: String,
+    overlay_root: String,
+    _cleanup: (ProjectCleanup, ProjectCleanup),
+}
+
+fn seed_overlay_pair(
+    conn: &mut postgres::Client,
+    database_url: &str,
+    label: &str,
+    parent_files: usize,
+    overlay_files: usize,
+) -> anyhow::Result<OverlayPair> {
+    let machine_id = uuid_for(&format!("{label}-machine"));
+    crate::test_env::seed_test_machine(conn, &machine_id).map_err(anyhow::Error::msg)?;
+    let parent_root = format!("/nonexistent/node-{label}-parent");
+    let overlay_root = format!("/nonexistent/node-{label}-overlay");
+    let parent_id = uuid_for(&format!("{label}-parent"));
+    let overlay_id = uuid_for(&format!("{label}-overlay"));
+    let cleanup = (
+        ProjectCleanup {
+            database_url: database_url.to_string(),
+            project_id: crate::db::id_param(&parent_id)?,
+        },
+        ProjectCleanup {
+            database_url: database_url.to_string(),
+            project_id: crate::db::id_param(&overlay_id)?,
+        },
+    );
+    api::upsert_project_stats(
+        conn,
+        &machine_id,
+        &stats_for(&parent_id, &parent_root, parent_files),
+        IndexWriteMode::Overlay,
+        false,
+    )?;
+    api::upsert_project_stats(
+        conn,
+        &machine_id,
+        &stats_for(&overlay_id, &overlay_root, overlay_files),
+        IndexWriteMode::Overlay,
+        false,
+    )?;
+    Ok(OverlayPair {
+        database_url: database_url.to_string(),
+        machine_id,
+        parent_id,
+        overlay_id,
+        parent_root,
+        overlay_root,
+        _cleanup: cleanup,
+    })
+}
+
+/// Writes one file's version, machine state and chunk for a project on this machine.
+fn seed_file(
+    conn: &mut postgres::Client,
+    machine_id: &str,
+    project_id: &str,
+    root: &str,
+    file_path: &str,
+    content: &str,
+) -> anyhow::Result<()> {
+    let machine = crate::db::id_param(machine_id)?;
+    let project = crate::db::id_param(project_id)?;
+    let hash = format!("hash-{project_id}-{file_path}");
+    insert_file_version(conn, &project, file_path, &hash);
+    insert_machine_state(conn, &machine, &project, root, file_path, &hash);
+    insert_chunk_version(conn, &project, file_path, content, &hash);
+    Ok(())
+}
+
+fn overlay_hub(pair: &OverlayPair) -> HubScope {
+    HubScope {
+        database_url: pair.database_url.clone(),
+        machine_id: pair.machine_id.clone(),
+        project_id: pair.parent_id.clone(),
+        overlay_project_id: Some(pair.overlay_id.clone()),
+    }
+}
+
+fn overlay_node_scope(pair: &OverlayPair) -> NodeScope {
+    NodeScope {
+        root: pair.overlay_root.clone(),
+        parent_root: Some(pair.parent_root.clone()),
+    }
+}
+
+/// The local context the CLI builds for the overlay checkout.
+fn overlay_local_context(pair: &OverlayPair) -> Context {
+    let mut ctx = local_context(
+        &pair.database_url,
+        Path::new(&pair.overlay_root),
+        &pair.overlay_id,
+        &pair.machine_id,
+    );
+    ctx.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: pair.overlay_id.clone(),
+        overlay_root: PathBuf::from(&pair.overlay_root),
+        parent_project_id: pair.parent_id.clone(),
+        parent_root: PathBuf::from(&pair.parent_root),
+    };
+    ctx
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn hub_overlay_status_reports_the_overlay_identity() -> anyhow::Result<()> {
+    let database_url = crate::test_env::postgres_test_database_url("node hub overlay status");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)?;
+    let pair = seed_overlay_pair(&mut conn, &database_url, "hub-overlay-status", 2, 1)?;
+    // The parent counts as indexed only while it holds file state on this machine.
+    seed_file(
+        &mut conn,
+        &pair.machine_id,
+        &pair.parent_id,
+        &pair.parent_root,
+        "src/parent.rs",
+        "fn parentstatusprobe() {}",
+    )?;
+
+    let report = hub_status(
+        &overlay_hub(&pair),
+        StatusRequest {
+            scope: overlay_node_scope(&pair),
+        },
+    )
+    .map_err(route_error)?;
+    let hub_json = render_json(&report)?;
+    let local_json = render_json(&collect(&mut conn, &overlay_local_context(&pair))?)?;
+
+    assert_eq!(hub_json, local_json);
+    assert!(
+        hub_json.contains(&format!(r#""id":"{}""#, pair.overlay_id)),
+        "{hub_json}"
+    );
+    assert!(hub_json.contains(r#""total_files":1"#), "{hub_json}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn hub_overlay_content_matches_the_local_candidates() -> anyhow::Result<()> {
+    let database_url = crate::test_env::postgres_test_database_url("node hub overlay content");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)?;
+    let pair = seed_overlay_pair(&mut conn, &database_url, "hub-overlay-content", 1, 1)?;
+    seed_file(
+        &mut conn,
+        &pair.machine_id,
+        &pair.parent_id,
+        &pair.parent_root,
+        "src/parent.rs",
+        "fn parentcontentprobe() {}",
+    )?;
+    seed_file(
+        &mut conn,
+        &pair.machine_id,
+        &pair.overlay_id,
+        &pair.overlay_root,
+        "src/overlay.rs",
+        "fn overlaycontentprobe() {}",
+    )?;
+    let local = overlay_local_context(&pair);
+    let no_paths: Vec<String> = Vec::new();
+
+    for query in ["overlaycontentprobe", "parentcontentprobe"] {
+        let hub = hub_search_content(
+            &overlay_hub(&pair),
+            SearchContentRequest {
+                scope: overlay_node_scope(&pair),
+                query: query.to_string(),
+                language: None,
+                paths: Vec::new(),
+                limit: 10,
+                offset: 0,
+            },
+        )
+        .map_err(route_error)?;
+        let local_candidates = content_candidates(
+            &mut conn,
+            &local,
+            query,
+            ContentQuery {
+                language: None,
+                paths: &no_paths,
+                limit: 10,
+                offset: 0,
+            },
+        )?;
+        let hub_files: Vec<&str> = hub.results.iter().map(|h| h.file_path.as_str()).collect();
+        let local_files: Vec<&str> = local_candidates
+            .results
+            .iter()
+            .map(|h| h.file_path.as_str())
+            .collect();
+        assert_eq!(hub_files, local_files, "query {query}");
+        assert_eq!(hub.db_total, local_candidates.db_total, "query {query}");
+    }
+
+    // The overlay's own file is visible to the overlay checkout, so the hub must return it too.
+    let overlay_hits = content_candidates(
+        &mut conn,
+        &local,
+        "overlaycontentprobe",
+        ContentQuery {
+            language: None,
+            paths: &no_paths,
+            limit: 10,
+            offset: 0,
+        },
+    )?;
+    assert_eq!(
+        overlay_hits
+            .results
+            .iter()
+            .map(|h| h.file_path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["src/overlay.rs"]
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn hub_overlay_search_refuses_a_missing_parent_index() -> anyhow::Result<()> {
+    let database_url = crate::test_env::postgres_test_database_url("node hub overlay parent");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)?;
+    // The parent has no file state on this machine, so the parent index does not exist.
+    let pair = seed_overlay_pair(&mut conn, &database_url, "hub-overlay-parent", 2, 1)?;
+
+    let error = hub_search_content(
+        &overlay_hub(&pair),
+        SearchContentRequest {
+            scope: overlay_node_scope(&pair),
+            query: "anything".to_string(),
+            language: None,
+            paths: Vec::new(),
+            limit: 10,
+            offset: 0,
+        },
+    )
+    .expect_err("an overlay whose parent has no index must be refused");
+    assert_eq!(error.code, "parent_index_missing");
     Ok(())
 }

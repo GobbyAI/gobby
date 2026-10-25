@@ -233,7 +233,6 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     let hint = token_budget::combine_hints(lane_hint, path_hint);
     output::print_empty_diagnostic(ctx, is_empty, options.offset, total, hint.as_deref());
     let meta = output::SearchPageMeta {
-        project_id: &ctx.project_id,
         total,
         offset: options.offset,
         limit: options.limit,
@@ -241,6 +240,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         warnings: &assembled.warnings,
     };
     let page = output::paginate(
+        ctx,
         results,
         meta,
         options.token_budget,
@@ -254,7 +254,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         }
         output::print_search_hint(ctx, is_empty, hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, |rows| {
+    output::print_page(ctx, &page, meta, options.format, |rows| {
         output::render_search_results(rows, options.verbose)
     })
 }
