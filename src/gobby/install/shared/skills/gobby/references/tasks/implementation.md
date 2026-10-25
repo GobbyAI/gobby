@@ -20,6 +20,25 @@ Preserve red, minimal green, refactor/final-green, exact command, and applicable
 test-audit evidence. The reviewer judges the sequence and the tests themselves.
 For development obligations use `$gobby development`.
 
+## Shell writes and ownership
+
+Modify repository files only through Edit/Write or statically classified shell
+writes with resolved targets, such as literal-path redirections or `sed -i`.
+`block-unresolved-scope-shell-write` refuses shell writes whose target scope
+cannot be resolved; use Edit/Write when that happens.
+
+Interpreter script files, including `uv run python <script.py>`, are for read-only
+probes. Running a script does not attribute its writes. An opaque write to a
+repository file leaves it unowned even when your own session made the change,
+so `block-cross-session-foreign-dirty-edit` locks you out of later edits.
+A before/after dirty diff cannot prove who wrote the file.
+
+If locked out, ask the operator through Triage/Assistant to revert the change or
+run the refusal's `gobby sessions approve-dirty-paths` command in their own shell.
+Then redo the intended change with Edit/Write. Agents cannot approve dirty paths.
+
+## Findings and final validation
+
 Every encountered defect, warning, or failed check becomes work in this session:
 
 1. Fix and verify it inside the current task, tracking it with the other substeps,
@@ -49,4 +68,4 @@ prior evidence stale; committing does not.
 Guides: [Git and Validation](../../../../../../../../docs/guides/tasks.md#git-and-validation),
 [Tests-first Development](../../../../../../../../docs/guides/tdd-enforcement.md).
 
-_Last verified: 2026-09-23_
+_Last verified: 2026-10-24_
