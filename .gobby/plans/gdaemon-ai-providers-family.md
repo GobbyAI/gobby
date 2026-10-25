@@ -66,7 +66,8 @@ Other boundaries: the runtime family (#21559,
 generation-endpoint probe and activation (its 5.13 and 5.14), grant issuance
 and capability tokens. Code index #24691 owns the node-local `POST
 /api/embeddings` arm and the node bootstrap embeddings key. WS chat #21592
-owns the web-chat runtime health that `GET /api/providers` reads. Provider
+owns the native web-chat runtime; 6.0 defines the per-provider health
+contract that runtime supplies to the providers routes at 6.3. Provider
 usage #23603 owns the capacity snapshot `details` field. Memory #21563 and the
 MCP front door #21570 own the collection rebuild seams #25070 and #25071.
 
@@ -77,6 +78,16 @@ Josh moves plan files. `.gobby/plans/decision-classifier-path.md:128-130`
 cites the rule in memory c0ba0b7c that Gobby must not download, load or manage
 LM Studio models. Josh retired that rule on 2026-10-25 (Decision 2). That file
 is not edited here; the citation is reported to the coordinator.
+
+**Non-goal: background capability refresh.**
+`src/gobby/providers/capabilities/refresh.py::CapabilityRefreshCoordinator`
+stays in Python. It is daemon maintenance that refreshes the provider
+capability tables with its collectors and coverage audit, and no ledger row
+of this family serves it. 6.1 reads its durable output as Python does.
+
+**Cross-plan contention.** `.gobby/plans/gdaemon-skills-family.md` leaf 5.1
+also targets `crates/gdaemon/src/main.rs::Command` and `::main`, which 7.5
+edits. The two landings serialize, and the second rebases onto the first.
 
 ## Decision Record
 `kind: framing`
@@ -122,7 +133,8 @@ is not edited here; the citation is reported to the coordinator.
    stated remainder.
 5. **Providers routes (Josh, D4 option A).** `GET /api/providers`, `GET
    /api/providers/models` and `GET /api/providers/{provider}/usage` stay in
-   this family, depend on #21592 for web-chat runtime health, and activate
+   this family, read per-provider web-chat health through 6.0's seam, which
+   #21592's runtime supplies at 6.3, and activate
    after the `ai` family as their own family.
 6. **Voice seam.** #25072 supplies `voice_stt_available(voice_config) ->
    bool`. Only 4.2 consumes it.
@@ -268,8 +280,9 @@ running the effect twice in production.
   `admission.rs`. The providers chain (6.x) edits only `providers/`, and the
   switch chain (7.x) only `switch/` and `contracts/embedding_catalog.v1.json`;
   neither edits a crate-root file, and each reads the shared modules through
-  dependency edges. Outside `crates/gai`, 7.0 edits gcore's Qdrant module and
-  7.5 edits the gdaemon command dispatcher. 1.1 declares the crate's complete
+  dependency edges. Outside `crates/gai`, 6.3 wires the web-chat health
+  adapter in gdaemon's `serve.rs`, 7.0 edits gcore's Qdrant module and 7.5
+  edits the gdaemon command dispatcher. 1.1 declares the crate's complete
   dependency set, including `clap` with `derive` and `reqwest`'s `blocking`
   feature for 7.5's command tree, except 4.1's `multipart` feature, so only
   1.1, 4.1 and the activation leaves edit `crates/gai/Cargo.toml` or
@@ -1264,7 +1277,38 @@ not results observed while drafting.
 ## P6: Native providers routes
 `kind: framing`
 
-### 6.1 Native provider list and model catalog [category: code] (depends: 2.5, #21592)
+### 6.0 Web-chat provider health seam [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gai/src/providers/mod.rs`
+- `crates/gai/src/providers/health.rs`
+- `crates/gai/tests/provider_health.rs`
+
+**Research context:** `src/gobby/servers/routes/providers.py::_provider_health`
+reads `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager.health`,
+which returns one provider's `available` and `startup_error`. The native
+providers rows need the same read from #21592's native web-chat runtime, and
+this plan owns that contract. `crates/gai/src/providers/health.rs` defines
+`ProviderHealth { available: bool, startup_error: Option<String> }` and the
+trait `WebChatHealth: Send + Sync` with `fn health(&self, provider: &str) ->
+ProviderHealth`. `ProvidersFamily` in `providers/mod.rs` gains
+`with_web_chat_health(Arc<dyn WebChatHealth>)`. Without a source the family
+claims no row, so traffic stays proxied, and Python's absent-manager branch,
+where availability is binary presence alone, never applies natively. gai
+never depends on #21592's crate: 6.3 wires the runtime in gdaemon through an
+adapter that implements this trait. This leaf edits no crate-root file.
+
+**Acceptance:**
+
+- 6.0.1 - Without a health source the providers family claims no row; with a
+  stub source, each provider's `available` and `startup_error` reach the
+  caller unchanged, including a `None` error and an unknown provider.
+  test: `crates/gai/tests/provider_health.rs::web_chat_health_seam_contract`.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-ai --test provider_health`.
+
+### 6.1 Native provider list and model catalog [category: code] (depends: 2.5, 6.0)
 `kind: deliverable`
 
 Targets:
@@ -1294,12 +1338,11 @@ then appends one row per `chat-completions` generation endpoint:
 `endpoint:<name>`, unavailable, display name `Local: <label>`, installed, no
 web chat or agent spawn, and `_GENERIC_LOCAL_UNAVAILABLE_REASON`.
 
-Runtime health comes from #21592, which owns the native web-chat runtime.
-This leaf consumes its per-provider `{available, startup_error}`, the native
-counterpart of `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager.health`.
-Python's branch for an absent runtime manager, where availability is binary
-presence alone, never applies natively: 6.3 activates this family only after
-#21592's runtime serves web chat.
+Runtime health comes through 6.0's `WebChatHealth` seam, the native
+counterpart of `src/gobby/servers/websocket/chat/runtime_manager.py::WebChatRuntimeManager.health`;
+6.3 connects #21592's runtime to it. Python's branch for an absent runtime
+manager never applies natively, because without a source the family claims
+nothing.
 
 `list_provider_models` builds one entry per CLI provider with the same health
 and metadata fields plus a capability payload. The payload reads the durable
@@ -1341,13 +1384,14 @@ neither the writer nor the tables.
 - 6.1.3 - Local endpoint groups match Python's discovery, routability,
   unavailable reasons, codex gating and 2.5's context projection.
   test: `crates/gai/tests/providers.rs::local_model_groups_match_python`.
-- 6.1.4 - Health is read from #21592's runtime for claude, grok and the
-  other providers, and the rows declare their admission classes.
+- 6.1.4 - Health is read through 6.0's seam for claude, grok and the other
+  providers with Python's branch rules, and the rows declare their admission
+  classes.
   test: `crates/gai/tests/providers.rs::provider_health_uses_native_runtime`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-ai --test providers`
 with fake provider binaries on a temporary `PATH`, local HTTP stubs, an
-isolated database and a stub of #21592's health seam.
+isolated database and a stub 6.0 health source.
 
 ### 6.2 Native provider usage [category: code] (depends: 6.1, #23603)
 `kind: deliverable`
@@ -1402,10 +1446,11 @@ converge on the latest snapshot.
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-ai --test usage`
 with a fake `agy` on a temporary `PATH` and an isolated database.
 
-### 6.3 providers family activation and gdaemon release [category: code] (depends: 6.2, 5.2)
+### 6.3 providers family activation and gdaemon release [category: code] (depends: 6.2, 5.2, #21592)
 `kind: deliverable`
 
 Targets:
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: pass #21592's web-chat runtime to the providers family through an adapter implementing 6.0's WebChatHealth, retaining the file-wide scope used by 1.1
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
@@ -1441,7 +1486,9 @@ Consumers unchanged:
 the existing bootstrap mechanism; Proxy stays selectable for rollback. It
 requires 5.2's activation and #21592's native web-chat runtime serving web
 chat, because list and models read that runtime's health; without it the
-family stays on Proxy.
+family stays on Proxy. In both serve entry points, `serve.rs` wraps the
+runtime's per-provider health read in an adapter that implements 6.0's
+`WebChatHealth` and passes it to `ProvidersFamily::with_web_chat_health`.
 
 Activation goes from Proxy to native without compare. All three rows read
 state the serving process owns: web-chat runtime health, 2.5's process-local
@@ -2090,8 +2137,9 @@ The acceptance items own all 19 rows: 1.1 owns `GET /api/llm/vision/status`,
 /api/providers/models`; 6.2 owns `GET /api/providers/{provider}/usage`; 7.2
 owns the four switch routes; 7.5 owns the four CLI rows, and 7.7 forwards the
 public entry to them. 0.1 rejects missing or extra keys. 5.1 owns admission
-binding and the Security approval gate. 2.5 supports 6.1's model groups, and
-7.0 supports 7.4's flip and cleanup. 5.2, 6.3 and 7.6 activate the three route
+binding and the Security approval gate. 2.5 supports 6.1's model groups, 6.0
+owns the web-chat health seam 6.1 reads and 6.3 connects to #21592's runtime,
+and 7.0 supports 7.4's flip and cleanup. 5.2, 6.3 and 7.6 activate the three route
 families, and 8.1 records the delegated ledger state.
 
 The #24963 readiness gate requires ordinary `Passed` cases and exactly cited,
