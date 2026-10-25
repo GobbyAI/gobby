@@ -92,11 +92,13 @@ def check_runbook_seats(
     truncated read, or a live sibling whose machine or workspace is unknown refuses with
     its cause.
 
-    ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each seat
-    whose agent already has an active run on this machine with a live session in this
-    project, and ``live`` maps those seats to that session. With ``team_id``, only runs
-    admitted to that team count. ``tab_exists`` says whether the
-    workspace has the tab titled ``tab_title``; two such tabs refuse.
+    ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each requested
+    seat whose agent already has an active run on this machine with a live session in this
+    project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
+    every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
+    reviewer's request still reports its team's live Dev Manager; only runs admitted to that team
+    count. ``tab_exists`` says whether the workspace has the tab titled ``tab_title``; two such
+    tabs refuse.
     """
     if (require_report_to and report_to is None) or (
         report_to is not None and not report_to.strip()
@@ -112,6 +114,7 @@ def check_runbook_seats(
         return _admit(
             stores,
             seats,
+            tuple(_catalogue_seat(entry) for entry in catalogue),
             caller_session_id=caller_session_id,
             workspace=workspace,
             skip_live_seats=skip_live_seats,
@@ -163,6 +166,7 @@ def _catalogue_seat(entry: Mapping[str, Any]) -> CatalogueSeat:
 def _admit(
     stores: RunbookSeatStores,
     seats: tuple[CatalogueSeat, ...],
+    catalogue: tuple[CatalogueSeat, ...],
     *,
     caller_session_id: str,
     workspace: str,
@@ -196,11 +200,16 @@ def _admit(
         workspace_id=workspace_id,
     )
     _refuse_unresolved_agents(stores.definitions, project_id, seats)
-    live = _live_seats(stores, session, seats, team_id=team_id) if skip_live_seats else {}
+    if team_id is not None:
+        live = _live_seats(stores, session, catalogue, team_id=team_id)
+    elif skip_live_seats:
+        live = _live_seats(stores, session, seats, team_id=None)
+    else:
+        live = {}
     return AdmittedSeats(
         workspace_id=workspace_id,
         seats=seats,
-        launch=tuple(seat.name for seat in seats if seat.name not in live),
+        launch=tuple(seat.name for seat in seats if not (skip_live_seats and seat.name in live)),
         live=live,
         tab_exists=tab_title is not None
         and _tab_exists(stores.workspaces, workspace_id, tab_title),
