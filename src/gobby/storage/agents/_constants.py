@@ -17,6 +17,7 @@ AgentRunTerminalReason = Literal[
     "provider_quota_exhausted",
     "provider_error",
 ]
+TerminalAction = Literal["complete", "fail", "timeout", "cancel"]
 
 # Terminal reasons where we ended the run on purpose, rather than the runtime
 # ending it under us. Only these say nothing about the provider's health, so a

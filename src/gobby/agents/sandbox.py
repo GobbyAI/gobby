@@ -55,6 +55,8 @@ class SandboxConfig(BaseModel):
 
 _DAEMON_OWNED_SANDBOX_MODE: Literal["permissive", "restrictive"] = "permissive"
 _DAEMON_SANDBOX_POLICY_VERSION = 2
+# Spawn-time git reads run on loaded hosts; 2 s failed closed. Matches daemon_git.run default.
+_GIT_METADATA_TIMEOUT_SECONDS = 10.0
 _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
     "This chat was created under a different sandbox policy. Continue it in a new chat."
 )
@@ -281,8 +283,6 @@ async def compute_sandbox_paths(
         default_write_paths,
         deny_paths,
         gcode_runtime_write_exceptions,
-        gobby_read_exceptions,
-        mcp_config_read_exceptions,
         provider_credential_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
@@ -291,6 +291,7 @@ async def compute_sandbox_paths(
         toolchain_credential_paths,
         toolchain_read_roots,
     )
+    from gobby.agents.sandbox_read_roots import gobby_read_exceptions
 
     workspace = Path(canonical_path(workspace_path))
     policy_env = os.environ if env is None else env
@@ -325,7 +326,6 @@ async def compute_sandbox_paths(
             *gobby_read_exceptions(policy_env),
             *(tuple(str(path) for path in rtk_paths.read_paths) if rtk_paths else ()),
             *toolchain_read_roots(),
-            *mcp_config_read_exceptions(workspace),
             *provider_reads,
             "~/.ssh/known_hosts",
             *config.extra_read_paths,
@@ -393,7 +393,7 @@ async def _git_metadata_write_paths(workspace: Path) -> list[str]:
     result = await daemon_git.run(
         ["rev-parse", "--git-dir", "--git-common-dir"],
         cwd=workspace,
-        timeout=2,
+        timeout=_GIT_METADATA_TIMEOUT_SECONDS,
     )
     if isinstance(result, GitFailed) and "not a git repository" in result.stderr.lower():
         return []

@@ -62,7 +62,7 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
         "strictAllowlist": True,
         "allowUnixSockets": paths.allow_unix_sockets,
         "allowAllUnixSockets": False,
-        # Loopback egress: ghook and `gobby mcp-server` POST to the daemon
+        # Loopback egress: ghook and `gmcp` POST to the daemon
         # HTTP port and gcode connects directly to the hub Postgres. SRT only
         # exposes a boolean (it renders `remote ip "localhost:*"`); the
         # external-domain allowlist stays enforced for non-loopback egress.

@@ -229,9 +229,7 @@ class CommunityLabeler:
                 )
                 states[key] = _community_state(community)
         service = get_decision_service(config)
-        decisions = await _decide(
-            service, config, "community_label_carry", states, questions, service.noul
-        )
+        decisions = await _decide(service, "community_label_carry", states, questions, service.noul)
         settled: set[int] = set()
         carried = 0
         for community in stale:
@@ -297,7 +295,7 @@ class CommunityLabeler:
         states = {f"c{c.community_id}": _community_state(c) for c in communities}
         service = get_decision_service(config)
         decisions = await _decide(
-            service, config, "community_label_sufficiency", states, questions, service.score
+            service, "community_label_sufficiency", states, questions, service.score
         )
         settled: set[int] = set()
         sufficient = 0
@@ -374,7 +372,7 @@ class CommunityLabeler:
                 "generated": {"name": result.name, "rationale": result.rationale},
             }
         service = get_decision_service(config)
-        return await _decide(service, config, "community_label", states, questions, service.choose)
+        return await _decide(service, "community_label", states, questions, service.choose)
 
     def _effective_mode(
         self,
@@ -502,7 +500,6 @@ def _community_state(community: StoredCommunity) -> dict[str, Any]:
 
 async def _decide[Q: (ChoiceQuestion, str, ScoreQuestion), A](
     service: DecisionService,
-    config: DecisionsConfig,
     consumer: str,
     states: Mapping[str, dict[str, Any]],
     questions: Mapping[str, Q],
@@ -522,16 +519,13 @@ async def _decide[Q: (ChoiceQuestion, str, ScoreQuestion), A](
     for key, question in questions.items():
         trial = {**pending, key: question}
         state = {"communities": {k: states[k] for k in trial}}
-        if (
-            len(trial) > 64
-            or service.estimate_request_tokens(state, trial) > config.max_input_tokens
-        ):
+        if len(trial) > 64 or not service.request_fits(state, trial):
             if pending:
                 await submit(pending)
             pending = {}
             trial = {key: question}
             state = {"communities": {key: states[key]}}
-            if service.estimate_request_tokens(state, trial) > config.max_input_tokens:
+            if not service.request_fits(state, trial):
                 results[key] = DecisionsUnavailable("oversize", "community exceeds request ceiling")
                 continue
         pending = trial

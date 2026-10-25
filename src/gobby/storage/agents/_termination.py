@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
+from ._constants import TerminalAction
 from ._models import AgentRun
-
-TerminalAction = Literal["complete", "fail", "timeout", "cancel"]
 
 
 class _AgentRunTerminationHost(Protocol):

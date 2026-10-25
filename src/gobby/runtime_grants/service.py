@@ -40,6 +40,9 @@ FALKOR_OPERATIONS = (
 QDRANT_OPERATIONS = (
     BrokerOperation(name="invalidate_projection", method="POST", path="/api/code-index/invalidate"),
 )
+NODE_CODE_INDEX_OPERATIONS = (
+    BrokerOperation(name="node_code_index", method="POST", path="/api/code-index/node"),
+)
 
 
 class ConfigCapture(Protocol):
@@ -184,6 +187,9 @@ def capabilities_from_snapshot(
 ) -> GrantCapabilities:
     falkordb = _falkor_capability(snapshot)
     qdrant = _qdrant_capability(snapshot)
+    if isinstance(postgres, BrokeredCapability):
+        falkordb = BrokeredCapability(operations=FALKOR_OPERATIONS)
+        qdrant = BrokeredCapability(operations=QDRANT_OPERATIONS)
     embed_enabled = bool(snapshot.active.embeddings.model) and not _unresolved(
         snapshot.active.embeddings.model
     )

@@ -456,12 +456,44 @@ def test_service_identity_fingerprint() -> None:
         _config(api_key="key-one", identity_contract="response_version"),
         _config(api_key="key-one", identity_contract="model_card"),
         _config(api_key="key-one", backend_max_state_tokens=16384),
+        _config(api_key="key-one", backend_max_question_tokens=16000),
+        _config(api_key="key-one", long_context=True),
         _wire_config("openrouter-decisions", api_key="key-one"),
     ]
     for variant in variants:
         service = get_decision_service(variant)
         assert service is not base
         assert get_decision_service(variant) is service
+
+
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+async def test_long_context_opt_in_raises_cap_and_sends_header(
+    wire: FakeWire, wire_api: str
+) -> None:
+    wire.handler = lambda request: httpx.Response(200, json=_decision(request))
+    config = _wire_config(wire_api, long_context=True, max_input_tokens=200000)
+    service = DecisionService(config)
+    result = await service.choose("test", {"text": "x" * 270000}, QUESTIONS)
+    assert result.answers["triage"].choice in TRIAGE.criteria
+    assert len(wire.requests) == 1
+    assert wire.requests[0].headers["TypeSafe-Danger-Zone-Long-Context"] == "true"
+    assert config.resolved_backend_max_state_tokens == 262144
+    assert config.resolved_backend_max_question_tokens == 262144
+
+
+async def test_question_context_limit_is_separate_from_request_budget(wire: FakeWire) -> None:
+    wire.handler = lambda request: httpx.Response(200, json=_decision(request))
+    config = _wire_config("openrouter-decisions", max_input_tokens=60000)
+    service = DecisionService(config)
+    # Each branch fits 32k, while all questions together exceed 32k.
+    question = ChoiceQuestion("Choose " + "x" * 80000, TRIAGE.criteria)
+    result = await service.choose("test", {}, {"a": question, "b": question})
+    assert set(result.answers) == {"a", "b"}
+    assert "TypeSafe-Danger-Zone-Long-Context" not in wire.requests[0].headers
+    with pytest.raises(DecisionsUnavailable, match="question") as error:
+        await service.choose("test", {"text": "x" * 128000}, QUESTIONS)
+    assert error.value.reason == "oversize"
+    assert len(wire.requests) == 1
 
 
 @pytest.mark.asyncio

@@ -69,9 +69,11 @@
           "decisions": {
             "api_base": null,
             "api_key": "@secret@",
+            "backend_max_question_tokens": null,
             "backend_max_state_tokens": null,
             "failure_cooldown_seconds": 60.0,
             "identity_contract": null,
+            "long_context": false,
             "max_input_tokens": 8192,
             "model": null,
             "timeout_seconds": 2.0,
@@ -1161,9 +1163,11 @@
           "decisions": {
             "api_base": null,
             "api_key": "@secret@",
+            "backend_max_question_tokens": null,
             "backend_max_state_tokens": null,
             "failure_cooldown_seconds": 60.0,
             "identity_contract": null,
+            "long_context": false,
             "max_input_tokens": 8192,
             "model": null,
             "timeout_seconds": 2.0,

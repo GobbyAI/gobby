@@ -13,7 +13,12 @@ use crate::visibility;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn machine_context(database_url: &str, project_id: &str, root: &Path, machine: &str) -> Context {
+pub(super) fn machine_context(
+    database_url: &str,
+    project_id: &str,
+    root: &Path,
+    machine: &str,
+) -> Context {
     Context {
         machine_id: machine.to_string(),
         database_url: database_url.to_string(),
@@ -264,6 +269,22 @@ fn overlay_incremental_index_shadows_parent_rows_for_commit_diverged_files() {
             "parent-only-hash",
         )],
     );
+    // An overlay with no pin inherits nothing: the pin is what lets the overlay
+    // serve the parent's path, as `gcode pin` records it.
+    let pin_machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &db::id_param(&pin_machine_id).expect("machine id"),
+            &db::id_param(&overlay_project_id).expect("overlay id"),
+            &rel,
+            &db::id_param(&parent_project_id).expect("parent id"),
+            &parent_hash,
+        ],
+    )
+    .expect("pin parent path");
 
     let ctx = Context {
         database_url,
@@ -1154,14 +1175,14 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
     assert_eq!(orphan_count, 0);
 }
 
-fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
+pub(super) fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
     let database_url = crate::test_env::postgres_test_database_url("indexer serial DB tests");
     let conn = db::connect_readwrite(&database_url)
         .expect("connect summary preservation PostgreSQL test database");
     (conn, database_url)
 }
 
-fn unique_test_uuid(prefix: &str) -> String {
+pub(super) fn unique_test_uuid(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
@@ -1211,12 +1232,16 @@ impl Drop for SummaryPreservationCleanup {
     }
 }
 
-fn cleanup_summary_preservation_project(
+pub(super) fn cleanup_summary_preservation_project(
     conn: &mut postgres::Client,
     project_id: &str,
 ) -> anyhow::Result<()> {
     let project_id = db::id_param(project_id)?;
     let mut tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
+        &[&project_id],
+    )?;
     tx.execute(
         "DELETE FROM code_indexed_file_states WHERE project_id = $1",
         &[&project_id],
@@ -1281,7 +1306,7 @@ fn write_postgres_parsed_file_facts(
     );
 }
 
-fn write_postgres_parsed_file_facts_with_root(
+pub(super) fn write_postgres_parsed_file_facts_with_root(
     conn: &mut postgres::Client,
     project_id: &str,
     root_path: &Path,
@@ -1319,7 +1344,7 @@ fn write_postgres_parsed_file_facts_with_root(
     tx.commit().expect("commit parsed write transaction");
 }
 
-fn test_symbol(
+pub(super) fn test_symbol(
     project_id: &str,
     rel: &str,
     file_content_hash: &str,

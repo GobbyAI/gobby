@@ -311,23 +311,42 @@ mod tests {
             retry: Duration::from_millis(10),
         };
         let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
         let slow = {
             let path = path.clone();
             thread::spawn(move || {
                 update_with(&path, timing, |data| {
                     let _ = held_tx.send(());
-                    thread::sleep(Duration::from_millis(900));
+                    release_rx.recv_timeout(Duration::from_secs(5))?;
                     data.insert("slow".into(), Value::Bool(true));
                     Ok(())
                 })
             })
         };
         held_rx.recv_timeout(Duration::from_secs(5))?;
+        // Keep the holder alive while a contender retries across three stale intervals.
+        let blocked = update_with(
+            &path,
+            Timing {
+                timeout: Duration::from_millis(900),
+                ..timing
+            },
+            |_| Ok(()),
+        );
+        release_tx.send(())?;
+        let slow_result = slow.join().expect("slow updater panicked");
+        let error = blocked.expect_err("a live holder must not be stolen");
+        assert!(
+            error
+                .to_string()
+                .contains("timed out waiting for Claude config lock"),
+            "{error:#}"
+        );
+        slow_result?;
         update_with(&path, timing, |data| {
             data.insert("fast".into(), Value::Bool(true));
             Ok(())
         })?;
-        slow.join().expect("slow updater panicked")?;
         let data: Value = serde_json::from_slice(&fs::read(&path)?)?;
         assert_eq!(data["slow"], Value::Bool(true), "{data}");
         assert_eq!(data["fast"], Value::Bool(true), "{data}");

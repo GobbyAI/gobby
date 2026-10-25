@@ -180,7 +180,7 @@ def test_decisions_scalar_rows_defaults_and_bounds() -> None:
     with pytest.raises(ValidationError, match="max_input_tokens"):
         _decisions(max_input_tokens=255)
     with pytest.raises(ValidationError, match="max_input_tokens"):
-        _decisions(wire_api="openrouter-decisions", max_input_tokens=32000)
+        _decisions(wire_api="openrouter-decisions", max_input_tokens=64000)
     with pytest.raises(ValidationError, match="max_input_tokens"):
         _decisions(backend_max_state_tokens=10000, max_input_tokens=10001)
 
@@ -189,7 +189,7 @@ def test_decisions_scalar_rows_defaults_and_bounds() -> None:
     for wire_api, resolved in (
         ("systemone", 65536),
         ("workers-ai", 65536),
-        ("openrouter-decisions", 32000),
+        ("openrouter-decisions", 64000),
     ):
         assert _decisions(wire_api=wire_api).resolved_backend_max_state_tokens == resolved
     explicit = _decisions(backend_max_state_tokens=100000)
@@ -220,6 +220,26 @@ def test_decisions_scalar_rows_defaults_and_bounds() -> None:
     for wire_api in ("openrouter-decisions", "workers-ai"):
         with pytest.raises(ValidationError, match="model_card"):
             _decisions(wire_api=wire_api, identity_contract="model_card")
+
+
+def test_openrouter_context_defaults_and_explicit_opt_in() -> None:
+    defaults = _decisions(wire_api="openrouter-decisions")
+    assert defaults.resolved_backend_max_state_tokens == 64000
+    assert defaults.resolved_backend_max_question_tokens == 32000
+    assert defaults.long_context is False
+    assert defaults.max_input_tokens == 8192
+    enabled = _decisions(wire_api="openrouter-decisions", long_context=True)
+    assert enabled.resolved_backend_max_state_tokens == 262144
+    assert enabled.resolved_backend_max_question_tokens == 262144
+    assert enabled.max_input_tokens == 8192
+    for field, value in (
+        ("backend_max_state_tokens", 262144),
+        ("backend_max_question_tokens", 64000),
+    ):
+        with pytest.raises(ValidationError, match="long_context"):
+            _decisions(wire_api="openrouter-decisions", **{field: value})
+    with pytest.raises(ValidationError, match="long_context"):
+        _decisions(wire_api="workers-ai", long_context=True)
 
 
 def test_decisions_consumer_rows_defaults() -> None:

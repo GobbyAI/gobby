@@ -28,6 +28,7 @@ from gobby.tasks.step_records import (
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.tasks.test_close_invariants import _set_close_policy
 
 pytestmark = pytest.mark.unit
 
@@ -384,3 +385,25 @@ def test_checkout_free_project_closes_under_the_default_policy(temp_db: HubDatab
     assert task_step_requirements(temp_db, chore).required == ()
     manager.close_task(chore.id)
     assert manager.get_task(chore.id).closed_at is not None
+
+
+def test_round_two_approval_leaves_the_implementation_step_approved(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    """Round-2 approval records the implementation step; no later write is needed."""
+    manager = LocalTaskManager(temp_db)
+    _set_close_policy(temp_db, task.project_id, {"enforce_step_records": True})
+    _step(temp_db, task, team["developer"], "implementation", "pending")
+    _step(temp_db, task, team["reviewer"], "review", "rejected")
+
+    manager.link_commit(task.id, _NEXT[:10])
+    _step(temp_db, task, team["reviewer"], "review", "approved", 2, sha=_NEXT)
+
+    approved = manager.get_task(task.id)
+    implementation = approved_task_step(
+        approved, list_task_step_records(temp_db, task.id), "implementation"
+    )
+    assert implementation is not None, "round-2 approval left the implementation step pending"
+    assert (implementation.status, implementation.commit_sha) == ("approved", _NEXT)
+    # Gate 5 reads the same requirements; only the closing record is still outstanding.
+    assert task_step_requirements(temp_db, approved).missing == ("closing",)
