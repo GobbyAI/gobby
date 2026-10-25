@@ -26,7 +26,7 @@ servers and UI asset/dev-server mounts are outside this backend inventory.
 Dropped rows remain as decision evidence after removal; other mapping keys must
 identify currently registered surfaces. Unmapped surfaces are visibly unclassified.
 
-Public surfaces and evidence gates: 1116. Unclassified: 0.
+Public surfaces and evidence gates: 1118. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -627,6 +627,8 @@ Public surfaces and evidence gates: 1116. Unclassified: 0.
 | `HTTP POST /api/nodes/hooks/replay` | proxied | Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.replay` shares hub replay decisions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port replay decisions and node machine ownership checks to Rust. |
 | `HTTP POST /api/nodes/receipts` | proxied | Python handler `src/gobby/servers/routes/node_hooks.py::create_node_hooks_router.receipts` applies hub receipt actions; blocked on #21569 Hook ingress and the node-local envelope ledger / #24151 hub half to port receipt authorization, UUID validation and compare-and-set side effects to Rust. |
 | `HTTP POST /api/nodes/report` | proxied | Python handler `src/gobby/servers/routes/nodes.py::create_nodes_router.report` admits node run reports through the hub inbox with byte budgets; blocked on #24151 hub half to port node machine ownership checks and report admission to Rust. |
+| `HTTP POST /api/nodes/runs/code-index-warning` | proxied | Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.code_index_preflight_warning` records node launch code-index warnings; blocked on #24151 hub half to port node machine ownership checks and launch outcome handling to Rust. |
+| `HTTP POST /api/nodes/runs/prompt-delivery-failure` | proxied | Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.prompt_delivery_failure` records node launch prompt-delivery failures; blocked on #24151 hub half to port node machine ownership checks and launch outcome handling to Rust. |
 | `HTTP POST /api/pipelines/approve/{token}` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/approve/{token}; Python handler `src/gobby/servers/routes/pipelines.py:432`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/pipelines/definitions` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions; Python handler `src/gobby/servers/routes/pipeline_definitions.py:284`; Rust front-door dispatch currently proxies this family. |
 | `HTTP POST /api/pipelines/definitions/import` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: implement native POST /api/pipelines/definitions/import; Python handler `src/gobby/servers/routes/pipeline_definitions.py:238`; Rust front-door dispatch currently proxies this family. |
