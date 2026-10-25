@@ -15,12 +15,12 @@ from ._constants import (
     TERMINAL_AGENT_RUN_STATUSES,
     AgentRunStatus,
     AgentRunTerminalReason,
+    TerminalAction,
     logger,
 )
 from ._manager import LocalAgentRunManager
 from ._models import AgentRun
 from ._sandbox_records import sandbox_record
-from ._termination import TerminalAction
 
 __all__ = [
     "ACTIVE_AGENT_RUN_STATUSES",
