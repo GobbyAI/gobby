@@ -301,7 +301,7 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
                     }
                     "excluded" => {
                         fs::write(&file, "pub fn blocked_live_token() {}\n").unwrap();
-                        ctx.indexing.extra_excludes.push(rel.to_string());
+                        ctx.indexing.extra_excludes.push("lib.rs".to_string());
                     }
                     _ => unreachable!(),
                 }
