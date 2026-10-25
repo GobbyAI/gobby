@@ -2115,7 +2115,7 @@ Synthetic inputs; no settings changed. Backend metadata and response bodies only
 
 ### Run 7: clean-reload small-request baseline (2026-10-25)
 
-After a clean Clef reload, LM Studio completed 193 rows: 9 warmups, 180 measured calls, and 4 raw calibration/identity probes. Exit 0; no HTTP 504s. Both Clef and Nomic were IDLE at the start. The recorded load remained context_length=262144, parallel=4, physical_batch_size=65536, eval_batch_size=65536, flash attention enabled, KV cache on GPU. Per-slot context and queue cancellation behavior were not captured.
+After a clean Clef reload, LM Studio completed 193 rows: 9 warmups, 180 measured calls, and 4 raw calibration/identity probes. Exit 0; no HTTP 504s. Operator terminal observations, not captured in artifacts: both Clef and Nomic were IDLE at the start, and the load remained context_length=262144, parallel=4, physical_batch_size=65536, eval_batch_size=65536, flash attention enabled, KV cache on GPU. Per-slot context and queue cancellation behavior were not captured.
 
 | Application token target | Shape | Measured input_tokens range | p50 seconds | p95 seconds | Calls <=1 s / 20 |
 | --- | --- | --- | --- | --- | --- |
@@ -10985,7 +10985,7 @@ Synthetic inputs; no settings changed. Backend metadata and response bodies only
 
 The raw over-limit request used state_chars=377028. Ollama returned HTTP 413 in approximately 0.04 s with {"error":"text and schema must not exceed 64 KiB"}. This is a backend byte cap, not a measured token limit. The raw request bypassed DecisionService, so this result does not test Gobby's max_input_tokens guard.
 
-The accompanying ollama ps observation showed clef:27b, context 16384, runner mlx, 100% GPU, 26 GB. Context capacity and the 64 KiB request cap have different units and must not be treated as interchangeable.
+An operator terminal ollama ps observation, not captured in artifacts, showed clef:27b, context 16384, runner mlx, 100% GPU, 26 GB. Context capacity and the 64 KiB request cap have different units and must not be treated as interchangeable.
 
 Artifacts: /var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-22604-clef-2grfypfe. No further live Ollama runs are authorized under the latest Orchestrator ruling.
 
