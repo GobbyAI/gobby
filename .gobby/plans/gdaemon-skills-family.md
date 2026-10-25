@@ -2077,3 +2077,18 @@ remaining finding, disagreement or unresolved decision remains. Base validation
 passed; the superseded M1 was withdrawn whole for fresh derivation. Coordinator
 review and Josh approval remain required before expansion, and the planning
 task stays claimed/open until that approval.
+
+2026-10-24 — Plan Writer gobby#17576 and Plan Adversary gobby#17577 renewed
+consensus after fresh review of ada739fde9c5eabfe9cccd288719c64e7e50e9c5.
+Josh's debt-first ruling is dispositioned: D1–D6 replace only the named
+behaviors through exact-surface #24963 waivers, native response/effect
+assertions and owning dependencies, preserving every KEEP obligation and all
+54 surfaces. Shared presence/error conventions agree with Projects and Cron;
+no family masks, skipped-only readiness or separate waiver mechanism remains.
+Paged completion consumes trusted #24884 reset generation with bounded
+single-use progression and atomic finalization. Browser admission binds the
+#24967 verifier implementation and #24964 outer CORS/preflight. No blocking
+finding, nit, disagreement or unresolved decision remains. Fresh project-aware
+base validation passed; the superseded M1 was withdrawn whole. Fresh manifest
+derivation, coordinator review and Josh's approval remain subsequent gates;
+no implementation, expansion, dispatch, cutover or push is authorized here.
