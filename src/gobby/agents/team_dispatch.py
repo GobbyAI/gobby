@@ -1,12 +1,14 @@
 """Epic-team spawn scope for the team's Dev Manager (redesign 8.2).
 
 The Dev Manager holds no claim; its run is bound to the epic, and it dispatches the team's seats
-here. A maker takes an open, unclaimed leaf of the epic: a primary leaf works in the team tree,
-and a sub-worktree leaf gets ``epic/<seq>/<leaf-seq>`` off the epic branch. A reviewer works in the team tree and is
-recorded on the team, one live seat per definition. A resumed reviewer is held to the same check
-and rebinds its definition to the resumed run. A team manager's other fresh spawn is refused, and
-every other caller takes the ordinary path. A resumed maker or other seat takes no scope here:
-spawn admission bounds it to the manager's own team's seats.
+here. A maker takes an open, unclaimed leaf of the epic. A primary leaf works in the team tree
+and holds its implementation domain (``fullstack`` when unset): one live primary per domain. A
+sub-worktree leaf gets ``epic/<seq>/<leaf-seq>`` off the epic branch and holds no primary slot.
+A reviewer works in the team tree and is recorded on the team, one live seat per definition. A
+resumed reviewer keeps the definition its session was stored under and rebinds that definition to
+the resumed run. A team manager's other fresh spawn is refused, and every other caller takes the
+ordinary path. A resumed maker or other seat takes no scope here: spawn admission bounds it to the
+manager's own team's seats.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from gobby.agents.isolation_models import title_slug
 from gobby.agents.team_lifecycle import (
     TeamAdmissionRefused,
     TeamBinding,
+    bind_primary_run,
     bind_reviewer_run,
     seat_team,
 )
@@ -30,10 +33,13 @@ from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.lifecycle_access import session_agent_definition
 from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.state_manager import SessionVariableManager
 
 _LIVE = frozenset({"queued", "pending", "running"})
 _MAKER_GRANT = "implementation"
 _REVIEWER_GRANT = "review"
+# A leaf with no implementation domain takes the fullstack primary slot.
+_UNDOMAINED_DOMAIN = "fullstack"
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,7 @@ class DispatchScope:
     base_branch: str | None = None
     worktree_dir_name: str | None = None
     reviewer_agent: str | None = None
+    primary_domain: str | None = None
 
 
 def leaf_names(epic: Task, leaf: Task) -> tuple[str, str]:
@@ -99,10 +106,11 @@ def _maker(
         )
     if open_leaf.claimed_by_session_id is not None:
         raise TeamAdmissionRefused("task_in_flight", f"task {task_id} already has a claimed seat")
+    leaf = LocalTaskManager(db).get_task(leaf_id)
     if checkout_mode == "worktree":
         if worktree_id is not None:
             raise TeamAdmissionRefused("team_tree_fixed", "a sub-worktree leaf names no tree")
-        branch, directory = leaf_names(epic, LocalTaskManager(db).get_task(leaf_id))
+        branch, directory = leaf_names(epic, leaf)
         return DispatchScope(
             team_id=binding.team_id,
             project_id=binding.project_id,
@@ -115,12 +123,31 @@ def _maker(
         raise TeamAdmissionRefused(
             "team_tree_mismatch", f"team {binding.team_id} works in tree {binding.worktree_id}"
         )
+    domain = leaf.implementation_domain or _UNDOMAINED_DOMAIN
+    if _live(db, binding.primaries.get(domain)):
+        raise TeamAdmissionRefused(
+            "primary_live", f"team {binding.team_id} already has a live {domain} primary"
+        )
     return DispatchScope(
         team_id=binding.team_id,
         project_id=binding.project_id,
         parent_session_id=parent,
         worktree_id=binding.worktree_id,
+        primary_domain=domain,
     )
+
+
+def _resumed_definition(db: HubDatabase, project_id: str, ref: str) -> str | None:
+    """The definition a resumed session was stored under; None when the ref names no session.
+
+    An unknown ref falls through to the resume path, which reports it.
+    """
+    try:
+        session_id = SessionManager(db).resolve_session_reference(ref, project_id)
+    except ValueError:
+        return None
+    stored = SessionVariableManager(db).get_variable_subset(session_id, ("_agent_type",))
+    return str(stored.get("_agent_type") or "default")
 
 
 def _reviewer(
@@ -134,7 +161,7 @@ def _reviewer(
     branch_name: str | None,
     base_branch: str | None,
     worktree_id: str | None,
-    resumed: bool,
+    resume_session_id: str | None,
 ) -> DispatchScope:
     if task_id is not None:
         raise TeamAdmissionRefused(
@@ -152,12 +179,19 @@ def _reviewer(
         raise TeamAdmissionRefused(
             "reviewer_seat_live", f"{agent} is already live on team {binding.team_id}"
         )
+    if resume_session_id is not None:
+        stored = _resumed_definition(db, binding.project_id, resume_session_id)
+        if stored is not None and stored != agent:
+            raise TeamAdmissionRefused(
+                "reviewer_definition_mismatch",
+                f"seat {resume_session_id} is {stored}; it resumes as {stored}, not {agent}",
+            )
     # A resumed seat reuses the tree it recorded, which is the team tree for a reviewer.
     return DispatchScope(
         team_id=binding.team_id,
         project_id=binding.project_id,
         parent_session_id=parent,
-        worktree_id=None if resumed else binding.worktree_id,
+        worktree_id=None if resume_session_id is not None else binding.worktree_id,
         reviewer_agent=agent,
     )
 
@@ -195,16 +229,17 @@ def dispatch_for_caller(
     branch_name: str | None,
     base_branch: str | None,
     worktree_id: str | None,
-    resumed: bool = False,
+    resume_session_id: str | None = None,
 ) -> DispatchScope | None:
     """The scope a spawn from an epic team's Dev Manager launches under, or None to fall through.
 
     Only the epic's bound Dev Manager dispatches, and it holds no claim. A fresh spawn from any
-    other team manager is refused, since a single-task team's runbook starts its seats. A resume
-    never refuses for scope: a reviewer is checked against the team's live seats and rebinds, and
-    any other resumed seat falls through. A team's leaf seats and every other caller take the
-    ordinary path.
+    other team manager is refused, since a single-task team's runbook starts its seats. A resumed
+    reviewer is checked against its stored definition and the team's live seats, then rebinds; any
+    other resumed seat falls through. A team's leaf seats and every other caller take the ordinary
+    path.
     """
+    resumed = resume_session_id is not None
     binding = seat_team(db, caller_session_id)
     if (
         binding is None
@@ -232,7 +267,7 @@ def dispatch_for_caller(
         "worktree_id": worktree_id,
     }
     if _REVIEWER_GRANT in grants:
-        return _reviewer(db, binding, agent, parent, resumed=resumed, **options)
+        return _reviewer(db, binding, agent, parent, resume_session_id=resume_session_id, **options)
     if resumed:
         return None
     if _MAKER_GRANT in grants:
@@ -244,12 +279,16 @@ def dispatch_for_caller(
 
 
 def record_dispatch(db: HubDatabase, scope: DispatchScope, result: dict[str, Any]) -> None:
-    """Bind a launched reviewer's run to its definition on the team; makers need no record.
+    """Bind a launched seat's run: a reviewer to its definition, a primary to its domain.
 
     The live check in ``dispatch_for_caller`` and this write are not atomic. One Dev Manager
-    dispatches a team's seats, so the window has a single writer.
+    dispatches a team's seats, so the window has a single writer. A sub-worktree maker needs no
+    record.
     """
     run_id = result.get("run_id")
-    if scope.reviewer_agent is None or not result.get("success") or not run_id:
+    if not result.get("success") or not run_id:
         return
-    bind_reviewer_run(db, scope.team_id, scope.project_id, scope.reviewer_agent, str(run_id))
+    if scope.reviewer_agent is not None:
+        bind_reviewer_run(db, scope.team_id, scope.project_id, scope.reviewer_agent, str(run_id))
+    if scope.primary_domain is not None:
+        bind_primary_run(db, scope.team_id, scope.project_id, scope.primary_domain, str(run_id))

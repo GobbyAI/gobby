@@ -72,6 +72,8 @@ class TeamBinding:
     worktree_path: str
     # One entry per reviewer definition the team binds; None until its seat exists.
     reviewers: dict[str, str | None] = field(default_factory=dict)
+    # One entry per implementation domain: the live primary that works the team tree.
+    primaries: dict[str, str | None] = field(default_factory=dict)
     # "epic" for a team bound to an epic's open leaves; "single" for one task.
     mode: str = SINGLE_MODE
 
@@ -272,6 +274,10 @@ def _binding(record: dict[str, Any] | None) -> TeamBinding | None:
             if not isinstance(value, dict):
                 return None
             values[item.name] = dict(value)
+            continue
+        if item.name == "primaries":
+            # The admission intent carries no primaries until a primary binds.
+            values[item.name] = dict(value) if isinstance(value, dict) else {}
             continue
         if item.name == "mode":
             # Records admitted before epic mode carry no mode: they are single-task teams.
@@ -571,13 +577,26 @@ def bind_reviewer_run(
     db: HubDatabase, team_id: str, project_id: str, definition: str, run_id: str
 ) -> None:
     """Record ``run_id`` as the live seat of reviewer ``definition`` on team ``team_id``."""
+    _bind_run(db, team_id, project_id, "reviewers", definition, run_id)
+
+
+def bind_primary_run(
+    db: HubDatabase, team_id: str, project_id: str, domain: str, run_id: str
+) -> None:
+    """Record ``run_id`` as the live primary of implementation ``domain`` on team ``team_id``."""
+    _bind_run(db, team_id, project_id, "primaries", domain, run_id)
+
+
+def _bind_run(
+    db: HubDatabase, team_id: str, project_id: str, key: str, name: str, run_id: str
+) -> None:
     executions = LocalPipelineExecutionManager(db, project_id)
     step = _admission_step(executions, team_id)
     record = _recorded(step)
     if step is None or record is None:
         raise TeamAdmissionRefused("team_missing", f"team {team_id} has no admission record")
-    reviewers = {**(record.get("reviewers") or {}), definition: run_id}
-    _merge(executions, step, team={**record, "reviewers": reviewers})
+    bound = {**(record.get(key) or {}), name: run_id}
+    _merge(executions, step, team={**record, key: bound})
 
 
 def _task_id(db: HubDatabase, ref: str, binding: TeamBinding) -> str | None:

@@ -513,7 +513,7 @@ def create_spawn_agent_registry(
                     branch_name=branch_name,
                     base_branch=base_branch,
                     worktree_id=worktree_id,
-                    resumed=resume_session_id is not None,
+                    resume_session_id=resume_session_id,
                 )
             except TeamAdmissionRefused as exc:
                 return {"success": False, "error": str(exc), "error_code": exc.code}
