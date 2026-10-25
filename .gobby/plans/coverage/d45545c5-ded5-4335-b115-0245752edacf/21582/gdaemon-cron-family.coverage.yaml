@@ -1,0 +1,1156 @@
+header:
+  plan_id: gdaemon-cron-family
+  plan_hash: a49dc667bda7794752e74fd1bae2eac2dbd264537be70b114a48effa81571d5c
+  root_task_ref: '21582'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-25T08:00:52Z'
+  task_tree_source: db
+  task_tree_source_hash: 478fa7393a4f23974bf73b9979a1f9729a1ff0b4c916110c11ddddb006c4d5ef
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 0320ae07b3633001db5bb7d33e40e68301803d6208c7b57153b755418e36782b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25014'
+    validation_criteria_snippet: '1.1.1: Schedule vectors reproduce Python results
+      at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_ve...'
+    matched_artifact_ref: tests/contracts/test_cron_oracle.py::test_schedule_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: f91b57b8bf07ec92838fa235421bf9b5d6beef7f38febbcceed2094ec71f8322
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25014'
+    validation_criteria_snippet: '1.1.1: Schedule vectors reproduce Python results
+      at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_ve...'
+    matched_artifact_ref: tests/contracts/test_cron_oracle.py::test_service_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 34d7ffca354257fb39247a0f796fcd3a5524f5ede9d50d81aa799042ced96c27
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25014'
+    validation_criteria_snippet: '1.1.1: Schedule vectors reproduce Python results
+      at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_ve...'
+    matched_artifact_ref: tests/contracts/test_cron_oracle.py::test_lifecycle_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 0bbbf4fd530c4e7b1086f40ae12fa50e47c63452b83ee23c7938097c341c51b3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25014'
+    validation_criteria_snippet: '1.1.1: Schedule vectors reproduce Python results
+      at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_ve...'
+    matched_artifact_ref: tests/contracts/http/cron.json
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 3c7f72bada1b9302b9576dc6abd007794c9bd3fe23d843f76de923b3caaca6ea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25014'
+    validation_criteria_snippet: '1.1.1: Schedule vectors reproduce Python results
+      at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_ve...'
+    matched_artifact_ref: tests/contracts/test_cron_oracle.py::test_browser_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: fad3418ddd07afa0e9982897281b7815f0f2723ad8b8abee4db3265d268e5921
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25014'
+    validation_criteria_snippet: '1.1.1: Schedule vectors reproduce Python results
+      at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_ve...'
+    matched_artifact_ref: docs/contracts/parity-waivers.json
+  deferral_target: null
+  detail: ''
+- section_id: 1.1a
+  item_id: 1.1a.1
+  plan_node_hash: 37a98b6e2edad07063a14e7ffd078cbb271637b8b65d6330847a9b8544ed412c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25015'
+    validation_criteria_snippet: '1.1a.1: Fresh and upgraded schemas expose nullable
+      BIGINT output_bytes_seen, BOOLEAN output_truncated and TEXT output_raw_ref;
+      old rows retain NULL/NULL/NULL a...'
+    matched_artifact_ref: crates/gcore/tests/cron_output_capture.rs::output_capture_migration_preserves_existing_runs
+  deferral_target: null
+  detail: ''
+- section_id: 1.1a
+  item_id: 1.1a.2
+  plan_node_hash: 16846aa393f25ba052f05ddf580fc4d1d93bc5b98b520802dbdda294e156d585
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25015'
+    validation_criteria_snippet: '1.1a.1: Fresh and upgraded schemas expose nullable
+      BIGINT output_bytes_seen, BOOLEAN output_truncated and TEXT output_raw_ref;
+      old rows retain NULL/NULL/NULL a...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
+  deferral_target: null
+  detail: ''
+- section_id: 1.1a
+  item_id: 1.1a.3
+  plan_node_hash: 4e8889b29b96af8d689542a3b50d58fe41cbe3a9ea1985a18defdd71412eaac6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25015'
+    validation_criteria_snippet: '1.1a.1: Fresh and upgraded schemas expose nullable
+      BIGINT output_bytes_seen, BOOLEAN output_truncated and TEXT output_raw_ref;
+      old rows retain NULL/NULL/NULL a...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 0de0363ad0df3ea07923d3207adec3a16c733311bcb10c1d3a50da546bfb4ea5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25016'
+    validation_criteria_snippet: '1.2.1: Every schedule vector gives the Python next
+      instant or no next instant, and accepts/rejects the same grammar. test: `crates/gcron/tests/schedule.rs::sch...'
+    matched_artifact_ref: crates/gcron/tests/schedule.rs::schedule_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 87c42a3e55bc3a6b673ac0ac15f3cfe9a85ee2c36dc9679d1249b6043d1c9b9e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25016'
+    validation_criteria_snippet: '1.2.1: Every schedule vector gives the Python next
+      instant or no next instant, and accepts/rejects the same grammar. test: `crates/gcron/tests/schedule.rs::sch...'
+    matched_artifact_ref: crates/gcron/tests/schedule.rs::models_match_python_wire
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: ca9a49e0d282802b2059f573fb96b979a47223498d09dbdac236cb7c6435cee2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25016'
+    validation_criteria_snippet: '1.2.1: Every schedule vector gives the Python next
+      instant or no next instant, and accepts/rejects the same grammar. test: `crates/gcron/tests/schedule.rs::sch...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 43dffefbb404dba17331dc748766c3d7734ec851f52acf1571f0dda4513bc984
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25017'
+    validation_criteria_snippet: '1.3.1: CRUD, SQL-before-limit retired filtering,
+      deterministic keyset pages, prefix cleanup, normalization and duplicate names
+      match service vectors plus the e...'
+    matched_artifact_ref: crates/gcron/tests/jobs.rs::job_mutations_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 7b235696f2c85f38e6615db005b0806eba2d28ea621bf209b4530b6fd485fb18
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25017'
+    validation_criteria_snippet: '1.3.1: CRUD, SQL-before-limit retired filtering,
+      deterministic keyset pages, prefix cleanup, normalization and duplicate names
+      match service vectors plus the e...'
+    matched_artifact_ref: crates/gcron/tests/jobs.rs::system_rows_remain_protected_and_parked
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: f9eee015466555f0d3c9c90f97ccbde2b8525b9e53ec70b176ddba856d6cf516
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25017'
+    validation_criteria_snippet: '1.3.1: CRUD, SQL-before-limit retired filtering,
+      deterministic keyset pages, prefix cleanup, normalization and duplicate names
+      match service vectors plus the e...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 10760c85f7bc97ae65c4f9a947bd22806df50769340a14522cf1c340ddb0c562
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25017'
+    validation_criteria_snippet: '1.3.1: CRUD, SQL-before-limit retired filtering,
+      deterministic keyset pages, prefix cleanup, normalization and duplicate names
+      match service vectors plus the e...'
+    matched_artifact_ref: crates/gcron/tests/jobs.rs::concurrent_schedule_edits_validate_committed_candidate
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 64d2a57b48b22fe439992adab51f48825f0c9360d5dd218394cc90556fc20974
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25017'
+    validation_criteria_snippet: '1.3.1: CRUD, SQL-before-limit retired filtering,
+      deterministic keyset pages, prefix cleanup, normalization and duplicate names
+      match service vectors plus the e...'
+    matched_artifact_ref: crates/gcron/tests/jobs.rs::patch_presence_and_merged_validation_are_atomic
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: 1817e6e7156bcab464f16bd2d977aec23111cf61034f3d4507a8b38dd6d4c58e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25017'
+    validation_criteria_snippet: '1.3.1: CRUD, SQL-before-limit retired filtering,
+      deterministic keyset pages, prefix cleanup, normalization and duplicate names
+      match service vectors plus the e...'
+    matched_artifact_ref: crates/gcron/tests/jobs.rs::toggle_requires_future_schedule_without_breaking_park
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 89d751aa5af3c9ece23906b8b70117b776782d547c4509aba38c9683238490d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25018'
+    validation_criteria_snippet: '2.1.1: Two contenders claim one scheduled occurrence,
+      and insertion failure leaves the original due timestamp. test: `crates/gcron/tests/admission.rs::schedule...'
+    matched_artifact_ref: crates/gcron/tests/admission.rs::scheduled_claim_is_atomic_and_interoperable
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 89e3558ffb103453f374ebeb1f1bb393d2e1b262da3e52edfd329a38882f02f9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25018'
+    validation_criteria_snippet: '2.1.1: Two contenders claim one scheduled occurrence,
+      and insertion failure leaves the original due timestamp. test: `crates/gcron/tests/admission.rs::schedule...'
+    matched_artifact_ref: crates/gcron/tests/admission.rs::manual_admission_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 003af038e108d8b7ee6a2d510acc2cec2f90ee6ba6e20d1ec30a9754420b1274
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25018'
+    validation_criteria_snippet: '2.1.1: Two contenders claim one scheduled occurrence,
+      and insertion failure leaves the original due timestamp. test: `crates/gcron/tests/admission.rs::schedule...'
+    matched_artifact_ref: crates/gcron/tests/admission.rs::run_queries_preserve_owner_and_children
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 03d14c38fb637f21c4a9779de9f8f2c4fa878b9a27e1609f01ffeb4da4a8734e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25018'
+    validation_criteria_snippet: '2.1.1: Two contenders claim one scheduled occurrence,
+      and insertion failure leaves the original due timestamp. test: `crates/gcron/tests/admission.rs::schedule...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 20100fdffbd2cb0c881a15e699344af0f83d5582e4791bf6cabb649eb9f6e229
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25018'
+    validation_criteria_snippet: '2.1.1: Two contenders claim one scheduled occurrence,
+      and insertion failure leaves the original due timestamp. test: `crates/gcron/tests/admission.rs::schedule...'
+    matched_artifact_ref: crates/gcron/tests/admission.rs::schedule_edit_and_admission_share_consistent_row_order
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: b3cddc63ddd2ff55f23e7ed8b07c297b596d1be3a11a2dff345b13164399c647
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25019'
+    validation_criteria_snippet: '2.2.1: Tick/backoff/retention and once-job disabling
+      match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
+      2.2....'
+    matched_artifact_ref: crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 803c7fa96607a315ba2445fc06fc5c115c7879dce6c0eaec57d3c3b0b3dfd6e0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25019'
+    validation_criteria_snippet: '2.2.1: Tick/backoff/retention and once-job disabling
+      match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
+      2.2....'
+    matched_artifact_ref: crates/gcron/tests/scheduler.rs::recovery_is_machine_and_owner_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 006b0ab07047a6e2809175eaf80bdb7b878b4bc56228778a807e0e466777e03a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25019'
+    validation_criteria_snippet: '2.2.1: Tick/backoff/retention and once-job disabling
+      match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
+      2.2....'
+    matched_artifact_ref: crates/gcron/tests/scheduler.rs::shutdown_drains_and_releases_owned_work
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 2c3d2b91c18475a50204dd840350f487e97a2b2147eac86121de7bbc93f0eedf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25019'
+    validation_criteria_snippet: '2.2.1: Tick/backoff/retention and once-job disabling
+      match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
+      2.2....'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 682992fbbb831400c6622e3633186b5b4426b06a043918de4d424fc2355e2b87
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25019'
+    validation_criteria_snippet: '2.2.1: Tick/backoff/retention and once-job disabling
+      match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
+      2.2....'
+    matched_artifact_ref: crates/gcron/tests/scheduler.rs::run_deletion_owns_raw_output_retention
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: c944bf1ba3bef22914d6ee2a6cfcc9179637ab408ae81ce1dbdb5bf12a0d6499
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25019'
+    validation_criteria_snippet: '2.2.1: Tick/backoff/retention and once-job disabling
+      match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
+      2.2....'
+    matched_artifact_ref: crates/gcron/tests/scheduler.rs::raw_output_cleanup_recovers_without_foreign_unlink
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: b7b2d67c7239eb66bc48f6d89d5c019053ad8e0b718113a2823acdeb4492ca96
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25020'
+    validation_criteria_snippet: '2.3.1: Handler results, timeout selection, unknown
+      actions and errors match lifecycle vectors. test: `crates/gcron/tests/executor.rs::inline_results_match_pyth...'
+    matched_artifact_ref: crates/gcron/tests/executor.rs::inline_results_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 62af7bb64fe98ca1b4b50bc261a3e2bf4aa32a1585e8e3adc28d5444f61cf894
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25020'
+    validation_criteria_snippet: '2.3.1: Handler results, timeout selection, unknown
+      actions and errors match lifecycle vectors. test: `crates/gcron/tests/executor.rs::inline_results_match_pyth...'
+    matched_artifact_ref: crates/gcron/tests/executor.rs::shell_actions_are_bounded_and_reaped
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 91e830e33189d26490d37aa0ef8eb8f77f9802e44f87837604a2cd80bb73412f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25020'
+    validation_criteria_snippet: '2.3.1: Handler results, timeout selection, unknown
+      actions and errors match lifecycle vectors. test: `crates/gcron/tests/executor.rs::inline_results_match_pyth...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: c42d4d5d08180e86b8b9fc0747bcdf71ecb1e0f446c8c2d2dfe465ad890abd4f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25020'
+    validation_criteria_snippet: '2.3.1: Handler results, timeout selection, unknown
+      actions and errors match lifecycle vectors. test: `crates/gcron/tests/executor.rs::inline_results_match_pyth...'
+    matched_artifact_ref: crates/gcron/tests/executor.rs::shell_output_budget_is_durable_and_utf8_safe
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 1bc51b2278edd9850049d133e4f2d1e23574d43afd61034e2cb848f2283bca3f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25021'
+    validation_criteria_snippet: '2.4.1: Definition/provider/project/lineage and restrictions
+      reach native spawn unchanged; disabled/readiness/overlap skips have no child/session
+      side effects. ...'
+    matched_artifact_ref: crates/gcron/tests/agent_action.rs::agent_dispatch_preserves_admission_and_lineage
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: c0514dff9992441f1e18245ac9be9b02cbe0d08db614228fae44addb4b3946ce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25021'
+    validation_criteria_snippet: '2.4.1: Definition/provider/project/lineage and restrictions
+      reach native spawn unchanged; disabled/readiness/overlap skips have no child/session
+      side effects. ...'
+    matched_artifact_ref: crates/gcron/tests/agent_action.rs::agent_children_are_durable_and_recoverable
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: f56aac5211c6661866337c40d8c4b422cdff6a30fb296c321d81d993af0b3f1f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25021'
+    validation_criteria_snippet: '2.4.1: Definition/provider/project/lineage and restrictions
+      reach native spawn unchanged; disabled/readiness/overlap skips have no child/session
+      side effects. ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: 279efd27dea2a16e6f71d0d542e0b1a2c20ead87f134ab940054ca7fc7772e0c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25022'
+    validation_criteria_snippet: '2.5.1: Disabled and overlap cases create neither
+      session nor execution, and missing cron parent refuses before dispatch. test:
+      `crates/gcron/tests/pipeline_act...'
+    matched_artifact_ref: crates/gcron/tests/pipeline_action.rs::pipeline_gates_precede_side_effects
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: c1f4ec067425edb46bbc2928fb906363450c36530d0f083c3938c4570cd6c2fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25022'
+    validation_criteria_snippet: '2.5.1: Disabled and overlap cases create neither
+      session nor execution, and missing cron parent refuses before dispatch. test:
+      `crates/gcron/tests/pipeline_act...'
+    matched_artifact_ref: crates/gcron/tests/pipeline_action.rs::pipeline_dispatch_is_durable
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 4d18381e0b0ca43d8f5ad9b786b8cc2624d1a8ce0280dba6cdbdaf1028836073
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25022'
+    validation_criteria_snippet: '2.5.1: Disabled and overlap cases create neither
+      session nor execution, and missing cron parent refuses before dispatch. test:
+      `crates/gcron/tests/pipeline_act...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.1
+  plan_node_hash: b2d74d09ac50cb8d893d5aa13ee6b4a8fc115ff552d79ccd62b4b00f261f43dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25023'
+    validation_criteria_snippet: '2.6.1: New/drifted/disabled/parked nightly definitions
+      reconcile correctly and preserve local-zone scheduling. test: `crates/gdaemon/tests/cron_code_index.rs::...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_code_index.rs::nightly_definition_preserves_operator_state
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.2
+  plan_node_hash: 2eca92cf74c9d6bc62b650878923450faa62226b84b3f9adedb266a5bf1fd477
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25023'
+    validation_criteria_snippet: '2.6.1: New/drifted/disabled/parked nightly definitions
+      reconcile correctly and preserve local-zone scheduling. test: `crates/gdaemon/tests/cron_code_index.rs::...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_code_index.rs::native_code_index_jobs_execute_once
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: fe2d56487c7f252f008bad5ad3265e2f4c6ea98cdaec3037e18bf7516334ea11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25023'
+    validation_criteria_snippet: '2.6.1: New/drifted/disabled/parked nightly definitions
+      reconcile correctly and preserve local-zone scheduling. test: `crates/gdaemon/tests/cron_code_index.rs::...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.1
+  plan_node_hash: c29699bc7eafd9bedf1939b051134332b0da5987fa7dfc01e114f490ecb47a92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25024'
+    validation_criteria_snippet: '2.7.1: Dream, feedback and purge invoke the proper
+      native service with the original job/project contract and no duplicate schedule
+      owner. test: `crates/gdaemon...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_system_jobs.rs::system_handlers_use_native_services
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.2
+  plan_node_hash: d4a5991e27b8006747c8d453ea9a1ee3ac34d1f3de7de34da5653cf04dee2431
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25024'
+    validation_criteria_snippet: '2.7.1: Dream, feedback and purge invoke the proper
+      native service with the original job/project contract and no duplicate schedule
+      owner. test: `crates/gdaemon...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_system_jobs.rs::system_job_policies_survive_restart
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.3
+  plan_node_hash: 42cc3d0fcd481939d35480d3b9842e9a772e556447663724ba41c8b312a92b07
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25024'
+    validation_criteria_snippet: '2.7.1: Dream, feedback and purge invoke the proper
+      native service with the original job/project contract and no duplicate schedule
+      owner. test: `crates/gdaemon...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_system_jobs.rs::project_cleanup_uses_native_jobs
+  deferral_target: null
+  detail: ''
+- section_id: '2.7'
+  item_id: 2.7.4
+  plan_node_hash: 7b4ecb74f51d6a778ade62dce682ad6cadf2e6f0a0a42d64b5f9ade607f1f14c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25024'
+    validation_criteria_snippet: '2.7.1: Dream, feedback and purge invoke the proper
+      native service with the original job/project contract and no duplicate schedule
+      owner. test: `crates/gdaemon...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.1
+  plan_node_hash: 90e67848a133a9d38d74ba75b9c326e86d137707cc4692302c31b389cdea3cb2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25025'
+    validation_criteria_snippet: '2.8.1: Before 4.1 activation, production has no
+      native cron tasks, mutations or manual admission; isolated activation starts
+      one hub/standalone owner and none ...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_runtime.rs::roles_and_lease_gate_cron_ownership
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.2
+  plan_node_hash: 028a7cc566194cb57deacfb2b8977d7445d2920e544f7ed64c8b9e2d013e8978
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25025'
+    validation_criteria_snippet: '2.8.1: Before 4.1 activation, production has no
+      native cron tasks, mutations or manual admission; isolated activation starts
+      one hub/standalone owner and none ...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_runtime.rs::cron_events_follow_committed_state
+  deferral_target: null
+  detail: ''
+- section_id: '2.8'
+  item_id: 2.8.3
+  plan_node_hash: 09b3f1b294ef42f75fcf28451459738d971d8d0f0428468ea237aa0190814d6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25025'
+    validation_criteria_snippet: '2.8.1: Before 4.1 activation, production has no
+      native cron tasks, mutations or manual admission; isolated activation starts
+      one hub/standalone owner and none ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: f565d12ca3bc89aaa0a3f8d412542202ef055bd9599db74118fabff22d92a041
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25026'
+    validation_criteria_snippet: '3.1.1: GET /api/cron/jobs preserves display names
+      and page count while the exact D3 waiver asserts default 50/max 200 cursor pages,
+      SQL-before-limit retirement...'
+    matched_artifact_ref: crates/gcron/tests/http_reads.rs::list_jobs_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 879a4172a8cffe50ddf074b23fd3a5bf64464c19bb56a51f9db886f2123e288c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25026'
+    validation_criteria_snippet: '3.1.1: GET /api/cron/jobs preserves display names
+      and page count while the exact D3 waiver asserts default 50/max 200 cursor pages,
+      SQL-before-limit retirement...'
+    matched_artifact_ref: crates/gcron/tests/http_reads.rs::get_job_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 1848df6ac4f548d37cdd92af440adafff26cfc1a51e12f00a512dcc391ee851c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25026'
+    validation_criteria_snippet: '3.1.1: GET /api/cron/jobs preserves display names
+      and page count while the exact D3 waiver asserts default 50/max 200 cursor pages,
+      SQL-before-limit retirement...'
+    matched_artifact_ref: crates/gcron/tests/http_reads.rs::list_runs_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 17453f126c31c68145dfd7a9b0171cb51e5fe095fea2fa9e2db08f030927fa44
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25026'
+    validation_criteria_snippet: '3.1.1: GET /api/cron/jobs preserves display names
+      and page count while the exact D3 waiver asserts default 50/max 200 cursor pages,
+      SQL-before-limit retirement...'
+    matched_artifact_ref: crates/gcron/tests/http_reads.rs::get_run_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: fdcc28233c4bacb331ed11ebb60132cfec6f649636cdc9dce8736be0b92bbbed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25026'
+    validation_criteria_snippet: '3.1.1: GET /api/cron/jobs preserves display names
+      and page count while the exact D3 waiver asserts default 50/max 200 cursor pages,
+      SQL-before-limit retirement...'
+    matched_artifact_ref: crates/gcron/tests/http_reads.rs::claims_and_auth_are_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: ca84fd08a1a29327e2e482b78d7210c9d12330fe73760663923f6a835e0defb5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25026'
+    validation_criteria_snippet: '3.1.1: GET /api/cron/jobs preserves display names
+      and page count while the exact D3 waiver asserts default 50/max 200 cursor pages,
+      SQL-before-limit retirement...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: 3.1a
+  item_id: 3.1a.1
+  plan_node_hash: b90bd9e79a1f859bbfecf42c4b95f61ef646f4c7af310d85cc4d1b8db022d74d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25027'
+    validation_criteria_snippet: '3.1a.1: Raw reads reconstruct the complete shell
+      byte stream beyond the inline cap, including invalid UTF-8, while each response
+      stays within the approved defa...'
+    matched_artifact_ref: crates/gcron/tests/http_output.rs::raw_output_is_complete_and_bounded
+  deferral_target: null
+  detail: ''
+- section_id: 3.1a
+  item_id: 3.1a.2
+  plan_node_hash: 119537c90925536bd8c22c5370579fe1d5bd2295e4bc66e29c8b579d2501ae83
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25027'
+    validation_criteria_snippet: '3.1a.1: Raw reads reconstruct the complete shell
+      byte stream beyond the inline cap, including invalid UTF-8, while each response
+      stays within the approved defa...'
+    matched_artifact_ref: crates/gcron/tests/http_output.rs::range_and_capture_states_are_explicit
+  deferral_target: null
+  detail: ''
+- section_id: 3.1a
+  item_id: 3.1a.3
+  plan_node_hash: ce4a0dad2e62dfdaacf5167478f295f9a2e756a2f5f92356447eec3d6daead47
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25027'
+    validation_criteria_snippet: '3.1a.1: Raw reads reconstruct the complete shell
+      byte stream beyond the inline cap, including invalid UTF-8, while each response
+      stays within the approved defa...'
+    matched_artifact_ref: crates/gcron/tests/http_output.rs::raw_output_authority_and_descriptor_are_bounded
+  deferral_target: null
+  detail: ''
+- section_id: 3.1a
+  item_id: 3.1a.4
+  plan_node_hash: 49a3c32517e84316c66d920dbd00da6fbb05a8551c71edc1072110d861f5c2e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25027'
+    validation_criteria_snippet: '3.1a.1: Raw reads reconstruct the complete shell
+      byte stream beyond the inline cap, including invalid UTF-8, while each response
+      stays within the approved defa...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: f883efb0d1b7c9f7b3e025164bb818ac23864b5dd4e16dc59f6fa562e5c0b6fb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25028'
+    validation_criteria_snippet: '3.2.1: POST /api/cron/jobs matches create validation,
+      project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_mat...'
+    matched_artifact_ref: crates/gcron/tests/http_writes.rs::create_job_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 66fc535a7542a23cf213f6e1c5c8f567064c7be21af64b9e84bd808c42daa10e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25028'
+    validation_criteria_snippet: '3.2.1: POST /api/cron/jobs matches create validation,
+      project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_mat...'
+    matched_artifact_ref: crates/gcron/tests/http_writes.rs::update_job_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 8a03b0749ea30954ce35529969e1dda0e10d9a5484ea53625e0883b2a2010c8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25028'
+    validation_criteria_snippet: '3.2.1: POST /api/cron/jobs matches create validation,
+      project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_mat...'
+    matched_artifact_ref: crates/gcron/tests/http_writes.rs::delete_job_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: 82e9a75ccb4d02546ebbbd35b07e76bab945271b06209b0ffc74c6ba5575b769
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25028'
+    validation_criteria_snippet: '3.2.1: POST /api/cron/jobs matches create validation,
+      project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_mat...'
+    matched_artifact_ref: crates/gcron/tests/http_writes.rs::toggle_job_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 46f70bce4de64dc75228071e19b80bc681b172334a8108a58ae8d891a7555727
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25028'
+    validation_criteria_snippet: '3.2.1: POST /api/cron/jobs matches create validation,
+      project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_mat...'
+    matched_artifact_ref: crates/gcron/tests/http_writes.rs::run_now_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 4b9c172fd57f45754cec3a83b3d20f80b896c6e1500ee6a51ddbee96205f19fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25028'
+    validation_criteria_snippet: '3.2.1: POST /api/cron/jobs matches create validation,
+      project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_mat...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: d9deda80debafa5c3916e78b4cf4e155c6b281b7226a7cf6e44baacfbeb4aa3c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25029'
+    validation_criteria_snippet: '3.3.1: GET /api/admin/cron/protected-runs returns
+      the original fields and timeout/owner filtering. test: `crates/gdaemon/tests/cron_protection.rs::protected_ru...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_protection.rs::protected_runs_query_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 8f2d61103cba8ec32c05da7ebeba180571e4a6ba93fb034d747661e6e7c2dd4b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25029'
+    validation_criteria_snippet: '3.3.1: GET /api/admin/cron/protected-runs returns
+      the original fields and timeout/owner filtering. test: `crates/gdaemon/tests/cron_protection.rs::protected_ru...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_protection.rs::restart_guard_honors_wait_and_force
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 7da1c870c08dc5a4b2d4f4d0f8abe37b4c5df3923f9c31c27a0a81a751d9c0fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25029'
+    validation_criteria_snippet: '3.3.1: GET /api/admin/cron/protected-runs returns
+      the original fields and timeout/owner filtering. test: `crates/gdaemon/tests/cron_protection.rs::protected_ru...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_protection.rs::active_count_is_local_complete_and_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: b1b05a750b9c629a6a467f2aac243454575994cad3e2b596e4683404b0ad86bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25029'
+    validation_criteria_snippet: '3.3.1: GET /api/admin/cron/protected-runs returns
+      the original fields and timeout/owner filtering. test: `crates/gdaemon/tests/cron_protection.rs::protected_ru...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: 202385882c205c0fafa3d203b7fe034df08dfaf0230e5b61988c38dc29656fbc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25030'
+    validation_criteria_snippet: '3.4.1: Every CLI/MCP operation uses the native service
+      and #24970''s shared safe-error adapters, with exact D1-D7/S3 waiver assertions
+      and no raw exception text...'
+    matched_artifact_ref: crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.2
+  plan_node_hash: 2bd6523deb56a26ea3f6ec2f996270ce5a588604873d4252ceebb22816267e6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25030'
+    validation_criteria_snippet: '3.4.1: Every CLI/MCP operation uses the native service
+      and #24970''s shared safe-error adapters, with exact D1-D7/S3 waiver assertions
+      and no raw exception text...'
+    matched_artifact_ref: docs/contracts/cron-services.md
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.3
+  plan_node_hash: 32bc607c0d7e5eb9fea2b16e8fcd46ceeec31777263c69f73560dfad48bff34b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25030'
+    validation_criteria_snippet: '3.4.1: Every CLI/MCP operation uses the native service
+      and #24970''s shared safe-error adapters, with exact D1-D7/S3 waiver assertions
+      and no raw exception text...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: bf95926a03991a0d6bbefb05f1a072f985634e9997dfac4339769dfce73e6bfe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25031'
+    validation_criteria_snippet: '3.5.1: Reads and verified writes detect tampered
+      response/state, skip concurrent changes and never duplicate writes or actions.
+      test: `crates/gcron/tests/compa...'
+    matched_artifact_ref: crates/gcron/tests/compare.rs::compare_is_side_effect_free_and_race_aware
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: 1db976824a9bba7e755d423bb64d5581926283c3f32e5d37ae32f3a092e49884
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25031'
+    validation_criteria_snippet: '3.5.1: Reads and verified writes detect tampered
+      response/state, skip concurrent changes and never duplicate writes or actions.
+      test: `crates/gcron/tests/compa...'
+    matched_artifact_ref: tests/e2e/test_cron_family.py::test_native_cron_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.3
+  plan_node_hash: 36b2cd5d3f03a07f9ad546c91c78578ef23b1dfda1be10f0799696234fc3b741
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25031'
+    validation_criteria_snippet: '3.5.1: Reads and verified writes detect tampered
+      response/state, skip concurrent changes and never duplicate writes or actions.
+      test: `crates/gcron/tests/compa...'
+    matched_artifact_ref: tests/e2e/test_cron_family.py::test_compare_has_coverage_without_double_dispatch
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.4
+  plan_node_hash: 3692815d8fb3d055709c93e0f7954bd7fdc4a960760ed70302eb080c0f1edae2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25031'
+    validation_criteria_snippet: '3.5.1: Reads and verified writes detect tampered
+      response/state, skip concurrent changes and never duplicate writes or actions.
+      test: `crates/gcron/tests/compa...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: b93c4adc9f64194198860c0c0efedcfd57aebd2efbe835105a6f8ae103179ddd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25032'
+    validation_criteria_snippet: '4.1.1: Native is the key-caller default only after
+      the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native
+      never both admit schedule...'
+    matched_artifact_ref: tests/e2e/test_cron_family.py::test_default_flip_has_one_scheduler_owner
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: f2e04892f24735f937713b7a0ab09a932fedbd09f9a3174938fabbdb54d342b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25032'
+    validation_criteria_snippet: '4.1.1: Native is the key-caller default only after
+      the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native
+      never both admit schedule...'
+    matched_artifact_ref: tests/e2e/test_cron_family.py::test_cron_survives_python_backend_loss
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: c7ff3f4666c4e5f979f09aafd632fadae10d0bd1f6d08b2b878e8a2da2cf44c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25032'
+    validation_criteria_snippet: '4.1.1: Native is the key-caller default only after
+      the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native
+      never both admit schedule...'
+    matched_artifact_ref: tests/scheduler/test_native_cron_transition.py::test_transition_never_has_two_admission_owners
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: d28e180e1d065911ae200654f374ffe93a29a58779e82ccc16c40c7052e0d47f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25032'
+    validation_criteria_snippet: '4.1.1: Native is the key-caller default only after
+      the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native
+      never both admit schedule...'
+    matched_artifact_ref: tests/servers/routes/test_daemon_lease_routes.py::test_handoff_uses_complete_local_native_cron_count
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 1e54a97184c1261b9ffff63690bdb3ef09f4832c1133ffa886c0062e1b626b1c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25032'
+    validation_criteria_snippet: '4.1.1: Native is the key-caller default only after
+      the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native
+      never both admit schedule...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.1
+  plan_node_hash: 76d98c8ac30a796d0083afab406bb7803b841f0cb0ea5b8eaf53c9b9d6804ce0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25033'
+    validation_criteria_snippet: '4.1a.1: Retention deletes only delivered mailbox
+      rows strictly before the 30-day UTC cutoff, ordered and bounded at 500; undelivered,
+      exact-cutoff and overflow...'
+    matched_artifact_ref: crates/gcron/tests/mailbox_retention.rs::current_mailbox_retention_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.2
+  plan_node_hash: 508f453f1e5058ec4a89f4dfc0eb07e1c59e6abbc94ec0382a20d6967263317f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25033'
+    validation_criteria_snippet: '4.1a.1: Retention deletes only delivered mailbox
+      rows strictly before the 30-day UTC cutoff, ordered and bounded at 500; undelivered,
+      exact-cutoff and overflow...'
+    matched_artifact_ref: crates/gcron/tests/mailbox_retention.rs::retention_lifecycle_preserves_current_policy
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.3
+  plan_node_hash: 9c3b927b298ae9026130a5ba98bee9c2eb93d1596309528f4ac1fb395320bab9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25033'
+    validation_criteria_snippet: '4.1a.1: Retention deletes only delivered mailbox
+      rows strictly before the 30-day UTC cutoff, ordered and bounded at 500; undelivered,
+      exact-cutoff and overflow...'
+    matched_artifact_ref: tests/communications/test_communications_maintenance.py::test_native_mailbox_takeover_preserves_other_cleanup
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.4
+  plan_node_hash: 4db9ad178dfe3717a9d56fca778833755406afe12071088d6aa6ac5b90be544b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25033'
+    validation_criteria_snippet: '4.1a.1: Retention deletes only delivered mailbox
+      rows strictly before the 30-day UTC cutoff, ordered and bounded at 500; undelivered,
+      exact-cutoff and overflow...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: 4.1b
+  item_id: 4.1b.1
+  plan_node_hash: da37dcc4181516fa352621f50d769def0136c670d597e84da4aabd266eb11409
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25034'
+    validation_criteria_snippet: '4.1b.1: Nine original routes preserve ordinary-cookie
+      status/body/effects under 1.1''s Python vectors and exact D1-D7 waivers; the
+      tenth output read follows its...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_browser.rs::cookie_get_and_mutations_match_python
+  deferral_target: null
+  detail: ''
+- section_id: 4.1b
+  item_id: 4.1b.2
+  plan_node_hash: f16677e5dfb6a17fe4313e448b40d53fab9b42a8e1e82a00b796c9090528b26f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25034'
+    validation_criteria_snippet: '4.1b.1: Nine original routes preserve ordinary-cookie
+      status/body/effects under 1.1''s Python vectors and exact D1-D7 waivers; the
+      tenth output read follows its...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_browser.rs::browser_authority_is_route_and_class_bounded
+  deferral_target: null
+  detail: ''
+- section_id: 4.1b
+  item_id: 4.1b.3
+  plan_node_hash: de3fc5643925c111fbcef2e4f62b0542f86321b6c519ac7457d1c52dd7a11649
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25034'
+    validation_criteria_snippet: '4.1b.1: Nine original routes preserve ordinary-cookie
+      status/body/effects under 1.1''s Python vectors and exact D1-D7 waivers; the
+      tenth output read follows its...'
+    matched_artifact_ref: crates/gdaemon/tests/cron_browser.rs::origin_and_preflight_match_python
+  deferral_target: null
+  detail: ''
+- section_id: 4.1b
+  item_id: 4.1b.4
+  plan_node_hash: 2b9e0289f79513b9b44bb3ad578a98c58ff096379fc638d44577e70cf76feac6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25034'
+    validation_criteria_snippet: '4.1b.1: Nine original routes preserve ordinary-cookie
+      status/body/effects under 1.1''s Python vectors and exact D1-D7 waivers; the
+      tenth output read follows its...'
+    matched_artifact_ref: tests/e2e/test_cron_family.py::test_cookie_cron_survives_python_backend_loss
+  deferral_target: null
+  detail: ''
+- section_id: 4.1b
+  item_id: 4.1b.5
+  plan_node_hash: 4c8dba975958b75385ef0ad8e5cbd90561ec51c756b7682a4573049507658802
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25034'
+    validation_criteria_snippet: '4.1b.1: Nine original routes preserve ordinary-cookie
+      status/body/effects under 1.1''s Python vectors and exact D1-D7 waivers; the
+      tenth output read follows its...'
+    matched_artifact_ref: docs/contracts/cron-services.md
+  deferral_target: null
+  detail: ''
+- section_id: 4.1b
+  item_id: 4.1b.6
+  plan_node_hash: 4d55e6697079105b3766222bf69e8d95b8a12cec612cedb7b47496a0eb618df2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25034'
+    validation_criteria_snippet: '4.1b.1: Nine original routes preserve ordinary-cookie
+      status/body/effects under 1.1''s Python vectors and exact D1-D7 waivers; the
+      tenth output read follows its...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 4ca98586f5f25f0f8011da48f10e6af4cd541984d4a5c071c689cfc86b39247f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25035'
+    validation_criteria_snippet: '4.2.1: Python scheduler/executor/HTTP/nightly modules
+      and nightly init/test consumers are absent; no production import names them.
+      test: `tests/scheduler/test_...'
+    matched_artifact_ref: tests/scheduler/test_cron_retirement.py::test_removed_cron_implementations_have_no_readers
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: fc037aa58be8872e0f82ba065aba7a0d1256fe319301c87a0cae760a01821971
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25035'
+    validation_criteria_snippet: '4.2.1: Python scheduler/executor/HTTP/nightly modules
+      and nightly init/test consumers are absent; no production import names them.
+      test: `tests/scheduler/test_...'
+    matched_artifact_ref: tests/scheduler/test_cron_retirement.py::test_retained_callers_have_no_python_execution_path
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: e784d8e232100f4fc221c2816223b7fa673bf844eef76315cf12cbae64b1142b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25035'
+    validation_criteria_snippet: '4.2.1: Python scheduler/executor/HTTP/nightly modules
+      and nightly init/test consumers are absent; no production import names them.
+      test: `tests/scheduler/test_...'
+    matched_artifact_ref: tests/e2e/test_cron_family.py::test_retired_python_is_unnecessary
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: 97f51118a6b4822ad73b67b7cb08784284303a523ca45c6a9de7511108b271fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25035'
+    validation_criteria_snippet: '4.2.1: Python scheduler/executor/HTTP/nightly modules
+      and nightly init/test consumers are absent; no production import names them.
+      test: `tests/scheduler/test_...'
+    matched_artifact_ref: docs/contracts/cron-services.md
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: b0d4f846176a28b0fad9c2f406ba30cdddda4c248db70681d926b8cb051f54e7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25036'
+    validation_criteria_snippet: '4.3.1: All original 28 rows remain accounted: ten
+      proven HTTP rows become delegated and eighteen CLI/MCP rows stay proxied with
+      their owners. The new output HT...'
+    matched_artifact_ref: docs/contracts/parity-ledger.md
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 173a57aadc2e7887e9f5315d41cf1c737cefc19f4cf39476879d35bf4f2ad953
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25036'
+    validation_criteria_snippet: '4.3.1: All original 28 rows remain accounted: ten
+      proven HTTP rows become delegated and eighteen CLI/MCP rows stay proxied with
+      their owners. The new output HT...'
+    matched_artifact_ref: docs/contracts/cron-services.md
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 5ad113b69d46ed39a246db9e6a0ab52e43ae995bb1c812044516773a2bc69231
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25036'
+    validation_criteria_snippet: '4.3.1: All original 28 rows remain accounted: ten
+      proven HTTP rows become delegated and eighteen CLI/MCP rows stay proxied with
+      their owners. The new output HT...'
+    matched_artifact_ref: docs/guides/configuration.md
+  deferral_target: null
+  detail: ''
