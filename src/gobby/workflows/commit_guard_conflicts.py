@@ -119,11 +119,11 @@ def format_dirty_edit_reason(
                     "Ask the operator through Triage/Assistant to revert the change or run "
                     "the approval command in their own shell:",
                     *[f"  {command}" for command in approval_commands],
-                    "Then redo the intended change with Edit/Write.",
+                    "Redo the intended change with Edit/Write, then retry.",
                 ]
                 if unowned
                 else []
             ),
-            "Then retry.",
+            *([] if unowned else ["Then retry."]),
         ]
     )

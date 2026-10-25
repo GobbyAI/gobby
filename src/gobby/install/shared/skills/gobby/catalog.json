@@ -21,7 +21,7 @@
         },
         {
           "name": "implementation",
-          "description": "Implement, handle found work, and validate",
+          "description": "Implement, handle shell writes and found work, and validate",
           "path": "references/tasks/implementation.md",
           "when": "Editing task-owned files or preparing verification"
         },
