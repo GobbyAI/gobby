@@ -303,6 +303,13 @@ comes with this amended plan; neither family depends on the other's root or
 retirement. Reuse the gprojects crate assembly and existing locked filesystem
 facilities, with normal gdaemon version/lock/pin release carriers.
 
+At expansion, the coordinator binds existing #24968 as blocked-by the concrete
+implementation task generated from Projects section1.2, before admitting the
+capability for work. Record that section-to-task mapping in the expansion
+handoff and verify the edge; plan approval alone does not satisfy crate assembly.
+Consumer tasks are then blocked by #24968. Create no1.3 task, no second crate
+assembly owner, and no dependency on either whole plan root or retirement.
+
 The owned implementation is crates/gprojects/src/files_home.rs, exported by
 the crate's lib.rs with focused crates/gprojects/tests/files_home.rs tests.
 Python references are paths.open_files_home_descendant,
@@ -530,7 +537,7 @@ lease behavior exact. This leaf adds the entry through #24963's schema/loader.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test attachment_content_delete`.
 
-### 3.4 Native files migration and final attachment layout [category: code] (depends: 3.3, #24968)
+### 3.4 Native files migration and final attachment layout [category: code] (depends: 3.3, #24963, #24968)
 `kind: deliverable`
 
 Targets:
@@ -538,6 +545,7 @@ Targets:
 - `crates/gprojects/src/migration_publish.rs`
 - `crates/gprojects/src/cli_files.rs`
 - `crates/gprojects/tests/files_migration.rs`
+- `docs/contracts/parity-waivers.json`
 - `crates/gdaemon/src/main.rs::*` — scope-reason: expose family-owned native files commands through the existing command dispatcher
 - `src/gobby/cli/files.py::*` — scope-reason: replace the whole files group with transitional native forwarding
 - `tests/cli/test_native_files_forwarding.py`
@@ -549,14 +557,27 @@ Targets:
 
 Port the existing migration classes into a fixed Rust operation, extending the destination once to attachments/<project-id>/. Include the existing legacy personal/project roots and already provisioned _personal/attachments, plus retained wiki bytes without recreating wiki behavior. Preserve existing non-attachment destinations and recognized retry states. Before any mutation, prewalk all sources/destinations, refuse overlaps, divergent collisions, symlinks, special entries and root/ancestor identity changes. Gate family uploads/deletes with the migration's exclusive lock; hold the daemon singleton/offline lock for offline CLI use. Publish using rename or cross-device copy/fsync/hash verification; retire source only after durable destination. Commit locator rewrites only after bytes exist. A crash after publication is reconciled by content equality on rerun; never overwrite divergent data or roll a locator forward to absent bytes. The report retains migrated/skipped/rewritten/unrewritten details and typed partial failure. The existing Click shim forwards to gdaemon files migrate and propagates stdout/stderr/exit status. Routing: backend code; tdd true.
 
+This leaf adds projects.files-migrate.final-layout under #24963 for exact
+surface CLI gobby files migrate, decision #24951 section3.4. Replacement: only
+chat-attachment destination strings in published/report entries and the matching
+persisted locators change from _personal/attachments/... to the final
+attachments/<project-id>/<prefix>/<id>/<filename> layout. Report field names,
+class IDs, unrelated class destinations, refusal/error/exit semantics and
+retry/collision/no-loss behavior remain exact. The case assertion checks both
+reported destinations and resulting bytes/locators; it is a cited Waived
+replacement, never a namespace mask or Skipped readiness case. Migration's
+ordinary report field named skipped retains its own data meaning and is not a
+compare-readiness outcome.
+
 **Granularity:** more than six production targets form one offline migration lifecycle plus its necessary entrypoints and release carriers; publication and ordinary attachment I/O are separately owned.
 
 **Acceptance:**
 - 3.4.1 - The source row CLI gobby files delegates group/help/usage handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding.py::test_group_delegates_to_rust`.
-- 3.4.2 - The source row CLI gobby files migrate delegates to the native hub-local migration and preserves report/error/exit semantics. test: `crates/gprojects/tests/files_migration.rs::command_matches_python`.
+- 3.4.2 - CLI gobby files migrate preserves report/error/exit semantics except the exact projects.files-migrate.final-layout destination/locator replacement, which proves final bytes and retains all unrelated classes and retry/refusal outcomes. test: `crates/gprojects/tests/files_migration.rs::command_matches_python`.
 - 3.4.3 - Preflight collision/special-type/overlap/root-swap refusals leave all sources, destinations and database locators byte-for-byte unchanged. test: `crates/gprojects/tests/files_migration.rs::preflight_has_zero_mutations`.
 - 3.4.4 - Same-device, cross-device and crash/rerun states converge to one verified final locator per attachment with no lost or duplicated divergent bytes. test: `crates/gprojects/tests/files_migration.rs::rerun_converges_after_each_boundary`.
 - 3.4.5 - Retained wiki bytes remain available as archived bytes, no wiki API appears, and comms_attachments is neither read nor moved. test: `crates/gprojects/tests/files_migration.rs::scope_preserves_retired_and_downstream_data`.
+- 3.4.6 - Corpus/replay/compare/ledger consume the same exact migration-layout waiver and reject missing citation, broad report normalization or loss of ordinary class/error/exit coverage. test: `crates/gprojects/tests/files_migration.rs::layout_waiver_is_case_specific`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test files_migration` and isolated pytest for tests/cli/test_native_files_forwarding.py.
 Collect the exact proposed Python node ID:
@@ -857,7 +878,168 @@ Port initialization's marker/config seeding and checkout registry transaction, i
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_checkouts` and `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test node_project_checkouts`.
 
-### 4.6 Native project updates and soft deletion [category: code] (depends: 4.5, #24963, #24968)
+### 4.5a Shared project metadata serialization and policy guards [category: code] (depends: 4.5, #24968)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/config/project_metadata.py`
+- `src/gobby/config/project_validation.py`
+- `src/gobby/utils/durable_file.py::*` — scope-reason: expose bounded locking of a securely opened descriptor while preserving the path wrapper
+- `src/gobby/config/validation_detection.py::*` — scope-reason: extract project-file policy helpers and retain their import facade
+- `src/gobby/config/tasks.py::load_project_task_close_policy`
+- `src/gobby/utils/project_context.py::*` — scope-reason: guard policy snapshots and both sides of isolation metadata copy and repair
+- `src/gobby/utils/project_init.py::*` — scope-reason: serialize marker read/merge/publication and expected-identity cleanup
+- `src/gobby/servers/tool_approvals.py::*` — scope-reason: guard approval load/save/clear/migrate and the async wrapper
+- `src/gobby/servers/chat_session_permissions.py::*` — scope-reason: map unavailable policy to the existing approval-required decision
+- `src/gobby/servers/websocket/chat/backends/codex.py::*` — scope-reason: refuse provider permission when async project-policy loading fails
+- `src/gobby/servers/websocket/chat/backends/droid_permissions.py::*` — scope-reason: refuse provider permission when async project-policy loading fails
+- `src/gobby/servers/routes/mcp/hook_hold_open.py::*` — scope-reason: deny autoapproval when guarded policy is unavailable
+- `src/gobby/servers/routes/projects.py::*` — scope-reason: propagate recovery refusal through existing route envelopes
+- `src/gobby/cli/extensions.py::*` — scope-reason: guard hook status and serialize enable/disable field merges
+- `src/gobby/project_verification/evidence.py::*` — scope-reason: collect verification policy from a guarded snapshot
+- `src/gobby/project_verification/refresh.py::*` — scope-reason: guard the legacy field writer until native replacement
+- `src/gobby/storage/projects.py::ensure_personal_project_identity`
+- `src/gobby/mcp_proxy/tools/merge_verification.py::*` — scope-reason: refuse merge verification on unavailable project policy
+- `src/gobby/tasks/transcript_outcomes.py::*` — scope-reason: refuse policy-dependent evidence credit on unavailable metadata
+- `src/gobby/tasks/step_records.py::*` — scope-reason: propagate unavailable task-close policy through close refusal
+- `src/gobby/hooks/verification_runner.py::*` — scope-reason: fail verification when hooks or verification policy is unavailable
+- `src/gobby/cli/release.py::*` — scope-reason: stop release verification when guarded project commands are unavailable
+- `src/gobby/agents/spawn_cache_policy.py::*` — scope-reason: prevent sandbox-policy fallback after recovery refusal
+- `src/gobby/agents/spawn_executor_providers.py::*` — scope-reason: reject launch preparation when source or main-checkout sandbox policy is unavailable
+- `src/gobby/workflows/found_work_gate.py::*` — scope-reason: extract project policy resolution and preserve a blocking gate on recovery refusal
+- `src/gobby/workflows/found_work_project_config.py`
+- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerate the required config carrier without adding a runtime option
+- `crates/gprojects/src/projects/metadata_lock.rs`
+- `crates/gprojects/src/projects/mod.rs`
+- `crates/gprojects/Cargo.toml`
+- `crates/gprojects/tests/project_metadata_barrier.rs`
+- `tests/contracts/test_project_metadata_barrier.py`
+- `tests/contracts/project_metadata_probe.py`
+- `tests/config/test_validation_detection.py::*` — scope-reason: preserve helper imports and ordinary overrides after extraction
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: keep managed releases coherent with the native guard
+
+**Research context:** The PA-D01 sweep found policy reads in
+tool_approvals.load_project_approval_rules/_load_project_payload,
+validation_detection.load_project_validation_detection/_load_project_payload,
+tasks.load_project_task_close_policy, project_context.get_project_context/
+_build_and_set_project_context, verification evidence, and
+found_work_gate._project_verification_commands. Consumers include chat approval,
+asynchronous Codex/Droid permission callbacks, hook autoapproval, merge
+verification, transcript evidence and close/stop gates. Shared project-context
+policy also feeds verification_runner, release and spawn sandbox preparation.
+Writers include approval save/clear/migrate, validation save/clear, project_init
+marker/field writers, project_context isolation copy/repair, hooks_enable/
+hooks_disable, ensure_personal_project_identity and refresh._write_verification.
+Identity-only readers such as gcore project::read_project_id do not consume the
+fields changed by4.6; their existing identity contract stays unchanged. Evidence
+inventory: `gcode grep -F 'project.json' src/gobby -m 100` and its continuation,
+plus identifier sweeps for approval, validation and project-context helpers.
+Recheck this bounded inventory at implementation tip before4.6 activation.
+The approval-loader citation is tool_approvals.py lines281–284,
+`281| data = json.loads(project_file.read_text(encoding="utf-8"))` followed by
+`284| return []`, excerpt_hash
+028db786a35a12df762d701ebe853f93f0ccd7daeaab2dc8e2ae5a147aabbd3d,
+from `gcode evidence` on load_project_approval_rules. The recovery error must
+never enter that ordinary fallback branch.
+
+Atomic rename can expose a candidate before SQL commit. Reuse
+durable_file.exclusive_file_lock and its bounded platform locking, exposing a
+descriptor-taking form with the path wrapper delegating. Python project_metadata
+and native metadata_lock implement one concrete protocol: securely open
+`.gobby/.project.json.lock` relative to the admitted held metadata directory,
+without following symlinks; validate a regular owner-only0600 sidecar and keep
+its inode stable. Never unlink/replace it. Use identical BSD flock exclusive
+locks on supported POSIX runtimes; native code reuses the locked libc dependency.
+No new package, runtime option or general transaction framework is needed.
+Acquire within the remaining operation deadline capped at two seconds; release
+on cancellation/process exit. Blocking filesystem work stays off async loops.
+
+Hold the lock across actual open/read/parse or the complete read/merge/durable
+publication. Check `.gobby/.project-update-recovery/` under that lock, never
+before it. Pending evidence, an invalid lock/journal object or lock deadline
+raises a distinct recovery-required error. No caller converts it to missing
+metadata, empty rules, absent verification or global/default policy. The recovery
+directory is0700 and records0600. This leaf recognizes evidence and refuses;
+4.6 alone interprets journals and resolves witnesses. Lock order is metadata
+flock then project row lock; never wait for flock while holding a row lock.
+File-only Python writers merge owned fields under the same exclusive lock,
+preserve unrelated keys and refuse pending recovery without a SQL transaction.
+Missing metadata keeps each operation's existing initialization contract;
+ordinary no-ops create no metadata file. Pass an already-held guard explicitly
+through nested helpers to avoid recursive flock acquisition.
+
+Guard get_project_context and _build_and_set_project_context before constructing
+policy-bearing context. Completed request snapshots contain committed bytes;
+new requests cannot populate or reuse a recovery-failed snapshot.
+get_verification_config/get_hooks_config/get_project_sandbox_config preserve
+typed outputs and propagate the distinct refusal. Isolation copies release a
+guarded source snapshot before taking the destination lock; destination writes
+recheck their own state. Reversed copies cannot deadlock or copy an uncommitted
+candidate. Personal identity repair and project_init expected-id cleanup refuse
+pending recovery instead of repairing or deleting its candidate.
+
+At policy boundaries, normal chat approval requires approval. Hook hold-open
+returns its existing deny envelope with safe reason project_metadata_unavailable,
+never autoapproving through session/global rules. Intentional bypass/plan modes
+remain unchanged. Merge verification returns its tool-error envelope; transcript
+attribution records no successful evidence; task close and stop remain blocked
+with a safe metadata-unavailable diagnostic. HTTP config materialization returns
+503 {"detail":"Project update recovery required"}. Existing command errors,
+exit conventions and ordinary valid/null/empty behavior remain exact. There is
+no second recovery engine or exception-swallowing fallback.
+
+Codex and Droid permission callbacks also return their existing safe refusal
+on the async loader's recovery error; they cannot bypass the shared gate through
+provider-specific allowlists. Verification runner/release fail instead of
+reporting no configured hooks or successful verification. Spawn cache and
+provider preparation propagate the unavailable-policy error before launch,
+without falling back to a weaker sandbox/default or reusing a failed snapshot.
+
+Split src/gobby/config/validation_detection.py by moving its project-file
+load/save/clear/resolve functions and private payload reader to new
+src/gobby/config/project_validation.py. Keep models/defaults in the original
+module and re-export current helper names through a cycle-free facade; the
+original finishes below850 lines. Split src/gobby/workflows/found_work_gate.py
+by moving resolve_stop_validation_config, _project_verification_commands,
+_project_command_prefix and their private category map to new
+src/gobby/workflows/found_work_project_config.py; retain the public resolver
+import and finish the original below850. All production files stay below1,000.
+
+**Granularity:** these integrations form one metadata-visibility outcome: any
+unguarded policy consumer or cooperating writer breaks it. The extractions are
+required size boundaries. Journal interpretation remains the independently
+testable4.6 lifecycle. Routing: backend code; tdd true.
+
+Consumers unchanged:
+- `tests/servers/routes/test_projects_routes.py` — no-edit-reason: preserved helper imports and ordinary routes remain compatible; recovery coverage is in the barrier suite.
+- `tests/servers/test_machine_scoped_projects.py` — no-edit-reason: loader monkeypatch names and checkout scope remain unchanged.
+- `src/gobby/cli/install.py` — no-edit-reason: invokes the same identity helper; the helper refuses before any candidate repair, and this caller consumes no metadata policy.
+- `src/gobby/cli/install_files_home.py` — no-edit-reason: invokes the same guarded identity helper without interpreting recovery evidence or policy fields.
+- `src/gobby/files_migrate.py` — no-edit-reason: the existing identity-helper call stays serialized inside that helper; migration owns no journal interpretation or policy decision.
+- `tests/cli/test_install_coverage.py` — no-edit-reason: ordinary identity initialization behavior and helper signature remain unchanged.
+- `tests/cli/test_install_prompts.py` — no-edit-reason: ordinary identity initialization behavior and helper signature remain unchanged.
+- `tests/cli/test_cli_install.py` — no-edit-reason: the identity-helper mock and ordinary install contract retain their signature and behavior.
+- `tests/cli/test_install_front_door.py` — no-edit-reason: identity-helper monkeypatches remain valid; recovery refusal is tested by the dedicated barrier suite.
+- `tests/storage/test_personal_remote_init.py` — no-edit-reason: existing local/remote identity vectors retain their contract; new journal-state cases are in the barrier suite.
+- `tests/storage/test_project_manager.py` — no-edit-reason: existing identity vectors retain their contract and helper signature.
+
+**Acceptance:**
+- 4.5a.1 - Python/native use the same stable secure sidecar, bounded deadline and lock order, without check/open gaps, link substitution, async-loop stalls or recursive-lock deadlocks. test: `crates/gprojects/tests/project_metadata_barrier.rs::python_native_lock_protocol_matches`.
+- 4.5a.2 - Every inventoried policy reader refuses pending recovery/timeout without exposing candidate fields or substituting empty/default policy. test: `tests/contracts/test_project_metadata_barrier.py::test_all_policy_readers_refuse_pending_recovery`.
+- 4.5a.3 - Chat requires approval, hook and provider callbacks refuse, merge/transcript/close/stop/verification cannot pass unavailable policy, and sandbox resolution refuses before launch; stated ordinary modes and envelopes remain exact. test: `tests/contracts/test_project_metadata_barrier.py::test_policy_boundaries_fail_closed`.
+- 4.5a.4 - Approval/validation/hook/verification/init writers preserve unrelated keys, refuse journals, and retain identity-checked cleanup and missing/no-op behavior. test: `tests/contracts/test_project_metadata_barrier.py::test_cooperating_writers_merge_under_one_lock`.
+- 4.5a.5 - Isolation copies and personal identity repair cannot consume/overwrite/delete a pending candidate; reversed copies terminate without deadlock. test: `tests/contracts/test_project_metadata_barrier.py::test_copy_and_identity_repair_obey_barrier`.
+- 4.5a.6 - Specified extractions preserve helper imports, config carrier parity and ordinary overrides; both originals finish below850 and every production file below1,000 lines. test: `tests/contracts/test_project_metadata_barrier.py::test_helper_facades_and_size_boundaries`.
+- 4.5a.7 - Native journal-producing mutations remain disabled until all guard integrations are active; pending recovery cannot reactivate an unguarded legacy writer. test: `crates/gprojects/tests/project_metadata_barrier.rs::activation_requires_all_consumers_guarded`.
+
+**Verification:** planned: isolated pytest for metadata-barrier and validation
+configuration suites, scoped Ruff/mypy and config-contract checks; native
+project_metadata_barrier tests use the Python probe through `uv run` and pipe
+barriers against temporary state. No live daemon or real project registration.
+
+### 4.6 Native project updates and soft deletion [category: code] (depends: 4.5a, #24963, #24968)
 `kind: deliverable`
 
 Targets:
@@ -866,6 +1048,7 @@ Targets:
 - `crates/gprojects/src/projects/update_recovery.rs`
 - `crates/gprojects/src/projects/read.rs`
 - `crates/gprojects/src/projects/mod.rs`
+- `crates/gprojects/src/projects/metadata_lock.rs`
 - `crates/gprojects/src/family.rs`
 - `crates/gprojects/tests/project_updates.rs`
 - `crates/gcore/assets/schema/migrations/478_project_file_mutations.sql`
@@ -918,9 +1101,13 @@ the normal toolchain and identity carriers; migration478 is rebased to the next
 free append-only slot at implementation tip. No distributed transaction service.
 
 Export update_recovery from projects/mod.rs and route read.rs configuration
-materialization through that same recovery path. Guarded project-config reads
-and updates take the same parent-row lock and
-resolve any journal first. On ordinary rollback or uncertain commit, query the
+materialization through that same recovery path. Reuse4.5a's descriptor-held
+`.gobby/.project.json.lock` and `.gobby/.project-update-recovery/` protocol.
+Take the bounded metadata flock before the parent-row lock and hold it across
+recovery, read/parse, publication, SQL commit and journal cleanup. Python policy
+readers and file-only writers use the same flock and refuse pending evidence;
+they never interpret witnesses or expose a candidate. Guarded native reads and
+updates resolve any journal first. On ordinary rollback or uncertain commit, query the
 witness on a fresh bounded transaction after the prior transaction settles.
 A committed witness means finish the complete candidate; absent witness means
 restore the predecessor (or original absence), only if the current file matches
@@ -932,7 +1119,8 @@ and can be reclaimed by the next guarded operation. Crash at any publication,
 commit or cleanup boundary is recoverable before coherent service state is
 exposed. Arbitrary direct filesystem editors are not a cross-store reader API.
 
-Before enabling native mutations/CLI updates, drain legacy update writers and
+Before enabling native mutations/CLI updates, prove4.5a's guard is active in all
+cooperating consumers and writers, drain legacy update writers and
 route PUT/PATCH exclusively to this service through the existing family backend
 selection. Native commands refuse updates until that native ownership is active.
 While a journal exists, routing rollback cannot reactivate Python mutation;
@@ -953,7 +1141,9 @@ semantics; no waiver silently widens or narrows field validation.
 **Granularity:** the journal, SQL witness, one file publication, recovery and
 mandatory schema/release carriers are one recoverable project-update lifecycle.
 Each failure boundary is identified below; soft deletion retains its existing
-small service path and does not become a separate recovery owner.
+small service path and does not become a separate recovery owner.4.5a owns guard
+integration; this leaf owns the sole native recovery/publication service also
+consumed by5.4's verification-field writer.
 
 **Acceptance:**
 - 4.6.1 - HTTP PUT /api/projects/{project_id} keeps valid update/validation/no-op/null/empty contracts and owning-checkout scope, except the exact cited D3/D4 failure-state replacements. test: `crates/gprojects/tests/project_updates.rs::put_matches_python`.
@@ -962,6 +1152,8 @@ small service path and does not become a separate recovery owner.
 - 4.6.4 - A second-field error, pre/post-publication failure, ambiguous/failed SQL commit and concurrent update preserve or recover one coherent complete state with correct witness/journal ordering and no foreign-root I/O. test: `crates/gprojects/tests/project_updates.rs::update_rolls_back_as_a_unit`.
 - 4.6.5 - Process loss at every journal/publication/commit/cleanup boundary recovers before guarded reads or mutation, and unknown external edits or unavailable authority retain evidence with safe503. test: `crates/gprojects/tests/project_updates.rs::crash_recovery_is_durable_and_bounded`.
 - 4.6.6 - Missing metadata initializes; malformed, non-object or unreadable metadata refuses unchanged, preserves unrelated keys, and cannot activate the repair-command policy. test: `crates/gprojects/tests/project_updates.rs::metadata_refusal_waivers_are_narrow`.
+- 4.6.7 - Pause after rename before SQL commit, then fail or kill the writer: actual Python approval/validation/close consumers block or refuse until witness-based recovery, never approving or crediting the uncommitted candidate. test: `crates/gprojects/tests/project_updates.rs::mixed_runtime_consumers_wait_for_recovery`.
+- 4.6.8 - Python field writers, native updates and verification publication serialize without lost unrelated keys; lock timeout/cancellation retains evidence and cannot cause false success or a gate pass. test: `crates/gprojects/tests/project_updates.rs::all_metadata_writers_share_serialization`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test project_updates`,
 the isolated schema contract and managed version-pin checks. Inject real process
@@ -1119,7 +1311,7 @@ Implement gdaemon projects group/help, list/show, rename/delete/purge/rebind/rep
 Collect the exact proposed Python node ID:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest --collect-only -q tests/cli/test_native_projects_forwarding.py::test_all_verbs_delegate_to_rust`.
 
-### 5.4 Native verification-command refresh [category: code] (depends: 5.3, #21587)
+### 5.4 Native verification-command refresh [category: code] (depends: 5.3, 4.6, #21587)
 `kind: deliverable`
 
 Targets:
@@ -1127,6 +1319,8 @@ Targets:
 - `crates/gprojects/src/verification/evidence.rs`
 - `crates/gprojects/src/verification/candidates.rs`
 - `crates/gprojects/src/verification/refresh.rs`
+- `crates/gprojects/src/projects/update_recovery.rs`
+- `crates/gprojects/src/projects/metadata_lock.rs`
 - `crates/gprojects/src/cli_projects.rs`
 - `crates/gprojects/tests/verification_refresh.rs`
 - `crates/gdaemon/Cargo.toml`
@@ -1135,7 +1329,20 @@ Targets:
 
 **Research context:** project_verification.refresh owns deterministic/AI modes, preview versus --fix, corrupted-project backup and atomic verification-file replacement. candidates.generate_candidates/select_best_candidates/is_safe_validation_command and evidence.collect_evidence supply bounded evidence, ranking and command safety. synthesis.synthesize_verification_commands uses the daemon generation service. #21587 owns the native AI-provider route consumed here; the dependency is explicit rather than retaining Python synthesis.
 
-Port deterministic evidence/candidate generation and safe command classification as one verification outcome. Preserve --ai auto/on/off, profile/candidate overrides, schema/rejection limits and warning/JSON/diff behavior. Use the existing gcore daemon text-generation client against #21587's native generation route; never call Python or directly bypass the daemon's AI routing policy. auto falls back deterministically with a warning; on fails if AI is unavailable; off makes no AI request. Preview changes nothing. --fix atomically replaces only verification fields, preserves unrelated metadata/permissions and backs up malformed input as the current contract requires. Never execute generated commands during refresh. Routing: backend code; tdd true.
+Port deterministic evidence/candidate generation and safe command classification as one verification outcome. Preserve --ai auto/on/off, profile/candidate overrides, schema/rejection limits and warning/JSON/diff behavior. Use the existing gcore daemon text-generation client against #21587's native generation route; never call Python or directly bypass the daemon's AI routing policy. auto falls back deterministically with a warning; on fails if AI is unavailable; off makes no AI request. Preview changes nothing. Never execute generated commands during refresh. Routing: backend code; tdd true.
+
+Preview evidence and --fix start from4.5a's guarded snapshot. Candidate generation
+and AI calls run outside the metadata lock. At publication use4.6's shared native
+publication/recovery owner: acquire its bounded flock before the project row
+lock, resolve pending journal/witness state, re-read current metadata, then merge
+only verification fields while retaining unrelated keys/permissions. Intervening
+policy changes survive instead of being replaced by the earlier evidence snapshot.
+--fix is the sole explicit corrupt-input repair path; durably back up the exact
+malformed bytes under this guard before replacement. A recovery journal never
+counts as corruption. After recovery, existing file-only durable publication
+suffices; create no second SQL witness or journal interpreter for verification.
+Unavailable recovery authority uses the existing safe command-error/exit
+convention. No lock spans AI/network waits.
 
 **Granularity:** the evidence, candidate and publication modules form one command's deterministic/AI pipeline. Their shared result and atomic file owner make a single leaf appropriate despite the production-target count.
 
@@ -1143,6 +1350,7 @@ Port deterministic evidence/candidate generation and safe command classification
 - 5.4.1 - The source row CLI gobby projects refresh-verification delegates entirely to Rust and preserves every mode, override, result and exit behavior. test: `crates/gprojects/tests/verification_refresh.rs::command_matches_python`.
 - 5.4.2 - Bounded evidence and deterministic selection match Python vectors; unsafe or unsupported AI commands are rejected, and no candidate is executed. test: `crates/gprojects/tests/verification_refresh.rs::selection_and_ai_policy_match`.
 - 5.4.3 - Preview, corrupt-input backup and injected write/cancellation failures preserve unrelated metadata and recoverable predecessor bytes. test: `crates/gprojects/tests/verification_refresh.rs::publication_is_atomic`.
+- 5.4.4 - Refresh racing with native updates and Python field merges retains verification and policy keys; a paused/crashed update cannot feed preview/--fix an uncommitted snapshot, and the sole owner recovers or safely refuses pending evidence. test: `crates/gprojects/tests/verification_refresh.rs::refresh_and_policy_updates_share_recovery`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test verification_refresh`.
 
@@ -1254,6 +1462,9 @@ cross-runtime cancellation/progress test contract. Record the shared files_home
 capability boundary for Cron: #24968 supplies descriptor-safe raw-stream I/O;
 Cron owns its isolated locator and run-retention lifecycle. Coordinate external
 edges after approval without expanding another task tree here.
+Specifically, record and verify the concrete1.2 implementation-task to existing
+#24968 producer edge and each #24968 consumer edge from section1.3. Approval or
+a reference to the Projects root cannot substitute for that dependency graph.
 
 **Acceptance:**
 - 6.3.1 - Each of the 35 exact source keys has proven delegated or explicit renamed-route decision status and a native replacement/test; no scoped key is silently omitted and no unrelated shard row changes ownership. test: `tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete`.
@@ -1323,3 +1534,10 @@ shared waiver registry. S2 consumes #24967 with explicit native admission;
 #24964 owns CORS; S3 retains one shared fence; S4 aligns the common safe-error
 and presence conventions. Native project-config recovery gains a durable
 journal/witness contract. Prior consensus remains superseded pending re-review.
+
+2026-10-24 — Writer accepted PA-D01 through PA-D03 from review of94fbc91.
+Add a prerequisite metadata barrier for service policy readers and cooperating
+writers, including isolation/identity helpers; verification refresh reuses its
+lock and the sole recovery engine. Add the exact migration-layout waiver and
+expansion-time1.2-to-#24968 producer edge. Combined validation and renewed
+adversary review are required before consensus or a fresh M1 stamp.
