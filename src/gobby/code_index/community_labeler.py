@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from gobby.ai.text_generation import TextGenerationService
     from gobby.code_index.models import StoredCommunity
     from gobby.code_index.storage import CodeIndexStorage
+    from gobby.config.ai import DecisionsConfig
     from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
@@ -68,8 +69,15 @@ class GeneratedLabel:
 class CommunityLabeler:
     """Generates, validates, and stores names for queued import communities."""
 
-    def __init__(self, text_generation: TextGenerationService, config: CodeIndexConfig) -> None:
+    def __init__(
+        self,
+        text_generation: TextGenerationService,
+        config: CodeIndexConfig,
+        *,
+        decisions_resolver: Callable[[], DecisionsConfig | None] | None = None,
+    ) -> None:
         self._text_generation = text_generation
+        self._decisions_resolver = decisions_resolver
         label_config = config.community_label
         self._profile = str(label_config.profile)
         self._candidates = candidate_labels(label_config.candidates)
