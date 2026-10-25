@@ -46,8 +46,8 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
 - Use `proxy`/`compare` only during the parity transition. After native takeover,
   Cron has no Python fallback. Rollback before deletion uses the same binaries
   and routing edit; rollback after deletion requires the prior coherent release.
-- **Browser ownership ruling (2026-10-24, Orchestrator via Triage).** #24659
-  owns the single native browser-session verifier, including both existing
+- **Browser ownership ruling (2026-10-24, Orchestrator via Triage).** A shared
+  verifier-only implementation outcome created from #24659 owns both existing
   gobby_session cookie classes. Cron's 4.1b registers only the nine /api/cron
   routes for Caller::Browser and preserves cookie, origin and CSRF behavior
   route by route. It carries `security-review` and depends on the shared
@@ -71,6 +71,36 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
   justify reuse over a new calendar engine. A small compatibility layer preserves
   croniter's field order, aliases, validation and DST results against 1.1's
   vectors; library defaults are never the parity oracle.
+
+## Pre-expansion capability bindings
+`kind: framing`
+
+The Orchestrator's CRON-004/005 ruling establishes two named implementation
+prerequisites. These are capability bindings, not dependencies on approval of
+another plan or on a family's whole retirement root:
+
+- **Shared browser-cookie verifier implementation, owner created from #24659
+  before Cron expansion.** Bind 3.1, 4.1 and 4.1b to that implementation-only
+  outcome, including both gobby_session classes and verified class/selectors.
+  Exclude #24659's root and cookie retirement: that retirement waits for
+  #24713, which already waits for Cron #21582. Plan approval is not landed
+  service evidence.
+- **Shared native CORS/preflight boundary, owner filed under #21542 after the
+  three route-family debt passes report.** Bind 4.1b to this separate shared
+  front-door implementation outcome. Every family consumes one configured
+  credentialed CORS boundary on success and auth errors, with applicable
+  unauthenticated preflight handled before authentication. This outcome is
+  separate from the cookie verifier; do not fold it into #24659 or implement
+  CORS independently in Cron.
+
+Before Cron expansion, the Orchestrator carries the updated capability scope
+through its owning approval/expansion process, creates/resolves both concrete
+implementation task references, inserts their blocked-by edges in the named deliverable headings,
+checks the full cross-plan graph for cycles and refreshes the canonical
+reviewed bytes. Base and expansion validation and a fresh adversary-derived
+M1 must cover those resolved references. Cron cannot expand or dispatch while
+either binding is unresolved. Implementation/activation additionally requires
+landed proof of each capability; a planning-task closure never supplies it.
 
 ## Constraints
 `kind: framing`
@@ -565,7 +595,7 @@ runtime state machine.
 ## P3: HTTP family and front-door service handoffs
 `kind: framing`
 
-### 3.1 Cron family and job/run read routes [category: code] (depends: 2.8, #24659)
+### 3.1 Cron family and job/run read routes [category: code] (depends: 2.8)
 `kind: deliverable`
 
 Targets:
@@ -587,10 +617,14 @@ only the listed methods/segments under /api/cron and the one protected-run
 route added by 3.3, never all admin paths. Preserve URI decoding, UUID errors,
 project authorization, status envelopes, count, sort, nullable fields and
 unavailable/404/422/500 behavior from the oracle. Reuse the runtime family's
-principal admission. #24659 owns the single native browser-session verifier;
+principal admission. The named pre-expansion binding **shared browser-cookie
+verifier implementation, owner created from #24659 before Cron expansion**
+supplies the single native verifier, independently of cookie retirement;
 #21559's runtime family and #21575's mode gate do not supply cookie verification.
-This leaf depends on that verifier's landed implementation, not merely approval
-of its plan. Keep Cron cookie requests proxied until 4.1b registers the nine
+The Orchestrator resolves that implementation-only task into this heading and
+refreshes reviewed bytes before Cron expansion; this leaf cannot dispatch
+without that binding and landed verifier proof. Keep Cron cookie requests
+proxied until 4.1b registers the nine
 Cron routes against it and proves parity. No browser claim includes either
 admin Cron endpoint. The family defaults to Proxy until 4.1; compare mutations
 call only Python. Registering
@@ -783,7 +817,7 @@ the single outcome is trustworthy compare evidence for this family.
 ## P4: Native takeover and Python retirement
 `kind: framing`
 
-### 4.1 Native default and single-owner scheduler cutover [category: code] (depends: 3.5, #24659)
+### 4.1 Native default and single-owner scheduler cutover [category: code] (depends: 3.5)
 `kind: deliverable`
 
 Targets:
@@ -803,8 +837,11 @@ Targets:
 **Research context:** RuntimeState's hub lease owns Rust services; Python's
 init_orchestration previously constructed CronExecutor and CronScheduler.
 This is the sole production scheduler activation leaf: both scheduled and manual
-native admission remain closed through P3. Its dependency on #24659 requires
-the shared native verifier to have landed. The routing switch here covers key
+native admission remain closed through P3. Bind this leaf before Cron expansion
+to **shared browser-cookie verifier implementation, owner created from #24659
+before Cron expansion**, excluding the planning/root/retirement outcome.
+The Orchestrator resolves the concrete task and refreshes reviewed bytes;
+dispatch requires that binding and landed verifier proof. The routing switch here covers key
 callers only: cookie requests continue to Python's Cron router, which uses the
 native client for manual admission. Keep that remainder explicit until 4.1b
 enables native Cron browser claims; Python Cron routes cannot be deleted first.
@@ -914,7 +951,7 @@ remains outside this leaf.
 - 4.1a.3 - The Python mailbox branch is absent before native retention activates, while communications and attachment cleanup retain bounded offload/startup behavior. test: `tests/communications/test_communications_maintenance.py::test_native_mailbox_takeover_preserves_other_cleanup`.
 - 4.1a.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.1b Admit Cron browser routes through the shared verifier [category: code] (depends: 4.1a, #24659)
+### 4.1b Admit Cron browser routes through the shared verifier [category: code] (depends: 4.1a)
 `kind: deliverable`
 
 Targets:
@@ -923,7 +960,7 @@ Targets:
 - `crates/gcron/src/http_writes.rs` — edit the file created by 3.2 to consume verified browser authority without changing mutation semantics
 - `crates/gcron/src/lib.rs` — edit the file created by 1.2 to export the bounded admission predicate
 - `crates/gcron/Cargo.toml` — edit the manifest created by 1.2 to reuse the shared browser principal type
-- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle` — register Cron admission against the shared verifier/CORS boundary without implementing either capability here
 - `crates/gdaemon/tests/cron_browser.rs`
 - `tests/e2e/test_cron_family.py` — edit the file created by 3.5 to prove cookie operation with the isolated Python backend absent
 - `docs/contracts/cron-services.md`
@@ -931,12 +968,17 @@ Targets:
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: release pin for bounded Cron browser admission
 
-**Research context:** The Orchestrator assigned the single native browser-cookie
-verifier to #24659 and updated that task's shared-verifier contract on 2026-10-24.
-It must expose both existing cookie classes, their verified user and applicable
-project/session selectors. This leaf depends on its landed implementation;
-approval of the #24659 plan alone cannot open native cookie admission. Reuse
-that verifier's parsing, storage lookup, expiry, revocation and typed principal.
+**Research context:** This leaf has two named pre-expansion bindings:
+**shared browser-cookie verifier implementation, owner created from #24659
+before Cron expansion**, and **shared native CORS/preflight boundary, owner
+filed under #21542 after the three route-family debt passes report**.
+The Orchestrator resolves concrete implementation-only task references into
+this heading, cycle-checks and refreshes reviewed bytes before Cron expansion;
+neither a planning approval nor a whole-family retirement root is a substitute.
+Dispatch and activation require those resolved bindings and landed proof of
+both capabilities. The shared verifier must expose both existing cookie
+classes, verified user and applicable project/session selectors. Reuse its
+parsing, storage lookup, expiry, revocation and typed principal.
 Cron adds only its route allowlist and authority checks; no second verifier,
 token issuer, session table, query cache or cookie lifecycle is introduced.
 Immediately after expansion, the Orchestrator applies `security-review` to
@@ -952,8 +994,13 @@ POST /api/cron/jobs/{job_id}/toggle and POST /api/cron/jobs/{job_id}/run.
 Use the family's existing method/path matcher for verifier admission and claims,
 including its URI decoding and UUID behavior. Caller::Browser is opt-in for
 these rows only; do not widen Caller::ALL, either /api/admin/cron endpoint,
-lease admin or another family. HEAD/OPTIONS acquire no new business handler;
-the existing CORS layer still answers its applicable preflights.
+lease admin or another family. HEAD/OPTIONS acquire no new business handler.
+The separate shared native boundary answers applicable unauthenticated
+preflights before auth and applies configured credentialed CORS headers to
+native success and auth-error responses. Python app_factory's current layer
+does not run after backend loss; it is the compatibility oracle, not the
+native owner. Cron registers its existing nine-route method/path policy with
+the shared boundary and adds no independent CORS implementation.
 
 Python compatibility references are
 `src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`,
@@ -967,7 +1014,7 @@ neither issuer nor cookie attributes. Ordinary cookies retain their current
 GET and mutation behavior. Browser-testing cookies retain loopback, live
 managed-authority and project/session selector restrictions: their GETs may
 read, while Cron mutations are refused. Consume verified class/selectors from
-#24659 to enforce this policy, rather than parsing a token or resolving
+the shared verifier to enforce this policy, rather than parsing a token or resolving
 managed authority inside Cron. Missing/expired/revoked credentials, forged
 identity/BrowserSession headers and unsupported callers fail before handlers.
 Preserve existing bearer precedence and each route's status/body and side effects
@@ -1002,15 +1049,15 @@ Planned: `cargo test -p gobby-daemon --test cron_browser`, the focused
 test_cron_family cookie case, and the required security review. All state,
 credentials and backend termination remain inside isolated test fixtures.
 
-**Granularity:** One lifecycle owner: opt-in Cron browser admission through an
-existing verifier. The nine routes share one policy and fixture table; targets
+**Granularity:** One lifecycle owner: opt-in Cron browser admission through the
+shared prerequisite capabilities. The nine routes share one policy and fixture table; targets
 above the six-file inspection threshold include release and evidence carriers.
-The shared verifier remains independently owned by #24659.
+The verifier and outer CORS boundary remain independently owned prerequisites.
 
 **Acceptance:**
-- 4.1b.1 - All nine Cron routes preserve ordinary-cookie GET and mutation status/body, stored effects, credential precedence and expiry/revocation behavior from 1.1 vectors, using only #24659's verifier. test: `crates/gdaemon/tests/cron_browser.rs::cookie_get_and_mutations_match_python`.
+- 4.1b.1 - All nine Cron routes preserve ordinary-cookie GET and mutation status/body, stored effects, credential precedence and expiry/revocation behavior from 1.1 vectors, using only the bound shared-verifier implementation after its landed proof. test: `crates/gdaemon/tests/cron_browser.rs::cookie_get_and_mutations_match_python`.
 - 4.1b.2 - Browser-testing GET authority and selector/loopback restrictions match Python; mutations, missing/non-cookie/non-key credentials and forged authority are refused before effects. No admin or other-family route gains browser admission. test: `crates/gdaemon/tests/cron_browser.rs::browser_authority_is_route_and_class_bounded`.
-- 4.1b.3 - Same-origin, cross-origin and preflight status/headers/effects match current configured credentialed CORS and cookie behavior, with no new CSRF-token or Origin rejection. test: `crates/gdaemon/tests/cron_browser.rs::origin_and_preflight_match_python`.
+- 4.1b.3 - The bound shared native CORS boundary preserves same-origin/cross-origin status, headers and effects on success and auth-error responses, and handles applicable unauthenticated preflight before auth after Python backend loss. Current cookie behavior gains no stricter CSRF-token or Origin rejection. test: `crates/gdaemon/tests/cron_browser.rs::origin_and_preflight_match_python`.
 - 4.1b.4 - Both cookie classes work through hub and relaying-node doors with the isolated Python backend absent; nodes verify no cookie locally and Python retirement waits for this proof. test: `tests/e2e/test_cron_family.py::test_cookie_cron_survives_python_backend_loss`.
 - 4.1b.5 - The Orchestrator applies `security-review` after expansion and verifies the persisted label before dispatch. Cookie activation waits for a Security Reviewer's approved step on the exact implementation SHA; the service handoff records scope and disposition of all blocking findings. file: `docs/contracts/cron-services.md`.
 - 4.1b.6 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
@@ -1152,9 +1199,19 @@ task expansion; this planning seat neither expands nor dispatches work.
 After approved future expansion, the Orchestrator applies and verifies
 `security-review` on 4.1b before dispatch. Native cookie activation requires a
 Security Reviewer's approved step for the exact implementation SHA.
+Cron expansion also waits for both named capability bindings to become concrete,
+cycle-checked implementation task edges in freshly reviewed/validated bytes.
 
 ## V1 Plan Changelog
 `kind: framing`
+
+2026-10-24: Accepted CRON-004/005 under the Orchestrator's explicit binding
+ruling. Only the early shared-verifier implementation may gate Cron; exclude
+the planning/root/retirement back-edge through #24713. A separate shared native
+CORS/preflight owner under #21542 supplies outer middleware after backend loss.
+Both concrete references, graph checks and refreshed review are mandatory before
+Cron expansion; dispatch/activation require landed capability proof. The
+read-only #24961 debt pass must be dispositioned and folded before stamping.
 
 2026-10-24: Coordinator review withdrew the prior consensus and stamp. Accepted
 the ledger-status correction and six clarifications: ordered acceptance IDs,
