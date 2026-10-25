@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import asdict
 from typing import Any
 
+from gobby.code_index.context import CodeIndexContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import (
     CHECKOUT_RESOLUTION_ERRORS,
@@ -22,7 +23,9 @@ from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.session_context import get_current_session_id
 
 
-def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
+def create_landing_registry(
+    ctx: RegistryContext, *, code_index: CodeIndexContext | None = None
+) -> InternalToolRegistry:
     """Create landing operation tools for gobby-tasks-ops."""
     registry = InternalToolRegistry(
         name="gobby-tasks-landing",
@@ -106,6 +109,7 @@ def create_landing_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 task=task,
                 caller_session_id=session_id,
                 commit_sha=commit_sha,
+                code_index=code_index,
             )
             if result.get("escalated"):
                 # Triage owns the conflict now: release the claimant's session claim state.
