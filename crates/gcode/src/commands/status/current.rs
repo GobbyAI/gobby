@@ -1,11 +1,10 @@
-use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::bm25_health;
 use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::models::IndexedProject;
-use crate::node::StatusReport;
+use crate::node::{OverlayStatus, StatusReport};
 use crate::output::{self, Format};
 use crate::utils::short_id;
 use crate::visibility;
@@ -13,28 +12,13 @@ use crate::visibility;
 use super::shared::{format_coverage, format_timestamp, indexed_project_from_row};
 
 /// Collects the status report from the database. Reads no file on disk.
-pub fn collect(_conn: &mut postgres::Client, _ctx: &Context) -> anyhow::Result<StatusReport> {
-    todo!("1.3: move the reads out of run")
-}
-
-/// Renders the JSON status object, without a trailing newline.
-pub fn render_json(_report: &StatusReport) -> anyhow::Result<String> {
-    todo!("1.3: render from StatusReport")
-}
-
-/// Renders the text status, without a trailing newline.
-pub fn render_text(_report: &StatusReport) -> String {
-    todo!("1.3: render from StatusReport")
-}
-
-pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let code_index = bm25_health::verify(&mut conn);
+pub fn collect(conn: &mut postgres::Client, ctx: &Context) -> anyhow::Result<StatusReport> {
+    let code_index = bm25_health::verify(conn);
     // A missing parent index reads as unindexed, the same report an empty overlay gets.
     let parent_indexed = match &ctx.index_scope {
         ProjectIndexScope::Overlay {
             parent_project_id, ..
-        } => parent_code_index_exists(&mut conn, parent_project_id, &ctx.machine_id)?,
+        } => parent_code_index_exists(conn, parent_project_id, &ctx.machine_id)?,
         ProjectIndexScope::Single => true,
     };
 
@@ -61,75 +45,81 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
         })
         .and_then(|row| indexed_project_from_row(&row).ok());
 
-    match stats {
-        Some(s) => match format {
-            Format::Json => {
-                let mut value = serde_json::to_value(&s)?;
-                if let Some(overlay) = overlay_status_json(ctx, &mut conn) {
-                    value["overlay"] = overlay;
-                }
-                value["code_index"] = serde_json::to_value(&code_index)?;
-                output::print_json(&value)
-            }
-            Format::Text => {
-                let name = Path::new(&s.root_path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| s.id.clone());
-                let mut text = String::new();
-                writeln!(text, "{} ({})", name, short_id(&s.id))?;
-                writeln!(text, "  Root:     {}", s.root_path)?;
-                writeln!(
-                    text,
+    Ok(match stats {
+        Some(project) => StatusReport::Indexed {
+            overlay: overlay_status(ctx, conn),
+            project: Box::new(project),
+            code_index,
+        },
+        None => StatusReport::Unindexed {
+            project_id: ctx.project_id.clone(),
+            indexed: false,
+            code_index,
+        },
+    })
+}
+
+/// Renders the JSON status object, without a trailing newline.
+pub fn render_json(report: &StatusReport) -> anyhow::Result<String> {
+    // Going through a Value sorts every key, which is the order the CLI has always printed.
+    Ok(serde_json::to_string(&serde_json::to_value(report)?)?)
+}
+
+/// Renders the text status, without a trailing newline.
+pub fn render_text(report: &StatusReport) -> String {
+    match report {
+        StatusReport::Indexed {
+            project,
+            overlay,
+            code_index,
+        } => {
+            let name = Path::new(&project.root_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| project.id.clone());
+            let mut lines = vec![
+                format!("{} ({})", name, short_id(&project.id)),
+                format!("  Root:     {}", project.root_path),
+                format!(
                     "  Files:    {}",
-                    format_coverage(s.total_files, s.total_eligible_files)
-                )?;
-                writeln!(text, "  Symbols:  {}", s.total_symbols)?;
-                writeln!(text, "  Indexed:  {}", format_timestamp(&s.last_indexed_at))?;
-                write!(text, "  Duration: {}ms", s.index_duration_ms)?;
-                if let crate::config::ProjectIndexScope::Overlay {
-                    parent_project_id,
-                    parent_root,
-                    ..
-                } = &ctx.index_scope
-                {
-                    writeln!(text)?;
-                    write!(
-                        text,
-                        "  Overlay:  parent {} ({})",
-                        parent_root.display(),
-                        short_id(parent_project_id)
-                    )?;
-                    let tombstones = visibility::tombstone_count(&mut conn, ctx);
-                    if tombstones > 0 {
-                        writeln!(text)?;
-                        write!(text, "  Deletes:  {tombstones}")?;
-                    }
+                    format_coverage(project.total_files, project.total_eligible_files)
+                ),
+                format!("  Symbols:  {}", project.total_symbols),
+                format!("  Indexed:  {}", format_timestamp(&project.last_indexed_at)),
+                format!("  Duration: {}ms", project.index_duration_ms),
+            ];
+            if let Some(overlay) = overlay {
+                lines.push(format!(
+                    "  Overlay:  parent {} ({})",
+                    overlay.parent_root.display(),
+                    short_id(&overlay.parent_project_id)
+                ));
+                if overlay.tombstones > 0 {
+                    lines.push(format!("  Deletes:  {}", overlay.tombstones));
                 }
-                writeln!(text)?;
-                write!(text, "{}", code_index.render_text())?;
-                output::print_text(&text)
             }
-        },
-        None => match format {
-            Format::Json => output::print_json(&serde_json::json!({
-                "project_id": ctx.project_id,
-                "indexed": false,
-                "code_index": code_index,
-            })),
-            Format::Text => {
-                eprintln!(
-                    "No index found for project {}. Run `gcode index` first.",
-                    ctx.project_id
-                );
-                output::print_text(&code_index.render_text())
-            }
-        },
+            format!("{}\n{}", lines.join("\n"), code_index.render_text())
+        }
+        StatusReport::Unindexed { code_index, .. } => code_index.render_text(),
     }
 }
 
-fn overlay_status_json(ctx: &Context, conn: &mut postgres::Client) -> Option<serde_json::Value> {
-    let crate::config::ProjectIndexScope::Overlay {
+pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let report = collect(&mut conn, ctx)?;
+    match format {
+        Format::Json => output::print_text(&render_json(&report)?),
+        Format::Text => {
+            if let StatusReport::Unindexed { project_id, .. } = &report {
+                eprintln!("No index found for project {project_id}. Run `gcode index` first.");
+            }
+            output::print_text(&render_text(&report))
+        }
+    }
+}
+
+fn overlay_status(ctx: &Context, conn: &mut postgres::Client) -> Option<OverlayStatus> {
+    let ProjectIndexScope::Overlay {
         overlay_project_id,
         overlay_root,
         parent_project_id,
@@ -139,15 +129,11 @@ fn overlay_status_json(ctx: &Context, conn: &mut postgres::Client) -> Option<ser
         return None;
     };
 
-    let tombstones = visibility::tombstone_count(conn, ctx);
-    let mut overlay = serde_json::json!({
-        "overlay_project_id": overlay_project_id,
-        "overlay_root": overlay_root,
-        "parent_project_id": parent_project_id,
-        "parent_root": parent_root,
-    });
-    if tombstones > 0 {
-        overlay["tombstones"] = serde_json::json!(tombstones);
-    }
-    Some(overlay)
+    Some(OverlayStatus {
+        overlay_project_id: overlay_project_id.clone(),
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_project_id.clone(),
+        parent_root: parent_root.clone(),
+        tombstones: visibility::tombstone_count(conn, ctx),
+    })
 }

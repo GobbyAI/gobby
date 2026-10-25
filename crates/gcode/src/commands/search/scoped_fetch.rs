@@ -1,5 +1,6 @@
 //! Ranked text and symbol retrieval through the effective workspace scope.
 
+use super::content_page::{ContentQuery, content_candidates, page_content};
 use super::*;
 
 pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
@@ -276,66 +277,51 @@ pub fn search_content(
     options: TextSearchOptions<'_>,
 ) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let expanded_paths = fts::expand_paths(options.paths);
-    let path_patterns = fts::compile_patterns(&expanded_paths)?;
-    let has_path_filters = !expanded_paths.is_empty();
-    let fetch_limit = if has_path_filters {
-        fts::FILTERED_FETCH_CAP
-    } else {
-        ((options.offset + options.limit) * 3).max(200)
-    };
-    let all_results = fts::search_content_visible(
+    let candidates = content_candidates(
         &mut conn,
-        query,
         ctx,
-        options.language,
-        &expanded_paths,
-        fetch_limit,
+        query,
+        ContentQuery {
+            language: options.language,
+            paths: options.paths,
+            limit: options.limit,
+            offset: options.offset,
+        },
     )?;
-    let cap_hint = (has_path_filters && all_results.len() >= fts::FILTERED_FETCH_CAP)
-        .then(filtered_fetch_cap_hint);
-    let path_hint =
-        fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-    let hint = token_budget::combine_hints(cap_hint, path_hint);
-    let all_results: Vec<_> = all_results
-        .into_iter()
-        .filter(|r| {
-            options
-                .language
-                .is_none_or(|lang| r.language.as_deref() == Some(lang))
-                && path_matches_filters(&path_patterns, &r.file_path)
-        })
-        .collect();
-    let all_results = retain_indexed_results(&mut conn, ctx, all_results, |r| r.file_path.as_str());
-    let total = if has_path_filters {
-        all_results.len()
-    } else {
-        fts::count_content_visible(&mut conn, query, ctx, options.language, &expanded_paths)?
-    };
-    let results: Vec<_> = all_results
-        .into_iter()
-        .skip(options.offset)
-        .take(options.limit)
-        .collect();
+    let page = page_content(candidates, options.offset, options.limit, |file_path| {
+        scope::path_exists_in_current_project(ctx, file_path)
+    });
 
-    output::print_empty_diagnostic(ctx, results.is_empty(), options.offset, total, None);
+    output::print_empty_diagnostic(
+        ctx,
+        page.results.is_empty(),
+        options.offset,
+        page.total,
+        None,
+    );
     let meta = output::SearchPageMeta {
         project_id: &ctx.project_id,
-        total,
+        total: page.total,
         offset: options.offset,
         limit: options.limit,
-        hint: hint.as_deref(),
+        hint: page.hint.as_deref(),
         warnings: &[],
     };
-    let page = output::paginate(
-        results,
+    let rendered = output::paginate_with_more(
+        page.results,
         meta,
+        page.next_offset.is_some(),
         options.token_budget,
         options.format,
         output::render_content_results,
     );
     if matches!(options.format, Format::Text) {
-        output::print_search_warning(ctx, options.verbose, hint.as_deref());
+        output::print_search_warning(ctx, options.verbose, page.hint.as_deref());
     }
-    output::print_page(&page, meta, options.format, output::render_content_results)
+    output::print_page(
+        &rendered,
+        meta,
+        options.format,
+        output::render_content_results,
+    )
 }

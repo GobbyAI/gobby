@@ -14,6 +14,7 @@ use crate::commands::grep::db_tests::{
 };
 use crate::commands::scope::path_exists_in_current_project;
 use crate::commands::search::content_page::{ContentQuery, content_candidates, page_content};
+use crate::commands::search::output::render_content_results;
 use crate::commands::status::current::{collect, render_json, render_text};
 use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::index::api::{self, IndexWriteMode};
@@ -22,7 +23,7 @@ use crate::node::hub::{HubScope, search_content as hub_search_content, status as
 use crate::node::{
     ContentCandidates, INDEX_APPLY_ROUTE, INDEX_PLAN_ROUTE, NODE_OPERATION, NODE_ROUTE_PREFIX,
     NodeScope, ROUTE_PATHS, RouteError, SEARCH_CONTENT_ROUTE, STATUS_ROUTE, SearchContentRequest,
-    StatusRequest,
+    StatusReport, StatusRequest,
 };
 
 /// Deletes the project rows a test wrote, so reruns start clean.
@@ -48,6 +49,11 @@ impl Drop for ProjectCleanup {
             "DELETE FROM code_indexed_projects WHERE id = $1",
             &[&self.project_id],
         );
+        let _ = conn.execute(
+            "DELETE FROM project_checkouts WHERE project_id = $1",
+            &[&self.project_id],
+        );
+        let _ = conn.execute("DELETE FROM projects WHERE id = $1", &[&self.project_id]);
     }
 }
 
@@ -125,7 +131,8 @@ fn status_render_matches_the_cli_output() -> anyhow::Result<()> {
     )?;
 
     let health = bm25_health::verify(&mut conn);
-    let health_json = serde_json::to_string(&health)?;
+    // The CLI renders code_index through a Value, so its keys come out sorted.
+    let health_json = serde_json::to_string(&serde_json::to_value(&health)?)?;
     let health_text = health.render_text();
     let short_id = &project_id[..8];
 
@@ -335,6 +342,137 @@ fn content_search_split_matches_the_cli_output() -> anyhow::Result<()> {
         serde_json::to_string(&page.results)?,
         r#"[{"file_path":"src/lib.rs","line_start":1,"line_end":1,"snippet":"fn searchprobemarker() {}","language":"rust"}]"#
     );
+    assert_eq!(
+        render_content_results(&page.results),
+        "src/lib.rs:1-1 fn searchprobemarker() {}"
+    );
+
+    // The second page starts past the only present hit. It is empty, so it has no next page.
+    let candidates = content_candidates(
+        &mut conn,
+        &ctx,
+        "searchprobemarker",
+        ContentQuery {
+            language: None,
+            paths: &paths,
+            limit: 10,
+            offset: 1,
+        },
+    )?;
+    let page = page_content(candidates, 1, 10, |file_path| {
+        path_exists_in_current_project(&ctx, file_path)
+    });
+    assert!(page.results.is_empty());
+    assert_eq!(page.total, 2);
+    assert_eq!(page.next_offset, None);
+
+    // A wire offset near the top of usize must page to nothing, not overflow the fetch cap.
+    let candidates = content_candidates(
+        &mut conn,
+        &ctx,
+        "searchprobemarker",
+        ContentQuery {
+            language: None,
+            paths: &paths,
+            limit: 10,
+            offset: usize::MAX,
+        },
+    )?;
+    let page = page_content(candidates, usize::MAX, 10, |file_path| {
+        path_exists_in_current_project(&ctx, file_path)
+    });
+    assert!(page.results.is_empty());
+    assert_eq!(page.next_offset, None);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn status_render_matches_the_cli_output_for_an_overlay() -> anyhow::Result<()> {
+    let database_url = crate::test_env::postgres_test_database_url("node status overlay");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)?;
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    let parent_dir = tempfile::tempdir()?;
+    let overlay_dir = tempfile::tempdir()?;
+    // The primary parent is fenced against its registered checkout, which is canonical.
+    let parent_root = parent_dir
+        .path()
+        .canonicalize()?
+        .to_string_lossy()
+        .into_owned();
+    let overlay_root = overlay_dir.path().to_string_lossy().into_owned();
+    let name = overlay_dir
+        .path()
+        .file_name()
+        .expect("temp dir has a name")
+        .to_string_lossy()
+        .into_owned();
+    let parent_id = uuid_for(&format!("{parent_root}-status-overlay-parent"));
+    let overlay_id = uuid_for(&format!("{overlay_root}-status-overlay"));
+    let _parent_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: crate::db::id_param(&parent_id)?,
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: crate::db::id_param(&overlay_id)?,
+    };
+    crate::test_env::seed_test_checkout(&mut conn, &parent_id, parent_dir.path())
+        .map_err(anyhow::Error::msg)?;
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &stats_for(&parent_id, &parent_root, 2),
+        IndexWriteMode::Primary,
+        false,
+    )?;
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &stats_for(&overlay_id, &overlay_root, 1),
+        IndexWriteMode::Overlay,
+        false,
+    )?;
+    // The parent counts as indexed only while it holds file state on this machine.
+    let machine = crate::db::id_param(&machine_id)?;
+    let parent_uuid = crate::db::id_param(&parent_id)?;
+    insert_file_version(&mut conn, &parent_uuid, "src/lib.rs", "hash-parent");
+    insert_machine_state(
+        &mut conn,
+        &machine,
+        &parent_uuid,
+        &parent_root,
+        "src/lib.rs",
+        "hash-parent",
+    );
+
+    let mut ctx = local_context(&database_url, overlay_dir.path(), &overlay_id, &machine_id);
+    ctx.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_id.clone(),
+        overlay_root: overlay_dir.path().to_path_buf(),
+        parent_project_id: parent_id.clone(),
+        parent_root: std::path::PathBuf::from(&parent_root),
+    };
+    let report = collect(&mut conn, &ctx)?;
+
+    let health = bm25_health::verify(&mut conn);
+    // Zero tombstones are omitted, so the overlay block carries only its four identities.
+    let health_json = serde_json::to_string(&serde_json::to_value(&health)?)?;
+    let health_text = health.render_text();
+    let expected_json = format!(
+        r#"{{"code_index":{health_json},"id":"{overlay_id}","index_duration_ms":1500,"indexer_version":"1.9.70","overlay":{{"overlay_project_id":"{overlay_id}","overlay_root":"{overlay_root}","parent_project_id":"{parent_id}","parent_root":"{parent_root}"}},"root_path":"{overlay_root}","total_files":1,"total_symbols":3}}"#
+    );
+    assert_eq!(render_json(&report)?, expected_json);
+    let expected_text = format!(
+        "{name} ({overlay_short})\n  Root:     {overlay_root}\n  Files:    1\n  Symbols:  3\n  Indexed:  never\n  Duration: 1500ms\n  Overlay:  parent {parent_root} ({parent_short})\n{health_text}",
+        overlay_short = &overlay_id[..8],
+        parent_short = &parent_id[..8],
+    );
+    assert_eq!(render_text(&report), expected_text);
     Ok(())
 }
 
@@ -412,5 +550,34 @@ fn wire_types_round_trip() -> anyhow::Result<()> {
             "message": "the overlay shape disagrees with the principal",
         })
     );
+
+    // Both status shapes decode from their JSON and encode back unchanged.
+    let code_index = json!({
+        "healthy": true,
+        "repair_command": "gobby postgres repair-code-index",
+        "indexes": [],
+    });
+    let indexed: StatusReport = serde_json::from_value(json!({
+        "code_index": code_index.clone(),
+        "id": "p1",
+        "index_duration_ms": 1500,
+        "root_path": "/work/repo-wt",
+        "total_files": 2,
+        "total_symbols": 3,
+        "overlay": {
+            "overlay_project_id": "o1",
+            "overlay_root": "/work/repo-wt",
+            "parent_project_id": "p1",
+            "parent_root": "/work/repo",
+            "tombstones": 4,
+        },
+    }))?;
+    assert_round_trip(&indexed)?;
+    let unindexed: StatusReport = serde_json::from_value(json!({
+        "code_index": code_index,
+        "indexed": false,
+        "project_id": "p1",
+    }))?;
+    assert_round_trip(&unindexed)?;
     Ok(())
 }

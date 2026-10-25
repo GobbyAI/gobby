@@ -44,6 +44,23 @@ where
     F: Fn(&[T]) -> String,
 {
     let has_more = meta.total > meta.offset.saturating_add(results.len());
+    paginate_with_more(results, meta, has_more, token_budget, format, render_rows)
+}
+
+/// Paginates with a caller-owned `has_more`, for pages whose cursor the caller
+/// already computed (content search carries `next_offset` on its page).
+pub(super) fn paginate_with_more<T, F>(
+    results: Vec<T>,
+    meta: SearchPageMeta<'_>,
+    has_more: bool,
+    token_budget: Option<usize>,
+    format: Format,
+    render_rows: F,
+) -> token_budget::TokenBudgetPage<T>
+where
+    T: Serialize,
+    F: Fn(&[T]) -> String,
+{
     token_budget::paginate_results(
         results,
         meta.offset,
@@ -174,7 +191,7 @@ pub(super) fn render_exact_results(results: &[SearchResult], verbose: bool) -> S
         .join("\n")
 }
 
-pub(super) fn render_content_results(results: &[crate::models::ContentSearchHit]) -> String {
+pub(crate) fn render_content_results(results: &[crate::models::ContentSearchHit]) -> String {
     results
         .iter()
         .map(|result| {

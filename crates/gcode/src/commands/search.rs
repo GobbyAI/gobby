@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 pub(crate) mod content_page;
-mod output;
+pub(crate) mod output;
 mod scoped_fetch;
 
 pub use scoped_fetch::{search_content, search_symbol, search_text};
