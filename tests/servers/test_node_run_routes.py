@@ -50,6 +50,7 @@ OTHER = "37e78430-9ce8-447b-8a68-0688cde4a886"
 FAILURE = "/api/nodes/runs/prompt-delivery-failure"
 WARNING = "/api/nodes/runs/code-index-warning"
 TERMINATE = "/api/nodes/runs/terminate"
+MANIFESTS = "/api/nodes/detection-manifests"
 STALL_PREFIX = "Provider bootstrap/accounting stall: terminal output was visible but"
 INIT_TIMEOUT = re.compile(
     r"Provider connection timed out: agent never initialized after \d+s \(provider=codex\)"
@@ -914,3 +915,78 @@ def test_extracted_health_conditions_match_local() -> None:
             run, session, age_seconds=120.0, pane_snapshot=pane
         )
         assert stall is None
+
+
+def _seed_manifest(db: HubDatabase, provider_id: str, content: str) -> None:
+    db.execute(
+        """
+        INSERT INTO detection_manifests (provider_id, version, engine, content, source)
+        VALUES (%s, '1', 1, %s, 'user')
+        ON CONFLICT (provider_id) DO UPDATE
+        SET content = EXCLUDED.content, updated_at = now()
+        """,
+        (provider_id, content),
+    )
+
+
+def _stored_manifests(db: HubDatabase) -> list[dict[str, str]]:
+    rows = db.fetchall("SELECT provider_id, content FROM detection_manifests ORDER BY provider_id")
+    return [{"provider_id": row["provider_id"], "content": row["content"]} for row in rows]
+
+
+def _seeded_manifests(body: dict[str, Any]) -> list[dict[str, str]]:
+    return [row for row in body["manifests"] if row["provider_id"].startswith("zz-mani-")]
+
+
+@pytest.mark.usefixtures("node_sessions")
+def test_detection_manifests_route(session_manager: SessionManager) -> None:
+    db = session_manager.db
+    ids = ("zz-mani-a", "zz-mani-b", "zz-mani-c")
+    for provider_id in ids:
+        db.execute("DELETE FROM detection_manifests WHERE provider_id = %s", (provider_id,))
+    try:
+        _seed_manifest(db, "zz-mani-b", "b v1")
+        _seed_manifest(db, "zz-mani-a", "a v1")
+        harness = _harness(db, session_manager)
+        with harness.client as client:
+            first = client.get(MANIFESTS, headers=_headers())
+            assert first.status_code == 200
+            assert first.json() == {"manifests": _stored_manifests(db)}
+            assert _seeded_manifests(first.json()) == [
+                {"provider_id": "zz-mani-a", "content": "a v1"},
+                {"provider_id": "zz-mani-b", "content": "b v1"},
+            ]
+            etag = first.headers["ETag"]
+            assert etag
+
+            missing = client.get(MANIFESTS)
+            assert (missing.status_code, missing.json()) == (
+                403,
+                {"detail": "node_identity_required"},
+            )
+            forged = client.get(MANIFESTS, headers={**_headers(), "X-Gobby-Front-Door": "forged"})
+            assert (forged.status_code, forged.json()) == (
+                403,
+                {"detail": "node_identity_required"},
+            )
+            local = client.get(MANIFESTS, headers=_headers(LOCAL))
+            assert (local.status_code, local.json()) == (403, {"detail": "machine_is_local"})
+
+            unchanged = client.get(MANIFESTS, headers={**_headers(), "If-None-Match": etag})
+            assert unchanged.status_code == 304
+            assert unchanged.content == b""
+
+            _seed_manifest(db, "zz-mani-b", "b v2")
+            _seed_manifest(db, "zz-mani-c", "c v1")
+            changed = client.get(MANIFESTS, headers={**_headers(), "If-None-Match": etag})
+            assert changed.status_code == 200
+            assert changed.json() == {"manifests": _stored_manifests(db)}
+            assert _seeded_manifests(changed.json()) == [
+                {"provider_id": "zz-mani-a", "content": "a v1"},
+                {"provider_id": "zz-mani-b", "content": "b v2"},
+                {"provider_id": "zz-mani-c", "content": "c v1"},
+            ]
+            assert changed.headers["ETag"] != etag
+    finally:
+        for provider_id in ids:
+            db.execute("DELETE FROM detection_manifests WHERE provider_id = %s", (provider_id,))
