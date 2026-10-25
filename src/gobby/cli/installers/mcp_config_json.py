@@ -6,11 +6,10 @@ from typing import Any
 from gobby.claude_config import claude_config_path, update_claude_config
 
 from .mcp_config_shared import (
-    _GOBBY_MCP_ARGS,
     _facade_copy2,
     _facade_time,
     _is_repairable_stale_gobby_mcp_server_config,
-    _resolved_gobby_mcp_command,
+    gmcp_command,
 )
 
 
@@ -66,7 +65,7 @@ def _configure(
             updates: dict[str, Any] = {}
             if isinstance(server, dict):
                 if _is_repairable_stale_gobby_mcp_server_config(server):
-                    updates.update(command=_resolved_gobby_mcp_command(), args=[*_GOBBY_MCP_ARGS])
+                    updates.update(command=gmcp_command(), args=[])
                 if extra_server_fields:
                     updates.update(
                         {
@@ -82,7 +81,7 @@ def _configure(
                     return True
             return False
         _backup(settings_path, result)
-        server = {"command": _resolved_gobby_mcp_command(), "args": [*_GOBBY_MCP_ARGS]}
+        server = {"command": gmcp_command(), "args": []}
         if project_key is not None:
             server["type"] = "stdio"
         if extra_server_fields:

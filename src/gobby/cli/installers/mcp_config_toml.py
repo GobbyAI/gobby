@@ -12,7 +12,7 @@ from .mcp_config_shared import (
     _facade_time,
     _remove_toml_table_block,
     _repair_stale_gobby_mcp_server_toml,
-    _resolved_gobby_mcp_command,
+    gmcp_command,
 )
 
 
@@ -101,11 +101,11 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
     # are not denied when Codex applies a sandboxed permission profile.
     # ``required`` makes Codex wait for the server before the first turn; an
     # optional server can be left out of that turn's tool catalog. The command is
-    # absolute so a launch whose PATH lacks gobby still starts it.
+    # absolute so a launch whose PATH lacks gmcp still starts it.
     mcp_config = f"""
 [mcp_servers.{server_name}]
-command = {json.dumps(_resolved_gobby_mcp_command())}
-args = ["mcp-server"]
+command = {json.dumps(gmcp_command())}
+args = []
 required = true
 startup_timeout_sec = {_CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC}
 tool_timeout_sec = {_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}
