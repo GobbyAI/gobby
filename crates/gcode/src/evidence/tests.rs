@@ -957,6 +957,58 @@ fn commit_metadata_can_read_history_without_rebinding_the_source_index() -> anyh
     Ok(())
 }
 
+/// The documented binding recovery (`commit_metadata` with default options) must
+/// succeed even when one changed path's full metadata exceeds the default budget.
+#[test]
+fn commit_metadata_recovers_binding_within_default_budget_for_oversized_patch() -> anyhow::Result<()>
+{
+    let (temporary, mut binding) = source_repo()?;
+    let repo = temporary.path();
+    let large: String = (0..2_000)
+        .map(|line| format!("oversized commit metadata line {line:05}\n"))
+        .collect();
+    std::fs::write(repo.join("large.txt"), &large)?;
+    git(repo, &["add", "large.txt"])?;
+    binding.commit_oid = commit(repo, "oversized change")?;
+    binding.tree_oid = git(repo, &["rev-parse", "HEAD^{tree}"])?;
+    let full_patch = git(
+        repo,
+        &["show", "--format=", &binding.commit_oid, "--", "large.txt"],
+    )?;
+    assert_eq!(DEFAULT_MAX_BYTES, 16_384);
+    assert!(
+        full_patch.len() > DEFAULT_MAX_BYTES,
+        "fixture must exceed the default budget"
+    );
+
+    let library = EvidenceLibrary::new(
+        repo,
+        binding.clone(),
+        Arc::new(FakeFacts::for_source(&binding)),
+    )?;
+    let metadata = request(
+        &binding,
+        EvidenceOperation::Read {
+            read: ReadSelector::CommitMetadata { commit_oid: None },
+        },
+    );
+    assert_eq!(metadata.max_bytes, DEFAULT_MAX_BYTES);
+    let response = library
+        .query(metadata)
+        .map_err(|error| anyhow::anyhow!("default commit_metadata read failed: {error}"))?;
+    assert!(!response.binding.project_id.is_empty());
+    assert_eq!(response.binding.project_id, binding.project_id);
+    assert!(!response.items.is_empty());
+    for item in &response.items {
+        assert!(serde_json::to_vec(item)?.len() <= DEFAULT_MAX_BYTES);
+        let EvidenceItem::CommitMetadata(item) = item else {
+            panic!("expected commit metadata, got {item:?}");
+        };
+        assert_eq!(item.commit_oid, binding.commit_oid);
+    }
+    Ok(())
+}
+
 fn assert_commit_metadata_contract() -> anyhow::Result<()> {
     let temporary = tempfile::tempdir()?;
     let repo = temporary.path();
