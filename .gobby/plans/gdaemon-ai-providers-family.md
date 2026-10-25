@@ -1043,6 +1043,12 @@ with directory mode 0700 and file mode 0600 and is deleted when the request
 ends. `src/gobby/servers/routes/llm.py::start_vision_temp_cleanup_task` sweeps
 that directory every 3600 seconds and deletes files older than 24 hours; the
 native sweep starts with the family and stops at shutdown.
+`src/gobby/servers/routes/llm.py::_write_temp_image` writes only after the
+bounded read, so an over-limit or interrupted upload leaves no file. It
+creates the file exclusively under the `_image_suffix` allowlist (`.jpg`,
+`.jpeg`, `.png`, `.gif`, `.webp`, otherwise `.png`), so a client filename
+never selects a path. The sweep unlinks directory entries, so a symlink is
+removed without touching its target.
 `src/gobby/ai/vision.py::VisionExtractService.extract` routes Claude through
 its adapter and endpoints whose input modalities include `image` through the
 endpoint adapter, or through `codex app-server` (3.2's client) for
@@ -1057,10 +1063,14 @@ vision_extract, effectful: true }`.
   endpoint and responses-wire bindings.
   test: `crates/gai/tests/vision.rs::extract_matches_python`.
 - 4.1.2 - Upload bounds, content types, unavailable bindings and adapter
-  failures match Python's status and body.
+  failures match Python's status and body, and an over-limit or interrupted
+  upload leaves no file.
   test: `crates/gai/tests/vision.rs::upload_bounds_and_errors_match_python`.
-- 4.1.3 - Temporary files are private, deleted after every request outcome,
-  and swept after 24 hours. test: `crates/gai/tests/vision.rs::temp_files_are_private_and_swept`.
+- 4.1.3 - Temporary files are private and created exclusively under an
+  allowlisted suffix, so a traversal-style filename never selects a path.
+  They are deleted after every request outcome and swept after 24 hours, and
+  the sweep removes a symlink without touching its target.
+  test: `crates/gai/tests/vision.rs::temp_files_are_private_and_swept`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-ai --test vision`.
 
@@ -1721,6 +1731,13 @@ recorded with `record_switch_error`, so they appear in the journal and in
 status. The probe and smoke test use gcore's blocking embeddings client
 through `spawn_blocking`, with keys from 1.1's sealed bindings.
 
+Python checks abort only after staging ends, through
+`src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner._check_abort`
+after the smoke test, and its setup runs in threads that abort cannot
+interrupt. The native stage keeps that behavior. Setup, probe and smoke waits
+are not cancelled, remote provider work continues after an abort, and nothing
+is unloaded.
+
 Add three waivers to `docs/contracts/parity-waivers.json`, each with decision
 `.gobby/plans/gdaemon-ai-providers-family.md#7.3`:
 `ai.http-embeddings-switch-start.provider-api-model-setup`,
@@ -1746,6 +1763,12 @@ on 2.4 orders the shared waiver file.
 - 7.3.4 - The three model-setup cases report `Waived` with their exact
   entries, and every other case stays `Passed`.
   test: `crates/gai/tests/switch_stage.rs::model_setup_cases_are_waived`.
+- 7.3.5 - An abort during LM Studio or Ollama setup, the dimension probe or
+  the smoke test takes effect at the check after staging, as in Python.
+  Staging runs to its end, the run moves to aborted, and nothing is unloaded.
+  Abort returns `timeout` when staging outlasts the 30-second wait and
+  `aborted` otherwise.
+  test: `crates/gai/tests/switch_stage.rs::abort_during_staging_matches_python`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-ai --test switch_stage`
 against LM Studio, Ollama and embedding HTTP stubs.
@@ -2049,8 +2072,9 @@ the public CLI entry, and 8.1 records ledger evidence.
 - 7.6.5 - The runbook records build and installed hashes, rollback command,
   announcement, the pre-flip switch status, health and native smoke evidence.
   behavior: "embedding switch activation evidence" in `docs/contracts/ai-native.md`.
-- 7.6.6 - On an isolated daemon, a Proxy-owned run held in staging, building
-  or flipping is interrupted by the flip restart. The old backend process is
+- 7.6.6 - This case bypasses the no-`running` precondition to prove
+  recovery. On an isolated daemon, a Proxy-owned run held in staging,
+  building or flipping is interrupted by the flip restart. The old backend process is
   gone before the new daemon answers. Native status reports the persisted
   phase, abort returns `not_found`, and the embedding stub and Qdrant receive
   no request from the old run. One native resume then reaches `active`. The
