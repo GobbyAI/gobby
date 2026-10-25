@@ -1351,3 +1351,15 @@ cutover or task expansion have been performed during planning.
 2026-10-24 — Initial narrative records the Orchestrator-confirmed 54-row scope,
 native CLI placement, shared-MCP ownership boundary and explicit prerequisite
 edges. Awaiting validated adversarial review; no consensus is claimed yet.
+
+2026-10-24 — Plan Writer gobby#17576 and Plan Adversary gobby#17577 reached
+consensus after re-review of e36a75e9b02bb813891d12da570cc78136bddbc5.
+SKILLS-01 is resolved by the connection-owned request supervisor, bounded
+node deadline, explicit cancellation and drain-before-acknowledgement contract,
+with healthy-channel remote-process cancellation coverage. SKILLS-02 is
+resolved by guarded native dev-startup ownership and nonrecursive private
+bundled-sync delegation for installation and explicit sync, preserving non-dev
+startup and existing selection/override policy. Both findings were accepted;
+no disagreement, unresolved decision or remaining finding remains. Fresh
+project-aware base validation passed. Manifest derivation and operator approval
+remain subsequent gates; no implementation or expansion is authorized here.
