@@ -1677,7 +1677,8 @@ persisted phase; `_launch` marks flipping started for the flipping, active
 and gc phases. One task runs per daemon, and nothing resumes at startup
 (KEEP). Python's coordinator stays in the Python daemon, but only its routes
 call it, so after 7.6 it receives no request; the journal and lock make a
-second start fail with `SwitchAlreadyActiveError` in either process. The
+second start fail with `SwitchAlreadyActiveError` in either process. 7.6
+moves ownership only across a restart that ends the outgoing task. The
 runner is a trait here, and tests use a scripted runner as Python's
 `RunnerFactory` does; 7.3 and 7.4 add the phases.
 
@@ -1765,9 +1766,17 @@ collections are `{kind}@{run_id}` for `memories` and `tool_embeddings`
 creates each physical collection at the target dimension with gcore's
 `ensure_collection`; on resume, a schema mismatch deletes and recreates it
 with `collection_schema` and `delete_collection`, as Python's
-`recreate_on_mismatch` does. It records the ledger watermark
-(`src/gobby/storage/embedding_generation_state.py::EmbeddingGenerationState`),
-calls `rebuild(kind, physical_name, embedder)` on #25070 (memories) and
+`recreate_on_mismatch` does. Build keeps Python's journal-first order on the
+first run and on resume. It persists `physical_names` in
+`ai.embeddings.switch_run` first. Only then does it read the ledger watermark
+(`src/gobby/storage/embedding_generation_state.py::EmbeddingGenerationState`)
+and persist it as `caught_up_watermark`. Python producers dual-project into
+the names that `src/gobby/ai/embedding_switch.py::managed_embedding_projection`
+reads from that key, so publishing the names first arms dual-writes for every
+change the watermark does not cover. Reversing the two writes can lose a
+projection change across a crash. Build reads the ledger through a reader the
+tests replace, as Python's tests replace `EmbeddingSwitchRunner.generation_state`.
+It then calls `rebuild(kind, physical_name, embedder)` on #25070 (memories) and
 #25071 (tool embeddings), then replays `changes_after(watermark)` through
 `project_change(kind, source_id, physical_name, embedder)` for at most
 `_REPLAY_MAX_PASSES` (20) passes before `EmbeddingGenerationNotCaughtUp`.
@@ -1799,10 +1808,16 @@ request and writes no collection. Python daemons keep their leases in
   test: `crates/gai/tests/switch_build.rs::gc_and_abort_cleanup_match_python`.
 - 7.4.4 - A resume after interruption in each phase reaches Python's end state.
   test: `crates/gai/tests/switch_build.rs::resume_matches_python_per_phase`.
+- 7.4.5 - Build persists `physical_names` before it reads and persists
+  `caught_up_watermark`, on the first run and on resume. A producer upsert and
+  delete recorded at the watermark read are replayed. A failure injected at
+  the watermark read, and another at the first `rebuild` call, each followed
+  by resume, leave the target points equal to the authoritative sources.
+  test: `crates/gai/tests/switch_build.rs::build_publishes_names_before_watermark`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-ai --test switch_build`
-against isolated Qdrant collections, an isolated database and stubs of the
-two seams.
+against isolated Qdrant collections, an isolated database, stubs of the two
+seams and a stub ledger reader.
 
 ### 7.5 Native embeddings command tree [category: code] (depends: 7.4, 6.3)
 `kind: deliverable`
@@ -1979,6 +1994,25 @@ proven at release. After activation, Python's coordinator receives no
 request, and the journal lock still makes a second start fail in either
 process.
 
+Activation and rollback hand switch ownership across a restart, so only one
+coordinator can hold a switch task at a time. gdaemon reads
+`front_door.routes` once, when
+`crates/gdaemon/src/serve.rs::serve_with_runtime` builds the `RouteTable`, so
+each flip edits `~/.gobby/bootstrap.yaml` and restarts gdaemon. On shutdown,
+`crates/gdaemon/src/lifecycle/backend.rs::BackendSupervisor::supervise`
+drains the Python backend through `BackendChild::drain` (SIGTERM, the grace
+window, SIGKILL, reap) before gdaemon exits. That ends Python's in-process
+task, and the native task ends with the gdaemon process. Neither coordinator
+resumes at startup (7.2, KEEP). The flip and the rollback each start only
+when `GET /api/embeddings/switch/status` reports no `running` task. A live run
+first finishes at `active`, or is aborted. Once abort returns `too_late`, the
+run completes forward and the flip waits for `active`. This check belongs to
+the quiet window, and no lease is added. If a run is interrupted anyway, the
+incoming owner treats the journal as Python does after any restart. Status
+reports the persisted phase. Abort returns `not_found` unless the phase is
+aborted, which relaunches cleanup as `cleanup_retry`. Resume relaunches the
+run once from its phase through 7.4.4's path.
+
 7.5 depends on 6.3, so this release always carries 7.5's command and every
 7.x change made after 6.3. Those commits change only `crates/gai`, gdaemon's
 command dispatcher, Python and scripts, and 7.0's gcore change shipped with
@@ -2013,8 +2047,16 @@ the public CLI entry, and 8.1 records ledger evidence.
 - 7.6.4 - Shipping manifests, lock and pins agree with only gdaemon bumped.
   test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 7.6.5 - The runbook records build and installed hashes, rollback command,
-  announcement, health and native smoke evidence.
+  announcement, the pre-flip switch status, health and native smoke evidence.
   behavior: "embedding switch activation evidence" in `docs/contracts/ai-native.md`.
+- 7.6.6 - On an isolated daemon, a Proxy-owned run held in staging, building
+  or flipping is interrupted by the flip restart. The old backend process is
+  gone before the new daemon answers. Native status reports the persisted
+  phase, abort returns `not_found`, and the embedding stub and Qdrant receive
+  no request from the old run. One native resume then reaches `active`. The
+  rollback restart does the same for a held native run, with Python resuming
+  it. Each run creates one physical collection set.
+  test: `tests/e2e/test_embedding_switch_native.py::test_route_flip_ends_the_outgoing_switch_run`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test embedding_switch_cutover`;
 the isolated e2e test with the protected Python prefix; scoped Ruff and mypy
@@ -2140,7 +2182,9 @@ public entry to them. 0.1 rejects missing or extra keys. 5.1 owns admission
 binding and the Security approval gate. 2.5 supports 6.1's model groups, 6.0
 owns the web-chat health seam 6.1 reads and 6.3 connects to #21592's runtime,
 and 7.0 supports 7.4's flip and cleanup. 5.2, 6.3 and 7.6 activate the three route
-families, and 8.1 records the delegated ledger state.
+families, and 8.1 records the delegated ledger state. 7.6 moves switch
+ownership only across a restart that ends the outgoing task, and 7.4 keeps
+Python's journal-first build order.
 
 The #24963 readiness gate requires ordinary `Passed` cases and exactly cited,
 native-asserted `Waived` cases for the seven waivers, and fails skipped-only
