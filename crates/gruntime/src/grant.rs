@@ -127,8 +127,10 @@ pub(crate) async fn read_fence(
 }
 
 /// Python's `interactive_generation_revoked` over the auth schema. A missing binding
-/// row counts as revoked, and so does an identifier that cannot name a binding. A
-/// machine id that cannot be read is a daemon configuration fault and is unavailable.
+/// row counts as revoked; non-interactive grants and grants without a credential
+/// generation skip this check. Invalid project ids are malformed grants. Unreadable
+/// or invalid machine ids make the grant service unavailable. Lookup failures and
+/// out-of-range credential generations are internal errors.
 async fn interactive_revoked(
     state: &RuntimeState,
     grant: &GrantBundle,
