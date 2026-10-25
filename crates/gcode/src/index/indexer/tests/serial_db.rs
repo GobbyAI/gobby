@@ -4,7 +4,7 @@ use super::super::sink::PostgresCodeFactSink;
 use super::super::types::IndexTarget;
 use super::super::{IndexOptions, IndexRequest, index_files};
 use super::fixtures::{git, write_file};
-use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
+use crate::config::{CodeVectorSettings, Context, ProjectIndexScope, validate_parent_code_index};
 use crate::db;
 use crate::index::semantic::{SemanticCallRequest, SemanticCallResolver, SemanticCallTarget};
 use crate::index::{api, hasher, parser};
@@ -167,6 +167,111 @@ fn status_reads_the_context_machine() -> anyhow::Result<()> {
     assert_eq!(status["root_path"], "/tmp/foreign-status");
     assert_eq!(status["total_files"], 3);
     assert_eq!(status["total_symbols"], 5);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn missing_parent_reads_as_unindexed_for_status_only() -> anyhow::Result<()> {
+    // Status runs in a child process so its real stdout is observable, as in
+    // `status_reads_the_context_machine`.
+    const PAYLOAD: &str = "GCODE_TEST_MISSING_PARENT_STATUS";
+    if let Ok(payload) = std::env::var(PAYLOAD) {
+        let [database_url, overlay, parent, overlay_root, parent_root]: [String; 5] =
+            serde_json::from_str(&payload)?;
+        let machine = gobby_core::machine::read_local_machine_id()?;
+        let ctx = Context {
+            index_scope: ProjectIndexScope::Overlay {
+                overlay_project_id: overlay.clone(),
+                overlay_root: PathBuf::from(&overlay_root),
+                parent_project_id: parent,
+                parent_root: PathBuf::from(parent_root),
+            },
+            ..machine_context(&database_url, &overlay, Path::new(&overlay_root), &machine)
+        };
+        return crate::commands::status::run(&ctx, crate::output::Format::Json);
+    }
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let overlay_root = tempfile::tempdir()?;
+    let parent_root = tempfile::tempdir()?;
+    let overlay = unique_test_uuid("missing-parent-overlay");
+    let parent = unique_test_uuid("missing-parent-root");
+    let local = gobby_core::machine::read_local_machine_id()?;
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay.clone(),
+    };
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent.clone(),
+    };
+    seed_primary_checkout(&mut conn, &parent, parent_root.path())?;
+    seed_primary_checkout(&mut conn, &overlay, overlay_root.path())?;
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&test_uuid_param(&overlay)],
+    )?;
+    // The overlay has its own project state; the parent has no file states.
+    conn.execute(
+        "INSERT INTO code_indexed_project_states (machine_id, project_id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
+         VALUES ($1, $2, '/tmp/missing-parent-overlay', 3, 5, NOW(), 0)",
+        &[&test_uuid_param(&local), &test_uuid_param(&overlay)],
+    )?;
+    // Search still needs the parent index, so the parent-missing guard holds.
+    let scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay.clone(),
+        overlay_root: overlay_root.path().to_path_buf(),
+        parent_project_id: parent.clone(),
+        parent_root: parent_root.path().to_path_buf(),
+    };
+    let error = validate_parent_code_index(&mut conn, &scope, &local)
+        .expect_err("search still requires the parent index");
+    assert!(
+        error.to_string().contains("parent code index missing"),
+        "{error}"
+    );
+    let overlay_path = overlay_root.path().to_string_lossy().into_owned();
+    let parent_path = parent_root.path().to_string_lossy().into_owned();
+    let output = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "missing_parent_reads_as_unindexed_for_status_only",
+            "--nocapture",
+        ])
+        .env(
+            PAYLOAD,
+            serde_json::to_string(&[
+                &database_url,
+                &overlay,
+                &parent,
+                &overlay_path,
+                &parent_path,
+            ])?,
+        )
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout)?;
+    let json = stdout
+        .lines()
+        .find(|line| line.starts_with('{'))
+        .expect("status JSON");
+    let status: serde_json::Value = serde_json::from_str(json)?;
+    assert_eq!(
+        status["indexed"], false,
+        "a missing parent reads as unindexed"
+    );
+    assert!(
+        status.get("total_files").is_none(),
+        "the overlay's own stats are hidden while the parent is missing"
+    );
+
     Ok(())
 }
 
@@ -1154,14 +1259,14 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
     assert_eq!(orphan_count, 0);
 }
 
-fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
+pub(super) fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
     let database_url = crate::test_env::postgres_test_database_url("indexer serial DB tests");
     let conn = db::connect_readwrite(&database_url)
         .expect("connect summary preservation PostgreSQL test database");
     (conn, database_url)
 }
 
-fn unique_test_uuid(prefix: &str) -> String {
+pub(super) fn unique_test_uuid(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
@@ -1173,7 +1278,7 @@ fn unique_test_uuid(prefix: &str) -> String {
     .to_string()
 }
 
-fn test_uuid_param(id: &str) -> uuid::Uuid {
+pub(super) fn test_uuid_param(id: &str) -> uuid::Uuid {
     db::id_param(id).expect("test id is a uuid")
 }
 
@@ -1198,9 +1303,9 @@ pub(super) fn seed_primary_checkout(
     Ok(())
 }
 
-struct SummaryPreservationCleanup {
-    database_url: String,
-    project_id: String,
+pub(super) struct SummaryPreservationCleanup {
+    pub(super) database_url: String,
+    pub(super) project_id: String,
 }
 
 impl Drop for SummaryPreservationCleanup {
@@ -1211,7 +1316,7 @@ impl Drop for SummaryPreservationCleanup {
     }
 }
 
-fn cleanup_summary_preservation_project(
+pub(super) fn cleanup_summary_preservation_project(
     conn: &mut postgres::Client,
     project_id: &str,
 ) -> anyhow::Result<()> {

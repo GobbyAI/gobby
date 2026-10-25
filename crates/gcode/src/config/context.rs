@@ -70,6 +70,7 @@ pub struct ServiceConfigSelection {
     pub qdrant: bool,
     pub embedding: bool,
     pub code_vectors: bool,
+    pub require_parent_index: bool,
 }
 
 impl ServiceConfigSelection {
@@ -89,6 +90,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: true,
             code_vectors: true,
+            require_parent_index: true,
         }
     }
 
@@ -98,6 +100,7 @@ impl ServiceConfigSelection {
             qdrant: false,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -107,6 +110,7 @@ impl ServiceConfigSelection {
             qdrant: false,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -116,6 +120,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -125,6 +130,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -134,6 +140,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: true,
             code_vectors: true,
+            require_parent_index: true,
         }
     }
 
@@ -143,6 +150,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: true,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 }
