@@ -70,6 +70,7 @@ from ._resume import (
     resume_isolation,
     resumed_seat_lane,
     resumed_seat_plan,
+    resumed_seat_task_id,
 )
 from ._run_lifetime import resolve_run_lifetime
 from ._runtime import build_spawn_context
@@ -162,6 +163,7 @@ async def spawn_agent_impl(
             )
         except ValueError as exc:
             return {"success": False, "error": str(exc) or type(exc).__name__}
+        task_id = task_id or resumed_seat_task_id(task_manager, resume_target, runner.run_storage)
         provider, model, reasoning_effort = resume_launch_defaults(
             resume_target, model=model, reasoning_effort=reasoning_effort
         )

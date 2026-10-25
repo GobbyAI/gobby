@@ -31,7 +31,7 @@ from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     concrete_provider,
     missing_provider_for_supplied_model,
 )
-from gobby.mcp_proxy.tools.spawn_agent._resume import resolve_resume_target
+from gobby.mcp_proxy.tools.spawn_agent._resume import resolve_resume_target, resumed_seat_task_id
 from gobby.mcp_proxy.tools.spawn_agent._run_lifetime import resolve_run_lifetime
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import (
     TaskSpawnLease,
@@ -157,6 +157,8 @@ async def spawn_remote_route(
             )
         except ValueError as exc:
             return spawn_refusal("resume_refused", str(exc))
+        inherited = resumed_seat_task_id(task_manager, resume_target, runner.run_storage)
+        request = replace(request, task_id=request.task_id or inherited)
     elif request.isolation in ("worktree", "clone"):
         # A fresh tree on another machine is new work, so this machine's window holds it.
         try:
