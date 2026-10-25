@@ -18,10 +18,10 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 478);
+    assert_eq!(identity.latest_asset.version, 479);
     assert_eq!(
         identity.latest_asset.filename,
-        "478_code_pin_source_read_scope.sql"
+        "479_code_file_state_cross_machine_read_scope.sql"
     );
     assert_eq!(
         identity.latest_asset.checksum,

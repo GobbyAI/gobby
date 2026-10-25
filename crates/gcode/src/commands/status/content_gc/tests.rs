@@ -1002,6 +1002,211 @@ mod serial_db {
         );
     }
 
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn scoped_prune_keeps_content_another_machine_references() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-scoped-foreign");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        seed_primary_checkout(&mut conn, &project_id, root.path());
+        let shared_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/shared.rs",
+            "gc-hash-shared",
+            60,
+            true,
+        );
+        let foreign_machine = uuid::Uuid::new_v4();
+        crate::test_env::seed_test_machine(&mut conn, &foreign_machine.to_string())
+            .expect("seed foreign machine");
+        seed_file_state(
+            &mut conn,
+            foreign_machine,
+            &project_id,
+            "src/shared.rs",
+            "gc-hash-shared",
+        );
+
+        // The daemon prunes under a principal scoped to this project on this machine.
+        // Content rows are machine-independent, so another machine's file state still
+        // roots the version: the scoped prune must keep it instead of failing the
+        // delete on code_indexed_file_states_content_fkey.
+        let principal = ScopedPrincipal::issue(&mut conn, &database_url, &project_id);
+        assert!(
+            discover_content_gc(&principal.database_url, 17, Some(&project_id))
+                .expect("discover GC candidates as the scoped principal")
+                .is_empty(),
+            "content another machine references is never a candidate for the scoped principal",
+        );
+
+        let shared = ContentGcCandidate {
+            id: shared_id.clone(),
+            project_id: project_id.clone(),
+            file_path: "src/shared.rs".to_string(),
+            content_hash: "gc-hash-shared".to_string(),
+            symbol_ids: Vec::new(),
+            has_graph_facts: false,
+            graph_synced: true,
+            vectors_synced: true,
+        };
+        let scoped_services = test_context(&principal.database_url, &project_id);
+        let totals = prune_content_versions_with(
+            &scoped_services,
+            std::slice::from_ref(&shared),
+            || false,
+            |project_id| Ok(test_context(&principal.database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "scoped prune must keep foreign-referenced content instead of aborting: {error:#}"
+            )
+        });
+        assert_eq!(totals.deleted_versions, 0);
+        assert_eq!(totals.failed_versions, 0);
+        assert_eq!(content_row_count(&mut conn, &shared_id), 1);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn cross_machine_file_state_visibility_preserves_project_and_write_scope() {
+        let (mut owner, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-state-visibility");
+        let unrelated_id = unique_test_project_id("gcode-gc-state-unrelated");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let _unrelated_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: unrelated_id.clone(),
+        };
+        let root = git_init_root();
+        let unrelated_root = git_init_root();
+        seed_project(&mut owner, &project_id, root.path());
+        seed_project(&mut owner, &unrelated_id, unrelated_root.path());
+        seed_primary_checkout(&mut owner, &project_id, root.path());
+        seed_content_version(&mut owner, &project_id, "src/lib.rs", "shared", 60, true);
+        seed_content_version(
+            &mut owner,
+            &unrelated_id,
+            "src/lib.rs",
+            "unrelated",
+            60,
+            true,
+        );
+        let local_machine = db::id_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        )
+        .expect("machine id is a uuid");
+        let foreign_machine = uuid::Uuid::new_v4();
+        crate::test_env::seed_test_machine(&mut owner, &foreign_machine.to_string())
+            .expect("seed foreign machine");
+        seed_file_state(
+            &mut owner,
+            local_machine,
+            &project_id,
+            "src/lib.rs",
+            "shared",
+        );
+        seed_file_state(
+            &mut owner,
+            foreign_machine,
+            &project_id,
+            "src/lib.rs",
+            "shared",
+        );
+        seed_file_state(
+            &mut owner,
+            foreign_machine,
+            &unrelated_id,
+            "src/lib.rs",
+            "unrelated",
+        );
+        seed_file_state(
+            &mut owner,
+            local_machine,
+            &unrelated_id,
+            "src/lib.rs",
+            "unrelated",
+        );
+
+        let principal = ScopedPrincipal::issue(&mut owner, &database_url, &project_id);
+        let mut scoped = db::connect_readwrite(&principal.database_url).expect("scoped connection");
+        let project_uuid = db::id_param(&project_id).unwrap();
+        let visible: i64 = scoped
+            .query_one(
+                "SELECT count(*) FROM code_indexed_file_states WHERE project_id = $1",
+                &[&project_uuid],
+            )
+            .expect("read own project file states")
+            .get(0);
+        assert_eq!(
+            visible, 2,
+            "content retention sees file states on every machine"
+        );
+        let unrelated: i64 = scoped
+            .query_one(
+                "SELECT count(*) FROM code_indexed_file_states WHERE project_id = $1",
+                &[&db::id_param(&unrelated_id).unwrap()],
+            )
+            .expect("query unrelated file states")
+            .get(0);
+        assert_eq!(unrelated, 0, "other projects' file states remain hidden");
+        assert_eq!(
+            scoped
+                .execute(
+                    "UPDATE code_indexed_file_states SET file_path = file_path
+                     WHERE project_id = $1 AND machine_id = $2",
+                    &[&project_uuid, &foreign_machine],
+                )
+                .expect("attempt foreign-machine update"),
+            0,
+            "cross-machine visibility grants no foreign file-state update authority",
+        );
+        assert_eq!(
+            scoped
+                .execute(
+                    "DELETE FROM code_indexed_file_states
+                     WHERE project_id = $1 AND machine_id = $2",
+                    &[&project_uuid, &foreign_machine],
+                )
+                .expect("attempt foreign-machine deletion"),
+            0,
+            "cross-machine visibility grants no foreign file-state deletion authority",
+        );
+        drop(scoped);
+        drop(principal);
+        let foreign_rows: i64 = owner
+            .query_one(
+                "SELECT count(*) FROM code_indexed_file_states
+                 WHERE project_id = $1 AND machine_id = $2",
+                &[&project_uuid, &foreign_machine],
+            )
+            .expect("count foreign file states as owner")
+            .get(0);
+        assert_eq!(
+            foreign_rows, 1,
+            "the foreign machine's file state is untouched"
+        );
+    }
+
     fn seed_overlay_pin(
         conn: &mut postgres::Client,
         overlay_project_id: &str,
