@@ -360,3 +360,20 @@ def test_only_the_assistant_and_triage_send_to_the_orchestrator() -> None:
         assert phrase in orchestrator, phrase
     support_inputs = yaml.safe_load((PIPELINES / "support.yaml").read_text())["inputs"]
     assert "Triage" in support_inputs["report_to"]["description"]
+
+
+def test_devteam_seats_reach_the_dev_manager_by_session_ref() -> None:
+    """Each seat sends to its Dev Manager with target="session".
+
+    list_running_agents returns run ids; a seat that finds its Dev Manager through it guesses
+    target="agent" with that id, which its send_message_targets refuse.
+    """
+    for seat in ("test-writer", "developer", "code-reviewer"):
+        sentences = [
+            sentence
+            for sentence in re.split(r"(?<=\.)\s+", _guidance(seat))
+            if "dev manager" in sentence.lower()
+        ]
+        assert any(re.search(r"target=[\"']session[\"']", s) for s in sentences), seat
+        for sentence in sentences:
+            assert "list_running_agents" not in sentence, (seat, sentence)
