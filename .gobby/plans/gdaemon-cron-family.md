@@ -9,7 +9,8 @@ Plan artifact: `.gobby/plans/gdaemon-cron-family.md`
 
 Implementation root: #21582. Planning assignment: #24952. Rust owns cron job and
 run services, scheduled and manual admission, execution, recovery, restart
-protection and the ten HTTP routes below. A statically linked family crate,
+protection and the ten ledger HTTP routes below, plus a bounded internal
+active-run count query for cooperative handoff. A statically linked family crate,
 `crates/gcron` (package `gobby-cron`), uses the runtime family's RouteFamily,
 configuration snapshot, PostgreSQL and compare seams. The hub owns the scheduler;
 standalone runs the same owner, and nodes neither start it nor mutate its rows.
@@ -41,6 +42,16 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
 - Use `proxy`/`compare` only during the parity transition. After native takeover,
   Cron has no Python fallback. Rollback before deletion uses the same binaries
   and routing edit; rollback after deletion requires the prior coherent release.
+- Native construction through P3 is passive in production. Only 4.1 activates
+  native scheduled/manual admission, reconciliation and system registration,
+  after the restart boundary proves Python admission has stopped. Proxy/compare
+  retain Python ownership. Isolated tests explicitly exercise native ownership.
+- **Mailbox scope ruling (2026-10-24, Orchestrator via Triage).** Port today's
+  delivered-mailbox retention against inter_session_messages, preserving its
+  cutoff, bounded batch and cadence. Remove only the Python mailbox branch.
+  #22340 remains parked by Josh and supplies no dependency or schema here;
+  its later approved channel-schema work owns replacement of this function.
+  Its unapproved D9 is reference context, not an approved service prerequisite.
 - Use the locked chrono, Tokio, tokio-postgres, serde and axum dependencies.
   Schedule parsing additionally uses `croner` 4.0.1 with its chrono backend and
   `chrono-tz` 0.10, confined to gcron. No locked native cron parser or named-zone
@@ -80,6 +91,9 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
   `gcode grep -F 'cron_scheduler' src/gobby/ -m 100`;
   `gcode grep -w 'code_index_nightly_repairer' src/ tests/ -m 40`;
   `gcode grep -F 'register_handler(' src/gobby/ -m 80`.
+  Also swept `gcode grep -F '#21582' .gobby/plans/ -m 100`: code-index D18 is
+  covered by 2.6 and Python retirement; the parked messaging draft's proposed
+  D9 received the explicit current-schema scope ruling above.
   The affected call paths are named in the owning sections. Exact targets are
   resolved from gcode outlines; full-file targets have bounded scope reasons.
 - Observed source evidence: gcode evidence for
@@ -420,7 +434,8 @@ Targets:
 
 **Research context:** #24706 ships
 `gobby_codeindex::jobs::nightly_repair::run(jobs: &Arc<HubJobs>) -> String`;
-its contract deliberately ships no tick and deletes no Python. Existing
+its contract deliberately ships no tick and deletes no Python. This leaf
+prepares/tests registration functions; production calls wait for 4.1. Existing
 `src/gobby/code_index/nightly_repair.py::register_code_index_nightly_repair_cron`
 owns the job name gobby:code-index-nightly-repair and handler
 code-index:nightly-repair. Register these exact names through 1.3's native
@@ -464,6 +479,8 @@ Project purge calls the native job disable/delete methods from 1.3; any consumer
 adapter belongs in this binding, not duplicated SQL. Missing required native
 services make readiness degraded and prevent starting the production scheduler;
 individual disabled jobs stay side-effect free. No Python handler fallback.
+Registration/execution stay passive in production until 4.1; this leaf
+exercises them only in isolated fixtures.
 Planned: `cargo test -p gobby-daemon --test cron_system_jobs` with real native
 service constructors and isolated databases; fake business effects, not Python.
 
@@ -473,7 +490,7 @@ service constructors and isolated databases; fake business effects, not Python.
 - 2.7.3 - Purge's native consumer disables/deletes only its project's jobs and cleans removed automation definitions. test: `crates/gdaemon/tests/cron_system_jobs.rs::project_cleanup_uses_native_jobs`.
 - 2.7.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 2.8 Hub runtime ownership and completion events [category: code] (depends: 2.7, #21575, #21558)
+### 2.8 Passive hub runtime wiring and completion events [category: code] (depends: 2.7, #21575, #21558)
 `kind: deliverable`
 
 Targets:
@@ -490,8 +507,13 @@ Targets:
 `crates/gdaemon/src/state.rs::RuntimeState::prepare` and RuntimeState::run,
 the hub singleton lease and #21575's role gates. Python starts Cron via
 `src/gobby/runner_lifecycle_subsystems.py::_start_cron_scheduler` in a hub-only
-phase. Rust starts only after native action bindings and active config exist;
-lease loss cancels admission before another owner can start.
+phase. This leaf constructs a passive native service handle and installs
+bindings; it starts no production tick, cleanup, reconciliation or system-row
+registration and admits no native manual action. Its activation entry point is
+called only by 4.1's restart-bound owner transfer. Proxy/compare keep the Python
+owner, including run-now; native action/runtime tests activate only isolated
+fixtures. No partially landed leaf can activate Rust scheduling. After 4.1
+activates the handle, lease loss cancels admission before another owner starts.
 `src/gobby/runner_broadcasting.py::setup_cron_event_broadcasting` maps completed,
 failed, skipped and dispatched into run_completed/run_failed/run_skipped/
 run_dispatched. Publish the same job/run payload via the native WS broker and
@@ -507,7 +529,7 @@ owner. More than six targets include required release carriers, not a second
 runtime state machine.
 
 **Acceptance:**
-- 2.8.1 - Hub and standalone start exactly one owner; node/standby/degraded state starts none and makes no cron mutations. test: `crates/gdaemon/tests/cron_runtime.rs::roles_and_lease_gate_cron_ownership`.
+- 2.8.1 - Before 4.1 activation, production has no native cron tasks, mutations or manual admission; isolated activation starts one hub/standalone owner and none on node/standby/degraded state. test: `crates/gdaemon/tests/cron_runtime.rs::roles_and_lease_gate_cron_ownership`.
 - 2.8.2 - Live config is captured once per tick, lease loss stops admission, and committed transitions publish the expected WS/accounting events despite observer failure. test: `crates/gdaemon/tests/cron_runtime.rs::cron_events_follow_committed_state`.
 - 2.8.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -537,7 +559,9 @@ route added by 3.3, never all admin paths. Preserve URI decoding, UUID errors,
 project authorization, status envelopes, count, sort, nullable fields and
 unavailable/404/422/500 behavior from the oracle. Reuse the runtime family's
 principal admission; browser/cookie requests must reach the equivalent native
-auth path at final takeover rather than fall back to deleted Python.
+auth path at final takeover rather than fall back to deleted Python. The family
+defaults to Proxy until 4.1; compare mutations call only Python. Registering
+these native routes does not activate their production scheduler handle.
 Planned: `cargo test -p gobby-cron --test http_reads` and HTTP corpus replay.
 
 **Granularity:** The four reads are one read-only family surface over the same
@@ -592,6 +616,7 @@ Targets:
 - `crates/gcron/src/lib.rs`
 - `crates/gcron/src/family.rs` — planned new file: claim only the exact protected-runs admin route
 - `crates/gdaemon/src/lifecycle/cron_guard.rs`
+- `crates/gdaemon/src/lease/admin_api.rs::*` — scope-reason: expose a bounded native all-active count for local cooperative handoff
 - `crates/gdaemon/src/lifecycle/mod.rs`
 - `crates/gdaemon/src/main.rs::*` — scope-reason: enforce the shared Cron guard from native lifecycle command entry points
 - `crates/gdaemon/src/cron_runtime.rs` — planned new file: expose owner-local protection and forced cancellation to lifecycle commands
@@ -606,13 +631,27 @@ active rows owned by the current scheduler_owner, reads restart_protected from
 action_config and excludes elapsed time beyond action_timeout_seconds. Preserve
 job/run/name/start/elapsed/remaining fields and unavailable behavior from
 `src/gobby/servers/routes/admin/_lifecycle.py::protected_cron_runs`.
-Native stop/restart/cutover entry points call the same guard; no HTTP loopback
-dependency. Normal refusal, wait-until-drained and force-interrupt semantics
+Native lifecycle consumers call the same guard without HTTP loopback inside
+Rust; CLI verb ownership stays with #21571. Normal refusal, wait-until-drained and force-interrupt semantics
 remain explicit. Force cancels/finalizes the owned run; dream resumes through
 its existing durable domain recovery. Lease takeover and stale rows cannot
 hold the guard forever. #21571 consumes this guard through the operator-verb
 contract; that CLI routing remains delegated. Planned: `cargo test -p
 gobby-daemon --test cron_protection` with a fake clock and isolated restart.
+
+Cooperative handoff needs a separate predicate: all pending/running cron rows
+for the daemon's local machine, irrespective of restart_protected, elapsed
+time or scheduler_owner. Reuse Runs::count_running from 2.1. Add exactly
+`GET /api/admin/cron/active-run-count` to the existing native lease-admin control
+seam, independently of the switchable Cron family router, so it stays native
+while that family is Proxy/Compare. Require the existing authenticated operator
+or backend control principal; accept no machine-id selector. Return
+`{"machine_id": "<local UUID>", "active_cron_runs": <nonnegative integer>}`.
+Missing identity, database failure or unsupported node role gives a typed
+non-200 refusal; never synthesize zero. This read requires no scheduler
+activation and makes no mutations. Python's temporary client uses the existing
+daemon client's bounded timeout; Rust calls the same count directly.
+Protected-run reporting cannot substitute for this count.
 
 **Granularity:** Query and lifecycle guard share the same restart lease; testing
 them together proves that reporting and enforcement cannot diverge. Release
@@ -621,6 +660,7 @@ carriers exceed the file-count inspection threshold.
 **Acceptance:**
 - 3.3.1 - GET /api/admin/cron/protected-runs returns the original fields and timeout/owner filtering. test: `crates/gdaemon/tests/cron_protection.rs::protected_runs_query_matches_python`.
 - 3.3.2 - Native lifecycle refuses protected work, waits when requested and force-interrupts only owned protected work; stale/expired leases do not wedge restart. test: `crates/gdaemon/tests/cron_protection.rs::restart_guard_honors_wait_and_force`.
+- 3.3.4 - The authenticated control query counts ordinary unprotected local active runs, excludes foreign-machine work and fails closed on unavailable identity/database; it stays native in Proxy/Compare. test: `crates/gdaemon/tests/cron_protection.rs::active_count_is_local_complete_and_fail_closed`.
 - 3.3.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 3.4 Native service contract for CLI and MCP owners [category: code] (depends: 3.3)
@@ -641,7 +681,7 @@ Targets:
 schedule shorthands, project references and JSON/text rendering. MCP owns
 restricted-caller admission and its declared schemas. Export concrete native
 functions over Jobs/Scheduler for create/get/list/update/delete/toggle/run/history,
-park/wake and ID-or-name resolution; errors remain typed. Do not add a second
+park/wake, complete local active-run count and ID-or-name resolution; errors remain typed. Do not add a second
 transport or public park/wake HTTP route merely for these in-process consumers.
 Document a name-by-name map for all ten CLI and eight MCP rows, input/default
 schemas, output/errors and ownership. Restricted agents cannot turn on shell
@@ -707,6 +747,8 @@ Targets:
 - `src/gobby/runner_init/orchestration_services.py`
 - `src/gobby/runner_cron_client.py`
 - `tests/scheduler/test_native_cron_transition.py`
+- `src/gobby/servers/routes/admin/_lease.py::*` — scope-reason: consume the complete native local active-run count for cooperative handoff
+- `tests/servers/routes/test_daemon_lease_routes.py::*` — scope-reason: preserve unprotected-run and foreign-machine handoff behavior
 - `tests/e2e/test_cron_family.py` — planned new file: prove native default, backend independence and pre-retirement rollback
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -714,15 +756,28 @@ Targets:
 
 **Research context:** RuntimeState's hub lease owns Rust services; Python's
 init_orchestration previously constructed CronExecutor and CronScheduler.
+This is the sole production activation leaf: both scheduled and manual native
+admission remain closed through P3. Resolve ownership once at the existing
+daemon restart boundary from the same startup routing selection used by the
+Python construction path. Proxy/compare allow only Python admission; Native
+allows only native admission. Drain/stop the outgoing process owner before
+starting the incoming owner. Do not change ownership on a live config refresh.
+Refuse startup if the outgoing owner's exclusion cannot be proved; no route
+claim, cleanup sweep or system registration may open admission first.
 Split unrelated remaining service construction out of
 `src/gobby/runner_init/orchestration.py` into the new
 `src/gobby/runner_init/orchestration_services.py`, keeping both below the ceiling.
 The minimal `src/gobby/runner_cron_client.py` uses the existing authenticated
-daemon HTTP client for run-now and protected-run queries. It holds no executor,
+daemon HTTP client for run-now, protected-run queries and the distinct native
+all-active local count control query from 3.3. It holds no executor,
 tick or database mutation logic. Disable Python ticking before native admission
 starts; forward necessary transitional Python manual-execution consumers to
 these native routes. This client is removed by its last front-door owner at
 S3.2, alongside the Python CLI; 4.2 removes every Python execution path.
+Wire `_active_work_blockers` to count_active_runs through its existing
+server.run_db offload. All pending/running local work blocks handoff, including
+unprotected jobs. A query refusal/timeout fails the handoff closed; never
+replace the old count with the length of the protected-runs list.
 Mode selection is the existing family routing configuration, not
 a new feature flag. A takeover failure restores the previous admission owner
 before allowing requests. Drain owned inline work before transfer; durable
@@ -737,12 +792,77 @@ pytest and test_cron_family e2e; never kill the operator's backend.
 admission-owner transfer. More than six files are wiring, tests and releases.
 
 **Acceptance:**
-- 4.1.1 - Native is the default, Python/native never both tick, in-flight runs survive transfer, and pre-deletion proxy rollback works with the same binaries. test: `tests/e2e/test_cron_family.py::test_default_flip_has_one_scheduler_owner`.
+- 4.1.1 - Native is the default only after the restart-bound transfer; Python/native never both admit scheduled or manual work, in-flight runs survive transfer, and pre-deletion proxy rollback excludes native before restoring Python with the same binaries. test: `tests/e2e/test_cron_family.py::test_default_flip_has_one_scheduler_owner`.
 - 4.1.2 - With isolated Python killed, all ten routes, four action kinds, nightly repair, system jobs and restart protection still work in hub/standalone; nodes create no jobs/runs. test: `tests/e2e/test_cron_family.py::test_cron_survives_python_backend_loss`.
 - 4.1.3 - Transition construction cannot leave Python scheduling live when native admission is enabled or native unavailable. test: `tests/scheduler/test_native_cron_transition.py::test_transition_never_has_two_admission_owners`.
+- 4.1.5 - Cooperative handoff refuses an ordinary unprotected local active run, ignores foreign-machine work and fails closed when the native count is unavailable. test: `tests/servers/routes/test_daemon_lease_routes.py::test_handoff_uses_complete_local_native_cron_count`.
 - 4.1.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.2 Delete Cron-owned Python and release the nightly cleanup boundary [category: code] (depends: 4.1)
+### 4.1a Native delivered-mailbox retention takeover [category: code] (depends: 4.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcron/src/mailbox_retention.rs`
+- `crates/gcron/src/lib.rs`
+- `crates/gcron/src/scheduler.rs`
+- `crates/gcron/tests/mailbox_retention.rs`
+- `crates/gdaemon/src/cron_runtime.rs`
+- `src/gobby/runner_maintenance/messaging.py::*` — scope-reason: delete only the mailbox adapter branch from communications cleanup
+- `tests/communications/test_cleanup.py::*` — scope-reason: preserve communications and attachment cleanup after mailbox extraction
+- `tests/communications/test_communications_maintenance.py::*` — scope-reason: stop expecting the removed mailbox adapter call
+- `tests/test_runner_maintenance_offload.py::*` — scope-reason: retain offload assertions for the remaining communications work
+- `tests/test_runner_maintenance_startup.py::*` — scope-reason: preserve startup pacing for the remaining cleanup loop
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: release pin for native mailbox retention
+
+**Research context:** Orchestrator's 2026-10-24 ruling is to port current mailbox
+retention now; #22340 remains parked and its unapproved channel-schema draft
+supplies no implementation dependency. Current
+`src/gobby/runner_maintenance/messaging.py::cleanup_comms_messages_loop` calls
+`src/gobby/storage/inter_session_messages.py::InterSessionMessageManager.delete_delivered_before`.
+That SQL deletes rows by delivered_at strictly before the UTC cutoff, in
+(delivered_at, id) order, at most 500 per cycle. Undelivered rows and rows on
+the cutoff survive. Use that existing table and predicate directly in the
+native function; add no migration, channel schema, compatibility selector or
+new configuration key. Return the deletion count for existing cleanup logging.
+
+The production call in runner_lifecycle_periodic passes no overrides: retention
+is 30 days, interval 86,400 seconds measured after a completed attempt, and
+startup uses the recurring helper's deterministic 1..300-second offset. The
+current comms-message-cleanup name resolves to 194 seconds (BLAKE2s with
+four-byte output); preserve that value without adding a hashing dependency.
+Existing fixture overrides of cutoff, interval and startup delay remain test
+inputs. There is no mailbox-specific enable switch: this hub/standalone
+maintenance duty runs even when ordinary cron.enabled is false, and never
+runs on a node or standby. It shares the native scheduler's lease/cancellation
+lifetime, consumes no job-admission slot and creates no new user job.
+After an error log it waits for the next cycle; cancellation/shutdown stops it.
+One bounded batch per cycle prevents an unbounded catch-up sweep.
+
+Wire this duty only in this leaf, using 4.1's restart-bound exclusion: the
+Python mailbox branch is absent before native maintenance starts. Delete only
+the InterSessionMessageManager import/construction, its prune call and its
+mailbox-specific log branch from cleanup_comms_messages_loop. Preserve
+communications-store pruning, attachment deletion/cleanup, their cadence and
+the unrelated zombie-message loop. #22340's later approved channel-schema work
+owns replacement with its eventual service; Cron never waits on that planning
+task and does not unpark it. Planned: isolated
+`cargo test -p gobby-cron --test mailbox_retention` and focused communications,
+maintenance offload/startup pytest, with frozen clocks and two-role fixtures.
+
+**Granularity:** The native retention callback and removal of its only Python
+caller are one maintenance-owner transfer. More than six targets are the
+required consumer tests and release carriers; communications business logic
+remains outside this leaf.
+
+**Acceptance:**
+- 4.1a.1 - Retention deletes only delivered mailbox rows strictly before the 30-day UTC cutoff, ordered and bounded at 500; undelivered, exact-cutoff and overflow rows survive. test: `crates/gcron/tests/mailbox_retention.rs::current_mailbox_retention_matches_python`.
+- 4.1a.2 - One hub/standalone owner preserves the 194-second startup delay and daily post-attempt cadence even with cron.enabled=false; node/standby, errors and shutdown preserve the stated bounds. test: `crates/gcron/tests/mailbox_retention.rs::retention_lifecycle_preserves_current_policy`.
+- 4.1a.3 - The Python mailbox branch is absent before native retention activates, while communications and attachment cleanup retain bounded offload/startup behavior. test: `tests/communications/test_communications_maintenance.py::test_native_mailbox_takeover_preserves_other_cleanup`.
+- 4.1a.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 4.2 Delete Cron-owned Python and release the nightly cleanup boundary [category: code] (depends: 4.1a)
 `kind: deliverable`
 
 Targets:
@@ -760,7 +880,6 @@ Targets:
 - `src/gobby/runner_broadcasting.py::*` — scope-reason: remove only Cron completion wiring now emitted by the native broker
 - `src/gobby/servers/_app_routes.py::*` — scope-reason: remove the deleted Cron router import/registration
 - `src/gobby/servers/routes/admin/_lifecycle.py::*` — scope-reason: native protected-run query and guard replace Python Cron references
-- `src/gobby/servers/routes/admin/_lease.py::*` — scope-reason: replace active-run counting with the native service query
 - `src/gobby/app_context.py::*` — scope-reason: replace Python scheduler type contract with the transition client for retained callers
 - `src/gobby/servers/http.py::*` — scope-reason: supply the native Cron client to retained Python registry callers
 - `src/gobby/mcp_proxy/tools/cron.py::*` — scope-reason: replace deleted scheduler type/error imports with the native client while retaining #21570's wrapper ownership
@@ -872,6 +991,11 @@ task expansion; this planning seat neither expands nor dispatches work.
 
 ## V1 Plan Changelog
 `kind: framing`
+
+2026-10-24: Accepted CRON-001/002/003: keep pre-cutover native services passive;
+port current-schema mailbox retention under the Orchestrator ruling without
+unparking #22340; preserve complete local active-run handoff counting through
+a native control query. Revalidate these repairs before renewed review.
 
 2026-10-24: Initial narrative prepared for #24952 after Orchestrator scope and
 ownership confirmation. Includes the 28-row inventory, native nightly handler
