@@ -1233,7 +1233,7 @@ its existing owner.
 Targets:
 - `crates/gskills/src/http.rs`
 - `crates/gdaemon/src/front_door/skills.rs`
-- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: register the Skills browser-admission predicate in the existing FrontDoor::handle dispatch boundary, retaining the file-wide scope used by 1.1
 - `crates/gdaemon/tests/skills_browser.rs`
 - `docs/contracts/skills-native.md`
 
