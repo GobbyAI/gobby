@@ -61,6 +61,45 @@ class ChoiceAnswer:
 
 
 @dataclass(frozen=True)
+class NoulAnswer:
+    probability: float
+
+
+@dataclass(frozen=True)
+class ScoreQuestion:
+    instructions: str
+    levels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ScoreAnswer:
+    score: float
+    probabilities: dict[str, float]
+    confidence: float
+
+
+@dataclass(frozen=True)
+class BoxImage:
+    mime_type: Literal["image/png", "image/jpeg"]
+    data_base64: str
+
+
+@dataclass(frozen=True)
+class BoxQuestion:
+    instructions: str
+    image: BoxImage
+
+
+@dataclass(frozen=True)
+class BoxAnswer:
+    top: float
+    bottom: float
+    left: float
+    right: float
+    confidence: float
+
+
+@dataclass(frozen=True)
 class DecisionResult[A]:
     answers: dict[str, A]
     backend_identity: str | None
@@ -161,6 +200,50 @@ class DecisionService:
                 int((time.monotonic() - started) * 1000),
                 outcome,
             )
+
+    async def noul(
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        propositions: Mapping[str, str],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> DecisionResult[NoulAnswer]:
+        """Return validated Noul probabilities, or raise ``DecisionsUnavailable``."""
+        raise NotImplementedError("community-label-decisions 1.1")
+
+    async def score(
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        questions: Mapping[str, ScoreQuestion],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> DecisionResult[ScoreAnswer]:
+        """Return validated Score answers, or raise ``DecisionsUnavailable``."""
+        raise NotImplementedError("community-label-decisions 1.2")
+
+    async def box(
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        questions: Mapping[str, BoxQuestion],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> DecisionResult[BoxAnswer]:
+        """Return validated Box answers, or raise ``DecisionsUnavailable``."""
+        raise NotImplementedError("community-label-decisions 1.3")
+
+    def estimate_request_tokens(
+        self,
+        state: Mapping[str, Any],
+        questions: Mapping[str, ChoiceQuestion]
+        | Mapping[str, str]
+        | Mapping[str, ScoreQuestion]
+        | Mapping[str, BoxQuestion],
+    ) -> int:
+        """Return the estimate the ``oversize`` guard compares with ``max_input_tokens``."""
+        raise NotImplementedError("community-label-decisions 1.1")
 
     async def _dial(
         self,
