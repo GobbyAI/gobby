@@ -1,0 +1,24 @@
+{
+  "id": "dec_noul0123456789ab",
+  "model": "typesafe/jev-1.14-20261014",
+  "provider": "TypeSafe",
+  "answers": {
+    "carry": {
+      "type": "noul",
+      "noul": 0.91
+    },
+    "split": {
+      "type": "noul",
+      "noul": 0.12
+    },
+    "rename": {
+      "type": "noul",
+      "noul": 0.5
+    }
+  },
+  "usage": {
+    "input_tokens": 388,
+    "output_tokens": 3,
+    "cost": 0.00011
+  }
+}

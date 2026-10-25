@@ -343,7 +343,7 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     run = LocalAgentRunManager(db).get_by_session(caller.id)
     definition = session_agent_definition(db, caller)
     if run is not None and run.task_id == task.id and definition is not None:
-        if "closing" in definition[0].task_step_writes:
+        if definition[0].name != "researcher" and "closing" in definition[0].task_step_writes:
             return True
     return is_operator_coordinator(LocalTaskManager(db), caller, roles=_ORCHESTRATOR)
 

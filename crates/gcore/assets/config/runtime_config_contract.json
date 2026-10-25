@@ -312,6 +312,106 @@
     },
     {
       "activation": "live",
+      "default": null,
+      "description": "Decision backend whose evaluation justifies enforce mode.",
+      "key": "ai.decisions.community_label_carry.evaluated_backend",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision model whose evaluation justifies enforce mode.",
+      "key": "ai.decisions.community_label_carry.evaluated_model",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.5,
+      "description": "Minimum decision probability to keep a candidate.",
+      "key": "ai.decisions.community_label_carry.min_probability",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "off",
+      "description": "off ignores the decision, shadow records it, enforce acts on it.",
+      "key": "ai.decisions.community_label_carry.mode",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision backend whose evaluation justifies enforce mode.",
+      "key": "ai.decisions.community_label_sufficiency.evaluated_backend",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Decision model whose evaluation justifies enforce mode.",
+      "key": "ai.decisions.community_label_sufficiency.evaluated_model",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.5,
+      "description": "Minimum Score position (score / (levels - 1)) to accept a name.",
+      "key": "ai.decisions.community_label_sufficiency.min_score",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "off",
+      "description": "off ignores the decision, shadow records it, enforce acts on it.",
+      "key": "ai.decisions.community_label_sufficiency.mode",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 60,
       "description": "Seconds the capability stays unavailable after a failed request.",
       "key": "ai.decisions.failure_cooldown_seconds",

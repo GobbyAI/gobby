@@ -27,6 +27,12 @@ fn fixture(text: &str) -> Result<Value> {
     serde_json::from_str(text).context("fixture is valid JSON")
 }
 
+/// The launch probe precedes the per-call response sequence.
+fn start_daemon(mut responses: Vec<Response>) -> Result<StubDaemon> {
+    responses.insert(0, Response::json(200, json!({"status": "healthy"})));
+    StubDaemon::start(responses)
+}
+
 fn tasks_listing() -> Value {
     json!({
         "success": true,
@@ -198,21 +204,24 @@ fn closed_url() -> Result<String> {
 }
 
 #[test]
-fn initialize_does_no_io() -> Result<()> {
+fn initialize_does_not_wait_for_startup_probe() -> Result<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     listener.set_nonblocking(true)?;
     let url = format!("http://{}", listener.local_addr()?);
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&url, home.path())?;
 
+    let started = Instant::now();
     let result = gmcp.initialize()?;
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "initialize waited on the unanswered 2 s startup probe"
+    );
 
     let expected = fixture(WIRE_CASES)?["initialize"].clone();
     assert_eq!(canonical(result), canonical(expected));
-    match listener.accept() {
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
-        other => bail!("initialize touched the daemon listener: {other:?}"),
-    }
+    // No health response is served: initialize must finish while startup is still waiting.
+    Ok(())
 }
 
 #[test]
@@ -231,13 +240,14 @@ fn tools_list_matches_fixture() -> Result<()> {
 fn tools_forward_like_python_wrapper() -> Result<()> {
     let wire = fixture(WIRE_CASES)?;
     for case in wire["forwarded"].as_array().context("forwarded cases")? {
-        let daemon = StubDaemon::start(
+        let daemon = start_daemon(
             (0..8)
                 .map(|_| Response::json(200, json!({"success": true})))
                 .collect(),
         )?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
         gmcp.initialize()?;
 
         gmcp.call_tool(
@@ -248,7 +258,9 @@ fn tools_forward_like_python_wrapper() -> Result<()> {
         let requests: Vec<_> = daemon
             .requests()
             .into_iter()
-            .filter(|request| !request.path.starts_with("/api/mcp/bridge/ready"))
+            .filter(|request| {
+                !request.path.starts_with("/api/mcp/bridge/ready") && request.path != "/api/health"
+            })
             .collect();
         let header = WRAPPER_CONTRACT
             .protocol_version_header
@@ -295,12 +307,13 @@ fn wire_results_match_fixture() -> Result<()> {
     let wire = fixture(WIRE_CASES)?;
     let calls = wire["calls"].as_object().context("calls")?;
 
-    let daemon = StubDaemon::start(vec![
+    let daemon = start_daemon(vec![
         Response::json(200, json!({"success": true, "servers": []})),
         Response::json(200, tasks_listing()),
     ])?;
     let home = tempfile::tempdir()?;
     let mut reachable = Gmcp::spawn(&daemon.url(), home.path())?;
+    daemon.wait_for_requests(1);
     reachable.initialize()?;
     let listed = reachable.call_tool("list_tools", json!({"server_name": "gobby-tasks"}))?;
     assert_eq!(
@@ -331,13 +344,14 @@ fn wire_results_match_fixture() -> Result<()> {
 
 #[test]
 fn result_type_is_complete_on_list_and_call_envelopes() -> Result<()> {
-    let daemon = StubDaemon::start(
+    let daemon = start_daemon(
         (0..8)
             .map(|_| Response::json(200, tasks_listing()))
             .collect(),
     )?;
     let home = tempfile::tempdir()?;
     let mut reachable = Gmcp::spawn(&daemon.url(), home.path())?;
+    daemon.wait_for_requests(1);
     reachable.initialize()?;
     let listed = reachable.call("tools/list", json!({}))?;
     assert_eq!(listed["resultType"], "complete");
@@ -364,16 +378,20 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
         .map(|delay| delay.as_f64().context("delay seconds"))
         .collect::<Result<_>>()?;
     let conflict = json!({"detail": {"success": false, "error_code": "SESSION_REQUIRED"}});
-    let daemon = StubDaemon::start(vec![
+    let daemon = start_daemon(vec![
         Response::json(409, conflict.clone()),
         Response::json(409, conflict),
         Response::json(200, json!({"success": true})),
     ])?;
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+    daemon.wait_for_requests(1);
     gmcp.initialize()?;
     assert!(
-        daemon.requests().is_empty(),
+        daemon
+            .requests()
+            .iter()
+            .all(|request| request.path == "/api/health"),
         "readiness waits for the first tools/list"
     );
 
@@ -381,7 +399,7 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
     let started = Instant::now();
     let mut arrivals = Vec::new();
     for count in 1..=3 {
-        daemon.wait_for_requests(count);
+        daemon.wait_for_requests(count + 1);
         arrivals.push(started.elapsed());
     }
     let tolerance = Duration::from_millis(50);
@@ -393,9 +411,10 @@ fn bridge_ready_follows_wrapper_schedule() -> Result<()> {
 #[test]
 fn bridge_ready_posts_once_across_tools_lists() -> Result<()> {
     let ok = || Response::json(200, json!({"success": true}));
-    let daemon = StubDaemon::start((0..4).map(|_| ok()).collect())?;
+    let daemon = start_daemon((0..4).map(|_| ok()).collect())?;
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+    daemon.wait_for_requests(1);
     gmcp.initialize()?;
 
     for _ in 0..3 {
@@ -417,9 +436,10 @@ fn session_ids_stay_one_path_segment() -> Result<()> {
     let ok = || Response::json(200, json!({"success": true}));
 
     {
-        let daemon = StubDaemon::start(vec![ok(), ok()])?;
+        let daemon = start_daemon(vec![ok(), ok()])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
         gmcp.initialize()?;
         let arguments = json!({"session_id": "sess/1", "name": "x", "value": 1});
         gmcp.call_tool("set_variable", arguments.clone())?;
@@ -434,9 +454,10 @@ fn session_ids_stay_one_path_segment() -> Result<()> {
     }
 
     {
-        let daemon = StubDaemon::start((0..6).map(|_| ok()).collect())?;
+        let daemon = start_daemon((0..6).map(|_| ok()).collect())?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
         gmcp.initialize()?;
         for (tool, session_id) in [
             ("set_variable", ""),
@@ -546,9 +567,10 @@ fn shaping_case_matches_fixture(name: &str) -> Result<()> {
         .iter()
         .map(|body| Response::json(200, body.clone()))
         .collect();
-    let daemon = StubDaemon::start(responses)?;
+    let daemon = start_daemon(responses)?;
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+    daemon.wait_for_requests(1);
     gmcp.initialize()?;
     let result = gmcp.call_tool(
         case["tool"].as_str().context("tool name")?,
@@ -558,7 +580,9 @@ fn shaping_case_matches_fixture(name: &str) -> Result<()> {
     let observed: Vec<Value> = daemon
         .requests()
         .into_iter()
-        .filter(|request| !request.path.starts_with("/api/mcp/bridge/ready"))
+        .filter(|request| {
+            !request.path.starts_with("/api/mcp/bridge/ready") && request.path != "/api/health"
+        })
         .map(|request| {
             let (path, query) = request.path.split_once('?').unwrap_or((&request.path, ""));
             let query: BTreeMap<&str, &str> = query
@@ -626,7 +650,9 @@ fn request_targets(daemon: &StubDaemon) -> Vec<String> {
     daemon
         .requests()
         .into_iter()
-        .filter(|request| !request.path.starts_with("/api/mcp/bridge/ready"))
+        .filter(|request| {
+            !request.path.starts_with("/api/mcp/bridge/ready") && request.path != "/api/health"
+        })
         .map(|request| {
             let path = request
                 .path
@@ -642,9 +668,10 @@ fn server_names_stay_one_path_segment() -> Result<()> {
     let ok = || Response::json(200, json!({"success": true, "tools": []}));
 
     {
-        let daemon = StubDaemon::start(vec![ok(), ok(), ok()])?;
+        let daemon = start_daemon(vec![ok(), ok(), ok()])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
         gmcp.initialize()?;
         gmcp.call_tool("remove_mcp_server", json!({"name": "../../projects/p1"}))?;
         gmcp.call_tool("list_tools", json!({"server_name": "a/../b"}))?;
@@ -659,9 +686,10 @@ fn server_names_stay_one_path_segment() -> Result<()> {
     }
 
     {
-        let daemon = StubDaemon::start((0..5).map(|_| ok()).collect())?;
+        let daemon = start_daemon((0..5).map(|_| ok()).collect())?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
         gmcp.initialize()?;
         for (tool, arguments) in [
             ("remove_mcp_server", json!({"name": ".."})),
@@ -682,7 +710,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
     }
 
     {
-        let daemon = StubDaemon::start(vec![
+        let daemon = start_daemon(vec![
             Response::json(
                 200,
                 json!({
@@ -695,6 +723,7 @@ fn server_names_stay_one_path_segment() -> Result<()> {
         ])?;
         let home = tempfile::tempdir()?;
         let mut gmcp = Gmcp::spawn(&daemon.url(), home.path())?;
+        daemon.wait_for_requests(1);
         gmcp.initialize()?;
         gmcp.call_tool("list_tools", json!({"server_name": ""}))?;
         assert_eq!(

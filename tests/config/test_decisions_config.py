@@ -30,7 +30,13 @@ REMOVED_COMMUNITY_LABEL_KEYS = (
     "decisions_min_confidence",
     "decisions_timeout_seconds",
 )
-CONSUMERS = ("community_label", "tool_rerank", "found_work")
+CONSUMERS = (
+    "community_label",
+    "tool_rerank",
+    "found_work",
+    "community_label_carry",
+    "community_label_sufficiency",
+)
 
 
 def _decisions(**values: Any) -> DecisionsConfig:
@@ -90,6 +96,8 @@ def test_decisions_config_invariants() -> None:
         ("tool_rerank", "min_probability"),
         ("found_work", "accept_below"),
         ("found_work", "accept_above"),
+        ("community_label_carry", "min_probability"),
+        ("community_label_sufficiency", "min_score"),
     ):
         for value in (-0.01, 1.01):
             with pytest.raises(ValidationError, match=field):
@@ -97,7 +105,31 @@ def test_decisions_config_invariants() -> None:
 
     loaded = AIConfig.model_validate({})
     assert loaded.decisions.api_base is None
-    assert [getattr(loaded.decisions, consumer).mode for consumer in CONSUMERS] == ["off"] * 3
+    assert [getattr(loaded.decisions, consumer).mode for consumer in CONSUMERS] == ["off"] * 5
+    assert loaded.decisions.model_dump()["community_label_carry"] == {
+        "mode": "off",
+        "min_probability": 0.5,
+        "evaluated_model": None,
+        "evaluated_backend": None,
+    }
+
+
+def test_score_consumer_bounds_min_score() -> None:
+    assert DecisionsConfig().model_dump()["community_label_sufficiency"] == {
+        "mode": "off",
+        "min_score": 0.5,
+        "evaluated_model": None,
+        "evaluated_backend": None,
+    }
+    for accepted in (0.0, 1.0):
+        dumped = _decisions(community_label_sufficiency={"min_score": accepted}).model_dump()
+        assert dumped["community_label_sufficiency"]["min_score"] == accepted
+    for rejected in (-0.01, 1.01):
+        with pytest.raises(ValidationError) as excinfo:
+            _decisions(community_label_sufficiency={"min_score": rejected})
+        assert [error["loc"] for error in excinfo.value.errors()] == [
+            ("community_label_sufficiency", "min_score")
+        ]
 
 
 def test_community_label_decision_keys_removed() -> None:

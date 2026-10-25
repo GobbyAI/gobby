@@ -195,6 +195,14 @@
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/nodes.py::create_nodes_router.report` admits node run reports through the hub inbox with byte budgets; blocked on #24151 hub half to port node machine ownership checks and report admission to Rust."
   },
+  "HTTP POST /api/nodes/runs/code-index-warning": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.code_index_preflight_warning` records node launch code-index warnings; blocked on #24151 hub half to port node machine ownership checks and launch outcome handling to Rust."
+  },
+  "HTTP POST /api/nodes/runs/prompt-delivery-failure": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.prompt_delivery_failure` records node launch prompt-delivery failures; blocked on #24151 hub half to port node machine ownership checks and launch outcome handling to Rust."
+  },
   "HTTP POST /api/webhooks/test": {
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/mcp/webhooks.py:71` (`create_webhooks_router::test_webhook`); blocked on #21569 Hook ingress / #24151 hub half to port hook-extension webhook configuration and test dispatch."

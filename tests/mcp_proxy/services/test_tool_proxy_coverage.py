@@ -735,6 +735,26 @@ class TestCallToolFallback:
         assert matching
         assert all(record.levelname == "DEBUG" for record in matching)
 
+    @pytest.mark.asyncio
+    async def test_messageless_exception_reply_names_its_type(
+        self, mock_mcp_manager: MagicMock, mock_internal_manager: MagicMock
+    ) -> None:
+        """A tool that raises without a message still returns a nonempty error naming the cause."""
+        _attach_named_server(mock_mcp_manager, "linear")
+        mock_mcp_manager.has_server.return_value = True
+        mock_mcp_manager.call_tool = AsyncMock(side_effect=LookupError())
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+            fallback_resolver=None,
+        )
+
+        result = await proxy.call_tool("linear", "update_issue", {})
+
+        assert result["success"] is False
+        assert "LookupError" in result["error"]
+
 
 class TestFindToolServer:
     """Tests for find_tool_server method (lines 250-278)."""

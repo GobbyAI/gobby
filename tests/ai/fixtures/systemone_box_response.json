@@ -1,0 +1,28 @@
+{
+  "model": "jev-1.14.0",
+  "answers": {
+    "logo": {
+      "type": "box",
+      "box": {
+        "top": 0.1,
+        "bottom": 0.4,
+        "left": 0.2,
+        "right": 0.6
+      },
+      "confidence": 0.95
+    },
+    "button": {
+      "type": "box",
+      "box": {
+        "top": 0.5,
+        "bottom": 0.9,
+        "left": 0.05,
+        "right": 0.3
+      },
+      "confidence": 0.8
+    }
+  },
+  "usage": {
+    "input_tokens": 640
+  }
+}

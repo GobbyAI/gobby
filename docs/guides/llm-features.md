@@ -170,6 +170,24 @@ the same `api_base` shape. There is no `vllm-metal` protocol value.
 | `gobby-tasks.validation` | `gobby-tasks.validation` | `feature_mid` | `LLMService.call_json_feature(config.gobby_tasks.validation, ...)` | `tasks.validation`: task completion validation |
 | `chat` | `chat` | `feature_high` | Text-generation service receives `config.chat` candidates | Chat session generation defaults |
 | `code_index.symbol_summary.candidates` | `code_index.symbol_summary` | `feature_low` | `TextGenerationService.generate(...)` with `config.code_index.symbol_summary.candidates` | `code_index.symbol_summary`: symbol summaries |
+| `code_index.community_label.candidates` | `code_index.community_label` | `feature_low` | `TextGenerationService.generate_json(...)` with `config.code_index.community_label.candidates` | `code_index.community_label`: community names, with optional decision checks |
+
+Community names pass through three daemon decision checks in order: Noul carry
+(`ai.decisions.community_label_carry`) can preserve a stale model name; Score sufficiency
+(`ai.decisions.community_label_sufficiency`) can accept a deterministic name before
+generation; Choice (`ai.decisions.community_label`) gates a generated name against the
+deterministic candidates. Each defaults to mode `off` and a floor of `0.5`
+(`min_probability`, `min_score`, and `min_confidence`, respectively). Score uses position
+`score / (levels - 1)`, separately from Choice confidence. Enforce acts only when
+`evaluated_model` matches the configured decision model and `evaluated_backend` matches
+the response's backend identity; a mismatch runs as shadow. The checks emit
+`code_index.community_label.carry`, `code_index.community_label.sufficiency`, and
+`code_index.community_label.outcome`, with one `code_index.community_label.batch` summary.
+These checks use `DecisionService` and the `ai.decisions` endpoint configuration; the
+gate is neither an `AICapability` nor a text-generation profile route. The live study
+and ship decision are pending; their report belongs at
+`docs/evidence/community-labels-2026-09/label-quality.md`. `CommunityLabeler` in
+`src/gobby/code_index/community_labeler.py` owns the execution path.
 
 ## Outside Feature Helpers
 
@@ -190,4 +208,4 @@ endpoints the binding exists only when probed or advertised `input_modalities` i
 - [system-requirements.md](system-requirements.md) — local generation runtime table
 - [configuration.md](configuration.md) — daemon and project configuration
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-24_
