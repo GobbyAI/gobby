@@ -377,6 +377,68 @@ async def test_hand_off_keeps_the_closer_and_the_reviewer_eligible(world: TeamWo
     assert tasks.get_task(task_id).claimed_by_session_id == team.sol
 
 
+@dataclass(frozen=True)
+class SpikeTeam:
+    task: Task
+    manager: str
+    developer: str
+    writer: str
+    researcher: str
+
+
+async def spike_team(world: TeamWorld) -> SpikeTeam:
+    """A research spike team whose developer holds the claim, with a bound researcher."""
+    db, project_id = world.case.db, world.case.project_id
+    task = world.case.task("Research the debt")
+    db.execute(
+        "UPDATE tasks SET task_type = 'research_spike', category = 'research' WHERE id = %s",
+        (task.id,),
+    )
+    runbook = world.child(task)
+    await world.admit(runbook, task)
+    manager = seat(world, runbook, "dev-manager", manages=task)
+    developer, writer = (seat(world, runbook, role) for role in ("developer", "test-writer"))
+    researcher = world.case.session("researcher", parent=runbook.id)
+    grant_step_writes(db, researcher, project_id, "researcher", ("implementation", "closing"))
+    LocalAgentRunManager(db).create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt="Research the spike.",
+        agent_name="researcher",
+        child_session_id=researcher,
+        task_id=task.id,
+    )
+    tasks = LocalTaskManager(db)
+    tasks.claim_task(task.id, developer, force=True)
+    return SpikeTeam(tasks.get_task(task.id), manager, developer, writer, researcher)
+
+
+@pytest.mark.asyncio
+async def test_bound_researcher_is_not_the_dev_manager(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    team = await spike_team(world)
+
+    refused = await hand_off(
+        create_task_registry(tasks), team.researcher, team.task, team.developer, team.writer
+    )
+
+    assert refused.get("error_code") == "team_manager_required", refused
+    assert tasks.get_task(team.task.id).claimed_by_session_id == team.developer
+
+
+@pytest.mark.asyncio
+async def test_researcher_closing_grant_still_receives_its_spike_claim(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    team = await spike_team(world)
+
+    moved = await hand_off(
+        create_task_registry(tasks), team.manager, team.task, team.developer, team.researcher
+    )
+
+    assert moved.get("success") is True, moved
+    assert tasks.get_task(team.task.id).claimed_by_session_id == team.researcher
+
+
 @pytest.mark.asyncio
 async def test_hand_off_dirty_check_runs_off_the_event_loop(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch

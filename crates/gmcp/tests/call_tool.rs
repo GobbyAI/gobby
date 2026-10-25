@@ -132,9 +132,16 @@ fn ordinary_call_completes_during_wait() -> Result<()> {
     let server = thread::spawn(move || -> Result<()> {
         let mut pending = None;
         // The first wrapper call captures the inventory; later calls reuse it.
-        for _ in 0..3 {
+        // Startup health is independent of these three calls and may arrive between them.
+        let mut remaining = 3;
+        while remaining > 0 {
             let (mut stream, _) = listener.accept()?;
             let (path, headers, body) = read_http(&mut stream)?;
+            if path == "/api/health" {
+                respond(&mut stream, json!({"status": "healthy"}))?;
+                continue;
+            }
+            remaining -= 1;
             requests.send((path.clone(), headers, body))?;
             if path == "/api/mcp/tools/call" {
                 pending = Some(stream);
