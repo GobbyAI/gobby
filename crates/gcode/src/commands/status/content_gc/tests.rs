@@ -902,6 +902,106 @@ mod serial_db {
         assert_eq!(content_row_count(&mut conn, &pinned_id), 0);
     }
 
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn source_pin_visibility_preserves_write_scope() {
+        let (mut owner, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-pin-visibility");
+        let unrelated_id = unique_test_project_id("gcode-gc-pin-unrelated");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let _unrelated_cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: unrelated_id.clone(),
+        };
+        let root = git_init_root();
+        let unrelated_root = git_init_root();
+        seed_project(&mut owner, &project_id, root.path());
+        seed_project(&mut owner, &unrelated_id, unrelated_root.path());
+        seed_primary_checkout(&mut owner, &project_id, root.path());
+        seed_content_version(&mut owner, &project_id, "src/lib.rs", "pinned", 60, true);
+        seed_content_version(
+            &mut owner,
+            &unrelated_id,
+            "src/lib.rs",
+            "unrelated",
+            60,
+            true,
+        );
+        let overlay = uuid::Uuid::new_v4().to_string();
+        let remote_overlay = uuid::Uuid::new_v4().to_string();
+        let unrelated_overlay = uuid::Uuid::new_v4().to_string();
+        seed_overlay_pin(&mut owner, &overlay, &project_id, "src/lib.rs", "pinned");
+        seed_overlay_pin(
+            &mut owner,
+            &remote_overlay,
+            &project_id,
+            "src/lib.rs",
+            "pinned",
+        );
+        seed_overlay_pin(
+            &mut owner,
+            &unrelated_overlay,
+            &unrelated_id,
+            "src/lib.rs",
+            "unrelated",
+        );
+        owner
+            .execute(
+                "UPDATE code_overlay_pins SET machine_id = $1 WHERE overlay_project_id = $2",
+                &[
+                    &uuid::Uuid::new_v4(),
+                    &db::id_param(&remote_overlay).unwrap(),
+                ],
+            )
+            .expect("move pin to another machine");
+        let principal = ScopedPrincipal::issue(&mut owner, &database_url, &project_id);
+        let mut scoped = db::connect_readwrite(&principal.database_url).expect("scoped connection");
+        let project_uuid = db::id_param(&project_id).unwrap();
+        let visible: i64 = scoped
+            .query_one(
+                "SELECT count(*) FROM code_overlay_pins WHERE source_project_id = $1",
+                &[&project_uuid],
+            )
+            .expect("read source pins")
+            .get(0);
+        assert_eq!(visible, 2, "source retention sees pins on every machine");
+        let unrelated: i64 = scoped
+            .query_one(
+                "SELECT count(*) FROM code_overlay_pins WHERE source_project_id = $1",
+                &[&db::id_param(&unrelated_id).unwrap()],
+            )
+            .expect("query unrelated pins")
+            .get(0);
+        assert_eq!(unrelated, 0, "unrelated source pins remain hidden");
+        assert_eq!(
+            scoped
+                .execute(
+                    "UPDATE code_overlay_pins SET git_blob_id = 'changed' WHERE source_project_id = $1",
+                    &[&project_uuid],
+                )
+                .expect("attempt source-side update"),
+            0,
+            "source visibility grants no overlay update authority",
+        );
+        assert_eq!(
+            scoped
+                .execute(
+                    "DELETE FROM code_overlay_pins WHERE source_project_id = $1",
+                    &[&project_uuid]
+                )
+                .expect("attempt source-side deletion"),
+            0,
+            "source visibility grants no overlay deletion authority",
+        );
+    }
+
     fn seed_overlay_pin(
         conn: &mut postgres::Client,
         overlay_project_id: &str,
