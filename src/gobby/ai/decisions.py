@@ -149,6 +149,8 @@ def _fingerprint(config: DecisionsConfig) -> tuple[object, ...]:
         config.timeout_seconds,
         config.max_input_tokens,
         config.resolved_backend_max_state_tokens,
+        config.resolved_backend_max_question_tokens,
+        config.long_context,
         config.failure_cooldown_seconds,
     )
 
@@ -194,10 +196,7 @@ class DecisionService:
             _check_request(questions, config.wire_api)
             body = _request_body(model, config.wire_api, state, questions)
             estimated = _estimate_body_tokens(body)
-            if estimated > config.max_input_tokens:
-                raise DecisionsUnavailable(
-                    "oversize", f"~{estimated} tokens exceeds {config.max_input_tokens}"
-                )
+            _check_request_tokens(body, config, estimated)
             if _now() < self._cooldown_until:
                 raise DecisionsUnavailable("cooldown", "a recent decision failure is cooling down")
             result = await self._dial(base, model, questions, body, timeout_seconds, parse_answer)
@@ -268,6 +267,22 @@ class DecisionService:
             _request_body(self._config.model or "", self._config.wire_api, state, questions)
         )
 
+    def request_fits(
+        self,
+        state: Mapping[str, Any],
+        questions: Mapping[str, ChoiceQuestion]
+        | Mapping[str, str]
+        | Mapping[str, ScoreQuestion]
+        | Mapping[str, BoxQuestion],
+    ) -> bool:
+        """Apply the same request and branch budgets used before dialing."""
+        body = _request_body(self._config.model or "", self._config.wire_api, state, questions)
+        try:
+            _check_request_tokens(body, self._config, _estimate_body_tokens(body))
+        except DecisionsUnavailable:
+            return False
+        return True
+
     async def _dial[Q, A](
         self,
         base: str,
@@ -287,6 +302,8 @@ class DecisionService:
         deadline = loop.time() + budget
         url = _endpoint(config.wire_api, base, model)
         headers = {"authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+        if config.long_context:
+            headers["TypeSafe-Danger-Zone-Long-Context"] = "true"
         if config.wire_api == "systemone" and "assets" in body:
             headers["TypeSafe-Danger-Zone-Images"] = "true"
         card: asyncio.Task[str | None] | None = None
@@ -415,6 +432,19 @@ def _request_body(
     if wire_api == "openrouter-decisions":
         body["provider"] = {"zdr": True, "data_collection": "deny"}
     return body
+
+
+def _check_request_tokens(body: dict[str, Any], config: DecisionsConfig, estimated: int) -> None:
+    if estimated > config.max_input_tokens:
+        raise DecisionsUnavailable(
+            "oversize", f"~{estimated} tokens exceeds {config.max_input_tokens}"
+        )
+    limit = config.resolved_backend_max_question_tokens
+    if limit is not None and estimated > limit:
+        for key, question in body["questions"].items():
+            branch = {**body, "questions": {key: question}}
+            if _estimate_body_tokens(branch) > limit:
+                raise DecisionsUnavailable("oversize", f"question {key} exceeds {limit} tokens")
 
 
 def _estimate_body_tokens(body: dict[str, Any]) -> int:

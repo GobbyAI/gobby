@@ -45,6 +45,10 @@ SEND_MESSAGE_TARGETS = {
     "release-manager": {"parent", "session", "project", "global"},
     "triage": {"parent", "session"},
 }
+# The Dev Manager spawns the seats its epic team dispatches; spawn admission bounds each spawn.
+SPAWNABLE_AGENTS = {
+    "dev-manager": ["developer", "code-reviewer", "docs-reviewer", "research-reviewer"],
+}
 # Seats with a procedure reference; the pane-placing seats also carry gclient's.
 PROCEDURE_SEATS = ("orchestrator", "dev-manager", "triage")
 PANE_SEATS = ("assistant", "orchestrator", "dev-manager")
@@ -160,7 +164,7 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
     assert body.step_workflow is None
     assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
     assert set(body.send_message_targets) == SEND_MESSAGE_TARGETS[name]
-    assert body.spawnable_agents == []
+    assert body.spawnable_agents == SPAWNABLE_AGENTS.get(name, [])
     for section in _baseline_sections():
         assert section in prompt
     assert "gobby-agents:send_message" in prompt

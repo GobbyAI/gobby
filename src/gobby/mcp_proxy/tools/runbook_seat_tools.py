@@ -107,6 +107,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         team_id: str | None = None,
         fresh_reviewer: bool = False,
         exclude_reviewers: str | None = None,
+        reviewer_agent: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -125,6 +126,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 exclude_reviewers=[
                     ref.strip() for ref in (exclude_reviewers or "").split(",") if ref.strip()
                 ],
+                reviewer_agent=reviewer_agent,
             )
         except TeamAdmissionRefused as exc:
             return {"success": False, "error": str(exc), "error_code": exc.code}

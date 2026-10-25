@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+import re
+import shlex
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
@@ -297,6 +302,108 @@ def network_override_allowed(session_manager: SessionManager | None, caller_ref:
     return agent_name is None or agent_name in _NETWORK_OVERRIDE_AGENTS
 
 
+_SHELL_OPERATORS = re.compile(r"[<>|;&()]")
+
+
+def _shell_path_words(command: Any) -> list[str]:
+    """Shell words that look like paths, with redirections split off and env vars expanded."""
+    if not isinstance(command, str):
+        return []
+    words = _SHELL_OPERATORS.sub(" ", command)
+    try:
+        tokens = shlex.split(words)
+    except ValueError:
+        tokens = words.split()
+    expanded = (os.path.expandvars(token) for token in tokens)
+    return [token for token in expanded if "/" in token or token.startswith("~")]
+
+
+def _workspace_read_targets(event_data: Mapping[str, Any] | None, tool_input: Any) -> list[Path]:
+    """Resolved paths a tool reads: path-like Bash words, or the path fields of a file tool."""
+    if not isinstance(tool_input, Mapping):
+        return []
+    data = event_data or {}
+    base = current_tool_cwd(data) or current_project_root(data)
+    raws: list[Any]
+    if data.get("tool_name") == "Bash":
+        raws = list(_shell_path_words(tool_input.get("command")))
+    else:
+        raws = [tool_input.get("file_path"), tool_input.get("path")]
+        if data.get("tool_name") == "Glob":
+            raws.append(tool_input.get("pattern"))
+    return [path for raw in raws if (path := resolve_tool_path(raw, base)) is not None]
+
+
+def _variable_folder(value: Any) -> Path | None:
+    return Path(value) if isinstance(value, str) and value else None
+
+
+def _workspace_path_readable(
+    target: Path,
+    session_manager: SessionManager | None,
+    caller_id: str | None,
+    folders: tuple[Path | None, Path | None, Path | None],
+) -> bool:
+    """Whether a caller may read one path under the workspace root.
+
+    ``folders`` is (own session folder, epic folder, anchor). The anchor is the project folder
+    holding the definition folders; its README is shared, and a predecessor folder of the same
+    definition is readable only for a persistent caller (see ``predecessor_folder_readable``).
+    """
+    from gobby.agents.agent_workspaces import predecessor_folder_readable
+
+    own, epic, anchor = folders
+    if any(folder is not None and target.is_relative_to(folder) for folder in (own, epic)):
+        return True
+    if anchor is None or not target.is_relative_to(anchor):
+        return False
+    if target == anchor / "README.md":
+        return True
+    relative = target.relative_to(anchor)
+    if len(relative.parts) < 2 or not caller_id or session_manager is None:
+        return False
+    folder = anchor / relative.parts[0] / relative.parts[1]
+    return predecessor_folder_readable(session_manager, caller_id, str(folder))
+
+
+def agent_workspace_read_violation(
+    session_manager: SessionManager | None,
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+    variables: Mapping[str, Any],
+    caller_id: str | None,
+) -> bool:
+    """True when a tool reads an agent workspace folder the caller may not see.
+
+    Only paths under the workspace root are judged. A seat reads its own folder, its epic
+    folder and the project README; a caller with no bound folder reads none of the root.
+    """
+    from gobby.agents.agent_workspaces import (
+        WORKSPACE_DIR_VARIABLE,
+        WORKSPACE_EPIC_DIR_VARIABLE,
+        workspaces_root,
+    )
+
+    root = resolve_tool_path(str(workspaces_root()), None)
+    if root is None:
+        return False
+    targets = [
+        target
+        for target in _workspace_read_targets(event_data, tool_input)
+        if target.is_relative_to(root)
+    ]
+    if not targets:
+        return False
+    own = _variable_folder(variables.get(WORKSPACE_DIR_VARIABLE))
+    epic = _variable_folder(variables.get(WORKSPACE_EPIC_DIR_VARIABLE))
+    bound = own or epic
+    anchor = bound.parents[1] if bound is not None else None
+    folders = (own, epic, anchor)
+    return not all(
+        _workspace_path_readable(target, session_manager, caller_id, folders) for target in targets
+    )
+
+
 def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
@@ -324,5 +431,10 @@ def session_condition_helpers(
         ),
         "network_override_allowed": lambda caller_ref: network_override_allowed(
             session_manager, caller_ref
+        ),
+        "agent_workspace_read_violation": lambda event_data, tool_input, variables, caller_id: (
+            agent_workspace_read_violation(
+                session_manager, event_data, tool_input, variables, caller_id
+            )
         ),
     }

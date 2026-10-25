@@ -177,6 +177,19 @@
           "default": null,
           "description": "Decision endpoint API key or $secret:NAME reference."
         },
+        "ai.decisions.backend_max_question_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "State plus one question maximum; OpenRouter defaults to 32000 tokens."
+        },
         "ai.decisions.backend_max_state_tokens": {
           "type": [
             "integer",
@@ -188,7 +201,7 @@
           "activation": "live",
           "machineExport": false,
           "default": null,
-          "description": "Backend state-token maximum; unset uses the wire's documented default."
+          "description": "Backend whole-request token maximum; unset uses the wire's default."
         },
         "ai.decisions.community_label.evaluated_backend": {
           "type": [
@@ -407,6 +420,16 @@
           "default": null,
           "description": "How the decision model identity is proven; model_card needs systemone."
         },
+        "ai.decisions.long_context": {
+          "type": "boolean",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": false,
+          "description": "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED."
+        },
         "ai.decisions.max_input_tokens": {
           "type": "integer",
           "namespace": "ai.decisions",
@@ -415,7 +438,7 @@
           "activation": "live",
           "machineExport": false,
           "default": 8192,
-          "description": "Request input ceiling; below the backend's maximum state tokens."
+          "description": "Application request input budget; below the backend's whole-request maximum."
         },
         "ai.decisions.model": {
           "type": [

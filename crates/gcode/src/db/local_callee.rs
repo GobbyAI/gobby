@@ -79,7 +79,8 @@ pub fn resolve_local_type_member_symbol_id(
     let project_id = id_param(project_id)?;
     let qualified_name = format!("{qualifier}::{name}");
     let sql = format!(
-        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_SYMBOL_FROM}
+          AND s.name = $4
           AND s.file_path = ANY($3)
           AND s.qualified_name = $5
           AND s.kind = 'method'
@@ -103,35 +104,64 @@ pub fn resolve_local_type_member_symbol_id(
 pub fn resolve_default_import_symbol_id(
     conn: &mut impl GenericClient,
     project_id: &str,
+    machine_id: &str,
     target_files: &[String],
 ) -> anyhow::Result<Option<String>> {
     if target_files.is_empty() {
         return Ok(None);
     }
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let target_kinds = ["function", "class", "type"];
+    let sql = format!(
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_SYMBOL_FROM}
+          AND s.file_path = ANY($3)
+          AND s.parent_symbol_id IS NULL
+          AND s.kind = ANY($4)
+         ORDER BY s.file_path, s.byte_start"
+    );
     let rows = conn.query(
-        "SELECT id, kind, parent_symbol_id
-         FROM code_symbols
-         WHERE project_id = $1 AND file_path = ANY($2)
-           AND parent_symbol_id IS NULL
-           AND kind = ANY($3)
-         ORDER BY file_path, byte_start",
-        &[&project_id, &target_files, &target_kinds.as_slice()],
+        &sql,
+        &[
+            &machine_id,
+            &project_id,
+            &target_files,
+            &target_kinds.as_slice(),
+        ],
     )?;
     Ok(select_default_import_candidate_id(&candidates_from_rows(
         &rows,
     )?))
 }
 
-const LOCAL_CALLEE_FROM: &str = "
-         FROM code_symbols s
-         JOIN code_indexed_file_states cifs
-           ON cifs.project_id = s.project_id
-          AND cifs.file_path = s.file_path
-          AND cifs.content_hash = s.file_content_hash
-          AND cifs.machine_id = $1
-         WHERE s.project_id = $2 AND s.name = $4";
+// The overlay's effective view: its own active symbols plus symbols of the
+// content its pins serve for paths it does not shadow. A pinned provider that
+// the overlay never re-indexed resolves here; the parent's moving rows never do.
+const LOCAL_SYMBOL_FROM: &str = "
+         FROM (
+            SELECT s.*
+            FROM code_symbols s
+            JOIN code_indexed_file_states cifs
+              ON cifs.project_id = s.project_id
+             AND cifs.file_path = s.file_path
+             AND cifs.content_hash = s.file_content_hash
+             AND cifs.machine_id = $1
+            WHERE s.project_id = $2
+            UNION ALL
+            SELECT s.*
+            FROM code_overlay_pins p
+            JOIN code_symbols s
+              ON s.project_id = p.source_project_id
+             AND s.file_path = p.file_path
+             AND s.file_content_hash = p.content_hash
+            WHERE p.machine_id = $1 AND p.overlay_project_id = $2
+              AND NOT EXISTS (
+                  SELECT 1 FROM code_indexed_file_states shadow
+                  WHERE shadow.machine_id = $1 AND shadow.project_id = $2
+                    AND shadow.file_path = p.file_path
+              )
+         ) s
+         WHERE TRUE";
 
 fn query_exact_file_candidates(
     conn: &mut impl GenericClient,
@@ -141,7 +171,8 @@ fn query_exact_file_candidates(
     name: &str,
 ) -> anyhow::Result<Vec<LocalCalleeCandidate>> {
     let sql = format!(
-        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_SYMBOL_FROM}
+          AND s.name = $4
           AND s.file_path = ANY($3)
          ORDER BY s.file_path, s.byte_start"
     );
@@ -158,7 +189,8 @@ fn query_module_prefix_candidates(
 ) -> anyhow::Result<Vec<LocalCalleeCandidate>> {
     let kinds = ["function", "class", "type"];
     let sql = format!(
-        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_CALLEE_FROM}
+        "SELECT s.id, s.kind, s.parent_symbol_id{LOCAL_SYMBOL_FROM}
+          AND s.name = $4
           AND EXISTS (
               SELECT 1 FROM unnest($3::text[]) AS module_prefix(value)
               WHERE s.file_path LIKE module_prefix.value ESCAPE '#'

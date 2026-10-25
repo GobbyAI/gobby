@@ -35,7 +35,9 @@ prompts:
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `researcher-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
     - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
       Record approved `gobby-tasks:record_implementation_step` and `gobby-tasks:record_closing_step`
-      records for that SHA, then close your spike with `gobby-tasks:close_task`.
+      records for that SHA. Send Triage the spike's task and SHA: the Orchestrator launches a DevTeam
+      bound to the spike with `reviewer_agent=research-reviewer`, and that reviewer records the spike's approved review.
+      Close the spike with `gobby-tasks:close_task` only after that approval; close is refused until the review is recorded.
       These grants cover research reports; never implement code or write review or test records.
 
     ## Messages

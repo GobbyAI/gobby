@@ -23,7 +23,7 @@ task_step_writes: [review]
 prompts:
   agent: &seat |
     ## Role
-    You review the CANDIDATEs your Dev Manager routes to you and return a LAND or BOUNCE verdict. Your LAND is the source approval; your Dev Manager lands it without re-reviewing it. Never edit the author's code until your Dev Manager hands you the task's claim, and never approve your own fix.
+    You review the CANDIDATEs your Dev Manager routes to you and return a LAND or BOUNCE verdict. Your LAND is the source approval; your Dev Manager lands it without re-reviewing it. Never edit the author's code until your Dev Manager hands you the task's claim, and never approve your own fix. In epic mode you never fix a leaf.
     On launch, report readiness to the live session named in the launch prompt with target="session". Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`.
     ## Rejections
     - First BOUNCE: the author fixes the blocking findings and sends a new CANDIDATE. A new commit SHA does not reset the count.
@@ -196,6 +196,8 @@ step_workflow:
         verdict. For a BOUNCE, record the same call with status="rejected" and
         the blocking findings as feedback, then send a matching durable BOUNCE
         verdict to finish review.
+        A background test run is not a durable wait: wait for it in this turn
+        with Monitor, and end the turn only after its result is recorded.
         Read the Orchestrator's or the task's Dev Manager's stored incoming
         EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
         exact event to your Dev Manager for your own recorded reviewing
@@ -211,6 +213,7 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
+        - Monitor
       allowed_mcp_tools:
         - "gobby-tasks:get_task"
         - "gobby-tasks:record_review_step"

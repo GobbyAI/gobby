@@ -249,7 +249,21 @@
     {
       "activation": "live",
       "default": null,
-      "description": "Backend state-token maximum; unset uses the wire's documented default.",
+      "description": "State plus one question maximum; OpenRouter defaults to 32000 tokens.",
+      "key": "ai.decisions.backend_max_question_tokens",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Backend whole-request token maximum; unset uses the wire's default.",
       "key": "ai.decisions.backend_max_state_tokens",
       "machineExport": false,
       "namespace": "ai.decisions",
@@ -498,8 +512,19 @@
     },
     {
       "activation": "live",
+      "default": false,
+      "description": "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED.",
+      "key": "ai.decisions.long_context",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": 8192,
-      "description": "Request input ceiling; below the backend's maximum state tokens.",
+      "description": "Application request input budget; below the backend's whole-request maximum.",
       "key": "ai.decisions.max_input_tokens",
       "machineExport": false,
       "namespace": "ai.decisions",

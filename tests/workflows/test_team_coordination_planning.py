@@ -13,7 +13,7 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
-SEATS = {"team-planning": ("plan-writer", "plan-adversary")}
+SEATS = {"team-planning": ("plan-writer", "plan-adversary", "plan-enhancer")}
 SHARED_INPUTS = {"lane", "workspace", "lane_pane", "project_path", "seats", "report_to"}
 STEP_REFERENCE = re.compile(r"steps\['([^']+)'\]")
 

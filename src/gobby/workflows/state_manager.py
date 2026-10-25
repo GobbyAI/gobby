@@ -387,6 +387,25 @@ class SessionVariableManager(SessionEditLedger):
             session_id, release, keys=("claimed_tasks", "task_claimed", "task_has_commits")
         )
 
+    def withdraw_variable(self, session_id: str, name: str, *, value: str | None = None) -> None:
+        """Remove variable ``name`` from one session when it holds ``value`` (or any value)."""
+
+        def withdraw(variables: dict[str, Any]) -> tuple[None, bool]:
+            if name not in variables or (value is not None and variables[name] != value):
+                return None, False
+            del variables[name]
+            return None, True
+
+        self._mutate_variables(session_id, withdraw, keys=(name,))
+
+    def withdraw_variable_value(self, name: str, value: str) -> None:
+        """Remove variable ``name`` from every session that holds exactly ``value``."""
+        rows = self.db.fetchall(
+            "SELECT session_id FROM session_variables WHERE variables ->> %s = %s", (name, value)
+        )
+        for row in rows:
+            self.withdraw_variable(str(row["session_id"]), name, value=value)
+
     def merge_existing_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         """Atomically merge updates without creating a missing session row."""
         if not updates:

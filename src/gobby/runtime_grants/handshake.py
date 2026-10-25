@@ -11,8 +11,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
-from gobby.runtime_grants.service import GrantService
+from gobby.runtime_grants.schema import (
+    BrokeredCapability,
+    GrantBundle,
+    GrantPrincipal,
+    PostgresCapability,
+    PostgresDirect,
+)
+from gobby.runtime_grants.service import NODE_CODE_INDEX_OPERATIONS, GrantService
 from gobby.utils.local_token import (
     AgentApiTokenClaims,
     _urlsafe_encode,
@@ -201,12 +207,18 @@ class HandshakeService:
         )
         lock = self._lock_for(key)
         with lock:
-            postgres = self.issue_postgres(principal)
+            postgres: PostgresCapability
+            if principal.kind == "interactive" and principal.machine_id != self.local_machine_id:
+                # A remote interactive principal reaches Postgres through the hub's node broker.
+                postgres = BrokeredCapability(operations=NODE_CODE_INDEX_OPERATIONS)
+            else:
+                postgres = self.issue_postgres(principal)
             now = self.clock()
             ttl = GRANT_TTL_SECONDS
             if token_exp is not None:
                 ttl = min(ttl, max(1, token_exp - now))
-            ttl = min(ttl, max(1, postgres.valid_until - now))
+            if isinstance(postgres, PostgresDirect):
+                ttl = min(ttl, max(1, postgres.valid_until - now))
             return self.grants.issue(
                 principal=principal, postgres=postgres, now=now, ttl_seconds=ttl
             )

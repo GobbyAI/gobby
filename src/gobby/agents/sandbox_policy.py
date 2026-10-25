@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -375,41 +374,6 @@ def provider_credential_read_exceptions(provider: str) -> list[str]:
     )
 
 
-def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
-    """Return Gobby state, runtime, and prompt resources needed by agents."""
-    # Gobby home stays readable apart from sensitive_roots(), which deny
-    # bootstrap.yaml: agents reach the daemon through GOBBY_DAEMON_URL and the
-    # hub through their managed grant (GOBBY_MANAGED_EXECUTION_BOOTSTRAP), which
-    # these exceptions re-admit alongside other per-run resources.
-    home = Path.home()
-    paths = [
-        # Codex scrubs the MCP subprocess environment, so uv falls back to its
-        # default cache roots. Shared cache contents remain readable while
-        # writable cache state is routed through a per-run extra_write_path.
-        home / ".cache" / "uv",
-        home / "Library" / "Caches" / "uv",
-    ]
-    runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
-    if runtime_home:
-        paths.append(Path(runtime_home))
-    managed_bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
-    if managed_bootstrap:
-        paths.append(Path(managed_bootstrap))
-    prompt_file = env.get("GOBBY_PROMPT_FILE")
-    if prompt_file:
-        paths.append(Path(prompt_file))
-    # Workspace tooling: `uv run` backs both agent shell commands and the
-    # spawned `gobby mcp-server` stdio process. The uv binary and its managed
-    # interpreters (venv symlink targets) live outside the workspace and stay
-    # read-only.
-    uv_binary = shutil.which("uv", path=env.get("PATH"))
-    if uv_binary:
-        uv_path = Path(uv_binary).expanduser().absolute()
-        paths.extend([uv_path, uv_path.resolve(strict=False)])
-    paths.append(Path("~/.local/share/uv").expanduser())
-    return canonical_paths([str(path) for path in paths])
-
-
 def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
     """Allow renewal writes only inside this workspace's generated gcode home."""
     # Keep the key contract aligned with code_index._runtime_home_for_workspace().
@@ -420,37 +384,6 @@ def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
     digest = hashlib.sha256(workspace_key.encode("utf-8")).hexdigest()[:16]
     runtime_home = gcode_runtime_root() / digest
     return canonical_paths([str(runtime_home)])
-
-
-def mcp_config_read_exceptions(workspace: Path) -> list[str]:
-    """Return project roots the workspace's own MCP servers resolve from.
-
-    Isolated agents get a generated ``.mcp.json`` whose gobby entry runs
-    ``uv run --project <main repo> gobby mcp-server`` so the proxy executes the
-    main repo's Gobby code (``_patch_mcp_config_for_isolation``). The sandbox
-    denies the operator home, so without a matching read grant ``uv`` cannot
-    open the main repo's ``pyproject.toml``, the MCP subprocess dies, and the
-    agent starts with no proxy tools at all (#19097). Read access is enough:
-    the isolated workspace stays the only writable source tree.
-    """
-    try:
-        config = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return []
-    servers = config.get("mcpServers") if isinstance(config, dict) else None
-    if not isinstance(servers, dict):
-        return []
-
-    server = servers.get("gobby")
-    args = server.get("args") if isinstance(server, dict) else None
-    if not isinstance(args, list):
-        return []
-    roots = [
-        arg
-        for arg in args
-        if isinstance(arg, str) and Path(arg).is_absolute() and Path(arg).is_dir()
-    ]
-    return canonical_paths(roots)
 
 
 def provider_read_exceptions(

@@ -11,7 +11,12 @@ from gobby.agents.resume_metadata import normalize_resume_metadata
 from gobby.utils.datetime import datetime_to_iso, normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
-from ._constants import ACTIVE_AGENT_RUN_STATUSES, AgentRunStatus, AgentRunTerminalReason
+from ._constants import (
+    ACTIVE_AGENT_RUN_STATUSES,
+    AgentRunStatus,
+    AgentRunTerminalReason,
+    TerminalAction,
+)
 from ._liveness import liveness_from_row
 
 
@@ -68,7 +73,7 @@ class AgentRun:
     resume_metadata_json: dict[str, Any] | None = None
     capture_id: str | None = None
     capture_revision: int = 0
-    pending_terminal_action: str | None = None
+    pending_terminal_action: TerminalAction | None = None
     pending_terminal_reason: str | None = None
     termination_requested_at: datetime | None = None
     child_status: str | None = None

@@ -10,7 +10,8 @@ rules:
     priority: 10
     when: >
       variables.get('_agent_type') in ['orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
+        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
+        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']

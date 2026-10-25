@@ -5,18 +5,19 @@ tags: [roles, seat, enforcement, gobby, default]
 # (`apply_persona`) never matches a seat rule.
 rules:
   seat-no-spawn:
-    description: "Seats, the Plan Writer included, do not spawn agents; a team manager may resume one. The Assistant and Orchestrator are outside this rule"
+    description: "Seats, the Plan Writer included, do not spawn agents; a team manager spawns its team's seats. The Assistant and Orchestrator are outside this rule"
     event: before_tool
     enabled: true
     priority: 10
     # The Assistant and Orchestrator launch seats for the operator, so this rule
-    # never covers them (Josh, 2026-10-21). Only a resume re-mints an expired seat
-    # capability, and a team manager (its definition sets the `team_manager`
-    # variable) recovers its team's stalled seats, so it may resume one. Spawn
-    # admission limits that resume to a seat of the manager's own team.
+    # never covers them (Josh, 2026-10-21). A team manager (its definition sets the
+    # `team_manager` variable) spawns and resumes its team's seats, so this rule
+    # exempts its spawn_agent calls. Spawn admission bounds them: an epic team's
+    # Dev Manager takes only its epic's leaves, reviewers and the team tree.
     when: >
       variables.get('_agent_type') in ['dev-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
+        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
+        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
@@ -24,15 +25,14 @@ rules:
         variables.get('team_manager')
         and tool_input.get('server_name') == 'gobby-agents'
         and tool_input.get('tool_name') == 'spawn_agent'
-        and ((tool_input.get('arguments') or tool_input) or {}).get('resume_session_id')
       )
     effects:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent"]
         reason: >-
           Seats do not spawn agents. The Assistant and the Orchestrator spawn seats,
-          and a team manager may only resume an existing seat of its team with
-          spawn_agent resume_session_id; send other work to Triage.
+          and a team manager spawns its team's seats through spawn_agent within its
+          team's scope; send other work to Triage.
 
   # The Orchestrator is the primary pipeline launcher and the Assistant is the
   # backup, launching only while the Orchestrator is down. The split is a norm in
@@ -46,7 +46,8 @@ rules:
     # named `pipeline:<name>`, so the condition alone selects the call.
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
+        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
+        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
@@ -71,7 +72,8 @@ rules:
     priority: 10
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
+        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
+        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']
@@ -93,7 +95,8 @@ rules:
     priority: 10
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'dev-manager',
-        'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
+        'developer', 'code-reviewer', 'docs-reviewer', 'research-reviewer',
+        'researcher', 'archivist', 'log-monitor', 'metrics-monitor',
         'plan-writer', 'plan-enhancer', 'plan-adversary', 'test-writer', 'triage',
         'release-manager', 'reporter', 'security-reviewer', 'debugger',
         'design-reviewer', 'recovery-steward', 'consolidator']

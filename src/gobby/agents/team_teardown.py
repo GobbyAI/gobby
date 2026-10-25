@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from gobby.agents.agent_workspaces import release_epic_workspace, schedule_workspace_commit
 from gobby.agents.team_lifecycle import (
-    ADMISSION_STEP,
     TeamBinding,
     _admission_step,
     _binding,
@@ -22,6 +22,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError
+from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.pipeline_state import StepExecution
@@ -99,11 +100,14 @@ ORDER BY se.id
 async def _tear_down(
     db: HubDatabase, team: _DueTeam, terminate: TeamRunTerminator, delete: TeamTreeDeleter
 ) -> int:
+    folder = await asyncio.to_thread(release_epic_workspace, db, team.binding)
     runs = await asyncio.to_thread(_live_runs, db, team)
     ended = [await terminate(run) for run in runs]
     if not all(ended):
         logger.warning("Team %s keeps live seats; the next pass retries", team.binding.team_id)
         return sum(ended)
+    if folder is not None:
+        schedule_workspace_commit(team.binding.project_id, folder.name)
     result: WorktreeDeletionResult | None = await delete(team.binding)
     if result is not None and result.error_code == "worktree_not_eligible":
         result = await asyncio.to_thread(_ineligible, db, team.binding)
