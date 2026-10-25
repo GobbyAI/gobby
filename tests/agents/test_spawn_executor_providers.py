@@ -235,6 +235,70 @@ async def test_sandbox_policy_grants_only_declared_main_nextest_store(
 
 
 @pytest.mark.asyncio
+async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_starts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # SRT refuses to create an absent ancestor of a denyWrite entry. The control
+    # denies under each grant stay, so spawn must create the grant directories
+    # first, or a fresh worktree cannot create .nextest or .gobby/tmp (#24949).
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    lane = tmp_path.resolve() / "lane"
+    (lane / ".gobby").mkdir(parents=True)
+    (lane / "notes.txt").write_text("kept")
+    grants = [".gobby/tmp", ".nextest", "notes.txt", "logs/*.log"]
+    (lane / ".gobby/project.json").write_text(
+        json.dumps({"id": "project", "sandbox": {"extra_write_paths": grants}})
+    )
+    request, spawn_context, _ = _sandbox_request()
+    request.session_manager = MagicMock()
+    request.machine_id = "machine"
+    request.project_path = str(lane)
+    request.cwd = str(lane)
+    request.agent_name = "backend-developer"
+    request.resume_metadata_json = {}
+    monkeypatch.setattr(
+        "gobby.storage.project_checkouts.require_root",
+        MagicMock(side_effect=CheckoutNotFoundError("Primary checkout unavailable")),
+    )
+    granted: list[str] = []
+    denied: list[str] = []
+    # Disk state SRT sees when the seat starts.
+    at_launch: dict[str, bool] = {}
+
+    async def launch(
+        *, config: SandboxConfig, workspace_path: str, env: dict[str, str], **_kwargs: object
+    ) -> SandboxLaunch:
+        paths = await compute_sandbox_paths(config, workspace_path, provider="codex", env=env)
+        filesystem = render_srt_settings(paths)["filesystem"]
+        granted.extend(filesystem["allowWrite"])
+        denied.extend(filesystem["denyWrite"])
+        at_launch.update(
+            nextest_dir=(lane / ".nextest").is_dir(),
+            tmp_dir=(lane / ".gobby/tmp").is_dir(),
+            file_grant_is_file=(lane / "notes.txt").is_file(),
+            glob_parent_exists=(lane / "logs").exists(),
+        )
+        return SandboxLaunch(backend="srt", enforced=True)
+
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.prepare_sandbox_launch", launch)
+    result = await _prepare_provider_sandbox(request, spawn_context, "codex", {})
+
+    assert isinstance(result, SandboxLaunch)
+    # Control denies under the grants stay; the grant directories must exist instead.
+    assert str(lane / ".nextest/.claude/settings.json") in denied
+    assert str(lane / ".gobby/tmp/.codex/hooks.json") in denied
+    assert (lane / "notes.txt").read_text() == "kept"
+    assert {str(lane / ".nextest"), str(lane / ".gobby/tmp")} <= set(granted)
+    assert at_launch == {
+        "nextest_dir": True,
+        "tmp_dir": True,
+        "file_grant_is_file": True,
+        "glob_parent_exists": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_codex_spawn_uses_sandbox_effective_cache_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
