@@ -116,7 +116,7 @@ async def test_candidate_with_spaced_run_is_refused_and_nothing_is_stored(
     assert result["error_code"] == "protocol_line_rejected"
     assert result["field"] == "RUN"
     assert "RUN" in result["error"]
-    assert "TASK_TITLE RUN WT COMMIT NOTE" in result["error"]
+    assert "TASK_TITLE RUN WT COMMIT|DISPOSITION NOTE" in result["error"]
     message_manager.create_message.assert_not_called()
 
 

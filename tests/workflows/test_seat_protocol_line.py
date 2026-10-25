@@ -60,8 +60,8 @@ def test_candidate_run_with_whitespace_names_run() -> None:
         _parse(f"EVENT=CANDIDATE TASK=#7 RUN=green pass WT=tree COMMIT={SHA}")
 
     assert caught.value.field == "RUN"
-    assert caught.value.canonical == "TASK_TITLE RUN WT COMMIT NOTE"
-    assert "TASK_TITLE RUN WT COMMIT NOTE" in str(caught.value)
+    assert caught.value.canonical == "TASK_TITLE RUN WT COMMIT|DISPOSITION NOTE"
+    assert "TASK_TITLE RUN WT COMMIT|DISPOSITION NOTE" in str(caught.value)
 
 
 @pytest.mark.parametrize(

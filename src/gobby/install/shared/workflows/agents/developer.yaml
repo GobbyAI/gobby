@@ -458,7 +458,9 @@ step_workflow:
         CANDIDATE to your Dev Manager only. Your Dev Manager lands the approved
         SHA and closes the task; never close a team task yourself.
         If the assigned task is moot and no candidate was sent, send your Dev
-        Manager the evidence; it closes the task.
+        Manager one CANDIDATE with DISPOSITION=moot (or superseded or wont_do)
+        in place of COMMIT and the evidence in NOTE. It relays the line to your
+        Code Reviewer, and the approved no-work review lets it close the task.
         Existing delivered work follows the normal candidate review flow after
         linking its implementation commit.
         A reply wait ends at the owner's next message. If that message is an

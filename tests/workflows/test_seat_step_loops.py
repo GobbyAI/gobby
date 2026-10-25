@@ -83,7 +83,7 @@ _CANDIDATE_DEFAULTS = {
 
 _CANDIDATE_GRAMMAR = (
     "CANDIDATE not bound: expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] "
-    "RUN= WT= COMMIT=<40-hex> [NOTE=...]"
+    "RUN= WT= COMMIT=<40-hex> or DISPOSITION=<moot|superseded|wont_do> [NOTE=...]"
 )
 
 # Session and project ids are native uuid columns in PostgreSQL.

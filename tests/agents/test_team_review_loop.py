@@ -877,6 +877,8 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
     team = await team_in_moot_review(world)
     db, task_id = world.case.db, team.task.id
     reviewer_at_await(db, team.sol)
+    # reviewer_at_await resets _agent_type to the seat name; restore the review writer grant.
+    grant_review_writes(db, team.sol, world.case.project_id)
 
     result, instance = await read_candidate(
         db, team.sol, team.manager, team.task, None, disposition="moot"
