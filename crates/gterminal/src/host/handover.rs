@@ -25,6 +25,11 @@ pub const SUPPORTED_FORMAT_VERSIONS: &[u32] = &[FORMAT_VERSION];
 /// The state file's name inside the socket directory.
 pub const STATE_FILE: &str = "gterm-handover.json";
 
+/// The handover runs between the running release and its successor, so this
+/// image must read what the previous release writes. A field added here needs
+/// a `serde` default derived from the carried state until that release ships;
+/// `tests/fixtures/handover_state/` holds the previous release's file, and
+/// `read_state_accepts_the_previous_release_state` fails without the default.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HandoverState {
     pub format_version: u32,
@@ -42,9 +47,17 @@ pub struct HandoverState {
     pub frames_listener_fd: RawFd,
     pub next_host_id: u64,
     /// Physical stream IDs cannot be reused while this host epoch survives.
+    /// gterm 0.1.15 writes none: no carried pane names an attachment id, and
+    /// that release never told a client one, so 1 is past every restored id.
+    #[serde(default = "first_attachment")]
     pub next_attachment: u64,
     pub events: CarriedEvents,
     pub panes: Vec<CarriedPane>,
+}
+
+/// One past the highest restored attachment id; a host starts at the same id.
+fn first_attachment() -> u64 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +150,8 @@ pub struct CarriedIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UpgradeOutcome {
     Succeeded,
-    Fallback,
+    /// The new image failed its restore and this earlier image resumed.
+    Fallback(RestoreFailure),
     /// The candidate failed its resume probe; nothing was quiesced.
     Refused,
     /// The write guard was not free within its retry, or the recheck under
@@ -179,6 +193,57 @@ impl UpgradeReason {
     }
 }
 
+/// Why a new image's restore failed, as the fallback's outcome names it. The
+/// failing image hands it to the earlier one through [`RESTORE_FAILURE_ENV`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestoreFailure {
+    /// The state file did not parse as this image's handover state.
+    StateUnreadable,
+    /// The image rejected the argv the earlier image recorded.
+    ArgsRejected,
+    /// The control token or host config was unusable.
+    SetupFailed,
+    /// Verifying the state or staging a pane, listener, or pin failed.
+    StageFailed,
+    Panicked,
+    /// The failing image named no reason, as releases before 0.1.17 do.
+    Unreported,
+}
+
+/// The environment variable carrying a [`RestoreFailure`] across the fallback
+/// exec. An argument would not do: the earlier image refuses unknown ones.
+pub(crate) const RESTORE_FAILURE_ENV: &str = "GTERM_RESTORE_FAILURE";
+
+impl RestoreFailure {
+    const ALL: [RestoreFailure; 6] = [
+        RestoreFailure::StateUnreadable,
+        RestoreFailure::ArgsRejected,
+        RestoreFailure::SetupFailed,
+        RestoreFailure::StageFailed,
+        RestoreFailure::Panicked,
+        RestoreFailure::Unreported,
+    ];
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            RestoreFailure::StateUnreadable => "state_unreadable",
+            RestoreFailure::ArgsRejected => "args_rejected",
+            RestoreFailure::SetupFailed => "setup_failed",
+            RestoreFailure::StageFailed => "stage_failed",
+            RestoreFailure::Panicked => "restore_panicked",
+            RestoreFailure::Unreported => "restore_failed",
+        }
+    }
+
+    /// The reason a failing image reported, or [`RestoreFailure::Unreported`].
+    pub(crate) fn reported(value: Option<&str>) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|failure| Some(failure.as_str()) == value)
+            .unwrap_or(RestoreFailure::Unreported)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UpgradeRecord {
     pub(crate) attempt: UpgradeAttempt,
@@ -215,44 +280,94 @@ pub fn monotonic_now_ns() -> u64 {
         .saturating_add(now.tv_nsec as u64)
 }
 
-/// Writes the state file durably with mode 0600: a private temporary file,
-/// `fsync`, rename over `path`, then `fsync` of the directory.
+/// Writes the state file durably with mode 0600: `stage_state`, then
+/// `commit_state`.
 pub fn write_state(path: &Path, state: &HandoverState) -> io::Result<()> {
+    commit_state(&stage_state(path, state)?, path)
+}
+
+/// A state file staged beside its target under a name no other call shares.
+/// Dropping it removes that file, so a late or failed stage leaves nothing;
+/// after `commit_state` the name is gone and the drop finds nothing.
+#[derive(Debug)]
+pub struct StagedState(PathBuf);
+
+impl Drop for StagedState {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Writes `state` to a private file of its own beside `path` and `fsync`s it.
+/// Nothing reads that file until `commit_state` puts it in place.
+pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<StagedState> {
+    let (dir, prefix) = staged_prefix(path)?;
+    let temp = dir.join(format!("{prefix}{}{STAGED_SUFFIX}", uuid::Uuid::new_v4()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)?;
+    let staged = StagedState(temp);
+    serde_json::to_writer(&mut file, state)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(staged)
+}
+
+/// Renames a staged state file over `path`, then `fsync`s the directory.
+pub fn commit_state(staged: &StagedState, path: &Path) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
+    fs::rename(&staged.0, path)?;
+    fs::File::open(dir)?.sync_all()
+}
+
+/// Removes every staged state file beside `path`. Only the socket owner calls
+/// it, before it can stage one itself, so each is an earlier image's or a dead
+/// host's.
+pub fn remove_staged(path: &Path) {
+    let Ok((dir, prefix)) = staged_prefix(path) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(&prefix) && name.ends_with(STAGED_SUFFIX) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+const STAGED_SUFFIX: &str = ".tmp";
+
+/// The directory beside `path` and the name prefix of its staged files.
+fn staged_prefix(path: &Path) -> io::Result<(&Path, String)> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no name"))?;
-    let temp = dir.join(format!(
-        ".{}.{}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
-    let _ = fs::remove_file(&temp);
-    let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
-        serde_json::to_writer(&mut file, state)?;
-        file.flush()?;
-        file.sync_all()?;
-        fs::rename(&temp, path)?;
-        fs::File::open(dir)?.sync_all()
-    })();
-    if written.is_err() {
-        let _ = fs::remove_file(&temp);
-    }
-    written
+    Ok((dir, format!(".{}.", name.to_string_lossy())))
 }
 
 /// Reads a state file, refusing a format this image does not support.
 pub fn read_state(path: &Path) -> io::Result<HandoverState> {
-    let bytes = fs::read(path)?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    parse_state(state_value(path)?)
+}
+
+/// A state file as JSON, before it is checked against this image's types.
+pub(crate) fn state_value(path: &Path) -> io::Result<Value> {
+    serde_json::from_slice(&fs::read(path)?)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+pub(crate) fn parse_state(value: Value) -> io::Result<HandoverState> {
     let version = value.get("format_version").and_then(Value::as_u64);
     if !version.is_some_and(|version| {
         SUPPORTED_FORMAT_VERSIONS

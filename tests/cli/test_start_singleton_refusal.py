@@ -60,6 +60,32 @@ def test_start_refuses_a_live_daemon_and_leaves_its_claim_held(pid_file: Path) -
         claim.release()
 
 
+def test_full_restart_start_half_refuses_a_daemon_still_holding_the_claim(
+    pid_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#24946: restart (and cutover, through the same start) never starts a second daemon."""
+    monkeypatch.setattr("gobby.releases.window.agent_activation_refusal", lambda: None)
+    monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda ctx: None)
+    monkeypatch.setattr(
+        "gobby.cli.daemon_lifecycle.restart_start_refusal", lambda runtime, **_: None
+    )
+    # The stop half reports success while a live daemon still holds the claim.
+    monkeypatch.setattr("gobby.cli.daemon_lifecycle._do_stop", lambda *args, **kwargs: True)
+    claim = claim_pid_file(pid_file, role="daemon")
+    assert claim is not None
+    record = _lock_record(pid_file)
+    try:
+        result = CliRunner().invoke(cli, ["restart", "--full"])
+
+        assert result.exit_code == 1
+        assert f"Daemon already running (PID: {os.getpid()})" in result.output
+        probe = probe_daemon_lock(pid_file)
+        assert (probe.state, probe.pid) == (ProbeState.DAEMON, os.getpid())
+        assert _lock_record(pid_file) == record
+    finally:
+        claim.release()
+
+
 def test_start_refuses_a_live_service_reservation_and_leaves_it_in_place(
     pid_file: Path,
 ) -> None:
