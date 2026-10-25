@@ -28,6 +28,7 @@ from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._de_escalation import REVIEW_REJECTION_LIMIT
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.tasks.step_records import (
     StepRecordError,
@@ -928,3 +929,52 @@ async def test_live_fresh_reviewer_still_blocks_a_second_one(world: TeamWorld) -
         second_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
     )
     assert await refusal(refused) == "fresh_reviewer_exists"
+
+
+@pytest.mark.asyncio
+async def test_round_reset_leaves_no_claim_holder_for_hand_off(world: TeamWorld) -> None:
+    """After escalation and an audited round reset, no seat holds the claim and hand-off agrees."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    team = await team_in_review(world, "Reset an exhausted review round")
+    task, manager, developer = team.task, team.manager, team.developer
+
+    # The developer claims through the MCP path, which records its claimed task state.
+    tasks.release_task_claim(task.id)
+    with session_context_for_test(developer):
+        claimed = await tools.call("claim_task", {"task_id": task.id})
+    assert "error" not in claimed, claimed
+    assert tasks.get_task(task.id).claimed_by_session_id == developer
+    assert task.id in claimed_tasks(db, developer)
+
+    # Escalation releases the claim and the developer's claimed task state.
+    with session_context_for_test(developer):
+        escalated = await tools.call("escalate_task", {"task_id": task.id, "reason": "Rejected"})
+    assert escalated == {}, escalated
+    assert tasks.get_task(task.id).claimed_by_session_id is None
+    assert task.id not in claimed_tasks(db, developer)
+
+    # The audited round reset clears the escalation and starts a new epoch. It must not
+    # resurrect the released claim.
+    tasks.update_task(task.id, review_fail_count=REVIEW_REJECTION_LIMIT)
+    epoch = tasks.get_task(task.id).review_epoch
+    reset = tasks.de_escalate_task(task.id, reason="Triage audited reset")
+    assert reset.is_escalated is False
+    assert reset.review_epoch == epoch + 1
+    assert reset.claimed_by_session_id is None
+    assert task.id not in claimed_tasks(db, developer)
+
+    # Neither a former holder nor a seat that never held the claim is the holder now.
+    refused = await hand_off(tools, manager, task, developer, developer)
+    assert refused.get("error_code") == "task_claim_conflict", refused
+    refused = await hand_off(tools, manager, task, manager, developer)
+    assert refused.get("error_code") == "task_claim_conflict", refused
+    assert tasks.get_task(task.id).claimed_by_session_id is None
+
+    # A seat that really holds the claim still gets same_seat when it names itself.
+    with session_context_for_test(developer):
+        reclaimed = await tools.call("claim_task", {"task_id": task.id})
+    assert "error" not in reclaimed, reclaimed
+    held = await hand_off(tools, manager, task, developer, developer)
+    assert held.get("error_code") == "same_seat", held
