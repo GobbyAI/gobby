@@ -318,6 +318,7 @@ async fn malformed_requests_send_nothing() -> Result<()> {
         // command parser for every command variant, including nested payloads.
         let corpus: Value =
             serde_json::from_str(include_str!("fixtures/node_commands/corpus.json"))?;
+        let mut per_command = std::collections::BTreeMap::<String, usize>::new();
         for case in corpus["messages"]
             .as_array()
             .unwrap()
@@ -325,6 +326,7 @@ async fn malformed_requests_send_nothing() -> Result<()> {
             .filter(|c| c["kind"] == "command")
         {
             let original: Value = serde_json::from_str(case["json"].as_str().unwrap())?;
+            let name = original["command"].as_str().unwrap().to_owned();
             for field in original["payload"].as_object().unwrap().keys() {
                 let mut missing = original.clone();
                 missing["payload"].as_object_mut().unwrap().remove(field);
@@ -335,6 +337,7 @@ async fn malformed_requests_send_nothing() -> Result<()> {
                 {
                     invalid
                         .push(json!({"command":missing["command"],"payload":missing["payload"]}));
+                    *per_command.entry(name.clone()).or_default() += 1;
                 }
                 let mut wrong = original.clone();
                 wrong["payload"][field] = json!({"invalid":true});
@@ -344,9 +347,37 @@ async fn malformed_requests_send_nothing() -> Result<()> {
                 .is_err()
                 {
                     invalid.push(json!({"command":wrong["command"],"payload":wrong["payload"]}));
+                    *per_command.entry(name.clone()).or_default() += 1;
                 }
             }
         }
+        // Every command the canonical parser dispatches (frame_dispatch.rs
+        // `command_frame`) must contribute at least one malformed case, so an
+        // empty or silently skipped case set fails instead of passing vacuously.
+        let expected = [
+            "agent.spawn",
+            "agent.cancel",
+            "terminal.write",
+            "workspace.merge",
+            "workspace.remove",
+            "checkout.status",
+            "checkout.read",
+        ];
+        for command in expected {
+            assert!(
+                per_command.get(command).is_some_and(|n| *n > 0),
+                "no malformed corpus case ran for {command}: {per_command:?}"
+            );
+        }
+        assert_eq!(
+            per_command.keys().map(String::as_str).collect::<Vec<_>>(),
+            {
+                let mut sorted = expected.to_vec();
+                sorted.sort_unstable();
+                sorted
+            },
+            "corpus commands drifted from the canonical command set"
+        );
         for body in invalid {
             let answer = response(
                 call(&hub.door, body.clone(), db.machine).await?,
