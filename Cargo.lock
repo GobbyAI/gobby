@@ -2503,6 +2503,7 @@ dependencies = [
  "rand 0.8.6",
  "redis",
  "reqwest",
+ "schemars",
  "scrypt",
  "serde",
  "serde_json",
