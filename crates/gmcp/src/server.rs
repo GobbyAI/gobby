@@ -57,9 +57,9 @@ pub struct WrapperServer {
 }
 
 impl WrapperServer {
-    pub fn new(dialer: Dialer) -> Self {
+    pub fn new(dialer: Arc<Dialer>) -> Self {
         Self {
-            dialer: Arc::new(dialer),
+            dialer,
             readiness_started: Arc::new(AtomicBool::new(false)),
         }
     }

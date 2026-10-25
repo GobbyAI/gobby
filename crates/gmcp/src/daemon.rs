@@ -13,6 +13,14 @@ use std::time::{Duration, Instant};
 
 type Headers = BTreeMap<String, String>;
 
+/// An HTTP answer proves the endpoint is running even when it is not ready.
+#[derive(Debug, PartialEq, Eq)]
+pub enum HealthProbe {
+    Healthy,
+    Answered(u16),
+    Unreachable,
+}
+
 struct CachedState {
     auth: Headers,
     caller_project: Option<String>,
@@ -51,6 +59,23 @@ impl Default for RequestOptions<'_> {
 }
 
 impl Dialer {
+    /// Probe the current endpoint without authentication, retries, or starting anything.
+    pub fn probe_health(&self) -> anyhow::Result<HealthProbe> {
+        let base = daemon_url()?;
+        let answer = self
+            .agent
+            .get(&format!("{}/api/health", base.trim_end_matches('/')))
+            .timeout(Duration::from_secs(2))
+            .call();
+        Ok(match answer {
+            Ok(response) if response.status() == 200 => HealthProbe::Healthy,
+            Ok(response) | Err(ureq::Error::Status(_, response)) => {
+                HealthProbe::Answered(response.status())
+            }
+            Err(ureq::Error::Transport(_)) => HealthProbe::Unreachable,
+        })
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         Self::with_context(&std::env::current_dir()?, terminal_context::capture())
     }

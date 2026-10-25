@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
@@ -21,6 +22,8 @@ pytestmark = pytest.mark.unit
 REFUSALS: dict[str, list[str]] = {
     "unrelated_manager": ["caller_not_task_manager"],
     "unbound_closer": ["caller_not_task_manager"],
+    # A researcher's closing grant closes its own spike; it never manages a task.
+    "bound_researcher": ["caller_not_task_manager"],
     "reviewer": ["caller_not_task_manager", "caller_is_reviewer", "review_approval_missing"],
     "self_reviewing_manager": ["caller_is_reviewer", "review_approval_missing"],
     "self_reviewing_orchestrator": ["caller_is_reviewer", "review_approval_missing"],
@@ -39,7 +42,13 @@ async def test_manager_landing_authority(case: LandingCase, caller_kind: str) ->
     sha = case.candidate("lane", {"docs/change.md": "land me\n"})
     task = case.task()
     case.link(task, sha)
-    if caller_kind in {"bound_manager", "unrelated_manager", "unbound_closer", "reviewer"}:
+    if caller_kind in {
+        "bound_manager",
+        "unrelated_manager",
+        "unbound_closer",
+        "bound_researcher",
+        "reviewer",
+    }:
         case.approve(task, sha)
     if caller_kind in {"orchestrator", "claimant_manager"}:
         case.approve(task, sha)
@@ -52,6 +61,19 @@ async def test_manager_landing_authority(case: LandingCase, caller_kind: str) ->
     elif caller_kind == "unbound_closer":
         caller = case.session("closer without a run", parent=case.creator)
         grant_step_writes(case.db, caller, case.project_id, DEV_MANAGER, ("closing",))
+    elif caller_kind == "bound_researcher":
+        caller = case.session("researcher", parent=case.creator)
+        grant_step_writes(
+            case.db, caller, case.project_id, "researcher", ("implementation", "closing")
+        )
+        LocalAgentRunManager(case.db).create(
+            parent_session_id=case.creator,
+            provider="claude",
+            prompt="Research the spike.",
+            agent_name="researcher",
+            child_session_id=caller,
+            task_id=task.id,
+        )
     elif caller_kind == "reviewer":
         caller = case.reviewer
     elif caller_kind == "self_reviewing_manager":

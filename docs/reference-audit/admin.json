@@ -1308,8 +1308,8 @@
     {
       "id": "native-schema-inspection",
       "kind": "source-inspection",
-      "command": "Read crates/gdaemon/src/main.rs SchemaCommand, verify_schema, plan_schema, print_schema_identity",
-      "result": "Version prints embedded identity without hub connection; verify enforces expected identity, resolves configured database/current schema and delegates SchemaRunner verification before reporting checked receipt, seed-row and object counts. Plan resolves the same database/current schema and delegates SchemaRunner::plan, printing database and code heads, baseline_pending and pending migration versions without writing. No native mutation probe."
+      "command": "Read crates/gdaemon/src/main.rs SchemaCommand, verify_schema, inspect_schema, print_schema_identity; crates/gcore/src/schema/runner_plan.rs::preflight and preflight_locked; src/gobby/cli/daemon_preflight.py::restart_start_refusal",
+      "result": "Version prints embedded identity without hub connection; verify enforces expected identity, resolves configured database/current schema and delegates SchemaRunner verification before reporting checked receipt, seed-row and object counts. Plan delegates SchemaRunner::plan without writing. Preflight proves pending transactional migrations and deferred constraints in a rolled-back transaction; pending baselines, non-transactional migrations and transaction control are refused. Restart and cutover run both checks before stopping or promoting. Rows, schema and schema version are preserved; sequence values may be consumed. No native mutation probe."
     }
   ],
   "discrepancies": [
@@ -1389,7 +1389,16 @@
     {
       "command": "gdaemon schema plan",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
-      "implementation": "crates/gdaemon/src/main.rs::plan_schema",
+      "implementation": "crates/gdaemon/src/main.rs::inspect_schema",
+      "verification": [
+        "native-schema-inspection"
+      ],
+      "audience": "operator"
+    },
+    {
+      "command": "gdaemon schema preflight",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/recovery.md",
+      "implementation": "crates/gdaemon/src/main.rs::inspect_schema",
       "verification": [
         "native-schema-inspection"
       ],

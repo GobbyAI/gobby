@@ -168,6 +168,7 @@ def _bound_dev_manager(ctx: RegistryContext, caller: Session, task_id: str) -> b
         run is not None
         and run.task_id == task_id
         and definition is not None
+        and definition[0].name != "researcher"
         and "closing" in definition[0].task_step_writes
     )
 
@@ -182,7 +183,9 @@ def _recipient_refusal(
     """
     definition = session_agent_definition(db, recipient)
     if recipient.id == caller_id or (
-        definition is not None and "closing" in definition[0].task_step_writes
+        definition is not None
+        and definition[0].name != "researcher"
+        and "closing" in definition[0].task_step_writes
     ):
         return {
             "error": "The seat that closes the task cannot hold its claim",
