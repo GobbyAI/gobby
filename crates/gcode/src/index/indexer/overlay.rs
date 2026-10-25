@@ -7,12 +7,14 @@ use anyhow::Context as _;
 use postgres::Client;
 use wait_timeout::ChildExt;
 
-use crate::config::{Context, ProjectIndexScope};
+use crate::cli_error::CliError;
+use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::index::api;
 use crate::index::{parser, walker};
 use crate::models::IndexedFile;
 use crate::project::read_isolation_marker;
+use crate::projection::sync::{self, ProjectionTarget, SilentProjectionProgress};
 use crate::visibility;
 
 use super::file::{
@@ -20,10 +22,12 @@ use super::file::{
 };
 use super::lifecycle::{attach_projection_sync, refresh_communities, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
-use super::pipeline::explicit_route_with_discovery_options;
+use super::pipeline::{explicit_route_with_discovery_options, index_discovered_files};
 use super::selector_blob::{self, HeadBlobs};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
-use super::types::{IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
+use super::types::{
+    IndexDegradation, IndexOptions, IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata,
+};
 use super::util::{
     effective_excludes, epoch_secs_str, relative_path, requested_relative_path,
     unsupported_file_types,
@@ -90,8 +94,9 @@ pub(super) fn index_overlay_files(
     conn: &mut Client,
     request: &IndexRequest,
     ctx: &Context,
+    options: &mut IndexOptions<'_>,
 ) -> anyhow::Result<IndexOutcome> {
-    let mut timings = super::IndexTimings::new("overlay.parent_validation");
+    let mut timings = super::IndexTimings::new("overlay.parent_index");
     let ProjectIndexScope::Overlay {
         overlay_project_id,
         overlay_root,
@@ -102,7 +107,40 @@ pub(super) fn index_overlay_files(
         anyhow::bail!("overlay indexer requires an overlay project context");
     };
 
-    crate::config::validate_parent_code_index(conn, &ctx.index_scope, &ctx.machine_id)?;
+    // Degradations from the parent-first pass belong to this overlay's outcome.
+    let mut parent_degraded = Vec::new();
+    if !parent_code_index_exists(conn, parent_project_id, &ctx.machine_id)? {
+        // An overlay-bound managed grant cannot write the parent's rows, so refuse
+        // before any write rather than attempting the parent-first pass.
+        if !ctx.can_write_project_index(conn, parent_project_id)? {
+            return Err(CliError::parent_index_required(
+                parent_root,
+                parent_project_id,
+                overlay_root,
+            )
+            .into());
+        }
+        // Index the parent first so the overlay pass has its rows to read. Fully
+        // projected unchanged parent files are adopted rather than re-parsed.
+        let parent_ctx = ctx.rebased(
+            parent_root.clone(),
+            parent_project_id.clone(),
+            ProjectIndexScope::Single,
+        );
+        let parent_request = IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: request.require_cpp_semantics,
+            sync_projections: request.sync_projections,
+        };
+        let parent_outcome = index_discovered_files(conn, &parent_request, &parent_ctx, options)?;
+        if request.sync_projections {
+            parent_degraded.extend(sync_parent_projections(&parent_ctx, &parent_outcome));
+        }
+        parent_degraded.extend(parent_outcome.degraded);
+    }
 
     timings.phase("overlay.seed");
 
@@ -126,6 +164,7 @@ pub(super) fn index_overlay_files(
         api::IndexWriteMode::Overlay,
     )?;
     let mut outcome = IndexOutcome::new(overlay_project_id);
+    outcome.degraded = parent_degraded;
     outcome.overlay = Some(OverlayIndexMetadata {
         overlay_project_id: overlay_project_id.clone(),
         overlay_root: overlay_root.to_string_lossy().to_string(),
@@ -423,6 +462,39 @@ pub(super) fn index_overlay_files(
     timings.phase("overlay.projection_attachment");
     attach_projection_sync(&mut outcome, request);
     Ok(outcome)
+}
+
+/// Projects the parent's freshly parsed files under the parent context, with the
+/// same bounded sync the overlay's own files get. Each degraded target becomes
+/// a degradation on the overlay outcome, so a failed parent projection is visible.
+fn sync_parent_projections(
+    parent_ctx: &Context,
+    parent_outcome: &IndexOutcome,
+) -> Vec<IndexDegradation> {
+    let reports = sync::sync_after_index_bounded(
+        parent_ctx,
+        &parent_outcome.graph_file_paths,
+        &parent_outcome.vector_file_paths,
+        sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
+        &mut SilentProjectionProgress,
+    );
+    [
+        (ProjectionTarget::Graph, reports.graph),
+        (ProjectionTarget::Vectors, reports.vector),
+    ]
+    .into_iter()
+    .filter(|(_, report)| report.degraded)
+    .map(
+        |(target, report)| IndexDegradation::ParentProjectionSyncFailed {
+            parent_project_id: parent_ctx.project_id.clone(),
+            target,
+            message: report.error.map_or_else(
+                || "projection sync degraded".to_string(),
+                |error| format!("{}: {}", error.kind, error.message),
+            ),
+        },
+    )
+    .collect()
 }
 
 /// The overlay's divergence from the base commit its pins were taken at, or

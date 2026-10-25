@@ -1620,7 +1620,7 @@ fn stale_model_label_reads_as_deterministic() {
     );
 }
 
-fn seeded_project(prefix: &str) -> (postgres::Client, String, String, ProjectCleanup) {
+pub(crate) fn seeded_project(prefix: &str) -> (postgres::Client, String, String, ProjectCleanup) {
     let database_url = crate::test_env::postgres_test_database_url("community refresh tests");
     let mut conn = db::connect_readwrite(&database_url).expect("connect to test database");
     let project_id = unique_test_uuid(prefix);
@@ -2091,7 +2091,7 @@ fn unique_test_uuid(prefix: &str) -> String {
     .to_string()
 }
 
-fn managed_overlay_principal(
+pub(crate) fn managed_overlay_principal(
     owner: &mut postgres::Client,
     database_url: &str,
     parent_id: &str,
@@ -2284,7 +2284,7 @@ fn install_parent_seed_select_barrier(
     installed.expect("install connection-local parent seed SELECT barrier");
 }
 
-struct ProjectCleanup {
+pub(crate) struct ProjectCleanup {
     database_url: String,
     project_id: String,
 }
@@ -2317,16 +2317,16 @@ impl Drop for ReviewAssignmentCleanup {
     }
 }
 
-struct ManagedPrincipal {
+pub(crate) struct ManagedPrincipal {
     client: Option<postgres::Client>,
-    managed_database_url: String,
+    pub(crate) managed_database_url: String,
     database_url: String,
     role_name: String,
-    execution_id: uuid::Uuid,
+    pub(crate) execution_id: uuid::Uuid,
     credential_generation: i32,
-    session_id: uuid::Uuid,
+    pub(crate) session_id: uuid::Uuid,
     worktree_id: uuid::Uuid,
-    machine_id: uuid::Uuid,
+    pub(crate) machine_id: uuid::Uuid,
     project_id: uuid::Uuid,
 }
 
