@@ -33,6 +33,7 @@ async fn cut_direct_source(epoch: &str) -> PaneFrameSource {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "terminal-1".into(),
+                host_attachment_id: 1,
             },
         )
         .await

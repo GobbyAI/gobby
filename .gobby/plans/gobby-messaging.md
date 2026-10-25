@@ -139,16 +139,17 @@ Writer decisions:
     pending. This replaces the zombie expiry loop, which existed only to mark
     rows to closed sessions as delivered. That loop is deleted in 1.2.
 13. **The `messaging` family defaults to native.** `RouteTable::new` defaults
-    every family to `Proxy`, and Python has no `/api/messaging`. `RouteFamily`
-    gains `default_backend()`, which returns `Proxy` unless the family
-    overrides it, and `messaging` overrides it to `Native`. A bootstrap
+    each family through its existing `default_backend()` fallback, and Python
+    has no `/api/messaging`. The generic gcore `RouteFamily<S>` trait already
+    supplies a `Proxy` default; `messaging` overrides it to `Native`. A bootstrap
     `front_door.routes.messaging` entry still wins.
 14. **`gmsg` exports constants and a service; gdaemon implements
-    `RouteFamily`.** The trait lives in gdaemon, so a family crate that
-    implemented it would depend on gdaemon and form a cycle. This follows
+    `RouteFamily<FrontDoorState>`.** The trait now lives in gcore and is
+    re-exported by gdaemon. The concrete router still uses gdaemon-owned
+    `FrontDoorState`, so this plan keeps its adapter in gdaemon and exports
+    a service and constants from gmsg. This follows
     `crates/gterminals/src/lib.rs` (`FAMILY_NAME`, `ROUTE_PREFIXES`). 1.5
-    corrects `crates/AGENTS.md`, which still says a family exports a static
-    `RouteFamily`.
+    documents this adapter placement in `crates/AGENTS.md`.
 15. **Identity on `/api/messaging`.** The caller is the principal the front
     door verified under #23273 (Hub-side key validation, front-door identity,
     and shared-token cutover). The acting session is `X-Gobby-Session-Id`.
@@ -256,7 +257,7 @@ Writer decisions:
 | Wake seam, mailbox, agent-run messages | `events/coordination_waits.py`, `storage/coordination_waits.py`, `storage/agent_message_waits.py`, `events/wake.py`, `events/wake_notifications.py`, `events/wake_recovery.py`, `sessions/mailbox.py`, `sessions/mailbox_targets.py`, `sessions/mailbox_delivery.py`, `agents/resume_finalization.py`, `hooks/session_coordinator.py`, `runner_init/orchestration.py` | #21564 (S2.7) | D3 |
 | Session continuity | `sessions/compact_continuation.py`, `servers/websocket/handlers/session_observe_proxy.py` | #21562 | D4 |
 | Rules engine | `workflows/engine/templating.py`, `workflows/engine/run_command_effects.py`, `workflows/enforcement/blocking.py` | #21567 | D5 |
-| Tasks | `mcp_proxy/tools/tasks/_stage_review.py`, `servers/routes/tasks_assignment.py` | #21560 | D6 |
+| Tasks | `servers/routes/tasks_assignment.py` | #21560 | D6 |
 | Communications | `storage/communications.py`, `storage/decision_answers.py` | #21583 | D7 |
 | Web chat | `servers/websocket/server.py`, `servers/websocket/chat/_pending_messages.py` | #21592 | D8 |
 | Retention loop | `runner_maintenance/messaging.py` | #21582 | D9 |
@@ -273,6 +274,9 @@ own cursors, and the council's consensus is a checkable state.
 
 ### 1.1 Channel schema, visibility, cursors, wake rules, and waits in SQL [category: code]
 `kind: deliverable`
+
+Consumers unchanged:
+- `crates/gcore/src/grant/presentation/tests.rs` — no-edit-reason: constructs the grant with expected_schema_identity() dynamically; no pinned identity changes.
 
 Targets:
 - `crates/gcore/assets/schema/migrations/460_agent_channels.sql`
@@ -414,6 +418,12 @@ then `cargo nextest run -p gobby-core --test schema_contract` and
 ### 1.2 The adapter reads channels, and `inter_session_messages` is dropped [category: code] (depends: 1.1)
 `kind: deliverable`
 
+Consumers unchanged:
+- `crates/gcore/src/grant/presentation/tests.rs` — no-edit-reason: constructs the grant with expected_schema_identity() dynamically; no pinned identity changes.
+- `src/gobby/agents/agent_health.py` — no-edit-reason: calls complete_agent_run through its unchanged signature and does not read message rows.
+- `tests/agents/watchdog/test_print_mode_exit.py` — no-edit-reason: exercises completion through its unchanged signature and does not read message rows.
+- `tests/test_runner_project_recovery.py` — no-edit-reason: calls open_storage_and_config through its unchanged signature and does not inspect the zombie-message task.
+
 Targets:
 - `crates/gcore/assets/schema/migrations/461_retire_inter_session_messages.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated catalog entries for migration 461
@@ -551,7 +561,6 @@ Consumers unchanged:
 - `src/gobby/sessions/compact_continuation.py` — no-edit-reason: uses adapter methods whose signatures are unchanged.
 - `src/gobby/sessions/mailbox_delivery.py` — no-edit-reason: consumes `InterSessionMessage` objects only.
 - `src/gobby/storage/communications.py` — no-edit-reason: creates and reads messages through the adapter.
-- `src/gobby/mcp_proxy/tools/tasks/_stage_review.py` — no-edit-reason: sends through the adapter.
 - `src/gobby/servers/routes/tasks_assignment.py` — no-edit-reason: sends through the adapter.
 - `src/gobby/servers/websocket/handlers/session_observe_proxy.py` — no-edit-reason: reads through the adapter.
 - `src/gobby/servers/websocket/chat/_pending_messages.py` — no-edit-reason: `mark_delivered` keeps its signature.
@@ -602,7 +611,14 @@ name and its imports.
 ### 1.3 A `global` or `project` send writes one post [category: code] (depends: 1.2)
 `kind: deliverable`
 
+Consumers unchanged:
+- `tests/agents/test_runbook_message_authority.py` — no-edit-reason: pins direct/fanout authority and delivery outputs preserved by the mailbox adapter.
+- `tests/terminals/test_composer_arbitration.py` — no-edit-reason: uses a direct mailbox send, whose signature and delivery contract are preserved.
+- `tests/mcp_proxy/tools/test_agent_messaging_protocol_line.py` — no-edit-reason: uses the unchanged registration signature and existing protocol-line contract.
+- `tests/mcp_proxy/tools/test_session_reporting.py` — no-edit-reason: uses the existing direct send/reporting contract through the unchanged registration signature.
+
 Targets:
+- `tests/workflows/test_seat_step_loops.py::*` — scope-reason: preserve seat protocol assertions while adapting mailbox storage fixtures
 - `src/gobby/sessions/mailbox.py::MailboxService.send`
 - `src/gobby/sessions/mailbox_targets.py::resolve_broadcast_selection`
 - `src/gobby/storage/inter_session_messages.py::*` — scope-reason: adds `create_channel_message` and the `reader_session_id` keyword on `get_message`
@@ -687,7 +703,8 @@ Targets:
   and the workspace version. The crate joins the root `members` list when its
   epic starts.
 - `crates/gterminals/src/lib.rs` exports `FAMILY_NAME` and `ROUTE_PREFIXES`,
-  because `RouteFamily` is defined in gdaemon (Decision 14).
+  with its gdaemon adapter implementing the gcore `RouteFamily<S>` trait
+  (Decision 14).
 - gcore feature `postgres-pool`:
   `gobby_core::postgres_pool::{Pool, Transaction}`,
   `Pool::transaction(lock, f)`, `Transaction::query`, `query_opt`,
@@ -753,18 +770,17 @@ Targets:
 Targets:
 - `crates/gdaemon/Cargo.toml`
 - `crates/gdaemon/src/front_door/messaging.rs`
-- `crates/gdaemon/src/front_door/routes.rs::RouteFamily`
 - `crates/gdaemon/src/front_door/routes.rs::FAMILIES`
-- `crates/gdaemon/src/front_door/routes.rs::RouteTable::new`
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: declares the `messaging` module only
 - `crates/AGENTS.md`
 
 **Research context:**
-- `RouteFamily` (`crates/gdaemon/src/front_door/routes.rs`) has `name`,
-  `prefixes`, and `router() -> Router<FrontDoorState>`. `FAMILIES` holds only
-  `HealthFamily`.
+- `RouteFamily<S>` (`crates/gcore/src/route_family.rs`, re-exported by
+  gdaemon) has `name`, `prefixes`, `router() -> Router<S>`, and
+  `default_backend()`, which defaults to `Proxy`. `FAMILIES` already holds
+  `HealthFamily` and `TerminalFamily`.
 - `RouteTable::new` takes each family's backend from the bootstrap
-  `front_door.routes` map and falls back to `RouteBackend::Proxy`. Unclaimed
+  `front_door.routes` map and already falls back to `family.default_backend()`. Unclaimed
   methods under a claimed prefix are proxied.
 - `FrontDoorState` holds the backend target and state. #21559 adds the gcore
   pool to it (Decision 4). This leaf reads that field and creates no pool.
@@ -772,9 +788,8 @@ Targets:
   token (Decision 15).
 
 **Implementation:**
-- `RouteFamily` gains `fn default_backend(&self) -> RouteBackend`, defaulting to
-  `RouteBackend::Proxy`. `RouteTable::new` falls back to it instead of the
-  constant. `FAMILIES` adds `&MessagingFamily`.
+- Reuse the existing generic trait and default-backend fallback unchanged.
+  `FAMILIES` adds `&MessagingFamily`, retaining the health and terminal families.
 - `front_door/messaging.rs` defines `MessagingFamily`. Its name and prefixes
   come from `gobby_messaging::{FAMILY_NAME, ROUTE_PREFIXES}`, and
   `default_backend` returns `Native`. Routes:
@@ -810,7 +825,13 @@ and `cargo clippy -p gobby-daemon --all-targets -- -D warnings` (heavy work).
 ### 1.6 Agent tools, the wait seam, and channel labels in the piggyback [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
 
+Consumers unchanged:
+- `tests/agents/test_bundled_agent_contract.py` — no-edit-reason: constructs the messaging registry through its unchanged signature; existing tools remain registered.
+- `tests/hub/test_remote_workspaces.py` — no-edit-reason: constructs the registry through its unchanged signature and tests workspace operations, not channel tools.
+
 Targets:
+- `tests/workflows/test_seat_step_loops.py::*` — scope-reason: update wait-manager fixtures for channel-tool registration while preserving seat protocol assertions
+- `tests/servers/routes/mcp_endpoints/test_terminal_session_revival.py::*` — scope-reason: update wait-manager fixtures while preserving terminal revival assertions
 - `src/gobby/mcp_proxy/tools/agent_channels.py`
 - `src/gobby/mcp_proxy/registries.py::setup_internal_registries`
 - `src/gobby/storage/agent_message_waits.py`
@@ -884,7 +905,6 @@ Consumers unchanged:
 - `src/gobby/ai/embedding_switch_runner.py` — no-edit-reason: calls `setup_internal_registries`, whose signature is unchanged.
 - `src/gobby/servers/http.py` — no-edit-reason: calls `setup_internal_registries`, whose signature is unchanged.
 - `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: calls `setup_internal_registries` and names no `gobby-agents` tool.
-- `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: calls `setup_internal_registries` and names no `gobby-agents` tool.
 - `tests/mcp_proxy/test_merge_integration.py` — no-edit-reason: calls `setup_internal_registries` and names no `gobby-agents` tool.
 - `tests/mcp_proxy/test_registries.py` — no-edit-reason: calls `setup_internal_registries` and names no `gobby-agents` tool.
 - `tests/mcp_proxy/test_registries_startup.py` — no-edit-reason: calls `setup_internal_registries` and names no `gobby-agents` tool.
@@ -916,7 +936,12 @@ Consumers unchanged:
 ### 1.7 The plan council converges on a consensus thread, and reply waits retire [category: code] (depends: 1.6)
 `kind: deliverable`
 
+Consumers unchanged:
+- `crates/gcore/src/grant/presentation/tests.rs` — no-edit-reason: constructs the grant with expected_schema_identity() dynamically; no pinned identity changes.
+
 Targets:
+- `tests/workflows/test_seat_step_loops.py::*` — scope-reason: migrate reply waits to wait_for_message and retain seat stop-gate coverage
+- `tests/servers/routes/mcp_endpoints/test_terminal_session_revival.py::*` — scope-reason: migrate reply waits to wait_for_message and retain terminal revival coverage
 - `crates/gcore/assets/schema/migrations/462_retire_coordination_reply_waits.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated catalog entries for migration 462
 - `crates/gcore/src/schema/assets.rs::MIGRATIONS`
@@ -937,7 +962,6 @@ Targets:
 - `src/gobby/install/shared/workflows/agents/plan-writer.yaml::*` — scope-reason: the consensus flow text
 - `src/gobby/install/shared/workflows/agents/plan-adversary.yaml::*` — scope-reason: the consensus flow text
 - `src/gobby/install/shared/workflows/rules/stop-gates/require-task-close.yaml::*` — scope-reason: the reply-wait instruction
-- `src/gobby/install/shared/workflows/rules/stop-gates/require-epic-tree-close.yaml::*` — scope-reason: the reply-wait instruction
 - `src/gobby/install/shared/workflows/rules/context-handoff/block-tools-after-handoff-compact.yaml::*` — scope-reason: both tool lists
 - `src/gobby/install/shared/skills/gobby/references/plan/review.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/messaging.md`
@@ -952,8 +976,8 @@ Targets:
 - Reply-wait consumers:
   - `references/agents/messaging.md:33`, `docs/guides/agents.md:325`, and the
     `wait_for_coordination` description;
-  - `require-task-close.yaml:16` and `require-epic-tree-close.yaml:20` ("reply
-    from another session").
+  - `require-task-close.yaml` (the reply-wait instruction). The former epic
+    close gate was removed by #24421 (5f328172bc); it needs no edit.
 - `block-tools-after-handoff-compact.yaml` lists `send_message`,
   `end_agent_run`, and `wait_for_coordination` at lines 26 and 116.
 - The council flow text is in `plan-writer.yaml` (Flow steps 3 and 4),
@@ -1132,9 +1156,9 @@ deferral:
 ## D6 Task review and assignment messages move with the tasks family
 `kind: deferred`
 
-- D6.1: `src/gobby/mcp_proxy/tools/tasks/_stage_review.py` and
-  `src/gobby/servers/routes/tasks_assignment.py` post through `gmsg`, and their
-  adapter use is deleted.
+- D6.1: `src/gobby/servers/routes/tasks_assignment.py` posts through `gmsg`,
+  and its adapter use is deleted. The former stage-review consumer was
+  already removed by #23856 (a94b7650bc); it adds no remaining port work.
 
 ```yaml
 deferral:
@@ -1221,8 +1245,8 @@ deferral:
 ```yaml
 deferral:
   task_ref: "#21574"
-  reason: "The adapter is the last Python messaging code and goes with the backend (#21574, Retire gobby-backend)."
-  owner: "gobby-1.0 stage 3 (S3.4, #21574)"
+  reason: "The adapter is the last Python messaging code and is removed at the S3.2 naming switch (#21573), by deletion child #21574 after D1 to D9 remove its callers. Rollback uses GitHub history and pinned released versions."
+  owner: "gobby-1.0 stage 3 (S3.2 #21573, deletion child #21574)"
   original_acceptance_items:
     - D11.1
 ```
@@ -1259,6 +1283,16 @@ The plan's root is #22340. Drafting creates no tasks, labels, or edges.
 ## V1 Plan Changelog
 `kind: verification`
 
+- 2026-10-24: #24954 aligns D11 with Josh's #24953 ROADMAP amendment
+  (f207ff6): Python is removed at S3.2 #21573, with #21574 as its deletion
+  child. Rollback uses GitHub history and pinned released versions. Removed
+  stale unchanged-consumer entries for the stage-review module deleted by
+  #23856 (a94b7650bc) and the dispatch test deleted by #23851 (fe8e05f7c7);
+  D6 retains the task-assignment consumer. Refreshed consumer inventories,
+  assigned seat/revival fixture migrations to their owning deliverables,
+  removed the retired epic close gate, and reused the existing gcore route
+  trait/default-backend fallback. Revised decisions await operator
+  approval before landing.
 - 2026-10-05: First draft by the Lane 7 Plan Writer gobby#15469 under the
   Orchestrator rulings of 12:52 and 12:56 CT. Targets and consumers were swept
   read-only on `0.5.0` at `d3985d1130`. The draft is narrative only, with no

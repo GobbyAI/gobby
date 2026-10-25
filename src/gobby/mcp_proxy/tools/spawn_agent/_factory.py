@@ -386,7 +386,7 @@ def create_spawn_agent_registry(
                 {"tab": {"workspace": REF, "title": TEXT}} or
                 {"split": {"pane": REF, "axis": "right"|"down", "title": TEXT}}.
                 A split may name {"workspace": REF, "tab_title": TEXT} in place of
-                "pane" to land beside the focused pane of the one tab with that
+                "pane" to land beside the last pane of the one tab with that
                 title; no matching tab, or several, refuses with 'invalid_ref'.
                 Split axis 'balanced' keeps panes at least 80 columns by 12 rows
                 when viewport 'columns' (default 80) and required 'rows' fit them,

@@ -111,6 +111,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                     community_labeler = CommunityLabeler(
                         runner.text_generation_service,
                         config.code_index,
+                        decisions_resolver=lambda: runner.config_runtime.capture().snapshot.active.ai.decisions,
                     )
             except Exception as e:
                 logger.warning("Failed to create CommunityLabeler: %s", e)

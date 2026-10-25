@@ -8,7 +8,6 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.tasks.lifecycle_access import session_grants
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
@@ -20,22 +19,6 @@ from gobby.workflows.step_instances import (
 from gobby.workflows.task_claim_state import active_task_id_for_edit, resolve_target_task_id
 
 BOUND_TASK_VARIABLE = "assigned_task_id"
-_CANDIDATE_LATCH_VARIABLES = (
-    "candidate_sent",
-    "implementation_complete",
-    BOUND_TASK_VARIABLE,
-    "assigned_task_ref",
-)
-
-
-def _unbounced_submitted_candidate(db: HubDatabase, instance: AgentStepInstance) -> bool:
-    """A maker's sent candidate that no reviewer has bounced."""
-    return (
-        instance.current_step == "submit"
-        and bool(instance.variables.get("candidate_sent"))
-        and not instance.variables.get("bounced")
-        and session_grants(db, instance.session_id, "implementation")
-    )
 
 
 def _binding_step_index(snapshot: AgentStepWorkflowBody) -> int | None:
@@ -62,11 +45,14 @@ def release_lost_binding(
     db: HubDatabase,
     instance: AgentStepInstance,
     session_variables: dict[str, Any],
+    *,
+    reset_on_claim: bool = False,
 ) -> AgentStepInstance:
     """Rewind a seat when its claim is lost or another owned claim becomes active.
 
     An unchanged held binding costs no task query. A different active selection
     must still be authoritatively owned before it can replace a parked binding.
+    A selected successful claim completion resets even an unchanged binding.
     """
     snapshot = instance.workflow
     binding = _binding_step_index(snapshot)
@@ -83,20 +69,30 @@ def release_lost_binding(
     selected = _read_task(db, active) if active is not None and active != bound_id else None
     if selected is None or not is_task_claimed_by_session(selected, instance.session_id):
         claimed = session_variables.get("claimed_tasks")
-        if isinstance(claimed, dict) and (bound in claimed or bound in claimed.values()):
+        if (
+            not reset_on_claim
+            and isinstance(claimed, dict)
+            and (bound in claimed or bound in claimed.values())
+        ):
             return instance
         task = _read_task(db, str(bound))
-        if task is not None and is_task_claimed_by_session(task, instance.session_id):
+        if reset_on_claim and (
+            active != bound_id
+            or task is None
+            or not is_task_claimed_by_session(task, instance.session_id)
+        ):
+            return instance
+        if (
+            not reset_on_claim
+            and task is not None
+            and is_task_claimed_by_session(task, instance.session_id)
+        ):
             return instance
 
     rewound = instance.model_copy(deep=True)
     defaults = copy.deepcopy(snapshot.variables)
     # Handoffs outlive any one binding; only observing their close retires them.
     defaults.pop(DEVELOPER_HANDOFF_TASKS_VARIABLE, None)
-    if _unbounced_submitted_candidate(db, instance):
-        # A release is not a bounce: a same-task re-claim resumes the candidate at submit.
-        for name in _CANDIDATE_LATCH_VARIABLES:
-            defaults[name] = instance.variables.get(name, defaults.get(name))
     rewound.variables.update(defaults)
     rewound.current_step = names[binding]
     rewound.step_action_count = 0

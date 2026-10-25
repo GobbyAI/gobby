@@ -145,6 +145,7 @@ class _Attachment:
     # attachment, so a holder id that leaks to another caller grants nothing.
     creator_user: str | None = None
     host_input_granted: bool = False
+    host_attachment_id: int | None = None
     # Viewer report that the pane is focused. Only the holder's report counts.
     focused: bool = False
 
@@ -515,6 +516,7 @@ class TerminalLeaseRegistry:
         attachment_id: str,
         *,
         takeover: bool = False,
+        host_attachment_id: int | None = None,
     ) -> ControlResult:
         async with self.lock(terminal_id):
             record = self.get(attachment_id)
@@ -524,6 +526,7 @@ class TerminalLeaseRegistry:
                 )
             lease = self._lease(terminal_id)
             if lease.holder == attachment_id:
+                record.host_attachment_id = host_attachment_id
                 # A repeated take is the holder's retry after a failed grant.
                 granted = await self._notify_holder(
                     terminal_id, record.terminal, record, holder_changed=False
@@ -534,6 +537,7 @@ class TerminalLeaseRegistry:
                 )
             if lease.holder is not None and not takeover:
                 return ControlResult(attachment_id, False, "held", lease.generation)
+            record.host_attachment_id = host_attachment_id
             displaced = lease.holder
             displaced_record = None if displaced is None else self.get(displaced)
             if displaced_record is not None:

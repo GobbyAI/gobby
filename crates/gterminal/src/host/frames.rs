@@ -183,6 +183,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                                     &ServerMessage::Attached {
                                         created,
                                         host_terminal_id: assigned,
+                                        host_attachment_id: id,
                                     },
                                 )
                                 .await;

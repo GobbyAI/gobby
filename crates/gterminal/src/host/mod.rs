@@ -596,12 +596,23 @@ fn run_from_pin(images_dir: &Path) -> io::Result<image::PinnedImage> {
 /// same path, so a host past the cap could never be reached. Runs before the
 /// image pin, so a refused host leaves nothing behind.
 fn check_socket_path(path: &Path) -> io::Result<()> {
+    // Pathname sockets reserve one byte of sun_path for the terminating NUL.
+    let limit = if cfg!(any(target_os = "linux", target_os = "android")) {
+        107
+    } else {
+        103
+    };
     std::os::unix::net::SocketAddr::from_pathname(path)
         .map(|_| ())
         .map_err(|err| {
             io::Error::new(
                 err.kind(),
-                format!("socket path {} is too long: {err}", path.display()),
+                format!(
+                    "gterm socket path {} is too long ({} bytes; AF_UNIX sun_path limit {limit} bytes): \
+                     {err}; set terminal_host.socket_dir to a shorter directory",
+                    path.display(),
+                    path.as_os_str().as_encoded_bytes().len(),
+                ),
             )
         })
 }

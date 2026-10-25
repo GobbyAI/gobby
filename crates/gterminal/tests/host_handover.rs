@@ -367,6 +367,14 @@ fn read_msg(stream: &mut UnixStream) -> ServerMessage {
 /// Attaches a frames stream to `host_terminal_id` and returns it once the
 /// first broadcast frame arrives.
 fn attach(socket_dir: &Path, host_terminal_id: &str, reservation_id: Option<&str>) -> UnixStream {
+    attach_with_id(socket_dir, host_terminal_id, reservation_id).0
+}
+
+fn attach_with_id(
+    socket_dir: &Path,
+    host_terminal_id: &str,
+    reservation_id: Option<&str>,
+) -> (UnixStream, u64) {
     let mut stream = connect(&socket_dir.join(FRAMES_SOCKET));
     write_msg(
         &mut stream,
@@ -391,9 +399,17 @@ fn attach(socket_dir: &Path, host_terminal_id: &str, reservation_id: Option<&str
             locator: None,
         },
     );
+    let mut attachment_id = None;
     loop {
         match read_msg(&mut stream) {
-            ServerMessage::Frame(_) | ServerMessage::Terminal(_) => return stream,
+            ServerMessage::Attached {
+                host_attachment_id, ..
+            } => {
+                attachment_id = Some(host_attachment_id);
+            }
+            ServerMessage::Frame(_) | ServerMessage::Terminal(_) => {
+                return (stream, attachment_id.expect("host attachment identifier"));
+            }
             ServerMessage::Error { code, .. } => panic!("attach refused: {code}"),
             _ => {}
         }
@@ -1029,6 +1045,169 @@ fn upgrade_keeps_pids_epoch_and_panes() {
     }
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     shutdown(&mut host, &mut ctl);
+}
+
+#[test]
+fn stale_attachment_grant_after_handover_cannot_authorize_a_new_stream() {
+    assert!(assert_stale_attachment_grant_after_restore_is_refused(
+        false, false
+    ));
+}
+
+#[test]
+fn stale_attachment_grant_after_fallback_cannot_authorize_a_new_stream() {
+    assert!(assert_stale_attachment_grant_after_restore_is_refused(
+        true, false
+    ));
+}
+
+#[test]
+fn late_frame_attach_in_the_capture_hold_is_refused_and_never_reused() {
+    assert!(assert_stale_attachment_grant_after_restore_is_refused(
+        false, true
+    ));
+}
+
+#[test]
+fn late_frame_attach_in_the_capture_hold_is_refused_on_fallback() {
+    assert!(assert_stale_attachment_grant_after_restore_is_refused(
+        true, true
+    ));
+}
+
+fn assert_late_frame_attach_is_refused(socket_dir: &Path, host_terminal_id: &str) {
+    let mut stream = connect(&socket_dir.join(FRAMES_SOCKET));
+    write_msg(
+        &mut stream,
+        &ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            encoding: RenderEncoding::SemanticFrame,
+            local_token: "local-token".into(),
+            cols: 80,
+            rows: 24,
+            tmux_identity: None,
+        },
+    );
+    assert!(matches!(
+        read_msg(&mut stream),
+        ServerMessage::Welcome { .. }
+    ));
+    write_msg(
+        &mut stream,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.into(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    // Read the reply directly: a refused attach answers at once, where a gated
+    // broadcast would wait for the upgrade to finish.
+    match read_msg(&mut stream) {
+        ServerMessage::Error { code, .. } => assert_eq!(code, "host_upgrading"),
+        message => panic!("a late attach must be refused during the capture hold: {message:?}"),
+    }
+}
+
+fn assert_stale_attachment_grant_after_restore_is_refused(
+    fallback: bool,
+    late_attach: bool,
+) -> bool {
+    let env: &[(&str, &str)] = if fallback {
+        &[("GTERM_RESTORE_FAULT", "decode:ht-1")]
+    } else {
+        &[]
+    };
+    let mut host = live_host(env);
+    let dir = host.socket_dir().to_path_buf();
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let panes = echo_panes(&mut host, &mut ctl, 1);
+    let terminal = &panes[0].host_terminal_id;
+    let (old_stream, old_id) = attach_with_id(&dir, terminal, None);
+    let before = ping(&mut ctl);
+    // The hold bounds only the capture-to-exec window; the explicit refusal below
+    // is the proof, so no timing decides the outcome.
+    let hold = if late_attach {
+        json!({"hold_before_exec_ms": 5000})
+    } else {
+        Value::Null
+    };
+    let accepted = host_upgrade(&mut ctl, &gterm_bin(), "stale-grant", hold);
+    assert_eq!(accepted["accepted"], true);
+    if late_attach {
+        wait_until("the capture is written", || dir.join(STATE_FILE).exists());
+        assert_late_frame_attach_is_refused(&dir, terminal);
+    }
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "stale-grant", OUTCOME_WAIT);
+    assert_outcome(
+        &after,
+        "stale-grant",
+        if fallback { "fallback" } else { "succeeded" },
+        None,
+    );
+    assert_eq!(after["host_epoch"], before["host_epoch"]);
+    drop(old_stream);
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let (mut attacker, new_id) = attach_with_id(&dir, terminal, None);
+    let mut events = connect_control(&dir, UPGRADE_TOKEN);
+    rpc(&mut events, "subscribe_events", json!({}));
+    // Both a queued take and a reconnect retry carry this old physical ID.
+    for _ in 0..2 {
+        let grant = rpc(
+            &mut ctl,
+            "grant_input",
+            json!({
+                "host_terminal_id": terminal,
+                "attachment_id": "old-holder",
+                "host_attachment_id": old_id,
+            }),
+        );
+        assert_eq!(grant["ok"], false, "stale grant must be refused: {grant}");
+    }
+    assert_ne!(
+        old_id, new_id,
+        "stream IDs must survive the retained epoch without reuse"
+    );
+    if late_attach {
+        assert_eq!(
+            new_id,
+            old_id + 1,
+            "a refused late attach must not consume an identifier"
+        );
+    }
+    write_msg(
+        &mut attacker,
+        &ClientMessage::BindAttachment {
+            attachment_id: "old-holder".into(),
+        },
+    );
+    barrier(&mut attacker);
+    for input in [
+        ClientMessage::Input {
+            data: b"STOLEN".to_vec(),
+        },
+        ClientMessage::Paste {
+            text: "STOLEN".into(),
+        },
+    ] {
+        write_msg(&mut attacker, &input);
+        loop {
+            match read_msg(&mut attacker) {
+                ServerMessage::InputRefused { code } => {
+                    assert_eq!(code, "input_not_granted");
+                    break;
+                }
+                ServerMessage::Frame(_) | ServerMessage::Terminal(_) => {}
+                message => panic!("expected input refusal, got {message:?}"),
+            }
+        }
+    }
+    barrier(&mut attacker);
+    assert!(!snapshot_text(&mut ctl, terminal).contains("STOLEN"));
+    let no_activity = events_for(&mut events, Duration::from_millis(100))
+        .iter()
+        .all(|event| event["event"] != "input_activity");
+    shutdown(&mut host, &mut ctl);
+    no_activity
 }
 
 /// Plan gterm-host-handover 1.3.3.

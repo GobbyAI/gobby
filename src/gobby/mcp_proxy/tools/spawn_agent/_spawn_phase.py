@@ -76,7 +76,9 @@ class SpawnPhase:
             raise
         except Exception as exc:
             logger.warning("Agent spawn failed for run %s: %s", self.run_id, type(exc).__name__)
-            return await self.fail(str(exc), infrastructure=isinstance(exc, OSError))
+            return await self.fail(
+                str(exc) or type(exc).__name__, infrastructure=isinstance(exc, OSError)
+            )
 
     async def run(self) -> None:
         result = await self.execute_phase()

@@ -27,9 +27,10 @@ the agent starts. Use one of three forms:
 - New tab: `{"tab": {"workspace": REF, "title": TEXT}}`. `REF` is a workspace
   ref, UUID or name.
 - Split beside a pane: `{"split": {"pane": REF, "axis": AXIS, "title": TEXT}}`.
-- Split beside a named tab's focused pane:
+- Split beside a named tab's last pane:
   `{"split": {"workspace": REF, "tab_title": TEXT, "axis": AXIS, "title": TEXT}}`.
-  Use this form when the project names its tabs; it needs no pane ref. It
+  Use this form when the project names its tabs; it needs no pane ref. Focus
+  never picks the target, so placed seats line up in launch order. It
   refuses with `invalid_ref` unless exactly one tab in that workspace has the
   title. `pane` and `tab_title` are mutually exclusive.
 

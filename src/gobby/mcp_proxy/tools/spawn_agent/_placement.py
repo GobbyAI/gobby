@@ -56,11 +56,11 @@ async def preflight_placement(
     try:
         parsed = AgentPlacement.parse(placement)
     except AgentPlacementError as exc:
-        return _refusal(exc.code, str(exc))
+        return _refusal(exc.code, str(exc) or type(exc).__name__)
     try:
         await asyncio.to_thread(require_managed_srt, sandbox_config)
     except SandboxRequiredError as exc:
-        return _refusal("sandbox_required", str(exc))
+        return _refusal("sandbox_required", str(exc) or type(exc).__name__)
     if (
         machine_id is None
         or parent_session_id == system_session_id(machine_id)
@@ -89,7 +89,7 @@ async def preflight_placement(
             own_seat_resume=own_seat,
         )
     except AgentPlacementError as exc:
-        return _refusal(exc.code, str(exc))
+        return _refusal(exc.code, str(exc) or type(exc).__name__)
     return PlacedLaunch(reserver=reserver, resolved=resolved, replaces_tab=replaces_tab)
 
 
@@ -100,6 +100,9 @@ def task_active_refusal(response: dict[str, Any]) -> dict[str, Any]:
             "success": False,
             "placement_error": "task_active",
             "run_id": response.get("run_id"),
+            "error": response.get("error")
+            or response.get("message")
+            or "Task already has an active agent run",
         }
     return response
 
@@ -117,9 +120,9 @@ async def run_placed_spawn(
         await phase.fail("Agent spawn cancelled")
         raise
     except AgentPlacementError as exc:
-        return {**await phase.fail(str(exc)), "placement_error": exc.code}
+        return {**await phase.fail(str(exc) or type(exc).__name__), "placement_error": exc.code}
     except Exception as exc:
-        return await phase.fail(str(exc))
+        return await phase.fail(str(exc) or type(exc).__name__)
 
     # Recorded before bind awaits: a publish failure raises after the pane holds it.
     launch_terminal_id: str | None = None

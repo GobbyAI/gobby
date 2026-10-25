@@ -10,6 +10,15 @@ pub enum SchemaError {
     Unsupported(String),
     #[error("schema apply lock: {0}")]
     ApplyLock(String),
+    #[error("migration v{version} ({filename}) failed at statement {statement}: {detail}")]
+    Migration {
+        version: i32,
+        filename: &'static str,
+        statement: String,
+        detail: String,
+        #[source]
+        source: postgres::Error,
+    },
     #[error("schema verification failed: {0}")]
     Verification(String),
     #[error(transparent)]

@@ -226,7 +226,12 @@ A new gterm does not need a restart; see
 
 Before stopping anything, the command proves the start half will succeed: the
 linked-worktree guard, the installed binary set, the schema identity, and a
-read-only `gdaemon schema plan` against the hub. On refusal it prints the reason
+read-only `gdaemon schema plan` and rollback-only `gdaemon schema preflight`
+against the hub's current data. The latter executes pending transactional
+migrations and always rolls back, preserving rows, schema, and schema version.
+It may consume sequence values without committing data. Non-transactional or
+transaction-control migrations and pending baseline initialization are refused.
+On refusal it prints the failing migration, statement, and PostgreSQL error where applicable,
 and leaves the running daemon alone, because a stop that cannot start again has
 no way back.
 
@@ -447,8 +452,12 @@ dirt elsewhere in the checkout never blocks it.
 
 After the build and before promotion, the freshly built candidate `gdaemon` must
 prove itself: its embedded schema identity must match the checkout pin, and its
-read-only `gdaemon schema plan` must succeed against the hub. On refusal nothing
-is promoted and nothing is stopped.
+read-only `gdaemon schema plan` and rollback-only `gdaemon schema preflight`
+must succeed against the hub's current data. The latter preserves rows, schema,
+and schema version, but pending migrations may consume sequence values without
+committing data. Non-transactional or transaction-control migrations and pending
+baseline initialization are refused. A migration failure names its statement and
+PostgreSQL error. On refusal nothing is promoted and nothing is stopped.
 
 ### `gobby auth`
 

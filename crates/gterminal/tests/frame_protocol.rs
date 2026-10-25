@@ -13,7 +13,7 @@ use host_support::{
     wait_until, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use serde_json::json;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
@@ -372,10 +372,12 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
             locator: None,
         },
     );
-    match read_reply(&mut frames) {
-        ServerMessage::Attached { .. } => {}
+    let host_attachment_id = match read_reply(&mut frames) {
+        ServerMessage::Attached {
+            host_attachment_id, ..
+        } => host_attachment_id,
         other => panic!("expected attached: {other:?}"),
-    }
+    };
 
     // Legacy write verbs stay rejected as unknown.
     write_msg(
@@ -398,16 +400,7 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
     );
     expect_refusal(&mut frames, "input_not_granted");
 
-    let granted = rpc(
-        &mut ctrl,
-        "grant_input",
-        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-1"}),
-    );
-    assert_eq!(granted["ok"], true, "{granted}");
-    assert_eq!(granted["granted"], true, "{granted}");
-    assert!(granted["previous"].is_null(), "{granted}");
-
-    // Granted, but this stream has not bound the granted id.
+    // A client-supplied label cannot create authority.
     write_msg(
         &mut frames,
         &ClientMessage::Input {
@@ -416,7 +409,7 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
     );
     expect_refusal(&mut frames, "input_not_granted");
 
-    // Bound to an id other than the holder.
+    // Another label is equally powerless.
     write_msg(
         &mut frames,
         &ClientMessage::BindAttachment {
@@ -431,7 +424,16 @@ fn ungranted_input_is_refused_and_granted_input_writes() {
     );
     expect_refusal(&mut frames, "input_not_granted");
 
-    // Bound to the holder: the child reads the line.
+    let granted = rpc(
+        &mut ctrl,
+        "grant_input",
+        json!({"host_terminal_id": host_terminal_id, "attachment_id": "att-1", "host_attachment_id": host_attachment_id}),
+    );
+    assert_eq!(granted["ok"], true, "{granted}");
+    assert_eq!(granted["granted"], true, "{granted}");
+    assert!(granted["previous"].is_null(), "{granted}");
+
+    // The trusted physical grant lets this stream write.
     write_msg(
         &mut frames,
         &ClientMessage::BindAttachment {
@@ -709,4 +711,144 @@ fn attach_history_then_max_keyframe_fits() {
         }
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn attached_reports_distinct_host_owned_stream_identifiers() {
+    let token = "host-stream-identity";
+    let (dir, mut child) = start_host(token);
+    let mut ctrl = control_hello(dir.path(), token);
+    let prepared = spawn_prepared(
+        &mut ctrl,
+        "stream-identity",
+        &[
+            "/bin/sh",
+            "-c",
+            "while IFS= read -r line; do printf 'READ:%s\\n' \"$line\"; done",
+        ],
+    );
+    child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
+    let terminal = prepared["host_terminal_id"].as_str().unwrap().to_string();
+    commit_spawn(&mut ctrl, "stream-identity");
+    let mut ids = Vec::new();
+    let mut streams = Vec::new();
+    for _ in 0..2 {
+        let mut frames = connect(&dir.path().join(FRAMES_SOCKET));
+        write_msg(&mut frames, &hello_frame(80, 24));
+        assert!(matches!(
+            read_reply(&mut frames),
+            ServerMessage::Welcome { .. }
+        ));
+        write_msg(
+            &mut frames,
+            &ClientMessage::AttachTerminal {
+                host_terminal_id: terminal.clone(),
+                reservation_id: None,
+                locator: None,
+            },
+        );
+        let reply = read_reply(&mut frames);
+        assert!(matches!(reply, ServerMessage::Attached { .. }));
+        let value = serde_json::to_value(reply).unwrap();
+        ids.push(
+            value["Attached"]["host_attachment_id"]
+                .as_u64()
+                .expect("Attached must report the host-owned stream identifier"),
+        );
+        streams.push(frames);
+    }
+    assert_ne!(ids[0], ids[1]);
+    let mut events = control_hello(dir.path(), token);
+    assert_eq!(rpc(&mut events, "subscribe_events", json!({}))["ok"], true);
+    let granted = rpc(
+        &mut ctrl,
+        "grant_input",
+        json!({
+            "host_terminal_id": terminal, "attachment_id": "holder-a", "host_attachment_id": ids[0],
+        }),
+    );
+    assert_eq!(granted["granted"], true);
+    // No first-bind race: the trusted grant already identifies A's stream.
+    write_msg(
+        &mut streams[1],
+        &ClientMessage::BindAttachment {
+            attachment_id: "holder-a".into(),
+        },
+    );
+    expect_refusal(&mut streams[1], "attachment_already_bound");
+    for message in [
+        ClientMessage::Input {
+            data: b"attack-input\n".to_vec(),
+        },
+        ClientMessage::Paste {
+            text: "attack-paste\n".into(),
+        },
+    ] {
+        write_msg(&mut streams[1], &message);
+        expect_refusal(&mut streams[1], "input_not_granted");
+    }
+    write_msg(
+        &mut streams[0],
+        &ClientMessage::Input {
+            data: b"owner\n".to_vec(),
+        },
+    );
+    wait_until("owner's input reaches the child", || {
+        snapshot_text(&mut ctrl, &terminal).contains("READ:owner")
+    });
+    assert!(!snapshot_text(&mut ctrl, &terminal).contains("attack-"));
+    let activity = recv_json(&mut events);
+    assert_eq!(activity["event"], "input_activity");
+    assert_eq!(activity["attachment_id"], "holder-a");
+    assert_eq!(activity["bytes"], 6);
+    let moved = rpc(
+        &mut ctrl,
+        "grant_input",
+        json!({
+            "host_terminal_id": terminal, "attachment_id": "holder-b", "host_attachment_id": ids[1],
+        }),
+    );
+    assert_eq!(moved["previous"], "holder-a");
+    for message in [
+        ClientMessage::Input {
+            data: b"stale-input\n".to_vec(),
+        },
+        ClientMessage::Paste {
+            text: "stale-paste\n".into(),
+        },
+    ] {
+        write_msg(&mut streams[0], &message);
+        expect_refusal(&mut streams[0], "input_not_granted");
+    }
+    write_msg(
+        &mut streams[1],
+        &ClientMessage::Paste {
+            text: "new-owner\n".into(),
+        },
+    );
+    wait_until("new owner's input reaches the child", || {
+        snapshot_text(&mut ctrl, &terminal).contains("READ:new-owner")
+    });
+    let screen = snapshot_text(&mut ctrl, &terminal);
+    assert!(
+        !screen.contains("attack-") && !screen.contains("stale-"),
+        "{screen}"
+    );
+    let activity = recv_json(&mut events);
+    assert_eq!(activity["attachment_id"], "holder-b");
+    assert_eq!(activity["kind"], "paste");
+    events
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let mut byte = [0_u8; 1];
+    let error = events.read(&mut byte).unwrap_err();
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    assert_eq!(
+        rpc(&mut ctrl, "host_shutdown", json!({"grace_ms": 20}))["ok"],
+        true
+    );
+    assert!(wait_exit(&mut child, Duration::from_secs(5)).is_some());
 }

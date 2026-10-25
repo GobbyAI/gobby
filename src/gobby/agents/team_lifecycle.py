@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from gobby.agents.team_scope import (
     epic_names,
     tree_is_live,
 )
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -50,6 +52,7 @@ from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_state import ExecutionStatus, StepExecution
 from gobby.worktrees.git import WorktreeGitManager
 
+logger = logging.getLogger(__name__)
 _PIPELINE_SOURCE = "pipeline"
 _PIPELINE_PREFIX = "pipeline-"
 _TREE_FIELDS = frozenset({"worktree_id", "worktree_path"})
@@ -127,7 +130,9 @@ async def admit_team(
     if team_id is not None:
         team_uuid = parse_uuid_reference(team_id)
         if team_uuid is None:
-            raise TeamAdmissionRefused("team_missing", f"team {team_id} is not an execution id")
+            raise TeamAdmissionRefused(
+                "team_missing", f"team {team_id} requires a full execution UUID for team_id"
+            )
         team_id = str(team_uuid)
     caller = await asyncio.to_thread(_team_caller, db, caller_session_id)
     target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
@@ -479,6 +484,11 @@ async def _create(
         )
     binding = TeamBinding(**intent, worktree_id=made.worktree_id, worktree_path=made.cwd)
     await asyncio.to_thread(_record, caller, asdict(binding))
+    # Seats join this tree without the isolation preflight that normally pins it.
+    try:
+        await GcodeGateway().pin_project(Path(binding.worktree_path))
+    except (GcodeGatewayError, OSError) as exc:
+        logger.warning("Failed to pin team code index for %s: %s", binding.worktree_path, exc)
     return binding
 
 

@@ -257,6 +257,7 @@ async fn direct_frame_eof_detaches_before_reattach() {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "term-a".into(),
+                host_attachment_id: 1,
             },
         )
         .await
@@ -400,6 +401,7 @@ async fn direct_and_proxy_panes_run_together() {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "terminal-direct".into(),
+                host_attachment_id: 1,
             },
         )
         .await

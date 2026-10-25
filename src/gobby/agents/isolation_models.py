@@ -69,6 +69,7 @@ class SpawnConfig:
     # Explicit worktree directory name under ~/.gobby/worktrees/<project>; None derives it
     # from the branch name.
     worktree_dir_name: str | None = None
+    preserve_existing_worktree: bool = False
 
 
 type SpawnStateKey = tuple[

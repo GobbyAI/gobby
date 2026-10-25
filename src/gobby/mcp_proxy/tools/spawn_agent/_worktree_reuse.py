@@ -82,7 +82,7 @@ async def prepare_resumed_worktree(
     """Return a resumed seat to its worktree exactly as the seat left it.
 
     A resume continues in-flight work, so it neither requires a clean tree nor
-    rebases onto the base: uncommitted files and unlanded commits stay as they are.
+    syncs with the base: uncommitted files and unlanded commits stay as they are.
     """
     await repair_isolation_environment(
         main_repo_path=main_repo_path,

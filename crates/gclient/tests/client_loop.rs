@@ -2611,6 +2611,7 @@ async fn live_resize_propagates_geometry_by_policy() {
                 &ServerMessage::Attached {
                     created: false,
                     host_terminal_id: "term-controlled".into(),
+                    host_attachment_id: 1,
                 },
             )
             .await
@@ -4142,6 +4143,7 @@ async fn daemon_loss_renders_read_only_until_recovery() {
             &ServerMessage::Attached {
                 created: false,
                 host_terminal_id: "terminal-loss".into(),
+                host_attachment_id: 1,
             },
         )
         .await

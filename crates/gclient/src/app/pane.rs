@@ -519,11 +519,14 @@ impl Pane {
         self.direct_native() && self.host_input_granted
     }
 
-    /// Put back the control the daemon outage took away. The host keeps its
-    /// `input_grant` across the exec, so a pane whose direct stream is back
-    /// carries the same lease and grant it had: nothing is re-asked of a
-    /// daemon that was never involved in the reconnect. The first key the
-    /// host refuses re-clears this (#23076).
+    pub(super) fn host_attachment_id(&self) -> Option<u64> {
+        self.frame_source
+            .as_ref()
+            .and_then(PaneFrameSource::host_attachment_id)
+    }
+
+    /// Put back control after a confirmed grant. A recovered physical stream
+    /// must obtain its own host grant before it can type.
     pub(super) fn restore_host_control(&mut self) {
         self.control = ControlState::Held;
         self.take_back = false;

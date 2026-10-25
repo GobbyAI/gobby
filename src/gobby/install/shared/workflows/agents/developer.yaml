@@ -291,16 +291,14 @@ step_workflow:
           when: >-
             tool_output.get('closed') is True
             or (tool_output.get('result') or {}).get('closed') is True
-        # A same-task re-claim keeps a candidate its release left latched.
+        # Every claim starts a fresh attempt; only link_commit completes it.
         - server: gobby-tasks
           tool: claim_task
-          when: "(tool_output.get('result') or tool_output).get('task_id') != vars.get('assigned_task_id')"
           action: set_variable
           variable: implementation_complete
           value: false
         - server: gobby-tasks
           tool: claim_task
-          when: "(tool_output.get('result') or tool_output).get('task_id') != vars.get('assigned_task_id')"
           action: set_variable
           variable: candidate_sent
           value: false
@@ -724,6 +722,26 @@ step_workflow:
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
+        - server: gobby-tasks
+          tool: unlink_commit
+          when: &own_last_commit_unlinked >-
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and task_has_no_commits(vars.get('assigned_task_id'))
+          action: set_variable
+          variable: implementation_complete
+          value: false
+        - server: gobby-tasks
+          tool: unlink_commit
+          when: *own_last_commit_unlinked
+          action: set_variable
+          variable: candidate_sent
+          value: false
+        - server: gobby-tasks
+          tool: unlink_commit
+          when: *own_last_commit_unlinked
+          action: set_variable
+          variable: bounced
+          value: false
         - *forget_closed_handoff
         - *forget_observed_closed_handoff
         - *record_land_handoff
@@ -761,6 +779,6 @@ step_workflow:
         - *clear_observed_closed_task_ref
       transitions:
         - to: implement
-          when: "vars.bounced"
+          when: "vars.bounced or (vars.task_claimed and not vars.implementation_complete)"
         - to: claim
           when: "not vars.task_claimed"

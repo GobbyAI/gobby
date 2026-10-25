@@ -1,20 +1,25 @@
-"""DecisionService: the Choice call path over the decision wires (task #24244)."""
+"""Strict Choice, Noul, Score and Box decisions over the supported wires."""
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import logging
 import math
 import re
+import struct
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+from uuid import uuid4
 
 import httpx
 
 from gobby.config.ai import DecisionsConfig
 from gobby.llm.claude_runtime import retry_async
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +62,45 @@ class ChoiceQuestion:
 class ChoiceAnswer:
     choice: str
     probabilities: Mapping[str, float]
+    confidence: float
+
+
+@dataclass(frozen=True)
+class NoulAnswer:
+    probability: float
+
+
+@dataclass(frozen=True)
+class ScoreQuestion:
+    instructions: str
+    levels: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ScoreAnswer:
+    score: float
+    probabilities: dict[str, float]
+    confidence: float
+
+
+@dataclass(frozen=True)
+class BoxImage:
+    mime_type: Literal["image/png", "image/jpeg"]
+    data_base64: str
+
+
+@dataclass(frozen=True)
+class BoxQuestion:
+    instructions: str
+    image: BoxImage
+
+
+@dataclass(frozen=True)
+class BoxAnswer:
+    top: float
+    bottom: float
+    left: float
+    right: float
     confidence: float
 
 
@@ -110,8 +154,14 @@ def _fingerprint(config: DecisionsConfig) -> tuple[object, ...]:
 
 
 class DecisionService:
-    def __init__(self, config: DecisionsConfig) -> None:
+    def __init__(
+        self,
+        config: DecisionsConfig,
+        *,
+        exchange_observer: Callable[[httpx.Response], None] | None = None,
+    ) -> None:
         self._config = config
+        self._exchange_observer = exchange_observer
         self._cooldown_until = 0.0
 
     async def choose(
@@ -123,6 +173,16 @@ class DecisionService:
         timeout_seconds: float | None = None,
     ) -> DecisionResult[ChoiceAnswer]:
         """Return validated Choice answers, or raise ``DecisionsUnavailable``."""
+        return await self._request(consumer, state, questions, _parse_choice, timeout_seconds)
+
+    async def _request[Q: (ChoiceQuestion, str, ScoreQuestion, BoxQuestion), A](
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        questions: Mapping[str, Q],
+        parse_answer: Callable[[Any, Q], A],
+        timeout_seconds: float | None,
+    ) -> DecisionResult[A]:
         config = self._config
         started = time.monotonic()
         outcome = "error"
@@ -131,16 +191,16 @@ class DecisionService:
             base, model = config.api_base, config.model
             if base is None or model is None:
                 raise DecisionsUnavailable("unconfigured", "decisions api_base is unset")
-            _check_request(questions)
+            _check_request(questions, config.wire_api)
             body = _request_body(model, config.wire_api, state, questions)
-            estimated = estimate_tokens(body)
+            estimated = _estimate_body_tokens(body)
             if estimated > config.max_input_tokens:
                 raise DecisionsUnavailable(
                     "oversize", f"~{estimated} tokens exceeds {config.max_input_tokens}"
                 )
             if _now() < self._cooldown_until:
                 raise DecisionsUnavailable("cooldown", "a recent decision failure is cooling down")
-            result = await self._dial(base, model, questions, body, timeout_seconds)
+            result = await self._dial(base, model, questions, body, timeout_seconds, parse_answer)
             outcome = "ok"
             return result
         except DecisionsUnavailable as error:
@@ -162,14 +222,61 @@ class DecisionService:
                 outcome,
             )
 
-    async def _dial(
+    async def noul(
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        propositions: Mapping[str, str],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> DecisionResult[NoulAnswer]:
+        """Return validated Noul probabilities, or raise ``DecisionsUnavailable``."""
+        return await self._request(consumer, state, propositions, _parse_noul, timeout_seconds)
+
+    async def score(
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        questions: Mapping[str, ScoreQuestion],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> DecisionResult[ScoreAnswer]:
+        """Return validated Score answers, or raise ``DecisionsUnavailable``."""
+        return await self._request(consumer, state, questions, _parse_score, timeout_seconds)
+
+    async def box(
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        questions: Mapping[str, BoxQuestion],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> DecisionResult[BoxAnswer]:
+        """Return validated Box answers, or raise ``DecisionsUnavailable``."""
+        return await self._request(consumer, state, questions, _parse_box, timeout_seconds)
+
+    def estimate_request_tokens(
+        self,
+        state: Mapping[str, Any],
+        questions: Mapping[str, ChoiceQuestion]
+        | Mapping[str, str]
+        | Mapping[str, ScoreQuestion]
+        | Mapping[str, BoxQuestion],
+    ) -> int:
+        """Return the estimate the ``oversize`` guard compares with ``max_input_tokens``."""
+        return _estimate_body_tokens(
+            _request_body(self._config.model or "", self._config.wire_api, state, questions)
+        )
+
+    async def _dial[Q, A](
         self,
         base: str,
         model: str,
-        questions: Mapping[str, ChoiceQuestion],
+        questions: Mapping[str, Q],
         body: dict[str, Any],
         timeout_seconds: float | None,
-    ) -> DecisionResult[ChoiceAnswer]:
+        parse_answer: Callable[[Any, Q], A],
+    ) -> DecisionResult[A]:
         config = self._config
         budget = config.timeout_seconds
         if timeout_seconds is not None:
@@ -180,21 +287,25 @@ class DecisionService:
         deadline = loop.time() + budget
         url = _endpoint(config.wire_api, base, model)
         headers = {"authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+        if config.wire_api == "systemone" and "assets" in body:
+            headers["TypeSafe-Danger-Zone-Images"] = "true"
         card: asyncio.Task[str | None] | None = None
         try:
             async with asyncio.timeout(budget):
                 if config.identity_contract == "model_card":
                     card = asyncio.create_task(
-                        _fetch_card_identity(base, model, config.resolved_backend_max_state_tokens)
+                        _fetch_card_identity(
+                            base, model, config.resolved_backend_max_state_tokens, budget
+                        )
                     )
                 payload = await retry_async(
-                    lambda: _post(url, headers, body),
+                    lambda: _post(url, headers, body, budget, self._exchange_observer),
                     max_retries=_ATTEMPTS,
                     delay=_RETRY_DELAY,
                     retry_if=_retryable,
                 )
                 body_json = _unwrap(payload, config.wire_api)
-                response_model, answers = _parse_answers(body_json, questions)
+                response_model, answers = _parse_answers(body_json, questions, parse_answer)
                 _check_not_truncated(body_json, config.resolved_backend_max_state_tokens)
             # The card waits on the budget's remainder, so the decision's own timeout cannot cut
             # a decision that already succeeded short.
@@ -233,17 +344,38 @@ class DecisionService:
                 await asyncio.wait({card})
 
 
-def _check_request(questions: Mapping[str, ChoiceQuestion]) -> None:
+def _check_request(
+    questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion | BoxQuestion], wire_api: str
+) -> None:
     if not 1 <= len(questions) <= _MAX_QUESTIONS:
         raise DecisionsUnavailable(
             "invalid_request", f"{len(questions)} questions; 1 to {_MAX_QUESTIONS} allowed"
         )
+    images = [q.image for q in questions.values() if isinstance(q, BoxQuestion)]
+    if images:
+        if wire_api == "workers-ai":
+            raise DecisionsUnavailable("invalid_request", "Workers AI does not support Box")
+        _check_images(images)
     for key, question in questions.items():
         if _KEY_PATTERN.fullmatch(key) is None:
             raise DecisionsUnavailable(
                 "invalid_request", "question keys must match [A-Za-z0-9_.-]{1,100}"
             )
-        if not _MIN_OPTIONS <= len(question.criteria) <= _MAX_OPTIONS:
+        instructions = question if isinstance(question, str) else question.instructions
+        if not isinstance(instructions, str) or not instructions.strip():
+            raise DecisionsUnavailable("invalid_request", "instructions must be non-empty text")
+        if isinstance(question, ScoreQuestion) and (
+            not 2 <= len(question.levels) <= 10
+            or any(not isinstance(level, str) or not level.strip() for level in question.levels)
+        ):
+            raise DecisionsUnavailable("invalid_request", "Score takes 2 to 10 non-empty levels")
+        if isinstance(question, ChoiceQuestion) and (
+            not _MIN_OPTIONS <= len(question.criteria) <= _MAX_OPTIONS
+            or any(
+                not isinstance(option, str) or not isinstance(value, str)
+                for option, value in question.criteria.items()
+            )
+        ):
             raise DecisionsUnavailable(
                 "invalid_request",
                 f"a Choice question takes {_MIN_OPTIONS} to {_MAX_OPTIONS} options",
@@ -251,23 +383,145 @@ def _check_request(questions: Mapping[str, ChoiceQuestion]) -> None:
 
 
 def _request_body(
-    model: str, wire_api: str, state: Mapping[str, Any], questions: Mapping[str, ChoiceQuestion]
+    model: str,
+    wire_api: str,
+    state: Mapping[str, Any],
+    questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion | BoxQuestion],
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
         "state": dict(state),
-        "questions": {
-            key: {
-                "type": "choice",
-                "instructions": question.instructions,
-                "criteria": dict(question.criteria),
-            }
-            for key, question in questions.items()
-        },
+        "questions": {},
     }
+    for key, question in questions.items():
+        if isinstance(question, BoxQuestion):
+            image = question.image
+            part: str | dict[str, Any]
+            if wire_api == "systemone":
+                part = f"gobby-image-{uuid4().hex}"
+                body.setdefault("assets", {})[part] = {
+                    "type": "image",
+                    "format": image.mime_type.removeprefix("image/"),
+                    "data_base64": image.data_base64,
+                }
+            else:
+                part = {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{image.mime_type};base64,{image.data_base64}"},
+                }
+            body["questions"][key] = {"type": "box", "instructions": [question.instructions, part]}
+        else:
+            body["questions"][key] = _question_body(question)
     if wire_api == "openrouter-decisions":
         body["provider"] = {"zdr": True, "data_collection": "deny"}
     return body
+
+
+def _estimate_body_tokens(body: dict[str, Any]) -> int:
+    """Image tokens are unknown until capture; estimate the textual payload only."""
+    text_body = dict(body)
+    if "assets" in body:
+        text_body["assets"] = {
+            key: {**asset, "data_base64": ""} for key, asset in body["assets"].items()
+        }
+    text_body["questions"] = dict(body["questions"])
+    for key, question in body["questions"].items():
+        if question["type"] == "box" and isinstance(question["instructions"][1], dict):
+            instruction, image = question["instructions"]
+            url = image["image_url"]["url"].split(",", 1)[0] + ","
+            text_body["questions"][key] = {
+                **question,
+                "instructions": [instruction, {"type": "image_url", "image_url": {"url": url}}],
+            }
+    return estimate_tokens(text_body)
+
+
+def _check_images(images: list[BoxImage]) -> None:
+    if len(images) > MAX_REQUEST_IMAGES:
+        raise DecisionsUnavailable("invalid_request", "too many request images")
+    total = 0
+    for image in images:
+        if len(image.data_base64) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
+            raise DecisionsUnavailable("invalid_request", "image exceeds byte limit")
+        try:
+            data = base64.b64decode(image.data_base64, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise DecisionsUnavailable("invalid_request", "invalid image base64") from error
+        total += len(data)
+        if len(data) > MAX_IMAGE_BYTES or total > MAX_REQUEST_IMAGE_BYTES:
+            raise DecisionsUnavailable("invalid_request", "images exceed byte limit")
+        width, height = _image_dimensions(data, image.mime_type)
+        if not (
+            280 <= width <= 1568 and 280 <= height <= 1568 and 78400 <= width * height <= 2458624
+        ):
+            raise DecisionsUnavailable("invalid_request", "image dimensions exceed Box limits")
+
+
+def _image_dimensions(data: bytes, mime_type: str) -> tuple[int, int]:
+    if (
+        mime_type == "image/png"
+        and len(data) >= 33
+        and data[:16] == (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+    ):
+        width, height = struct.unpack_from(">II", data, 16)
+        return width, height
+    if mime_type == "image/jpeg" and data.startswith(b"\xff\xd8"):
+        offset = 2
+        while offset < len(data) and data[offset] == 0xFF:
+            while offset < len(data) and data[offset] == 0xFF:
+                offset += 1
+            if offset >= len(data):
+                break
+            marker = data[offset]
+            offset += 1
+            if marker in (0xD9, 0xDA):
+                break
+            if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+                continue
+            if offset + 2 > len(data):
+                break
+            length = int.from_bytes(data[offset : offset + 2], "big")
+            if length < 2 or offset + length > len(data):
+                break
+            if marker in {
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            }:
+                if length < 8:
+                    break
+                height, width = struct.unpack_from(">HH", data, offset + 3)
+                return width, height
+            offset += length
+    raise DecisionsUnavailable("invalid_request", "missing PNG IHDR or JPEG SOF dimensions")
+
+
+def _question_body(question: ChoiceQuestion | str | ScoreQuestion | BoxQuestion) -> dict[str, Any]:
+    if isinstance(question, str):
+        return {"type": "noul", "instructions": question}
+    if isinstance(question, ScoreQuestion):
+        return {
+            "type": "score",
+            "instructions": question.instructions,
+            "criteria": list(question.levels),
+        }
+    if isinstance(question, ChoiceQuestion):
+        return {
+            "type": "choice",
+            "instructions": question.instructions,
+            "criteria": dict(question.criteria),
+        }
+    raise DecisionsUnavailable("invalid_request", "unsupported question shape")
 
 
 def _endpoint(wire_api: str, base: str, model: str) -> str:
@@ -279,14 +533,22 @@ def _endpoint(wire_api: str, base: str, model: str) -> str:
     return f"{root}/ai/run/@cf/cloudflare/{model}"
 
 
-def _client() -> httpx.AsyncClient:
+def _client(timeout_seconds: float) -> httpx.AsyncClient:
     # The wire URL is the only host dialed: no environment proxy and no redirect hop.
-    return httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=None)
+    return httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=timeout_seconds)
 
 
-async def _post(url: str, headers: Mapping[str, str], body: Mapping[str, Any]) -> Any:
-    async with _client() as client:
+async def _post(
+    url: str,
+    headers: Mapping[str, str],
+    body: Mapping[str, Any],
+    timeout_seconds: float,
+    exchange_observer: Callable[[httpx.Response], None] | None = None,
+) -> Any:
+    async with _client(timeout_seconds) as client:
         response = await client.post(url, json=body, headers=headers)
+    if exchange_observer is not None:
+        exchange_observer(response)
     if not 200 <= response.status_code < 300:
         raise _HTTPStatusError(response.status_code)
     try:
@@ -321,19 +583,64 @@ def _unwrap(payload: Any, wire_api: str) -> dict[str, Any]:
     return payload
 
 
-def _parse_answers(
-    body: dict[str, Any], questions: Mapping[str, ChoiceQuestion]
-) -> tuple[str, dict[str, ChoiceAnswer]]:
+def _parse_answers[Q, A](
+    body: dict[str, Any], questions: Mapping[str, Q], parse_answer: Callable[[Any, Q], A]
+) -> tuple[str, dict[str, A]]:
     model = body.get("model")
     if not isinstance(model, str) or not model:
         raise _parse_error("response model is missing")
     raw_answers = body.get("answers")
     if not isinstance(raw_answers, dict) or raw_answers.keys() != questions.keys():
         raise _parse_error("answers do not match the questions")
-    answers = {
-        key: _parse_choice(raw_answers[key], question) for key, question in questions.items()
-    }
+    answers = {key: parse_answer(raw_answers[key], question) for key, question in questions.items()}
     return model, answers
+
+
+def _parse_noul(raw: Any, proposition: str) -> NoulAnswer:
+    if not isinstance(raw, dict) or raw.get("type") != "noul":
+        raise _parse_error("answer is not a noul")
+    return NoulAnswer(probability=_unit(raw.get("noul")))
+
+
+def _parse_box(raw: Any, question: BoxQuestion) -> BoxAnswer:
+    if (
+        not isinstance(raw, dict)
+        or raw.get("type") != "box"
+        or not isinstance(raw.get("box"), dict)
+    ):
+        raise _parse_error("answer is not a box")
+    box = raw["box"]
+    top, bottom, left, right = (_unit(box.get(edge)) for edge in ("top", "bottom", "left", "right"))
+    if left >= right or top >= bottom:
+        raise _parse_error("box edges are not ordered")
+    return BoxAnswer(top, bottom, left, right, _unit(raw.get("confidence")))
+
+
+def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
+    if not isinstance(raw, dict) or raw.get("type") != "score":
+        raise _parse_error("answer is not a score")
+    legend = {str(index): level for index, level in enumerate(question.levels)}
+    if raw.get("legend") != legend:
+        raise _parse_error("legend does not match the requested levels")
+    raw_probabilities = raw.get("probabilities")
+    if not isinstance(raw_probabilities, dict) or raw_probabilities.keys() != legend.keys():
+        raise _parse_error("probabilities do not match the levels")
+    probabilities = {key: _unit(value) for key, value in raw_probabilities.items()}
+    if not math.isclose(sum(probabilities.values()), 1.0, abs_tol=_SUM_TOLERANCE):
+        raise _parse_error("probabilities do not sum to 1")
+    score = raw.get("score")
+    maximum = len(question.levels) - 1
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, int | float)
+        or not math.isfinite(score)
+        or not 0 <= score <= maximum
+    ):
+        raise _parse_error("score is not a finite index within the requested levels")
+    expected = sum(int(key) * value for key, value in probabilities.items())
+    if not math.isclose(score, expected, abs_tol=maximum * _SUM_TOLERANCE):
+        raise _parse_error("score differs from the probability-weighted index")
+    return ScoreAnswer(float(score), probabilities, _unit(raw.get("confidence")))
 
 
 def _parse_choice(raw: Any, question: ChoiceQuestion) -> ChoiceAnswer:
@@ -385,9 +692,11 @@ def _check_not_truncated(body: dict[str, Any], backend_max: int) -> None:
         )
 
 
-async def _fetch_card_identity(base: str, model: str, backend_max: int) -> str | None:
+async def _fetch_card_identity(
+    base: str, model: str, backend_max: int, timeout_seconds: float
+) -> str | None:
     try:
-        async with _client() as client:
+        async with _client(timeout_seconds) as client:
             response = await client.get(f"{base.rstrip('/')}/v1/models")
         payload = response.json() if response.status_code == 200 else None
     except (httpx.HTTPError, ValueError):
@@ -411,8 +720,19 @@ def _card_identity(payload: Any, model: str, backend_max: int) -> str | None:
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _schema_hash(questions: Mapping[str, ChoiceQuestion]) -> str:
-    shape = {key: sorted(question.criteria) for key, question in questions.items()}
+def _schema_hash(
+    questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion | BoxQuestion],
+) -> str:
+    shape: dict[str, dict[str, object]] = {
+        key: {"type": "choice", "options": sorted(question.criteria)}
+        if isinstance(question, ChoiceQuestion)
+        else {"type": "score", "levels": len(question.levels)}
+        if isinstance(question, ScoreQuestion)
+        else {"type": "box"}
+        if isinstance(question, BoxQuestion)
+        else {"type": "noul"}
+        for key, question in questions.items()
+    }
     return hashlib.sha256(json.dumps(shape, sort_keys=True).encode()).hexdigest()[:12]
 
 

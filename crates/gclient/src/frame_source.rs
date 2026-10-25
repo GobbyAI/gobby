@@ -280,6 +280,13 @@ pub enum PaneFrameSource {
 }
 
 impl PaneFrameSource {
+    /// Host-assigned stream identity from the completed direct handshake.
+    pub fn host_attachment_id(&self) -> Option<u64> {
+        match self {
+            Self::Direct(source) => source.host_attachment_id,
+            _ => None,
+        }
+    }
     pub fn scripted(&self) -> Option<&ScriptedFrameSource> {
         match self {
             Self::Scripted(source) => Some(source),
@@ -437,6 +444,7 @@ impl AsyncWrite for SourceWriteHalf {
 pub type WriteReceipt = oneshot::Receiver<Result<(), FrameError>>;
 
 pub struct UnixSocketFrameSource {
+    host_attachment_id: Option<u64>,
     outbound: mpsc::Sender<WriteRequest>,
     /// The receipt of the last write `send_input` queued. The writer task
     /// flushes in order, so it covers every write before it.
@@ -530,7 +538,7 @@ impl UnixSocketFrameSource {
         // refusal is never mistaken for a restored stream, and hand any frame
         // that raced the reply to the reader through `pending` (#23076).
         let mut pending = VecDeque::new();
-        loop {
+        let host_attachment_id = loop {
             let message: ServerMessage = timeout(
                 CONNECT_TIMEOUT,
                 read_message_async(&mut stream, MAX_FRAME_SIZE),
@@ -557,7 +565,9 @@ impl UnixSocketFrameSource {
                 }
                 // The acknowledgement completes the handshake and is consumed
                 // here; frames that raced it are already in `pending`.
-                ServerMessage::Attached { .. } => break,
+                ServerMessage::Attached {
+                    host_attachment_id, ..
+                } => break host_attachment_id,
                 ServerMessage::Error { code, .. } => {
                     return Err(FrameError::AttachRefused { code })
                 }
@@ -568,8 +578,10 @@ impl UnixSocketFrameSource {
                     pending.push_back(other);
                 }
             }
-        }
-        Ok(Self::from_stream(stream, pending))
+        };
+        let mut source = Self::from_stream(stream, pending);
+        source.host_attachment_id = Some(host_attachment_id);
+        Ok(source)
     }
 
     pub async fn from_gobby_home(
@@ -647,6 +659,7 @@ impl UnixSocketFrameSource {
 
         Self {
             outbound: write_tx,
+            host_attachment_id: None,
             last_write: None,
             inbound,
             pending,
@@ -660,6 +673,11 @@ impl UnixSocketFrameSource {
             #[cfg(test)]
             write_pause_after,
         }
+    }
+
+    /// Identifies the physical stream selected by the host's attach handshake.
+    pub fn host_attachment_id(&self) -> Option<u64> {
+        self.host_attachment_id
     }
 
     /// Takes the receipt of the last write `send_input` queued, if one is

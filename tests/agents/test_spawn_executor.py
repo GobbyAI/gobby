@@ -4025,7 +4025,7 @@ class _ForeignEpochBindings:
 
 
 def _host_manager(
-    tmp_path: Path,
+    short_socket_dir: Path,
     *,
     connector: Callable[[], Any],
     spawner: Callable[[], Any],
@@ -4035,7 +4035,7 @@ def _host_manager(
     return TerminalHostManager(
         config=TerminalHostConfig(
             enabled=True,
-            socket_dir=str(tmp_path),
+            socket_dir=str(short_socket_dir),
             shutdown_grace_seconds=0.2,
             health_interval_seconds=3600.0,
         ),
@@ -4047,19 +4047,19 @@ def _host_manager(
     )
 
 
-async def _host_in_state(tmp_path: Path, state: str) -> TerminalHostManager:
+async def _host_in_state(short_socket_dir: Path, state: str) -> TerminalHostManager:
     """A started manager whose latest start or adoption ended in ``state``."""
     if state == "gterm_missing":
-        host = _host_manager(tmp_path, connector=_refused_connect, spawner=_missing_gterm)
+        host = _host_manager(short_socket_dir, connector=_refused_connect, spawner=_missing_gterm)
     elif state == "host_start_timeout":
         host = _host_manager(
-            tmp_path, connector=_refused_connect, spawner=lambda: FakeHostProcess(pid=4242)
+            short_socket_dir, connector=_refused_connect, spawner=lambda: FakeHostProcess(pid=4242)
         )
     elif state == "epoch_refused":
         # Reachable, authenticated and pid-verified; only the durable adoption
         # matrix refuses the epoch, as the Rust supervisor does (plan 1.2.2).
         host = _host_manager(
-            tmp_path,
+            short_socket_dir,
             connector=_connector(FakeControlClient()),
             spawner=_missing_gterm,
             terminal_manager=cast(TerminalManager, _ForeignEpochBindings()),
@@ -4067,21 +4067,21 @@ async def _host_in_state(tmp_path: Path, state: str) -> TerminalHostManager:
     elif state == "pid":
         client = FakeControlClient()
         host = _host_manager(
-            tmp_path, connector=_connector(client), spawner=_missing_gterm, pid_ok=False
+            short_socket_dir, connector=_connector(client), spawner=_missing_gterm, pid_ok=False
         )
     elif state == "token":
         client = FakeControlClient(hello_error="invalid_token")
-        host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
+        host = _host_manager(short_socket_dir, connector=_connector(client), spawner=_missing_gterm)
     elif state == "protocol":
         client = FakeControlClient(protocol_version=99)
-        host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
+        host = _host_manager(short_socket_dir, connector=_connector(client), spawner=_missing_gterm)
     else:
         assert state == "healthy"
         client = FakeControlClient()
-        host = _host_manager(tmp_path, connector=_connector(client), spawner=_missing_gterm)
+        host = _host_manager(short_socket_dir, connector=_connector(client), spawner=_missing_gterm)
     # The pidfile agrees with the fake host's ping, so each client-backed state
     # fails for its own reason and a healthy host is truly adopted.
-    write_pidfile(tmp_path, FakeControlClient.host_pid)
+    write_pidfile(short_socket_dir, FakeControlClient.host_pid)
     with patch("gobby.utils.machine_id._cached_machine_id", _LOCAL_MACHINE_ID):
         await host.start()
     if state != "healthy":
@@ -4173,14 +4173,14 @@ _FAIL_CLOSED = ("host_start_timeout", "epoch_refused", "gterm_missing")
     ],
 )
 async def test_host_unavailable_reasons_fail_closed_with_typed_code(
-    tmp_path: Path,
+    short_socket_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     state: str,
     stage: str | None,
     error: BaseException | None,
     expected: str | None,
 ) -> None:
-    host = await _host_in_state(tmp_path, state)
+    host = await _host_in_state(short_socket_dir, state)
     request, native, tmux, manager = _host_backed_request(host)
     if stage is not None:
         monkeypatch.setattr(native, f"{stage}_spawn", AsyncMock(side_effect=error))
@@ -4213,12 +4213,12 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("short_host_deadline")
 async def test_adopted_host_spawns_while_first_reconcile_outlasts_ready_deadline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     host = _host_manager(
-        tmp_path, connector=_connector(FakeControlClient()), spawner=_missing_gterm
+        short_socket_dir, connector=_connector(FakeControlClient()), spawner=_missing_gterm
     )
-    write_pidfile(tmp_path, FakeControlClient.host_pid)
+    write_pidfile(short_socket_dir, FakeControlClient.host_pid)
     reconciling = asyncio.Event()
     release = asyncio.Event()
 
@@ -4252,9 +4252,9 @@ async def test_adopted_host_spawns_while_first_reconcile_outlasts_ready_deadline
 @pytest.mark.usefixtures("short_host_deadline")
 @pytest.mark.parametrize("lifetime", ["run", "persistent_role"])
 async def test_every_lifetime_fails_closed_without_host(
-    tmp_path: Path, lifetime: TerminalLifetime
+    short_socket_dir: Path, lifetime: TerminalLifetime
 ) -> None:
-    host = await _host_in_state(tmp_path, "gterm_missing")
+    host = await _host_in_state(short_socket_dir, "gterm_missing")
     request, native, tmux, manager = _host_backed_request(host, lifetime=lifetime)
     try:
         result = await execute_spawn(request)
@@ -4269,9 +4269,9 @@ async def test_every_lifetime_fails_closed_without_host(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("short_host_deadline")
-async def test_fail_closed_spawn_has_no_side_effects(tmp_path: Path) -> None:
+async def test_fail_closed_spawn_has_no_side_effects(short_socket_dir: Path) -> None:
     # A start that never settles misses the ready deadline the same way.
-    undecided = _host_manager(tmp_path, connector=_refused_connect, spawner=_missing_gterm)
+    undecided = _host_manager(short_socket_dir, connector=_refused_connect, spawner=_missing_gterm)
     request, native, tmux, manager = _host_backed_request(undecided)
     result = await execute_spawn(request)
 
@@ -4286,8 +4286,8 @@ async def test_fail_closed_spawn_has_no_side_effects(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("short_host_deadline")
-async def test_spawn_recovers_after_host_readoption(tmp_path: Path) -> None:
-    host = await _host_in_state(tmp_path, "host_start_timeout")
+async def test_spawn_recovers_after_host_readoption(short_socket_dir: Path) -> None:
+    host = await _host_in_state(short_socket_dir, "host_start_timeout")
     try:
         refused, _native, _tmux, refused_rows = _host_backed_request(host)
         first = await execute_spawn(refused)

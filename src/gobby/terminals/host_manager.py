@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import secrets
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
@@ -38,6 +39,7 @@ from gobby.terminals.host_protocol import (
     control_socket_path,
     control_token_path,
     expand_socket_dir,
+    frames_socket_path,
     read_pidfile,
     write_pidfile,
 )
@@ -235,6 +237,7 @@ class TerminalHostManager(HostShutdown):
 
     async def spawn_refusal(self) -> HostUnavailableReason | None:
         """The fail-closed reason a spawn must refuse with now, or None to proceed."""
+        self._check_socket_paths()
         # A published client is a usable host even while the first start's
         # reconcile is still running; only an undecided start waits.
         if self._client is None:
@@ -276,9 +279,11 @@ class TerminalHostManager(HostShutdown):
         except Exception as exc:
             self.running = False
             self.native_available = False
-            self.last_error = str(exc)
+            self.last_error = (
+                exc.detail or str(exc) if isinstance(exc, HostUnavailableError) else str(exc)
+            )
             self.failure_reason = _start_failure_reason(exc)
-            logger.warning("gterm host unavailable; native launches degraded: %s", exc)
+            logger.warning("gterm host unavailable; native launches degraded: %s", self.last_error)
             # A failed start is retried on the health interval instead of
             # staying degraded until the next daemon restart (#22425).
             self._arm_health()
@@ -691,9 +696,21 @@ class TerminalHostManager(HostShutdown):
         client, hello, ping = await self._spawn_candidate()
         self._publish_spawned_client(client, hello, ping)
 
+    def _check_socket_paths(self) -> None:
+        limit = 107 if sys.platform.startswith("linux") else 103
+        for path in (control_socket_path(self.socket_dir), frames_socket_path(self.socket_dir)):
+            length = len(os.fsencode(path))
+            if length > limit:
+                raise HostUnavailableError(
+                    f"gterm socket path {path} is too long ({length} bytes; "
+                    f"AF_UNIX sun_path limit {limit} bytes); "
+                    "set terminal_host.socket_dir to a shorter directory"
+                )
+
     async def _spawn_candidate(self) -> tuple[Any, Any, Any]:
         if self._stop_requested or self.host_drained:
             raise HostManagerStopped("gterm host manager stopped")
+        self._check_socket_paths()
         # Only reached when nothing answered the control socket, so a fresh
         # token cannot lock out a live host.
         self.rotate_control_token() if control_token_path(self.socket_dir).exists() else (

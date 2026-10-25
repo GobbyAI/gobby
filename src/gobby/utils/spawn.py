@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import errno
+import logging
 import os
 import shutil
 import signal
@@ -22,7 +23,8 @@ import subprocess  # nosec B404 # the helper owns daemon spawns
 import tempfile
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from typing import Any, BinaryIO, Literal, overload
 
 # Each of these forces the fork path, or bypasses executable resolution. A
@@ -93,6 +95,102 @@ def _spawn_plan(
     return chdir_argv, "/bin/sh", None
 
 
+logger = logging.getLogger(__name__)
+_command_scope: ContextVar[_CommandScope | None] = ContextVar("probe_command_scope", default=None)
+
+
+class _CommandScope:
+    """Cancel active commands and refuse new ones after cancellation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._cancelled = False
+        self._processes: set[subprocess.Popen[Any]] = set()
+
+    def cancel(self) -> None:
+        with self._lock:
+            self._cancelled = True
+            for process in self._processes:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+
+    def run(
+        self,
+        command: Sequence[str],
+        *,
+        input: bytes | str | None = None,
+        capture_output: bool = False,
+        timeout: float | None = None,
+        check: bool = False,
+        **options: Any,
+    ) -> subprocess.CompletedProcess[Any]:
+        """The subprocess.run contract, with process creation fenced by cancel()."""
+        if input is not None:
+            if options.get("stdin") is not None:
+                raise ValueError("stdin and input arguments may not both be used")
+            options["stdin"] = subprocess.PIPE
+        if capture_output:
+            if options.get("stdout") is not None or options.get("stderr") is not None:
+                raise ValueError("stdout and stderr arguments may not be used with capture_output")
+            options.update(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        with self._lock:
+            if self._cancelled:
+                raise subprocess.TimeoutExpired(command, 0)
+            process = subprocess.Popen(command, **options)  # nosec B603 # resolved spawn argv
+            self._processes.add(process)
+        try:
+            with process:
+                try:
+                    stdout, stderr = process.communicate(input, timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+                    raise
+                if check and process.returncode:
+                    raise subprocess.CalledProcessError(
+                        process.returncode, command, output=stdout, stderr=stderr
+                    )
+                return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+
+
+async def run_cancellable_probe[T](probe: Callable[[], T], *, timeout: float) -> T:
+    """Bound a worker's commands and join it before timeout/cancellation escapes.
+
+    to_thread propagates the command scope. Shielding keeps the worker awaitable
+    alive so cancellation cannot discard the only handle that proves it reaped its
+    subprocess. Repeated caller cancellation must also wait for that cleanup.
+    """
+    scope = _CommandScope()
+    token = _command_scope.set(scope)
+    try:
+        worker = asyncio.create_task(asyncio.to_thread(probe))
+    finally:
+        _command_scope.reset(token)
+    try:
+        return await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
+    except (TimeoutError, asyncio.CancelledError) as interruption:
+        outcome: BaseException = interruption
+        scope.cancel()
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError as cancellation:
+                outcome = cancellation
+                scope.cancel()
+            except Exception:
+                break  # Retrieve and log the worker error below; preserve the interruption.
+        try:
+            worker.result()
+        except Exception:
+            logger.debug("Interrupted probe finished with an error", exc_info=True)
+        if outcome is interruption:
+            raise
+        raise outcome from interruption
+
+
 _thread_deadline = threading.local()
 
 
@@ -153,7 +251,9 @@ def run(
         timeout = options.get("timeout")
         options["timeout"] = remaining if timeout is None else min(timeout, remaining)
     command, executable, directory = _spawn_plan(argv, cwd, env)
-    return subprocess.run(  # nosec B603 # argv form, resolved executable
+    scope = _command_scope.get()
+    runner = subprocess.run if scope is None else scope.run
+    return runner(  # nosec B603 # argv form, resolved executable
         command,
         executable=executable,
         cwd=directory,

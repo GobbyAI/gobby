@@ -23,6 +23,15 @@ not depend on a source path existing in the current checkout):
 gcode evidence --request-json '{"schema_version":1,"operation":"read","read":{"kind":"commit_metadata"}}'
 ```
 
+This succeeds with the default byte budget even when a changed file's patch is
+too large. Oversized patches are replaced by an explicit omission marker; the
+response reports `commit_patch_omitted` warnings and `truncated_patch`
+completeness (or `paginated` while more items remain). Identity and changed-path
+metadata remain available. Each warning gives the `max_bytes` needed to retrieve
+the full item: repeat the request with that top-level budget. Omitted and full
+patch records have different hashes and evidence IDs. Check all pages and
+warnings before claiming full patch coverage.
+
 Bound requests require all three fields inside `binding`:
 
 | Field | Value |

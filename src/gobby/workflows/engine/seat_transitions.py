@@ -151,6 +151,17 @@ def _candidate_rejection(
     return None
 
 
+def _holds_seat(
+    db: HubDatabase, session_id: str, agent_name: str | None, seat: str, step: str
+) -> bool:
+    """Whether the session holds ``seat``: named so, or its definition grants ``step``.
+
+    Team seats such as docs-reviewer carry grants rather than the fixed names; the name
+    keeps seats without a resolvable installed definition on their fixed role.
+    """
+    return agent_name == seat or session_grants(db, session_id, step)
+
+
 def candidate_binding_error(
     db: HubDatabase, session_id: str, message: InterSessionMessage
 ) -> str | None:
@@ -166,7 +177,9 @@ def candidate_binding_error(
     if reason is None and (event is None or event.fields.get("EVENT") != "CANDIDATE"):
         return None
     instance = AgentStepInstanceManager(db).get_for_session(session_id)
-    if instance is None or not instance.enabled or not session_grants(db, session_id, "review"):
+    if instance is None or not instance.enabled:
+        return None
+    if not _holds_seat(db, session_id, instance.agent_name, "code-reviewer", "review"):
         return None
     if reason is None and event is not None:
         state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
@@ -252,16 +265,15 @@ def advance_seat(
     if (
         step == "route_skills"
         and mcp_tool == ("gobby-tasks", "get_task")
-        and session_grants(db, session_id, "implementation")
+        and _holds_seat(db, session_id, role, "developer", "implementation")
     ):
         task = _requested_task(tasks, state.get("assigned_task_id"), tool_input.get("task_id"))
         if task is None or task.claimed_by_session_id != session_id:
             return {}
         skills = build_claimed_task_extra_skill_state({"claimed_tasks": {task.id: {}}}, tasks)
         return {"additional_skills": skills["claimed_task_extra_skills"], "skills_routed": True}
-    if (
-        mcp_tool in {("gobby-tasks", "get_task"), ("gobby-tasks", "record_review_step")}
-        and session_grants(db, session_id, "review")
+    if mcp_tool in {("gobby-tasks", "get_task"), ("gobby-tasks", "record_review_step")} and (
+        _holds_seat(db, session_id, role, "code-reviewer", "review")
     ):
         task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
         task = _requested_task(tasks, task_id, tool_input.get("task_id"))
@@ -280,7 +292,7 @@ def advance_seat(
         except CandidateMessageError:
             continue
         changes: dict[str, Any] = {}
-        if event is not None and session_grants(db, session_id, "review"):
+        if event is not None and _holds_seat(db, session_id, role, "code-reviewer", "review"):
             changes = _reviewer_message(db, session_id, state, event, variables)
         elif role in {"log-monitor", "metrics-monitor"} and message.from_session == session_id:
             changes = _monitor_message(
@@ -294,7 +306,8 @@ def advance_seat(
             )
         elif role == "plan-adversary" and message.from_session == session_id:
             match = re.match(
-                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)", message.content
+                r"EVENT=(CONSENSUS|CONSENSUS_WITHDRAWN) SHA=([0-9a-f]{40})(?:\s|$)",
+                message.content.partition("\n")[0],
             )
             if match and step == "review" and match[1] == "CONSENSUS":
                 changes = {"consensus": True, "consensus_sha": match[2], "bounced": False}
@@ -304,7 +317,7 @@ def advance_seat(
         elif (
             step == "submit"
             and event is not None
-            and session_grants(db, session_id, "implementation")
+            and _holds_seat(db, session_id, role, "developer", "implementation")
         ):
             if (
                 message.to_session == session_id

@@ -56,7 +56,8 @@ class _GrantingRuntime(_NativeRuntime):
         super().__init__()
         self.grants: list[tuple[str, str | None]] = []
 
-    async def grant_input(self, terminal: Any, attachment_id: str) -> None:
+    async def grant_input(self, terminal: Any, attachment_id: str, host_attachment_id: int) -> None:
+        assert host_attachment_id == 42
         self.grants.append((str(terminal.id), attachment_id))
 
     async def revoke_input(self, terminal: Any, attachment_id: str | None = None) -> None:
@@ -870,6 +871,7 @@ async def test_direct_gclient_holder_is_granted_and_revoked_on_transitions(
         "terminal_id": terminal_id,
         "attachment_id": direct,
         "takeover": False,
+        "host_attachment_id": 42,
     }
     await _send(server, gclient, take)
     granted = gclient.messages_of_type("terminal_control_result")[-1]

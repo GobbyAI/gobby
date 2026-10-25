@@ -396,10 +396,13 @@ impl LoopJobs {
                 let Some(pane) = workspace.panes.get(&pane_id) else {
                     return false;
                 };
-                if pane.writable() || pane.pending_input.is_empty() {
+                if pane.direct_input() || pane.pending_input.is_empty() {
                     return false;
                 }
                 let Some(locator) = pane.host_locator() else {
+                    return false;
+                };
+                let Some(host_attachment_id) = pane.host_attachment_id() else {
                     return false;
                 };
                 let frame_socket = PathBuf::from(&locator.frame_socket_path);
@@ -422,8 +425,13 @@ impl LoopJobs {
                     })
                     .collect();
                 spawn_job(&self.tx, tag.clone(), async move {
-                    let grant =
-                        outage_grant::grant(&frame_socket, &host_terminal_id, &attachment).await;
+                    let grant = outage_grant::grant(
+                        &frame_socket,
+                        &host_terminal_id,
+                        &attachment,
+                        host_attachment_id,
+                    )
+                    .await;
                     let mut revoked = Vec::with_capacity(others.len());
                     for (other, other_socket, other_terminal, other_attachment) in others {
                         let result =

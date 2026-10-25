@@ -201,6 +201,7 @@ fn server_messages() -> Vec<ServerMessage> {
         ServerMessage::Attached {
             created: true,
             host_terminal_id: "host-1".into(),
+            host_attachment_id: 1,
         },
         ServerMessage::TextRead {
             text: "retained text".into(),

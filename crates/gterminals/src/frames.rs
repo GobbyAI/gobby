@@ -214,6 +214,7 @@ pub enum ServerMessage {
     Attached {
         created: bool,
         host_terminal_id: String,
+        host_attachment_id: u64,
     },
     InputRefused {
         code: String,

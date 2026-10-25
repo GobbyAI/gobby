@@ -20,7 +20,7 @@ inputs:
   team_id:
     type: string
     default: null
-    description: "Admitting execution id of the team to join; omitted admits a new team"
+    description: "Full UUID of the team's admitting execution; omitted admits a new team"
   workspace:
     type: string
     required: true
@@ -101,6 +101,8 @@ steps:
         requested: "${{ 'code-reviewer' if inputs.fresh_reviewer else inputs.seats }}"
         report_to: "${{ inputs.report_to }}"
         require_report_to: true
+        skip_live_seats: "${{ inputs.team_id is not none and not inputs.fresh_reviewer }}"
+        team_id: "${{ inputs.team_id }}"
         catalogue:
           - name: dev-manager
             title: Dev manager
@@ -127,7 +129,7 @@ steps:
         reviewer_agent: "${{ inputs.reviewer_agent }}"
 
   - id: dev-manager
-    condition: "${{ not inputs.fresh_reviewer and 'dev-manager' in inputs.seats.split(',') }}"
+    condition: "${{ not inputs.fresh_reviewer and 'dev-manager' in steps.guard.output.launch }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent
@@ -152,7 +154,7 @@ steps:
           'title': steps.admit.output.branch}} }}
 
   - id: test-writer
-    condition: "${{ not inputs.fresh_reviewer and 'test-writer' in inputs.seats.split(',') }}"
+    condition: "${{ not inputs.fresh_reviewer and 'test-writer' in steps.guard.output.launch }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent
@@ -173,7 +175,7 @@ steps:
           'title': steps.admit.output.branch + ' test writer'}} }}
 
   - id: developer
-    condition: "${{ not inputs.fresh_reviewer and 'developer' in inputs.seats.split(',') }}"
+    condition: "${{ not inputs.fresh_reviewer and 'developer' in steps.guard.output.launch }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent
@@ -194,7 +196,7 @@ steps:
           'title': steps.admit.output.branch + ' developer'}} }}
 
   - id: code-reviewer
-    condition: "${{ inputs.fresh_reviewer or 'code-reviewer' in inputs.seats.split(',') }}"
+    condition: "${{ 'code-reviewer' in steps.guard.output.launch }}"
     mcp:
       server: gobby-agents
       tool: spawn_agent

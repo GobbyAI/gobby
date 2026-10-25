@@ -1,5 +1,69 @@
 use super::*;
 
+use crate::visibility::pin_fixture;
+
+#[test]
+#[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]
+#[serial_test::serial(serial_db)]
+fn pinned_visibility_precedes_limit() -> anyhow::Result<()> {
+    use crate::{index::api, models::Symbol, search::fts};
+    let mut fixture = pin_fixture::PinFixture::new()?;
+    let parent = fixture.parent();
+    let overlay = fixture.ctx.project_id.clone();
+    let stale = fixture.version(&parent, "aaa.rs", "stale", "aaa_scopewindowneedle")?;
+    fixture.version(
+        &overlay,
+        "aaa.rs",
+        crate::visibility::TOMBSTONE_HASH,
+        "deleted",
+    )?;
+    let source = fixture.source.clone();
+    let valid = fixture.version(&source, "zzz.rs", "kept", "zzz_scopewindowneedle")?;
+    fixture.pin(&source, "zzz.rs", "kept")?;
+    let stale_symbols: Vec<_> = (0..=fts::FILTERED_FETCH_CAP)
+        .map(|i| {
+            let name = format!("aaa_scopewindowneedle_{i:05}");
+            Symbol {
+                id: Symbol::make_id(&parent, "aaa.rs", "stale", &name, "function", i),
+                name,
+                ..stale.clone()
+            }
+        })
+        .collect();
+    api::upsert_symbols(&mut fixture.conn, &stale_symbols)?;
+    let ctx = fixture.ctx.clone();
+    let hits = fts::search_symbols_by_name_visible(
+        &mut fixture.conn,
+        "scopewindowneedle",
+        &ctx,
+        None,
+        None,
+        &[],
+        1,
+    )?;
+    assert_eq!(
+        hits.iter().map(|s| &s.id).collect::<Vec<_>>(),
+        vec![&valid.id],
+        "shadowed rows must be excluded before the SQL limit"
+    );
+    let hits = fts::search_symbols_fts_visible(
+        &mut fixture.conn,
+        "scopewindowneedle",
+        &ctx,
+        None,
+        None,
+        &[],
+        1,
+    )?;
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].id, valid.id);
+    let content =
+        fts::search_content_visible(&mut fixture.conn, "scopewindowneedle", &ctx, None, &[], 1)?;
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0].file_path, "zzz.rs");
+    Ok(())
+}
+
 #[test]
 fn test_parse_search_symbol_filters() {
     let cli = Cli::try_parse_from([

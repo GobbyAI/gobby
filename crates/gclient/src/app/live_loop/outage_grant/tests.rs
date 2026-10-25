@@ -43,9 +43,10 @@ fn owner_only_refuses_a_missing_file() {
 #[test]
 fn grant_request_names_the_terminal_and_the_attachment() {
     assert_eq!(
-        grant_request("grant-1", "ht-1", "att-1"),
+        grant_request("grant-1", "ht-1", "att-1", 42),
         json!({
             "attachment_id": "att-1",
+            "host_attachment_id": 42,
             "host_terminal_id": "ht-1",
             "id": "grant-1",
             "method": "grant_input",

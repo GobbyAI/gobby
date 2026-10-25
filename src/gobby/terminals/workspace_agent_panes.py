@@ -12,7 +12,7 @@ from psycopg.errors import UniqueViolation
 
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
-from gobby.storage.workspace_layout import MIN_PANE_ROWS
+from gobby.storage.workspace_layout import MIN_PANE_ROWS, layout_pane_ids
 from gobby.storage.workspaces import (
     LayoutChange,
     WorkspaceBusyError,
@@ -93,7 +93,7 @@ class AgentPlacement:
     """A validated ``placement`` input: a new tab, or a split beside a pane.
 
     A split names its pane by ``ref``, or, with ``tab_title``, splits beside the
-    focused pane of the one tab with that title in workspace ``ref``.
+    last pane, in reading order, of the one tab with that title in workspace ``ref``.
     """
 
     kind: Literal["tab", "split"]
@@ -262,7 +262,7 @@ class AgentPaneReserver:
                 tab, beside = (
                     _pane_of(target, placement.ref)
                     if placement.tab_title is None
-                    else self._titled_tab_focus(target, placement.ref, placement.tab_title)
+                    else self._titled_tab_last_pane(target, placement.ref, placement.tab_title)
                 )
                 if tab.project_id != project_id:
                     raise AgentPlacementError(
@@ -281,20 +281,23 @@ class AgentPaneReserver:
             tab_id=tab_id,
         )
 
-    def _titled_tab_focus(
+    def _titled_tab_last_pane(
         self, target: WorkspaceTarget, reference: str, tab_title: str
     ) -> tuple[WorkspaceTab, WorkspacePane]:
-        """Resolve the focused pane of the one tab titled ``tab_title`` in the workspace."""
+        """Resolve the last pane, in reading order, of the one tab titled ``tab_title``.
+
+        Placed agent panes never take focus, so focus never picks the split target.
+        """
         workspace = _workspace_of(target, reference)
         tabs = [tab for tab in self._workspaces.list_tabs(workspace.id) if tab.title == tab_title]
-        focused = tabs[0].focused_pane_id if len(tabs) == 1 else None
-        if focused is None:
+        if len(tabs) != 1:
             raise WorkspaceOpError(
                 "invalid_ref",
-                f"Workspace {reference!r} needs exactly one tab titled {tab_title!r} with a "
-                f"focused pane; {len(tabs)} tabs have that title",
+                f"Workspace {reference!r} needs exactly one tab titled {tab_title!r}; "
+                f"{len(tabs)} tabs have that title",
             )
-        return _pane_of(self._workspaces.resolve_reference(focused), focused)
+        last = layout_pane_ids(tabs[0].layout)[-1]
+        return _pane_of(self._workspaces.resolve_reference(last), last)
 
     async def reserve(
         self, resolved: ResolvedPlacement, *, worktree_id: str | None

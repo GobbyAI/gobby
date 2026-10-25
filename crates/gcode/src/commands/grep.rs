@@ -24,22 +24,6 @@ use grep_matcher::GrepMatcher;
 
 const GREP_SQL_SAFETY_LIMIT: i64 = 100_000;
 
-/// Chunk rows joined to their indexed file state; callers append `WHERE` conditions.
-const GREP_CHUNK_ROWS_SQL: &str = "SELECT c.file_path,
-                        c.line_start::BIGINT AS line_start,
-                        c.content,
-                        c.chunk_index
-                 FROM code_content_chunks c
-                 JOIN code_indexed_file_states fs
-                   ON fs.project_id = c.project_id
-                  AND fs.file_path = c.file_path
-                  AND fs.content_hash = c.content_hash
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = c.project_id
-                  AND cf.file_path = c.file_path
-                  AND cf.content_hash = c.content_hash
-                 WHERE";
-
 #[derive(Clone, Copy)]
 pub struct GrepOptions<'a> {
     pub pattern: &'a str,
@@ -299,13 +283,8 @@ fn load_indexed_chunks(
     literal: Option<&str>,
 ) -> anyhow::Result<LoadedIndexedChunks> {
     let mut chunks = Vec::new();
-    let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
-    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
-        return Ok(LoadedIndexedChunks {
-            chunks,
-            truncated: false,
-        });
-    };
+    let machine_id = db::id_param(&ctx.machine_id)?;
+    let project_id = db::id_param(visibility::scope_project_id(ctx))?;
     let candidates = match literal {
         Some(literal) => Some(content_prefilter::literal_files(conn, ctx, literal)?),
         None => None,
@@ -316,92 +295,32 @@ fn load_indexed_chunks(
             truncated: false,
         });
     }
-    let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => {
-            let project_id = db::id_param(&ctx.project_id)?;
-            let mut params: Vec<&(dyn ToSql + Sync)> =
-                vec![&project_id, &tombstone_language, &machine_id];
-            let mut conditions = vec![
-                "c.project_id = $1".to_string(),
-                "cf.language != $2".to_string(),
-                "fs.machine_id = $3".to_string(),
-            ];
-            push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
-            if let Some(files) = candidates.as_ref() {
-                params.push(files);
-                conditions.push(format!("c.file_path = ANY(${})", params.len()));
-            }
-            let limit = GREP_SQL_SAFETY_LIMIT + 1;
-            let limit_placeholder = format!("${}", params.len() + 1);
-            params.push(&limit);
-            let sql = format!(
-                "SELECT c.file_path,
-                        c.line_start::BIGINT AS line_start,
-                        c.content
-                 FROM code_content_chunks c
-                 JOIN code_indexed_file_states fs
-                   ON fs.project_id = c.project_id
-                  AND fs.file_path = c.file_path
-                  AND fs.content_hash = c.content_hash
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = c.project_id
-                  AND cf.file_path = c.file_path
-                  AND cf.content_hash = c.content_hash
-                 WHERE {}
-                 ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC
-                 LIMIT {limit_placeholder}",
-                conditions.join(" AND ")
-            );
-            let _chunk_timings = crate::index::indexer::IndexTimings::new("grep.chunks");
-            conn.query(&sql, &params)?
-        }
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => {
-            let overlay_project_id = db::id_param(overlay_project_id)?;
-            let parent_project_id = db::id_param(parent_project_id)?;
-            let mut params: Vec<&(dyn ToSql + Sync)> = vec![
-                &overlay_project_id,
-                &parent_project_id,
-                &tombstone_language,
-                &machine_id,
-            ];
-            let mut conditions = vec![
-                "cf.language != $3".to_string(),
-                "fs.machine_id = $4".to_string(),
-            ];
-            push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
-            if let Some(files) = candidates.as_ref() {
-                params.push(files);
-                conditions.push(format!("c.file_path = ANY(${})", params.len()));
-            }
-            let limit = GREP_SQL_SAFETY_LIMIT + 1;
-            let limit_placeholder = format!("${}", params.len() + 1);
-            params.push(&limit);
-            // One branch per project: each side filters on a single project_id
-            // before the join, and only the parent branch checks for shadowing.
-            let shared = conditions.join(" AND ");
-            let sql = format!(
-                "SELECT file_path, line_start, content, chunk_index FROM (
-                    {GREP_CHUNK_ROWS_SQL} {shared} AND c.project_id = $1
-                    UNION ALL
-                    {GREP_CHUNK_ROWS_SQL} {shared} AND c.project_id = $2
-                      AND NOT EXISTS (
-                        SELECT 1 FROM code_indexed_file_states shadow
-                        WHERE shadow.machine_id = $4
-                          AND shadow.project_id = $1
-                          AND shadow.file_path = c.file_path
-                      )
-                 ) grep_rows
-                 ORDER BY file_path ASC, line_start ASC, chunk_index ASC
-                 LIMIT {limit_placeholder}"
-            );
-            let _chunk_timings = crate::index::indexer::IndexTimings::new("grep.chunks");
-            conn.query(&sql, &params)?
-        }
+    let selectors = visibility::visible_selectors_sql(ctx, "$1", "$2");
+    let mut params: Vec<&(dyn ToSql + Sync)> = vec![&machine_id, &project_id];
+    let mut conditions = Vec::new();
+    push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
+    if let Some(files) = candidates.as_ref() {
+        params.push(files);
+        conditions.push(format!("c.file_path = ANY(${})", params.len()));
+    }
+    let limit = GREP_SQL_SAFETY_LIMIT + 1;
+    params.push(&limit);
+    let limit_placeholder = format!("${}", params.len());
+    let predicate = if conditions.is_empty() {
+        "TRUE".to_string()
+    } else {
+        conditions.join(" AND ")
     };
+    let sql = format!(
+        "SELECT c.file_path, c.line_start::BIGINT AS line_start, c.content
+         FROM code_content_chunks c JOIN ({selectors}) visible
+           ON visible.project_id = c.project_id AND visible.file_path = c.file_path
+          AND visible.content_hash = c.content_hash
+         WHERE {predicate}
+         ORDER BY c.file_path, c.line_start, c.chunk_index LIMIT {limit_placeholder}"
+    );
+    let _chunk_timings = crate::index::indexer::IndexTimings::new("grep.chunks");
+    let rows = conn.query(&sql, &params)?;
     let file_paths = rows
         .iter()
         .map(|row| row.try_get::<_, String>("file_path"))
@@ -471,79 +390,21 @@ fn indexed_files_cover_filters(
     ctx: &Context,
     filters: &GrepFilters,
 ) -> anyhow::Result<bool> {
-    let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
-    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
-        return Ok(false);
+    let machine_id = db::id_param(&ctx.machine_id)?;
+    let project_id = db::id_param(visibility::scope_project_id(ctx))?;
+    let selectors = visibility::visible_selectors_sql(ctx, "$1", "$2");
+    let mut params: Vec<&(dyn ToSql + Sync)> = vec![&machine_id, &project_id];
+    let mut conditions = Vec::new();
+    push_grep_sql_prefilters(&mut conditions, &mut params, "fs", filters);
+    let predicate = if conditions.is_empty() {
+        "TRUE".to_string()
+    } else {
+        conditions.join(" AND ")
     };
-    let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => {
-            let project_id = db::id_param(&ctx.project_id)?;
-            let mut params: Vec<&(dyn ToSql + Sync)> =
-                vec![&project_id, &tombstone_language, &machine_id];
-            let mut conditions = vec![
-                "fs.project_id = $1".to_string(),
-                "cf.language != $2".to_string(),
-                "fs.machine_id = $3".to_string(),
-            ];
-            push_grep_sql_prefilters(&mut conditions, &mut params, "fs", filters);
-            let sql = format!(
-                "SELECT fs.file_path
-                 FROM code_indexed_file_states fs
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = fs.project_id
-                  AND cf.file_path = fs.file_path
-                  AND cf.content_hash = fs.content_hash
-                 WHERE {}
-                 LIMIT 500",
-                conditions.join(" AND ")
-            );
-            conn.query(&sql, &params)?
-        }
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => {
-            let overlay_project_id = db::id_param(overlay_project_id)?;
-            let parent_project_id = db::id_param(parent_project_id)?;
-            let mut params: Vec<&(dyn ToSql + Sync)> = vec![
-                &overlay_project_id,
-                &parent_project_id,
-                &tombstone_language,
-                &machine_id,
-            ];
-            let mut conditions = vec![
-                "cf.language != $3".to_string(),
-                "fs.machine_id = $4".to_string(),
-                "(
-                    fs.project_id = $1
-                    OR (
-                        fs.project_id = $2
-                        AND NOT EXISTS (
-                            SELECT 1 FROM code_indexed_file_states shadow
-                            WHERE shadow.machine_id = $4
-                              AND shadow.project_id = $1
-                              AND shadow.file_path = fs.file_path
-                        )
-                    )
-                )"
-                .to_string(),
-            ];
-            push_grep_sql_prefilters(&mut conditions, &mut params, "fs", filters);
-            let sql = format!(
-                "SELECT fs.file_path
-                 FROM code_indexed_file_states fs
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = fs.project_id
-                  AND cf.file_path = fs.file_path
-                  AND cf.content_hash = fs.content_hash
-                 WHERE {}
-                 LIMIT 500",
-                conditions.join(" AND ")
-            );
-            conn.query(&sql, &params)?
-        }
-    };
+    let rows = conn.query(
+        &format!("SELECT fs.file_path FROM ({selectors}) fs WHERE {predicate} LIMIT 500"),
+        &params,
+    )?;
     for row in rows {
         let file_path: String = row.try_get("file_path")?;
         if filters.matches(&file_path) {

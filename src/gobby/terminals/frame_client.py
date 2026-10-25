@@ -324,6 +324,7 @@ def _decode_server(reader: _Reader) -> dict[str, Any]:
             "type": "attached",
             "created": reader.boolean(),
             "host_terminal_id": reader.string(),
+            "host_attachment_id": reader.uvarint(),
         }
     raise FrameProtocolError(f"unknown server tag {tag}")
 

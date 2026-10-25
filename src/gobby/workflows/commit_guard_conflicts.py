@@ -99,7 +99,7 @@ def format_dirty_edit_reason(
     )
     return "\n".join(
         [
-            "Edit blocked: dirty path(s) were changed outside this session "
+            "Edit blocked: dirty path(s) are not attributed to this session "
             "(rule 3: you may not mutate files that are dirty):",
             *[
                 f"- {owner.path} — session {owner.session_ref}, "
@@ -114,9 +114,12 @@ def format_dirty_edit_reason(
             ),
             *(
                 [
-                    "Unowned paths need the operator's approval. Ask the user to run, in "
-                    "their own shell:",
+                    "Unowned paths may come from an unattributable interpreter-script or "
+                    "other opaque write, including your own session's write.",
+                    "Ask the operator through Triage/Assistant to revert the change or run "
+                    "the approval command in their own shell:",
                     *[f"  {command}" for command in approval_commands],
+                    "Then redo the intended change with Edit/Write.",
                 ]
                 if unowned
                 else []

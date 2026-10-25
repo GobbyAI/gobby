@@ -500,10 +500,11 @@ class EnforcementCompletionMixin:
             and isinstance(claim_result, dict)
             and claim_result.get("task_id") == active_task_id_for_edit(variables)
         ):
-            # A permissive implementation step can claim a different task. Rewind
-            # before handling that completion, so its claim effects bind the new
-            # selection rather than being lost until the next BEFORE_TOOL read.
-            rebound = await offload(release_lost_binding, self.db, instance, variables)
+            # Every selected successful claim starts a new attempt, even if the
+            # release and same-task reclaim happened between hook observations.
+            rebound = await offload(
+                release_lost_binding, self.db, instance, variables, reset_on_claim=True
+            )
             if rebound.current_step != instance.current_step:
                 instance = rebound
                 definition = instance.workflow

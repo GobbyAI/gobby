@@ -9,6 +9,7 @@ from pathlib import Path
 
 from gobby.hooks._path_scope import resolve_tool_path
 from gobby.hooks._shell_execution_words import _unwrap
+from gobby.hooks.checkout_reads import node_origin, path_facts
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import _SHELLS
 
@@ -161,6 +162,12 @@ def read_script_body(word: str, base: Path | None) -> tuple[Path, str] | None:
 def _bounded_read(word: str, base: Path | None, limit: int) -> tuple[Path, bytes] | None:
     """Read up to ``limit`` bytes of the file ``word`` names, or ``None`` when it is
     missing, unreadable or slower than ``SCRIPT_READ_TIMEOUT_SECONDS``."""
+    if node_origin():
+        path = resolve_tool_path(word, base)
+        if path is None:
+            return None
+        fact = path_facts([str(path)], read_limit=limit).files[0]
+        return (path, fact.data) if fact.kind == "file" and fact.data is not None else None
     with _parked_reads_lock:
         if len(_parked_reads) >= _SCRIPT_READ_WORKERS:
             return None

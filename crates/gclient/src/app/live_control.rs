@@ -111,6 +111,7 @@ impl Workspace<LiveDaemon> {
             "type": "terminal_take_control",
             "terminal_id": pane.terminal_id,
             "attachment_id": pane.attachment_id(),
+            "host_attachment_id": pane.host_attachment_id(),
             "takeover": takeover,
         });
         let daemon = self.daemon.clone();

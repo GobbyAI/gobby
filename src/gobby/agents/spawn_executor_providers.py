@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,8 @@ from gobby.agents.constants import (
     MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
+from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_policy import canonical_path
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
@@ -44,6 +47,7 @@ from gobby.agents.srt_runtime import (
     prepare_sandbox_launch,
 )
 from gobby.agents.trust import pre_approve_directory
+from gobby.utils.terminal_output import redact_terminal_output
 
 if TYPE_CHECKING:
     from gobby.providers.version_gate import AgySupportRecord
@@ -66,6 +70,15 @@ class ProviderSpawnPlan:
     title: str | None = None
     codex_prompt: str | None = None
     inject_persona: bool = False
+
+
+def code_index_warning(cwd: str, message: str) -> dict[str, str]:
+    """Build the sanitized warning shared by local and node launch outcomes."""
+    return {
+        "preflight": "code_index",
+        "cwd": redact_terminal_output(cwd),
+        "message": redact_terminal_output(message),
+    }
 
 
 def _append_code_index_warning(prompt: str, warning: dict[str, str]) -> str:
@@ -138,6 +151,25 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     )
 
 
+def _ensure_sandbox_write_directories(
+    config: SandboxConfig, workspace: str, project_path: str | None
+) -> None:
+    """Create declared directory grants before cache paths enrich the policy."""
+    from gobby.utils.project_context import get_project_sandbox_config
+
+    declared_paths = list(config.extra_write_paths)
+    if project_path is not None:
+        project_config = get_project_sandbox_config(Path(project_path))
+        if project_config is not None:
+            declared_paths.extend(project_config.extra_write_paths)
+    for raw_path in declared_paths:
+        if has_magic(raw_path):
+            continue
+        path = Path(canonical_path(raw_path, base=Path(workspace)))
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+
+
 async def _prepare_provider_sandbox(
     request: SpawnRequest,
     spawn_context: PreparedSpawn,
@@ -190,6 +222,13 @@ async def _prepare_provider_sandbox(
                             "extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]
                         }
                     )
+        if sandbox_config is not None and sandbox_config.enabled:
+            await asyncio.to_thread(
+                _ensure_sandbox_write_directories,
+                sandbox_config,
+                request.cwd,
+                request.project_path,
+            )
         config = _sandbox_config_for_spawn(
             sandbox_config,
             env,
@@ -277,11 +316,7 @@ async def _prepare_managed_code_index(
         spawn_context.env_vars.update(preflight.env)
         return None
     except Exception as exc:
-        warning = {
-            "preflight": "code_index",
-            "cwd": request.cwd,
-            "message": str(exc),
-        }
+        warning = code_index_warning(request.cwd, str(exc))
         request.code_index_preflight_warning = warning
         request.prompt = _append_code_index_warning(request.prompt, warning)
         if request.initial_variables is not None:
@@ -302,8 +337,8 @@ async def _prepare_managed_code_index(
                 )
         logging.getLogger(__name__).warning(
             "Continuing spawn after scoped code index preflight failed for cwd=%s: %s",
-            request.cwd,
-            exc,
+            warning["cwd"],
+            warning["message"],
         )
         return None
 

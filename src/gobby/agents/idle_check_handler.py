@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -10,9 +11,10 @@ from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.watchdog.completed_turn_recovery import completed_turn_recovery_due
 from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
-from gobby.agents.watchdog.quota import detect_provider_quota
+from gobby.agents.watchdog.quota import ProviderQuotaExhaustion, detect_provider_quota
 from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator, pane_has_capacity_message
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
+from gobby.hub.remote_pane import remote_pane_store
 from gobby.sessions.activity import last_session_activity
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.storage.coordination_waits import CoordinationWaitManager
@@ -34,6 +36,19 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PaneFacts:
+    """Pane observations consumed by the hub's idle policy."""
+
+    quota: ProviderQuotaExhaustion | None
+    capacity_candidate: bool
+    status: str
+    turn_in_flight: bool
+    unsubmitted_input: bool
+    queued_message_prompt: bool
+    tail: str
 
 
 class IdleCheckHandler:
@@ -115,6 +130,7 @@ class IdleCheckHandler:
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
+        runs.extend(await self._run_db(self._get_remote_runs))
         attention_panes = self._attention_panes_for_idle
         self._attention_panes_for_idle = {}
         self._recovery.prune({run.id for run in runs})
@@ -175,6 +191,44 @@ class IdleCheckHandler:
             return []
         runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
         return [run for run in runs if services.terminal_for(run) is not None]
+
+    def _get_remote_runs(self) -> list[AgentRun]:
+        """Active terminal runs on machines that have reported pane state."""
+        services = self._terminal_services
+        if services is None:
+            return []
+        local_machine_id = require_machine_id()
+        return [
+            run
+            for machine_id in remote_pane_store().machine_ids()
+            if machine_id != local_machine_id
+            for run in self._agent_run_manager.list_active_for_machine(machine_id)
+            if services.terminal_for(run) is not None
+        ]
+
+    def _remote_pane_facts(self, run: AgentRun) -> PaneFacts | None:
+        """Use only the node's reported classification, never reclassify its tail."""
+        if run.terminal_id is None:
+            return None
+        entry = remote_pane_store().get(run.terminal_id, run.machine_id)
+        if entry is None or entry.stopped or entry.run_id != run.id or entry.pane is None:
+            return None
+        idle = entry.pane.idle
+        if idle is None:
+            return None
+        return PaneFacts(
+            quota=(
+                None
+                if idle.quota is None
+                else ProviderQuotaExhaustion(idle.quota.provider, idle.quota.reset_time)
+            ),
+            capacity_candidate=idle.capacity_message is not None,
+            status=idle.status,
+            turn_in_flight=idle.turn_in_flight,
+            unsubmitted_input=idle.unsubmitted_input,
+            queued_message_prompt=idle.queued_message_prompt,
+            tail=entry.pane.tail,
+        )
 
     def _idle_timeout_seconds_for_run(self, run: AgentRun) -> int:
         """Return the idle timeout window for a run."""
@@ -290,6 +344,10 @@ class IdleCheckHandler:
             return 0
 
         run = latest_run
+        remote = run.machine_id != require_machine_id()
+        facts = self._remote_pane_facts(run) if remote else None
+        if remote and facts is None:
+            return 0
         prompt_detector = self._prompt_detector.for_provider(run.provider)
         terminal = (
             None if self._terminal_services is None else self._terminal_services.terminal_for(run)
@@ -372,18 +430,35 @@ class IdleCheckHandler:
             idle_detector.reset_idle(run.id)
             return 0
 
-        if pane_output is None:
-            snapshot = (
-                None
-                if self._terminal_services is None
-                else await self._terminal_services.snapshot(run, 15)
+        if facts is None:
+            if pane_output is None:
+                snapshot = (
+                    None
+                    if self._terminal_services is None
+                    else await self._terminal_services.snapshot(run, 15)
+                )
+                pane_output = None if snapshot is None else snapshot.text
+            if pane_output is None:
+                return 0
+            if not attention_synced:
+                await self._attention_tracker.sync(run, pane_output)
+            quota = detect_provider_quota(pane_output, provider_id)
+            status = idle_detector.detect(pane_output) if quota is None else "unknown"
+            check_composer = status in ("idle", "active")
+            facts = PaneFacts(
+                quota=quota,
+                capacity_candidate=pane_has_capacity_message(pane_output, reader),
+                status=status,
+                turn_in_flight=check_composer and idle_detector.has_turn_in_flight(pane_output),
+                unsubmitted_input=check_composer
+                and idle_detector.has_unsubmitted_input(pane_output),
+                queued_message_prompt=(
+                    check_composer and prompt_detector.detect_queued_message_prompt(pane_output)
+                ),
+                tail=pane_output,
             )
-            pane_output = None if snapshot is None else snapshot.text
-        if pane_output is None:
-            return 0
-        if not attention_synced:
-            await self._attention_tracker.sync(run, pane_output)
-        quota = detect_provider_quota(pane_output, provider_id)
+        pane_output = facts.tail
+        quota = facts.quota
         if quota is not None:
             logger.error(
                 "Failing agent %s because %s quota is exhausted%s",
@@ -393,8 +468,8 @@ class IdleCheckHandler:
             )
             await self._recovery.fail_provider_quota_agent(run, quota)
             return 1
-        capacity_candidate = pane_has_capacity_message(pane_output, reader)
-        status = idle_detector.detect(pane_output)
+        capacity_candidate = facts.capacity_candidate
+        status = facts.status
 
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None
         transcript_path: str | None = None
@@ -420,7 +495,7 @@ class IdleCheckHandler:
             await self._recovery._fail_idle_agent(run, reason="context window exhausted")
             return 1
 
-        if idle_detector.has_turn_in_flight(pane_output):
+        if facts.turn_in_flight:
             # The provider is mid-turn (thinking phases write nothing to the
             # transcript for minutes); reprompting would queue junk into a live
             # turn. Stagnation deferral bounds a frozen spinner separately.
@@ -451,7 +526,7 @@ class IdleCheckHandler:
                 idle_detector.reset_idle(run.id)
                 return 0
 
-        if idle_detector.has_unsubmitted_input(pane_output):
+        if facts.unsubmitted_input:
             # Managed runs are autonomous: nobody returns to submit draft composer
             # text, so a turn completed past the idle window must still recover
             # (the reprompt path clears the draft with Escape before typing).
@@ -505,7 +580,7 @@ class IdleCheckHandler:
             idle_detector.reset_idle(run.id)
             return 0
 
-        queued_message_prompt_visible = prompt_detector.detect_queued_message_prompt(pane_output)
+        queued_message_prompt_visible = facts.queued_message_prompt
         if idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
             if queued_message_prompt_visible:
                 logger.info(

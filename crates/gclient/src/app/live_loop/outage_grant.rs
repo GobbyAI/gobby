@@ -48,12 +48,18 @@ pub(super) fn verify_owner_only(path: &Path) -> io::Result<()> {
 }
 
 /// The `grant_input` request giving `attachment_id` input on the terminal.
-pub(super) fn grant_request(id: &str, host_terminal_id: &str, attachment_id: &str) -> Value {
+pub(super) fn grant_request(
+    id: &str,
+    host_terminal_id: &str,
+    attachment_id: &str,
+    host_attachment_id: u64,
+) -> Value {
     json!({
         "attachment_id": attachment_id,
         "host_terminal_id": host_terminal_id,
         "id": id,
         "method": "grant_input",
+        "host_attachment_id": host_attachment_id,
     })
 }
 
@@ -95,9 +101,10 @@ pub(super) async fn grant(
     frame_socket: &Path,
     host_terminal_id: &str,
     attachment_id: &str,
+    host_attachment_id: u64,
 ) -> io::Result<GrantOutcome> {
     let reply = exchange(frame_socket, |id| {
-        grant_request(id, host_terminal_id, attachment_id)
+        grant_request(id, host_terminal_id, attachment_id, host_attachment_id)
     })
     .await?;
     Ok(grant_outcome(&reply))

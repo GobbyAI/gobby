@@ -28,7 +28,7 @@ from gobby.agents.spawn import PreparedSpawn, prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
-from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
 from gobby.providers.version_gate import (
     AGY_REVALIDATING_REASON,
@@ -162,7 +162,7 @@ async def spawn_agent_impl(
                 live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": str(exc) or type(exc).__name__}
         provider, model, reasoning_effort = resume_launch_defaults(
             resume_target, model=model, reasoning_effort=reasoning_effort
         )
@@ -188,7 +188,7 @@ async def spawn_agent_impl(
             agent_body, execution_mode, resumed=resume_target is not None
         )
     except ValueError as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(exc) or type(exc).__name__}
     try:
         write_grant = await asyncio.to_thread(
             authorize_write_grant,
@@ -201,12 +201,12 @@ async def spawn_agent_impl(
             launch_machine_id=require_machine_id(),
         )
     except ValueError as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(exc) or type(exc).__name__}
     if agent_body is not None:
         try:
             agent_body.prompt_for("agent")
         except ValueError as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": str(exc) or type(exc).__name__}
 
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
@@ -392,7 +392,11 @@ async def spawn_agent_impl(
                 agent_pane_reserver.workspaces,
             )
         except ResumeSeatGone as exc:
-            return {"success": False, "placement_error": "not_found", "error": str(exc)}
+            return {
+                "success": False,
+                "placement_error": "not_found",
+                "error": str(exc) or type(exc).__name__,
+            }
     placed = await preflight_placement(
         placement,
         reserver=agent_pane_reserver,
@@ -443,6 +447,12 @@ async def spawn_agent_impl(
         parent_session_id=parent_session_id,
         phase_timings_ms=phase_timings_ms,
         worktree_dir_name=worktree_dir_name,
+        preserve_existing_worktree=resume_target is not None
+        or bool(
+            agent_body
+            and agent_body.task_step_writes
+            and "implementation" not in agent_body.task_step_writes
+        ),
     )
     if droid_mode == "interactive" and effective_provider != "droid":
         return {
@@ -455,7 +465,7 @@ async def spawn_agent_impl(
         try:
             worktree_id = worktree_storage.resolve_reference(worktree_id)
         except ValueError as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": str(exc) or type(exc).__name__}
         existing_worktree = worktree_storage.get(worktree_id)
         if not existing_worktree:
             return {"success": False, "error": f"Worktree {worktree_id} not found"}
@@ -484,7 +494,8 @@ async def spawn_agent_impl(
             return {"success": False, "error": "git_manager is required to reuse a worktree"}
 
         try:
-            if resume_target is not None:
+            # Associated seats join the exact candidate; default/developer seats sync it.
+            if spawn_config.preserve_existing_worktree:
                 isolation_ctx, handler = await prepare_resumed_worktree(
                     existing_worktree=existing_worktree,
                     spawn_config=spawn_config,
@@ -502,12 +513,12 @@ async def spawn_agent_impl(
             context_handler: IsolationHandler = WorktreeIsolationHandler(
                 target_git_manager, worktree_storage
             )
-        except ReusedWorktreeRebaseConflict as exc:
+        except ReusedWorktreeSyncConflict as exc:
             return {
                 "success": False,
-                "error_code": "reused_worktree_rebase_conflict",
+                "error_code": "reused_worktree_merge_conflict",
                 "error": (
-                    f"Reused worktree {existing_worktree.id} could not be rebased onto "
+                    f"Reused worktree {existing_worktree.id} could not merge base "
                     f"{exc.base_ref}; the original worktree was preserved at "
                     f"{existing_worktree.worktree_path}: {exc}"
                 ),
@@ -515,11 +526,11 @@ async def spawn_agent_impl(
                 "worktree_path": existing_worktree.worktree_path,
                 "branch_name": existing_worktree.branch_name,
                 "base_branch": existing_worktree.base_branch,
-                "rebase_target": exc.base_ref,
+                "merge_target": exc.base_ref,
                 "base_commit_sha": exc.base_commit_sha,
                 "preserved": True,
                 "recovery": (
-                    "Check the preserved worktree's rebase state and resolve the branch against "
+                    "Check the preserved worktree's merge state and resolve the branch against "
                     f"'{exc.base_ref}' in the preserved worktree, then retry spawn_agent "
                     f"with worktree_id='{existing_worktree.id}'."
                 ),
@@ -775,7 +786,7 @@ async def spawn_agent_impl(
             )
             return {
                 "success": False,
-                "error": str(exc),
+                "error": str(exc) or type(exc).__name__,
                 "reasoning": reasoning.to_dict(),
             }
         finally:
@@ -827,7 +838,7 @@ async def spawn_agent_impl(
                     await cleanup_failed_spawn(
                         runner,
                         run_id,
-                        str(exc),
+                        str(exc) or type(exc).__name__,
                         handler,
                         spawn_config,
                         completion_registry=completion_registry,
@@ -838,7 +849,7 @@ async def spawn_agent_impl(
                     )
                     return {
                         "success": False,
-                        "error": str(exc),
+                        "error": str(exc) or type(exc).__name__,
                         **spawn_identity,
                         "reasoning": reasoning.to_dict(),
                     }
@@ -937,7 +948,7 @@ async def spawn_agent_impl(
                     description="Agent spawn background task",
                 )
             except RuntimeError as exc:
-                return await spawn_phase.fail(str(exc))
+                return await spawn_phase.fail(str(exc) or type(exc).__name__)
 
             return {
                 "success": True,

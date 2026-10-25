@@ -284,11 +284,13 @@ def test_take_control_input_grant_answers_while_the_default_executor_is_held() -
     manager.clear_native_input_handoff.side_effect = _recording(threads)
     runtime = MagicMock()
 
-    async def grant_input(_terminal: Terminal, _attachment_id: str) -> None:
+    async def grant_input(
+        _terminal: Terminal, _attachment_id: str, _host_attachment_id: int
+    ) -> None:
         return None
 
     runtime.grant_input.side_effect = grant_input
-    holder = SimpleNamespace(attachment_id="att-1", frame_delivery="direct")
+    holder = SimpleNamespace(attachment_id="att-1", frame_delivery="direct", host_attachment_id=42)
 
     granted = _run_while_default_executor_held(
         sync_host_input_grant(runtime, terminal, holder, manager=manager)

@@ -258,8 +258,8 @@ pub enum ClientMessage {
     SetScrollOffset {
         rows_from_live_edge: u32,
     },
-    /// Names the daemon-issued attachment id this stream types as. Input is
-    /// delivered only while the slot's `grant_input` holder equals it.
+    /// Names a daemon attachment for theme relay. This never grants input;
+    /// only a trusted control grant to the host-owned stream can do that.
     BindAttachment {
         attachment_id: String,
     },
@@ -547,9 +547,12 @@ pub enum ServerMessage {
     Attached {
         created: bool,
         host_terminal_id: String,
+        /// Host-owned identity of this frame attachment; input grants name it
+        /// together with the terminal, through the trusted control socket.
+        host_attachment_id: u64,
     },
     /// Typed refusal of `BindAttachment`, `Input` or `Paste`; the stream stays
-    /// open. Codes: `attach_required`, `input_not_granted`, `not_native`,
+    /// open. Codes: `attach_required`, `attachment_already_bound`, `input_not_granted`, `not_native`,
     /// `request_too_large`, `pty_busy`, `terminal_gone`.
     InputRefused {
         code: String,

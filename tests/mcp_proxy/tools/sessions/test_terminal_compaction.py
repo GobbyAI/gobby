@@ -285,6 +285,23 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
     clear.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_empty_composer_dispatches_after_terminal_replies(
+    composer_ledger: ComposerLedger,
+) -> None:
+    pane = _GrokPane()
+    for reply in ("\x1b[12;40R", "\x1b[?62;22;52c", "\x1b]11;rgb:0000/0000/0000\x07"):
+        composer_ledger.observe_write(pane.target, origin="operator", kind="input", payload=reply)
+
+    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
+
+    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
+    assert pane.typed == [f"{_COMMAND}\n"]
+    assert pane.keys == ["enter"]
+    mark.assert_called_once()
+    clear.assert_not_called()
+
+
 def _grok_event(kind: str, **fields: object) -> bytes:
     return (json.dumps({"type": kind, **fields}) + "\n").encode()
 

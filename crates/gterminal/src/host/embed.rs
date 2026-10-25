@@ -95,6 +95,11 @@ async fn attach_tmux(
     rows: u16,
     cols: u16,
 ) -> Result<AttachOutcome, &'static str> {
+    // Same fence as HostState::attach, released before capture_history: that
+    // blocks on tmux and must not hold the upgrade out.
+    let Ok(gate) = state.mutation_gate.try_read() else {
+        return Err("host_upgrading");
+    };
     let key = locator.locator_key();
     let mut inner = state.inner.lock().await;
     let created = inner
@@ -154,6 +159,7 @@ async fn attach_tmux(
             truncated: false,
             user_attachments: HashSet::new(),
             input_grant: None,
+            input_grant_attachment: None,
             locator: Some(locator.clone()),
             tmux_history_bytes: 0,
             history: None,
@@ -223,6 +229,7 @@ async fn attach_tmux(
         }
     }
     drop(inner);
+    drop(gate);
     if created {
         capture_history(state, &key).await;
         start_poll(state, key.clone()).await;

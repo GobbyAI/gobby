@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,6 +37,30 @@ from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, managed_tool_bin_dir
 
 pytestmark = pytest.mark.unit
 _HASH_SUFFIX_RE = re.compile(r".+-[0-9a-f]{16}$")
+
+
+@pytest.mark.parametrize(
+    "run_id,depth,expected", [("run-1", 0, True), ("", 1, True), ("", 0, False)]
+)
+def test_spawned_env_agrees_with_session_variable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, run_id: str, depth: int, expected: bool
+) -> None:
+    from gobby.hooks.session_activation import _fallback_agent_updates
+
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    monkeypatch.setattr("gobby.utils.daemon_url.daemon_url", lambda: "http://127.0.0.1:1")
+    session = SimpleNamespace(agent_run_id=run_id, agent_depth=depth)
+    variables = _fallback_agent_updates({}, session, None, run_lookup_confirmed_absent=False)
+    env = get_terminal_env_vars(
+        session_id="fixture",
+        parent_session_id="parent",
+        agent_run_id=run_id,
+        project_id="fixture",
+        agent_depth=depth,
+        checkout_root=tmp_path / "checkout",
+    )
+    assert variables["is_spawned_agent"] is expected
+    assert env.get("GOBBY_IS_SPAWNED_AGENT") == ("1" if expected else "0")
 
 
 def _expected_cache_leaf(prefix: str, session_id: str) -> str:
@@ -107,6 +132,7 @@ class TestEnvironmentVariableConstants:
             GOBBY_SESSION_ID,
             GOBBY_PARENT_SESSION_ID,
             GOBBY_AGENT_RUN_ID,
+            "GOBBY_IS_SPAWNED_AGENT",
             GOBBY_AGENT_API_TOKEN,
             GOBBY_WORKFLOW_NAME,
             GOBBY_PROJECT_ID,
