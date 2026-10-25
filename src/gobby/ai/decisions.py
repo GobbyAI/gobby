@@ -7,7 +7,7 @@ import logging
 import math
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -162,6 +162,16 @@ class DecisionService:
         timeout_seconds: float | None = None,
     ) -> DecisionResult[ChoiceAnswer]:
         """Return validated Choice answers, or raise ``DecisionsUnavailable``."""
+        return await self._request(consumer, state, questions, _parse_choice, timeout_seconds)
+
+    async def _request[Q: (ChoiceQuestion, str), A](
+        self,
+        consumer: str,
+        state: Mapping[str, Any],
+        questions: Mapping[str, Q],
+        parse_answer: Callable[[Any, Q], A],
+        timeout_seconds: float | None,
+    ) -> DecisionResult[A]:
         config = self._config
         started = time.monotonic()
         outcome = "error"
@@ -179,7 +189,7 @@ class DecisionService:
                 )
             if _now() < self._cooldown_until:
                 raise DecisionsUnavailable("cooldown", "a recent decision failure is cooling down")
-            result = await self._dial(base, model, questions, body, timeout_seconds)
+            result = await self._dial(base, model, questions, body, timeout_seconds, parse_answer)
             outcome = "ok"
             return result
         except DecisionsUnavailable as error:
@@ -210,7 +220,7 @@ class DecisionService:
         timeout_seconds: float | None = None,
     ) -> DecisionResult[NoulAnswer]:
         """Return validated Noul probabilities, or raise ``DecisionsUnavailable``."""
-        raise NotImplementedError("community-label-decisions 1.1")
+        return await self._request(consumer, state, propositions, _parse_noul, timeout_seconds)
 
     async def score(
         self,
@@ -243,16 +253,19 @@ class DecisionService:
         | Mapping[str, BoxQuestion],
     ) -> int:
         """Return the estimate the ``oversize`` guard compares with ``max_input_tokens``."""
-        raise NotImplementedError("community-label-decisions 1.1")
+        return estimate_tokens(
+            _request_body(self._config.model or "", self._config.wire_api, state, questions)
+        )
 
-    async def _dial(
+    async def _dial[Q, A](
         self,
         base: str,
         model: str,
-        questions: Mapping[str, ChoiceQuestion],
+        questions: Mapping[str, Q],
         body: dict[str, Any],
         timeout_seconds: float | None,
-    ) -> DecisionResult[ChoiceAnswer]:
+        parse_answer: Callable[[Any, Q], A],
+    ) -> DecisionResult[A]:
         config = self._config
         budget = config.timeout_seconds
         if timeout_seconds is not None:
@@ -279,7 +292,7 @@ class DecisionService:
                     retry_if=_retryable,
                 )
                 body_json = _unwrap(payload, config.wire_api)
-                response_model, answers = _parse_answers(body_json, questions)
+                response_model, answers = _parse_answers(body_json, questions, parse_answer)
                 _check_not_truncated(body_json, config.resolved_backend_max_state_tokens)
             # The card waits on the budget's remainder, so the decision's own timeout cannot cut
             # a decision that already succeeded short.
@@ -318,7 +331,7 @@ class DecisionService:
                 await asyncio.wait({card})
 
 
-def _check_request(questions: Mapping[str, ChoiceQuestion]) -> None:
+def _check_request(questions: Mapping[str, ChoiceQuestion | str]) -> None:
     if not 1 <= len(questions) <= _MAX_QUESTIONS:
         raise DecisionsUnavailable(
             "invalid_request", f"{len(questions)} questions; 1 to {_MAX_QUESTIONS} allowed"
@@ -328,7 +341,16 @@ def _check_request(questions: Mapping[str, ChoiceQuestion]) -> None:
             raise DecisionsUnavailable(
                 "invalid_request", "question keys must match [A-Za-z0-9_.-]{1,100}"
             )
-        if not _MIN_OPTIONS <= len(question.criteria) <= _MAX_OPTIONS:
+        instructions = question if isinstance(question, str) else question.instructions
+        if not isinstance(instructions, str) or not instructions.strip():
+            raise DecisionsUnavailable("invalid_request", "instructions must be non-empty text")
+        if isinstance(question, ChoiceQuestion) and (
+            not _MIN_OPTIONS <= len(question.criteria) <= _MAX_OPTIONS
+            or any(
+                not isinstance(option, str) or not isinstance(value, str)
+                for option, value in question.criteria.items()
+            )
+        ):
             raise DecisionsUnavailable(
                 "invalid_request",
                 f"a Choice question takes {_MIN_OPTIONS} to {_MAX_OPTIONS} options",
@@ -336,23 +358,31 @@ def _check_request(questions: Mapping[str, ChoiceQuestion]) -> None:
 
 
 def _request_body(
-    model: str, wire_api: str, state: Mapping[str, Any], questions: Mapping[str, ChoiceQuestion]
+    model: str,
+    wire_api: str,
+    state: Mapping[str, Any],
+    questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion | BoxQuestion],
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
         "state": dict(state),
-        "questions": {
-            key: {
-                "type": "choice",
-                "instructions": question.instructions,
-                "criteria": dict(question.criteria),
-            }
-            for key, question in questions.items()
-        },
+        "questions": {key: _question_body(question) for key, question in questions.items()},
     }
     if wire_api == "openrouter-decisions":
         body["provider"] = {"zdr": True, "data_collection": "deny"}
     return body
+
+
+def _question_body(question: ChoiceQuestion | str | ScoreQuestion | BoxQuestion) -> dict[str, Any]:
+    if isinstance(question, str):
+        return {"type": "noul", "instructions": question}
+    if isinstance(question, ChoiceQuestion):
+        return {
+            "type": "choice",
+            "instructions": question.instructions,
+            "criteria": dict(question.criteria),
+        }
+    raise DecisionsUnavailable("invalid_request", "unsupported question shape")
 
 
 def _endpoint(wire_api: str, base: str, model: str) -> str:
@@ -408,19 +438,23 @@ def _unwrap(payload: Any, wire_api: str) -> dict[str, Any]:
     return payload
 
 
-def _parse_answers(
-    body: dict[str, Any], questions: Mapping[str, ChoiceQuestion]
-) -> tuple[str, dict[str, ChoiceAnswer]]:
+def _parse_answers[Q, A](
+    body: dict[str, Any], questions: Mapping[str, Q], parse_answer: Callable[[Any, Q], A]
+) -> tuple[str, dict[str, A]]:
     model = body.get("model")
     if not isinstance(model, str) or not model:
         raise _parse_error("response model is missing")
     raw_answers = body.get("answers")
     if not isinstance(raw_answers, dict) or raw_answers.keys() != questions.keys():
         raise _parse_error("answers do not match the questions")
-    answers = {
-        key: _parse_choice(raw_answers[key], question) for key, question in questions.items()
-    }
+    answers = {key: parse_answer(raw_answers[key], question) for key, question in questions.items()}
     return model, answers
+
+
+def _parse_noul(raw: Any, proposition: str) -> NoulAnswer:
+    if not isinstance(raw, dict) or raw.get("type") != "noul":
+        raise _parse_error("answer is not a noul")
+    return NoulAnswer(probability=_unit(raw.get("noul")))
 
 
 def _parse_choice(raw: Any, question: ChoiceQuestion) -> ChoiceAnswer:
@@ -500,8 +534,13 @@ def _card_identity(payload: Any, model: str, backend_max: int) -> str | None:
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _schema_hash(questions: Mapping[str, ChoiceQuestion]) -> str:
-    shape = {key: sorted(question.criteria) for key, question in questions.items()}
+def _schema_hash(questions: Mapping[str, ChoiceQuestion | str]) -> str:
+    shape = {
+        key: {"type": "choice", "options": sorted(question.criteria)}
+        if isinstance(question, ChoiceQuestion)
+        else {"type": "noul"}
+        for key, question in questions.items()
+    }
     return hashlib.sha256(json.dumps(shape, sort_keys=True).encode()).hexdigest()[:12]
 
 

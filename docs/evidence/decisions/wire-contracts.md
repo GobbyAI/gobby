@@ -20,17 +20,17 @@ The parser and the fixtures under `tests/ai/fixtures/` use the field names below
 
 - URL: `{api_base}/v1/systemone`. The default wire, `wire_api: systemone`.
 - Request body: `model`, `state`, and `questions`. `questions` is a map keyed by question
-  ID. Each Choice question carries `type: "choice"`, `instructions` (required on every
-  question), and `criteria`, a map from option key to option text.
+  ID. Gobby policy requires each Choice question to carry `type: "choice"`, non-empty
+  string `instructions`, and `criteria`, a map from option key to string-only text.
 - Response body: `model` (a non-empty string; TypeSafe resolves `jev-latest` to a version
   such as `jev-1.13.0`), `answers` keyed by question ID, and `usage.input_tokens`.
   Each answer carries `type` (equal to its question's type), `choice`, `probabilities`
   (keyed by option), and `confidence`. TypeSafe requires `probabilities` and `confidence`
   on a Choice answer.
-- Limits: 2 to 255 Choice options; 1 to 64 questions; question keys match
+- Gobby request-profile limits: 2 to 255 Choice options; 1 to 64 questions; question keys match
   `^[A-Za-z0-9_.-]{1,100}$`. Documented whole-request limit 64k tokens; 32k for state
   plus the longest question (`https://docs.typesafe.ai/models`, per Decision 8).
-- Noul (`type: "noul"`, a yes/no proposition): the question is exactly
+- Noul (`type: "noul"`, a yes/no proposition): Gobby's question is exactly
   `{"type": "noul", "instructions": <non-empty string>}`, with no other keys. The answer
   carries `type: "noul"` and the probability in its `noul` field, finite and in [0,1]. A Noul
   answer carries no separate `confidence` (`docs/research/jev.md` lines 35-36). Recorded from
@@ -180,3 +180,27 @@ per Decision 15. Not re-read this seat.
 
 Every unverified item keeps a consumer in `shadow` until the Activation Gate's live capture
 settles it.
+
+## 7. Gobby policy and Noul fixtures (2026-10-24)
+
+The required instructions, string-only Choice descriptions, two-option minimum and Noul
+shape above are **Gobby policy**, a narrower request profile than current upstream.
+TypeSafe OpenAPI 0.2.0 allows optional instructions, 1 to 255 Choice options with string,
+object, array or null descriptions, and optional Noul `criteria.true` and `criteria.false`.
+OpenRouter requires instructions; when Noul criteria are supplied it requires both keys.
+Gobby sends exactly `type` and non-empty string `instructions` for each Noul proposition.
+
+The three `*_noul_response.json` fixtures cover keyed probabilities on systemone,
+OpenRouter (dated model, id, provider and cost), and the Workers AI REST envelope.
+The parser requires `type: noul` and a finite `noul` value in [0,1], with no separate
+confidence. Missing keys fail closed. Noul shares Choice's request ceiling, cooldown,
+retry, identity, truncation checks and redacted call log. The public request estimate
+serializes the same body used by the oversize guard.
+
+Sources retrieved by researcher gobby#17515 on 2026-10-24, transcribed in
+`.gobby/plans/research/community-label-decisions-22604.md`:
+[TypeSafe OpenAPI](https://api.typesafe.ai/openapi.json),
+[TypeSafe system-one reference](https://docs.typesafe.ai/api/system-one),
+[OpenRouter OpenAPI](https://openrouter.ai/openapi.json), and
+[Cloudflare Clef schema](https://github.com/cloudflare/cloudflare-docs/blob/production/src/content/workers-ai-models/clef.json).
+These are documented-schema fixtures; runtime support still requires a live capture.
