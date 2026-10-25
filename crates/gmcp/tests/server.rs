@@ -211,7 +211,12 @@ fn initialize_does_not_wait_for_startup_probe() -> Result<()> {
     let home = tempfile::tempdir()?;
     let mut gmcp = Gmcp::spawn(&url, home.path())?;
 
+    let started = Instant::now();
     let result = gmcp.initialize()?;
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "initialize waited on the unanswered 2 s startup probe"
+    );
 
     let expected = fixture(WIRE_CASES)?["initialize"].clone();
     assert_eq!(canonical(result), canonical(expected));
