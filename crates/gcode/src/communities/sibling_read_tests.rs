@@ -270,6 +270,63 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
                 3,
                 "grep -w must also read a file no row serves"
             );
+            fs::remove_file(sibling_root.join("src/extra.rs")).unwrap();
+            let outside = root.join("outside.rs");
+            fs::write(&outside, "pub fn blocked_live_token() {}\n").unwrap();
+            let rejected_content = GrepOptions {
+                pattern: "blocked_live_token|sibling_only",
+                fixed_strings: false,
+                ..current_callers
+            };
+            let mut leaked = Vec::new();
+            for replacement in [
+                #[cfg(unix)]
+                "external-symlink",
+                "binary",
+                "oversize",
+                "excluded",
+            ] {
+                let file = sibling_root.join(rel);
+                fs::remove_file(&file).unwrap();
+                match replacement {
+                    "external-symlink" => {
+                        #[cfg(unix)]
+                        std::os::unix::fs::symlink(&outside, &file).unwrap();
+                    }
+                    "binary" => fs::write(&file, b"blocked_live_token\0\n").unwrap(),
+                    "oversize" => {
+                        let mut bytes = b"blocked_live_token\n".to_vec();
+                        bytes.resize(crate::index::MAX_FILE_SIZE as usize + 1, b'x');
+                        fs::write(&file, bytes).unwrap();
+                    }
+                    "excluded" => {
+                        fs::write(&file, "pub fn blocked_live_token() {}\n").unwrap();
+                        ctx.indexing.extra_excludes.push(rel.to_string());
+                    }
+                    _ => unreachable!(),
+                }
+                assert_eq!(
+                    ensure_fresh(&ctx, FreshnessScope::Project).unwrap(),
+                    FreshnessStatus::Stale(vec![rel.to_string()]),
+                    "a rejected served path remains stale: {replacement}"
+                );
+                crate::test_env::clear_captured_logs();
+                crate::dispatch::ensure_project_fresh(&ctx, false).unwrap();
+                assert!(
+                    crate::test_env::captured_logs(log::Level::Warn)
+                        .iter()
+                        .any(|line| line.contains("gcode index is stale for 1 path(s)")),
+                    "rejected content must retain the stale warning: {replacement}"
+                );
+                let result = grep_repo(&ctx, managed.client(), &rejected_content).unwrap();
+                if result.matched_lines != 0 {
+                    leaked.push((replacement, result.matched_lines));
+                }
+            }
+            assert!(
+                leaked.is_empty(),
+                "grep must drop old chunks and never read rejected live content: {leaked:?}"
+            );
             let error = crate::commands::index::run(
                 &ctx,
                 &sibling_root,
