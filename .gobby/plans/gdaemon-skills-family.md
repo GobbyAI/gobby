@@ -984,6 +984,10 @@ cache publication or process effects are mutation-classified. Listing and
 search never load instructions. The shared gateway supplies policy, discovery
 leases, context injection, timeouts and result offloading; do not duplicate
 those mechanisms. Registering and activating in gdaemon waits for 6.1.
+The landed descriptor integration suite is
+`crates/gcore/tests/mcp_contract.rs`. As a #24883 consumer, this leaf runs the
+entire `--test mcp_contract` target, including the two tests outside the
+similarly named module; the `-E 'test(mcp_contract)'` filter is insufficient.
 
 **Granularity:** Fourteen public-row items and one catalog item exercise one
 descriptor/dispatch adapter. Each behavior's storage/source/runtime state
@@ -1025,7 +1029,8 @@ tool name would create per-file wrappers rather than independent outcomes.
   malformed arguments execute no service call.
   test: `crates/gskills/tests/mcp.rs::catalog_and_validation_match_python`.
 
-Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test mcp`.
+Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test mcp`;
+`CARGO_BUILD_JOBS=3 cargo test -p gobby-core --test mcp_contract`.
 
 ## P5: Native CLI callbacks
 `kind: framing`
@@ -1361,6 +1366,10 @@ choice to its executor.
 
 Draft validation command:
 `uv run gobby plans validate .gobby/plans/gdaemon-skills-family.md -p /Users/josh/Projects/gobby`.
+Execution verification for the #24883 descriptor consumer includes the complete
+integration target: `CARGO_BUILD_JOBS=3 cargo test -p gobby-core --test mcp_contract`.
+Use the target selector rather than `-E 'test(mcp_contract)'`, which omits two
+tests outside the module.
 Expansion validation is unrun for the narrative draft and becomes mandatory
 after the Adversary derives and applies M1. No implementation tests, production
 cutover or task expansion have been performed during planning.
