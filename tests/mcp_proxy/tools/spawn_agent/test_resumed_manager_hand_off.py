@@ -155,6 +155,21 @@ async def test_seat_resumed_from_another_session_keeps_its_team(crashed: Crashed
 
 
 @pytest.mark.asyncio
+async def test_seat_resumed_past_32_runs_keeps_its_team(crashed: CrashedTeam) -> None:
+    """The Orchestrator resumes a seat 33 times; the runbook run is 33 links back on its chain."""
+    db = crashed.case.db
+    for _ in range(33):
+        resumed = await _resume(crashed, crashed.developer, "developer")
+        assert resumed["success"] is True, resumed
+        _park(db, crashed.developer)
+
+    seat = SessionManager(db).get(crashed.developer)
+    assert seat is not None
+    assert seat.parent_session_id == crashed.resumer
+    assert seat_team(db, crashed.developer) == crashed.team
+
+
+@pytest.mark.asyncio
 async def test_resumed_dev_manager_hands_off_to_a_resumed_seat(crashed: CrashedTeam) -> None:
     db = crashed.case.db
     for seat, agent_name in ((crashed.manager, DEV_MANAGER), (crashed.developer, "developer")):

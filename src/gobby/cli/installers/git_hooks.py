@@ -346,13 +346,14 @@ fi
         "merge",
         r"""
 if git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1; then
-    WORKTREE_CHANGED=$(git diff --name-only HEAD 2>/dev/null)
-    if [ -n "$WORKTREE_CHANGED" ]; then
-        CHANGED_FILES="$WORKTREE_CHANGED"
-    elif [ "$(git rev-parse ORIG_HEAD 2>/dev/null)" != "$(git rev-parse HEAD 2>/dev/null)" ]; then
+    # $1 is 1 for a squash merge: it moves no HEAD, so the staged worktree holds its changes.
+    if [ "$1" != "1" ] && [ "$(git rev-parse ORIG_HEAD)" != "$(git rev-parse HEAD)" ]; then
         CHANGED_FILES=$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null)
     else
-        CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+        CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null)
+        if [ -z "$CHANGED_FILES" ]; then
+            CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+        fi
     fi
 else
     CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)

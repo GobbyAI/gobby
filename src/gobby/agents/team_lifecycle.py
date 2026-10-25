@@ -27,7 +27,7 @@ from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
@@ -41,6 +41,7 @@ from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_state import ExecutionStatus, StepExecution
 from gobby.worktrees.git import WorktreeGitManager
 
@@ -50,8 +51,6 @@ ADMISSION_STEP = "admit"
 _PIPELINE_SOURCE = "pipeline"
 _PIPELINE_PREFIX = "pipeline-"
 _TREE_FIELDS = frozenset({"worktree_id", "worktree_path"})
-# Bounds the resume-chain walk from a seat's run back to the run that launched it.
-_RESUME_CHAIN_LIMIT = 32
 
 
 @dataclass(frozen=True)
@@ -325,6 +324,25 @@ async def _join(db: HubDatabase, caller: _Caller, task: Task, team_id: str) -> T
     return binding
 
 
+_ENDED_EXECUTIONS = frozenset(
+    {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED}
+)
+
+
+def _holds_epoch(db: HubDatabase, executions: LocalPipelineExecutionManager, holder: str) -> bool:
+    """Whether a reserved fresh-reviewer execution still holds its epoch's slot.
+
+    An execution still in progress holds it, since its reviewer may not have spawned yet. An
+    ended execution holds it only while its code-reviewer seat runs. A failed pipeline or a
+    refused spawn leaves no active seat, so it frees the slot for a relaunch.
+    """
+    execution = executions.get_execution(holder)
+    if execution is None or execution.status not in _ENDED_EXECUTIONS:
+        return True
+    reviewer = LocalAgentRunManager(db).get(step_invocation_id(holder, "code-reviewer"))
+    return reviewer is not None and reviewer.status in ACTIVE_AGENT_RUN_STATUSES
+
+
 def _reserve_fresh_reviewer(
     db: HubDatabase, caller: _Caller, task: Task, team_id: str, exclude_reviewers: Sequence[str]
 ) -> None:
@@ -362,10 +380,15 @@ def _reserve_fresh_reviewer(
         )
     reserved = _output(step).get("fresh_reviewers")
     reserved = reserved if isinstance(reserved, dict) else {}
-    if reserved.get(str(epoch)) not in (None, caller.execution_id):
+    holder = reserved.get(str(epoch))
+    if (
+        holder is not None
+        and holder != caller.execution_id
+        and _holds_epoch(db, caller.executions, str(holder))
+    ):
         raise TeamAdmissionRefused(
             "fresh_reviewer_exists",
-            f"execution {reserved[str(epoch)]} is team {team_id}'s epoch {epoch} fresh reviewer",
+            f"execution {holder} is team {team_id}'s epoch {epoch} fresh reviewer",
         )
     _merge(
         caller.executions,
@@ -496,7 +519,7 @@ def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
     runs = LocalAgentRunManager(db)
     run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
     seen: set[str] = set()
-    while run is not None and run.id not in seen and len(seen) < _RESUME_CHAIN_LIMIT:
+    while run is not None and run.id not in seen:
         seen.add(run.id)
         parents.append(run.parent_session_id)
         previous = (run.resume_metadata_json or {}).get("resume_previous_run_id")

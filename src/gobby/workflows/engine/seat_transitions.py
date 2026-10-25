@@ -23,6 +23,7 @@ from gobby.workflows.engine.seat_messages import (
     CandidateMessageError,
     candidate_event,
     completion_messages,
+    is_relaying_dev_manager,
     is_task_coordinator,
     is_task_reviewer,
 )
@@ -60,10 +61,17 @@ def _same_task(db: HubDatabase, ref: Any, event: CandidateEvent) -> bool:
 
 
 def _linked_candidate_matches(db: HubDatabase, session_id: str, event: CandidateEvent) -> bool:
-    """Verify full and linked short IDs as commit objects in the task's checkout."""
+    if event.task.claimed_by_session_id != session_id:
+        return False
+    return _commit_linked_to_claimant(db, event)
+
+
+def _commit_linked_to_claimant(db: HubDatabase, event: CandidateEvent) -> bool:
+    """Verify full and linked short IDs as commit objects in the claimant's checkout."""
     tasks = LocalTaskManager(db)
-    owner = SessionManager(db).get(session_id)
-    if owner is None or event.task.claimed_by_session_id != owner.id:
+    claimant_id = event.task.claimed_by_session_id
+    owner = SessionManager(db).get(claimant_id) if claimant_id else None
+    if owner is None:
         return False
     artifacts = tasks.artifacts.get_artifacts(event.task.id)
     try:
@@ -135,12 +143,16 @@ def _monitor_message(
 
 
 def _candidate_rejection(
-    db: HubDatabase, variables: dict[str, Any], event: CandidateEvent
+    db: HubDatabase, variables: dict[str, Any], event: CandidateEvent, reviewer_session_id: str
 ) -> str | None:
     if event.message.id in (variables.get("_seat_consumed_messages") or []):
         return "message already consumed"
     if event.message.from_session != event.task.claimed_by_session_id:
-        return "sender does not claim task"
+        # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
+        if not is_relaying_dev_manager(db, event, reviewer_session_id):
+            return "sender does not claim task"
+        if not _commit_linked_to_claimant(db, event):
+            return "COMMIT is not linked to the claimant's task"
     same_task = _same_task(db, variables.get("candidate_task"), event)
     if variables.get("candidate_received") and not same_task:
         return "another candidate task is active"
@@ -169,7 +181,7 @@ def candidate_binding_error(
         return None
     if reason is None and event is not None:
         state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
-        reason = _candidate_rejection(db, state, event)
+        reason = _candidate_rejection(db, state, event, session_id)
     return f"CANDIDATE not bound: {reason}" if reason else None
 
 
@@ -193,7 +205,7 @@ def _reviewer_message(
         and event.sha == session_variables.get("candidate_sha")
     )
     if incoming and kind == "CANDIDATE":
-        if _candidate_rejection(db, variables, event) is not None:
+        if _candidate_rejection(db, variables, event, session_id) is not None:
             return {}
         received_at = event.message.sent_at.isoformat()
         if same_unit:

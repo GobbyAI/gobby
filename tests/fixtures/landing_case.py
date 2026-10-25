@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.code_index.context import CodeIndexContext
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
@@ -217,11 +218,22 @@ class LandingCase:
         monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", lent)
         return opened
 
-    async def land(self, task: Task, sha: str, caller: str | None = None) -> LandingResult:
+    async def land(
+        self,
+        task: Task,
+        sha: str,
+        caller: str | None = None,
+        *,
+        code_index: CodeIndexContext | None = None,
+    ) -> LandingResult:
         session = caller or self.manager_for(task)
         with session_context_for_test(session):
             return await land_candidate(
-                self.db, task=task, caller_session_id=session, commit_sha=sha
+                self.db,
+                task=task,
+                caller_session_id=session,
+                commit_sha=sha,
+                code_index=code_index,
             )
 
 

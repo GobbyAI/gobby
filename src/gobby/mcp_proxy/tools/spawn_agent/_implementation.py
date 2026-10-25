@@ -167,23 +167,23 @@ async def spawn_agent_impl(
         provider, model, reasoning_effort = resume_launch_defaults(
             resume_target, model=model, reasoning_effort=reasoning_effort
         )
-        if checkout_mode is None and not worktree_id and not clone_id:
-            # A resumed seat returns to the checkout its last run worked in.
-            worktree_id, clone_id = await asyncio.to_thread(
-                resume_isolation, resume_target, runner.run_storage
-            )
-            if (
-                not (worktree_id or clone_id)
-                and not (project_path and project_path_explicit)
-                and resume_target.workspace_path
-            ):
-                if not await asyncio.to_thread(Path(resume_target.workspace_path).is_dir):
-                    return {
-                        "success": False,
-                        "error": f"Stored resume workspace is not a directory: {resume_target.workspace_path}",
-                    }
-                project_path = resume_target.workspace_path
+        if checkout_mode in (None, "none") and not worktree_id and not clone_id:
+            # A resumed seat returns to the checkout its last run worked in. An explicit
+            # project_path names that checkout instead.
+            if project_path and project_path_explicit:
                 checkout_mode = "none"
+            else:
+                worktree_id, clone_id = await asyncio.to_thread(
+                    resume_isolation, resume_target, runner.run_storage
+                )
+                if not (worktree_id or clone_id) and resume_target.workspace_path:
+                    if not await asyncio.to_thread(Path(resume_target.workspace_path).is_dir):
+                        return {
+                            "success": False,
+                            "error": f"Stored resume workspace is not a directory: {resume_target.workspace_path}",
+                        }
+                    project_path = resume_target.workspace_path
+                    checkout_mode = "none"
     try:
         run_lifetime = resolve_run_lifetime(
             agent_body, execution_mode, resumed=resume_target is not None

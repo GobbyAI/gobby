@@ -198,7 +198,7 @@ group in `docs/contracts/parity-ledger-status.d/` and regenerate the ledger with
   Runtime/auth, health, terminal, API keys/nodes, sessions, tasks, agents,
   memory, rules/workflows, pipelines, plus every #21568 family: Skills, Plans,
   Communications, source control/GitHub/sync, Projects/files/hub documents,
-  wiki/code-index, AI providers/LLM/local models, Voice, admin/metrics/traces/
+  code-index, AI providers/LLM/local models, Voice, admin/metrics/traces/
   telemetry, Web UI serving, install/setup, and WS chat's HTTP handshakes.
   This identifies mechanism exposure; it does not assert every family needs a
   waiver. Non-HTTP adapters need the same decision references in their own gates.
