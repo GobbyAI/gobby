@@ -112,9 +112,7 @@ pub(super) fn canonical_json(value: &Value) -> String {
             entries.sort_by(|left, right| left.0.cmp(right.0));
             let fields: Vec<String> = entries
                 .into_iter()
-                .map(|(key, item)| {
-                    format!("{}:{}", Value::String(key.clone()), canonical_json(item))
-                })
+                .map(|(key, item)| format!("{}:{}", json_string(key), canonical_json(item)))
                 .collect();
             format!("{{{}}}", fields.join(","))
         }
@@ -122,6 +120,38 @@ pub(super) fn canonical_json(value: &Value) -> String {
             let items: Vec<String> = items.iter().map(canonical_json).collect();
             format!("[{}]", items.join(","))
         }
+        Value::String(text) => json_string(text),
         scalar => scalar.to_string(),
     }
 }
+
+/// Python's `json.dumps` with `ensure_ascii`: printable ASCII stays literal, and every
+/// other character becomes lowercase `\uXXXX`, with surrogate pairs above the BMP.
+fn json_string(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len() + 2);
+    escaped.push('"');
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\u{c}' => escaped.push_str("\\f"),
+            ' '..='~' => escaped.push(character),
+            _ => {
+                let mut units = [0; 2];
+                for unit in character.encode_utf16(&mut units) {
+                    escaped.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+#[cfg(test)]
+#[path = "settings/tests.rs"]
+mod tests;
