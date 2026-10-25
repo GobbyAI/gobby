@@ -3,6 +3,88 @@ use crate::models::CODE_INDEX_UUID_NAMESPACE;
 use postgres::Client;
 use std::path::Path;
 
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_served_hash_agrees_with_visibility_for_a_pinned_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let parent_root = tmp.path().join("parent");
+    let overlay_root = tmp.path().join("overlay");
+    let rel = "src/lib.rs";
+    for root in [&parent_root, &overlay_root] {
+        std::fs::create_dir_all(root.join("src")).expect("create src");
+        std::fs::write(root.join(rel), b"pub fn parent_name() {}\n").expect("write source");
+    }
+    let parent_ctx =
+        postgres_context_with_root(&test_project_id("gcode-pinned-fresh-parent"), &parent_root);
+    let mut overlay_ctx = postgres_context_with_root(
+        &test_project_id("gcode-pinned-fresh-overlay"),
+        &overlay_root,
+    );
+    overlay_ctx.index_scope = crate::config::ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_ctx.project_id.clone(),
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_ctx.project_id.clone(),
+        parent_root: parent_root.clone(),
+    };
+    invalidate_test_project(&parent_ctx);
+    invalidate_test_project(&overlay_ctx);
+    full_index(&parent_ctx);
+
+    // The overlay owns no row for lib.rs: the pin serves the parent's indexed
+    // content, which is what the worktree holds.
+    let pinned = crate::index::hasher::file_content_hash(&overlay_root.join(rel))
+        .expect("hash pinned content");
+    let mut conn = crate::db::connect_readwrite(&overlay_ctx.database_url).expect("connect");
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &crate::db::id_param(&overlay_ctx.machine_id).expect("machine id"),
+            &crate::db::id_param(&overlay_ctx.project_id).expect("overlay id"),
+            &rel,
+            &crate::db::id_param(&parent_ctx.project_id).expect("parent id"),
+            &pinned,
+        ],
+    )
+    .expect("pin lib.rs");
+
+    // The parent reindexes lib.rs with new content. The overlay still serves
+    // the pinned content, so freshness must agree with visibility.
+    std::fs::write(parent_root.join(rel), b"pub fn parent_moved() {}\n").expect("write parent");
+    full_index(&parent_ctx);
+
+    assert_eq!(
+        visible_symbol_names(&overlay_ctx, rel),
+        ["parent_name"],
+        "visibility serves the pinned content"
+    );
+    assert_eq!(
+        overlay_served_content_hash(&mut conn, &overlay_ctx, rel).expect("served hash"),
+        Some(pinned.clone()),
+        "explicit-file freshness must read the content visibility serves, not the parent's new row"
+    );
+    let status = ensure_fresh(
+        &overlay_ctx,
+        FreshnessScope::Files(vec![PathBuf::from(rel)]),
+    )
+    .expect("lib freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+    assert_eq!(visible_symbol_names(&overlay_ctx, rel), ["parent_name"]);
+
+    conn.execute(
+        "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1",
+        &[&crate::db::id_param(&overlay_ctx.project_id).expect("overlay id")],
+    )
+    .expect("delete pin");
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
 fn context_for(root: &Path) -> Context {
     Context {
         database_url: "postgresql://localhost/gobby-test".to_string(),
@@ -135,6 +217,28 @@ fn backdate_project_index(ctx: &Context, seconds: f64) {
         &[&machine_id, &project_id, &seconds],
     )
     .expect("backdate project index");
+}
+
+/// Pins each named path to the parent's indexed version, the rows `gcode pin`
+/// writes for a worktree that matches the parent. Inherited rows come only from
+/// pins, so an overlay indexed without them inherits nothing.
+fn pin_parent_versions(overlay: &Context, parent: &Context, paths: &[&str]) {
+    let mut conn =
+        db::connect_readwrite(&overlay.database_url).expect("connect test PostgreSQL hub");
+    let machine_id = db::id_param(&overlay.machine_id).expect("machine uuid");
+    let overlay_id = db::id_param(&overlay.project_id).expect("overlay uuid");
+    let parent_id = db::id_param(&parent.project_id).expect("parent uuid");
+    for &path in paths {
+        conn.execute(
+            "INSERT INTO code_overlay_pins
+             (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+             SELECT machine_id, $2, file_path, project_id, content_hash
+               FROM code_indexed_file_states
+              WHERE machine_id = $1 AND project_id = $3 AND file_path = $4",
+            &[&machine_id, &overlay_id, &parent_id, &path],
+        )
+        .expect("pin parent version");
+    }
 }
 
 fn tombstone_count(ctx: &Context) -> usize {
@@ -341,6 +445,7 @@ mod serial_db {
         invalidate_test_project(&parent_ctx);
         invalidate_test_project(&overlay_ctx);
         full_index(&parent_ctx);
+        pin_parent_versions(&overlay_ctx, &parent_ctx, &["src/lib.rs"]);
         full_index(&overlay_ctx);
         assert_eq!(
             visible_symbol_names(&overlay_ctx, "src/lib.rs"),
@@ -506,21 +611,24 @@ mod serial_db {
         invalidate_test_project(&parent_ctx);
         invalidate_test_project(&overlay_ctx);
         full_index(&parent_ctx);
+        pin_parent_versions(
+            &overlay_ctx,
+            &parent_ctx,
+            &["src/lib.rs", "README.md", "generated/page.md"],
+        );
         full_index(&overlay_ctx);
         assert_eq!(tombstone_count(&overlay_ctx), 1);
 
-        // Every worktree path is inherited from the parent and older than
-        // the overlay's index: nothing to refresh, no lock taken.
+        // Every worktree path is served through its pin and older than the
+        // overlay's index: nothing to refresh, no lock taken.
         assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
 
-        // A parent index newer than the overlay's changes the rows the
-        // overlay inherits; no worktree mtime can show that.
+        // A parent index newer than the overlay's changes nothing the overlay
+        // serves: its pins name the content, so the gate stays quiet.
         backdate_project_index(&overlay_ctx, 3600.0);
-        assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-        full_index(&overlay_ctx);
         assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
 
-        // Deleting an inherited file in the worktree trips the gate; once
+        // Deleting a pinned file in the worktree trips the gate; once
         // the refresh tombstones it, the known-absent path is quiet again.
         let readme = overlay_root.join("README.md");
         std::fs::remove_file(&readme).expect("delete README");
@@ -851,10 +959,9 @@ fn overlay_explicit_file_grep_refreshes_each_file_edited_before_the_first_read()
         b"pub fn other_edited() {}\n",
     )
     .expect("write other edit");
-    // A time-based gate skips a file edited before the first read stamps the
-    // overlay, so wait past that stamp. The content gate does not need the
-    // wait; it keeps this test failing if such a gate returns.
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // The gate compares each file's content hash, so no time has to pass
+    // between the edits and the first read. A time-based gate would skip the
+    // second file here and fail this test.
 
     for file in ["src/lib.rs", "src/other.rs"] {
         let status = ensure_fresh(

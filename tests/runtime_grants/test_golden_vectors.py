@@ -25,7 +25,12 @@ from gobby.runtime_grants import (
     payload_checksum,
     sign_grant,
 )
-from gobby.runtime_grants.schema import API_CONTRACT, PostgresDirect
+from gobby.runtime_grants.schema import (
+    API_CONTRACT,
+    BrokeredCapability,
+    BrokerOperation,
+    PostgresDirect,
+)
 from gobby.runtime_grants.signing import signature_matches
 from gobby.storage.schema_contract import expected_schema_identity
 from tests.runtime_grants.support import (
@@ -38,6 +43,8 @@ from tests.runtime_grants.support import (
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 NEGATIVE_GOLDENS = frozenset({"payload_skew_unknown_field.json"})
+REMOTE_GOLDEN = "remote_interactive_brokered.json"
+NODE_OPERATION = BrokerOperation(name="node_code_index", method="POST", path="/api/code-index/node")
 
 
 @pytest.fixture(autouse=True)
@@ -76,6 +83,9 @@ def _load_grants() -> list[tuple[Path, bytes, GrantBundle]]:
 def test_grant_vectors_round_trip() -> None:
     loaded = _load_grants()
     assert loaded, f"expected golden vectors under {GOLDEN_DIR}"
+    assert REMOTE_GOLDEN in {path.name for path, _raw, _grant in loaded}, (
+        f"{REMOTE_GOLDEN} must be checked in under {GOLDEN_DIR}"
+    )
 
     found: dict[str, set[str]] = defaultdict(set)
     for path, raw, grant in loaded:
@@ -91,6 +101,10 @@ def test_grant_vectors_round_trip() -> None:
 
     for name, required in REQUIRED_MODES.items():
         assert required <= found[name], f"{name} missing variants {required - found[name]}"
+
+    remote = next(grant for path, _raw, grant in loaded if path.name == REMOTE_GOLDEN)
+    assert remote.principal.kind == "interactive"
+    assert remote.capabilities.postgres == BrokeredCapability(operations=(NODE_OPERATION,))
 
 
 @pytest.mark.unit

@@ -342,6 +342,7 @@ CREATE TABLE {schema}.deployment_runtime (
     epoch_updated_at timestamp with time zone
 );
 GRANT USAGE ON SCHEMA {schema}, {auth} TO gobby_daemon_runtime;
+GRANT EXECUTE ON FUNCTION {auth}.lookup_interactive_principal(text, uuid, uuid, integer) TO gobby_daemon_runtime;
 GRANT SELECT ON {schema}.deployment_runtime TO gobby_daemon_runtime;
 {}",
             MIGRATION.replace("public.", &format!("{schema}."))

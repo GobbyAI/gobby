@@ -1,0 +1,1551 @@
+header:
+  plan_id: gdaemon-skills-family
+  plan_hash: a20ab56ddbda9f403c730bea0c1d325d106ee78352242edadd7c64ab3e4caa1a
+  root_task_ref: '21580'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-25T07:59:39Z'
+  task_tree_source: db
+  task_tree_source_hash: 2190139f26daef480380b4b8b56ba66f2640f945ef34eaf132aa0675ef2ea0f9
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '0.1'
+  item_id: 0.1.1
+  plan_node_hash: e9877640339d170eef0d9530c53736f2d4e89711038a000ce4f37f5e430692d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24986'
+    validation_criteria_snippet: '0.1.1: Corpus inventory equals the exact 54-key
+      ledger predicate, and every key has a success and representative validation/failure
+      case; non-Skills keys are r...'
+    matched_artifact_ref: tests/contracts/test_skills_parity_corpus.py::test_inventory_matches_skills_ledger
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.2
+  plan_node_hash: 817765c32d3c64fc91ae37372f9536882ff69ad58c2370698d4c38f2501f96bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24986'
+    validation_criteria_snippet: '0.1.1: Corpus inventory equals the exact 54-key
+      ledger predicate, and every key has a success and representative validation/failure
+      case; non-Skills keys are r...'
+    matched_artifact_ref: tests/contracts/test_skills_parity_corpus.py::test_collection_is_reproducible
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.3
+  plan_node_hash: b641adb4f47e2e66a65ece68fd4f23b7e7bb89a73f246d251725edc84ae54d1a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24986'
+    validation_criteria_snippet: '0.1.1: Corpus inventory equals the exact 54-key
+      ledger predicate, and every key has a success and representative validation/failure
+      case; non-Skills keys are r...'
+    matched_artifact_ref: crates/gskills/tests/fixtures/safety.json
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.4
+  plan_node_hash: e4ff20e6d4a975e0f5d7d8fe37bd110971038ab3ceda530a8ffe1b9db34edbf2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24986'
+    validation_criteria_snippet: '0.1.1: Corpus inventory equals the exact 54-key
+      ledger predicate, and every key has a success and representative validation/failure
+      case; non-Skills keys are r...'
+    matched_artifact_ref: tests/contracts/test_skills_parity_corpus.py::test_http_cookie_admission_matrix
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.5
+  plan_node_hash: bf5975244528b4c3b3f6dd217fde981803987b240dfd1a1ad62e4bc39a049816
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24986'
+    validation_criteria_snippet: '0.1.1: Corpus inventory equals the exact 54-key
+      ledger predicate, and every key has a success and representative validation/failure
+      case; non-Skills keys are r...'
+    matched_artifact_ref: tests/contracts/test_skills_parity_corpus.py::test_debt_waivers_are_behavior_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.6
+  plan_node_hash: fe1b9fea94d61fbf4c79e2865b2d7a88f513e4e7b92c909b5f6dde27b276571a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24986'
+    validation_criteria_snippet: '0.1.1: Corpus inventory equals the exact 54-key
+      ledger predicate, and every key has a success and representative validation/failure
+      case; non-Skills keys are r...'
+    matched_artifact_ref: tests/contracts/test_skills_parity_corpus.py::test_waiver_does_not_hide_unrelated_diff
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: c39682f64b38bd2d7761471887ea4d698cbf8e38108631ddc18e4e65b52351d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24987'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/skills` matches scoped list/filter/order
+      and response parity. test: `crates/gskills/tests/registry.rs::list_matches_python`.
+      1.1.2: `HTTP...'
+    matched_artifact_ref: crates/gskills/tests/registry.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 5be27e868125d09645ea3c859afd18afe09de5de613df7e1b164a43a323c3727
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24987'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/skills` matches scoped list/filter/order
+      and response parity. test: `crates/gskills/tests/registry.rs::list_matches_python`.
+      1.1.2: `HTTP...'
+    matched_artifact_ref: crates/gskills/tests/registry.rs::get_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 3f42b5e39d0cb1971e206f5429852c33ebb5c6073d7c29b3d0aa87174ab599b7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24987'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/skills` matches scoped list/filter/order
+      and response parity. test: `crates/gskills/tests/registry.rs::list_matches_python`.
+      1.1.2: `HTTP...'
+    matched_artifact_ref: crates/gskills/tests/registry.rs::stats_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 7759b9dc1b571c9c9f83db2a26389206a35df3da287ff10cad130c07ab96230d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24987'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/skills` matches scoped list/filter/order
+      and response parity. test: `crates/gskills/tests/registry.rs::list_matches_python`.
+      1.1.2: `HTTP...'
+    matched_artifact_ref: crates/gskills/tests/registry.rs::scope_and_authority_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: d525db9076addfe581ed9ef43f783e3d9b1d1043a2553cfa65ace9fc6319b199
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24987'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/skills` matches scoped list/filter/order
+      and response parity. test: `crates/gskills/tests/registry.rs::list_matches_python`.
+      1.1.2: `HTTP...'
+    matched_artifact_ref: crates/gskills/tests/registry.rs::unexpected_read_errors_are_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: aacff5f56ef942a1c3f914fd79ea873d49e724dbae11bddd08165514f33a42bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::create_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 6076f7331fd9c2a40595e397c6a659f41b535267477448f408100486800ae02f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::update_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: fd55e17cc1d60f314d991944ceaf53850bf805a7b571968783f9dd78179972f2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::delete_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 1397b4f4b9cdf11b6ca0fec7a5920a819fa40dd5505c308fcdbb41c68d18a75c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::restore_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 74695c92945adfc55ab5a441a20d044572220ab761196b1919b757fc22a38d68
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::move_project_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 80efb569d3b95336d43ded3df1409406d4c1c87eb8aa5d1352cdcb521c611b86
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::move_installed_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: e4815f2e6929a261926b73ed91bcec6e0a91177ae4325c2f214899cd9cb5a959
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::commit_controls_notifications
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.8
+  plan_node_hash: 8691edb1b6500233269c0957df22ec136776bed3011f210dfa1d18bf6254357f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::partial_update_presence_is_lossless
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.9
+  plan_node_hash: 28da01cc02e3236d3f58e1a34705a327fc98f70d9ee960110339b26e76a51e79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::soft_delete_failure_is_atomic
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.10
+  plan_node_hash: bb2a4236037212c10a1e777dbf2044a5bb00bcfefd8076672fc18bba84d0a726
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::slow_mutations_do_not_block_the_executor
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.11
+  plan_node_hash: 3bab147c8a6d1ef89101816eb2458df228a91c07be4ed8dda176de4b5815c2e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24988'
+    validation_criteria_snippet: '1.2.1: `HTTP POST /api/skills` preserves create
+      validation and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+      1.2.2: `HTTP PUT /api...'
+    matched_artifact_ref: crates/gskills/tests/lifecycle.rs::unexpected_mutation_errors_are_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 7de5fcb025506df6970cf787c54294b9f3b027d45b0eb1ce7ce3f6b4bcea2e8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24989'
+    validation_criteria_snippet: '1.3.1: Valid/invalid frontmatter, YAML scalars,
+      CRLF, missing separators, audience/levels/runtime metadata and validation warnings
+      match the frozen corpus. tes...'
+    matched_artifact_ref: crates/gskills/tests/parser.rs::parser_and_validator_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: ace1d634d70179b59926673e3749ef25c9685963231ec468772b8a8a37153d13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24989'
+    validation_criteria_snippet: '1.3.1: Valid/invalid frontmatter, YAML scalars,
+      CRLF, missing separators, audience/levels/runtime metadata and validation warnings
+      match the frozen corpus. tes...'
+    matched_artifact_ref: crates/gskills/tests/parser.rs::hostile_inputs_are_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 07caa458cdc833f7a00716b8ff70002813e96b93558ad0398175813a3ef21ff1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24990'
+    validation_criteria_snippet: '1.4.1: `HTTP POST /api/skills/scan` returns matching
+      findings, severity, category, remediation, location and safe/unsafe decisions,
+      with only elapsed duration ...'
+    matched_artifact_ref: crates/gskills/tests/scanner.rs::scan_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 5f95a796f0a1b5f2bf9e692bb66c76fcd5cbfad5136e2b520a311595d64ce768
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24990'
+    validation_criteria_snippet: '1.4.1: `HTTP POST /api/skills/scan` returns matching
+      findings, severity, category, remediation, location and safe/unsafe decisions,
+      with only elapsed duration ...'
+    matched_artifact_ref: crates/gskills/tests/scanner.rs::all_effective_rules_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: d5d1b53da11d71089b81b2fc03021e9cccb1dfd1d065c9bdd94435b91a0471b9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24990'
+    validation_criteria_snippet: '1.4.1: `HTTP POST /api/skills/scan` returns matching
+      findings, severity, category, remediation, location and safe/unsafe decisions,
+      with only elapsed duration ...'
+    matched_artifact_ref: crates/gskills/tests/scanner.rs::scanner_failures_never_become_safe
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: d4628c158fb27d4f0daa4050bdf2683e1cee3a894dc9ab6f3d03bd32392ecf68
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24990'
+    validation_criteria_snippet: '1.4.1: `HTTP POST /api/skills/scan` returns matching
+      findings, severity, category, remediation, location and safe/unsafe decisions,
+      with only elapsed duration ...'
+    matched_artifact_ref: crates/gskills/tests/scanner.rs::scan_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: e5eb6ee58a69624be91315c512596540cc36ea2d8e6a18832259b5d423887e88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24991'
+    validation_criteria_snippet: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches
+      filters, ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+      1.5.2: `...'
+    matched_artifact_ref: crates/gskills/tests/files.rs::list_files_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 31603fca226a6d2f875b2677fdbca5ac27066a030902382546837cb8b7ccf4a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24991'
+    validation_criteria_snippet: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches
+      filters, ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+      1.5.2: `...'
+    matched_artifact_ref: crates/gskills/tests/files.rs::read_file_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: ff59d99dd1c94e724ac5cad33cd95ac4e635f2efdb0466a28ce8f1a0d1912652
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24991'
+    validation_criteria_snippet: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches
+      filters, ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+      1.5.2: `...'
+    matched_artifact_ref: crates/gskills/tests/files.rs::write_file_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: 1a388a779d081decbdfeac9b5c242ee0f4f2d4425854d835e9f72d8872ecb8ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24991'
+    validation_criteria_snippet: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches
+      filters, ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+      1.5.2: `...'
+    matched_artifact_ref: crates/gskills/tests/files.rs::export_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: fc2e6304581360acf3b89c0c32bd19a9b5855bb860549e00116f8080ecb5a45c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24991'
+    validation_criteria_snippet: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches
+      filters, ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+      1.5.2: `...'
+    matched_artifact_ref: crates/gskills/tests/files.rs::snapshots_are_atomic_and_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.6
+  plan_node_hash: 34e01603cd1b3c4fdd992edf1d3d743598744d235a42903c71c08c9b0c45525a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24991'
+    validation_criteria_snippet: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches
+      filters, ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+      1.5.2: `...'
+    matched_artifact_ref: crates/gskills/tests/files.rs::file_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 240658e88f6965070b120e17535691ebddee75a845006811ed812bc4770e46f5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::pages_reconstruct_exact_content
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.2
+  plan_node_hash: 597fa72a59384cb231a0815a35a357d1e170db87f015652258dece13d5f72ff7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::cursor_contract_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.3
+  plan_node_hash: 0056ace226a9718e3a3d2fc201b1f924281a73589494d822ec8685db951f2810
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::completion_controls_load_tracking
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.4
+  plan_node_hash: 04e4be607b721b8575f777073522cd14dd6ebda99e1d8e79a9c4178d48b367c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::serve_scan_precedes_delivery
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.5
+  plan_node_hash: f9edc9d2a6beb19812f6375f1681fe03d32d794f9bcb5fb6861139454c3a0f11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::cursor_progression_is_single_use_and_bound
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.6
+  plan_node_hash: 08eda645691dabb969a2e17575b627928ca29b84211c653ca2ef92810e5ab01d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::cursor_lifetimes_are_bounded_and_reset_safe
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.7
+  plan_node_hash: fa7cfcb5022695e9d2e1243672dcbfef21b1e09b6cf14f63af002928a96dfdac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::completion_is_atomic_and_generation_fenced
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.8
+  plan_node_hash: 1ebc3a1ca696be9d23e946763f047b4dd78185313915eb8e03ee15a049f49947
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24992'
+    validation_criteria_snippet: '1.6.1: Full/brief entrypoint and reference streams
+      reconstruct exact snapshot content within every serialized response budget.
+      test: `crates/gskills/tests/deli...'
+    matched_artifact_ref: crates/gskills/tests/delivery.rs::completion_failures_reconcile_without_duplicate_effects
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.1
+  plan_node_hash: 0171ed4bc7260fe5262a4ed189a54294a34566f82062ad5267626e44411d1b10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24993'
+    validation_criteria_snippet: '1.7.1: `HTTP GET /api/skills/search` matches keyword/hybrid
+      modes, filters, ordering, empty results and errors. test: `crates/gskills/tests/search.rs::http_sea...'
+    matched_artifact_ref: crates/gskills/tests/search.rs::http_search_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.2
+  plan_node_hash: 70b266ab0aae10e745490aece95d84e8ddeb804607be7dd968b2a06c26f77e21
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24993'
+    validation_criteria_snippet: '1.7.1: `HTTP GET /api/skills/search` matches keyword/hybrid
+      modes, filters, ordering, empty results and errors. test: `crates/gskills/tests/search.rs::http_sea...'
+    matched_artifact_ref: crates/gskills/tests/search.rs::projections_and_ranking_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.3
+  plan_node_hash: 649fbb98464daa3c1e2e505e763bff51737bb52233d31b0d3a637e444e56952b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24993'
+    validation_criteria_snippet: '1.7.1: `HTTP GET /api/skills/search` matches keyword/hybrid
+      modes, filters, ordering, empty results and errors. test: `crates/gskills/tests/search.rs::http_sea...'
+    matched_artifact_ref: crates/gskills/tests/search.rs::index_freshness_survives_mutation_and_restart
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.4
+  plan_node_hash: e4a07794c6957f79936bafcfc878e14731cffb68981306c57170f420295595f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24993'
+    validation_criteria_snippet: '1.7.1: `HTTP GET /api/skills/search` matches keyword/hybrid
+      modes, filters, ordering, empty results and errors. test: `crates/gskills/tests/search.rs::http_sea...'
+    matched_artifact_ref: crates/gskills/tests/search.rs::slow_search_does_not_stall_requests
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.5
+  plan_node_hash: 264d8941307b2e9278a895725958a157ff8c352664da6f61f83113e7754d174b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24993'
+    validation_criteria_snippet: '1.7.1: `HTTP GET /api/skills/search` matches keyword/hybrid
+      modes, filters, ordering, empty results and errors. test: `crates/gskills/tests/search.rs::http_sea...'
+    matched_artifact_ref: crates/gskills/tests/search.rs::search_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: d5569a46549233d19f109fee36ba8a26f5621da38d41a895a910a62c3d50735c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24994'
+    validation_criteria_snippet: '2.1.1: Standalone and hub/node local snapshot/scaffold/document
+      effects execute on the intended machine with no hub datastore credential on
+      nodes. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_node.rs::effects_are_machine_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: b1f8a9ac14ac5742c70ee5cdfbed7eb3ad1bb128afc2802dde195d6bdc116938
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24994'
+    validation_criteria_snippet: '2.1.1: Standalone and hub/node local snapshot/scaffold/document
+      effects execute on the intended machine with no hub datastore credential on
+      nodes. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_node.rs::invalid_effects_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 9b18cb8a94b1c860ff05b6abb38ba8a2f7b15441ae57606df786e71d0e2dc910
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24994'
+    validation_criteria_snippet: '2.1.1: Standalone and hub/node local snapshot/scaffold/document
+      effects execute on the intended machine with no hub datastore credential on
+      nodes. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_node.rs::protocol_extension_preserves_existing_commands
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 60c60e7223fb8e2414e918a5eddda364ff628a5a9a8b1df2fad13ad04fd548e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24994'
+    validation_criteria_snippet: '2.1.1: Standalone and hub/node local snapshot/scaffold/document
+      effects execute on the intended machine with no hub datastore credential on
+      nodes. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_node.rs::remote_effect_lifetime_is_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: ee2f21c4eeb03305fd2f64150c590d53ee1c0c8fa2add6ce8c7958a66f572862
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24995'
+    validation_criteria_snippet: '2.2.1: Explicit/implicit GitHub forms, revisions/subpaths,
+      local precedence, binary/companion selection and untrusted metadata match Python.
+      test: `crates/gski...'
+    matched_artifact_ref: crates/gskills/tests/sources.rs::github_and_source_resolution_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 04b3c18e8344717cbdedd11a28faae58214eb877ef6063bbdca5d2d90bc683a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24995'
+    validation_criteria_snippet: '2.2.1: Explicit/implicit GitHub forms, revisions/subpaths,
+      local precedence, binary/companion selection and untrusted metadata match Python.
+      test: `crates/gski...'
+    matched_artifact_ref: crates/gskills/tests/sources.rs::zip_inputs_are_bounded_and_equivalent
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: cc8bb2939a790921a397dcc1e24c4c4877221618d5be82f418c20724891e0440
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24996'
+    validation_criteria_snippet: '2.3.1: `HTTP GET /api/skills/hubs` matches configured
+      hub names, types and auth status without secrets. test: `crates/gskills/tests/hubs_api.rs::list_hubs_matc...'
+    matched_artifact_ref: crates/gskills/tests/hubs_api.rs::list_hubs_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 130abd6d2f2db58932df25ad1dcc5fda856a31e6e00f8c76b65c70de546763b2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24996'
+    validation_criteria_snippet: '2.3.1: `HTTP GET /api/skills/hubs` matches configured
+      hub names, types and auth status without secrets. test: `crates/gskills/tests/hubs_api.rs::list_hubs_matc...'
+    matched_artifact_ref: crates/gskills/tests/hubs_api.rs::api_providers_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: b0ed1205bec9dda2a658c98e9163a811c662d61184099673e9afc52aaa9b06dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24996'
+    validation_criteria_snippet: '2.3.1: `HTTP GET /api/skills/hubs` matches configured
+      hub names, types and auth status without secrets. test: `crates/gskills/tests/hubs_api.rs::list_hubs_matc...'
+    matched_artifact_ref: crates/gskills/tests/hubs_api.rs::hub_list_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: f383a09c90c03f755486d0b66b0bb426b829b0b39fbde39ee7fe839f424c0a6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24997'
+    validation_criteria_snippet: '2.4.1: Collection, topic and Claude-plugin discovery/downloads
+      preserve source IDs, paths, descriptions, metadata, authentication and bounds.
+      test: `crates/gsk...'
+    matched_artifact_ref: crates/gskills/tests/hubs_github.rs::repository_providers_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: be51b23d4397598bd04f6aed1d16779e2645a7d15a68b475ee20a5fe4426256e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24997'
+    validation_criteria_snippet: '2.4.1: Collection, topic and Claude-plugin discovery/downloads
+      preserve source IDs, paths, descriptions, metadata, authentication and bounds.
+      test: `crates/gsk...'
+    matched_artifact_ref: crates/gskills/tests/hubs_github.rs::combined_hub_search_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 00f3efd947eedb45bf9bab348f632f787c8890301f761bbb5ad724945fe19bf1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24997'
+    validation_criteria_snippet: '2.4.1: Collection, topic and Claude-plugin discovery/downloads
+      preserve source IDs, paths, descriptions, metadata, authentication and bounds.
+      test: `crates/gsk...'
+    matched_artifact_ref: crates/gskills/tests/hubs_github.rs::descriptions_and_cache_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: be09c53f223be2f83a1626d1c6b3ef6c7818cb5001daa3efdcdb0202ec78e1cd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24997'
+    validation_criteria_snippet: '2.4.1: Collection, topic and Claude-plugin discovery/downloads
+      preserve source IDs, paths, descriptions, metadata, authentication and bounds.
+      test: `crates/gsk...'
+    matched_artifact_ref: crates/gskills/tests/hubs_github.rs::hub_search_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: 49a83ccd23f459a31edc0776a746817d4ecc2fb7c67e6bd607a0863feb8f3c6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24998'
+    validation_criteria_snippet: '2.5.1: `HTTP POST /api/skills/import` matches local/GitHub/ZIP
+      resolution, validation, full-surface scanning and transactional results. test:
+      `crates/gskills/t...'
+    matched_artifact_ref: crates/gskills/tests/install.rs::http_import_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: fde9e405b0f581904a34d3bffac8009c1575780b998e14d24cc7db64ccdf2307
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24998'
+    validation_criteria_snippet: '2.5.1: `HTTP POST /api/skills/import` matches local/GitHub/ZIP
+      resolution, validation, full-surface scanning and transactional results. test:
+      `crates/gskills/t...'
+    matched_artifact_ref: crates/gskills/tests/install.rs::http_hub_install_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 69af17b34de4e9c19b0cc30599fc886e30097f303a7a2776e0e3f3fad1545c8f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24998'
+    validation_criteria_snippet: '2.5.1: `HTTP POST /api/skills/import` matches local/GitHub/ZIP
+      resolution, validation, full-surface scanning and transactional results. test:
+      `crates/gskills/t...'
+    matched_artifact_ref: crates/gskills/tests/install.rs::updates_are_atomic_and_scanned
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: ea8782a6241dbdfb6c166f526f75b5b7a988f4d86c48aea29515738c1dcae31d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24998'
+    validation_criteria_snippet: '2.5.1: `HTTP POST /api/skills/import` matches local/GitHub/ZIP
+      resolution, validation, full-surface scanning and transactional results. test:
+      `crates/gskills/t...'
+    matched_artifact_ref: crates/gskills/tests/install.rs::failed_refresh_never_writes_or_claims_rollback
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.5
+  plan_node_hash: 4b99808e77045ae1af46548051318c6083ba4093cd54970cd781622e3f45b660
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24998'
+    validation_criteria_snippet: '2.5.1: `HTTP POST /api/skills/import` matches local/GitHub/ZIP
+      resolution, validation, full-surface scanning and transactional results. test:
+      `crates/gskills/t...'
+    matched_artifact_ref: crates/gskills/tests/install.rs::install_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.1
+  plan_node_hash: 829a6060881c00f4bcf7843c66be7e9ccc711eb266d5627bd707608ed46c0d73
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24999'
+    validation_criteria_snippet: '2.6.1: `HTTP POST /api/skills/restore-defaults`
+      matches counts, template content, companion restoration and override preservation.
+      test: `crates/gskills/tests/...'
+    matched_artifact_ref: crates/gskills/tests/bundled.rs::restore_defaults_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.2
+  plan_node_hash: 14e6faa416974865ec424ddde78e02aae8981e19677b429648239a5ede99bc0e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24999'
+    validation_criteria_snippet: '2.6.1: `HTTP POST /api/skills/restore-defaults`
+      matches counts, template content, companion restoration and override preservation.
+      test: `crates/gskills/tests/...'
+    matched_artifact_ref: crates/gskills/tests/bundled.rs::bundled_asset_and_sync_are_current
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: b2d417f80ef419218df088c38b630b34fa1a419207dc1b62d4a32e4a3106605f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24999'
+    validation_criteria_snippet: '2.6.1: `HTTP POST /api/skills/restore-defaults`
+      matches counts, template content, companion restoration and override preservation.
+      test: `crates/gskills/tests/...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_startup.rs::startup_policy_preserves_single_publisher
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.4
+  plan_node_hash: 74438b83925bb75c0ee17c5aca03d5ce45e4ee8cf1fdb22038175926609d1a16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24999'
+    validation_criteria_snippet: '2.6.1: `HTTP POST /api/skills/restore-defaults`
+      matches counts, template content, companion restoration and override preservation.
+      test: `crates/gskills/tests/...'
+    matched_artifact_ref: tests/skills/test_native_sync.py::test_explicit_aggregation_delegates_skills_once
+  deferral_target: null
+  detail: ''
+- section_id: '2.6'
+  item_id: 2.6.5
+  plan_node_hash: 8f05a7278475680009887bfe7bc3be727ed3e4545d0e740827930a017621637a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24999'
+    validation_criteria_snippet: '2.6.1: `HTTP POST /api/skills/restore-defaults`
+      matches counts, template content, companion restoration and override preservation.
+      test: `crates/gskills/tests/...'
+    matched_artifact_ref: crates/gskills/tests/bundled.rs::restore_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: f5bd4c9630e5651cebf07011abd740f3326def1c1f0cd0dd5a5eae0ea43d3d1e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25000'
+    validation_criteria_snippet: '3.1.1: Cold/warm publication, changed companions,
+      simultaneous callers, ownership checks and returned script paths match Python.
+      test: `crates/gskills/tests/ma...'
+    matched_artifact_ref: crates/gskills/tests/materialize.rs::generation_publication_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: f21ff47359add8888da9f5511dde2c363b9a52dfca317d8e6dfc4c28236dd1b7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25000'
+    validation_criteria_snippet: '3.1.1: Cold/warm publication, changed companions,
+      simultaneous callers, ownership checks and returned script paths match Python.
+      test: `crates/gskills/tests/ma...'
+    matched_artifact_ref: crates/gskills/tests/materialize.rs::publication_failure_preserves_ownership
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: f9cdca18d70cc9814c858bba6cb16f8f5c1ccf246322459bac3e66eba39afdb2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25001'
+    validation_criteria_snippet: '3.2.1: Ready/missing/old Node, lock changes, dependency
+      failures and browser cache state produce matching readiness, warnings and environment.
+      test: `crates/gs...'
+    matched_artifact_ref: crates/gskills/tests/runtime.rs::runtime_readiness_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: c18791087c863254580de5bcfaaf3997568d3d29c0d692e457fa463fd1fe535f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25001'
+    validation_criteria_snippet: '3.2.1: Ready/missing/old Node, lock changes, dependency
+      failures and browser cache state produce matching readiness, warnings and environment.
+      test: `crates/gs...'
+    matched_artifact_ref: crates/gskills/tests/runtime.rs::runtime_failures_drain_owned_processes
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: a05e5761a2f444f1e17b85dd274237e226e708d6463c9f7638207303e641016e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25001'
+    validation_criteria_snippet: '3.2.1: Ready/missing/old Node, lock changes, dependency
+      failures and browser cache state produce matching readiness, warnings and environment.
+      test: `crates/gs...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_runtime_cancellation.rs::hub_cancellation_drains_remote_runtime
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 6c26d539fddc2a18719409882c7647b9e75dee8294ea0d83ab38e72f13f87744
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::get_skill_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: d8c0dddc511f73447a641fe2c111fd8a35dcf0e6c40be8ce08c2a81e8a5242f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::get_skill_file_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 16fc915225ffec27307a70fd33fa05463cff6eb11d631a78b0c47dd5be1f1f0f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::get_skill_files_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 0704d1482bf1193e865c56a7ad7d3fcb4b7d188276794afdefce2e78df8726d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::install_skill_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 7fd32889d1d684db0113d3372639f0cebe5eae774ef1c299a666aa7881cad910
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::list_hubs_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: 15a4a45815b24e2ce0f0e4a33afd2002fefe0afa462ee87b8a166533ee481639
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::list_skills_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.7
+  plan_node_hash: e7ca7111961fd2f3d936a1db24fec5c847854cf34bb77d755199a9715e1f442e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::materialize_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.8
+  plan_node_hash: 58fb34c6e616de62b23eb152d3b60d8da82fa2f5c295d3f041310b96956dbb61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::move_installed_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.9
+  plan_node_hash: 4988cc3a833f8621ede339daeb4b89278f5f62d7aa7a9f391ff3637ee79774a8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::move_project_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.10
+  plan_node_hash: 54088f49ac89193c3a34bb36e6099b1077914fde8c54a5e4bef1d799c0b166a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::remove_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.11
+  plan_node_hash: ef47482d505fe40e1222fc7ef19653e5c8de0d29116ece53a9e971fef01ad6b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::restore_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.12
+  plan_node_hash: 2b684d3bd2b02db874be35a20f31cd73d081029661f03ff524690f77f90a038b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::search_hub_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.13
+  plan_node_hash: 0a1d55ff954eeef91f5321ae3e9424d34aab8b4bdc8b41f300d11358662a51a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::search_skills_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.14
+  plan_node_hash: ed461abcad68be89c7ff470dfd04550277c234945eefac1595731d41ccdc1f59
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::update_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.15
+  plan_node_hash: cc09fc49aea46b3a4b6f8634a6c30773d0aaae889e11a2cb59b0e2ec938b6102
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::catalog_and_validation_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.16
+  plan_node_hash: cf30e08f67dc171667ce6fc182ce7cf97f46ed33ea3e2487f9979953c1876375
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25002'
+    validation_criteria_snippet: '4.1.1: `MCP gobby-skills:get_skill` preserves valid
+      paged/level/scan results and asserts 1.6''s bound progression and atomic tracking
+      under its exact waiver. te...'
+    matched_artifact_ref: crates/gskills/tests/mcp.rs::all_tool_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 674170484c4d2078649739cbde500b5f99b1690f91bfc2259878ea787332da79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::skills_group_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 53c8199af6e6a16b138ec7dbc68e5b5733a410d7cd27c4ccaee9afbab3ed8d03
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::meta_group_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: aa29e776937f895ac5410c00b64c05afa5056ca819879fdf3dc3c24e54775d9f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: 183c355f48c313cc719863c6e46c46eaf9717d408ace9ae2ffb939f6828c6427
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::show_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: bbec1e986e80bb26d9e829518c2eb52dc1d56d02a306cc3ffcb4a389d999f3af
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::enable_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.6
+  plan_node_hash: c27bbd3ef00577c092d44e7fc2b204fa7306b606842c141190b41359f24d9c95
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::disable_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.7
+  plan_node_hash: 29ff8b98af7648366a72276f35dbf464df2c302b10b246a82619444a5f858698
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::meta_get_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.8
+  plan_node_hash: e9305774476d53a56273ade52ae2899ddc157743f0bb0d8223f957ec86bc7a4c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::meta_set_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.9
+  plan_node_hash: 30d6fd32a301ad869d608f0daa8d3b6079456a2845a9b713ce94a4f748fbdf51
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25003'
+    validation_criteria_snippet: '5.1.1: `CLI gobby skills` matches group help and
+      argument dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+      5.1.2: `CLI gobb...'
+    matched_artifact_ref: crates/gskills/tests/cli_registry.rs::meta_unset_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: 433cc8e6d768279f060186ad689b5595c189039a43483eb768fe86bc26b91959
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::install_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 4aa43a436eed17dc6df8e86561fdac45dbcc75104ab44746c4393780ac737baa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::remove_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 998b869c15dafa02540c3340e3100f29438edcc111165e7a4da0e4e1c12f780f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::update_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: 0d48286c9eac9fe5a1d59336c4fff55e32f203e3f7651b0a80698cb9e65b1ed4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::validate_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 1b4cf28a9e206afc4072b8b5767af1147ed9600c906b7131d41a66a7cbb167cd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::init_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.6
+  plan_node_hash: 42dd055c3a822e33a8e1b487ff1d8a8e5c3783f5cfd68dc578a60cc4e0e9d2ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::new_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.7
+  plan_node_hash: d2f1d45dac33366797777af6440531e7c7fb19db36c8c981f04e7839f08effd2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25004'
+    validation_criteria_snippet: '5.2.1: `CLI gobby skills install` matches flags,
+      source outcomes and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+      5.2.2...'
+    matched_artifact_ref: crates/gskills/tests/cli_sources.rs::doc_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.1
+  plan_node_hash: 172b0db79b16017055f28f0ab9b27e0bbf3d6580b0fe0c7efc45fef765c86227
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25005'
+    validation_criteria_snippet: '5.3.1: `CLI gobby skills hub` matches group help/errors.
+      test: `crates/gskills/tests/cli_hubs.rs::hub_group_matches_python`. 5.3.2: `CLI
+      gobby skills hub list`...'
+    matched_artifact_ref: crates/gskills/tests/cli_hubs.rs::hub_group_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.2
+  plan_node_hash: 7db86d4a1c914d8be406cf7231f2d03403bcd8a834de566bc9a9c27994cff1e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25005'
+    validation_criteria_snippet: '5.3.1: `CLI gobby skills hub` matches group help/errors.
+      test: `crates/gskills/tests/cli_hubs.rs::hub_group_matches_python`. 5.3.2: `CLI
+      gobby skills hub list`...'
+    matched_artifact_ref: crates/gskills/tests/cli_hubs.rs::hub_list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.3
+  plan_node_hash: bebcfce79406638076350038abca23a45a8ad5b51735bdced5d462e71ca657b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25005'
+    validation_criteria_snippet: '5.3.1: `CLI gobby skills hub` matches group help/errors.
+      test: `crates/gskills/tests/cli_hubs.rs::hub_group_matches_python`. 5.3.2: `CLI
+      gobby skills hub list`...'
+    matched_artifact_ref: crates/gskills/tests/cli_hubs.rs::hub_add_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.4
+  plan_node_hash: 528934265a99fe408603b6d023368914209cfd7531e8a3efcdedd81e60380b4f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25005'
+    validation_criteria_snippet: '5.3.1: `CLI gobby skills hub` matches group help/errors.
+      test: `crates/gskills/tests/cli_hubs.rs::hub_group_matches_python`. 5.3.2: `CLI
+      gobby skills hub list`...'
+    matched_artifact_ref: crates/gskills/tests/cli_hubs.rs::search_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.1
+  plan_node_hash: 63a181c2e7c9a07878330bc71a1da5d0788d2f0d43e46f909c10a8033383d52c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25006'
+    validation_criteria_snippet: '5.4.1: The public launcher forwards literal arguments/cwd/config
+      and exit status, including unknown options, Unicode, help and errors, to the
+      resolved binary; ...'
+    matched_artifact_ref: tests/cli/test_skills_native_forwarding.py::test_launcher_only_forwards
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.2
+  plan_node_hash: e624837d8f97892738faa0671f2a9f9717ac848084128975cd46e3f68b085671
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25006'
+    validation_criteria_snippet: '5.4.1: The public launcher forwards literal arguments/cwd/config
+      and exit status, including unknown options, Unicode, help and errors, to the
+      resolved binary; ...'
+    matched_artifact_ref: tests/cli/test_skills_native_forwarding.py::test_retired_callbacks_have_native_coverage
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.1
+  plan_node_hash: 3dc82476916436afc23579b4ab64829e0c589819401b324ed333b0ea87762cb6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25007'
+    validation_criteria_snippet: '6.0.1: Ordinary AuthStore cookies reproduce Python
+      admission and payload/error outcomes on every one of the exact nine GET and
+      eleven mutation rows, through th...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_browser.rs::ordinary_cookie_routes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.2
+  plan_node_hash: 1c7807a4aedd112b5e94bc6f634c190997d77fbd244eccae709956dd6a77240e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25007'
+    validation_criteria_snippet: '6.0.1: Ordinary AuthStore cookies reproduce Python
+      admission and payload/error outcomes on every one of the exact nine GET and
+      eleven mutation rows, through th...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_browser.rs::managed_cookie_authority_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.3
+  plan_node_hash: 866a5288dd27c7d68ac96347e9b22f2cfd66b3c06f85d0060b0320033b88b0db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25007'
+    validation_criteria_snippet: '6.0.1: Ordinary AuthStore cookies reproduce Python
+      admission and payload/error outcomes on every one of the exact nine GET and
+      eleven mutation rows, through th...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_browser.rs::browser_admission_is_exact_and_fails_closed
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.4
+  plan_node_hash: 90c58e18c6eecfe07e69302b045a2899ac726acf7f90dc36b0034fed881a6b6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25007'
+    validation_criteria_snippet: '6.0.1: Ordinary AuthStore cookies reproduce Python
+      admission and payload/error outcomes on every one of the exact nine GET and
+      eleven mutation rows, through th...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_browser.rs::cors_and_cookie_mutation_parity
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.5
+  plan_node_hash: a2a550576cdd22d5041e8b9847e1518bb5cb21908d97d872dd4398577f63cf6f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25007'
+    validation_criteria_snippet: '6.0.1: Ordinary AuthStore cookies reproduce Python
+      admission and payload/error outcomes on every one of the exact nine GET and
+      eleven mutation rows, through th...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_browser.rs::cookie_takeover_waits_for_shared_verifier
+  deferral_target: null
+  detail: ''
+- section_id: '6.0'
+  item_id: 6.0.6
+  plan_node_hash: 5e5c60147d9cc8ab029691f48f29e5f5c64609f396f41a894233f710334fe2b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25007'
+    validation_criteria_snippet: '6.0.1: Ordinary AuthStore cookies reproduce Python
+      admission and payload/error outcomes on every one of the exact nine GET and
+      eleven mutation rows, through th...'
+    matched_artifact_ref: Skills browser admission security gate
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: e6596058fed58819786d5a429db8418ffef8816b65a435f7605e14f06d1b8334
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_cutover.rs::native_skills_uses_shared_gateway
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: 04533b7838275e503bb7a3423c0685e887a1591b1d74e9f1467ebbda10517a96
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_cutover.rs::skills_cutover_is_scoped_and_single_effect
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: cdd40c3eab08de280094ee12f6ee120c7a2cac741eb7f1257981261ea7bfb128
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: tests/e2e/test_skills_native.py::test_all_54_rows_work_without_python_backend
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.4
+  plan_node_hash: 929bda2a2f32517e9504e868cbc23bdf926090f4580c9b98f35eb50162ec32b9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: tests/e2e/test_skills_native.py::test_restart_and_rollback_preserve_skills_state
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.5
+  plan_node_hash: 0b0ac3d0a243e65d7a9d2c349ae39deb5188e5e23fe46f7fc33ba8f5c6c9027b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.6
+  plan_node_hash: c41c0aaa5baa251d190b32c180fe9b786e3adf255d186ba583433c9ae21028a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: Skills activation evidence
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.7
+  plan_node_hash: 0c36058b4b3338f0ecd4bc09d25f8910474214ba65107b3894c1facb5f983115
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_cutover.rs::waiver_readiness_gates_activation
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.8
+  plan_node_hash: b7197d7fdc551840f9d7abae7abb8843c0bd57166f13529b4f0109845255be49
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25008'
+    validation_criteria_snippet: '6.1.1: The native gateway serves the complete Skills
+      catalog under its existing name with matching schemas, leases, caller context
+      and exactly one semantic pol...'
+    matched_artifact_ref: crates/gdaemon/tests/skills_cutover.rs::slow_skill_work_keeps_front_door_progressing
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: 8dbdc4379abdc355838c70de340d5a5e82479483e1df6c15c239c7ab19de6f66
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25009'
+    validation_criteria_snippet: '6.2.1: Exactly the frozen 54 Skills keys have status
+      `delegated` with concrete implementation/evidence and exact behavior-waiver
+      notes, ordinary Passed cases a...'
+    matched_artifact_ref: 54 delegated Skills parity rows
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: b5b2fc5841ee3b64a40c99db3957f45d77842f95fe18ba4a137a68353b738f79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25009'
+    validation_criteria_snippet: '6.2.1: Exactly the frozen 54 Skills keys have status
+      `delegated` with concrete implementation/evidence and exact behavior-waiver
+      notes, ordinary Passed cases a...'
+    matched_artifact_ref: native Skills operations
+  deferral_target: null
+  detail: ''

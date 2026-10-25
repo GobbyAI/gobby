@@ -14,14 +14,19 @@ class _HasGet(Protocol):
     def get(self, terminal_id: str) -> Terminal | None: ...
 
 
-def active_terminal_for_run(manager: _HasGet | None, run: Any) -> Terminal | None:
-    """Return the run's terminal when it is still pending or live."""
+def bound_terminal_for_run(manager: _HasGet | None, run: Any) -> Terminal | None:
+    """Return the run's terminal row in any state, so a settled termination can still finish."""
     if manager is None:
         return None
     terminal_id = getattr(run, "terminal_id", None)
     if not isinstance(terminal_id, str) or not terminal_id:
         return None
-    row = manager.get(terminal_id)
+    return manager.get(terminal_id)
+
+
+def active_terminal_for_run(manager: _HasGet | None, run: Any) -> Terminal | None:
+    """Return the run's terminal when it is still pending or live."""
+    row = bound_terminal_for_run(manager, run)
     if row is None or row.state not in ACTIVE_TERMINAL_STATES:
         return None
     return row

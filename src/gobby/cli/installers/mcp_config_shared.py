@@ -7,15 +7,19 @@ import time as _time_module
 from collections.abc import Callable
 from pathlib import Path
 from shutil import copy2 as _copy2
-from shutil import which
 from typing import Any, cast
+
+from gobby.paths import get_gobby_home
+from gobby.utils.native_bin import native_bin_name
 
 _FACADE_MODULE = "gobby.cli.installers.mcp_config"
 _LOGGER = logging.getLogger(_FACADE_MODULE)
 _ORIGINAL_COPY2 = _copy2
 
-_GOBBY_MCP_COMMAND = "gobby"
-_GOBBY_MCP_ARGS = ["mcp-server"]
+_GOBBY_MCP_COMMAND = "gmcp"
+# Python wrapper entries that launched `gobby mcp-server`; the repair rewrites them.
+_LEGACY_GOBBY_COMMAND = "gobby"
+_LEGACY_GOBBY_MCP_ARGS = ["mcp-server"]
 _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC: int = 120
 _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
 # Codex requires approval for MCP tools that are not annotated read-only whenever
@@ -101,12 +105,9 @@ def _trailing_blank_or_comment_lines(text: str) -> str:
     return "".join(suffix)
 
 
-def _resolved_gobby_mcp_command() -> str:
-    """Return an absolute ``gobby`` so the launching CLI's PATH cannot hide it."""
-    gobby_bin = Path(sys.executable).parent / _GOBBY_MCP_COMMAND
-    if gobby_bin.exists():
-        return str(gobby_bin)
-    return which(_GOBBY_MCP_COMMAND) or _GOBBY_MCP_COMMAND
+def gmcp_command() -> str:
+    """Return the managed ``gmcp`` path so the launching CLI's PATH cannot hide it."""
+    return str(get_gobby_home() / "bin" / native_bin_name(_GOBBY_MCP_COMMAND))
 
 
 def _command_basename(command: Any) -> str | None:
@@ -129,9 +130,7 @@ def _toml_string_list(value: Any) -> list[str] | None:
 
 def _is_current_gobby_mcp_server_config(server_config: Any) -> bool:
     args = _toml_string_list(server_config.get("args"))
-    return _command_basename(server_config.get("command")) == _GOBBY_MCP_COMMAND and args == [
-        *_GOBBY_MCP_ARGS
-    ]
+    return _command_basename(server_config.get("command")) == _GOBBY_MCP_COMMAND and args == []
 
 
 def _needs_codex_gobby_mcp_tool_timeout(server_config: Any) -> bool:
@@ -158,17 +157,18 @@ def _needs_codex_gobby_mcp_tools_approval_mode(server_config: Any) -> bool:
 
 
 def _is_repairable_stale_gobby_mcp_server_config(server_config: Any) -> bool:
-    if _command_basename(server_config.get("command")) != "uv":
-        return False
-
+    """Return True for a Python wrapper entry that launches ``gobby mcp-server``."""
     args = _toml_string_list(server_config.get("args"))
-    if not args or len(args) < 3:
-        return False
-    if args[0] != "run" or args[-2:] != [_GOBBY_MCP_COMMAND, *_GOBBY_MCP_ARGS]:
+    if not args:
         return False
 
-    middle = args[1:-2]
-    return middle == [] or (len(middle) == 2 and middle[0] == "--directory")
+    command = _command_basename(server_config.get("command"))
+    if command == _LEGACY_GOBBY_COMMAND:
+        return args == _LEGACY_GOBBY_MCP_ARGS
+    if command != "uv":
+        return False
+    # Any flags may lie between `run` and the `gobby mcp-server` tail, e.g. `--project X`.
+    return args[0] == "run" and args[-2:] == [_LEGACY_GOBBY_COMMAND, *_LEGACY_GOBBY_MCP_ARGS]
 
 
 def _repair_stale_gobby_mcp_server_toml(
@@ -196,13 +196,11 @@ def _repair_stale_gobby_mcp_server_toml(
     if not _is_current_gobby_mcp_server_config(
         server_config
     ) and _is_repairable_stale_gobby_mcp_server_config(server_config):
-        updates["command"] = _resolved_gobby_mcp_command()
-        updates["args"] = [*_GOBBY_MCP_ARGS]
+        updates["command"] = gmcp_command()
+        updates["args"] = []
     elif server_config.get("command") == _GOBBY_MCP_COMMAND:
         # ``required = true`` turns a bare command missing from PATH into a failed launch.
-        resolved = _resolved_gobby_mcp_command()
-        if resolved != _GOBBY_MCP_COMMAND:
-            updates["command"] = resolved
+        updates["command"] = gmcp_command()
 
     if _needs_codex_gobby_mcp_tool_timeout(server_config):
         updates["tool_timeout_sec"] = _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC

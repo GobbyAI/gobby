@@ -13,7 +13,13 @@ from typing import Any
 from pydantic import BaseModel
 
 from gobby.agents.attention_tracker import AgentAttentionTracker, AttentionClassification
-from gobby.hub.node_commands import PaneAttention, ReportAgent, ReportBody, ReportPane
+from gobby.hub.node_commands import (
+    PaneAttention,
+    PaneComposer,
+    ReportAgent,
+    ReportBody,
+    ReportPane,
+)
 from gobby.hub.node_reports import is_uuid
 from gobby.storage.agents import AgentRun
 from gobby.storage.attention import AttentionKind
@@ -63,7 +69,8 @@ class RemotePaneStore:
             current = self._machines.get(machine_id)
             if current is not None and revision <= current.revision:
                 return None
-            previous = current.panes if current is not None else {}
+            # Tails recorded before any accepted report are not a previous report.
+            previous = current.panes if current is not None and current.revision > 0 else {}
             self._machines[machine_id] = _MachineState(
                 revision=revision,
                 panes={
@@ -83,6 +90,30 @@ class RemotePaneStore:
             if pane is not None:
                 state.panes[terminal_id] = replace(pane, stopped=True)
 
+    def record_tail(self, terminal_id: str, machine_id: str, run_id: str, tail: str) -> None:
+        """Store a hub-side kill's pane tail, keeping the node's last report for the terminal.
+
+        A new entry starts at revision 0, so the node's next report still applies.
+        """
+        with self._lock:
+            state = self._machines.get(machine_id)
+            if state is None:
+                state = _MachineState(revision=0, panes={})
+                self._machines[machine_id] = state
+            prior = state.panes.get(terminal_id)
+            if prior is not None and prior.pane is not None and prior.run_id == run_id:
+                pane = prior.pane.model_copy(update={"tail": tail})
+            else:
+                pane = ReportPane(
+                    attention=None,
+                    injections=0,
+                    composer=PaneComposer(state="unknown", line=None),
+                    idle=None,
+                    tail=tail,
+                )
+            stopped = prior is not None and prior.stopped and prior.run_id == run_id
+            state.panes[terminal_id] = RemotePane(machine_id, run_id, pane, stopped=stopped)
+
     def get(self, terminal_id: str, machine_id: str) -> RemotePane | None:
         """The machine's own entry for the terminal; another machine's never answers."""
         with self._lock:
@@ -92,7 +123,7 @@ class RemotePaneStore:
     def machine_ids(self) -> tuple[str, ...]:
         """Return a snapshot of machines with accepted reports."""
         with self._lock:
-            return tuple(self._machines)
+            return tuple(machine for machine, state in self._machines.items() if state.revision > 0)
 
 
 def _entry(machine_id: str, agent: ReportAgent, prior: RemotePane | None) -> RemotePane:

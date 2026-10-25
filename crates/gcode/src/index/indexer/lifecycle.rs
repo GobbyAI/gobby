@@ -39,6 +39,11 @@ pub fn invalidate(
     let project_uuid = id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
+        "DELETE FROM code_overlay_pins
+         WHERE machine_id = $1 AND overlay_project_id = $2",
+        &[&machine_uuid, &project_uuid],
+    )?;
+    tx.execute(
         "DELETE FROM code_communities
          WHERE machine_id = $1 AND project_id = $2",
         &[&machine_uuid, &project_uuid],

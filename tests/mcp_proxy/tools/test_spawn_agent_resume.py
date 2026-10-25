@@ -500,3 +500,117 @@ async def test_pipeline_input_passes_resume_or_fresh(resume_ref: str | None) -> 
         result = await registry.call("spawn_agent", arguments)
     assert result["success"] is True
     assert spawn.call_args.kwargs["resume_session_id"] == resume_ref
+
+
+def _main_with_task_worktree(tmp_path: Path) -> tuple[Path, Path]:
+    main, lane = tmp_path / "main", tmp_path / "task-worktree"
+    main.mkdir()
+    _git(main, "init", "-b", "main")
+    (main / "work.txt").write_text("base\n")
+    _git(main, "add", "work.txt")
+    _git(main, "commit", "-m", "base")
+    _git(main, "worktree", "add", "-b", "task-branch", str(lane))
+    return main, lane
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("stub_srt_verifier")
+@pytest.mark.parametrize("recorded", ["worktree_id", "no_isolation_ids"])
+@pytest.mark.parametrize("caller", ["inherited_main_checkout", "explicit_project_path"])
+@pytest.mark.parametrize("checkout", [None, "none"])
+async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
+    tmp_path: Path, recorded: str, caller: str, checkout: Literal["none"] | None
+) -> None:
+    main, lane_path = _main_with_task_worktree(tmp_path)
+    explicit = tmp_path / "explicit"
+    explicit.mkdir()
+    target = SimpleNamespace(
+        id="existing",
+        project_id="project",
+        source="codex",
+        external_id="native-thread",
+        status="expired",
+        agent_run_id="old-run",
+        parent_session_id="old-parent",
+        workflow_name=None,
+        model=None,
+        reasoning_effort=None,
+        workspace_path=str(lane_path),
+    )
+    sessions = MagicMock()
+    sessions.resolve_session_reference.return_value = target.id
+    sessions.get.return_value = target
+    runner = MagicMock()
+    runner.can_spawn.return_value = (True, "Can spawn", 0)
+    runner.run_storage.has_active_run_for_task.return_value = False
+    runner.run_storage.get.return_value = _run(
+        status="expired",
+        worktree_id="lane-worktree" if recorded == "worktree_id" else None,
+        clone_id=None,
+    )
+    lane = SimpleNamespace(
+        id="lane-worktree",
+        worktree_path=str(lane_path),
+        branch_name="task-branch",
+        base_branch="main",
+        project_id="project",
+    )
+    worktrees = MagicMock()
+    worktrees.resolve_reference.return_value = lane.id
+    worktrees.get.return_value = lane
+    git_manager = WorktreeGitManager(main)
+    handler = MagicMock()
+    handler.build_context_prompt.return_value = "Continue"
+    prepared = PreparedSpawn(
+        session_id="existing",
+        agent_run_id="new-run",
+        parent_session_id="parent",
+        project_id="project",
+        workflow_name=None,
+        agent_depth=1,
+        env_vars={},
+    )
+    # The factory hands the implementation the parent's checkout with explicit=False
+    # when the caller passed no project_path; an explicit path is passed as given.
+    explicit_call = caller == "explicit_project_path"
+    project_path = str(explicit) if explicit_call else str(main)
+    with (
+        patch.object(
+            implementation,
+            "get_project_context",
+            side_effect=lambda path: {"id": "project", "project_path": str(path)},
+        ),
+        patch.object(implementation, "get_machine_id", return_value="machine"),
+        patch.object(worktree_reuse, "repair_isolation_environment", AsyncMock()),
+        patch.object(implementation, "WorktreeIsolationHandler", return_value=handler),
+        patch.object(implementation, "get_isolation_handler", return_value=NoneIsolationHandler()),
+        patch.object(implementation, "provider_mcp_config_error", return_value=None),
+        patch("gobby.agents.spawn.prepare_terminal_resume", return_value=prepared),
+        patch.object(implementation, "execute_spawn", AsyncMock()) as execute,
+        patch.object(implementation, "finalize_executed_spawn", AsyncMock()),
+        patch.object(implementation, "persist_initial_step_instance_if_resolved"),
+    ):
+        result = await spawn_agent_impl(
+            prompt="Continue",
+            runner=runner,
+            session_manager=sessions,
+            parent_session_id="parent",
+            target_project_id="project",
+            checkout_mode=checkout,
+            resume_session_id="gobby#123",
+            reserved_run_id="new-run",
+            project_path=project_path,
+            project_path_explicit=explicit_call,
+            agent_body=make_agent_definition(name="developer", prompts={"agent": "Continue"}),
+            worktree_storage=worktrees,
+            git_manager=git_manager,
+            git_manager_resolver=lambda _project_id: git_manager,
+            db=MagicMock(),
+        )
+        await asyncio.gather(*implementation._spawn_background_tasks.values())
+    assert result["success"] is True, result
+    request = execute.call_args.args[0]
+    expected = explicit if explicit_call else lane_path
+    assert request.cwd == str(expected)
+    assert request.resume_metadata_json["cwd"] == str(expected)
+    assert request.resume_metadata_json["workspace_path"] == str(expected)

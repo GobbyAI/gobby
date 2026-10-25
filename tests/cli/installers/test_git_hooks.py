@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from gobby.cli.installers.git_hooks import _CODE_INDEX_REINDEX_BODY, install_git_hooks
+from gobby.cli.installers.git_hooks import (
+    _CODE_INDEX_REINDEX_BODY,
+    HOOK_TEMPLATES,
+    install_git_hooks,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -120,6 +124,8 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env |= {
         "PATH": f"{work_dir / 'bin'}{os.pathsep}{env.get('PATH', '/usr/bin:/bin')}",
         "HOME": str(work_dir / "home"),
+        # Hooks resolve gcode under GOBBY_HOME first; never reach the real install.
+        "GOBBY_HOME": str(work_dir / "home" / ".gobby"),
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_AUTHOR_NAME": "Test",
@@ -313,3 +319,34 @@ class TestPreCommitAutoFixBoundary:
         assert _subjects(repo) == ["baseline"]
         # The fix was restaged; the unfixable failure is what refused the commit.
         assert _git_out(repo, "show", ":F.txt") == "base\nlint-error\nauto-fixed\n"
+
+
+def test_post_merge_in_dirty_worktree_indexes_the_merged_files(tmp_path: Path) -> None:
+    """gobby-#24973: the shared main checkout is always dirty; a merge still indexes its files."""
+    repo = _init_hook_repo(tmp_path, ["dirty.txt"])
+    base = _git_out(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    _git_out(repo, "checkout", "-q", "-b", "lane")
+    (repo / "landed.py").write_text("landed = 1\n", encoding="utf-8")
+    _git_out(repo, "add", "landed.py")
+    _git_out(repo, "commit", "-q", "-m", "feat: land me")
+    _git_out(repo, "checkout", "-q", base)
+    (repo / "dirty.txt").write_text("someone else's edit\n", encoding="utf-8")
+    _git_out(repo, "merge", "--ff-only", "lane")
+    # Replay the post-merge section synchronously: `wait` joins its background index.
+    home = tmp_path / "home"
+    capture = tmp_path / "gcode-args"
+    _write_executable(home / ".gobby/bin/gcode", f'#!/bin/sh\nprintf "%s\\n" "$@" > "{capture}"\n')
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env |= {"HOME": str(home), "GOBBY_HOME": str(home / ".gobby")}
+
+    result = subprocess.run(
+        ["/bin/bash", "-c", f"{HOOK_TEMPLATES['post-merge']}\nwait"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+        env=env,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--files=landed.py" in capture.read_text(encoding="utf-8").splitlines()

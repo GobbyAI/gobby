@@ -58,6 +58,31 @@ fn write_state_is_private_and_round_trips() {
 }
 
 #[test]
+fn a_late_stage_leaves_another_attempts_state_alone() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(STATE_FILE);
+    let attempt = |attempt_id: &str| {
+        let mut state = state_with(Vec::new(), 7, 8);
+        state.attempt.attempt_id = attempt_id.into();
+        state
+    };
+
+    // B stages. An abandoned job from attempt A stages late, and its result
+    // is dropped before B commits.
+    let staged = stage_state(&path, &attempt("b")).expect("stage b");
+    drop(stage_state(&path, &attempt("a")).expect("stage a"));
+    commit_state(&staged, &path).expect("commit b");
+
+    let carried = read_state(&path).expect("read state");
+    assert_eq!(carried.attempt.attempt_id, "b");
+    let names: Vec<_> = fs::read_dir(dir.path())
+        .expect("read dir")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from(STATE_FILE)]);
+}
+
+#[test]
 fn read_state_refuses_an_unsupported_format() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(STATE_FILE);
@@ -69,6 +94,40 @@ fn read_state_refuses_an_unsupported_format() {
 
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     assert!(err.to_string().contains("unsupported handover format"));
+}
+
+/// A state file exactly as gterm 0.1.15, the previous release, wrote it: one
+/// captured pane, and no `next_attachment`, which 0.1.16 added.
+///
+/// The handover is a cross-version exchange, so this image must read the state
+/// the running release writes. Do not regenerate this fixture from the current
+/// types: a field added without a default must fail here until it has one, or
+/// until a release ships and this file is replaced by that release's output.
+const PREVIOUS_RELEASE_STATE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/handover_state/gterm-0.1.15.json"
+);
+
+#[test]
+fn read_state_accepts_the_previous_release_state() {
+    let carried = read_state(Path::new(PREVIOUS_RELEASE_STATE))
+        .unwrap_or_else(|err| panic!("read the 0.1.15 state: {err}"));
+
+    assert_eq!(carried.format_version, FORMAT_VERSION);
+    assert_eq!(
+        (
+            carried.host_epoch.as_str(),
+            carried.generation,
+            carried.next_host_id
+        ),
+        ("epoch-1", 3, 42)
+    );
+    let ids: Vec<_> = carried
+        .panes
+        .iter()
+        .map(|pane| pane.host_terminal_id.as_str())
+        .collect();
+    assert_eq!(ids, ["ht-17"], "every carried pane is read");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -149,7 +208,7 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
     .expect("write state");
 
     let carried = read_state(&path).expect("read state");
-    let staged = stage(carried, &path, &pid_file, 1 << 20, 1 << 20, false).expect("stage");
+    let staged = stage(carried, &path, &pid_file, 1 << 20, 1 << 20, None).expect("stage");
 
     assert_eq!(staged.host.host_epoch, "epoch-1");
     assert_eq!(staged.host.generation, 3);

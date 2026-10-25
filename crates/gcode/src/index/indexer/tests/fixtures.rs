@@ -40,3 +40,24 @@ pub(super) fn git_output(dir: &Path, hooks: &Path, args: &[&str]) -> String {
     );
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
+
+/// Writes the overlay's isolation marker with complete pin provenance: the
+/// parent it branched from and the base commit its pins were taken at.
+pub(super) fn write_isolation_marker(
+    overlay_root: &Path,
+    parent_root: &Path,
+    parent_project_id: &str,
+    base_commit: &str,
+) {
+    let dir = overlay_root.join(".gobby");
+    std::fs::create_dir_all(&dir).expect("create gobby dir");
+    let parent = parent_root.to_str().expect("utf-8 parent path");
+    let marker = serde_json::json!({
+        "parent_project_path": parent,
+        "parent_project_id": parent_project_id,
+        "base_commit": base_commit,
+        "ancestor_checkout_path": parent,
+        "ancestor_checkout_identity": parent_project_id,
+    });
+    std::fs::write(dir.join("isolation.json"), marker.to_string()).expect("write isolation marker");
+}

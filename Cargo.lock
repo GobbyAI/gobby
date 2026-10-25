@@ -2396,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.79"
+version = "0.1.82"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.63"
+version = "1.9.67"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.96"
+version = "0.4.99"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.43"
+version = "0.9.45"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.6"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -2594,11 +2594,12 @@ dependencies = [
  "tokio",
  "unicode_names2",
  "ureq",
+ "url",
 ]
 
 [[package]]
 name = "gobby-runtime"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -2624,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "base64 0.22.1",
  "bincode",

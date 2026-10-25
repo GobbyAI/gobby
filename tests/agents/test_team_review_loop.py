@@ -4,20 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import Awaitable
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import yaml
 
+from gobby.agents.sync import get_bundled_agents_path
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.mcp_proxy.tools.tasks import _claim_release, create_task_registry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -35,12 +42,15 @@ from gobby.workflows.agent_models import (
     AgentDefinitionBody,
     AgentPromptBlocks,
     AgentSelector,
+    AgentStepWorkflowBody,
     AgentWorkflows,
 )
 from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 from gobby.workflows.task_dirty_state import task_dirty_paths
 from gobby.workflows.templates import TemplateEngine
 from tests.fixtures.landing_case import bind_task_manager, make_landing_case
@@ -225,9 +235,12 @@ def devteam_context(inputs: dict[str, Any]) -> dict[str, Any]:
     values = {name: spec.get("default") for name, spec in DEVTEAM.inputs.items()}
     values.update(LAUNCH_DEFAULTS, workspace="pilot-workspace", report_to="gobby#14972")
     values.update(inputs)
+    # With no live seat, the guard launches every requested seat, as check_runbook_seats does.
+    requested = "code-reviewer" if values["fresh_reviewer"] else values["seats"]
+    guard = {"workspace_id": WORKSPACE, "launch": requested.split(",")}
     return {
         "inputs": values,
-        "steps": {"guard": {"output": {"workspace_id": WORKSPACE}}},
+        "steps": {"guard": {"output": guard}},
         "_string_inputs": frozenset(
             name for name, spec in DEVTEAM.inputs.items() if spec.get("type") == "string"
         ),
@@ -375,6 +388,68 @@ async def test_hand_off_keeps_the_closer_and_the_reviewer_eligible(world: TeamWo
     moved = await hand_off(tools, team.manager, team.task, team.developer, team.sol)
     assert moved.get("success") is True, moved
     assert tasks.get_task(task_id).claimed_by_session_id == team.sol
+
+
+@dataclass(frozen=True)
+class SpikeTeam:
+    task: Task
+    manager: str
+    developer: str
+    writer: str
+    researcher: str
+
+
+async def spike_team(world: TeamWorld) -> SpikeTeam:
+    """A research spike team whose developer holds the claim, with a bound researcher."""
+    db, project_id = world.case.db, world.case.project_id
+    task = world.case.task("Research the debt")
+    db.execute(
+        "UPDATE tasks SET task_type = 'research_spike', category = 'research' WHERE id = %s",
+        (task.id,),
+    )
+    runbook = world.child(task)
+    await world.admit(runbook, task)
+    manager = seat(world, runbook, "dev-manager", manages=task)
+    developer, writer = (seat(world, runbook, role) for role in ("developer", "test-writer"))
+    researcher = world.case.session("researcher", parent=runbook.id)
+    grant_step_writes(db, researcher, project_id, "researcher", ("implementation", "closing"))
+    LocalAgentRunManager(db).create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt="Research the spike.",
+        agent_name="researcher",
+        child_session_id=researcher,
+        task_id=task.id,
+    )
+    tasks = LocalTaskManager(db)
+    tasks.claim_task(task.id, developer, force=True)
+    return SpikeTeam(tasks.get_task(task.id), manager, developer, writer, researcher)
+
+
+@pytest.mark.asyncio
+async def test_bound_researcher_is_not_the_dev_manager(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    team = await spike_team(world)
+
+    refused = await hand_off(
+        create_task_registry(tasks), team.researcher, team.task, team.developer, team.writer
+    )
+
+    assert refused.get("error_code") == "team_manager_required", refused
+    assert tasks.get_task(team.task.id).claimed_by_session_id == team.developer
+
+
+@pytest.mark.asyncio
+async def test_researcher_closing_grant_still_receives_its_spike_claim(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    team = await spike_team(world)
+
+    moved = await hand_off(
+        create_task_registry(tasks), team.manager, team.task, team.developer, team.researcher
+    )
+
+    assert moved.get("success") is True, moved
+    assert tasks.get_task(team.task.id).claimed_by_session_id == team.researcher
 
 
 @pytest.mark.asyncio
@@ -614,3 +689,238 @@ async def test_review_loop_recovers_idempotently(world: TeamWorld) -> None:
     assert (again.get("adopted"), again.get("run_id")) == (True, reviewer["reserved_run_id"])
     assert len(world.launches) == 1
     assert tasks.get_task(task_id).claimed_by_session_id == team.sol
+
+
+# Relayed CANDIDATE intake (#24974): the task's bound Dev Manager may relay the
+# claimant's CANDIDATE to its team reviewer; it binds the claimant's linked SHA.
+NOT_LINKED = "CANDIDATE not bound: COMMIT is not linked to the claimant's task"
+NOT_CLAIMANT = "CANDIDATE not bound: sender does not claim task"
+
+
+def reviewer_at_await(db: HubDatabase, session_id: str) -> None:
+    """Run ``session_id`` as a code-reviewer step instance waiting for a candidate."""
+    agent = yaml.safe_load((get_bundled_agents_path() / "code-reviewer.yaml").read_text())
+    workflow = agent["step_workflow"]
+    SessionVariableManager(db).set_variable(session_id, "_agent_type", "code-reviewer")
+    AgentStepInstanceManager(db).save(
+        AgentStepInstance(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            agent_name="code-reviewer",
+            snapshot=AgentStepWorkflowBody.model_validate(workflow),
+            enabled=True,
+            current_step="await",
+            step_entered_at=datetime.now(UTC),
+            variables=dict(workflow["variables"]),
+        )
+    )
+
+
+async def read_candidate(
+    db: HubDatabase, reviewer: str, sender: str, task: Task, sha: str
+) -> tuple[dict[str, Any], AgentStepInstance]:
+    """Deliver a CANDIDATE from ``sender`` and consume it the way the reviewer does."""
+    messages = InterSessionMessageManager(db)
+    content = f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree COMMIT={sha} NOTE=relayed"
+    message = messages.create_message(sender, reviewer, content)
+    registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
+    add_messaging_tools(registry, messages, SessionManager(db), db)
+    arguments = {"message_id": message.id}
+    with session_context_for_test(reviewer):
+        result = cast(dict[str, Any], await registry.call("get_inter_session_message", arguments))
+    assert result["success"] is True, result
+    call = {
+        "server_name": "gobby-agents",
+        "tool_name": "get_inter_session_message",
+        "arguments": arguments,
+    }
+    data = {"tool_name": "mcp__gobby__call_tool", "tool_input": call, "tool_output": result}
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=reviewer,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=normalize_tool_fields(data),
+        metadata={},
+    )
+    engine = RuleEngine(db, session_manager=SessionManager(db), task_manager=LocalTaskManager(db))
+    variables = SessionVariableManager(db).get_variables(reviewer)
+    await engine.evaluate(event, session_id=reviewer, variables=variables)
+    instance = AgentStepInstanceManager(db).get_for_session(reviewer)
+    assert instance is not None
+    return result, instance
+
+
+@pytest.mark.parametrize("sender", ["claimant", "bound-manager"])
+@pytest.mark.asyncio
+async def test_bound_dev_manager_relayed_candidate_opens_review(
+    world: TeamWorld, sender: str
+) -> None:
+    team = await team_in_review(world)
+    reviewer_at_await(world.case.db, team.sol)
+    session = team.developer if sender == "claimant" else team.manager
+
+    result, instance = await read_candidate(
+        world.case.db, team.sol, session, team.task, team.candidate
+    )
+
+    assert "candidate_binding_error" not in result, result
+    assert instance.current_step == "review"
+    assert instance.variables["candidate_received"] is True
+    assert instance.variables["candidate_task"] == team.task.id
+    assert instance.variables["candidate_sha"] == team.candidate
+
+
+@pytest.mark.asyncio
+async def test_relayed_candidate_for_unlinked_commit_is_refused(world: TeamWorld) -> None:
+    team = await team_in_review(world)
+    reviewer_at_await(world.case.db, team.sol)
+    # A real commit in the team tree that the claimant never linked to the task.
+    tree = Path(team.binding.worktree_path)
+    (tree / "unlinked.py").write_text("# unlinked\n")
+    git_in(tree, "add", "unlinked.py")
+    git_in(tree, "commit", "-m", "Add unlinked")
+    unlinked = git_in(tree, "rev-parse", "HEAD")
+    assert unlinked not in (LocalTaskManager(world.case.db).get_task(team.task.id).commits or [])
+
+    result, instance = await read_candidate(
+        world.case.db, team.sol, team.manager, team.task, unlinked
+    )
+
+    assert result.get("candidate_binding_error") == NOT_LINKED
+    assert instance.current_step == "await"
+    assert instance.variables["candidate_received"] is False
+    assert instance.variables["candidate_sha"] is None
+
+
+@pytest.mark.parametrize("sender", ["unbound-manager", "other-team-manager", "team-developer"])
+@pytest.mark.asyncio
+async def test_candidate_from_non_claimant_non_manager_stays_refused(
+    world: TeamWorld, sender: str
+) -> None:
+    team = await team_in_review(world)
+    reviewer_at_await(world.case.db, team.sol)
+    if sender == "unbound-manager":
+        session = seat(world, team.runbook, "dev-manager")
+    elif sender == "team-developer":
+        session = seat(world, team.runbook, "developer")
+    else:
+        other_task = world.case.task("Another team's task")
+        other_runbook = world.child(other_task, DEVTEAM)
+        await world.admit(other_runbook, other_task)
+        session = seat(world, other_runbook, "dev-manager", manages=other_task)
+
+    result, instance = await read_candidate(
+        world.case.db, team.sol, session, team.task, team.candidate
+    )
+
+    assert result.get("candidate_binding_error") == NOT_CLAIMANT
+    assert instance.current_step == "await"
+    assert instance.variables["candidate_received"] is False
+
+
+async def _rejected_twice_and_handed_over(world: TeamWorld) -> ReviewTeam:
+    """A team whose Sol reviewer holds the claim after the second rejection."""
+    db = world.case.db
+    team = await team_in_review(world)
+    submit(db, team.sol, team.task.id, "review", "rejected", 1, team.candidate)
+    submit(db, team.sol, team.task.id, "review", "rejected", 2, team.candidate)
+    moved = await hand_off(
+        create_task_registry(LocalTaskManager(db)),
+        team.manager,
+        team.task,
+        team.developer,
+        team.sol,
+    )
+    assert moved.get("success") is True, moved
+    return team
+
+
+@pytest.mark.asyncio
+async def test_failed_fresh_reviewer_spawn_frees_the_epoch_slot(world: TeamWorld) -> None:
+    db = world.case.db
+    team = await _rejected_twice_and_handed_over(world)
+    task_id, team_id = team.task.id, execution_id(team.runbook)
+    epoch = LocalTaskManager(db).get_task(task_id).review_epoch
+    fresh_inputs = {
+        "task": task_id,
+        "team_id": team_id,
+        "fresh_reviewer": True,
+        "exclude_reviewers": session_ref(db, team.sol),
+    }
+
+    # The first fresh-reviewer execution admits; its code-reviewer spawn fails, and its pipeline
+    # fails with it.
+    first_run = world.child(team.task, DEVTEAM)
+    admitted_first = await world.admit(
+        first_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    assert admitted_first == team.binding
+    reviewer = launch(first_run, await admitted(world, first_run, fresh_inputs))["code-reviewer"]
+    world.spawn_replies.append(
+        {
+            "success": False,
+            "error": "Workspace needs exactly one tab titled 'task-24824'; 0 tabs have that title.",
+        }
+    )
+    failed = await spawn_seat(world, first_run, reviewer)
+    assert failed.get("success") is False, failed
+    world.fail(first_run)
+
+    # The failed execution holds no live reviewer, so a relaunch for the same epoch admits and
+    # spawns the one fresh reviewer.
+    second_run = world.child(team.task, DEVTEAM)
+    admitted_second = await world.admit(
+        second_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    assert admitted_second == team.binding
+    assert world.admit_step_output(team.runbook)["fresh_reviewers"] == {
+        str(epoch): execution_id(second_run)
+    }
+    relaunch = launch(second_run, await admitted(world, second_run, fresh_inputs))["code-reviewer"]
+    spawned = await spawn_seat(world, second_run, relaunch)
+    assert spawned.get("success") is True, spawned
+    (launched,) = world.launches
+    assert identity(launched) == OPUS
+    assert launched["reserved_run_id"] == step_invocation_id(
+        execution_id(second_run), "code-reviewer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_fresh_reviewer_still_blocks_a_second_one(world: TeamWorld) -> None:
+    db = world.case.db
+    team = await _rejected_twice_and_handed_over(world)
+    task_id, team_id = team.task.id, execution_id(team.runbook)
+    fresh_inputs = {
+        "task": task_id,
+        "team_id": team_id,
+        "fresh_reviewer": True,
+        "exclude_reviewers": session_ref(db, team.sol),
+    }
+
+    # The first fresh reviewer spawns and runs; its runbook then completes as a fire-and-forget
+    # runbook does, so the live reviewer, not the execution status, holds the epoch's slot.
+    first_run = world.child(team.task, DEVTEAM)
+    await world.admit(
+        first_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    reviewer = launch(first_run, await admitted(world, first_run, fresh_inputs))["code-reviewer"]
+    spawned = await spawn_seat(world, first_run, reviewer)
+    assert spawned.get("success") is True, spawned
+    runs = LocalAgentRunManager(db)
+    runs.create(
+        parent_session_id=first_run.id,
+        provider=OPUS["provider"],
+        prompt="Review the fixed candidate.",
+        agent_name="code-reviewer",
+        run_id=reviewer["reserved_run_id"],
+    )
+    runs.start(reviewer["reserved_run_id"])
+    world.finish(first_run)
+
+    second_run = world.child(team.task, DEVTEAM)
+    refused = world.admit(
+        second_run, team.task, team_id, fresh_reviewer=True, exclude_reviewers=[team.sol]
+    )
+    assert await refusal(refused) == "fresh_reviewer_exists"

@@ -93,8 +93,8 @@ CARGO_TARGET_DIR = "CARGO_TARGET_DIR"
 
 # How long Claude Code may block its first turn waiting for an `--mcp-config`
 # server it has to wait for. Claude Code's own default is 5s, and a cold
-# `uv run ... gobby mcp-server` inside an agent sandbox has been measured past
-# 7s on a loaded machine, so at the default an agent can reach the model before
+# `gmcp` inside an agent sandbox has been measured past 7s on a loaded
+# machine, so at the default an agent can reach the model before
 # its Gobby tools exist. Overshooting costs nothing: the wait ends as soon as
 # the handshake lands.
 MCP_CONNECT_TIMEOUT_MS = "MCP_CONNECT_TIMEOUT_MS"
@@ -102,7 +102,7 @@ MCP_CONNECT_TIMEOUT_MS_VALUE = "60000"
 
 # Claude Code's connection deadline for every MCP server it launches, whichever
 # config scope names it (its own default is 30s). Beside concurrent agent spawns
-# a cold `gobby mcp-server` took 25s to connect and two siblings passed 30s,
+# a cold `gmcp` took 25s to connect and two siblings passed 30s,
 # leaving those agents without Gobby tools for their whole run. 120s matches
 # Codex's `mcp_servers.gobby.startup_timeout_sec`.
 MCP_TIMEOUT = "MCP_TIMEOUT"

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 
 pytestmark = pytest.mark.unit
 
@@ -803,8 +803,8 @@ class TestInstallCodex:
 
         assert result["success"] is True
         config = _load_toml_file(config_path)
-        assert config["mcp_servers"]["gobby"]["command"] == _resolved_gobby_mcp_command()
-        assert list(config["mcp_servers"]["gobby"]["args"]) == ["mcp-server"]
+        assert config["mcp_servers"]["gobby"]["command"] == gmcp_command()
+        assert list(config["mcp_servers"]["gobby"]["args"]) == []
 
 
 class TestInstallCodexProjectHooks:

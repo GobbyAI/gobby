@@ -70,6 +70,7 @@ from ._resume import (
     resume_isolation,
     resumed_seat_lane,
     resumed_seat_plan,
+    resumed_seat_task_id,
 )
 from ._run_lifetime import resolve_run_lifetime
 from ._runtime import build_spawn_context
@@ -161,33 +162,34 @@ async def spawn_agent_impl(
                 live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": str(exc) or type(exc).__name__}
+        task_id = task_id or resumed_seat_task_id(task_manager, resume_target, runner.run_storage)
         provider, model, reasoning_effort = resume_launch_defaults(
             resume_target, model=model, reasoning_effort=reasoning_effort
         )
-        if checkout_mode is None and not worktree_id and not clone_id:
-            # A resumed seat returns to the checkout its last run worked in.
-            worktree_id, clone_id = await asyncio.to_thread(
-                resume_isolation, resume_target, runner.run_storage
-            )
-            if (
-                not (worktree_id or clone_id)
-                and not (project_path and project_path_explicit)
-                and resume_target.workspace_path
-            ):
-                if not await asyncio.to_thread(Path(resume_target.workspace_path).is_dir):
-                    return {
-                        "success": False,
-                        "error": f"Stored resume workspace is not a directory: {resume_target.workspace_path}",
-                    }
-                project_path = resume_target.workspace_path
+        if checkout_mode in (None, "none") and not worktree_id and not clone_id:
+            # A resumed seat returns to the checkout its last run worked in. An explicit
+            # project_path names that checkout instead.
+            if project_path and project_path_explicit:
                 checkout_mode = "none"
+            else:
+                worktree_id, clone_id = await asyncio.to_thread(
+                    resume_isolation, resume_target, runner.run_storage
+                )
+                if not (worktree_id or clone_id) and resume_target.workspace_path:
+                    if not await asyncio.to_thread(Path(resume_target.workspace_path).is_dir):
+                        return {
+                            "success": False,
+                            "error": f"Stored resume workspace is not a directory: {resume_target.workspace_path}",
+                        }
+                    project_path = resume_target.workspace_path
+                    checkout_mode = "none"
     try:
         run_lifetime = resolve_run_lifetime(
             agent_body, execution_mode, resumed=resume_target is not None
         )
     except ValueError as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(exc) or type(exc).__name__}
     try:
         write_grant = await asyncio.to_thread(
             authorize_write_grant,
@@ -200,12 +202,12 @@ async def spawn_agent_impl(
             launch_machine_id=require_machine_id(),
         )
     except ValueError as exc:
-        return {"success": False, "error": str(exc)}
+        return {"success": False, "error": str(exc) or type(exc).__name__}
     if agent_body is not None:
         try:
             agent_body.prompt_for("agent")
         except ValueError as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": str(exc) or type(exc).__name__}
 
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
 
@@ -391,7 +393,11 @@ async def spawn_agent_impl(
                 agent_pane_reserver.workspaces,
             )
         except ResumeSeatGone as exc:
-            return {"success": False, "placement_error": "not_found", "error": str(exc)}
+            return {
+                "success": False,
+                "placement_error": "not_found",
+                "error": str(exc) or type(exc).__name__,
+            }
     placed = await preflight_placement(
         placement,
         reserver=agent_pane_reserver,
@@ -459,7 +465,7 @@ async def spawn_agent_impl(
         try:
             worktree_id = worktree_storage.resolve_reference(worktree_id)
         except ValueError as exc:
-            return {"success": False, "error": str(exc)}
+            return {"success": False, "error": str(exc) or type(exc).__name__}
         existing_worktree = worktree_storage.get(worktree_id)
         if not existing_worktree:
             return {"success": False, "error": f"Worktree {worktree_id} not found"}
@@ -780,7 +786,7 @@ async def spawn_agent_impl(
             )
             return {
                 "success": False,
-                "error": str(exc),
+                "error": str(exc) or type(exc).__name__,
                 "reasoning": reasoning.to_dict(),
             }
         finally:
@@ -832,7 +838,7 @@ async def spawn_agent_impl(
                     await cleanup_failed_spawn(
                         runner,
                         run_id,
-                        str(exc),
+                        str(exc) or type(exc).__name__,
                         handler,
                         spawn_config,
                         completion_registry=completion_registry,
@@ -843,7 +849,7 @@ async def spawn_agent_impl(
                     )
                     return {
                         "success": False,
-                        "error": str(exc),
+                        "error": str(exc) or type(exc).__name__,
                         **spawn_identity,
                         "reasoning": reasoning.to_dict(),
                     }
@@ -942,7 +948,7 @@ async def spawn_agent_impl(
                     description="Agent spawn background task",
                 )
             except RuntimeError as exc:
-                return await spawn_phase.fail(str(exc))
+                return await spawn_phase.fail(str(exc) or type(exc).__name__)
 
             return {
                 "success": True,

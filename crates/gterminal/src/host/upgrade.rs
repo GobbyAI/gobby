@@ -4,7 +4,7 @@
 //! before exec rolls back in process; a rollback that cannot resume every pane
 //! ends the host through SIGALRM.
 
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -16,15 +16,18 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{oneshot, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockWriteGuard};
 
 use super::handover::{
-    encode_snapshot, monotonic_now_ns, write_state, CarriedIdentity, CarriedObserverBind,
-    CarriedPane, CarriedReservation, HandoverState, UpgradeAttempt, UpgradeOutcome, UpgradeReason,
+    commit_state, monotonic_now_ns, stage_state, UpgradeAttempt, UpgradeOutcome, UpgradeReason,
     UpgradeRecord, FORMAT_VERSION, STATE_FILE,
 };
 use super::helpers::{err, s};
 use super::image::{self, PinnedImage};
 use super::sigterm;
-use super::state::{CommitState, HostState, ObserverBind};
+use super::state::{CommitState, HostState};
 use crate::pty::actor::{HandoffAckFault, PtyIoActorHandle};
+
+mod capture;
+
+use capture::{capture, CaptureSpec};
 
 /// Decision 10's budget, fixed when the attempt takes `upgrade_lock`.
 const BUDGET: Duration = Duration::from_secs(15);
@@ -178,7 +181,7 @@ fn upgrade_record(state: &HostState) -> Value {
 fn outcome_json(record: &UpgradeRecord) -> Option<Value> {
     let (outcome, reason, errno) = match record.outcome? {
         UpgradeOutcome::Succeeded => ("succeeded", None, None),
-        UpgradeOutcome::Fallback => ("fallback", None, None),
+        UpgradeOutcome::Fallback(reason) => ("fallback", Some(reason.as_str()), None),
         UpgradeOutcome::Refused => ("refused", None, None),
         UpgradeOutcome::Deferred(reason) => ("deferred", Some(reason.as_str()), None),
         UpgradeOutcome::Aborted(reason) => ("aborted", Some(reason.as_str()), None),
@@ -269,6 +272,8 @@ struct Faults {
     encode_error: Option<String>,
     soft_deadline_in_capture: bool,
     capture_cutoff_delay: Duration,
+    /// The state write job starts staging this long past the soft cutoff.
+    write_past_cutoff: Option<Duration>,
     soft_deadline_in_exec: bool,
     exec_error: bool,
     rollback_fail: Option<String>,
@@ -318,6 +323,9 @@ impl Faults {
             encode_error: pane("encode_error"),
             soft_deadline_in_capture: flag("soft_deadline_in_capture"),
             capture_cutoff_delay: ms("capture_cutoff_delay_ms", FAULT_DELAY_CAP),
+            write_past_cutoff: fault
+                .contains_key("write_past_cutoff_ms")
+                .then(|| ms("write_past_cutoff_ms", FAULT_DELAY_CAP)),
             soft_deadline_in_exec: flag("soft_deadline_in_exec"),
             exec_error: flag("exec_error"),
             rollback_fail: pane("rollback_fail"),
@@ -675,21 +683,42 @@ impl Attempt {
             return UpgradeOutcome::Aborted(reason);
         }
         let path = self.context().socket_dir.join(STATE_FILE);
-        let target = path.clone();
-        let written = tokio::task::spawn_blocking(move || write_state(&target, &handover)).await;
-        if !matches!(written, Ok(Ok(()))) {
-            return UpgradeOutcome::Aborted(UpgradeReason::StateWriteFailed);
-        }
-        // 1.4: exec only the bytes the probe accepted.
-        let verified = {
-            let pin = pin.clone();
-            tokio::task::spawn_blocking(move || pin.verify()).await
+        let mut written = {
+            let (target, pin) = (path.clone(), pin.clone());
+            let (write_past_cutoff, deadline_ns) =
+                (self.faults.write_past_cutoff, self.deadline_ns);
+            tokio::task::spawn_blocking(move || {
+                if let Some(past) = write_past_cutoff {
+                    std::thread::sleep(until_soft_cutoff(deadline_ns) + past);
+                }
+                let staged =
+                    stage_state(&target, &handover).map_err(|_| UpgradeReason::StateWriteFailed)?;
+                // 1.4: exec only the bytes the probe accepted.
+                pin.verify().map_err(|_| UpgradeReason::PinMismatch)?;
+                Ok(staged)
+            })
         };
-        if !matches!(verified, Ok(Ok(()))) {
-            return UpgradeOutcome::Aborted(UpgradeReason::PinMismatch);
-        }
+        // The write and pin check end at the soft cutoff, as capture does. A
+        // late job holds no lock and is left to finish: it only stages, under
+        // a name of its own that its dropped result removes. If an exec ends
+        // it first, the next image sweeps that file.
+        let staged =
+            match tokio::time::timeout(until_soft_cutoff(self.deadline_ns), &mut written).await {
+                Ok(Ok(Ok(staged))) => staged,
+                Ok(Ok(Err(reason))) => return UpgradeOutcome::Aborted(reason),
+                Ok(Err(_)) => return UpgradeOutcome::Aborted(UpgradeReason::StateWriteFailed),
+                Err(_) => {
+                    written.abort();
+                    return UpgradeOutcome::Aborted(UpgradeReason::SoftDeadline);
+                }
+            };
         if let Some(reason) = self.cutoff() {
             return UpgradeOutcome::Aborted(reason);
+        }
+        let target = path.clone();
+        let committed = tokio::task::spawn_blocking(move || commit_state(&staged, &target)).await;
+        if !matches!(committed, Ok(Ok(()))) {
+            return UpgradeOutcome::Aborted(UpgradeReason::StateWriteFailed);
         }
         tokio::time::sleep(self.faults.hold_before_exec).await;
 
@@ -838,159 +867,5 @@ fn resume(panes: &[(String, PtyIoActorHandle)], fail: Option<&str>) -> Vec<Strin
             .into_iter()
             .filter_map(|(id, join)| (!matches!(join.join(), Ok(true))).then(|| id.clone()))
             .collect()
-    })
-}
-
-struct CaptureSpec {
-    attempt: UpgradeAttempt,
-    deadline_ns: u64,
-    encode_error: Option<String>,
-    soft_deadline_in_capture: bool,
-    capture_cutoff_delay: Duration,
-}
-
-/// Step 5 on a blocking thread, under the `inner` lock then the events lock.
-/// Every master duplicate lands in `masters`, which closes it on rollback or
-/// when a panic unwinds.
-fn capture(
-    state: &HostState,
-    spec: CaptureSpec,
-    masters: &mut Vec<OwnedFd>,
-) -> Result<HandoverState, UpgradeReason> {
-    let context = state
-        .attempts
-        .context
-        .get()
-        .ok_or(UpgradeReason::CaptureFailed)?;
-    let inner = state.inner.blocking_lock();
-    if spec.soft_deadline_in_capture {
-        // Exercise a worker still running when the window's soft wait expires.
-        std::thread::sleep(
-            until_soft_cutoff(spec.deadline_ns)
-                + spec.capture_cutoff_delay.max(HANDOFF_ROLLBACK / 2),
-        );
-    }
-    let mut slots: Vec<_> = inner
-        .terminals
-        .values()
-        .filter_map(|slot| slot.child.as_ref().map(|child| (slot, child)))
-        .collect();
-    slots.sort_by(|(a, _), (b, _)| a.host_terminal_id.cmp(&b.host_terminal_id));
-    let failed = |_what: &str, _id: &str, _err: std::io::Error| UpgradeReason::CaptureFailed;
-    let mut panes = Vec::with_capacity(slots.len());
-    for (slot, child) in slots {
-        if until_soft_cutoff(spec.deadline_ns).is_zero() {
-            return Err(UpgradeReason::SoftDeadline);
-        }
-        let id = slot.host_terminal_id.as_str();
-        if spec.encode_error.as_deref() == Some(id) {
-            return Err(failed(
-                "encode",
-                id,
-                std::io::Error::other("injected encode error"),
-            ));
-        }
-        let (snapshot, core) = child
-            .runtime
-            .encode_handover()
-            .map_err(|err| failed("encode", id, err))?;
-        if until_soft_cutoff(spec.deadline_ns).is_zero() {
-            return Err(UpgradeReason::SoftDeadline);
-        }
-        let master_fd = child
-            .runtime
-            .duplicate_handoff_fd()
-            .map_err(|err| failed("master duplicate", id, err))?;
-        // SAFETY: the duplicate is new, and nothing else owns it.
-        masters.push(unsafe { OwnedFd::from_raw_fd(master_fd) });
-        let (_, _, pixel_width, pixel_height) = child.runtime.handover_size();
-        panes.push(CarriedPane {
-            host_terminal_id: slot.host_terminal_id.clone(),
-            terminal_id: slot.identity.terminal_id.clone(),
-            spawn_key: slot.identity.spawn_key.clone(),
-            master_fd,
-            pid: child.pid,
-            pgid: slot.pgid,
-            start_time: child.start_time,
-            title: slot.title.clone(),
-            rows: slot.rows,
-            cols: slot.cols,
-            pixel_width,
-            pixel_height,
-            last_seq: slot.last_seq,
-            fingerprint: slot.fingerprint,
-            observation_state: slot.observation_state,
-            observation_generation: slot.observation_generation,
-            observer_generation: slot.observer_generation,
-            written_bytes: slot.written_bytes,
-            dropped_bytes: slot.dropped_bytes,
-            total_bytes: slot.total_bytes,
-            truncated: slot.truncated,
-            input_grant: slot.input_grant.clone(),
-            locator: slot.locator.clone(),
-            reported_cwd: child.runtime.reported_cwd(),
-            reservation_id: slot.reservation_id.clone(),
-            reserve_key: slot.reserve_key.clone(),
-            reserve_generation: slot.reserve_generation,
-            // Attachments close at exec, so a bound observer is carried as
-            // entitled.
-            observer_bind: match &slot.observer_bind {
-                ObserverBind::None => CarriedObserverBind::None,
-                ObserverBind::Reserved {
-                    reservation_id,
-                    generation,
-                } => CarriedObserverBind::Reserved {
-                    reservation_id: reservation_id.clone(),
-                    generation: *generation,
-                },
-                ObserverBind::Bound {
-                    reservation_id,
-                    generation,
-                    ..
-                }
-                | ObserverBind::Entitled {
-                    reservation_id,
-                    generation,
-                } => CarriedObserverBind::Entitled {
-                    reservation_id: reservation_id.clone(),
-                    generation: *generation,
-                },
-            },
-            reservation: inner
-                .reservations
-                .get(&slot.reservation_id)
-                .map(|reservation| CarriedReservation {
-                    id: reservation.id.clone(),
-                    key: reservation.key.clone(),
-                    generation: reservation.generation,
-                    terminal_id: reservation.terminal_id.clone(),
-                    identity: reservation
-                        .identity
-                        .as_ref()
-                        .map(|identity| CarriedIdentity {
-                            terminal_id: identity.terminal_id.clone(),
-                            spawn_key: identity.spawn_key.clone(),
-                        }),
-                }),
-            exit: child.runtime.child_exit(),
-            snapshot_b64: encode_snapshot(&snapshot),
-            core,
-        });
-    }
-    Ok(HandoverState {
-        format_version: FORMAT_VERSION,
-        host_epoch: state.host_epoch.clone(),
-        generation: state.generation + 1,
-        host_pid: state.host_pid,
-        deadline_monotonic_ns: spec.deadline_ns,
-        attempt: spec.attempt,
-        previous_image: state.image.path.clone(),
-        argv: context.argv.clone(),
-        control_listener_fd: context.control_fd,
-        frames_listener_fd: context.frames_fd,
-        next_host_id: inner.next_host_id,
-        next_attachment: inner.next_attachment,
-        events: state.events.carried(),
-        panes,
     })
 }

@@ -13,7 +13,7 @@ use tracing::{info, warn};
 
 use super::{
     decode_snapshot, monotonic_now_ns, CarriedHost, CarriedObserverBind, CarriedPane,
-    HandoverState, UpgradeOutcome, UpgradeRecord,
+    HandoverState, RestoreFailure, UpgradeOutcome, UpgradeRecord,
 };
 use crate::host::events::HostEvents;
 use crate::host::spawn::PreparedChild;
@@ -41,14 +41,16 @@ pub(crate) struct PendingCommit {
 
 /// Verifies `state`, read from `path`, and builds every pane, listener, and
 /// registry record on duplicates. Nothing reads, reaps, or accepts yet.
+/// `resumed_from` names the failure a fallback takes over from.
 pub(crate) fn stage(
     state: HandoverState,
     path: &Path,
     pid_file: &Path,
     scrollback_limit_bytes: usize,
     event_queue_bytes: usize,
-    fallback: bool,
+    resumed_from: Option<RestoreFailure>,
 ) -> io::Result<Staged> {
+    let fallback = resumed_from.is_some();
     verify(&state, pid_file)?;
     let control = listener(state.control_listener_fd)?;
     let frames = listener(state.frames_listener_fd)?;
@@ -100,11 +102,7 @@ pub(crate) fn stage(
             path: path.to_path_buf(),
             exits,
             originals,
-            outcome: if fallback {
-                UpgradeOutcome::Fallback
-            } else {
-                UpgradeOutcome::Succeeded
-            },
+            outcome: resumed_from.map_or(UpgradeOutcome::Succeeded, UpgradeOutcome::Fallback),
         },
     })
 }

@@ -156,20 +156,11 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
         ProjectIndexScope::Single => {
             db::list_indexed_file_paths(&mut conn, &ctx.project_id, &ctx.machine_id)?
         }
-        ProjectIndexScope::Overlay {
-            parent_project_id, ..
-        } => {
-            // The overlay serves parent rows for every path it does not shadow,
-            // so a parent index newer than the overlay's own changes what the
-            // overlay reads without touching a worktree mtime.
-            let parent_indexed_at =
-                project_last_indexed_at(&mut conn, &machine_id, parent_project_id)?;
-            if parent_indexed_at.is_some_and(|parent| parent > last_indexed_at) {
-                return Ok(true);
-            }
-            // Overlay rows plus the parent rows they do not shadow. Tombstoned
-            // paths drop out: a file deleted in the worktree is known-absent,
-            // and one that reappears reads as new.
+        ProjectIndexScope::Overlay { .. } => {
+            // Overlay rows plus the pins they do not shadow. The parent's index
+            // time does not change what the overlay serves, so it does not gate
+            // freshness. Tombstoned paths drop out: a file deleted in the
+            // worktree is known-absent, and one that reappears reads as new.
             visibility::visible_tree(&mut conn, ctx)?
                 .into_iter()
                 .map(|file| file.file_path)
@@ -234,9 +225,7 @@ fn overlay_served_content_hash(
     file_path: &str,
 ) -> anyhow::Result<Option<String>> {
     let ProjectIndexScope::Overlay {
-        overlay_project_id,
-        parent_project_id,
-        ..
+        overlay_project_id, ..
     } = &ctx.index_scope
     else {
         return Ok(None);
@@ -244,52 +233,20 @@ fn overlay_served_content_hash(
     let Some(machine_id) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
         return Ok(None);
     };
-    let (Some(overlay_project_id), Some(parent_project_id)) = (
-        visibility::project_uuid_or_invisible(overlay_project_id),
-        visibility::project_uuid_or_invisible(parent_project_id),
-    ) else {
+    let Some(overlay_project_id) = visibility::project_uuid_or_invisible(overlay_project_id) else {
         return Ok(None);
     };
+    // The selectors visibility reads: the overlay's own rows, then the pins for
+    // paths it does not shadow. Parent rows never serve.
+    let selectors = visibility::file_selectors_sql("$1", "$2", true);
     let row = conn.query_opt(
-        "SELECT served.content_hash
-         FROM (
-            SELECT ofs.content_hash, 0 AS origin
-            FROM code_indexed_file_states ofs
-            JOIN code_indexed_files of
-              ON of.project_id = ofs.project_id
-             AND of.file_path = ofs.file_path
-             AND of.content_hash = ofs.content_hash
-            WHERE ofs.machine_id = $1
-              AND ofs.project_id = $2
-              AND ofs.file_path = $4
-              AND of.language != $5
-            UNION ALL
-            SELECT pfs.content_hash, 1 AS origin
-            FROM code_indexed_file_states pfs
-            JOIN code_indexed_files pf
-              ON pf.project_id = pfs.project_id
-             AND pf.file_path = pfs.file_path
-             AND pf.content_hash = pfs.content_hash
-            WHERE pfs.machine_id = $1
-              AND pfs.project_id = $3
-              AND pfs.file_path = $4
-              AND pf.language != $5
-              AND NOT EXISTS (
-                  SELECT 1 FROM code_indexed_file_states shadow
-                  WHERE shadow.machine_id = $1
-                    AND shadow.project_id = $2
-                    AND shadow.file_path = pfs.file_path
-              )
-         ) served
-         ORDER BY served.origin
-         LIMIT 1",
-        &[
-            &machine_id,
-            &overlay_project_id,
-            &parent_project_id,
-            &file_path,
-            &visibility::TOMBSTONE_LANGUAGE,
-        ],
+        &format!(
+            "SELECT served.content_hash
+             FROM ({selectors}) AS served
+             WHERE served.file_path = $3
+             LIMIT 1"
+        ),
+        &[&machine_id, &overlay_project_id, &file_path],
     )?;
     Ok(row.map(|row| row.try_get::<_, String>(0)).transpose()?)
 }

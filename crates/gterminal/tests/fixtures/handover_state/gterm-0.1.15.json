@@ -1,0 +1,133 @@
+{
+  "argv": [
+    "gterm",
+    "host"
+  ],
+  "attempt": {
+    "attempt_id": "attempt-1",
+    "candidate_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "previous_sha256": "pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+  },
+  "control_listener_fd": 7,
+  "deadline_monotonic_ns": 1000000000000,
+  "events": {
+    "cursor": 7,
+    "ring": [
+      {
+        "epoch": "epoch-1",
+        "event": "terminal_exited",
+        "seq": 6
+      },
+      {
+        "epoch": "epoch-1",
+        "event": "terminal_exited",
+        "seq": 7
+      }
+    ]
+  },
+  "format_version": 1,
+  "frames_listener_fd": 8,
+  "generation": 3,
+  "host_epoch": "epoch-1",
+  "host_pid": 4242,
+  "next_host_id": 42,
+  "panes": [
+    {
+      "cols": 80,
+      "core": {
+        "agent_osc_state": {
+          "collector": {
+            "body": [],
+            "state": "Ground"
+          },
+          "latest_progress": null,
+          "latest_title": null,
+          "terminal_title": null
+        },
+        "child_default_background_changed": false,
+        "child_default_foreground_changed": false,
+        "decscusr_tracker": {
+          "cursor_shape_overridden": false,
+          "state": "Ground"
+        },
+        "default_color_event_tracker": {
+          "body": [],
+          "state": "Ground"
+        },
+        "default_color_tracker": {
+          "body": [],
+          "state": "Ground"
+        },
+        "host_color_scheme": null,
+        "host_terminal_theme": {
+          "background": null,
+          "foreground": null,
+          "palette": []
+        },
+        "initial_default_background": {
+          "b": 0,
+          "g": 0,
+          "r": 0
+        },
+        "initial_default_foreground": {
+          "b": 255,
+          "g": 255,
+          "r": 255
+        },
+        "kitty_keyboard": {
+          "flags": 0,
+          "pending": [],
+          "stack": []
+        },
+        "transient_default_color_owner_pgid": null
+      },
+      "dropped_bytes": 1,
+      "exit": {
+        "exit_code": 0,
+        "signal": null
+      },
+      "fingerprint": 5,
+      "host_terminal_id": "ht-17",
+      "input_grant": "att-1",
+      "last_seq": 9,
+      "locator": null,
+      "master_fd": 11,
+      "observation_generation": 2,
+      "observation_state": "live",
+      "observer_bind": {
+        "generation": 2,
+        "reservation_id": "res-17",
+        "state": "entitled"
+      },
+      "observer_generation": 4,
+      "pgid": 4242,
+      "pid": 4242,
+      "pixel_height": 480,
+      "pixel_width": 640,
+      "reported_cwd": "/tmp",
+      "reservation": {
+        "generation": 2,
+        "id": "res-17",
+        "identity": {
+          "spawn_key": "spawn-17",
+          "terminal_id": "term-17"
+        },
+        "key": "key-17",
+        "terminal_id": "term-17"
+      },
+      "reservation_id": "res-17",
+      "reserve_generation": 2,
+      "reserve_key": "key-17",
+      "rows": 24,
+      "snapshot_b64": "R0hPU1RTTlABAAEAmQMAAGS6/nNQABgAAAAAAAAAAAAAABcAAABPAAAAAAEAbgAAAAEBAQEAAAAACAAEIgBkQAAAAAQiAGQAAAAABCIAZEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAP//////////AAEBAQEBAQEBAR0fIcxmZrW9aPDGdIGivrKUu4q+t8XIxmZmZtVOU7nKSufFR3qm2sOX2HDAserq6gAAAAAAXwAAhwAArwAA1wAA/wBfAABfXwBfhwBfrwBf1wBf/wCHAACHXwCHhwCHrwCH1wCH/wCvAACvXwCvhwCvrwCv1wCv/wDXAADXXwDXhwDXrwDX1wDX/wD/AAD/XwD/hwD/rwD/1wD//18AAF8AX18Ah18Ar18A118A/19fAF9fX19fh19fr19f119f/1+HAF+HX1+Hh1+Hr1+H11+H/1+vAF+vX1+vh1+vr1+v11+v/1/XAF/XX1/Xh1/Xr1/X11/X/1//AF//X1//h1//r1//11///4cAAIcAX4cAh4cAr4cA14cA/4dfAIdfX4dfh4dfr4df14df/4eHAIeHX4eHh4eHr4eH14eH/4evAIevX4evh4evr4ev14ev/4fXAIfXX4fXh4fXr4fX14fX/4f/AIf/X4f/h4f/r4f/14f//68AAK8AX68Ah68Ar68A168A/69fAK9fX69fh69fr69f169f/6+HAK+HX6+Hh6+Hr6+H16+H/6+vAK+vX6+vh6+vr6+v16+v/6/XAK/XX6/Xh6/Xr6/X16/X/6//AK//X6//h6//r6//16///9cAANcAX9cAh9cAr9cA19cA/9dfANdfX9dfh9dfr9df19df/9eHANeHX9eHh9eHr9eH19eH/9evANevX9evh9evr9ev19ev/9fXANfXX9fXh9fXr9fX19fX/9f/ANf/X9f/h9f/r9f/19f///8AAP8AX/8Ah/8Ar/8A1/8A//9fAP9fX/9fh/9fr/9f1/9f//+HAP+HX/+Hh/+Hr/+H1/+H//+vAP+vX/+vh/+vr/+v1/+v///XAP/XX//Xh//Xr//X1//X////AP//X///h///r///1////wgICBISEhwcHCYmJjAwMDo6OkRERE5OTlhYWGJiYmxsbHZ2doCAgIqKipSUlJ6enqioqLKysry8vMbGxtDQ0Nra2uTk5O7u7gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACADYAAAB7ZgmSAAABAAAAAAAAAAAAAAABAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAwBuAAAAkfZwA1AAGAAAAAAAgADAAAAgAAAACAAAAA4AZml4dHVyZS1zY3JlZW4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABwAAAAAAJ4Bj0QUAAAAAAOQg7woEAAYAAAChEYpeAAAAAAAABgAAAAAAPutTPg==",
+      "spawn_key": "spawn-17",
+      "start_time": 12.5,
+      "terminal_id": "term-17",
+      "title": "agent",
+      "total_bytes": 11,
+      "truncated": false,
+      "written_bytes": 10
+    }
+  ],
+  "previous_image": "/nonexistent/gterm-previous"
+}
