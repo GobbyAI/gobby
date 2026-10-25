@@ -1533,3 +1533,668 @@ startup and existing selection/override policy. Both findings were accepted;
 no disagreement, unresolved decision or remaining finding remains. Fresh
 project-aware base validation passed. Manifest derivation and operator approval
 remain subsequent gates; no implementation or expansion is authorized here.
+
+2026-10-24 — Plan Writer gobby#17576 and Plan Adversary gobby#17577 renewed
+consensus on 4371f5dde6d1ac745e73c021f4ae6f8ff08bc979 after the
+Orchestrator's revision request. The delegated ledger status, backend-unavailable
+wording, verification separation, scoped pin criterion, naming-switch cleanup,
+source-identity evidence and complete MCP-contract test target are resolved.
+The new 6.0 admits exactly nine Skills GET and eleven mutation rows through
+#24659's one verifier, preserving ordinary and managed cookie classes, selector
+and loopback restrictions, current credentialed CORS, and the cookie proxy
+remainder. The Orchestrator's persisted security-review label check gates
+dispatch; Security approval for the exact SHA gates cookie activation. No
+remaining finding, disagreement or unresolved decision remains. Base validation
+passed; the superseded M1 was withdrawn whole for fresh derivation. Coordinator
+review and Josh approval remain required before expansion, and the planning
+task stays claimed/open until that approval.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Executable 54-row characterization corpus
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.1.1: Corpus inventory equals the exact 54-key ledger predicate,
+    and every key has a success and representative validation/failure case; non-Skills
+    keys are rejected. test: `tests/contracts/test_skills_parity_corpus.py::test_inventory_matches_skills_ledger`.
+
+    0.1.2: Running the collector twice against reset isolated state gives the same
+    normalized fixtures, schemas, ordering, stdout/stderr, exit codes, and side-effect
+    assertions. test: `tests/contracts/test_skills_parity_corpus.py::test_collection_is_reproducible`.
+
+    0.1.3: Safety fixtures cover all 39 effective rules, safe near-matches, companion
+    files with arbitrary text extensions, POST versus postgres, and unavailable/erroring
+    scanners. file: `crates/gskills/tests/fixtures/safety.json`.
+
+    0.1.4: For each of the 20 HTTP rows, the corpus records ordinary and managed browser-cookie
+    admission, body/query/header selector effects, missing/invalid credentials, cookie
+    GET and mutation outcomes, and observed credentialed CORS and preflight behavior.
+    Managed-cookie loopback and safe-method restrictions remain distinct from ordinary
+    sessions. test: `tests/contracts/test_skills_parity_corpus.py::test_http_cookie_admission_matrix`.'
+  labels:
+  - covers:gdaemon-skills-family:0.1:0.1.1
+  - covers:gdaemon-skills-family:0.1:0.1.2
+  - covers:gdaemon-skills-family:0.1:0.1.3
+  - covers:gdaemon-skills-family:0.1:0.1.4
+  tdd: false
+  source_section: '0.1'
+  assigned_agent: developer
+- title: Native scoped repository and HTTP reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '1.1.1: `HTTP GET /api/skills` matches scoped list/filter/order
+    and response parity. test: `crates/gskills/tests/registry.rs::list_matches_python`.
+
+    1.1.2: `HTTP GET /api/skills/{skill_id}` matches identity, not-found and deleted-row
+    visibility. test: `crates/gskills/tests/registry.rs::get_matches_python`.
+
+    1.1.3: `HTTP GET /api/skills/stats` preserves counts, usage and filters. test:
+    `crates/gskills/tests/registry.rs::stats_matches_python`.
+
+    1.1.4: Project, installed and template precedence, same-name conflicts, disabled
+    skills, empty sets and transaction failures match Python; a node constructs no
+    pool or registry. test: `crates/gskills/tests/registry.rs::scope_and_authority_match_python`.'
+  labels:
+  - covers:gdaemon-skills-family:1.1:1.1.1
+  - covers:gdaemon-skills-family:1.1:1.1.2
+  - covers:gdaemon-skills-family:1.1:1.1.3
+  - covers:gdaemon-skills-family:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Atomic registry lifecycle and notifications
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `HTTP POST /api/skills` preserves create validation
+    and results. test: `crates/gskills/tests/lifecycle.rs::create_matches_python`.
+
+    1.2.2: `HTTP PUT /api/skills/{skill_id}` preserves partial updates, metadata/null
+    distinctions and bundled restrictions. test: `crates/gskills/tests/lifecycle.rs::update_matches_python`.
+
+    1.2.3: `HTTP DELETE /api/skills/{skill_id}` preserves soft deletion and companion-file
+    atomicity. test: `crates/gskills/tests/lifecycle.rs::delete_matches_python`.
+
+    1.2.4: `HTTP POST /api/skills/{skill_id}/restore` restores the complete record
+    with conflict/error parity. test: `crates/gskills/tests/lifecycle.rs::restore_matches_python`.
+
+    1.2.5: `HTTP POST /api/skills/{skill_id}/move-to-project` preserves target validation
+    and collision rollback. test: `crates/gskills/tests/lifecycle.rs::move_project_matches_python`.
+
+    1.2.6: `HTTP POST /api/skills/{skill_id}/move-to-installed` preserves scope transfer
+    and collisions. test: `crates/gskills/tests/lifecycle.rs::move_installed_matches_python`.
+
+    1.2.7: Fault injection proves rollback publishes no event; successful writes publish
+    one existing event and invalidate search once. test: `crates/gskills/tests/lifecycle.rs::commit_controls_notifications`.'
+  labels:
+  - covers:gdaemon-skills-family:1.2:1.2.1
+  - covers:gdaemon-skills-family:1.2:1.2.2
+  - covers:gdaemon-skills-family:1.2:1.2.3
+  - covers:gdaemon-skills-family:1.2:1.2.4
+  - covers:gdaemon-skills-family:1.2:1.2.5
+  - covers:gdaemon-skills-family:1.2:1.2.6
+  - covers:gdaemon-skills-family:1.2:1.2.7
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Bounded skill parsing and validation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: Valid/invalid frontmatter, YAML scalars, CRLF, missing
+    separators, audience/levels/runtime metadata and validation warnings match the
+    frozen corpus. test: `crates/gskills/tests/parser.rs::parser_and_validator_match_python`.
+
+    1.3.2: Byte, alias, recursion, name and metadata limits reject before unbounded
+    expansion and preserve structured failures. test: `crates/gskills/tests/parser.rs::hostile_inputs_are_bounded`.'
+  labels:
+  - covers:gdaemon-skills-family:1.3:1.3.1
+  - covers:gdaemon-skills-family:1.3:1.3.2
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Native safety scanner and scan route
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: `HTTP POST /api/skills/scan` returns matching findings,
+    severity, category, remediation, location and safe/unsafe decisions, with only
+    elapsed duration normalized. test: `crates/gskills/tests/scanner.rs::scan_route_matches_python`.
+
+    1.4.2: Every effective rule and safe near-match passes the committed scanner corpus,
+    including arbitrary-extension companions and postgres. test: `crates/gskills/tests/scanner.rs::all_effective_rules_match_python`.
+
+    1.4.3: Missing/invalid rules, exhausted matching budgets and evaluator errors
+    fail closed on external install and serve; local behavior is explicit. test: `crates/gskills/tests/scanner.rs::scanner_failures_never_become_safe`.'
+  labels:
+  - covers:gdaemon-skills-family:1.4:1.4.1
+  - covers:gdaemon-skills-family:1.4:1.4.2
+  - covers:gdaemon-skills-family:1.4:1.4.3
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Companion-file snapshots and HTTP file operations
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '1.5.1: `HTTP GET /api/skills/{skill_id}/files` matches filters,
+    ordering and paging. test: `crates/gskills/tests/files.rs::list_files_matches_python`.
+
+    1.5.2: `HTTP GET /api/skills/{skill_id}/files/{file_path:path}` matches content
+    and missing/path errors. test: `crates/gskills/tests/files.rs::read_file_matches_python`.
+
+    1.5.3: `HTTP PUT /api/skills/{skill_id}/files/{file_path:path}` matches update
+    semantics, limits and invalidation. test: `crates/gskills/tests/files.rs::write_file_matches_python`.
+
+    1.5.4: `HTTP GET /api/skills/{skill_id}/export` preserves the full export payload.
+    test: `crates/gskills/tests/files.rs::export_matches_python`.
+
+    1.5.5: Concurrent edits cannot mix versions in a snapshot; traversal, invalid
+    prefixes, oversized paths and deleted parents fail safely. test: `crates/gskills/tests/files.rs::snapshots_are_atomic_and_scoped`.'
+  labels:
+  - covers:gdaemon-skills-family:1.5:1.5.1
+  - covers:gdaemon-skills-family:1.5:1.5.2
+  - covers:gdaemon-skills-family:1.5:1.5.3
+  - covers:gdaemon-skills-family:1.5:1.5.4
+  - covers:gdaemon-skills-family:1.5:1.5.5
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Paged instruction delivery and completed-load state
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.5'
+  validation_criteria: '1.6.1: Full/brief entrypoint and reference streams reconstruct
+    exact snapshot content within every serialized response budget. test: `crates/gskills/tests/delivery.rs::pages_reconstruct_exact_content`.
+
+    1.6.2: Cursor-only requests, stale and invalid cursors, Unicode and content edits
+    match Python. test: `crates/gskills/tests/delivery.rs::cursor_contract_matches_python`.
+
+    1.6.3: Only final successful pages record ordered, deduplicated load identities
+    and effective levels; references have separate tracking and context reset requires
+    a fresh load. test: `crates/gskills/tests/delivery.rs::completion_controls_load_tracking`.
+
+    1.6.4: Unsafe entrypoint/reference content and scanner failures deliver no instruction
+    body or completed-load side effect. test: `crates/gskills/tests/delivery.rs::serve_scan_precedes_delivery`.'
+  labels:
+  - covers:gdaemon-skills-family:1.6:1.6.1
+  - covers:gdaemon-skills-family:1.6:1.6.2
+  - covers:gdaemon-skills-family:1.6:1.6.3
+  - covers:gdaemon-skills-family:1.6:1.6.4
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: Search, list projection and index freshness
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.6'
+  validation_criteria: '1.7.1: `HTTP GET /api/skills/search` matches keyword/hybrid
+    modes, filters, ordering, empty results and errors. test: `crates/gskills/tests/search.rs::http_search_matches_python`.
+
+    1.7.2: Native list/search projections preserve audience, capability, enabled/scope/category/tag
+    filters, brief metadata, top-k and fallback explanations. test: `crates/gskills/tests/search.rs::projections_and_ranking_match_python`.
+
+    1.7.3: Create/update/delete/move/restore, independent DB writers, concurrent search
+    and restart do not serve a stale scope or resurrect a deleted result. test: `crates/gskills/tests/search.rs::index_freshness_survives_mutation_and_restart`.'
+  labels:
+  - covers:gdaemon-skills-family:1.7:1.7.1
+  - covers:gdaemon-skills-family:1.7:1.7.2
+  - covers:gdaemon-skills-family:1.7:1.7.3
+  tdd: true
+  source_section: '1.7'
+  implementation_domain: backend
+- title: Native node-local skill filesystem boundary
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.7'
+  validation_criteria: '2.1.1: Standalone and hub/node local snapshot/scaffold/document
+    effects execute on the intended machine with no hub datastore credential on nodes.
+    test: `crates/gdaemon/tests/skills_node.rs::effects_are_machine_scoped`.
+
+    2.1.2: Wrong machine/project, disconnected nodes, timeout, malformed payloads,
+    symlink escapes and oversized reads return typed failures without a hub-local
+    fallback or automatic replay of writes. test: `crates/gdaemon/tests/skills_node.rs::invalid_effects_fail_closed`.
+
+    2.1.3: The protocol split preserves existing wire fixtures and public type consumers,
+    and every affected production file stays below 1,000 lines. test: `crates/gdaemon/tests/skills_node.rs::protocol_extension_preserves_existing_commands`.
+
+    2.1.4: Caller drop and timeout cancel a held node effect over a healthy connection;
+    expired commands, duplicate cancellation, late replies and disconnect/reconnect
+    preserve connection/request ownership and drain work. test: `crates/gdaemon/tests/skills_node.rs::remote_effect_lifetime_is_bounded`.'
+  labels:
+  - covers:gdaemon-skills-family:2.1:2.1.1
+  - covers:gdaemon-skills-family:2.1:2.1.2
+  - covers:gdaemon-skills-family:2.1:2.1.3
+  - covers:gdaemon-skills-family:2.1:2.1.4
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Bounded GitHub and ZIP source loading
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Explicit/implicit GitHub forms, revisions/subpaths,
+    local precedence, binary/companion selection and untrusted metadata match Python.
+    test: `crates/gskills/tests/sources.rs::github_and_source_resolution_match_python`.
+
+    2.2.2: ZIP contents and failures match the corpus, including decompression bombs,
+    traversal, links, malformed archives, limits and cleanup. test: `crates/gskills/tests/sources.rs::zip_inputs_are_bounded_and_equivalent`.'
+  labels:
+  - covers:gdaemon-skills-family:2.2:2.2.1
+  - covers:gdaemon-skills-family:2.2:2.2.2
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Native API hub providers
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: `HTTP GET /api/skills/hubs` matches configured hub
+    names, types and auth status without secrets. test: `crates/gskills/tests/hubs_api.rs::list_hubs_matches_python`.
+
+    2.3.2: Clawdhub and SkillsMP query/download behavior matches fixture requests
+    and responses, including auth, timeout, rate-limit, malformed and oversized payload
+    failures. test: `crates/gskills/tests/hubs_api.rs::api_providers_match_python`.'
+  labels:
+  - covers:gdaemon-skills-family:2.3:2.3.1
+  - covers:gdaemon-skills-family:2.3:2.3.2
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: GitHub collection, topic and Claude-plugin hubs
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: Collection, topic and Claude-plugin discovery/downloads
+    preserve source IDs, paths, descriptions, metadata, authentication and bounds.
+    test: `crates/gskills/tests/hubs_github.rs::repository_providers_match_python`.
+
+    2.4.2: `HTTP GET /api/skills/hubs/search` preserves single/all-hub search, result
+    limits, ordering and partial-error handling. test: `crates/gskills/tests/hubs_github.rs::combined_hub_search_matches_python`.
+
+    2.4.3: Description generation and unavailable-generation behavior match the current
+    configured contract; cache expiry and config changes refresh results. test: `crates/gskills/tests/hubs_github.rs::descriptions_and_cache_match_python`.'
+  labels:
+  - covers:gdaemon-skills-family:2.4:2.4.1
+  - covers:gdaemon-skills-family:2.4:2.4.2
+  - covers:gdaemon-skills-family:2.4:2.4.3
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Scanned installation and source updates
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: `HTTP POST /api/skills/import` matches local/GitHub/ZIP
+    resolution, validation, full-surface scanning and transactional results. test:
+    `crates/gskills/tests/install.rs::http_import_matches_python`.
+
+    2.5.2: `HTTP POST /api/skills/hubs/install` matches source retrieval, auth, scan
+    failures and installed metadata/files. test: `crates/gskills/tests/install.rs::http_hub_install_matches_python`.
+
+    2.5.3: Install/update/update-all preserve provenance, changed/unchanged outcomes
+    and rollback across failures and concurrent source changes. test: `crates/gskills/tests/install.rs::updates_are_atomic_and_scanned`.'
+  labels:
+  - covers:gdaemon-skills-family:2.5:2.5.1
+  - covers:gdaemon-skills-family:2.5:2.5.2
+  - covers:gdaemon-skills-family:2.5:2.5.3
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Native bundled synchronization and default restoration
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '2.6.1: `HTTP POST /api/skills/restore-defaults` matches counts,
+    template content, companion restoration and override preservation. test: `crates/gskills/tests/bundled.rs::restore_defaults_matches_python`.
+
+    2.6.2: Repeated synchronization is idempotent; asset hashes equal bundled sources,
+    and configured bundled-size violations fail visibly. test: `crates/gskills/tests/bundled.rs::bundled_asset_and_sync_are_current`.
+
+    2.6.3: Native dev startup synchronizes once before serving or launching Python;
+    repeated startup is idempotent, dirty/unreadable inputs refuse before writes,
+    the exact existing override is honored, and non-dev/node startup writes no bundled
+    rows. Installed overrides remain intact. test: `crates/gdaemon/tests/skills_startup.rs::startup_policy_preserves_single_publisher`.
+
+    2.6.4: A fresh non-dev installation and explicit sync/reinstall seed native rows
+    through the private command with no running daemon/Python backend; only/skip_types,
+    counts, warnings/errors and database identity are preserved, delegation cannot
+    recurse, and missing binaries fail without a second publisher. test: `tests/skills/test_native_sync.py::test_explicit_aggregation_delegates_skills_once`.'
+  labels:
+  - covers:gdaemon-skills-family:2.6:2.6.1
+  - covers:gdaemon-skills-family:2.6:2.6.2
+  - covers:gdaemon-skills-family:2.6:2.6.3
+  - covers:gdaemon-skills-family:2.6:2.6.4
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Owned, atomic script-generation publication
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.6'
+  validation_criteria: '3.1.1: Cold/warm publication, changed companions, simultaneous
+    callers, ownership checks and returned script paths match Python. test: `crates/gskills/tests/materialize.rs::generation_publication_matches_python`.
+
+    3.1.2: Crash/cancellation checkpoints, stale stages, live process owners, symlinks
+    and tombstones preserve complete generations and unrelated data. test: `crates/gskills/tests/materialize.rs::publication_failure_preserves_ownership`.'
+  labels:
+  - covers:gdaemon-skills-family:3.1:3.1.1
+  - covers:gdaemon-skills-family:3.1:3.1.2
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Dependency and browser runtime readiness
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Ready/missing/old Node, lock changes, dependency failures
+    and browser cache state produce matching readiness, warnings and environment.
+    test: `crates/gskills/tests/runtime.rs::runtime_readiness_matches_python`.
+
+    3.2.2: Timeout, disconnect and cancellation leave no owned child running, no false
+    readiness marker, and a reusable prior complete generation. test: `crates/gskills/tests/runtime.rs::runtime_failures_drain_owned_processes`.
+
+    3.2.3: With the hub/node channel healthy and a fake npm/browser child blocked,
+    cancellation or timeout of the hub caller cancels/drains that child before acknowledgement;
+    a following request succeeds. Disconnect/reconnect, duplicate cancel and cancellation-delivery
+    failure are separately exercised, with deadline enforcement and explicit unconfirmed-cleanup
+    diagnostics. test: `crates/gdaemon/tests/skills_runtime_cancellation.rs::hub_cancellation_drains_remote_runtime`.'
+  labels:
+  - covers:gdaemon-skills-family:3.2:3.2.1
+  - covers:gdaemon-skills-family:3.2:3.2.2
+  - covers:gdaemon-skills-family:3.2:3.2.3
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Skills descriptor, schemas and MCP behavior
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '4.1.1: `MCP gobby-skills:get_skill` matches the frozen paged/level/scan
+    and tracking contract. test: `crates/gskills/tests/mcp.rs::get_skill_matches_python`.
+
+    4.1.2: `MCP gobby-skills:get_skill_file` matches reference pages and tracking.
+    test: `crates/gskills/tests/mcp.rs::get_skill_file_matches_python`.
+
+    4.1.3: `MCP gobby-skills:get_skill_files` matches the bounded file manifest contract.
+    test: `crates/gskills/tests/mcp.rs::get_skill_files_matches_python`.
+
+    4.1.4: `MCP gobby-skills:install_skill` matches scanned installation. test: `crates/gskills/tests/mcp.rs::install_skill_matches_python`.
+
+    4.1.5: `MCP gobby-skills:list_hubs` matches hub/auth projection. test: `crates/gskills/tests/mcp.rs::list_hubs_matches_python`.
+
+    4.1.6: `MCP gobby-skills:list_skills` matches filters and brief/full projection.
+    test: `crates/gskills/tests/mcp.rs::list_skills_matches_python`.
+
+    4.1.7: `MCP gobby-skills:materialize_skill_scripts` matches machine-local paths,
+    readiness and environment. test: `crates/gskills/tests/mcp.rs::materialize_matches_python`.
+
+    4.1.8: `MCP gobby-skills:move_skill_to_installed` preserves scope and collisions.
+    test: `crates/gskills/tests/mcp.rs::move_installed_matches_python`.
+
+    4.1.9: `MCP gobby-skills:move_skill_to_project` preserves target scope and validation.
+    test: `crates/gskills/tests/mcp.rs::move_project_matches_python`.
+
+    4.1.10: `MCP gobby-skills:remove_skill` preserves deletion/errors. test: `crates/gskills/tests/mcp.rs::remove_matches_python`.
+
+    4.1.11: `MCP gobby-skills:restore_skill` preserves restoration/errors. test: `crates/gskills/tests/mcp.rs::restore_matches_python`.
+
+    4.1.12: `MCP gobby-skills:search_hub` preserves provider search/errors. test:
+    `crates/gskills/tests/mcp.rs::search_hub_matches_python`.
+
+    4.1.13: `MCP gobby-skills:search_skills` preserves ranking and selection. test:
+    `crates/gskills/tests/mcp.rs::search_skills_matches_python`.
+
+    4.1.14: `MCP gobby-skills:update_skill` preserves source update/rollback. test:
+    `crates/gskills/tests/mcp.rs::update_matches_python`.
+
+    4.1.15: Tool inventory, descriptions, schemas, definition hashes, classifications
+    and structured failures match the frozen Python contract; malformed arguments
+    execute no service call. test: `crates/gskills/tests/mcp.rs::catalog_and_validation_match_python`.'
+  labels:
+  - covers:gdaemon-skills-family:4.1:4.1.1
+  - covers:gdaemon-skills-family:4.1:4.1.2
+  - covers:gdaemon-skills-family:4.1:4.1.3
+  - covers:gdaemon-skills-family:4.1:4.1.4
+  - covers:gdaemon-skills-family:4.1:4.1.5
+  - covers:gdaemon-skills-family:4.1:4.1.6
+  - covers:gdaemon-skills-family:4.1:4.1.7
+  - covers:gdaemon-skills-family:4.1:4.1.8
+  - covers:gdaemon-skills-family:4.1:4.1.9
+  - covers:gdaemon-skills-family:4.1:4.1.10
+  - covers:gdaemon-skills-family:4.1:4.1.11
+  - covers:gdaemon-skills-family:4.1:4.1.12
+  - covers:gdaemon-skills-family:4.1:4.1.13
+  - covers:gdaemon-skills-family:4.1:4.1.14
+  - covers:gdaemon-skills-family:4.1:4.1.15
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Native command tree and registry commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '5.1.1: `CLI gobby skills` matches group help and argument
+    dispatch. test: `crates/gskills/tests/cli_registry.rs::skills_group_matches_python`.
+
+    5.1.2: `CLI gobby skills meta` matches metadata group behavior. test: `crates/gskills/tests/cli_registry.rs::meta_group_matches_python`.
+
+    5.1.3: `CLI gobby skills list` matches output, scope/filter flags and offline
+    authority behavior. test: `crates/gskills/tests/cli_registry.rs::list_matches_python`.
+
+    5.1.4: `CLI gobby skills show` matches text/JSON/error output. test: `crates/gskills/tests/cli_registry.rs::show_matches_python`.
+
+    5.1.5: `CLI gobby skills enable` matches persisted state and errors. test: `crates/gskills/tests/cli_registry.rs::enable_matches_python`.
+
+    5.1.6: `CLI gobby skills disable` matches persisted state and errors. test: `crates/gskills/tests/cli_registry.rs::disable_matches_python`.
+
+    5.1.7: `CLI gobby skills meta get` matches dotted lookup and output. test: `crates/gskills/tests/cli_registry.rs::meta_get_matches_python`.
+
+    5.1.8: `CLI gobby skills meta set` matches JSON/scalar coercion and writes. test:
+    `crates/gskills/tests/cli_registry.rs::meta_set_matches_python`.
+
+    5.1.9: `CLI gobby skills meta unset` matches missing-key and persistence behavior.
+    test: `crates/gskills/tests/cli_registry.rs::meta_unset_matches_python`.'
+  labels:
+  - covers:gdaemon-skills-family:5.1:5.1.1
+  - covers:gdaemon-skills-family:5.1:5.1.2
+  - covers:gdaemon-skills-family:5.1:5.1.3
+  - covers:gdaemon-skills-family:5.1:5.1.4
+  - covers:gdaemon-skills-family:5.1:5.1.5
+  - covers:gdaemon-skills-family:5.1:5.1.6
+  - covers:gdaemon-skills-family:5.1:5.1.7
+  - covers:gdaemon-skills-family:5.1:5.1.8
+  - covers:gdaemon-skills-family:5.1:5.1.9
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Native source and authoring CLI commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: `CLI gobby skills install` matches flags, source outcomes
+    and failure output. test: `crates/gskills/tests/cli_sources.rs::install_matches_python`.
+
+    5.2.2: `CLI gobby skills remove` matches deletion/error output. test: `crates/gskills/tests/cli_sources.rs::remove_matches_python`.
+
+    5.2.3: `CLI gobby skills update` matches one/all behavior and partial failure.
+    test: `crates/gskills/tests/cli_sources.rs::update_matches_python`.
+
+    5.2.4: `CLI gobby skills validate` matches validation warnings/errors, JSON and
+    exits. test: `crates/gskills/tests/cli_sources.rs::validate_matches_python`.
+
+    5.2.5: `CLI gobby skills init` matches idempotent scaffold behavior. test: `crates/gskills/tests/cli_sources.rs::init_matches_python`.
+
+    5.2.6: `CLI gobby skills new` matches names/descriptions, created files and collision
+    protection. test: `crates/gskills/tests/cli_sources.rs::new_matches_python`.
+
+    5.2.7: `CLI gobby skills doc` matches formats, content and output-path handling.
+    test: `crates/gskills/tests/cli_sources.rs::doc_matches_python`.'
+  labels:
+  - covers:gdaemon-skills-family:5.2:5.2.1
+  - covers:gdaemon-skills-family:5.2:5.2.2
+  - covers:gdaemon-skills-family:5.2:5.2.3
+  - covers:gdaemon-skills-family:5.2:5.2.4
+  - covers:gdaemon-skills-family:5.2:5.2.5
+  - covers:gdaemon-skills-family:5.2:5.2.6
+  - covers:gdaemon-skills-family:5.2:5.2.7
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Native hub CLI and active configuration
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  validation_criteria: '5.3.1: `CLI gobby skills hub` matches group help/errors. test:
+    `crates/gskills/tests/cli_hubs.rs::hub_group_matches_python`.
+
+    5.3.2: `CLI gobby skills hub list` matches JSON/text and auth status. test: `crates/gskills/tests/cli_hubs.rs::hub_list_matches_python`.
+
+    5.3.3: `CLI gobby skills hub add` matches validation, atomic config persistence
+    and errors. test: `crates/gskills/tests/cli_hubs.rs::hub_add_matches_python`.
+
+    5.3.4: `CLI gobby skills search` matches single/all-hub options, results and partial
+    failures. test: `crates/gskills/tests/cli_hubs.rs::search_matches_python`.'
+  labels:
+  - covers:gdaemon-skills-family:5.3:5.3.1
+  - covers:gdaemon-skills-family:5.3:5.3.2
+  - covers:gdaemon-skills-family:5.3:5.3.3
+  - covers:gdaemon-skills-family:5.3:5.3.4
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: Forward the public CLI and retire Python callbacks
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.3'
+  validation_criteria: '5.4.1: The public launcher forwards literal arguments/cwd/config
+    and exit status, including unknown options, Unicode, help and errors, to the resolved
+    binary; it imports no Skills business/storage/parser module. test: `tests/cli/test_skills_native_forwarding.py::test_launcher_only_forwards`.
+
+    5.4.2: Every retired callback expectation maps to the frozen corpus and a native
+    row test; import/patch-string sweeps find no owned reference to deleted helpers.
+    test: `tests/cli/test_skills_native_forwarding.py::test_retired_callbacks_have_native_coverage`.'
+  labels:
+  - covers:gdaemon-skills-family:5.4:5.4.1
+  - covers:gdaemon-skills-family:5.4:5.4.2
+  tdd: true
+  source_section: '5.4'
+  implementation_domain: backend
+- title: Skills browser admission through the shared verifier
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.4'
+  validation_criteria: '6.0.1: Ordinary AuthStore cookies reproduce Python admission
+    and payload/error outcomes on every one of the exact nine GET and eleven mutation
+    rows, through the shared #24659 verifier only. test: `crates/gdaemon/tests/skills_browser.rs::ordinary_cookie_routes_match_python`.
+
+    6.0.2: Managed browser-testing cookies preserve loopback safe-read admission,
+    live-capability and project/session/body selector checks; all eleven mutations
+    and off-loopback requests are refused before Skills effects. test: `crates/gdaemon/tests/skills_browser.rs::managed_cookie_authority_matches_python`.
+
+    6.0.3: A caller with neither cookie nor key, invalid/expired cookies and unsupported
+    identity headers gain no Skills authority; API-key callers and neighboring/unlisted
+    routes retain their existing behavior. test: `crates/gdaemon/tests/skills_browser.rs::browser_admission_is_exact_and_fails_closed`.
+
+    6.0.4: Both cookie classes retain observed credentialed CORS, preflight and refusal-header
+    behavior without new Origin/CSRF policy. test: `crates/gdaemon/tests/skills_browser.rs::cors_and_cookie_mutation_parity`.
+
+    6.0.5: Until the approved leaf ships, cookie traffic remains proxied in every
+    switch state with the remainder explicit; after activation, verified browser requests
+    use native handlers and denied requests invoke no handler/fallback. test: `crates/gdaemon/tests/skills_browser.rs::cookie_takeover_waits_for_shared_verifier`.
+
+    6.0.6: The activation record identifies the persisted `security-review` label,
+    pre-dispatch check and Security Reviewer''s approved step for the exact shipping
+    SHA; absent or stale approval holds cookie activation. behavior: "Skills browser
+    admission security gate" in `docs/contracts/skills-native.md`.'
+  labels:
+  - covers:gdaemon-skills-family:6.0:6.0.1
+  - covers:gdaemon-skills-family:6.0:6.0.2
+  - covers:gdaemon-skills-family:6.0:6.0.3
+  - covers:gdaemon-skills-family:6.0:6.0.4
+  - covers:gdaemon-skills-family:6.0:6.0.5
+  - covers:gdaemon-skills-family:6.0:6.0.6
+  tdd: true
+  source_section: '6.0'
+  implementation_domain: backend
+- title: Skills-only activation and coherent release
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.0'
+  validation_criteria: '6.1.1: The native gateway serves the complete Skills catalog
+    under its existing name with matching schemas, leases, caller context and exactly
+    one semantic policy pass. test: `crates/gdaemon/tests/skills_cutover.rs::native_skills_uses_shared_gateway`.
+
+    6.1.2: Proxy/compare/native states affect only Skills; compare executes every
+    mutation and completed-load effect once, and rollback preserves data. test: `crates/gdaemon/tests/skills_cutover.rs::skills_cutover_is_scoped_and_single_effect`.
+
+    6.1.3: With the Python backend unavailable, all 20 HTTP, 14 MCP and 20 CLI rows
+    run natively; the transitional launcher performs forwarding only. Hub/node and
+    standalone return correct machine-local paths and have no Python fallback. test:
+    `tests/e2e/test_skills_native.py::test_all_54_rows_work_without_python_backend`.
+
+    6.1.4: Native writes are readable after rollback to proxy; source/cache cancellation
+    and restart preserve owned data and incomplete-load state. test: `tests/e2e/test_skills_native.py::test_restart_and_rollback_preserve_skills_state`.
+
+    6.1.5: Shipping published-binary manifests/lock/pins agree at the required patch
+    increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    6.1.6: The runbook records exact build/installed hashes, compared cases, rollback
+    command, announcement, health, cookie remainder/security approval and native smoke
+    evidence without claiming the shared compatibility backend removed. behavior:
+    "Skills activation evidence" in `docs/contracts/skills-native.md`.'
+  labels:
+  - covers:gdaemon-skills-family:6.1:6.1.1
+  - covers:gdaemon-skills-family:6.1:6.1.2
+  - covers:gdaemon-skills-family:6.1:6.1.3
+  - covers:gdaemon-skills-family:6.1:6.1.4
+  - covers:gdaemon-skills-family:6.1:6.1.5
+  - covers:gdaemon-skills-family:6.1:6.1.6
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Publish exact Skills parity ownership
+  category: docs
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: Exactly the frozen 54 Skills keys have status `delegated`
+    with concrete implementation/evidence notes; no memory or other-family status
+    changes. behavior: "54 delegated Skills parity rows" in `docs/contracts/parity-ledger-status.d/memory-skills.json`.
+
+    6.2.2: Regeneration yields a clean second run and the native guide/runbook agrees
+    with the verified 54-row behavior and ownership boundaries. behavior: "native
+    Skills operations" in `docs/guides/skills.md`.'
+  labels:
+  - covers:gdaemon-skills-family:6.2:6.2.1
+  - covers:gdaemon-skills-family:6.2:6.2.2
+  tdd: false
+  source_section: '6.2'
+  assigned_agent: tech-writer
+```
