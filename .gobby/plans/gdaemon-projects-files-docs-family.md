@@ -973,3 +973,567 @@ and fence progress. No findings or governing decisions remain open. The
 adversary will derive M1 from the committed bytes containing this entry;
 operator approval still gates task expansion.
 
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Executable parity inventory and isolated corpus
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The inventory contains exactly the 35 scoped source
+    keys and a unique acceptance owner for each; API-docs UI rows remain excluded.
+    test: `tests/contracts/test_projects_files_corpus.py::test_inventory_is_complete`.
+
+    1.1.2: Characterization cases execute the existing Python handlers and record
+    exact response/state outcomes, with security, failure and cancellation cases and
+    no production I/O. test: `tests/contracts/test_projects_files_corpus.py::test_python_cases_match`.
+
+    1.1.3: The contract specifies namespace replacements, node-write authority, layout,
+    migration retry states and #21592/#21576 ownership. file: `docs/contracts/projects-files-hub.md`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:1.1:1.1.1
+  - covers:gdaemon-projects-files-docs-family:1.1:1.1.2
+  - covers:gdaemon-projects-files-docs-family:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: developer
+- title: Statically linked Projects family
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Proxy/native/compare dispatch, longest-prefix ownership
+    and unknown-method fallback are preserved for the registered Projects family.
+    test: `crates/gprojects/tests/family.rs::dispatch_is_exact`.
+
+    1.2.2: Hub/standalone prepare the native service; node mode prepares only local
+    checkout operations and the existing hub relay, with no datastore connection.
+    test: `crates/gprojects/tests/family.rs::mode_assembly_is_scoped`.
+
+    1.2.3: Extracted assembly leaves every production file below 1,000 lines and keeps
+    startup behavior unchanged. test: `crates/gprojects/tests/family.rs::composition_preserves_startup`.
+
+    1.2.4: Release versions, lockfile and managed pins match the affected binary closure.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:1.2:1.2.1
+  - covers:gdaemon-projects-files-docs-family:1.2:1.2.2
+  - covers:gdaemon-projects-files-docs-family:1.2:1.2.3
+  - covers:gdaemon-projects-files-docs-family:1.2:1.2.4
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Hub-authoritative confined browser sessions
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: Issue/lookup/evict/revoke and epoch replacement agree
+    with the active-session contract, and no row stores raw credentials or signing
+    keys. test: `tests/servers/test_browser_admission.py::test_authority_lifecycle_is_atomic`.
+
+    2.1.2: Carrier failures never report a successful grant or revocation; restart
+    invalidates predecessor cookies, while backend loss alone preserves valid published
+    admission. test: `tests/servers/test_browser_admission.py::test_failure_and_restart_are_fail_closed`.
+
+    2.1.3: All required schema identity carriers and affected managed version pins
+    regenerate consistently. test: `crates/gcore/tests/schema_contract.rs::browser_admission_schema_is_consistent`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:2.1:2.1.1
+  - covers:gdaemon-projects-files-docs-family:2.1:2.1.2
+  - covers:gdaemon-projects-files-docs-family:2.1:2.1.3
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Reusable native admission and confinement
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: API keys, local credentials and managed callers receive
+    the same admitted/refused outcomes as Python; forged identity headers and revoked
+    principals are refused. test: `crates/gdaemon/tests/project_admission.rs::credentials_match_python`.
+
+    2.2.2: Browser expiry, epoch/revoke, peer/Host, method and every project/session
+    selector restriction survive Python loss; absent authority fails closed. test:
+    `crates/gdaemon/tests/project_admission.rs::browser_confinement_is_native`.
+
+    2.2.3: The shared verifier protects user docs, file reads and attachments, and
+    cookie requests stay proxied until the admission dependency is installed. test:
+    `crates/gdaemon/tests/project_admission.rs::family_never_skips_admission`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:2.2:2.2.1
+  - covers:gdaemon-projects-files-docs-family:2.2:2.2.2
+  - covers:gdaemon-projects-files-docs-family:2.2:2.2.3
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Descriptor-safe files_home and native USER.md
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.1.1: GET''s source row HTTP GET /api/files/user-md is implemented
+    as native GET /api/hub/user, including empty/missing profiles and remote forwarding.
+    test: `crates/gprojects/tests/user_document.rs::get_matches_python`.
+
+    3.1.2: PUT''s source row HTTP PUT /api/files/user-md is implemented as native
+    PUT /api/hub/user, with wire/decoded limits, JSON validation and durable content.
+    test: `crates/gprojects/tests/user_document.rs::put_matches_python`.
+
+    3.1.3: Symlink/root/ancestor swaps, write cancellation, fsync/rename failure and
+    unsupported platforms cannot escape the held root or falsely report committed
+    content. test: `crates/gprojects/tests/user_document.rs::storage_refusals_preserve_bytes`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:3.1:3.1.1
+  - covers:gdaemon-projects-files-docs-family:3.1:3.1.2
+  - covers:gdaemon-projects-files-docs-family:3.1:3.1.3
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Native attachment limits and publication
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: The source row HTTP GET /api/chat/attachments/limits
+    becomes native GET /api/hub/chat/attachments/limits and returns the current configured
+    max_file_bytes with existing fallback rules. test: `crates/gprojects/tests/attachment_upload.rs::limits_match_python`.
+
+    3.2.2: The source row HTTP POST /api/chat/attachments becomes native POST /api/hub/chat/attachments
+    with equivalent metadata/limits/MIME failures and canonical content_url. test:
+    `crates/gprojects/tests/attachment_upload.rs::upload_matches_python`.
+
+    3.2.3: Injected disk, database, rename/CAS and cancellation failures preserve
+    recoverable rows/bytes; concurrent cleanup cannot publish an unowned or expired
+    claim. test: `crates/gprojects/tests/attachment_upload.rs::publication_is_failure_atomic`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:3.2:3.2.1
+  - covers:gdaemon-projects-files-docs-family:3.2:3.2.2
+  - covers:gdaemon-projects-files-docs-family:3.2:3.2.3
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Native attachment content and lease-safe deletion
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: The source row HTTP GET /api/chat/attachments/{attachment_id}/content
+    becomes the native hub content route with 200/206/304, missing-record/bytes and
+    range/header parity. test: `crates/gprojects/tests/attachment_content_delete.rs::content_matches_python`.
+
+    3.3.2: The source row HTTP DELETE /api/chat/attachments/{attachment_id} becomes
+    native hub deletion with bound/conflict, missing and ok outcomes. test: `crates/gprojects/tests/attachment_content_delete.rs::delete_matches_python`.
+
+    3.3.3: Project/locator substitution, root swaps, concurrent bind/delete, lease
+    expiry and cancellation do not expose or delete unauthorized bytes or rows. test:
+    `crates/gprojects/tests/attachment_content_delete.rs::claims_and_descriptors_are_safe`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:3.3:3.3.1
+  - covers:gdaemon-projects-files-docs-family:3.3:3.3.2
+  - covers:gdaemon-projects-files-docs-family:3.3:3.3.3
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Native files migration and final attachment layout
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: The source row CLI gobby files delegates group/help/usage
+    handling to Rust without Python migration logic. test: `tests/cli/test_native_files_forwarding.py::test_group_delegates_to_rust`.
+
+    3.4.2: The source row CLI gobby files migrate delegates to the native hub-local
+    migration and preserves report/error/exit semantics. test: `crates/gprojects/tests/files_migration.rs::command_matches_python`.
+
+    3.4.3: Preflight collision/special-type/overlap/root-swap refusals leave all sources,
+    destinations and database locators byte-for-byte unchanged. test: `crates/gprojects/tests/files_migration.rs::preflight_has_zero_mutations`.
+
+    3.4.4: Same-device, cross-device and crash/rerun states converge to one verified
+    final locator per attachment with no lost or duplicated divergent bytes. test:
+    `crates/gprojects/tests/files_migration.rs::rerun_converges_after_each_boundary`.
+
+    3.4.5: Retained wiki bytes remain available as archived bytes, no wiki API appears,
+    and comms_attachments is neither read nor moved. test: `crates/gprojects/tests/files_migration.rs::scope_preserves_retired_and_downstream_data`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:3.4:3.4.1
+  - covers:gdaemon-projects-files-docs-family:3.4:3.4.2
+  - covers:gdaemon-projects-files-docs-family:3.4:3.4.3
+  - covers:gdaemon-projects-files-docs-family:3.4:3.4.4
+  - covers:gdaemon-projects-files-docs-family:3.4:3.4.5
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Atomic namespace cutover and all current consumers
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: '3.5.1: Every enumerated profile/upload/download/delete consumer
+    uses the canonical hub routes; browser rendered links, restore and proxy tests
+    remain functional. test: `tests/contracts/test_hub_namespace_cutover.py::test_all_consumers_use_hub_namespace`.
+
+    3.5.2: Old route paths and retired wiki paths return normal 404, and a node without
+    local copies reads/writes hub USER.md and attachments through the authenticated
+    owner relay. test: `tests/contracts/test_hub_namespace_cutover.py::test_cutover_has_one_owner_and_no_aliases`.
+
+    3.5.3: Current Python cleanup/binding consumers and native publication/content/deletion
+    all resolve the same final locator after migration, with no second byte migration.
+    test: `tests/contracts/test_hub_namespace_cutover.py::test_mixed_runtime_consumers_share_layout`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:3.5:3.5.1
+  - covers:gdaemon-projects-files-docs-family:3.5:3.5.2
+  - covers:gdaemon-projects-files-docs-family:3.5:3.5.3
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: fullstack
+- title: Native project inventory, detail and cross-project MCP listing
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.5'
+  validation_criteria: '4.1.1: The source row HTTP GET /api/projects matches listing,
+    machine scope, statistics and hidden/deleted rules natively. test: `crates/gprojects/tests/project_reads.rs::list_matches_python`.
+
+    4.1.2: The source row HTTP GET /api/projects/{project_id} matches detail and not-found
+    behavior natively. test: `crates/gprojects/tests/project_reads.rs::detail_matches_python`.
+
+    4.1.3: The source row HTTP GET /api/projects/{project_id}/checkouts matches object-or-null
+    local checkout behavior. test: `crates/gprojects/tests/project_reads.rs::checkout_matches_python`.
+
+    4.1.4: The source row HTTP GET /api/files/projects matches checkout-shaped browser
+    inventory, including Personal and no repo_path. test: `crates/gprojects/tests/project_reads.rs::file_inventory_matches_python`.
+
+    4.1.5: The source row MCP gobby-hub:list_all_projects delegates to the native
+    include_system-filtered cross-project query with its existing envelope. test:
+    `tests/mcp_proxy/tools/test_native_hub_projects.py::test_listing_delegates_to_rust`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:4.1:4.1.1
+  - covers:gdaemon-projects-files-docs-family:4.1:4.1.2
+  - covers:gdaemon-projects-files-docs-family:4.1:4.1.3
+  - covers:gdaemon-projects-files-docs-family:4.1:4.1.4
+  - covers:gdaemon-projects-files-docs-family:4.1:4.1.5
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Native local file tree, text and image reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: The source row HTTP GET /api/files/tree matches directories-first
+    case-insensitive order, gitignore visibility and error responses. test: `crates/gprojects/tests/checkout_reads.rs::tree_matches_python`.
+
+    4.2.2: The source row HTTP GET /api/files/read matches bounds, UTF-8 replacement,
+    binary/image flags, MIME and truncation metadata. test: `crates/gprojects/tests/checkout_reads.rs::read_matches_python`.
+
+    4.2.3: The source row HTTP GET /api/files/image matches content/range/cache behavior
+    and SVG security headers. test: `crates/gprojects/tests/checkout_reads.rs::image_matches_python`.
+
+    4.2.4: Traversal, symlink swaps and cross-machine checkout substitutions fail
+    before unauthorized I/O, and node mode opens no hub datastore. test: `crates/gprojects/tests/checkout_reads.rs::locality_and_paths_are_enforced`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:4.2:4.2.1
+  - covers:gdaemon-projects-files-docs-family:4.2:4.2.2
+  - covers:gdaemon-projects-files-docs-family:4.2:4.2.3
+  - covers:gdaemon-projects-files-docs-family:4.2:4.2.4
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Native checkout file writes
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: The source row HTTP POST /api/files/write writes only
+    the admitted local checkout and returns the Python success/size/path shape. test:
+    `crates/gprojects/tests/checkout_write.rs::write_matches_python`.
+
+    4.3.2: .git, traversal, replaced parents, cross-machine roots and injected publication
+    failures leave unauthorized or predecessor bytes unchanged. test: `crates/gprojects/tests/checkout_write.rs::refusals_and_failures_preserve_bytes`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:4.3:4.3.1
+  - covers:gdaemon-projects-files-docs-family:4.3:4.3.2
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Native local Git status and diff
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '4.4.1: The source row HTTP GET /api/files/git-status matches
+    branch/status mapping, rename/untracked cases and unavailable responses. test:
+    `crates/gprojects/tests/checkout_git.rs::status_matches_python`.
+
+    4.4.2: The source row HTTP GET /api/files/git-diff matches literal file diffs,
+    path validation, missing HEAD and subprocess failure responses. test: `crates/gprojects/tests/checkout_git.rs::diff_matches_python`.
+
+    4.4.3: Hostile filenames/arguments and timeout/cancellation cannot execute a shell,
+    escape the checkout or leave a child running. test: `crates/gprojects/tests/checkout_git.rs::subprocess_boundaries_are_safe`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:4.4:4.4.1
+  - covers:gdaemon-projects-files-docs-family:4.4:4.4.2
+  - covers:gdaemon-projects-files-docs-family:4.4:4.4.3
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: Native project initialization and checkout mutation
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: '4.5.1: The source row HTTP POST /api/projects/init initializes/reattaches
+    with Python''s identity/marker/checkout behavior and event rule. test: `crates/gprojects/tests/project_checkouts.rs::init_matches_python`.
+
+    4.5.2: The source row HTTP POST /api/projects/{project_id}/checkouts gives 201
+    insert/200 retry and matching conflicts without restoring a deleted project. test:
+    `crates/gprojects/tests/project_checkouts.rs::register_matches_python`.
+
+    4.5.3: The source row HTTP POST /api/projects/{project_id}/checkouts/{machine_id}/rebind
+    preserves machine scope, validation, index invalidation and event semantics. test:
+    `crates/gprojects/tests/project_checkouts.rs::rebind_matches_python`.
+
+    4.5.4: Node-key authority writes only its own machine rows, and marker/root/overlay
+    conflicts or transaction failure leave no partial checkout or event. test: `crates/gprojects/tests/project_checkouts.rs::machine_authority_and_atomicity_hold`.
+
+    4.5.5: The registered native POST /api/nodes/checkouts works with Python unavailable,
+    derives machine identity from the key, refuses body/header machine forgery, and
+    cannot be served as a local node authority. test: `crates/gdaemon/tests/node_project_checkouts.rs::registration_is_native_and_key_bound`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:4.5:4.5.1
+  - covers:gdaemon-projects-files-docs-family:4.5:4.5.2
+  - covers:gdaemon-projects-files-docs-family:4.5:4.5.3
+  - covers:gdaemon-projects-files-docs-family:4.5:4.5.4
+  - covers:gdaemon-projects-files-docs-family:4.5:4.5.5
+  tdd: true
+  source_section: '4.5'
+  implementation_domain: backend
+- title: Native project updates and soft deletion
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.5'
+  validation_criteria: '4.6.1: The source row HTTP PUT /api/projects/{project_id}
+    matches update/validation/no-op payloads and checkout-scoped file writes. test:
+    `crates/gprojects/tests/project_updates.rs::put_matches_python`.
+
+    4.6.2: The source row HTTP PATCH /api/projects/{project_id} preserves omitted
+    fields and matches partial update behavior. test: `crates/gprojects/tests/project_updates.rs::patch_matches_python`.
+
+    4.6.3: The source row HTTP DELETE /api/projects/{project_id} preserves protected/not-found
+    guards and soft-delete response/state. test: `crates/gprojects/tests/project_updates.rs::soft_delete_matches_python`.
+
+    4.6.4: Database and checkout-file failures preserve the pre-update coherent state,
+    and foreign roots are never opened. test: `crates/gprojects/tests/project_updates.rs::update_rolls_back_as_a_unit`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:4.6:4.6.1
+  - covers:gdaemon-projects-files-docs-family:4.6:4.6.2
+  - covers:gdaemon-projects-files-docs-family:4.6:4.6.3
+  - covers:gdaemon-projects-files-docs-family:4.6:4.6.4
+  tdd: true
+  source_section: '4.6'
+  implementation_domain: backend
+- title: Shared cross-runtime project write fence
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.6'
+  validation_criteria: '5.1.1: A Python writer blocks Rust purge and a Rust writer
+    blocks Python purge until drain; deleted/absent projects refuse new writers. test:
+    `tests/projects/test_cross_runtime_write_fence.py::test_both_runtimes_share_exclusion`.
+
+    5.1.2: Reentrancy, global writers, concurrent purge, timeout/cancellation and
+    dropped connections preserve safety without leaked locks or pool contamination.
+    test: `crates/gcore/tests/project_fence.rs::lock_lifecycle_is_safe`.
+
+    5.1.3: Required shared-core binary bumps, maintenance floor, lockfile and managed
+    pins agree. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    5.1.4: With the minimum two-slot operation pool, concurrent fenced writers, a
+    waiting purge, nested ownership, resize and cancellation make bounded progress
+    without starving ordinary queries or leaking permits/connections. test: `crates/gcore/tests/project_fence.rs::small_pool_progress_is_bounded`.
+
+    5.1.5: The Python pool uses the same reserve and releases capacity on failure/cancellation;
+    concurrent writers and purge finish under a bounded saturation test. test: `tests/projects/test_cross_runtime_write_fence.py::test_small_pool_progress_is_bounded`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:5.1:5.1.1
+  - covers:gdaemon-projects-files-docs-family:5.1:5.1.2
+  - covers:gdaemon-projects-files-docs-family:5.1:5.1.3
+  - covers:gdaemon-projects-files-docs-family:5.1:5.1.4
+  - covers:gdaemon-projects-files-docs-family:5.1:5.1.5
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Native lifecycle-safe hard purge
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: The source row HTTP POST /api/projects/{project_id}/purge
+    matches purged/not_found/protected/failed statuses and dependent-resource cleanup
+    without Python. test: `crates/gprojects/tests/project_purge.rs::purge_matches_python`.
+
+    5.2.2: Active terminals, draining cron, derived writers and concurrent terminal
+    insertion cannot race a destructive purge; timeouts leave retryable state. test:
+    `crates/gprojects/tests/project_purge.rs::lifecycle_guards_hold`.
+
+    5.2.3: Injected code/vector/graph/database failures and retries preserve tombstone/detach
+    ordering and never delete another project''s resources or source checkout. test:
+    `crates/gprojects/tests/project_purge.rs::failures_are_retryable_and_scoped`.
+
+    5.2.4: A real isolated gcode child invalidates the intended soft-deleted and indexed-only
+    targets through fresh project-scoped maintenance authority with Python down and
+    no interactive grant; foreign project/machine claims are refused. test: `crates/gprojects/tests/project_purge.rs::maintenance_child_authority_is_scoped`.
+
+    5.2.5: Success, spawn failure, child failure, timeout and cancellation revoke
+    the invocation and remove private launch secrets; injected revoke failure records
+    the native retry and prevents purge success or hub-row deletion. test: `crates/gprojects/tests/project_purge.rs::maintenance_child_teardown_is_bounded`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:5.2:5.2.1
+  - covers:gdaemon-projects-files-docs-family:5.2:5.2.2
+  - covers:gdaemon-projects-files-docs-family:5.2:5.2.3
+  - covers:gdaemon-projects-files-docs-family:5.2:5.2.4
+  - covers:gdaemon-projects-files-docs-family:5.2:5.2.5
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Native Projects command group and ordinary verbs
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  validation_criteria: '5.3.1: The source row CLI gobby projects delegates help/group/usage
+    to Rust with matching exit behavior. test: `crates/gprojects/tests/projects_cli.rs::group_usage_matches`.
+
+    5.3.2: The source row CLI gobby projects list matches --all/--json filtering and
+    text/JSON rendering. test: `crates/gprojects/tests/projects_cli.rs::list_matches_python`.
+
+    5.3.3: The source row CLI gobby projects show resolves names/IDs and matches detail/error
+    rendering. test: `crates/gprojects/tests/projects_cli.rs::show_matches_python`.
+
+    5.3.4: The source row CLI gobby projects rename preserves uniqueness/sentinel
+    rules and output. test: `crates/gprojects/tests/projects_cli.rs::rename_matches_python`.
+
+    5.3.5: The source row CLI gobby projects delete preserves exact-name confirmation/protection
+    and delegates soft deletion. test: `crates/gprojects/tests/projects_cli.rs::delete_matches_python`.
+
+    5.3.6: The source row CLI gobby projects purge preserves confirmation and native
+    purge outcomes. test: `crates/gprojects/tests/projects_cli.rs::purge_matches_python`.
+
+    5.3.7: The source row CLI gobby projects rebind validates local root/marker, uses
+    key-bound machine authority and retains the cache hint. test: `crates/gprojects/tests/projects_cli.rs::rebind_matches_python`.
+
+    5.3.8: The source row CLI gobby projects repair preserves dry-run/fix/no-drift/conflict
+    outcomes and never silently rebinds. test: `crates/gprojects/tests/projects_cli.rs::repair_matches_python`.
+
+    5.3.9: The Click shims forward argv/stdout/stderr/exit status to Rust and execute
+    no Python project business logic. test: `tests/cli/test_native_projects_forwarding.py::test_all_verbs_delegate_to_rust`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.1
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.2
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.3
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.4
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.5
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.6
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.7
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.8
+  - covers:gdaemon-projects-files-docs-family:5.3:5.3.9
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: Native verification-command refresh
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.3'
+  validation_criteria: '5.4.1: The source row CLI gobby projects refresh-verification
+    delegates entirely to Rust and preserves every mode, override, result and exit
+    behavior. test: `crates/gprojects/tests/verification_refresh.rs::command_matches_python`.
+
+    5.4.2: Bounded evidence and deterministic selection match Python vectors; unsafe
+    or unsupported AI commands are rejected, and no candidate is executed. test: `crates/gprojects/tests/verification_refresh.rs::selection_and_ai_policy_match`.
+
+    5.4.3: Preview, corrupt-input backup and injected write/cancellation failures
+    preserve unrelated metadata and recoverable predecessor bytes. test: `crates/gprojects/tests/verification_refresh.rs::publication_is_atomic`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:5.4:5.4.1
+  - covers:gdaemon-projects-files-docs-family:5.4:5.4.2
+  - covers:gdaemon-projects-files-docs-family:5.4:5.4.3
+  tdd: true
+  source_section: '5.4'
+  implementation_domain: backend
+- title: Read/write compare verification and native default
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.4'
+  validation_criteria: '6.1.1: Every claimed read and mutation has a tested compare/verifier
+    path, with writes executed exactly once and concurrent/unavailable cases counted
+    as skipped rather than matches. test: `crates/gprojects/tests/compare.rs::every_route_has_safe_verification`.
+
+    6.1.2: Default Native dispatch serves all owned principals and methods; explicit
+    pre-switch proxy/compare selection and unknown-family fallback remain correct.
+    test: `crates/gdaemon/tests/projects_routing.rs::native_default_is_complete`.
+
+    6.1.3: Compare logs/report contain no profile content, attachment bytes, credentials
+    or user path secrets and reject an incomplete representative route window. test:
+    `crates/gprojects/tests/compare.rs::reports_are_bounded_and_complete`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:6.1:6.1.1
+  - covers:gdaemon-projects-files-docs-family:6.1:6.1.2
+  - covers:gdaemon-projects-files-docs-family:6.1:6.1.3
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Cross-surface native parity and two-machine failure proof
+  category: test
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: All 35 inventory rows pass their named native parity
+    acceptance, with explicit native replacement coverage for renamed routes. test:
+    `tests/e2e/test_projects_files_family.py::test_all_owned_rows_have_native_parity`.
+
+    6.2.2: Killing isolated Python leaves API-key/local/browser-admitted native operations
+    serving and preserves refusal/transaction semantics. test: `tests/e2e/test_projects_files_family.py::test_family_survives_python_loss`.
+
+    6.2.3: A second machine without local hub bytes or DB credentials accesses hub
+    documents and only its own local checkout, refusing cross-machine root and identity
+    forgery. test: `tests/e2e/test_projects_files_family.py::test_two_machine_ownership_is_correct`.
+
+    6.2.4: Representative compare has zero mismatches and accounted coverage; pre-switch
+    routing rollback uses the same binaries and never remigrates bytes. test: `tests/e2e/test_projects_files_family.py::test_compare_and_routing_rollback_are_safe`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:6.2:6.2.1
+  - covers:gdaemon-projects-files-docs-family:6.2:6.2.2
+  - covers:gdaemon-projects-files-docs-family:6.2:6.2.3
+  - covers:gdaemon-projects-files-docs-family:6.2:6.2.4
+  tdd: false
+  source_section: '6.2'
+  assigned_agent: developer
+- title: Ledger evidence and downstream cutover contract
+  category: docs
+  task_type: docs
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: Each of the 35 exact source keys has proven delegated
+    or explicit renamed-route decision status and a native replacement/test; no scoped
+    key is silently omitted and no unrelated shard row changes ownership. test: `tests/contracts/test_projects_files_ledger.py::test_owned_rows_are_complete`.
+
+    6.3.2: Regeneration yields the checked-in ledger, canonical new routes are classified
+    and the eight API-docs UI rows remain #21589-owned. test: `tests/contracts/test_projects_files_ledger.py::test_generated_ledger_matches_inventory`.
+
+    6.3.3: The contract states #21592''s shared-service dependency, #21576''s comms
+    boundary, admission reuse, once-only migration and naming-switch shim removal.
+    file: `docs/contracts/projects-files-hub.md`.'
+  labels:
+  - covers:gdaemon-projects-files-docs-family:6.3:6.3.1
+  - covers:gdaemon-projects-files-docs-family:6.3:6.3.2
+  - covers:gdaemon-projects-files-docs-family:6.3:6.3.3
+  tdd: false
+  source_section: '6.3'
+  assigned_agent: tech-writer
+```
