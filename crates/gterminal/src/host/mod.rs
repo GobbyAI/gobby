@@ -208,6 +208,11 @@ pub async fn run() -> io::Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     #[cfg(all(unix, feature = "vt-engine"))]
     sigterm::start(&state.draining)?;
+    // Only the socket owner gets here, and nothing of this image stages until
+    // the install: a staged state file now is an earlier image's or a dead
+    // host's.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    handover::remove_staged(&args.socket_dir.join(handover::STATE_FILE));
     #[cfg(all(unix, feature = "vt-engine"))]
     state.attempts.install(upgrade::UpgradeContext::new(
         args.socket_dir.clone(),

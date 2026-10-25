@@ -286,62 +286,74 @@ pub fn write_state(path: &Path, state: &HandoverState) -> io::Result<()> {
     commit_state(&stage_state(path, state)?, path)
 }
 
-/// Writes `state` to a private temporary file beside `path` and `fsync`s it.
-/// Nothing reads the temporary file until `commit_state` puts it in place.
-pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<PathBuf> {
-    let temp = staged_path(path)?;
-    let _ = fs::remove_file(&temp);
-    let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp)?;
-        serde_json::to_writer(&mut file, state)?;
-        file.flush()?;
-        file.sync_all()
-    })();
-    match written {
-        Ok(()) => Ok(temp),
-        Err(err) => {
-            let _ = fs::remove_file(&temp);
-            Err(err)
+/// A state file staged beside its target under a name no other call shares.
+/// Dropping it removes that file, so a late or failed stage leaves nothing;
+/// after `commit_state` the name is gone and the drop finds nothing.
+#[derive(Debug)]
+pub struct StagedState(PathBuf);
+
+impl Drop for StagedState {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// Writes `state` to a private file of its own beside `path` and `fsync`s it.
+/// Nothing reads that file until `commit_state` puts it in place.
+pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<StagedState> {
+    let (dir, prefix) = staged_prefix(path)?;
+    let temp = dir.join(format!("{prefix}{}{STAGED_SUFFIX}", uuid::Uuid::new_v4()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temp)?;
+    let staged = StagedState(temp);
+    serde_json::to_writer(&mut file, state)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(staged)
+}
+
+/// Renames a staged state file over `path`, then `fsync`s the directory.
+pub fn commit_state(staged: &StagedState, path: &Path) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
+    fs::rename(&staged.0, path)?;
+    fs::File::open(dir)?.sync_all()
+}
+
+/// Removes every staged state file beside `path`. Only the socket owner calls
+/// it, before it can stage one itself, so each is an earlier image's or a dead
+/// host's.
+pub fn remove_staged(path: &Path) {
+    let Ok((dir, prefix)) = staged_prefix(path) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(&prefix) && name.ends_with(STAGED_SUFFIX) {
+            let _ = fs::remove_file(entry.path());
         }
     }
 }
 
-/// Renames a staged state file over `path`, then `fsync`s the directory.
-pub fn commit_state(staged: &Path, path: &Path) -> io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
-    let committed = fs::rename(staged, path).and_then(|()| fs::File::open(dir)?.sync_all());
-    if committed.is_err() {
-        let _ = fs::remove_file(staged);
-    }
-    committed
-}
+const STAGED_SUFFIX: &str = ".tmp";
 
-/// Removes the state file at `path` and any staged temporary file for it.
-pub fn remove_state(path: &Path) {
-    let _ = fs::remove_file(path);
-    if let Ok(temp) = staged_path(path) {
-        let _ = fs::remove_file(temp);
-    }
-}
-
-fn staged_path(path: &Path) -> io::Result<PathBuf> {
+/// The directory beside `path` and the name prefix of its staged files.
+fn staged_prefix(path: &Path) -> io::Result<(&Path, String)> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
     let name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no name"))?;
-    Ok(dir.join(format!(
-        ".{}.{}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    )))
+    Ok((dir, format!(".{}.", name.to_string_lossy())))
 }
 
 /// Reads a state file, refusing a format this image does not support.

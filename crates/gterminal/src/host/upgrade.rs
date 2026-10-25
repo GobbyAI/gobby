@@ -16,8 +16,8 @@ use serde_json::{json, Map, Value};
 use tokio::sync::{oneshot, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockWriteGuard};
 
 use super::handover::{
-    commit_state, monotonic_now_ns, remove_state, stage_state, UpgradeAttempt, UpgradeOutcome,
-    UpgradeReason, UpgradeRecord, FORMAT_VERSION, STATE_FILE,
+    commit_state, monotonic_now_ns, stage_state, UpgradeAttempt, UpgradeOutcome, UpgradeReason,
+    UpgradeRecord, FORMAT_VERSION, STATE_FILE,
 };
 use super::helpers::{err, s};
 use super::image::{self, PinnedImage};
@@ -272,7 +272,7 @@ struct Faults {
     encode_error: Option<String>,
     soft_deadline_in_capture: bool,
     capture_cutoff_delay: Duration,
-    /// The state write job runs this long past the soft cutoff.
+    /// The state write job starts staging this long past the soft cutoff.
     write_past_cutoff: Option<Duration>,
     soft_deadline_in_exec: bool,
     exec_error: bool,
@@ -688,19 +688,20 @@ impl Attempt {
             let (write_past_cutoff, deadline_ns) =
                 (self.faults.write_past_cutoff, self.deadline_ns);
             tokio::task::spawn_blocking(move || {
-                let staged =
-                    stage_state(&target, &handover).map_err(|_| UpgradeReason::StateWriteFailed)?;
                 if let Some(past) = write_past_cutoff {
                     std::thread::sleep(until_soft_cutoff(deadline_ns) + past);
                 }
+                let staged =
+                    stage_state(&target, &handover).map_err(|_| UpgradeReason::StateWriteFailed)?;
                 // 1.4: exec only the bytes the probe accepted.
                 pin.verify().map_err(|_| UpgradeReason::PinMismatch)?;
                 Ok(staged)
             })
         };
         // The write and pin check end at the soft cutoff, as capture does. A
-        // late job holds no lock and is left to finish: it only stages, and
-        // rollback removes what it staged.
+        // late job holds no lock and is left to finish: it only stages, under
+        // a name of its own that its dropped result removes. If an exec ends
+        // it first, the next image sweeps that file.
         let staged =
             match tokio::time::timeout(until_soft_cutoff(self.deadline_ns), &mut written).await {
                 Ok(Ok(Ok(staged))) => staged,
@@ -811,7 +812,7 @@ impl Attempt {
         if self.faults.stall_cleanup {
             tokio::time::sleep(FAULT_STALL_CAP).await;
         }
-        remove_state(&self.context().socket_dir.join(STATE_FILE));
+        let _ = std::fs::remove_file(self.context().socket_dir.join(STATE_FILE));
         self.drop_candidate(&pin);
         self.record(outcome, pin.sha256.clone());
         let reason = match outcome {

@@ -58,6 +58,31 @@ fn write_state_is_private_and_round_trips() {
 }
 
 #[test]
+fn a_late_stage_leaves_another_attempts_state_alone() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join(STATE_FILE);
+    let attempt = |attempt_id: &str| {
+        let mut state = state_with(Vec::new(), 7, 8);
+        state.attempt.attempt_id = attempt_id.into();
+        state
+    };
+
+    // B stages. An abandoned job from attempt A stages late, and its result
+    // is dropped before B commits.
+    let staged = stage_state(&path, &attempt("b")).expect("stage b");
+    drop(stage_state(&path, &attempt("a")).expect("stage a"));
+    commit_state(&staged, &path).expect("commit b");
+
+    let carried = read_state(&path).expect("read state");
+    assert_eq!(carried.attempt.attempt_id, "b");
+    let names: Vec<_> = fs::read_dir(dir.path())
+        .expect("read dir")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from(STATE_FILE)]);
+}
+
+#[test]
 fn read_state_refuses_an_unsupported_format() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(STATE_FILE);

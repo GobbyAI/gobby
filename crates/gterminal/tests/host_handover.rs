@@ -1723,21 +1723,38 @@ fn rollback_case(case: &RollbackCase) -> Value {
         try_ping(&dir, UPGRADE_TOKEN).is_some(),
         "{label}: the host answers"
     );
-    // Rollback removes the state file and its temporary file; only the
-    // directory a case put in the state file's place remains.
-    let leftovers: Vec<_> = std::fs::read_dir(&dir)
-        .expect("read the socket dir")
-        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-        .filter(|name| name.contains(STATE_FILE))
-        .collect();
+    // Rollback removes the state file; only the directory a case put in its
+    // place remains.
     let kept: &[&str] = if case.block_state_file {
         &[STATE_FILE]
     } else {
         &[]
     };
-    assert_eq!(leftovers, kept, "{label}: rollback leaves no state");
+    wait_state_files(&dir, label, kept);
     shutdown(&mut host, &mut writer);
     after
+}
+
+/// Waits until the socket dir's state and staged files are `kept`: a late
+/// write job removes the file it staged only when it ends.
+fn wait_state_files(dir: &Path, label: &str, kept: &[&str]) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let mut left: Vec<_> = std::fs::read_dir(dir)
+            .expect("read the socket dir")
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name.contains(STATE_FILE))
+            .collect();
+        left.sort();
+        if left == kept {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label}: state files left: {left:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Plan gterm-host-handover 1.3.4. The cases run on their own hosts at once,
@@ -1895,6 +1912,44 @@ fn overdue_state_write_rolls_back_with_live_panes() {
         after["upgrade"]["last_outcome"]["reason"], "soft_deadline",
         "{after}"
     );
+}
+
+#[test]
+fn retry_after_a_late_state_write_keeps_its_own_state() {
+    let mut host = live_host(&[]);
+    let dir = host.socket_dir().to_path_buf();
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let panes = echo_panes(&mut host, &mut ctl, 2);
+    let before = ping(&mut ctl);
+    let mut upgrader = connect_control(&dir, UPGRADE_TOKEN);
+
+    // A rolls back at its soft cutoff. Its write job is left running and
+    // stages a second past A's hard deadline, inside B's hold before exec.
+    let late = json!({"write_past_cutoff_ms": 4000});
+    let accepted = host_upgrade(&mut upgrader, &gterm_bin(), "late-write", late);
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "late-write", OUTCOME_WAIT);
+    assert_outcome(&after, "late-write", "aborted", Some("soft_deadline"));
+
+    // No job owns this one: a dead host staged it.
+    let orphan = dir.join(format!(".{STATE_FILE}.orphan.tmp"));
+    std::fs::write(&orphan, b"{}").expect("plant an orphaned staged file");
+    let hold = json!({"hold_before_exec_ms": 5000});
+    let accepted = upgrade_once_idle(&mut upgrader, &gterm_bin(), "after-late-write", hold);
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "after-late-write", OUTCOME_WAIT);
+    assert_outcome(&after, "after-late-write", "succeeded", None);
+    assert_eq!(after["generation"], 1, "{after}");
+    assert_eq!(after["host_pid"], host.id(), "{after}");
+    assert_eq!(after["host_epoch"], before["host_epoch"], "{after}");
+
+    for pane in &panes {
+        assert!(process_exists(pane.pgid), "{} lives", pane.host_terminal_id);
+    }
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    assert_writes_echo(&mut ctl, "after-late-write", &ids(&panes));
+    wait_state_files(&dir, "after-late-write", &[]);
+    shutdown(&mut host, &mut ctl);
 }
 
 #[test]
