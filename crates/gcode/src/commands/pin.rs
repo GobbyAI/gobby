@@ -75,7 +75,7 @@ pub(crate) fn apply_pin(
             .collect();
     let pinned: Vec<String> = pins.iter().map(|pin| pin.file_path.clone()).collect();
     let gaps = derive_gaps(&tracked, &pinned.iter().cloned().collect());
-    replace_pins(conn, machine_id, overlay_project_id, &pins)?;
+    replace_pins(conn, machine_id, overlay_project_id, &pins, &gaps)?;
     Ok(PinReport {
         warm: true,
         reason: None,
@@ -158,7 +158,7 @@ fn write_cold(
     reason: &'static str,
     gaps: Vec<String>,
 ) -> anyhow::Result<PinReport> {
-    replace_pins(conn, machine_id, overlay_project_id, &[])?;
+    replace_pins(conn, machine_id, overlay_project_id, &[], &gaps)?;
     Ok(PinReport {
         warm: false,
         reason: Some(reason),
@@ -172,12 +172,17 @@ fn replace_pins(
     machine_id: &str,
     overlay_project_id: &str,
     pins: &[EffectiveSelector],
+    gaps: &[String],
 ) -> anyhow::Result<()> {
     let machine_id = db::id_param(machine_id)?;
     let overlay_project_id = db::id_param(overlay_project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM code_overlay_pins WHERE machine_id = $1 AND overlay_project_id = $2",
+        &[&machine_id, &overlay_project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_overlay_pin_gaps WHERE machine_id = $1 AND overlay_project_id = $2",
         &[&machine_id, &overlay_project_id],
     )?;
     let insert = tx.prepare(
@@ -199,9 +204,19 @@ fn replace_pins(
             ],
         )?;
     }
+    let insert_gap = tx.prepare(
+        "INSERT INTO code_overlay_pin_gaps (machine_id, overlay_project_id, file_path)
+         VALUES ($1, $2, $3)",
+    )?;
+    for gap in gaps {
+        tx.execute(&insert_gap, &[&machine_id, &overlay_project_id, gap])?;
+    }
     tx.commit()?;
     Ok(())
 }
+
+#[cfg(test)]
+pub(crate) use crate::db::persisted_gaps;
 
 #[cfg(test)]
 mod tests;

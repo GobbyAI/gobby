@@ -29,7 +29,7 @@ prompts:
     - Found work. Fix what you find on your task's surface inside the claimed task and name it in your implementation step record. Send anything that needs its own task to Triage with the failing command, diagnostics, paths and impact.
     - TDD. Before any behavior-bearing production write, resolve every named behavior test across the leaf's stored criteria and retain each exact node's authenticated RED after its relevant test edit. Skill completion permits test/stub preparation; writing one acceptance file never opens this barrier. Only explicitly stored regression-only: criteria proven unchanged against the claim baseline may use GREEN alone. Test-only writes and mechanically verified behavior-free API stubs may prepare RED; shell and mixed implementation writes share the leaf-wide guard. Close needs the same per-test chronology and later GREEN for every named test. Preserve original RED through compaction; never replay it.
     - Epic leaf. In an epic team your task is one leaf the Dev Manager dispatches. Claim it, commit only that leaf's work, tag each commit and link it to the leaf, record `gobby-tasks:record_implementation_step` at the leaf tip, and release the claim. Never rebase or squash after the first link. The conflict-merge job for a sub-worktree developer is to merge epic main into its branch when the Dev Manager asks, and then to end its run with `gobby-agents:end_agent_run` after recording.
-    - Sandbox. The sandbox denies writes to /tmp and ps argument listing. Write temp files under $TMPDIR, never a literal /tmp path, and take a PID-only process inventory (`ps -axo pid=`) instead of listing command arguments.
+    - Sandbox. The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write temp files under $TMPDIR, never a literal /tmp path. Run bare `ps` with non-argument columns, such as `ps -axo pid=` or `ps -axo pid,ppid,etime,comm`, instead of listing command arguments.
 
     ## Task skills
     After claiming, read the task with `gobby-tasks:get_task` and route its skills by the paths it touches:
@@ -41,7 +41,7 @@ prompts:
 
     ## Messages
     Reach your Dev Manager, your reviewer and Triage through `gobby-agents:send_message`.
-    On launch, report readiness to the live session named in the launch prompt with target="session". Find your Dev Manager with `gobby-agents:list_running_agents(task_id=<task>)`: it is the one run bound to the task. Send it your session ref with `gobby-agents:send_message(target="session", target_id=<Dev Manager session>)`.
+    On launch, report readiness to the live session named in the launch prompt with target="session". Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`.
 
     ## Continuity
     Compact in place: under context pressure, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.
@@ -147,9 +147,9 @@ step_workflow:
         Defer implementation and validation until implement. Until the claim
         arrives, report readiness to the live session in your launch prompt using
         gobby-agents:send_message(target="session", target_id=<report target>),
-        send your session ref to your Dev Manager, found with
-        gobby-agents:list_running_agents(task_id=<task>), then register a
-        gobby-agents:wait_for_coordination reply wait on your Dev Manager and
+        send your session ref to your Dev Manager with
+        gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>),
+        then register a gobby-agents:wait_for_coordination reply wait on your Dev Manager and
         end the turn. End each idle turn on a registered durable wait; re-arm
         after an interim owner reply. If no wait applies, send
         EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.

@@ -412,6 +412,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/479_code_file_state_cross_machine_read_scope.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 480,
+        filename: "480_code_overlay_pin_gaps.sql",
+        checksum: "068d6d65ddbe2f807613bb822690af2eef323feaf543669ccdd2ff97df7917ac",
+        sql: include_str!("../../assets/schema/migrations/480_code_overlay_pin_gaps.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

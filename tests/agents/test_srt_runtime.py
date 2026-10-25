@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Coroutine, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -730,13 +730,13 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         preflights.append((launch, cwd, env))
 
     monkeypatch.setattr(srt_runtime, "_preflight_srt", fake_preflight)
-    ps_shim_path = str(tmp_path / "ps-shim")
-
-    def fake_ps_environment(directory: Path | None, env: Mapping[str, str]) -> dict[str, str]:
-        return {"PATH": f"{ps_shim_path}{os.pathsep}{env['PATH']}"}
-
-    monkeypatch.setattr(srt_runtime, "ps_shim_path_env", fake_ps_environment)
-    monkeypatch.setattr(srt_runtime, "droid_ps_shim_dir", lambda: None)
+    # #25069: the re-signed ps shim serves every SRT launch, not only Droid. Every
+    # provider must get it readable and first on PATH so `ps -axo pid,ppid,etime,comm`
+    # resolves inside the sandbox.
+    ps_shim_dir = tmp_path / "ps-shim"
+    ps_shim_dir.mkdir()
+    (ps_shim_dir / "ps").write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(srt_runtime, "droid_ps_shim_dir", lambda: ps_shim_dir)
     original_which = shutil.which
     provider_lookups = 0
 
@@ -809,13 +809,13 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(
         temp_path if platform_name == "linux" else mux_dir
     )
-    expected_path = f"{ps_shim_path}{os.pathsep}{shim_dir}"
+    expected_path = f"{ps_shim_dir}{os.pathsep}{shim_dir}"
     if cargo_present:
         cargo_bin = expected_parent / "assets" / "cargo-bin"
         expected_path = f"{cargo_bin}{os.pathsep}{expected_path}"
         assert Path(launch.provider_env["BASH_ENV"]).is_relative_to(expected_parent / "assets")
         assert Path(launch.provider_env["ZDOTDIR"]).is_relative_to(expected_parent / "assets")
-    assert launch.provider_env["PATH"] == expected_path
+    assert launch.provider_env.get("PATH") == expected_path
     if platform_name == "darwin":
         assert mux_dir.is_dir()
         assert mux_dir.stat().st_mode & 0o777 == 0o700
@@ -873,6 +873,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert not any(Path(path).is_relative_to(srt_root.resolve()) for path in allowed_writes)
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
+    assert str(ps_shim_dir.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads
     assert str(provider_shim.absolute()) not in allowed_reads
     assert str(shim_dir.resolve()) not in allowed_reads

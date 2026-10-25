@@ -587,6 +587,9 @@ RULE_CASES = (
             "ps -o pid= -p 123",
             "ps -A -o pid,comm",
             "ps -ww -o pid,ppid,etime",
+            # #25069: the column-safe diagnostic reviewer seats run must stay allowed.
+            "ps -axo pid,ppid,etime,comm",
+            "ps -axo pid,ppid,etime,state,comm",
             "ps -o comm -p 123",
             'echo "ps e"',
             "pkill -f gobby.runner",

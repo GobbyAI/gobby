@@ -12,8 +12,8 @@ mod tests;
 pub use context::{
     CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorConfigError, CodeVectorSettings, Context,
     EmbeddingConfig, FALKORDB_GRAPH_NAME, FalkorConfig, ProjectIdentitySource, ProjectIndexScope,
-    QdrantConfig, ServiceConfigSelection, detect_project_root, detect_project_root_from,
-    resolve_project_identity, warn_project_identity,
+    ProjectView, QdrantConfig, ServiceConfigSelection, detect_project_root,
+    detect_project_root_from, resolve_project_identity, warn_project_identity,
 };
 
 pub(crate) use context::parent_code_index_exists;

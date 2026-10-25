@@ -43,7 +43,8 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "launch names the seats to start; skip_live_seats leaves out each seat whose "
             "agent already runs on this machine with a live session in this project and "
             "maps it to that session under live. tab_title sets tab_exists for that tab of "
-            "the workspace. team_id limits live seats to that admitted team's runs. "
+            "the workspace. team_id limits live seats to that admitted team's runs and maps "
+            "every catalogue seat with such a run under live, requested or not. "
             "On success it returns the checked seats."
         ),
         read_only=True,

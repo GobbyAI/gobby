@@ -25,7 +25,11 @@ pub(super) fn valid_indexed_paths(
 
 /// The subset of `file_paths` that `visibility::indexed_file_exists` accepts for
 /// each path, answered by one statement for the whole set.
-fn indexed_file_paths(conn: &mut Client, ctx: &Context, file_paths: &[String]) -> BTreeSet<String> {
+pub(super) fn indexed_file_paths(
+    conn: &mut Client,
+    ctx: &Context,
+    file_paths: &[String],
+) -> BTreeSet<String> {
     if file_paths.is_empty() {
         return BTreeSet::new();
     }

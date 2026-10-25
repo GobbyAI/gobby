@@ -52,7 +52,12 @@ def test_devteam_developer_inherits_live_provider_or_resolver_fallback(
         {
             "inputs": inputs,
             "steps": {
-                "guard": {"output": {"workspace_id": "test-workspace"}},
+                "guard": {
+                    "output": {
+                        "workspace_id": "test-workspace",
+                        "live": {"dev-manager": "dev-manager-session"},
+                    }
+                },
                 "admit": {
                     "output": {
                         "branch": "task-example",
@@ -66,6 +71,7 @@ def test_devteam_developer_inherits_live_provider_or_resolver_fallback(
         drop_none=True,
     )
     assert "provider" not in arguments
+    assert "Your Dev Manager is session dev-manager-session" in arguments["prompt"]
     sessions = {
         "d6a9f756": SimpleNamespace(source="pipeline"),
         "launcher": SimpleNamespace(source=parent_source),
