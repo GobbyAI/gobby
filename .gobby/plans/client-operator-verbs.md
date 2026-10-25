@@ -1251,8 +1251,9 @@ Targets:
 - The 46 former Python carriers remain `carried = false` until their owning
   family supplies Rust CLI parity. The heading names each family owner as a
   cross-plan prerequisite, so expansion creates blocked-by edges on those
-  tasks rather than leaving the wait in prose. Lifecycle rows from D1 must
-  also pass this gate; no retained row is exempt.
+  tasks rather than leaving the wait in prose. The seven lifecycle rows
+  owned by #21554 belong to deferred D1 and are proved there. Section 1.7
+  can complete independently of D1; S3.2 requires both outcomes.
 - `gclient` becomes `gobby` at S3.2. Other retained carriers include
   `gdaemon schema apply` and the native MCP transport executable. The gate
   verifies the Rust carrier actually named by each row, preserving absorbed
@@ -1262,13 +1263,20 @@ Targets:
   those fixtures rather than implementing another command parser.
 
 **Implementation:**
-- Load 1.5's inventory with `toml`. Fail with the path, member and owner ref
-  of every `keep` or `absorb` command row whose `carried` flag is false.
+- Load 1.5's inventory with `toml`. The support module defines the exact D1
+  carve-out as owner ref `#21554` paired with each of these seven paths:
+  `start`, `stop`, `restart`, `lease status`, `lease promote`, `lease recover`,
+  and `lease handoff`. Validate that all seven pairs exist exactly once.
+  Select 1.7's rows as every keep/absorb row except those exact pairs,
+  regardless of their `carried` flags. The two sets must partition all
+  retained rows; a different path or owner ref cannot enter the carve-out.
+- Fail with the path, member and owner ref of every selected command row
+  whose `carried` flag is false.
   Set a row true only after all its exact members pass the execution check
   below. Drop rows remain explicit decisions and are excluded from execution.
-- The support module maps each retained exact member to its Rust carrier
+- The support module maps each selected exact member to its Rust carrier
   invocation, isolated fixture and expected output or request. Rows without
-  `members` use their own `path`. Compare the full retained-member set with
+  `members` use their own `path`. Compare the full selected-member set with
   the proof-case keys; missing, duplicated or stale cases fail. Absorbed
   members name the replacement invocation explicitly, not by prefix.
 - Execute every proof case through its Rust command entry point with valid
@@ -1282,28 +1290,38 @@ Targets:
   and a command rejected by its carrier all fail with the exact member and
   owner ref. A false row cannot disappear from the execution set by filtering
   on `carried`; readiness and execution are independent checks.
-- This leaf owns the final inventory flags and the executable gate. S3.2
-  requires its successful completion before handing the name to the client.
+- A carve-out negative fixture tries an extra path under #21554 and a
+  listed path under another owner ref. Neither is excluded. Removing or
+  duplicating an expected lifecycle pair also fails. Changing any selected
+  row's flag to false must still fail, so a non-lifecycle gap cannot hide.
+- This leaf owns its selected rows' final inventory flags and the reusable
+  execution gate. D1 owns the seven lifecycle rows and adds their execution
+  proof using the same support module. S3.2 requires both completed tasks.
 
 **Focused verification (planned):**
 `cargo nextest run -p gobby-client --test operator_inventory_parity` must
-pass against the completed inventory, including every retained member and
+pass against 1.7's selected rows, including every selected member and
 the negative fixtures. Run `cargo clippy -p gobby-client --all-targets -- -D warnings`.
 
 **Acceptance:**
 
-- 1.7.1 - Every keep/absorb command row is carried; a false flag fails with
-  the member and owning ref instead of being skipped. test:
+- 1.7.1 - Every keep/absorb command row outside the exact seven-pair D1
+  carve-out is carried; a false flag fails with the member and owning ref
+  instead of being skipped. test:
   `crates/gclient/tests/operator_inventory_parity.rs::retained_rows_have_no_uncarried_commands`.
-- 1.7.2 - Every exact retained member has a passing Rust execution proof
+- 1.7.2 - Every exact selected member has a passing Rust execution proof
   for its declared carrier; missing, duplicate, stale or unserved members
   fail, including nested commands and absorbed replacements. test:
   `crates/gclient/tests/operator_inventory_parity.rs::every_retained_member_has_rust_execution_proof`.
 - 1.7.3 - Negative fixtures prove that an uncarried row, missing member and
   carrier rejection each fail with the member and owner ref. test:
   `crates/gclient/tests/operator_inventory_parity.rs::parity_gate_rejects_incomplete_inventory`.
+- 1.7.4 - The D1 carve-out is exactly the seven #21554/path pairs above;
+  extra or wrong-owner rows cannot hide, missing or duplicated pairs fail,
+  and selection never depends on carried flags. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::lifecycle_carve_out_is_exact`.
 
-## D1 Lifecycle and lease verbs on the client (depends: 1.6)
+## D1 Lifecycle and lease verbs on the client (depends: 1.6, 1.7, #21554)
 `kind: deferred`
 
 `gclient start`, `stop`, `restart` and `lease status|promote|recover` wait for
@@ -1322,6 +1340,7 @@ deferral:
     - D1.2
     - D1.3
     - D1.4
+    - D1.5
 ```
 
 - D1.1 - `gclient start` starts the daemon the way #21554's thin Python
@@ -1337,6 +1356,16 @@ deferral:
   verbs and `lease handoff` become `carried = true`. The Python
   `daemon_lifecycle.py` that #21554 creates stays registered until S3.2
   #21573 removes it in the change that hands the `gobby` name to the client.
+- D1.5 - The seven #21554/path pairs excluded from 1.7 pass that section's
+  readiness and Rust execution checks through the same support module.
+  D1 adds `lifecycle_rows_have_rust_execution_proof` to
+  `crates/gclient/tests/operator_inventory_parity.rs`, supplies the seven
+  cases in `crates/gclient/tests/support/operator_inventory.rs`, and proves
+  all seven flags true and every member served, including the absorbed
+  `lease handoff` invocation through `stop`. Run
+  `cargo nextest run -p gobby-client --test operator_inventory_parity` after
+  D1; both the base gate and lifecycle proof must pass. The heading's
+  dependency on 1.7 supplies the shared harness before D1 is implemented.
 
 ## S3.2 Handoff
 `kind: framing`
@@ -1354,8 +1383,11 @@ Orchestrator carries them into that task's plan; this plan does not edit
    and the stamped coherent set, so cutover builds, signs, stamps and
    promotes the renamed client with the other binaries (found work, 02:36 CT).
    This obligation survives deletion of the Python cutover implementation.
-3. Require completion of S3.1 section 1.7, the operator inventory parity
-   gate and its cross-plan prerequisites: every retained command
+3. Require completion of both S3.1 section 1.7 and the task created for
+   deferred D1 at expansion. The Orchestrator records blocked-by edges from
+   #21573 to both tasks when their concrete refs exist. Section 1.7 proves
+   the non-lifecycle inventory; D1.5 proves the exact seven lifecycle rows
+   through the same execution gate. Together, every retained command
    row, including all 46 additional family-owned Rust CLI carriers, must be
    `carried = true` with its exact members served by Rust. A planned name or
    native HTTP/MCP route alone is insufficient. Rename `gclient` carriers to
@@ -1383,11 +1415,18 @@ intermediate Python command or supervised runtime after the switch.
   row's `members`; the test failure names it and the file.
 - D1 is expanded as a needs-planning task and waits for #21554.
 - 1.7 follows 1.5 and its explicit family-owner dependencies. Its passing
-  execution gate is required before S3.2; 1.5's help-only check is insufficient.
+  execution gate and D1.5's lifecycle proof are both required before S3.2;
+  1.5's help-only check is insufficient.
 
 ## V1 Plan Changelog
 `kind: verification`
 
+- 2026-10-24: #24954 review round 2 repaired under Orchestrator GO. Section
+  1.7 excludes exactly seven #21554/path pairs by ownership, never by
+  carried flag, and tests that the carve-out cannot hide another gap.
+  D1.5 owns those seven rows' readiness and execution proofs with 1.7's
+  shared harness; D1 depends on 1.7 and #21554. S3.2 requires both 1.7 and
+  D1's expansion-created task. V2 distinguishes the base and lifecycle runs.
 - 2026-10-24: #24954 review round 1 repaired. Section 1.7 now owns the
   executable parity gate with family-owner cross-plan dependencies, exact
   member proofs, negative fixtures and acceptance items. V2 and the S3.2
@@ -1481,8 +1520,11 @@ Observed on this draft:
 Planned checks (not run; the files they test do not exist yet):
 
 - `cargo nextest run -p gobby-client --test operator_inventory_parity`
-  must pass for every retained inventory member, with no uncarried rows or
-  unserved members, before the S3.2 naming switch (section 1.7).
+  must pass after 1.7 for every retained member outside the exact seven-pair
+  D1 carve-out, with no uncarried selected rows or unserved selected members.
+  After D1, rerun it with D1.5's added lifecycle proof: all seven lifecycle
+  rows must also be carried and served. Both completed tasks and the final
+  combined passing suite are required before the S3.2 naming switch.
 - `cargo nextest run -p gobby-client --test status_verb --test projects_verb --test tasks_verb --test config_verb --test command_mode --test cli_inventory --test source_size`
   must pass.
 - `cargo clippy -p gobby-client --all-targets -- -D warnings` must pass.
