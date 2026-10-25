@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
@@ -13,6 +14,10 @@ from typing import TypedDict
 
 import psycopg
 
+from gobby.code_index.context import CodeIndexContext
+from gobby.code_index.eligibility import overlay_project_id_for_root
+from gobby.code_index.gcode_gateway import GcodeGateway
+from gobby.code_index.maintenance_launch import open_launch_async
 from gobby.releases.window import ReleaseWindowUnreadable, admissions_closed, read_window
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
@@ -48,6 +53,8 @@ from gobby.utils.git import git_subprocess_env
 from gobby.utils.machine_id import require_machine_id
 
 __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
+
+logger = logging.getLogger(__name__)
 
 _FULL_SHA = re.compile(r"[0-9a-f]{40}")
 _LANDING_ACTION = re.compile(
@@ -420,8 +427,53 @@ async def _mark_task_worktree(
     return {**result, "worktree_id": row.id, "worktree_merged": merged}
 
 
+async def _refresh_index(
+    main: Path,
+    sha: str,
+    project_id: str,
+    paths: set[str],
+    code_index: CodeIndexContext | None,
+) -> None:
+    """Re-index the landed paths in the main checkout; a failure never fails the landing.
+
+    The refresh runs under the same managed launch the code-index trigger uses, read
+    when the landing runs because the daemon binds its launch factory after startup.
+    """
+    if not paths:
+        return
+    factory = code_index.launch_factory if code_index is not None else None
+    try:
+        if factory is None:
+            result = await GcodeGateway().incremental_index(
+                main, sorted(paths), timeout=_LANDING_TIMEOUT
+            )
+        else:
+            async with open_launch_async(
+                factory,
+                project_id,
+                timeout_seconds=_LANDING_TIMEOUT,
+                code_overlay_project_id=overlay_project_id_for_root(main),
+            ) as launch:
+                result = await GcodeGateway().incremental_index(
+                    main, sorted(paths), timeout=_LANDING_TIMEOUT, env=launch.env
+                )
+    except Exception as exc:  # Launch and gateway faults never fail a landed commit.
+        logger.warning("Index refresh failed after landing %s: %s", sha, exc)
+        return
+    # Exit 3 is --skip-if-locked yielding to a concurrent indexer, not a failure.
+    if result.returncode not in (0, 3):
+        logger.warning(
+            "Index refresh exited %s after landing %s: %s", result.returncode, sha, result.stderr
+        )
+
+
 async def land_candidate(
-    db: HubDatabase, *, task: Task, caller_session_id: str, commit_sha: str
+    db: HubDatabase,
+    *,
+    task: Task,
+    caller_session_id: str,
+    commit_sha: str,
+    code_index: CodeIndexContext | None = None,
 ) -> LandingResult:
     """Land a linked candidate another session approved, as the task's Dev Manager.
 
@@ -571,6 +623,7 @@ async def land_candidate(
                     landed = await _record_and_notify(
                         db, current_task, caller_session_id, sha, facts
                     )
+                    await _refresh_index(main, sha, task.project_id, paths, code_index)
                     return await _mark_task_worktree(db, current_task, main, landed)
                 if observed_tip != tip:
                     continue
