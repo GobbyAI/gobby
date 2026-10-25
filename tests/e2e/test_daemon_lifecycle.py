@@ -694,7 +694,9 @@ class TestBridgeAutoStart:
             async with gmcp_session(home=gobby_home, cwd=e2e_project_dir, identity_env=env):
                 await wait_for_awaited_condition(
                     healthy,
-                    timeout=300.0,
+                    # Under the suite's 120 s per-test timeout, leaving room for setup and
+                    # teardown, so a start that never happens fails on this assertion.
+                    timeout=75.0,
                     interval=1.0,
                     description="gmcp's recorded start to bring /api/health to 200",
                 )
