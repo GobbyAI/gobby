@@ -233,13 +233,23 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
     ) as client:
         for chars in (4096, 8192):
             probes.append(await _probe(client, config, model, chars, "chars-per-token"))
-        ratios = [p["chars_per_token"] for p in probes if "chars_per_token" in p]
-        ratio = sum(ratios) / len(ratios) if ratios else 4.0
+        # Differencing cancels fixed question/envelope overhead in input_tokens.
+        measured_ratio: float | None = None
+        overhead = 0.0
+        first_tokens = probes[0].get("usage", {}).get("input_tokens", 0)
+        second_tokens = probes[1].get("usage", {}).get("input_tokens", 0)
+        if 0 < first_tokens < second_tokens:
+            candidate_ratio = (probes[1]["state_chars"] - probes[0]["state_chars"]) / (
+                second_tokens - first_tokens
+            )
+            if math.isfinite(candidate_ratio):
+                measured_ratio = candidate_ratio
+                overhead = max(0.0, first_tokens - probes[0]["state_chars"] / measured_ratio)
+        ratio = measured_ratio if measured_ratio is not None else 4.0
         limit = config.resolved_backend_max_state_tokens
         for name, multiplier in (("just-under", 0.99), ("over-limit", 1.05)):
-            probes.append(
-                await _probe(client, config, model, int(limit * ratio * multiplier), name)
-            )
+            chars = max(0, int((limit * multiplier - overhead) * ratio))
+            probes.append(await _probe(client, config, model, chars, name))
         pinned = await _probe(client, config, model, 4096, "pinned-model")
         alias = await _probe(client, config, args.alias, 4096, "alias")
         probes.extend((pinned, alias))
@@ -271,7 +281,9 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         "backend_max_state_tokens": limit,
         "shapes": shapes,
         "probes": probes,
-        "measured_chars_per_token": sum(ratios) / len(ratios) if ratios else None,
+        "measured_chars_per_token": measured_ratio,
+        "limit_probe_chars_per_token": ratio,
+        "estimated_input_overhead_tokens": overhead if measured_ratio is not None else None,
         "alias_matches_pinned_response": alias_matches,
         "canonical_slug": canonical,
         "privacy_policy": PRIVACY if config.wire_api == "openrouter-decisions" else None,
@@ -298,9 +310,11 @@ def main(
         "Service round trips validate all four shapes. Raw probes record usage and cost, "
         "chars-per-token, both input-limit responses and the alias comparison. "
         "A failed shape remains a finding; successful probes do not waive it.\n\n"
-        "The ratio uses state characters divided by reported input tokens; the denominator "
-        "may include question overhead. The over-limit response is evidence, not an assumption "
-        "that the backend rejects or truncates.\n\n"
+        "The measured ratio uses the difference in state characters divided by the difference "
+        "in reported input tokens across two probes, removing fixed question overhead. "
+        "Limit-probe sizes account for the estimated overhead. If calibration is unavailable, "
+        "the measured ratio is null and probes assume 4 characters per token with zero overhead. "
+        "The responses establish whether the backend rejects or truncates.\n\n"
         "OpenRouter privacy flags are checked on every service exchange and raw probe. "
         "Input scope, documented errors and usage: "
         "[OpenRouter Jev](https://openrouter.ai/docs/guides/community/jev.md), "

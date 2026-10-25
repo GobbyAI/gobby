@@ -312,6 +312,7 @@ class CommunityLabeler:
             else:
                 mode = self._effective_mode(config, policy, decision.backend_identity)
                 position = decision.answers[key].score / (len(_SUFFICIENCY_LEVELS) - 1)
+                outcome = "sufficient" if position >= policy.min_score else "insufficient"
                 if mode == "enforce" and position >= policy.min_score:
                     written = await run_db(
                         storage.update_community_label,
@@ -440,7 +441,7 @@ class CommunityLabeler:
         confidence = None
         model = self._profile
         fields: dict[str, Any] = {
-            "decision_mode": "off",
+            "decision_mode": config.community_label.mode if config is not None else "off",
             "decision_choice": None,
             "decision_confidence": None,
             "decision_unavailable": None,

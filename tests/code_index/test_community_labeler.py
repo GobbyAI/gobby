@@ -763,6 +763,8 @@ async def test_gate_outcomes_extend_the_discriminator_to_nine(
 
     events = {event["community_id"]: event for event in _events(caplog, OUTCOME_EVENT)}
     assert {event["outcome"] for event in events.values()} == NINE_OUTCOMES
+    assert events[13]["decision_mode"] == "enforce"
+    assert events[13]["decision_choice"] is None
     assert events[14]["decision_mode"] == "enforce"
     assert events[14]["decision_choice"] == "generated"
     assert events[14]["decision_confidence"] == pytest.approx(0.9)
@@ -1135,7 +1137,7 @@ async def test_insufficient_or_shadow_score_generates(
     )
     assert outcomes == {85: "written_model"}
     [event] = sufficiency_events()
-    assert event["mode"] == "shadow"
+    assert (event["outcome"], event["mode"]) == ("sufficient", "shadow")
     assert event["position"] == pytest.approx(1.0)
 
     caplog.clear()

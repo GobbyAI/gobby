@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ast
 import base64
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 
 from scripts import decisions_live_capture
@@ -70,9 +72,14 @@ def test_capture_records_every_shape_and_probe(
     listing = [r for r in openrouter_wire.requests if r.method == "GET"]
     assert [r.url.path for r in listing] == ["/api/v1/models"]
     sizes = [len(r.content) for r in openrouter_wire.requests if r.method == "POST"]
-    near_limit = sorted(sizes)[-2:]
-    assert near_limit[0] >= BACKEND_MAX_STATE_TOKENS * 4 // 2, "just-under probe"
-    assert near_limit[1] > near_limit[0], "over-limit probe"
+    ceiling = BACKEND_MAX_STATE_TOKENS * 4
+    assert any(ceiling // 2 <= size <= ceiling for size in sizes), "just-under probe"
+    assert any(size > ceiling for size in sizes), "over-limit probe"
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    probes = {probe["probe"]: probe for probe in capture["probes"]}
+    assert probes["just-under"]["status"] == 200
+    assert probes["over-limit"]["status"] == 400
+    assert capture["measured_chars_per_token"] == pytest.approx(4.0)
 
     lowered = section.lower()
     run_dates = {datetime.now(UTC).date().isoformat(), datetime.now().date().isoformat()}
@@ -85,6 +92,39 @@ def test_capture_records_every_shape_and_probe(
     assert "chars-per-token" in lowered
     assert ALIAS_MODEL in section
     assert "cost" in lowered
+
+
+@pytest.mark.parametrize("token_counts", [(1024, 1024), (2048, 1024), (1024, None)])
+def test_capture_reports_unmeasured_ratio_for_unusable_calibration(
+    tmp_path: Path,
+    openrouter_wire: OpenRouterWire,
+    monkeypatch: pytest.MonkeyPatch,
+    token_counts: tuple[int, int | None],
+) -> None:
+    handle = openrouter_wire.handle
+
+    def calibration_response(request: httpx.Request) -> httpx.Response:
+        response = handle(request)
+        if request.method == "POST" and response.is_success:
+            body = json.loads(request.content)
+            size = len(body["state"].get("text", ""))
+            if size in (4096, 8192):
+                payload = response.json()
+                tokens = token_counts[(4096, 8192).index(size)]
+                payload["usage"] = {} if tokens is None else {"input_tokens": tokens}
+                return httpx.Response(200, json=payload)
+        return response
+
+    monkeypatch.setattr(openrouter_wire, "handle", calibration_response)
+
+    code, section = _capture(tmp_path)
+
+    assert code == 0
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    assert capture["measured_chars_per_token"] is None
+    probes = {probe["probe"]: probe for probe in capture["probes"]}
+    assert probes["just-under"]["status"] == 200
+    assert probes["over-limit"]["status"] == 400
 
 
 def test_capture_output_omits_key_and_image(
