@@ -30,8 +30,6 @@ recorded under planning task #24951:
   ledger ownership update. The two additive routes in2.2/4.1 have separate
   native-extension entries. The eight GET/HEAD API-docs UI
   rows for /docs, /redoc and /openapi.json remain with #21589.
-- **D2, wiki:** wiki retirement supersedes the historical /api/hub/wiki/*
-  clause. Preserve ordinary 404 responses and retained bytes; recreate no wiki API.
 - **D3, command entry:** native family operations are exposed by
   `gdaemon projects` and `gdaemon files`. Existing Click groups become
   argument/exit-code forwarding shims. The current MCP registry delegates
@@ -91,7 +89,7 @@ and all prior safety/functional obligations.
   intentional status/envelope/refusal contracts; only exact cited waivers
   replace the listed accidental messages/failure states.
 - D7 KEEP the approved once-only namespace/layout cutover, retained bytes,
-  leases, owner relay and wiki 404. Section 3.5 adds its exact shared waivers;
+  leases and owner relay. Section 3.5 adds its exact shared waivers;
   removed source rows retain dropped-by-decision provenance.
 
 S1 belongs to #24963: docs/contracts/parity-waivers.json has required id,
@@ -179,10 +177,6 @@ storage, migration and auth modules named in the owning sections. No proposed
 implementation test has run. The following complete gcode evidence reads pin
 particularly consequential facts:
 
-- `tests/test_wiki_retirement_contract.py::test_retired_http_routes_use_normal_missing_route`,
-  lines 33–54, excerpt_hash
-  5fb861d97c0d35667138f6563db7838cfb714b401c91cebccc40f25cfddc0715:
-  `53| assert not any(path.startswith("/api/wiki") for path in app.openapi()["paths"])`.
 - `src/gobby/servers/chat_attachment_files.py::attachment_relative_locator`,
   lines 55–59, excerpt_hash
   183224488bd50f71971d4b34921faaa451adc76a7dd3f994e8ecabac0f7e94df:
@@ -206,12 +200,11 @@ Observed literal sweeps:
 session-start/profile, hub_files_proxy and test_hub_files_proxy.
 `gcode grep -F '/api/files/user-md' web/ src/ tests/ -m 80` additionally
 found remote_preflight, intro overview/profile, test_remote_preflight_auth and
-test_utils_daemon_client. `gcode grep -E 'user-md|api/wiki|api/chat/attachments'
+test_utils_daemon_client. `gcode grep -E 'user-md|api/chat/attachments'
 web/src/ -m 65` found MessageItem, chatAttachments and the six test consumers
 listed in 3.5. The source-side attachment sweep additionally found
 storage/chat_attachments, the Python route and the files-home/AI contract docs.
-These consumers are all owned by 3.5. No wiki runtime consumer was found;
-the retirement test is retained. Re-run these bounded sweeps at implementation
+These consumers are all owned by 3.5. Re-run these bounded sweeps at implementation
 and include newly landed consumers in the same owning outcome.
 
 ## P1: Contract and family assembly
@@ -594,7 +587,7 @@ Targets:
 
 **Research context:** files_migrate.run_files_migrate performs discovery, prewalk, collision/identity checks, publication, baseline seeding and locator rewrites. _discover_attachments currently targets _personal/attachments, and attachment_relative_locator confirms that live layout. files.migrate is hub-local and refuses singleton conflicts. #21576 owns comms_attachments, which is not a source here.
 
-Port the existing migration classes into a fixed Rust operation, extending the destination once to attachments/<project-id>/. Include the existing legacy personal/project roots and already provisioned _personal/attachments, plus retained wiki bytes without recreating wiki behavior. Preserve existing non-attachment destinations and recognized retry states. Before any mutation, prewalk all sources/destinations, refuse overlaps, divergent collisions, symlinks, special entries and root/ancestor identity changes. Gate family uploads/deletes with the migration's exclusive lock; hold the daemon singleton/offline lock for offline CLI use. Publish using rename or cross-device copy/fsync/hash verification; retire source only after durable destination. Commit locator rewrites only after bytes exist. A crash after publication is reconciled by content equality on rerun; never overwrite divergent data or roll a locator forward to absent bytes. The report retains migrated/skipped/rewritten/unrewritten details and typed partial failure. The existing Click shim forwards to gdaemon files migrate and propagates stdout/stderr/exit status. Routing: backend code; tdd true.
+Port the existing migration classes into a fixed Rust operation, extending the destination once to attachments/<project-id>/. Include the existing legacy personal/project roots and already provisioned _personal/attachments. Preserve existing non-attachment destinations and recognized retry states. Before any mutation, prewalk all sources/destinations, refuse overlaps, divergent collisions, symlinks, special entries and root/ancestor identity changes. Gate family uploads/deletes with the migration's exclusive lock; hold the daemon singleton/offline lock for offline CLI use. Publish using rename or cross-device copy/fsync/hash verification; retire source only after durable destination. Commit locator rewrites only after bytes exist. A crash after publication is reconciled by content equality on rerun; never overwrite divergent data or roll a locator forward to absent bytes. The report retains migrated/skipped/rewritten/unrewritten details and typed partial failure. The existing Click shim forwards to gdaemon files migrate and propagates stdout/stderr/exit status. Routing: backend code; tdd true.
 
 This leaf adds projects.files-migrate.final-layout under #24963 for exact
 surface CLI gobby files migrate, decision .gobby/plans/gdaemon-projects-files-docs-family.md#3.4. Replacement: only
@@ -615,7 +608,7 @@ compare-readiness outcome.
 - 3.4.2 - CLI gobby files migrate preserves report/error/exit semantics except the exact projects.files-migrate.final-layout destination/locator replacement, which proves final bytes and retains all unrelated classes and retry/refusal outcomes. test: `crates/gprojects/tests/files_migration.rs::command_matches_python`.
 - 3.4.3 - Preflight collision/special-type/overlap/root-swap refusals leave all sources, destinations and database locators byte-for-byte unchanged. test: `crates/gprojects/tests/files_migration.rs::preflight_has_zero_mutations`.
 - 3.4.4 - Same-device, cross-device and crash/rerun states converge to one verified final locator per attachment with no lost or duplicated divergent bytes. test: `crates/gprojects/tests/files_migration.rs::rerun_converges_after_each_boundary`.
-- 3.4.5 - Retained wiki bytes remain available as archived bytes, no wiki API appears, and comms_attachments is neither read nor moved. test: `crates/gprojects/tests/files_migration.rs::scope_preserves_retired_and_downstream_data`.
+- 3.4.5 - comms_attachments is neither read nor moved. test: `crates/gprojects/tests/files_migration.rs::scope_preserves_downstream_data`.
 - 3.4.6 - Corpus/replay/compare/ledger consume the same exact migration-layout waiver and reject missing citation, broad report normalization or loss of ordinary class/error/exit coverage. test: `crates/gprojects/tests/files_migration.rs::layout_waiver_is_case_specific`.
 
 **Verification:** planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-projects --test files_migration` and isolated pytest for tests/cli/test_native_files_forwarding.py.
@@ -657,7 +650,7 @@ Targets:
 
 **Research context:** The bounded literal sweeps recorded above locate the profile path constant, remote probe, Python response URL and React consumers. MessageItem validates the old attachment prefix explicitly; changing server routes alone would break rendered attachment links. chat_attachment_files is still called by transitional cleanup/binding code, so all readers/writers must move with the migration.
 
-After migration is proven, change every listed producer/consumer and contract to the canonical hub namespaces/layout in one release. Preserve the existing relay's hop-loop guard and bounded headers/body streaming; node requests reach the owner without local files_home access. Old /api/files/user-md and /api/chat/attachments paths must receive ordinary missing-route responses from the native dispatcher even while Python remains available; they must not fall through to old Python handlers. Do not install compatibility aliases. Keep the retired wiki path missing. Rendered content_url values change at serialization, so old stored conversation metadata is normalized through the canonical serializer rather than moving bytes again. Repeat exact-literal sweeps across src, web, tests and docs and account for any new hits. No visual design changes are involved. Routing: fullstack code; tdd true.
+After migration is proven, change every listed producer/consumer and contract to the canonical hub namespaces/layout in one release. Preserve the existing relay's hop-loop guard and bounded headers/body streaming; node requests reach the owner without local files_home access. Old /api/files/user-md and /api/chat/attachments paths must receive ordinary missing-route responses from the native dispatcher even while Python remains available; they must not fall through to old Python handlers. Do not install compatibility aliases. Rendered content_url values change at serialization, so old stored conversation metadata is normalized through the canonical serializer rather than moving bytes again. Repeat exact-literal sweeps across src, web, tests and docs and account for any new hits. No visual design changes are involved. Routing: fullstack code; tdd true.
 
 D7 retains this cutover and all byte/lease/relay guarantees. This leaf adds
 the following #24963 entries, each citing .gobby/plans/gdaemon-projects-files-docs-family.md#3.5 as its decision:
@@ -681,7 +674,7 @@ not path masks or Skipped comparisons; unchanged functional cases still Pass.
 
 **Acceptance:**
 - 3.5.1 - Every enumerated profile/upload/download/delete consumer uses the canonical hub routes; browser rendered links, restore and proxy tests remain functional. test: `tests/contracts/test_hub_namespace_cutover.py::test_all_consumers_use_hub_namespace`.
-- 3.5.2 - Old route paths and retired wiki paths return normal 404, and a node without local copies reads/writes hub USER.md and attachments through the authenticated owner relay. test: `tests/contracts/test_hub_namespace_cutover.py::test_cutover_has_one_owner_and_no_aliases`.
+- 3.5.2 - Old USER.md/attachment route paths return normal 404, and a node without local copies reads/writes hub USER.md and attachments through the authenticated owner relay. test: `tests/contracts/test_hub_namespace_cutover.py::test_cutover_has_one_owner_and_no_aliases`.
 - 3.5.3 - Current Python cleanup/binding consumers and native publication/content/deletion all resolve the same final locator after migration, with no second byte migration. test: `tests/contracts/test_hub_namespace_cutover.py::test_mixed_runtime_consumers_share_layout`.
 - 3.5.4 - All six named namespace/layout entries validate against #24963 and prove exact old404/new-contract/retained-byte assertions without waiving other outcomes or adding aliases. test: `tests/contracts/test_hub_namespace_cutover.py::test_cutover_waivers_preserve_functional_contracts`.
 
@@ -1576,8 +1569,9 @@ The narrative draft has no M1 and has not run expansion validation.
 After adversary derivation, run the same base validation and:
 `uv run gobby plans validate .gobby/plans/gdaemon-projects-files-docs-family.md -p /Users/josh/Projects/gobby --mode expansion`.
 Any narrative edit after derivation requires a fresh adversary-derived manifest.
-The coordinator presents the stamped bytes to Josh; explicit operator approval
-precedes expansion.
+Josh approved all three family plans on2026-10-25. The operator's current
+scope-deletion ruling retains that approval without another approval round.
+Fresh M1 and coordinator expansion checks remain required.
 
 Executors also run scoped Rust format/clippy and focused nextest checks,
 Python Ruff/mypy for changed production paths, changed-test type audit, and
@@ -1589,7 +1583,7 @@ deliverables. No planned success is claimed as validation evidence.
 `kind: framing`
 
 2026-10-24 — Initial narrative by Plan Writer gobby#17571 for planning task
-#24951. Scope, wiki retirement, transitional native command entry and shared
+#24951. Scope, transitional native command entry and shared
 admission ownership follow the coordinator's confirmed Decision Record.
 No consensus or manifest is claimed in this initial draft.
 

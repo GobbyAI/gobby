@@ -157,7 +157,7 @@ intentional behavioral divergence.
   `src/gobby/servers/routes/hub_files_proxy.py:33-63`.
 - **Call: KEEP** the plan's D5/D6 decision to **DROP** old route names and
   locator layout at the one cutover. Keep retained bytes, lease/publication
-  semantics, owner relay and wiki's existing ordinary 404. No extra alias or
+  semantics and owner relay. No extra alias or
   second attachment store is justified.
 - **Amend:** retain 3.4/3.5/6.3 and their M1 entries; extend 1.1/6.1's mapping
   beyond namespace-only deltas to the separately approved D1-D6 case waivers.
