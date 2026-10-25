@@ -24,6 +24,7 @@ pub mod local_token;
 pub mod loopback;
 pub mod machine;
 pub mod markdown;
+pub mod mcp;
 pub mod mermaid;
 pub mod progress;
 pub mod token_budget;

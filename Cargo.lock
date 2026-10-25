@@ -2425,7 +2425,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-code"
-version = "1.9.61"
+version = "1.9.63"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2496,6 +2496,7 @@ dependencies = [
  "fernet",
  "httpdate",
  "ignore",
+ "jsonschema",
  "log",
  "openssl",
  "postgres",
@@ -2503,6 +2504,7 @@ dependencies = [
  "rand 0.8.6",
  "redis",
  "reqwest",
+ "schemars",
  "scrypt",
  "serde",
  "serde_json",
@@ -2520,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.95"
+version = "0.4.97"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2559,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.41"
+version = "0.9.43"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

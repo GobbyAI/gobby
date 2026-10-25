@@ -1,0 +1,26 @@
+{
+  "result": {
+    "model": "clef",
+    "answers": {
+      "carry": {
+        "type": "noul",
+        "noul": 0.91
+      },
+      "split": {
+        "type": "noul",
+        "noul": 0.12
+      },
+      "rename": {
+        "type": "noul",
+        "noul": 0.5
+      }
+    },
+    "usage": {
+      "input_tokens": 388,
+      "output_tokens": 3
+    }
+  },
+  "success": true,
+  "errors": [],
+  "messages": []
+}

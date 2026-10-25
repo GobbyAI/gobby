@@ -333,6 +333,56 @@ async def test_session_process_loop_uses_one_runtime_bundle_per_iteration(
     assert runtime.capture_count == 2
 
 
+@pytest.mark.asyncio
+async def test_community_labeler_reads_live_decisions_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = BundleRuntime(
+        [
+            _bundle(
+                _snapshot(
+                    active=DaemonConfig(
+                        ai={"decisions": {"api_base": "https://decide.test", "model": model}},
+                        code_index={"community_label": {"enabled": True}},
+                    ),
+                    revision=revision,
+                )
+            )
+            for revision, model in enumerate(("jev-startup", "jev-second", "jev-third"), 1)
+        ]
+    )
+    labeler_kwargs: list[dict[str, Any]] = []
+
+    class RecordingLabeler:
+        def __init__(self, *_args: object, **kwargs: Any) -> None:
+            labeler_kwargs.append(kwargs)
+
+    async def idle_loop(**_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("gobby.code_index.community_labeler.CommunityLabeler", RecordingLabeler)
+    monkeypatch.setattr("gobby.code_index.maintenance.code_index_maintenance_loop", idle_loop)
+    monkeypatch.setattr("gobby.code_index.sync_worker.sync_worker_loop", idle_loop)
+    runner = SimpleNamespace(
+        config_runtime=runtime,
+        code_indexer=SimpleNamespace(storage=object(), run_db=object()),
+        text_generation_service=object(),
+        http_server=SimpleNamespace(services=SimpleNamespace(startup_ready=True)),
+    )
+
+    startup_code_index._start_code_index_tasks(cast(GobbyRunner, runner), None)
+    await runner._code_index_task
+    await runner._sync_worker_task
+
+    assert len(labeler_kwargs) == 1
+    resolver = labeler_kwargs[0].get("decisions_resolver")
+    assert callable(resolver)
+    assert runtime.capture_count == 1
+    assert resolver().model == "jev-second"
+    assert resolver().model == "jev-third"
+    assert runtime.capture_count == 3
+
+
 def test_lifecycle_modules_use_runtime_access() -> None:
     repository_root = Path(__file__).resolve().parents[2]
     violations: list[str] = []

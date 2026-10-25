@@ -9,11 +9,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents.team_lifecycle import ADMISSION_STEP, TeamBinding, admit_team
+from gobby.code_index.gcode_gateway import GcodeGateway
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.runbook_seat_tools import register_runbook_seat_tools
@@ -188,6 +189,7 @@ def make_team_world(
     """Wire spawn_agent and the runbook tools over ``case``; launches are recorded, not run."""
     # Team trees live under ~/.gobby/worktrees; keep them inside the test's directory.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(GcodeGateway, "pin_project", AsyncMock())
     LocalMachineManager(case.db).upsert_seen(require_machine_id(), TEST_USER_ID, hostname="local")
     world = TeamWorld(
         case=case,

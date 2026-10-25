@@ -21,12 +21,13 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.config.app import DaemonConfig
 from gobby.config.node_reports import NodeReportsConfig
-from gobby.hub import node_reports, remote_pane
+from gobby.hub import node_reports, remote_pane, remote_sandbox
 from gobby.hub.node_commands import CONTRACT_VERSION, ReportBody
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes import nodes
 from gobby.storage import workspace_machine_scope
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.attention import AttentionStateManager, run_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -887,3 +888,153 @@ def test_reported_run_must_be_active(
         )
 
     assert remote_pane.load_reported_run(temp_db, NODE, run.run_id, run.terminal_id) is None
+
+
+def _report_sandbox(
+    operations: dict[str, int],
+    events: list[dict[str, Any]] | None = None,
+    *,
+    version: str = "0.0.79",
+) -> dict[str, Any]:
+    return {
+        "runtime_version": version,
+        "policy_schema_version": 1,
+        "policy_hash": PANE_DIGEST,
+        "violation_count": sum(operations.values()),
+        "violation_count_truncated": False,
+        "denial_operations": operations,
+        "recent_violations": events,
+    }
+
+
+def _stored_sandbox(db: HubDatabase, run_id: str) -> dict[str, Any] | None:
+    run = LocalAgentRunManager(db).get(run_id)
+    assert run is not None
+    return cast(dict[str, Any] | None, (run.resume_metadata_json or {}).get("sandbox"))
+
+
+def _run_row_text(db: HubDatabase, run_id: str) -> str:
+    row = db.fetchone("SELECT * FROM agent_runs WHERE id = %s", (run_id,))
+    return repr(row)
+
+
+def test_report_sandbox_events_redacted(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _machines(temp_db)
+    caplog.set_level(logging.DEBUG)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    events = [{"line": f"deny network-outbound {API_KEY}", "command": f"echo {API_KEY}"}]
+    exit_report = {
+        **_exit(run.run_id, run.terminal_id),
+        "sandbox": _report_sandbox({"network-outbound": 1}, events),
+    }
+
+    with _client(temp_db, monkeypatch) as client:
+        epoch = node_reports.node_report_inbox().hub_epoch
+        response = _post(client, "report", _report(epoch, 1, exits=[exit_report]))
+        stored = _stored_sandbox(temp_db, run.run_id)
+        taken = node_reports.node_report_inbox().take()
+
+    assert response == (200, {})
+    assert stored is not None
+    assert stored["recent_violations"] == [
+        {"line": f"deny network-outbound {REDACTED_KEY}", "command": f"echo {REDACTED_KEY}"}
+    ]
+    assert [e.run_id for e in taken[NODE].exits] == [run.run_id]
+    assert API_KEY not in _run_row_text(temp_db, run.run_id)
+    assert API_KEY not in repr(taken)
+    assert API_KEY not in caplog.text
+
+
+def test_report_secret_sandbox_identity_refused(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _machines(temp_db)
+    caplog.set_level(logging.DEBUG)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    lowercase_key = "sk-abcdefghijklmnopqrstuv"
+    secret_version = _report_sandbox({"file-write-create": 2}, version=API_KEY)
+    secret_operation = _report_sandbox({lowercase_key: 2})
+    plain = _report_sandbox({"file-write-create": 2})
+
+    def agent(sandbox: dict[str, Any]) -> dict[str, Any]:
+        return {**_agent(run.run_id, run.terminal_id, None), "sandbox": sandbox}
+
+    with _client(temp_db, monkeypatch) as client:
+        inbox = node_reports.node_report_inbox()
+        epoch = inbox.hub_epoch
+        refused_version = _post(client, "report", _report(epoch, 1, [agent(secret_version)]))
+        refused_operation = _post(client, "report", _report(epoch, 1, [agent(secret_operation)]))
+        refused_taken = inbox.take()
+        refused_stored = _stored_sandbox(temp_db, run.run_id)
+        accepted = _post(client, "report", _report(epoch, 1, [agent(plain)]))
+        stored = _stored_sandbox(temp_db, run.run_id)
+        taken = inbox.take()
+
+    assert refused_version == (422, {"detail": "invalid_body"})
+    assert refused_operation == (422, {"detail": "invalid_body"})
+    assert refused_taken == {}
+    assert refused_stored is None
+    assert accepted == (200, {})
+    assert stored is not None
+    assert stored["runtime_version"] == "0.0.79"
+    assert stored["denial_operations"] == {"file-write-create": 2}
+    for secret in (API_KEY, lowercase_key):
+        assert secret not in caplog.text
+        assert secret not in repr(taken)
+        assert secret not in _run_row_text(temp_db, run.run_id)
+
+
+def test_report_sandbox_merge_failure_not_acknowledged(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _machines(temp_db)
+    caplog.set_level(logging.DEBUG)
+    run = _seed_run(temp_db, session_manager, sample_project["id"], monkeypatch)
+    marker = "/node/merge-marker-q7"
+    operations = {"file-write-unlink": 3}
+    events = [{"line": f"deny file-write-unlink {marker}", "command": f"rm {marker}"}]
+    exit_report = {
+        **_exit(run.run_id, run.terminal_id),
+        "sandbox": _report_sandbox(operations, events),
+    }
+
+    def failed_merge(*_args: object) -> None:
+        raise RuntimeError(f"merge failed for {marker} file-write-unlink")
+
+    # raising=False: the route binds the name once it applies sandbox records.
+    monkeypatch.setattr(nodes, "apply_sandbox_records", failed_merge, raising=False)
+    with _client(temp_db, monkeypatch) as client:
+        inbox = node_reports.node_report_inbox()
+        epoch = inbox.hub_epoch
+        failed = _post(client, "report", _report(epoch, 1, exits=[exit_report]))
+        after_failure = inbox.take()
+        monkeypatch.setattr(nodes, "apply_sandbox_records", remote_sandbox.apply_sandbox_records)
+        retried = _post(client, "report", _report(epoch, 2, exits=[exit_report]))
+        stored = _stored_sandbox(temp_db, run.run_id)
+        taken = inbox.take()
+
+    assert failed[0] == 500
+    assert after_failure == {}
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
+    assert "file-write-unlink" not in caplog.text
+    assert retried == (200, {})
+    assert stored is not None
+    assert stored["violation_count"] == 3
+    assert stored["denial_operations"] == operations
+    assert stored["recent_violations"] == events
+    assert [e.run_id for e in taken[NODE].exits] == [run.run_id]

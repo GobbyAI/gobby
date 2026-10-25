@@ -748,7 +748,7 @@ async def _execute_tool(
                 else "Tool call timed out"
             )
         else:
-            error_message = str(e)
+            error_message = str(e) or type(e).__name__
         if not is_internal:
             error_message, counts = strip_invisible_unicode(error_message)
             log_invisible_counts(counts, "third-party MCP error")
