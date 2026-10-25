@@ -141,9 +141,18 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     )
 
 
-def _ensure_sandbox_write_directories(config: SandboxConfig, workspace: str) -> None:
-    """Create directory grants before SRT pins their absent control-file children."""
-    for raw_path in config.extra_write_paths:
+def _ensure_sandbox_write_directories(
+    config: SandboxConfig, workspace: str, project_path: str | None
+) -> None:
+    """Create declared directory grants before cache paths enrich the policy."""
+    from gobby.utils.project_context import get_project_sandbox_config
+
+    declared_paths = list(config.extra_write_paths)
+    if project_path is not None:
+        project_config = get_project_sandbox_config(Path(project_path))
+        if project_config is not None:
+            declared_paths.extend(project_config.extra_write_paths)
+    for raw_path in declared_paths:
         if has_magic(raw_path):
             continue
         path = Path(canonical_path(raw_path, base=Path(workspace)))
@@ -203,6 +212,13 @@ async def _prepare_provider_sandbox(
                             "extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]
                         }
                     )
+        if sandbox_config is not None and sandbox_config.enabled:
+            await asyncio.to_thread(
+                _ensure_sandbox_write_directories,
+                sandbox_config,
+                request.cwd,
+                request.project_path,
+            )
         config = _sandbox_config_for_spawn(
             sandbox_config,
             env,
@@ -222,8 +238,6 @@ async def _prepare_provider_sandbox(
         daemon_port = int(getattr(request.daemon_config, "daemon_port", 60887))
         websocket = getattr(request.daemon_config, "websocket", None)
         websocket_port = int(getattr(websocket, "port", 60888))
-        if config.enabled:
-            await asyncio.to_thread(_ensure_sandbox_write_directories, config, request.cwd)
         launch = await prepare_sandbox_launch(
             config=config,
             provider=provider,
