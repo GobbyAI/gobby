@@ -24,7 +24,7 @@ use gobby_terminal::protocol::{
 use gobby_terminal::terminal_theme::{RgbColor, TerminalTheme, ThemeDeclaration};
 use handover_support::{
     ino, is_zombie, launch, list_rows, mtime_ns, pgid_file, restore, wait_until, Bound, HelperPane,
-    HelperSpec, BOUND_FILE, WAIT,
+    HelperSpec, StateEdit, BOUND_FILE, WAIT,
 };
 use host_support::{
     connect, recv_json, rpc, temp_socket_dir, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
@@ -742,6 +742,88 @@ fn setup_failure_in_new_image_falls_back() {
     }
 }
 
+/// #24946: the handover runs between the running release and its successor,
+/// so this image restores the state file gterm 0.1.15 wrote (it carries no
+/// `next_attachment`) with every pane live.
+#[test]
+fn previous_release_state_restores_every_pane() {
+    let dir = temp_socket_dir();
+    let mut spec = HelperSpec::new(dir.path(), vec![echo_pane("ht-a"), echo_pane("ht-b")]);
+    spec.state_edit = StateEdit::PreviousRelease;
+    let host = restore(&spec);
+
+    let restored = committed_restores(dir.path(), "previous-release");
+    assert_eq!(restored.len(), 1, "one restore: {restored:?}");
+    assert!(
+        restored[0].contains("Succeeded"),
+        "this image committed, without a fallback: {restored:?}"
+    );
+    let mut control = host.control();
+    let mut listed: Vec<String> = list_rows(&mut control)
+        .iter()
+        .map(|row| row["host_terminal_id"].as_str().unwrap_or_default().into())
+        .collect();
+    listed.sort();
+    assert_eq!(listed, ["ht-a", "ht-b"], "every carried pane is restored");
+    assert_writes_echo(&mut control, "previous-release", &["ht-a", "ht-b"]);
+}
+
+/// #24946: a new image that cannot read the state file at all still execs
+/// the earlier image the attempt recorded, over the unchanged state file and
+/// carried fds, so no live pane is dropped.
+#[test]
+fn unreadable_state_falls_back_with_every_pane_live() {
+    let dir = temp_socket_dir();
+    let path = |name: &str| dir.path().join(name);
+    let mut spec = HelperSpec::new(dir.path(), vec![echo_pane("ht-a"), echo_pane("ht-b")]);
+    spec.state_edit = StateEdit::UnknownObserverBind;
+    let ran = path("fallback-args");
+    // The earlier image records its arguments, then keeps the carried fds open.
+    spec.fallback_script = Some(format!(
+        "echo \"$@\" > '{}.tmp' && mv '{0}.tmp' '{0}'\nexec sleep 600",
+        ran.display()
+    ));
+    let mut host = launch(&spec);
+    host.wait_captured();
+
+    let deadline = Instant::now() + WAIT;
+    while !ran.exists() {
+        if let Some(status) = host.wait_exit(Duration::from_millis(20)) {
+            panic!(
+                "the restore ended ({status}) without falling back, dropping every pane: {}",
+                host.diagnostics()
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the earlier image never ran: {}",
+            host.diagnostics()
+        );
+    }
+    let args = std::fs::read_to_string(&ran).expect("fallback args");
+    let state = path(STATE_FILE);
+    assert!(
+        args.contains(&format!("--resume-state {}", state.display()))
+            && args.contains("--resume-fallback"),
+        "the earlier image resumes the same state file as a fallback: {args:?}"
+    );
+    assert!(state.exists(), "the state file is left for the fallback");
+    for id in ["ht-a", "ht-b"] {
+        let pgid: i32 = std::fs::read_to_string(path(&pgid_file(id)))
+            .expect("pgid file")
+            .trim()
+            .parse()
+            .expect("pgid");
+        // SAFETY: signal 0 only checks that the pane leader exists.
+        let alive = unsafe { libc::kill(pgid, 0) } == 0;
+        assert!(alive && !is_zombie(pgid as u32), "{id} survives");
+    }
+    assert!(
+        host.wait_exit(Duration::ZERO).is_none(),
+        "the host process lives on as the earlier image"
+    );
+}
+
 #[test]
 fn fallback_failure_and_wedged_restore_end_the_process() {
     let panes = || vec![echo_pane("ht-a"), echo_pane("ht-b")];
@@ -1044,6 +1126,65 @@ fn upgrade_keeps_pids_epoch_and_panes() {
         assert_writes_echo(&mut ctl, attempt_id, &ids(&panes));
     }
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    shutdown(&mut host, &mut ctl);
+}
+
+/// #24946: a restore that fails in the new image ends in a fallback whose
+/// outcome names why, so the daemon driving the install gets a typed error
+/// rather than a bare `fallback`.
+#[test]
+fn fallback_outcome_names_why_the_restore_failed() {
+    let mut host = live_host(&[("GTERM_RESTORE_FAULT", "decode:ht-1")]);
+    let dir = host.socket_dir().to_path_buf();
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let panes = echo_panes(&mut host, &mut ctl, 1);
+    let rows = expected_rows(&panes);
+
+    let accepted = host_upgrade(&mut ctl, &gterm_bin(), "typed-fallback", Value::Null);
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "typed-fallback", OUTCOME_WAIT);
+    assert_outcome(&after, "typed-fallback", "fallback", None);
+    let reason = &after["upgrade"]["last_outcome"]["reason"];
+    assert!(
+        reason.as_str().is_some_and(|reason| !reason.is_empty()),
+        "a fallback names its restore failure: {after}"
+    );
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    assert_eq!(pane_rows(&mut ctl), rows, "the panes survive the fallback");
+    assert_writes_echo(&mut ctl, "typed-fallback", &ids(&panes));
+    shutdown(&mut host, &mut ctl);
+}
+
+/// #24946: outside the handover, a second host started on a live host's
+/// socket dir refuses, leaving the live host, its sockets, and its pidfile
+/// alone, so two live hosts never share one socket dir.
+#[test]
+fn second_host_on_a_live_socket_dir_refuses() {
+    let mut host = live_host(&[]);
+    let dir = host.socket_dir().to_path_buf();
+    let control_ino = ino(&dir.join(CONTROL_SOCKET));
+    let frames_ino = ino(&dir.join(FRAMES_SOCKET));
+
+    let mut second = spawn_host_with_env(&dir, &[], &[], &[]);
+    let status = host_support::wait_exit(&mut second, Duration::from_secs(15))
+        .expect("the second host exits");
+
+    assert!(!status.success(), "the second host refuses: {status}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join(PID_FILE))
+            .expect("pidfile")
+            .trim(),
+        host.id().to_string(),
+        "the live host keeps its pidfile"
+    );
+    assert_eq!(ino(&dir.join(CONTROL_SOCKET)), control_ino);
+    assert_eq!(ino(&dir.join(FRAMES_SOCKET)), frames_ino);
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    assert_eq!(
+        ping(&mut ctl)["host_pid"],
+        host.id(),
+        "the live host answers"
+    );
     shutdown(&mut host, &mut ctl);
 }
 

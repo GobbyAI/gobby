@@ -71,6 +71,40 @@ fn read_state_refuses_an_unsupported_format() {
     assert!(err.to_string().contains("unsupported handover format"));
 }
 
+/// A state file exactly as gterm 0.1.15, the previous release, wrote it: one
+/// captured pane, and no `next_attachment`, which 0.1.16 added.
+///
+/// The handover is a cross-version exchange, so this image must read the state
+/// the running release writes. Do not regenerate this fixture from the current
+/// types: a field added without a default must fail here until it has one, or
+/// until a release ships and this file is replaced by that release's output.
+const PREVIOUS_RELEASE_STATE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/handover_state/gterm-0.1.15.json"
+);
+
+#[test]
+fn read_state_accepts_the_previous_release_state() {
+    let carried = read_state(Path::new(PREVIOUS_RELEASE_STATE))
+        .unwrap_or_else(|err| panic!("read the 0.1.15 state: {err}"));
+
+    assert_eq!(carried.format_version, FORMAT_VERSION);
+    assert_eq!(
+        (
+            carried.host_epoch.as_str(),
+            carried.generation,
+            carried.next_host_id
+        ),
+        ("epoch-1", 3, 42)
+    );
+    let ids: Vec<_> = carried
+        .panes
+        .iter()
+        .map(|pane| pane.host_terminal_id.as_str())
+        .collect();
+    assert_eq!(ids, ["ht-17"], "every carried pane is read");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn stage_rebuilds_generation_attempt_and_registry() {
     let dir = tempfile::tempdir().expect("tempdir");
