@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -11,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
 from psycopg.errors import UniqueViolation
 from pydantic import BaseModel, ValidationError
 
@@ -327,5 +329,23 @@ def create_node_runs_router(server: HTTPServer) -> APIRouter:
             logger.error("Terminate kill failed for run %s: %s", run.id, result.error_code)
             return {"terminated": False, "retry": True}
         return {"terminated": True, "retry": False}
+
+    @router.get("/detection-manifests")
+    async def detection_manifests(request: Request) -> Response:
+        _node_machine(server, request)
+        rows = await asyncio.to_thread(
+            server.services.database.fetchall,
+            "SELECT provider_id, content FROM detection_manifests ORDER BY provider_id",
+        )
+        digest = hashlib.sha256()
+        for row in rows:
+            content_sha = hashlib.sha256(row["content"].encode()).hexdigest()
+            digest.update(f"{row['provider_id']}\n{content_sha}\n".encode())
+        etag = f'"{digest.hexdigest()}"'
+        requested = {tag.strip() for tag in request.headers.get("if-none-match", "").split(",")}
+        if etag in requested:
+            return Response(status_code=304, headers={"ETag": etag})
+        manifests = [{"provider_id": row["provider_id"], "content": row["content"]} for row in rows]
+        return JSONResponse({"manifests": manifests}, headers={"ETag": etag})
 
     return router

@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
+from gobby.agents.agent_workspaces import schedule_workspace_commit
 from gobby.agents.provider_capabilities import agent_run_is_headless
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.hub.remote_runtime import resolve_terminal_runtime
@@ -367,6 +368,9 @@ def register_terminal_tools(
         if feedback_status.get("success") is False:
             return feedback_status
 
+        from gobby.agents.agent_workspaces import workspace_handoff_references
+
+        workspace_refs = workspace_handoff_references(db, session_id)
         try:
             handoff = build_handoff_payload(
                 current_state=current_state,
@@ -377,7 +381,7 @@ def register_terminal_tools(
                 what_didnt_work=what_didnt_work or (),
                 blockers=blockers or (),
                 notes=notes or (),
-                references=references or (),
+                references=[*(references or ()), *workspace_refs],
                 found_work=_validated_found_work(found_work),
             )
         except ValueError as exc:
@@ -495,6 +499,7 @@ def register_terminal_tools(
                 compact_target = session_id
             attempt_id = uuid4().hex
             attempt_state = None
+            schedule_workspace_commit(getattr(session, "project_id", None), "set_handoff")
             try:
                 conversation_id, _ = web_chat_session_registry.find_session(compact_target)
                 delivery_mode: Literal["in_process", "queued_in_process"] = (
@@ -649,6 +654,7 @@ def register_terminal_tools(
             }
 
         compact_attempt_id = uuid4().hex
+        schedule_workspace_commit(getattr(session, "project_id", None), "set_handoff")
         try:
             stage_handoff_attempt(
                 db,

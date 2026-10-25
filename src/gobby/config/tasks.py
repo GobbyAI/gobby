@@ -163,7 +163,7 @@ class TaskClosePolicyConfig(BaseModel):
         description="Task categories that also need an approved test record.",
     )
     review_categories: list[str] = Field(
-        default_factory=lambda: ["code", "docs"],
+        default_factory=lambda: ["code", "docs", "research"],
         description="Task categories that also need an approved independent review record.",
     )
 

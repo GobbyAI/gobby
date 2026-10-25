@@ -736,6 +736,17 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 logger.exception("Failed to register memory dream cron handler")
 
         try:
+            from gobby.agents.agent_workspaces import register_agent_workspace_cron
+
+            register_agent_workspace_cron(
+                cron_storage=runner.cron_storage,
+                cron_executor=cron_executor,
+            )
+        except Exception:
+            mark_service_degraded(runner, "agent_workspace_cron")
+            logger.exception("Failed to register agent workspace cron handler")
+
+        try:
             from gobby.feedback.agent import FeedbackReviewerAgent
             from gobby.feedback.cron import register_feedback_review_cron
             from gobby.feedback.service import FeedbackReviewService

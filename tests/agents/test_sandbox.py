@@ -3,7 +3,9 @@ Tests for Sandbox Configuration Models.
 """
 
 import json
+import math
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -47,7 +49,7 @@ from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
-from gobby.utils.daemon_git import GitFailed, GitTimeout
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout
 
 pytestmark = pytest.mark.unit
 
@@ -985,6 +987,16 @@ class TestComputeSandboxPaths:
                 ),
                 id="unavailable",
             ),
+            pytest.param(
+                GitFailed(
+                    status="failed",
+                    argv=("git", "rev-parse"),
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: detected dubious ownership in repository",
+                ),
+                id="nonzero-exit",
+            ),
         ],
     )
     async def test_git_metadata_failure_fails_closed(
@@ -1006,6 +1018,54 @@ class TestComputeSandboxPaths:
             )
 
         run.assert_awaited_once()
+
+    async def test_slow_git_metadata_within_bound_resolves(self, tmp_path: Path) -> None:
+        """Git metadata slower than the old 2 s bound resolves when it fits the new bound."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        simulated_git_seconds = 2.5
+
+        def git_completes_within_deadline(
+            args: Sequence[str], *, cwd: str | Path, timeout: float, **_: object
+        ) -> GitOk | GitTimeout:
+            argv = ("git", *args)
+            if timeout < simulated_git_seconds:
+                return GitTimeout(status="timeout", argv=argv, timeout=timeout)
+            return GitOk(status="ok", argv=argv, stdout=".git\n.git\n", stderr="")
+
+        run = AsyncMock(side_effect=git_completes_within_deadline)
+        with patch("gobby.agents.sandbox.daemon_git.run", new=run):
+            paths = await compute_sandbox_paths(
+                config=SandboxConfig(enabled=True),
+                workspace_path=str(workspace),
+            )
+
+        assert run.await_args is not None
+        assert run.await_args.kwargs["timeout"] > 2.0
+        assert str((workspace / ".git").resolve()) in paths.write_paths
+
+    async def test_git_metadata_hung_past_bound_fails_closed(self, tmp_path: Path) -> None:
+        """A Git call that never completes fails closed, and its deadline stays finite."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        def git_never_completes(
+            args: Sequence[str], *, cwd: str | Path, timeout: float, **_: object
+        ) -> GitTimeout:
+            return GitTimeout(status="timeout", argv=("git", *args), timeout=timeout)
+
+        run = AsyncMock(side_effect=git_never_completes)
+        with (
+            patch("gobby.agents.sandbox.daemon_git.run", new=run),
+            pytest.raises(RuntimeError, match="Failed to resolve Git metadata for sandbox"),
+        ):
+            await compute_sandbox_paths(
+                config=SandboxConfig(enabled=True),
+                workspace_path=str(workspace),
+            )
+
+        assert run.await_args is not None
+        assert 0 < run.await_args.kwargs["timeout"] < math.inf
 
     async def test_linked_worktree_git_metadata_dirs_are_writable(self, tmp_path: Path) -> None:
         """Linked worktree commits need write access to Git metadata outside the worktree."""

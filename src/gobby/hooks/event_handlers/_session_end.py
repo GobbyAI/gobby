@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gobby.agents.agent_workspaces import schedule_workspace_commit, unbind_epic_workspace
 from gobby.hooks.agent_run_ingress import session_end_targets_live_cli
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -37,6 +38,11 @@ class SessionEndMixin(EventHandlersBase):
                 session_id,
             )
             return HookResponse(decision="allow")
+
+        workspace_project_id = event.project_id or self._resolve_project_id(
+            event.project_id, event.cwd
+        )
+        schedule_workspace_commit(workspace_project_id, "session_end", loop=self._event_loop)
 
         if session_id:
             self.logger.debug("SESSION_END: session %s", session_id)
@@ -148,6 +154,13 @@ class SessionEndMixin(EventHandlersBase):
                     self._session_coordinator.complete_agent_run(session)
             except Exception as e:
                 self.logger.warning("Failed to complete agent run: %s", e)
+
+        # Run end releases the epic folder; a resumed seat re-binds it while its team is live.
+        if terminal_outcome and not hands_off_run and session_id and self._session_manager:
+            try:
+                unbind_epic_workspace(self._session_manager.db, session_id)
+            except Exception as e:
+                self.logger.warning("Failed to release epic workspace for %s: %s", session_id, e)
 
         # Session-bound workflow instances must be cleared when the session ends
         # so agent-only step enforcement cannot leak onto later requests.

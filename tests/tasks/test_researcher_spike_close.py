@@ -72,7 +72,8 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
         task = manager.get_task(task.id)
         required = task_step_requirements(temp_db, task).required
         assert required, "the research spike policy requires step records"
-        for step in required:
+        assert "review" in required, "a research spike needs an independent review record"
+        for step in (step for step in required if step != "review"):
             recorded = await registry.call(
                 f"record_{step}_step",
                 {
@@ -99,6 +100,37 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
         )
         assert refused == {"error": "agent definition researcher cannot write the review step"}
 
+        unreviewed = await registry.call("close_task", {"task_id": task.id, "commit_sha": sha})
+
+    # Without the research-reviewer's approval, gate 5 names review and the spike stays open.
+    assert unreviewed.get("closed") is not True, unreviewed
+    (review_gate,) = (gate for gate in unreviewed["gates"] if gate["item"] == 5)
+    assert review_gate["status"] == "failed"
+    assert "review" in review_gate["message"]
+    assert manager.get_task(task.id).closed_at is None
+
+    reviewer = sessions.register(
+        external_id="research-reviewer-spike-close",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+    )
+    SessionVariableManager(temp_db).set_variable(reviewer.id, "_agent_type", "research-reviewer")
+    with session_context_for_test(reviewer.id):
+        reviewed = await registry.call(
+            "record_review_step",
+            {
+                "task_id": task.id,
+                "status": "approved",
+                "epoch": task.review_epoch,
+                "round_number": 1,
+                "feedback": "The report answers the question and its claims match the commit.",
+                "commit_sha": sha,
+            },
+        )
+    assert "error" not in reviewed, reviewed
+
+    with session_context_for_test(session.id):
         closed = await registry.call("close_task", {"task_id": task.id, "commit_sha": sha})
 
     assert closed.get("closed") is True, closed

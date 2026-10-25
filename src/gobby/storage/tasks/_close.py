@@ -13,6 +13,7 @@ from gobby.storage.tasks._models import (
     TaskStaleStateError,
     TaskStepRecordsMissingError,
 )
+from gobby.storage.team_records import live_team_rows_sql
 from gobby.tasks.criteria_text import normalized_validation_criteria
 from gobby.tasks.state_semantics import validate_task_close_reason
 from gobby.utils.datetime import utc_now
@@ -194,6 +195,15 @@ def close_eligible_parent_chain(
             # leaf gates: linked commit, clean attribution, validation, review.
             # Closing it here skips every gate and drops the claim — found-work
             # child #21046 took its worked parent #20969 and epic #20964 that way.
+            return
+        live_team = conn.execute(
+            f"SELECT 1 FROM ({live_team_rows_sql()}) live WHERE live.task_id = %s LIMIT 1",  # nosec B608
+            (parent_id,),
+        ).fetchone()
+        if live_team is not None:
+            # A live team's bound epic closes through its Dev Manager, which lands the epic tip
+            # and writes the closing record. The Dev Manager holds no claim, so the claim check
+            # above never stops the cascade for it.
             return
         if (
             has_hold_label(parent)

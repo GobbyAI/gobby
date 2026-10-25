@@ -1,0 +1,44 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+# The seat's workspace folder (addendum 9.3). Injected once per context epoch, with the
+# predecessor-read note for persistent seats only. The reset re-arms it after clear or compact,
+# the same epochs that re-arm the shared seat guidance.
+rules:
+  inject-agent-workspace:
+    description: "Inject the seat's agent workspace folder once per context epoch"
+    event: turn_start
+    enabled: true
+    priority: 21
+    when: >
+      variables.get('_agent_workspace_dir')
+      and not variables.get('_agent_workspace_injected')
+    effects:
+      - type: inject_context
+        delivery: on_receipt
+        template: |
+          ## Agent Workspace
+          Your session folder: {{ variables.get('_agent_workspace_dir') }}
+          Write literal paths only, under that folder.
+          {% if variables.get('_agent_workspace_epic_dir') %}
+          Your epic folder, shared by your team: {{ variables.get('_agent_workspace_epic_dir') }}
+          Write literal paths only, under that folder, one file per topic. Append to an existing file with Edit.
+          {% endif %}
+          {% if variables.get('_agent_workspace_persistent') %}
+          Predecessor folders under your definition are readable only to recover from a crash or learn from mistakes in prior sessions.
+          {% endif %}
+      - type: set_variable
+        delivery: on_receipt
+        variable: _agent_workspace_injected
+        value: true
+
+  reset-agent-workspace-on-context-loss:
+    description: "Re-arm the agent workspace folder after clear or compact"
+    event: session_start
+    enabled: true
+    # Same epochs and priority as reset-seat-common-on-context-loss.
+    priority: 8
+    when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
+    effects:
+      - type: set_variable
+        variable: _agent_workspace_injected
+        value: false

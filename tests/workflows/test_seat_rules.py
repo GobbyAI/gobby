@@ -161,7 +161,7 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
     assert 'healthy="Systems nominal"' in first
     assert "stalled-session resume only" in first
     assert "No spawns except Assistant and Orchestrator." in first
-    assert "Team managers may resume their team's seats" in first
+    assert "A team manager spawns and resumes its own team's seats" in first
     assert GUIDANCE_HEADING not in second
 
 
@@ -266,7 +266,8 @@ async def test_orchestrator_and_assistant_spawn_fresh_sessions(
 
 
 @pytest.mark.asyncio
-async def test_a_team_manager_resumes_an_existing_session(engine: RuleEngine) -> None:
+async def test_a_team_manager_spawns_and_resumes_its_team_seats(engine: RuleEngine) -> None:
+    """The seat rule lets a team manager spawn or resume; the factory bounds each spawn."""
     seat = TEAM_MANAGER
 
     resumed = await _decide(engine, _proxy_call("gobby-agents", "spawn_agent", RESUME), seat)
@@ -275,8 +276,7 @@ async def test_a_team_manager_resumes_an_existing_session(engine: RuleEngine) ->
     )
 
     assert resumed.decision == "allow"
-    assert new_spawn.decision == "block"
-    assert "resume_session_id" in (new_spawn.reason or "")
+    assert new_spawn.decision == "allow"
 
 
 @pytest.mark.asyncio
