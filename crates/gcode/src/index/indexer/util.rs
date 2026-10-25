@@ -29,7 +29,7 @@ pub(super) const DEFAULT_EXCLUDES: &[&str] = &[
     ".cache",
 ];
 
-pub(super) fn effective_excludes(extra_excludes: &[String]) -> Vec<&str> {
+pub(crate) fn effective_excludes(extra_excludes: &[String]) -> Vec<&str> {
     DEFAULT_EXCLUDES
         .iter()
         .copied()

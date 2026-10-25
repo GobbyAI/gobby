@@ -303,11 +303,24 @@ fn load_chunks_for_read(
 /// numbers lines from `line_start`, so a single chunk starting at line 1 is exact.
 /// A path that no longer exists contributes nothing.
 fn live_chunks(ctx: &Context, filters: &GrepFilters, stale: &[String]) -> Vec<IndexedContentChunk> {
+    let excludes = crate::index::indexer::effective_excludes(&ctx.indexing.extra_excludes);
+    let options = crate::index::walker::DiscoveryOptions {
+        respect_gitignore: ctx.indexing.respect_gitignore,
+    };
     stale
         .iter()
         .filter(|path| filters.matches(path.as_str()))
         .filter_map(|path| {
-            let bytes = std::fs::read(ctx.project_root.join(path)).ok()?;
+            let absolute = ctx.project_root.join(path);
+            // A stale served path may now be excluded, binary, too large, or an
+            // escaping symlink. Its old chunks are removed, but it grants no live read.
+            crate::index::walker::classify_explicit_file_with_options(
+                &ctx.project_root,
+                &absolute,
+                &excludes,
+                options,
+            )?;
+            let bytes = std::fs::read(absolute).ok()?;
             Some(IndexedContentChunk {
                 file_path: path.clone(),
                 line_start: 1,

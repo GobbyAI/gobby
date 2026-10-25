@@ -1156,14 +1156,18 @@ fn merged_worktree_grep_finds_every_current_caller() {
         ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("grep freshness status");
     assert_eq!(status, FreshnessStatus::Checked);
 
-    assert_grep_finds_current_callers(&overlay_ctx);
+    assert_eq!(
+        current_caller_lines(&overlay_ctx),
+        vec![5, 10, 14],
+        "grep -w must return the merged definition and both callers"
+    );
 
     invalidate_test_project(&overlay_ctx);
     invalidate_test_project(&parent_ctx);
 }
 
 /// `grep -w` over the overlay must name every current line that mentions `current_body`.
-fn assert_grep_finds_current_callers(overlay_ctx: &Context) {
+fn current_caller_lines(overlay_ctx: &Context) -> Vec<usize> {
     let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect readonly");
     let options = GrepOptions {
         pattern: "current_body",
@@ -1189,16 +1193,7 @@ fn assert_grep_finds_current_callers(overlay_ctx: &Context) {
         .map(|found| found.line)
         .collect();
     lines.sort_unstable();
-    let expected: Vec<usize> = MERGED_SOURCE
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| line.contains("current_body"))
-        .map(|(index, _)| index + 1)
-        .collect();
-    assert_eq!(
-        lines, expected,
-        "grep -w must return every current line naming current_body, including the new caller"
-    );
+    lines
 }
 
 #[test]
@@ -1240,7 +1235,11 @@ fn merged_worktree_grep_survives_a_filtered_overlay_index() {
 
     // An unscoped grep checks freshness for the whole project.
     ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("grep freshness status");
-    assert_grep_finds_current_callers(&overlay_ctx);
+    assert_eq!(
+        current_caller_lines(&overlay_ctx),
+        vec![5, 10, 14],
+        "grep -w must return the merged definition and both callers after a filtered index"
+    );
 
     invalidate_test_project(&overlay_ctx);
     invalidate_test_project(&parent_ctx);
