@@ -180,6 +180,42 @@ def test_protected_branch_refuses_writes_from_any_worktree(tmp_path: Path) -> No
     assert repo.ok(repo.root, "rev-parse", "main") == main_before
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(("merge", "-q", "--ff-only", "lane"), id="merge-ff-only"),
+        pytest.param(("merge", "-q", "lane"), id="merge-default"),
+        pytest.param(("pull", "-q", "--ff-only", ".", "lane"), id="pull-ff-only"),
+    ],
+)
+def test_refused_fast_forward_leaves_the_checkout_untouched(
+    tmp_path: Path, command: tuple[str, ...]
+) -> None:
+    """A refused fast-forward keeps HEAD, index, tree and unrelated edits exactly as before."""
+    repo = _baseline(tmp_path)
+    lane = tmp_path / "lane"
+    repo.ok(repo.root, "worktree", "add", "-q", "-b", "lane", str(lane))
+    lane_commit = repo.commit(lane, {"src/gobby/base.py": "x = 2\n", "src/gobby/a.py": "a = 1\n"})
+    # Unrelated work in the main checkout that the merge does not touch.
+    (repo.root / BASE_PLAN).write_text("plan edited\n", encoding="utf-8")
+    (repo.root / "scratch.txt").write_text("untracked\n", encoding="utf-8")
+    head_before = repo.ok(repo.root, "rev-parse", "HEAD")
+    index_before = repo.ok(repo.root, "ls-files", "-s")
+    status_before = repo.ok(repo.root, "status", "--porcelain", "--untracked-files=all")
+
+    result = repo.git(repo.root, *command)
+
+    assert lane_commit.returncode == 0, lane_commit.stderr
+    _assert_refused(result, "src/gobby/a.py")
+    assert repo.ok(repo.root, "rev-parse", "HEAD") == head_before
+    assert repo.ok(repo.root, "ls-files", "-s") == index_before
+    assert repo.ok(repo.root, "status", "--porcelain", "--untracked-files=all") == status_before
+    assert not (repo.root / "src/gobby/a.py").exists()
+    assert (repo.root / "src/gobby/base.py").read_text(encoding="utf-8") == "x = 1\n"
+    assert (repo.root / BASE_PLAN).read_text(encoding="utf-8") == "plan edited\n"
+    assert (repo.root / "scratch.txt").read_text(encoding="utf-8") == "untracked\n"
+
+
 def test_pack_refs_prunes_the_protected_ref_but_deletions_stay_refused(tmp_path: Path) -> None:
     """pack-refs may prune the protected ref's loose copy; deleting the branch stays refused."""
     repo = _baseline(tmp_path)
