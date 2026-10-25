@@ -13,11 +13,19 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.lifecycle_access import session_agent_definition
-from gobby.tasks.step_records import task_step_requirements
+from gobby.tasks.step_records import (
+    StepRecordError,
+    StepSubmission,
+    TaskStep,
+    list_task_step_records,
+    record_task_step,
+    task_step_requirements,
+)
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.tasks.test_close_invariants import _set_close_policy, git
+from tests.tasks.test_step_records import _Seats
 
 pytestmark = pytest.mark.unit
 
@@ -97,3 +105,45 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
     assert len(closed["gates"]) == 5
     assert all(gate["status"] == "passed" for gate in closed["gates"]), closed["gates"]
     assert manager.get_task(task.id).closed_at is not None
+
+
+@pytest.mark.parametrize("target", ["code_task", "foreign_spike"])
+@pytest.mark.parametrize("step", ["implementation", "closing"])
+def test_researcher_records_only_its_own_research_spike(
+    temp_db: HubDatabase, sample_project: dict[str, Any], target: str, step: TaskStep
+) -> None:
+    project_id = sample_project["id"]
+    seats = _Seats(temp_db, project_id)
+    researcher = seats.add("researcher", ["implementation", "closing"])
+    other = seats.add("researcher-peer", ["implementation", "closing"])
+    manager = LocalTaskManager(temp_db)
+    if target == "code_task":
+        task = manager.create_task(
+            project_id, "Code work", category="code", validation_criteria="Code ships."
+        )
+        manager.claim_task(task.id, researcher)
+    else:
+        task = manager.create_task(
+            project_id,
+            "Another researcher's spike",
+            task_type="research_spike",
+            category="research",
+            validation_criteria="The report answers the question.",
+        )
+        manager.claim_task(task.id, other)
+
+    with pytest.raises(StepRecordError):
+        record_task_step(
+            temp_db,
+            task_id=task.id,
+            session_id=researcher,
+            step=step,
+            submission=StepSubmission(
+                status="approved",
+                epoch=1,
+                round_number=1,
+                feedback=f"A researcher's {step} step outside its spike.",
+                disposition="moot",
+            ),
+        )
+    assert list_task_step_records(temp_db, task.id) == []
