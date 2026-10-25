@@ -138,6 +138,7 @@ body's `run_id` or the run belongs to another machine.
 | `report_too_large` | 413 |
 | `checkout_too_large` | 413 |
 | `report_backlog_full` | 429 |
+| `sandbox_records_not_applied` | 500 |
 
 ## Commands
 

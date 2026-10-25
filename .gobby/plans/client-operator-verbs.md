@@ -11,8 +11,9 @@ Task #21571 (Operator verbs on the client) is ROADMAP row S3.1. It moves the
 commands an operator types every day from the Python `gobby` CLI onto the Rust
 client, `gclient`, over the daemon's public HTTP API. It also records a keep,
 absorb or drop decision for every Python command, so S3.2 #21573 (The naming
-switch: `gclient` → `gobby`, Python → `gobby-backend`) knows what the client
-carries and what stays reachable as `gobby-backend <cmd>`.
+switch: `gclient` → `gobby`, with Python removed) has a Rust carrier for
+every retained command. #21574 is the deletion child of S3.2, rather than a
+later retirement stage. Rollback uses GitHub history and pinned released versions.
 
 The task asks for `start`, `stop`, `restart`, `status`, `tasks`, `lease`,
 `projects` "and the rest of what an operator types every day", plus Josh's
@@ -29,12 +30,25 @@ This plan carries the verbs that need no lifecycle change now:
 - the command inventory, as `docs/contracts/cli-inventory.toml`, in 1.5;
 - the client docs in 1.6.
 
+Section 1.7 owns the final operator-inventory parity gate, after the family
+owners listed in its cross-plan dependencies have delivered their carriers.
+
 `start`, `stop`, `restart` and `lease status|promote|recover` are deferred to
 D1. Their meaning changes when #21554 (Singleton lease and Python backend
 lifecycle in Rust) lands, so they are planned against the landed lifecycle.
-The section "S3.2 Handoff" records two obligations this plan places on S3.2.
+The section "S3.2 Handoff" records the obligations this plan places on S3.2.
 
-All six deliverables change only the client, its tests, one contract file, one
+**S3.1 scope amendment (#24954):** the 46 command rows formerly assigned to
+the Python CLI now require Rust command parity. Each row retains its owning
+family `ref`; that owner delivers the listed `gclient <path>` command and all
+its exact `members`, backed by its native Rust service or local operation.
+These are planned carriers (`carried = false`), named `gobby <path>` after
+S3.2. S3.1 owns the complete operator inventory and integration checks;
+family owners own the implementations. HTTP/MCP route parity alone does not
+fulfil a CLI row. Before the switch, S3.1 verifies every retained command is
+carried, and S3.2 blocks on any remaining gap. No command is newly dropped.
+
+All seven deliverables change only the client, its tests, one contract file, one
 Python test and docs. No daemon route, schema or config key changes.
 
 ## Decision Record
@@ -114,9 +128,10 @@ Python test and docs. No daemon route, schema or config key changes.
    from `--project NAME|ID` or the current directory's `.gobby/project.json`
    and is sent both as `X-Gobby-Project-Id` and as the tools' `project`
    argument. An unregistered id then fails loudly instead of listing every
-   project. Writes (`create`, `update`, `close`, `reopen` and the rest) stay
-   on `gobby-backend` until S2.4 #21560 (Tasks family) and its write path
-   #21561 settle.
+   project. Writes (`create`, `update`, `close`, `reopen` and the rest) require
+   Rust client commands owned by S2.4 #21560 (Tasks family), using its write
+   path #21561. They remain uncarried until that owner proves CLI parity,
+   which must precede the S3.2 switch.
 8. **`config` uses `/api/config/values`, the service the MCP config tools
    use.** `set` reads the revision, then sends a compare-and-set `PATCH`. On a
    409 `revision_conflict` it re-reads and retries once, as the Python
@@ -135,8 +150,8 @@ Python test and docs. No daemon route, schema or config key changes.
     - Schema heads: `gdaemon schema verify` checks the live identity receipts,
       and `gdaemon schema version` prints the embedded pin. Neither prints the
       checkout/installed/live line, so `gdaemon schema verify` is the
-      operator's schema check until #21554 and S3.4 #21574 (Retire
-      `gobby-backend`) collapse the heads.
+      operator's schema check until #21554 and S3.2 #21573 (naming switch
+      with Python removed; deletion child #21574) collapse the heads.
     - The lock probe and pid claim belong to #21554.
     - Process metrics are in `/api/admin/status` and print with `--json`.
 11. **The inventory is a contract file with rows, guarded by tests.** One TOML
@@ -165,9 +180,10 @@ Python test and docs. No daemon route, schema or config key changes.
       DCR).
     - Dropped: `auth token`, because S1.4 #21555 (API keys and node
       registration) retires the shared token; `test-quality` and `test-types`,
-      because S3.4 #21574 leaves no Python to audit.
-    - Everything else is kept as a gap on `gobby-backend`, with the route-family
-      task that owns its takeover as `ref`.
+      because S3.2 #21573 removes Python through deletion child #21574.
+    - Every other kept row names a planned Rust `gclient` carrier and the
+      owning family task as `ref`. The owner must carry all row members
+      before S3.2; S3.1 verifies the complete operator surface.
 
 ## As-Is Facts
 `kind: framing`
@@ -628,7 +644,8 @@ and `--limit` to `VALUE_FLAGS`, and `--all-projects` and `--closed` to
   unchanged.
 - `list` shows open tasks by default (`closed: false`) and closed tasks only
   with `--closed` (`closed: true` selects rows with `closed_at` set). A mixed
-  open and closed listing stays on `gobby-backend tasks list`.
+  open and closed listing is additional Rust CLI parity owned by #21560,
+  outside this read-only slice; it must be carried before S3.2.
 - The row and card shapes come from `src/gobby/mcp_proxy/tools/tasks/_formatters.py:71-162`
   (`6ac386355be2a12b`): `state` nests `current_stage` and `is_closed`, and
   `task_summary_payload` carries `parent_task_id` and `dependencies`.
@@ -819,7 +836,11 @@ Targets:
 - A row with `carried = false`, every `drop` row and every `helper` row has
   `ref`, matching `#<digits>`.
 - Every row has a non-empty `reason`.
-- `gobby-backend <path>` carriers are the Python CLI after S3.2's rename.
+- `gclient <path>` carriers name Rust command mode before S3.2 and
+  `gobby <path>` afterwards. A false `carried` flag is an outstanding CLI
+  implementation obligation for the row's `ref`, never a Python fallback.
+  S3.1 verifies every member of each retained row before S3.2, using the
+  owner's CLI proofs; an HTTP/MCP-only implementation cannot set it true.
 
 ```toml
 # Command inventory: every Python `gobby` command and helper module, with its fate.
@@ -852,67 +873,67 @@ command = [
   { path = "schema apply", disposition = "absorb", carrier = "gdaemon schema apply", carried = true, reason = "gdaemon owns the migration chain." },
   { path = "mcp-server", disposition = "absorb", carrier = "gobby-mcp", carried = false, ref = "#23275", reason = "The gobby-mcp crate serves the native MCP transports." },
   { path = "auth token", disposition = "drop", ref = "#21555", reason = "S1.4 retires the shared local CLI token." },
-  { path = "test-quality", disposition = "drop", ref = "#21574", reason = "Python test tooling; S3.4 leaves no Python to audit.", members = [
+  { path = "test-quality", disposition = "drop", ref = "#21574", reason = "Python test tooling; S3.2 #21573 removes Python, deletion child #21574.", members = [
       "test-quality audit",
   ] },
-  { path = "test-types", disposition = "drop", ref = "#21574", reason = "Python test tooling; S3.4 leaves no Python to audit.", members = [
+  { path = "test-types", disposition = "drop", ref = "#21574", reason = "Python test tooling; S3.2 #21573 removes Python, deletion child #21574.", members = [
       "test-types audit", "test-types suppressions",
   ] },
-  { path = "agents", disposition = "keep", carrier = "gobby-backend agents", carried = false, ref = "#21564", reason = "S2.7 agents, dispatch and worktrees.", members = [
+  { path = "agents", disposition = "keep", carrier = "gclient agents", carried = false, ref = "#21564", reason = "S2.7 agents, dispatch and worktrees.", members = [
       "agents check", "agents cleanup", "agents kill", "agents list", "agents runs list",
       "agents runs show", "agents show", "agents spawn", "agents stats", "agents status",
       "agents steps", "agents stop",
   ] },
-  { path = "auth", disposition = "keep", carrier = "gobby-backend auth", carried = false, ref = "#21555", reason = "S1.4 API keys and node registration.", members = [
+  { path = "auth", disposition = "keep", carrier = "gclient auth", carried = false, ref = "#21555", reason = "S1.4 API keys and node registration.", members = [
       "auth credentials", "auth key", "auth login",
   ] },
-  { path = "build", disposition = "keep", carrier = "gobby-backend build", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build." },
-  { path = "clones", disposition = "keep", carrier = "gobby-backend clones", carried = false, ref = "#21564", reason = "S2.7 agents, dispatch and worktrees.", members = [
+  { path = "build", disposition = "keep", carrier = "gclient build", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build." },
+  { path = "clones", disposition = "keep", carrier = "gclient clones", carried = false, ref = "#21564", reason = "S2.7 agents, dispatch and worktrees.", members = [
       "clones create", "clones delete", "clones list", "clones merge", "clones spawn",
       "clones sync",
   ] },
-  { path = "comms", disposition = "keep", carrier = "gobby-backend comms", carried = false, ref = "#21583", reason = "Communications route family.", members = [
+  { path = "comms", disposition = "keep", carrier = "gclient comms", carried = false, ref = "#21583", reason = "Communications route family.", members = [
       "comms attach", "comms channels add", "comms channels list", "comms channels list-default",
       "comms channels remove", "comms send", "comms status",
   ] },
-  { path = "cron", disposition = "keep", carrier = "gobby-backend cron", carried = false, ref = "#21582", reason = "Cron and scheduler route family.", members = [
+  { path = "cron", disposition = "keep", carrier = "gclient cron", carried = false, ref = "#21582", reason = "Cron and scheduler route family.", members = [
       "cron add", "cron edit", "cron list", "cron park", "cron remove", "cron run", "cron runs",
       "cron toggle", "cron wake",
   ] },
-  { path = "cutover", disposition = "keep", carrier = "gobby-backend cutover", carried = false, ref = "#21591", reason = "Install and setup route family." },
-  { path = "datastores", disposition = "keep", carrier = "gobby-backend datastores", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
+  { path = "cutover", disposition = "keep", carrier = "gclient cutover", carried = false, ref = "#21591", reason = "Install and setup route family." },
+  { path = "datastores", disposition = "keep", carrier = "gclient datastores", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
       "datastores expose", "datastores rotate-password",
   ] },
-  { path = "embeddings", disposition = "keep", carrier = "gobby-backend embeddings", carried = false, ref = "#21587", reason = "AI providers, LLM routing and local models route family.", members = [
+  { path = "embeddings", disposition = "keep", carrier = "gclient embeddings", carried = false, ref = "#21587", reason = "AI providers, LLM routing and local models route family.", members = [
       "embeddings catalog", "embeddings doctor", "embeddings switch",
   ] },
-  { path = "feedback", disposition = "keep", carrier = "gobby-backend feedback", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
+  { path = "feedback", disposition = "keep", carrier = "gclient feedback", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
       "feedback digest", "feedback list", "feedback observations", "feedback results",
       "feedback review", "feedback status",
   ] },
-  { path = "files", disposition = "keep", carrier = "gobby-backend files", carried = false, ref = "#21585", reason = "Projects, /api/files and hub documents route family.", members = [
+  { path = "files", disposition = "keep", carrier = "gclient files", carried = false, ref = "#21585", reason = "Projects, /api/files and hub documents route family.", members = [
       "files migrate",
   ] },
-  { path = "hooks", disposition = "keep", carrier = "gobby-backend hooks", carried = false, ref = "#21569", reason = "S2.11 hook ingress.", members = [
+  { path = "hooks", disposition = "keep", carrier = "gclient hooks", carried = false, ref = "#21569", reason = "S2.11 hook ingress.", members = [
       "hooks disable", "hooks enable", "hooks list", "hooks run", "hooks status", "hooks test",
   ] },
-  { path = "hub-backup", disposition = "keep", carrier = "gobby-backend hub-backup", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family.", members = [
+  { path = "hub-backup", disposition = "keep", carrier = "gclient hub-backup", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family.", members = [
       "hub-backup", "hub-backup restore",
   ] },
-  { path = "hub-maintenance", disposition = "keep", carrier = "gobby-backend hub-maintenance", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family.", members = [
+  { path = "hub-maintenance", disposition = "keep", carrier = "gclient hub-maintenance", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family.", members = [
       "hub-maintenance abort", "hub-maintenance resume", "hub-maintenance run",
       "hub-maintenance status",
   ] },
-  { path = "init", disposition = "keep", carrier = "gobby-backend init", carried = false, ref = "#21591", reason = "Install and setup route family." },
-  { path = "install", disposition = "keep", carrier = "gobby-backend install", carried = false, ref = "#21591", reason = "Install and setup route family." },
-  { path = "mcp-proxy", disposition = "keep", carrier = "gobby-backend mcp-proxy", carried = false, ref = "#21566", reason = "S2.10 external-MCP transport multiplexer.", members = [
+  { path = "init", disposition = "keep", carrier = "gclient init", carried = false, ref = "#21591", reason = "Install and setup route family." },
+  { path = "install", disposition = "keep", carrier = "gclient install", carried = false, ref = "#21591", reason = "Install and setup route family." },
+  { path = "mcp-proxy", disposition = "keep", carrier = "gclient mcp-proxy", carried = false, ref = "#21566", reason = "S2.10 external-MCP transport multiplexer.", members = [
       "mcp-proxy add-server", "mcp-proxy auth", "mcp-proxy call-tool", "mcp-proxy get-schema",
       "mcp-proxy import-server", "mcp-proxy list-servers", "mcp-proxy list-templates",
       "mcp-proxy list-tools", "mcp-proxy oauth-shape", "mcp-proxy recommend-tools",
       "mcp-proxy refresh", "mcp-proxy remove-server", "mcp-proxy search-tools",
       "mcp-proxy show-template", "mcp-proxy status",
   ] },
-  { path = "memory", disposition = "keep", carrier = "gobby-backend memory", carried = false, ref = "#21563", reason = "S2.6 memory and search.", members = [
+  { path = "memory", disposition = "keep", carrier = "gclient memory", carried = false, ref = "#21563", reason = "S2.6 memory and search.", members = [
       "memory backfill-unscoped-lessons", "memory backup", "memory clear-graph", "memory create",
       "memory dedupe", "memory delete", "memory dream", "memory dream revert",
       "memory dream status", "memory export", "memory graph-counts", "memory invalidate",
@@ -920,75 +941,75 @@ command = [
       "memory reconcile", "memory reindex-embeddings", "memory restore", "memory show",
       "memory stats", "memory update",
   ] },
-  { path = "merge", disposition = "keep", carrier = "gobby-backend merge", carried = false, ref = "#21584", reason = "Source control, GitHub triage and sync route family.", members = [
+  { path = "merge", disposition = "keep", carrier = "gclient merge", carried = false, ref = "#21584", reason = "Source control, GitHub triage and sync route family.", members = [
       "merge abort", "merge apply", "merge resolve", "merge start", "merge status",
   ] },
-  { path = "nodes", disposition = "keep", carrier = "gobby-backend nodes", carried = false, ref = "#21564", reason = "S2.7 machine scoping.", members = [
+  { path = "nodes", disposition = "keep", carrier = "gclient nodes", carried = false, ref = "#21564", reason = "S2.7 machine scoping.", members = [
       "nodes list",
   ] },
-  { path = "observations", disposition = "keep", carrier = "gobby-backend observations", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
+  { path = "observations", disposition = "keep", carrier = "gclient observations", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
       "observations list",
   ] },
-  { path = "pack", disposition = "keep", carrier = "gobby-backend pack", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family." },
-  { path = "panes", disposition = "keep", carrier = "gobby-backend panes", carried = false, ref = "#21565", reason = "move and swap have no gclient verb; S2.8 gterm adoption.", members = [
+  { path = "pack", disposition = "keep", carrier = "gclient pack", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family." },
+  { path = "panes", disposition = "keep", carrier = "gclient panes", carried = false, ref = "#21565", reason = "move and swap have no gclient verb; S2.8 gterm adoption.", members = [
       "panes move", "panes swap",
   ] },
-  { path = "pipelines", disposition = "keep", carrier = "gobby-backend pipelines", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
+  { path = "pipelines", disposition = "keep", carrier = "gclient pipelines", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
       "pipelines approve", "pipelines check", "pipelines history", "pipelines import",
       "pipelines list", "pipelines reject", "pipelines run", "pipelines runs list",
       "pipelines runs show", "pipelines search", "pipelines show",
   ] },
-  { path = "plan", disposition = "keep", carrier = "gobby-backend plan", carried = false, ref = "#21581", reason = "Plans and the plan registry route family.", members = [
+  { path = "plan", disposition = "keep", carrier = "gclient plan", carried = false, ref = "#21581", reason = "Plans and the plan registry route family.", members = [
       "plan coverage",
   ] },
-  { path = "plans", disposition = "keep", carrier = "gobby-backend plans", carried = false, ref = "#21581", reason = "Plans and the plan registry route family.", members = [
+  { path = "plans", disposition = "keep", carrier = "gclient plans", carried = false, ref = "#21581", reason = "Plans and the plan registry route family.", members = [
       "plans archive", "plans list", "plans register", "plans review-evidence",
       "plans review-runs", "plans show", "plans validate",
   ] },
-  { path = "postgres", disposition = "keep", carrier = "gobby-backend postgres", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
+  { path = "postgres", disposition = "keep", carrier = "gclient postgres", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
       "postgres backup", "postgres force-revoke-run", "postgres install",
       "postgres repair-code-index", "postgres restore", "postgres scoped-roles",
       "postgres status",
   ] },
-  { path = "profiles", disposition = "keep", carrier = "gobby-backend profiles", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
+  { path = "profiles", disposition = "keep", carrier = "gclient profiles", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
       "profiles create", "profiles delete", "profiles disable", "profiles enable",
       "profiles list", "profiles restore", "profiles show", "profiles update",
   ] },
-  { path = "projects", disposition = "keep", carrier = "gobby-backend projects", carried = false, ref = "#21585", reason = "Project writes; Projects, /api/files and hub documents route family.", members = [
+  { path = "projects", disposition = "keep", carrier = "gclient projects", carried = false, ref = "#21585", reason = "Project writes; Projects, /api/files and hub documents route family.", members = [
       "projects delete", "projects purge", "projects rebind", "projects refresh-verification",
       "projects rename", "projects repair",
   ] },
-  { path = "qdrant", disposition = "keep", carrier = "gobby-backend qdrant", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
+  { path = "qdrant", disposition = "keep", carrier = "gclient qdrant", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
       "qdrant install", "qdrant status",
   ] },
-  { path = "rules", disposition = "keep", carrier = "gobby-backend rules", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
+  { path = "rules", disposition = "keep", carrier = "gclient rules", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
       "rules audit", "rules disable", "rules enable", "rules export", "rules import",
       "rules list", "rules show",
   ] },
-  { path = "secrets", disposition = "keep", carrier = "gobby-backend secrets", carried = false, ref = "#21559", reason = "S2.3 config and grant issuing.", members = [
+  { path = "secrets", disposition = "keep", carrier = "gclient secrets", carried = false, ref = "#21559", reason = "S2.3 config and grant issuing.", members = [
       "secrets delete", "secrets get", "secrets list", "secrets rekey", "secrets set",
   ] },
-  { path = "service", disposition = "keep", carrier = "gobby-backend service", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
+  { path = "service", disposition = "keep", carrier = "gclient service", carried = false, ref = "#21591", reason = "Install and setup route family.", members = [
       "service disable", "service enable", "service install", "service status",
       "service uninstall",
   ] },
-  { path = "sessions", disposition = "keep", carrier = "gobby-backend sessions", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
+  { path = "sessions", disposition = "keep", carrier = "gclient sessions", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
       "sessions backfill-context-windows", "sessions delete", "sessions list",
       "sessions messages", "sessions renumber", "sessions restore", "sessions show",
       "sessions stats", "sessions summarize", "sessions terminate-terminal",
   ] },
-  { path = "skills", disposition = "keep", carrier = "gobby-backend skills", carried = false, ref = "#21580", reason = "Skills route family.", members = [
+  { path = "skills", disposition = "keep", carrier = "gclient skills", carried = false, ref = "#21580", reason = "Skills route family.", members = [
       "skills disable", "skills doc", "skills enable", "skills hub add", "skills hub list",
       "skills init", "skills install", "skills list", "skills meta get", "skills meta set",
       "skills meta unset", "skills new", "skills remove", "skills search", "skills show",
       "skills update", "skills validate",
   ] },
-  { path = "stages", disposition = "keep", carrier = "gobby-backend stages", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
+  { path = "stages", disposition = "keep", carrier = "gclient stages", carried = false, ref = "#21567", reason = "S2.9 workflows, rules, pipelines and build.", members = [
       "stages defaults", "stages delete", "stages list", "stages restore", "stages show",
       "stages update",
   ] },
-  { path = "sync", disposition = "keep", carrier = "gobby-backend sync", carried = false, ref = "#21591", reason = "Install and setup route family." },
-  { path = "tasks", disposition = "keep", carrier = "gobby-backend tasks", carried = false, ref = "#21560", reason = "Task writes and maintenance; S2.4 tasks family.", members = [
+  { path = "sync", disposition = "keep", carrier = "gclient sync", carried = false, ref = "#21591", reason = "Install and setup route family." },
+  { path = "tasks", disposition = "keep", carrier = "gclient tasks", carried = false, ref = "#21560", reason = "Task writes and maintenance; S2.4 tasks family.", members = [
       "tasks advance", "tasks backup", "tasks clean", "tasks close", "tasks commit auto",
       "tasks commit link", "tasks commit list", "tasks commit unlink", "tasks compact analyze",
       "tasks compact apply", "tasks compact stats", "tasks create", "tasks de-escalate",
@@ -999,25 +1020,25 @@ command = [
       "tasks reopen", "tasks repair-lifecycle", "tasks restore", "tasks review", "tasks stages",
       "tasks stats", "tasks suggest", "tasks update", "tasks validation-history",
   ] },
-  { path = "tokens", disposition = "keep", carrier = "gobby-backend tokens", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family.", members = [
+  { path = "tokens", disposition = "keep", carrier = "gclient tokens", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family.", members = [
       "tokens audit", "tokens stats",
   ] },
-  { path = "ui", disposition = "keep", carrier = "gobby-backend ui", carried = false, ref = "#21590", reason = "Web UI static serving route family.", members = [
+  { path = "ui", disposition = "keep", carrier = "gclient ui", carried = false, ref = "#21590", reason = "Web UI static serving route family.", members = [
       "ui build", "ui dev", "ui expose", "ui install-deps", "ui restart", "ui start", "ui status",
       "ui stop", "ui unexpose",
   ] },
-  { path = "uninstall", disposition = "keep", carrier = "gobby-backend uninstall", carried = false, ref = "#21591", reason = "Install and setup route family." },
-  { path = "unpack", disposition = "keep", carrier = "gobby-backend unpack", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family." },
-  { path = "variables", disposition = "keep", carrier = "gobby-backend variables", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
+  { path = "uninstall", disposition = "keep", carrier = "gclient uninstall", carried = false, ref = "#21591", reason = "Install and setup route family." },
+  { path = "unpack", disposition = "keep", carrier = "gclient unpack", carried = false, ref = "#21589", reason = "Admin, metrics, traces and telemetry route family." },
+  { path = "variables", disposition = "keep", carrier = "gclient variables", carried = false, ref = "#21562", reason = "S2.5 sessions and transcripts.", members = [
       "variables get", "variables set",
   ] },
-  { path = "webhooks", disposition = "keep", carrier = "gobby-backend webhooks", carried = false, ref = "#21569", reason = "S2.11 hook ingress.", members = [
+  { path = "webhooks", disposition = "keep", carrier = "gclient webhooks", carried = false, ref = "#21569", reason = "S2.11 hook ingress.", members = [
       "webhooks list", "webhooks test",
   ] },
-  { path = "workspaces", disposition = "keep", carrier = "gobby-backend workspaces", carried = false, ref = "#21565", reason = "list, create and delete; S2.8 gterm adoption.", members = [
+  { path = "workspaces", disposition = "keep", carrier = "gclient workspaces", carried = false, ref = "#21565", reason = "list, create and delete; S2.8 gterm adoption.", members = [
       "workspaces create", "workspaces delete", "workspaces list",
   ] },
-  { path = "worktrees", disposition = "keep", carrier = "gobby-backend worktrees", carried = false, ref = "#21564", reason = "S2.7 agents, dispatch and worktrees.", members = [
+  { path = "worktrees", disposition = "keep", carrier = "gclient worktrees", carried = false, ref = "#21564", reason = "S2.7 agents, dispatch and worktrees.", members = [
       "worktrees claim", "worktrees cleanup", "worktrees create", "worktrees delete",
       "worktrees list", "worktrees release", "worktrees show", "worktrees stale",
       "worktrees stats", "worktrees sync",
@@ -1025,7 +1046,7 @@ command = [
 ]
 
 helper = [
-  { module = "gobby.cli.__main__", disposition = "keep", ref = "#21573", reason = "python -m entry; becomes gobby-backend." },
+  { module = "gobby.cli.__main__", disposition = "keep", ref = "#21573", reason = "Entry-point role carried by the Rust gobby binary at S3.2 #21573; deletion child #21574 removes the Python module." },
   { module = "gobby.cli._build_", disposition = "keep", ref = "#21567", reason = "build command support.", members = [
       "gobby.cli._build_daemon", "gobby.cli._build_options", "gobby.cli._build_output",
   ] },
@@ -1191,8 +1212,10 @@ operator verbs are operator-only, and an agent token exits 3 with
 `route_not_permitted` or `identity_mismatch`, so agents keep using the MCP
 proxy. It also gains the project context rule for `tasks`, open-only and
 closed-only listing, the `--` rule for dash-led config values, and a
-pointer to `docs/contracts/cli-inventory.toml` for commands that stay on
-`gobby-backend`. Its `_Last verified` date moves to the landing date.
+pointer to `docs/contracts/cli-inventory.toml` for planned Rust carriers
+and their owning family tasks. Document that S3.2 removes Python and that
+rollback uses GitHub history and pinned released versions. Its `_Last verified`
+date moves to the landing date.
 
 `docs/guides/gclient-user-guide.md` gains a section `## Operator commands`
 with the same verbs, one example each, and the exit codes.
@@ -1213,7 +1236,92 @@ with the same verbs, one example each, and the exit codes.
   verbs and the exit codes. behavior: "## Operator commands" in
   `docs/guides/gclient-user-guide.md`.
 
-## D1 Lifecycle and lease verbs on the client (depends: 1.6)
+### 1.7 Operator inventory parity gate [category: code] (depends: 1.5, #21555, #21559, #21560, #21562, #21563, #21564, #21565, #21566, #21567, #21569, #21580, #21581, #21582, #21583, #21584, #21585, #21587, #21589, #21590, #21591, #23275)
+`kind: deliverable`
+
+Targets:
+- `docs/contracts/cli-inventory.toml`
+- `crates/gclient/tests/operator_inventory_parity.rs`
+- `crates/gclient/tests/support/operator_inventory.rs`
+
+**Research context:**
+- 1.5 defines the complete inventory and its exact members. Its
+  `cli_inventory.rs` check examines only rows already marked `carried = true`
+  and checks a top-level help verb; it cannot prove switch readiness.
+- The 46 former Python carriers remain `carried = false` until their owning
+  family supplies Rust CLI parity. The heading names each family owner as a
+  cross-plan prerequisite, so expansion creates blocked-by edges on those
+  tasks rather than leaving the wait in prose. The seven lifecycle rows
+  owned by #21554 belong to deferred D1 and are proved there. Section 1.7
+  can complete independently of D1; S3.2 requires both outcomes.
+- `gclient` becomes `gobby` at S3.2. Other retained carriers include
+  `gdaemon schema apply` and the native MCP transport executable. The gate
+  verifies the Rust carrier actually named by each row, preserving absorbed
+  spellings such as `panes send` into `gclient send-keys`.
+- The two Rust test files above are new. Existing owner CLI fixtures and
+  command-mode tests supply the request/response and exit contracts; reuse
+  those fixtures rather than implementing another command parser.
+
+**Implementation:**
+- Load 1.5's inventory with `toml`. The support module defines the exact D1
+  carve-out as owner ref `#21554` paired with each of these seven paths:
+  `start`, `stop`, `restart`, `lease status`, `lease promote`, `lease recover`,
+  and `lease handoff`. Validate that all seven pairs exist exactly once.
+  Select 1.7's rows as every keep/absorb row except those exact pairs,
+  regardless of their `carried` flags. The two sets must partition all
+  retained rows; a different path or owner ref cannot enter the carve-out.
+- Fail with the path, member and owner ref of every selected command row
+  whose `carried` flag is false.
+  Set a row true only after all its exact members pass the execution check
+  below. Drop rows remain explicit decisions and are excluded from execution.
+- The support module maps each selected exact member to its Rust carrier
+  invocation, isolated fixture and expected output or request. Rows without
+  `members` use their own `path`. Compare the full selected-member set with
+  the proof-case keys; missing, duplicated or stale cases fail. Absorbed
+  members name the replacement invocation explicitly, not by prefix.
+- Execute every proof case through its Rust command entry point with valid
+  arguments. Assert its documented exit/result and the expected handler
+  request or local operation, so an unknown nested command, a top-level help
+  response or a successful no-op cannot satisfy a member. HTTP fixtures use
+  isolated native-service contracts; local/lifecycle fixtures use temporary
+  state, ports and binaries from the same checkout. No proof invokes Python
+  or touches the operator's daemon, credentials or stores.
+- Include negative fixtures: a retained false row, a missing proof member,
+  and a command rejected by its carrier all fail with the exact member and
+  owner ref. A false row cannot disappear from the execution set by filtering
+  on `carried`; readiness and execution are independent checks.
+- A carve-out negative fixture tries an extra path under #21554 and a
+  listed path under another owner ref. Neither is excluded. Removing or
+  duplicating an expected lifecycle pair also fails. Changing any selected
+  row's flag to false must still fail, so a non-lifecycle gap cannot hide.
+- This leaf owns its selected rows' final inventory flags and the reusable
+  execution gate. D1 owns the seven lifecycle rows and adds their execution
+  proof using the same support module. S3.2 requires both completed tasks.
+
+**Focused verification (planned):**
+`cargo nextest run -p gobby-client --test operator_inventory_parity` must
+pass against 1.7's selected rows, including every selected member and
+the negative fixtures. Run `cargo clippy -p gobby-client --all-targets -- -D warnings`.
+
+**Acceptance:**
+
+- 1.7.1 - Every keep/absorb command row outside the exact seven-pair D1
+  carve-out is carried; a false flag fails with the member and owning ref
+  instead of being skipped. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::retained_rows_have_no_uncarried_commands`.
+- 1.7.2 - Every exact selected member has a passing Rust execution proof
+  for its declared carrier; missing, duplicate, stale or unserved members
+  fail, including nested commands and absorbed replacements. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::every_retained_member_has_rust_execution_proof`.
+- 1.7.3 - Negative fixtures prove that an uncarried row, missing member and
+  carrier rejection each fail with the member and owner ref. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::parity_gate_rejects_incomplete_inventory`.
+- 1.7.4 - The D1 carve-out is exactly the seven #21554/path pairs above;
+  extra or wrong-owner rows cannot hide, missing or duplicated pairs fail,
+  and selection never depends on carried flags. test:
+  `crates/gclient/tests/operator_inventory_parity.rs::lifecycle_carve_out_is_exact`.
+
+## D1 Lifecycle and lease verbs on the client (depends: 1.6, 1.7, #21554)
 `kind: deferred`
 
 `gclient start`, `stop`, `restart` and `lease status|promote|recover` wait for
@@ -1232,6 +1340,7 @@ deferral:
     - D1.2
     - D1.3
     - D1.4
+    - D1.5
 ```
 
 - D1.1 - `gclient start` starts the daemon the way #21554's thin Python
@@ -1247,24 +1356,45 @@ deferral:
   verbs and `lease handoff` become `carried = true`. The Python
   `daemon_lifecycle.py` that #21554 creates stays registered until S3.2
   #21573 removes it in the change that hands the `gobby` name to the client.
+- D1.5 - The seven #21554/path pairs excluded from 1.7 pass that section's
+  readiness and Rust execution checks through the same support module.
+  D1 adds `lifecycle_rows_have_rust_execution_proof` to
+  `crates/gclient/tests/operator_inventory_parity.rs`, supplies the seven
+  cases in `crates/gclient/tests/support/operator_inventory.rs`, and proves
+  all seven flags true and every member served, including the absorbed
+  `lease handoff` invocation through `stop`. Run
+  `cargo nextest run -p gobby-client --test operator_inventory_parity` after
+  D1; both the base gate and lifecycle proof must pass. The heading's
+  dependency on 1.7 supplies the shared harness before D1 is implemented.
 
 ## S3.2 Handoff
 `kind: framing`
 
-This plan places two obligations on S3.2 #21573 (The naming switch: `gclient`
-→ `gobby`, Python → `gobby-backend`). The Orchestrator carries them into that
-task's plan; this plan does not edit `ROADMAP.md` or #21573.
+This plan places three obligations on S3.2 #21573 (The naming switch:
+`gclient` → `gobby`, with Python removed by deletion child #21574). The
+Orchestrator carries them into that task's plan; this plan does not edit
+`ROADMAP.md` or #21573.
 
 1. Delete `src/gobby/cli/daemon_lifecycle.py` (created by #21554's §5.2,
    gdaemon-front-door.md:1312) in the same change that hands the `gobby`
    name to the client (R1).
-2. Add the client to `src/gobby/cli/cutover.py`'s `_PACKAGES` and
-   `_BINARY_NAMES` (lines 25-42 name `gcode`, `gdaemon` and `ghook` today)
-   and to the stamped coherent set, so a cutover builds, signs, stamps and
+2. Carry the client membership formerly recorded in the Python cutover's
+   `_PACKAGES` and `_BINARY_NAMES` into #21591's Rust cutover/install path
+   and the stamped coherent set, so cutover builds, signs, stamps and
    promotes the renamed client with the other binaries (found work, 02:36 CT).
+   This obligation survives deletion of the Python cutover implementation.
+3. Require completion of both S3.1 section 1.7 and the task created for
+   deferred D1 at expansion. The Orchestrator records blocked-by edges from
+   #21573 to both tasks when their concrete refs exist. Section 1.7 proves
+   the non-lifecycle inventory; D1.5 proves the exact seven lifecycle rows
+   through the same execution gate. Together, every retained command
+   row, including all 46 additional family-owned Rust CLI carriers, must be
+   `carried = true` with its exact members served by Rust. A planned name or
+   native HTTP/MCP route alone is insufficient. Rename `gclient` carriers to
+   `gobby` with the client; remove the Python CLI and runtime in this switch.
 
-S3.2 also turns the inventory's `gobby-backend <path>` carriers into the real
-command names.
+Rollback uses GitHub history and pinned released versions. There is no
+intermediate Python command or supervised runtime after the switch.
 
 ## Rollout
 `kind: framing`
@@ -1284,9 +1414,31 @@ command names.
   helper module, even inside a known family, also adds it to an inventory
   row's `members`; the test failure names it and the file.
 - D1 is expanded as a needs-planning task and waits for #21554.
+- 1.7 follows 1.5 and its explicit family-owner dependencies. Its passing
+  execution gate and D1.5's lifecycle proof are both required before S3.2;
+  1.5's help-only check is insufficient.
 
 ## V1 Plan Changelog
 `kind: verification`
+
+- 2026-10-24: #24954 review round 2 repaired under Orchestrator GO. Section
+  1.7 excludes exactly seven #21554/path pairs by ownership, never by
+  carried flag, and tests that the carve-out cannot hide another gap.
+  D1.5 owns those seven rows' readiness and execution proofs with 1.7's
+  shared harness; D1 depends on 1.7 and #21554. S3.2 requires both 1.7 and
+  D1's expansion-created task. V2 distinguishes the base and lifecycle runs.
+- 2026-10-24: #24954 review round 1 repaired. Section 1.7 now owns the
+  executable parity gate with family-owner cross-plan dependencies, exact
+  member proofs, negative fixtures and acceptance items. V2 and the S3.2
+  handoff require that gate. The entry-point helper row names the Rust
+  `gobby` binary as the role's carrier while the Python module is deleted.
+- 2026-10-24: #24954 amendment follows Josh's ROADMAP ruling in #24953
+  (f207ff6). S3.2 #21573 removes Python, with #21574 as its deletion child.
+  All 46 former Python command carriers now name planned Rust client
+  commands under their existing owner refs; S3.1 grows to verify their
+  exact members before the switch. Dispositions, members and owner refs
+  are preserved. Revised plan decisions await operator approval before
+  landing; earlier consensus below applies to the prior revision.
 
 - 2026-10-06 03:20 CDT: First draft by the Lane 7 Plan Writer gobby#15544 on
   #21571, with rulings R1 and R2, the 02:36 found work and the 02:57 ROADMAP
@@ -1367,6 +1519,12 @@ Observed on this draft:
 
 Planned checks (not run; the files they test do not exist yet):
 
+- `cargo nextest run -p gobby-client --test operator_inventory_parity`
+  must pass after 1.7 for every retained member outside the exact seven-pair
+  D1 carve-out, with no uncarried selected rows or unserved selected members.
+  After D1, rerun it with D1.5's added lifecycle proof: all seven lifecycle
+  rows must also be carried and served. Both completed tasks and the final
+  combined passing suite are required before the S3.2 naming switch.
 - `cargo nextest run -p gobby-client --test status_verb --test projects_verb --test tasks_verb --test config_verb --test command_mode --test cli_inventory --test source_size`
   must pass.
 - `cargo clippy -p gobby-client --all-targets -- -D warnings` must pass.
