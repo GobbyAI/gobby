@@ -182,6 +182,10 @@ def _cleanup_managed_execution(
             (execution_id,),
         )
         admin.execute(
+            f"DELETE FROM {AUTH_SCHEMA}.forced_revocations WHERE managed_execution_id = %s",
+            (execution_id,),
+        )
+        admin.execute(
             f"DELETE FROM {AUTH_SCHEMA}.principal_bindings WHERE managed_execution_id = %s",
             (execution_id,),
         )
@@ -562,17 +566,18 @@ def test_managed_issue_without_binding_unchanged(
 
 
 @pytest.mark.integration
-def test_managed_refresh_rejects_dead_binding(
+def test_managed_refresh_rejects_force_revoked_binding(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
 ) -> None:
+    """An operator-forced revocation locks out a live owner's refresh (#24816)."""
     fixture = authorization_fixture
     execution_id = fixture.agent_run_id
-    runtime_root = tmp_path / "revoked"
+    runtime_root = tmp_path / "forced"
     manager = _manager(fixture, runtime_root)
     try:
-        generation = _issue_initial_binding(manager, fixture, "agent_run", execution_id)
-        manager.revoke(execution_id, generation=generation, reason="test-seed")
+        _issue_initial_binding(manager, fixture, "agent_run", execution_id)
+        manager.force_revoke(execution_id)
         bootstrap_path = runtime_root / str(execution_id) / "bootstrap.json"
         bootstrap_before = bootstrap_path.read_bytes() if bootstrap_path.exists() else None
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
@@ -611,6 +616,40 @@ def test_managed_refresh_rejects_dead_binding(
         assert (
             bootstrap_path.read_bytes() if bootstrap_path.exists() else None
         ) == bootstrap_before
+    finally:
+        _cleanup_managed_execution(manager, fixture, execution_id)
+        manager.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("ended", ["run", "session"])
+def test_managed_refresh_rejects_ended_owner_after_revoke(
+    ended: str,
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = fixture.agent_run_id
+    manager = _manager(fixture, tmp_path / ended)
+    try:
+        generation = _issue_initial_binding(manager, fixture, "agent_run", execution_id)
+        manager.revoke(execution_id, generation=generation, reason="test-ended")
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            if ended == "run":
+                admin.execute(
+                    "UPDATE agent_runs SET status = 'success' WHERE id = %s", (execution_id,)
+                )
+            else:
+                admin.execute(
+                    "UPDATE sessions SET status = 'expired' WHERE id = %s", (fixture.session_id,)
+                )
+        with pytest.raises(HandshakeRejection):
+            _handshake(fixture, manager).issue_for_agent(
+                _claims("agent_run", fixture, execution_id),
+                machine_id=str(fixture.machine_id),
+                project_id=str(fixture.project_id),
+            )
+        assert manager.get_live_binding_generation(execution_id) is None
     finally:
         _cleanup_managed_execution(manager, fixture, execution_id)
         manager.close()
