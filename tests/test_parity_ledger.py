@@ -225,3 +225,31 @@ def test_exit_rule_points_at_naming_switch_instead_of_gobby_backend() -> None:
     assert b"#21573" in header
     assert b"#21574 Retire gobby-backend" not in header
     assert b"gobby-backend" not in header
+
+
+def test_every_current_surface_is_classified(surfaces: set[str]) -> None:
+    """Regenerating the ledger must not launder unclassified rows past the drift check."""
+    assert sorted(surfaces - load_statuses().keys()) == []
+
+
+@pytest.mark.parametrize(
+    ("surface", "handler"),
+    [
+        ("HTTP POST /api/nodes/runs/code-index-warning", "code_index_preflight_warning"),
+        ("HTTP POST /api/nodes/runs/prompt-delivery-failure", "prompt_delivery_failure"),
+    ],
+)
+def test_node_run_outcome_routes_match_sibling_node_routes(surface: str, handler: str) -> None:
+    statuses = load_statuses()
+    siblings = {
+        name: entry
+        for name, entry in statuses.items()
+        if name.startswith("HTTP POST /api/nodes/") and "/api/nodes/runs/" not in name
+    }
+    assert siblings, "sibling node routes disappeared from the mapping"
+    entry = statuses.get(surface)
+    assert entry is not None, f"{surface} is unclassified"
+    assert {s.status for s in siblings.values()} == {entry.status}
+    assert all("#24151" in s.note for s in siblings.values())
+    assert "#24151" in entry.note
+    assert f"src/gobby/servers/routes/node_runs.py::create_node_runs_router.{handler}" in entry.note

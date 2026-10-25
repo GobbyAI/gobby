@@ -444,6 +444,7 @@ pub enum Completeness {
     Paginated,
     TruncatedIndex,
     TruncatedTraversal,
+    TruncatedPatch,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

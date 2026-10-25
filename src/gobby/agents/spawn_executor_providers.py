@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,8 @@ from gobby.agents.constants import (
     MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
+from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_policy import canonical_path
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
@@ -148,6 +151,25 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     )
 
 
+def _ensure_sandbox_write_directories(
+    config: SandboxConfig, workspace: str, project_path: str | None
+) -> None:
+    """Create declared directory grants before cache paths enrich the policy."""
+    from gobby.utils.project_context import get_project_sandbox_config
+
+    declared_paths = list(config.extra_write_paths)
+    if project_path is not None:
+        project_config = get_project_sandbox_config(Path(project_path))
+        if project_config is not None:
+            declared_paths.extend(project_config.extra_write_paths)
+    for raw_path in declared_paths:
+        if has_magic(raw_path):
+            continue
+        path = Path(canonical_path(raw_path, base=Path(workspace)))
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+
+
 async def _prepare_provider_sandbox(
     request: SpawnRequest,
     spawn_context: PreparedSpawn,
@@ -200,6 +222,13 @@ async def _prepare_provider_sandbox(
                             "extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]
                         }
                     )
+        if sandbox_config is not None and sandbox_config.enabled:
+            await asyncio.to_thread(
+                _ensure_sandbox_write_directories,
+                sandbox_config,
+                request.cwd,
+                request.project_path,
+            )
         config = _sandbox_config_for_spawn(
             sandbox_config,
             env,

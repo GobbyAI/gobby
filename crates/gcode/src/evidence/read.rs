@@ -7,7 +7,11 @@ use super::contracts::{
 use super::source::{canonical_hash, validate_repo_path};
 use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 
-pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Result<QueryResult> {
+pub(super) fn execute(
+    library: &EvidenceLibrary,
+    selector: &ReadSelector,
+    max_bytes: usize,
+) -> Result<QueryResult> {
     validate_selector(selector)?;
     let mut warnings = Vec::new();
     let items = match selector {
@@ -49,11 +53,18 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &ReadSelector) -> Res
         ReadSelector::CommitMetadata { commit_oid } => commit_items(
             library,
             commit_oid.as_deref().unwrap_or(&library.binding.commit_oid),
+            max_bytes,
+            &mut warnings,
         )?,
     };
     let result_limit = items.len();
     Ok(QueryResult {
-        completeness: if items.is_empty() {
+        completeness: if warnings
+            .iter()
+            .any(|warning| warning.code == "commit_patch_omitted")
+        {
+            Completeness::TruncatedPatch
+        } else if items.is_empty() {
             Completeness::CompleteEmpty
         } else {
             Completeness::Complete
@@ -338,7 +349,12 @@ pub(super) fn numbered_excerpt(excerpt: &str, line_start: usize) -> String {
         .collect()
 }
 
-fn commit_items(library: &EvidenceLibrary, commit_oid: &str) -> Result<Vec<EvidenceItem>> {
+fn commit_items(
+    library: &EvidenceLibrary,
+    commit_oid: &str,
+    max_bytes: usize,
+    warnings: &mut Vec<EvidenceWarning>,
+) -> Result<Vec<EvidenceItem>> {
     let commit = super::provenance::load_commit_binding(&library.repository_root, commit_oid)?;
     let records = if commit.changed_paths.is_empty() {
         vec![None]
@@ -357,30 +373,53 @@ fn commit_items(library: &EvidenceLibrary, commit_oid: &str) -> Result<Vec<Evide
                 )?,
                 None => String::new(),
             };
-            let record_hash = canonical_hash(&(&changed_path, &patch))?;
-            let evidence_id = format!(
-                "commit:{}",
-                canonical_hash(&(
-                    commit_oid,
-                    &commit.parent_oids,
-                    &commit.comparison_parent_oid,
-                    &commit.comparison_kind,
-                    &commit.changed_paths_digest,
-                    &record_hash,
-                ))?
-            );
-            Ok(EvidenceItem::CommitMetadata(CommitMetadataEvidence {
-                evidence_id,
-                commit_oid: commit_oid.to_string(),
-                parent_oids: commit.parent_oids.clone(),
-                comparison_parent_oid: commit.comparison_parent_oid.clone(),
-                comparison_kind: commit.comparison_kind,
-                changed_paths_digest: commit.changed_paths_digest.clone(),
-                changed_path_count: commit.changed_paths.len(),
-                changed_path,
-                patch,
-                record_hash,
-            }))
+            let make_item = |patch: String| -> Result<EvidenceItem> {
+                let record_hash = canonical_hash(&(&changed_path, &patch))?;
+                let evidence_id = format!(
+                    "commit:{}",
+                    canonical_hash(&(
+                        commit_oid,
+                        &commit.parent_oids,
+                        &commit.comparison_parent_oid,
+                        &commit.comparison_kind,
+                        &commit.changed_paths_digest,
+                        &record_hash,
+                    ))?
+                );
+                Ok(EvidenceItem::CommitMetadata(CommitMetadataEvidence {
+                    evidence_id,
+                    commit_oid: commit_oid.to_string(),
+                    parent_oids: commit.parent_oids.clone(),
+                    comparison_parent_oid: commit.comparison_parent_oid.clone(),
+                    comparison_kind: commit.comparison_kind,
+                    changed_paths_digest: commit.changed_paths_digest.clone(),
+                    changed_path_count: commit.changed_paths.len(),
+                    changed_path: changed_path.clone(),
+                    patch,
+                    record_hash,
+                }))
+            };
+            let mut item = make_item(patch)?;
+            let item_bytes = serde_json::to_vec(&item)
+                .map_err(|error| EvidenceError::Contract {
+                    detail: error.to_string(),
+                })?
+                .len();
+            if item_bytes > max_bytes {
+                let message = format!(
+                    "patch omitted: full commit metadata item requires {item_bytes} bytes; \
+                     repeat the request with max_bytes >= {item_bytes} to retrieve it"
+                );
+                item = make_item(format!("[{message}]"))?;
+                warnings.push(EvidenceWarning {
+                    code: "commit_patch_omitted".to_string(),
+                    message,
+                    path: changed_path.as_ref().and_then(|path| {
+                        path.new_path.as_ref().or(path.old_path.as_ref()).cloned()
+                    }),
+                });
+            }
+            Ok(item)
         })
         .collect()
 }
