@@ -1,7 +1,9 @@
 //! Durable node-local agent ownership.
 #[cfg(unix)]
 pub mod host;
+pub mod repair;
 pub mod state;
+pub mod workspace;
 
 use anyhow::{Context, Result};
 use state::AgentState;
