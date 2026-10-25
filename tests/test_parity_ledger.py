@@ -217,3 +217,11 @@ def test_raw_asgi_mount_fails_instead_of_disappearing() -> None:
 
     with pytest.raises(ValueError, match="Cannot enumerate raw ASGI mount: /proxy/raw"):
         http_surfaces([Mount("/raw", app=endpoint)], prefix="/proxy")
+
+
+def test_exit_rule_points_at_naming_switch_instead_of_gobby_backend() -> None:
+    """S3.4 merged into S3.2 (#21573): Python is removed, nothing is renamed gobby-backend."""
+    header = render_ledger(set(), {})
+    assert b"#21573" in header
+    assert b"#21574 Retire gobby-backend" not in header
+    assert b"gobby-backend" not in header

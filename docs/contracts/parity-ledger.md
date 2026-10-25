@@ -10,8 +10,9 @@ or blocking Rust work; string entries have empty notes. Pipes and line breaks in
 are escaped for the table. Malformed entries are errors.
 
 Exit rule: every row must be `delegated` or `dropped by decision <ref>` with a recorded
-decision. `proxied` and **unclassified** rows still block retirement. This makes
-#21574 Retire gobby-backend a mechanical deletion; its exit check is owned there.
+decision. `proxied` and **unclassified** rows block #21573, the S3.2 naming switch
+with Python removed. Deletion child #21574 owns the mechanical deletion, gated by
+this exit check before the switch.
 The native terminal default flip has its own evidence row referencing #21357
 Plan native runtime completion. A closed planning task alone does not prove the flip.
 

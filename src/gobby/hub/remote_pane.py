@@ -89,6 +89,11 @@ class RemotePaneStore:
             state = self._machines.get(machine_id)
             return None if state is None else state.panes.get(terminal_id)
 
+    def machine_ids(self) -> tuple[str, ...]:
+        """Return a snapshot of machines with accepted reports."""
+        with self._lock:
+            return tuple(self._machines)
+
 
 def _entry(machine_id: str, agent: ReportAgent, prior: RemotePane | None) -> RemotePane:
     # A stop carries over a newer report only while the same run still holds the terminal.

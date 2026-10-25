@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
@@ -175,3 +178,39 @@ async def test_team_binding_cannot_drift(world: TeamWorld, tmp_path: Path) -> No
     assert joined["success"] is True, joined
     assert world.task_branches() == [team.branch]
     assert sorted(world.tree_ids()) == sorted([team.worktree_id, elsewhere.id])
+
+
+async def test_team_tree_is_pinned_for_code_index(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seats join the team tree without an isolation preflight, so admission must pin
+    its overlay; an unpinned overlay hides every file unchanged from the parent index."""
+    pin = AsyncMock()
+    monkeypatch.setattr(GcodeGateway, "pin_project", pin)
+    project_json = Path(world.case.repo) / ".gobby" / "project.json"
+    project_json.parent.mkdir(exist_ok=True)
+    project_json.write_text(json.dumps({"id": world.case.project_id}))
+    task = world.case.task(TITLE)
+
+    team = await world.admit(world.child(task), task)
+
+    # `gcode pin` copies the ancestor's selectors at the marker's base commit.
+    marker = json.loads((Path(team.worktree_path) / ".gobby" / "isolation.json").read_text())
+    assert Path(marker["ancestor_checkout_path"]).resolve() == Path(world.case.repo).resolve()
+    assert marker["base_commit"] == git_in(team.worktree_path, "rev-parse", "HEAD")
+    pin.assert_awaited_once_with(Path(team.worktree_path))
+
+
+async def test_team_tree_pin_failure_still_admits(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The code index is advisory: a failed pin never refuses the team or loses its tree."""
+    monkeypatch.setattr(
+        GcodeGateway, "pin_project", AsyncMock(side_effect=GcodeGatewayError("index down"))
+    )
+    task = world.case.task(TITLE)
+
+    team = await world.admit(world.child(task), task)
+
+    assert git_in(team.worktree_path, "branch", "--show-current") == team.branch
+    assert world.tree_ids() == [team.worktree_id]

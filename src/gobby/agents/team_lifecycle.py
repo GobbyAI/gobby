@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
@@ -24,6 +25,7 @@ from typing import Any
 
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
+from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -40,6 +42,8 @@ from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline_state import ExecutionStatus, StepExecution
 from gobby.worktrees.git import WorktreeGitManager
+
+logger = logging.getLogger(__name__)
 
 ADMISSION_STEP = "admit"
 _PIPELINE_SOURCE = "pipeline"
@@ -419,6 +423,11 @@ async def _create(db: HubDatabase, caller: _Caller, task: Task) -> TeamBinding:
         )
     binding = TeamBinding(**intent, worktree_id=made.worktree_id, worktree_path=made.cwd)
     await asyncio.to_thread(_record, caller, asdict(binding))
+    # Seats join this tree without the isolation preflight that normally pins it.
+    try:
+        await GcodeGateway().pin_project(Path(binding.worktree_path))
+    except (GcodeGatewayError, OSError) as exc:
+        logger.warning("Failed to pin team code index for %s: %s", binding.worktree_path, exc)
     return binding
 
 
