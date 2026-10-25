@@ -20,7 +20,8 @@ const SPARE_TEMP_NAME: &str = ".pre-commit-store-spare.tmp";
 static SPARE_WORKER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 
 /// `_prewarm_pre_commit_store`: copy the operator's pre-commit store into a run's cache,
-/// consuming the managed spare when one exists. A run that clones starts the replenisher.
+/// consuming the managed spare when one exists. Every run then starts the replenisher
+/// when no spare exists.
 pub(super) fn prewarm(
     workspace: &Path,
     destination: &Path,
@@ -41,16 +42,14 @@ pub(super) fn prewarm(
         eprintln!("gdaemon: failed to prepare the run pre-commit cache: {error}");
         return;
     }
-    if consume_spare(managed_root, destination) {
-        // A consumed spare ends this run's prewarm. The refill waits for the next run that
-        // has to clone, so this call never recreates the spare it just used.
-        return;
-    }
-    if let Err(error) = clone_store(&source, destination) {
+    if !consume_spare(managed_root, destination)
+        && let Err(error) = clone_store(&source, destination)
+    {
         // The store is only a prewarm; pre-commit rebuilds hooks into an empty cache.
         eprintln!("gdaemon: failed to prewarm pre-commit store: {error}");
         let _ = remove_store(destination);
     }
+    // Consuming a spare also starts its replacement, as `_prewarm_pre_commit_store` does.
     schedule_spare(source, managed_root.to_path_buf());
 }
 
