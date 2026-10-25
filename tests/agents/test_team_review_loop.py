@@ -225,9 +225,11 @@ def devteam_context(inputs: dict[str, Any]) -> dict[str, Any]:
     values = {name: spec.get("default") for name, spec in DEVTEAM.inputs.items()}
     values.update(LAUNCH_DEFAULTS, workspace="pilot-workspace", report_to="gobby#14972")
     values.update(inputs)
+    # The guard's launch list: the requested seats, none live in these fixtures.
+    requested = ["code-reviewer"] if values["fresh_reviewer"] else values["seats"].split(",")
     return {
         "inputs": values,
-        "steps": {"guard": {"output": {"workspace_id": WORKSPACE}}},
+        "steps": {"guard": {"output": {"workspace_id": WORKSPACE, "launch": requested}}},
         "_string_inputs": frozenset(
             name for name, spec in DEVTEAM.inputs.items() if spec.get("type") == "string"
         ),

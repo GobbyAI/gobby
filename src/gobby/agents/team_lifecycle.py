@@ -27,6 +27,7 @@ from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
@@ -49,6 +50,8 @@ ADMISSION_STEP = "admit"
 _PIPELINE_SOURCE = "pipeline"
 _PIPELINE_PREFIX = "pipeline-"
 _TREE_FIELDS = frozenset({"worktree_id", "worktree_path"})
+# Bounds the resume-chain walk from a seat's run back to the run that launched it.
+_RESUME_CHAIN_LIMIT = 32
 
 
 @dataclass(frozen=True)
@@ -483,17 +486,41 @@ def _caller_binding(db: HubDatabase, caller: Session) -> TeamBinding | None:
     return binding
 
 
+def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
+    """The seat's parent, then the parents its runs were launched under, newest first.
+
+    A resume re-parents the seat to the resumer, so the runbook that launched it sits on
+    the resume chain: each resumed run names the run it resumed.
+    """
+    parents = [seat.parent_session_id] if seat.parent_session_id else []
+    runs = LocalAgentRunManager(db)
+    run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
+    seen: set[str] = set()
+    while run is not None and run.id not in seen and len(seen) < _RESUME_CHAIN_LIMIT:
+        seen.add(run.id)
+        parents.append(run.parent_session_id)
+        previous = (run.resume_metadata_json or {}).get("resume_previous_run_id")
+        run = runs.get(previous) if isinstance(previous, str) else None
+    return parents
+
+
 def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
     """The admitted team whose runbook launched this seat, or None outside any team."""
     sessions = SessionManager(db)
     seat = sessions.get(session_id)
-    runbook = sessions.get(seat.parent_session_id) if seat and seat.parent_session_id else None
-    if runbook is None:
+    if seat is None:
         return None
-    try:
-        return _caller_binding(db, runbook)
-    except TeamAdmissionRefused:
-        return None
+    for parent_id in _seat_parents(db, seat):
+        runbook = sessions.get(parent_id)
+        if runbook is None:
+            continue
+        try:
+            team = _caller_binding(db, runbook)
+        except TeamAdmissionRefused:
+            continue
+        if team is not None:
+            return team
+    return None
 
 
 def _task_id(db: HubDatabase, ref: str, binding: TeamBinding) -> str | None:
