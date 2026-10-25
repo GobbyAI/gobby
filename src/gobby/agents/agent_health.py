@@ -53,6 +53,22 @@ def _exits_without_session_end(provider: str) -> bool:
     return HookEventType.STOP in events and HookEventType.SESSION_END not in events
 
 
+def session_never_initialized(run: AgentRun, session: Any) -> bool:
+    """True when neither the run nor its child session shows provider initialization."""
+    raise NotImplementedError
+
+
+def bootstrap_accounting_stall_error(
+    run: AgentRun,
+    session: Any,
+    *,
+    age_seconds: float,
+    pane_snapshot: str,
+) -> str | None:
+    """Reason for a bootstrap/accounting stall, or None when the run is not stalled."""
+    raise NotImplementedError
+
+
 class AgentHealthMonitor:
     """Handles periodic health checks for agents (unhealthy, init-timeout, stalls)."""
 
