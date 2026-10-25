@@ -218,6 +218,68 @@ async def team_in_review(world: TeamWorld, title: str = TITLE) -> ReviewTeam:
     return ReviewTeam(task, runbook, binding, manager, developer, sol, candidate)
 
 
+def submit_moot(
+    db: HubDatabase, session_id: str, task_id: str, step: TaskStep, round_number: int
+) -> tuple[TaskStepRecord, bool]:
+    """Write a no-work disposition for a task that has no linked commit."""
+    return record_task_step(
+        db,
+        task_id=task_id,
+        session_id=session_id,
+        step=step,
+        submission=StepSubmission(
+            status="approved",
+            epoch=LocalTaskManager(db).get_task(task_id).review_epoch,
+            round_number=round_number,
+            feedback=f"{step} moot in round {round_number}",
+            disposition="moot",
+        ),
+    )
+
+
+def enforce_step_records(repo: Path, project_id: str) -> None:
+    """Turn on the step-record close gates in the primary checkout's project marker."""
+    marker = repo / ".gobby" / "project.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else {"id": project_id}
+    policy = {
+        "enforce_step_records": True,
+        "test_categories": ["code"],
+        "review_categories": ["code"],
+    }
+    marker.write_text(json.dumps({**data, "task_close_policy": policy}), encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class MootTeam:
+    task: Task
+    manager: str
+    sol: str
+
+
+async def team_in_moot_review(world: TeamWorld, title: str = "Moot scroll") -> MootTeam:
+    """A devteam whose task needs no commit: test and implementation are moot, no review yet."""
+    db, project_id = world.case.db, world.case.project_id
+    task = world.case.task(title)
+    db.execute("UPDATE tasks SET category = %s WHERE id = %s", ("code", task.id))
+    task = LocalTaskManager(db).get_task(task.id)
+    enforce_step_records(world.case.repo, project_id)
+    runbook = world.child(task, DEVTEAM)
+    await world.admit(runbook, task)
+    manager = seat(world, runbook, "dev-manager", manages=task)
+    tester, developer, sol = (
+        seat(world, runbook, role) for role in ("test-writer", "developer", "code-reviewer")
+    )
+    grant_step_writes(db, tester, project_id, "fixture-test-writer", ("test",))
+    grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
+    grant_review_writes(db, sol, project_id)
+    grant_step_writes(db, manager, project_id, "fixture-dev-manager", ("closing",))
+    LocalTaskManager(db).claim_task(task.id, developer, force=True)
+    submit_moot(db, tester, task.id, "test", 1)
+    submit_moot(db, developer, task.id, "implementation", 1)
+    return MootTeam(task, manager, sol)
+
+
 def session_ref(db: HubDatabase, session_id: str) -> str:
     session = SessionManager(db).get(session_id)
     assert session is not None
@@ -721,11 +783,18 @@ def reviewer_at_await(db: HubDatabase, session_id: str) -> None:
 
 
 async def read_candidate(
-    db: HubDatabase, reviewer: str, sender: str, task: Task, sha: str
+    db: HubDatabase,
+    reviewer: str,
+    sender: str,
+    task: Task,
+    sha: str | None,
+    *,
+    disposition: str | None = None,
 ) -> tuple[dict[str, Any], AgentStepInstance]:
     """Deliver a CANDIDATE from ``sender`` and consume it the way the reviewer does."""
     messages = InterSessionMessageManager(db)
-    content = f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree COMMIT={sha} NOTE=relayed"
+    proof = f"COMMIT={sha}" if sha else f"DISPOSITION={disposition}"
+    content = f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree {proof} NOTE=relayed"
     message = messages.create_message(sender, reviewer, content)
     registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
     add_messaging_tools(registry, messages, SessionManager(db), db)
@@ -795,6 +864,77 @@ async def test_relayed_candidate_for_unlinked_commit_is_refused(world: TeamWorld
     assert instance.current_step == "await"
     assert instance.variables["candidate_received"] is False
     assert instance.variables["candidate_sha"] is None
+
+
+@pytest.mark.asyncio
+async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorld) -> None:
+    """A moot task has no commit to name, so its Dev Manager relays a no-commit CANDIDATE.
+
+    Contract: ``EVENT=CANDIDATE TASK=#N RUN=run WT=tree DISPOSITION=moot NOTE=...`` stands in
+    for ``COMMIT=<sha>`` and routes the reviewer to review. The reviewer records an approved
+    review with disposition moot, and the Dev Manager's closing record lets close_task succeed.
+    """
+    team = await team_in_moot_review(world)
+    db, task_id = world.case.db, team.task.id
+    reviewer_at_await(db, team.sol)
+
+    result, instance = await read_candidate(
+        db, team.sol, team.manager, team.task, None, disposition="moot"
+    )
+
+    assert "candidate_binding_error" not in result, result
+    assert instance.current_step == "review"
+    assert instance.variables["candidate_received"] is True
+    assert instance.variables["candidate_task"] == task_id
+
+    review, written = submit_moot(db, team.sol, task_id, "review", 1)
+    assert written is True
+    assert (review.status, review.disposition, review.commit_sha) == ("approved", "moot", None)
+
+    submit_moot(db, team.manager, task_id, "closing", 1)
+    task_tools = create_task_registry(LocalTaskManager(db))
+    with session_context_for_test(team.manager):
+        closed = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
+    assert closed.get("closed") is True, closed
+    assert LocalTaskManager(db).get_task(task_id).closed_reason == "moot"
+
+
+@pytest.mark.asyncio
+async def test_moot_candidate_is_refused_with_linked_commits(
+    world: TeamWorld,
+) -> None:
+    """A no-work disposition cannot stand in for the review of a task with linked work."""
+    team = await team_in_review(world)
+    reviewer_at_await(world.case.db, team.sol)
+
+    result, instance = await read_candidate(
+        world.case.db, team.sol, team.manager, team.task, None, disposition="moot"
+    )
+
+    assert result.get("candidate_binding_error"), result
+    assert instance.current_step == "await"
+    assert instance.variables["candidate_received"] is False
+
+
+@pytest.mark.asyncio
+async def test_moot_candidate_line_is_accepted_by_send_message(world: TeamWorld) -> None:
+    """The Dev Manager sends the no-commit CANDIDATE line through send_message unrefused."""
+    team = await team_in_moot_review(world)
+    db = world.case.db
+    reviewer_at_await(db, team.sol)
+    sender_tools = InternalToolRegistry(name="gobby-agents", description="Candidate send")
+    add_messaging_tools(sender_tools, InterSessionMessageManager(db), SessionManager(db), db)
+    line = (
+        f"EVENT=CANDIDATE TASK=#{team.task.seq_num} RUN=run WT=tree DISPOSITION=moot NOTE=relayed"
+    )
+
+    with session_context_for_test(team.manager):
+        sent = await sender_tools.call(
+            "send_message", {"target": "session", "target_id": team.sol, "content": line}
+        )
+
+    assert "candidate_binding_error" not in sent, sent
+    assert sent.get("success") is True, sent
 
 
 @pytest.mark.parametrize("sender", ["unbound-manager", "other-team-manager", "team-developer"])
