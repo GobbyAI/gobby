@@ -34,7 +34,11 @@ checks the configured hub's current schema after enforcing checkout identity;
 its report counts checked receipts, seed rows and catalog objects.
 `gdaemon schema plan` runs apply's lineage validation and pending-migration
 resolution without writing and prints the database and code heads with pending
-migrations; `gobby restart` and `cutover` run it before stopping or promoting.
+migrations. `gdaemon schema preflight` executes pending transactional migrations
+and checks deferred constraints, then rolls back, preserving rows, schema and
+schema version; sequence values may still be consumed. It refuses pending
+baselines, non-transactional migrations and transaction control. `gobby restart`
+and `cutover` run both checks before stopping or promoting.
 Preserve an identity mismatch and coordinate the normal cutover with its owner. Direct
 `schema apply` and `sweep-test-schemas` are migration/test implementation
 entrypoints; use the documented Python maintenance workflow for live recovery.
@@ -55,3 +59,5 @@ without presenting future thin-node operation as shipped.
 See [hub installation contract](../../../../../../../../docs/guides/hub-install-contract.md),
 [backup recovery](../../../../../../../../docs/guides/cli-commands.md#hub-backup-disaster-recovery),
 and [physical acceptance](../../../../../../../../docs/guides/remote-docker-acceptance.md).
+
+_Last verified: 2026-10-24_

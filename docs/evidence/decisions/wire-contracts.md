@@ -20,17 +20,17 @@ The parser and the fixtures under `tests/ai/fixtures/` use the field names below
 
 - URL: `{api_base}/v1/systemone`. The default wire, `wire_api: systemone`.
 - Request body: `model`, `state`, and `questions`. `questions` is a map keyed by question
-  ID. Each Choice question carries `type: "choice"`, `instructions` (required on every
-  question), and `criteria`, a map from option key to option text.
+  ID. Gobby policy requires each Choice question to carry `type: "choice"`, non-empty
+  string `instructions`, and `criteria`, a map from option key to string-only text.
 - Response body: `model` (a non-empty string; TypeSafe resolves `jev-latest` to a version
   such as `jev-1.13.0`), `answers` keyed by question ID, and `usage.input_tokens`.
   Each answer carries `type` (equal to its question's type), `choice`, `probabilities`
   (keyed by option), and `confidence`. TypeSafe requires `probabilities` and `confidence`
   on a Choice answer.
-- Limits: 2 to 255 Choice options; 1 to 64 questions; question keys match
+- Gobby request-profile limits: 2 to 255 Choice options; 1 to 64 questions; question keys match
   `^[A-Za-z0-9_.-]{1,100}$`. Documented whole-request limit 64k tokens; 32k for state
   plus the longest question (`https://docs.typesafe.ai/models`, per Decision 8).
-- Noul (`type: "noul"`, a yes/no proposition): the question is exactly
+- Noul (`type: "noul"`, a yes/no proposition): Gobby's question is exactly
   `{"type": "noul", "instructions": <non-empty string>}`, with no other keys. The answer
   carries `type: "noul"` and the probability in its `noul` field, finite and in [0,1]. A Noul
   answer carries no separate `confidence` (`docs/research/jev.md` lines 35-36). Recorded from
@@ -180,3 +180,85 @@ per Decision 15. Not re-read this seat.
 
 Every unverified item keeps a consumer in `shadow` until the Activation Gate's live capture
 settles it.
+
+## 7. Gobby policy and Noul fixtures (2026-10-24)
+
+The required instructions, string-only Choice descriptions, two-option minimum and Noul
+shape above are **Gobby policy**, a narrower request profile than current upstream.
+TypeSafe OpenAPI 0.2.0 allows optional instructions, 1 to 255 Choice options with string,
+object, array or null descriptions, and optional Noul `criteria.true` and `criteria.false`.
+OpenRouter requires instructions; when Noul criteria are supplied it requires both keys.
+Gobby sends exactly `type` and non-empty string `instructions` for each Noul proposition.
+
+The three `*_noul_response.json` fixtures cover keyed probabilities on systemone,
+OpenRouter (dated model, id, provider and cost), and the Workers AI REST envelope.
+The parser requires `type: noul` and a finite `noul` value in [0,1], with no separate
+confidence. Missing keys fail closed. Noul shares Choice's request ceiling, cooldown,
+retry, identity, truncation checks and redacted call log. The public request estimate
+serializes the same body used by the oversize guard.
+
+Sources retrieved by researcher gobby#17515 on 2026-10-24, transcribed in
+`.gobby/plans/research/community-label-decisions-22604.md`:
+[TypeSafe OpenAPI](https://api.typesafe.ai/openapi.json),
+[TypeSafe system-one reference](https://docs.typesafe.ai/api/system-one),
+[OpenRouter OpenAPI](https://openrouter.ai/openapi.json), and
+[Cloudflare Clef schema](https://github.com/cloudflare/cloudflare-docs/blob/production/src/content/workers-ai-models/clef.json).
+These are documented-schema fixtures; runtime support still requires a live capture.
+
+## 8. Strict Score profile (retrieved 2026-10-24)
+
+Gobby sends `type: score`, non-empty string `instructions` and `criteria`, an ordered
+array of 2 to 10 non-empty levels, lowest first. The strict response profile requires
+`type`, `score`, `confidence`, `legend` and `probabilities`. Legend and probability keys
+are exactly `"0"` through `"n-1"`; the legend matches the requested levels. Probabilities
+and confidence must be finite in [0,1], with the probabilities summing to 1 within 0.001.
+The finite score lies in [0,n-1] and equals the probability-weighted index within
+`(n-1) * 0.001`. A missing or inconsistent field raises `DecisionsUnavailable("parse")`.
+The returned answer omits the validated legend. Consumers compare `score / (n-1)` with
+their position threshold; a Score position is not Choice confidence.
+
+The three `*_score_response.json` fixtures cover three four-level questions on every
+wire. Score shares the transport, request estimator, cooldown and identity path with
+Choice and Noul. The schema hash includes the question type and level count.
+
+The sources listed in section 7 and the same dated research transcript pin these
+differences: TypeSafe OpenAPI 0.2.0 allows one level while its
+[Score prose](https://docs.typesafe.ai/primitives/score) requires 2 to 10. OpenRouter
+requires only `type` and `score` in answers, so omission of its optional legend,
+probabilities or confidence fails Gobby's profile. Cloudflare and the
+[llama.cpp systemone reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1systemone-typesafe-compatible-system-one-api)
+specify 2 to 10 levels. Fixtures do not establish runtime compatibility.
+
+## 9. Strict Box profile and image transports (retrieved 2026-10-24)
+
+Box requires Jev 1.14. Gobby sends non-empty instructions and one PNG or JPEG per
+question. Before dialing it checks the decoded signature and PNG IHDR or JPEG SOF
+dimensions: 280 to 1568 pixels per side, area 78,400 to 2,458,624. Gobby's shared image
+bounds apply: 5 MiB per image, 8 images and 24 MiB decoded bytes per request. These are
+stricter than TypeSafe's documented 16 MiB per-image limit. Invalid input never opens
+the service cooldown.
+
+- OpenRouter carries `[instructions, {type: image_url, image_url: {url: data URL}}]`
+  inside each Box question. It receives no top-level assets or images map.
+- Systemone carries `[instructions, reference]` with a fresh `gobby-image-<uuid4 hex>`
+  whole-value reference. Its top-level `assets` entry carries `type: image`,
+  `format: png|jpeg`, and `data_base64`. The request sets
+  `TypeSafe-Danger-Zone-Images: true`.
+- Workers AI's Clef schema has no Box; Gobby refuses it before dialing. The documented
+  llama.cpp and LM Studio systemone surfaces list Choice, Noul and Score only; Box
+  runtime support remains unverified there.
+
+The strict answer requires `type: box`, finite `top`, `bottom`, `left`, `right` edges
+in [0,1], `left < right`, `top < bottom`, and finite confidence in [0,1]. Missing or
+null confidence fails closed, even though OpenRouter marks it optional and TypeSafe
+allows null. There is no probability-sum check. The two `*_box_response.json` fixtures
+exercise both transports with keyed answers. The text estimate removes image data;
+image token cost is unknown until capture, and the response truncation guard remains.
+
+Sources transcribed by researcher gobby#17515 in the 2026-10-24 working note:
+[TypeSafe Box](https://docs.typesafe.ai/primitives/box),
+[TypeSafe images](https://docs.typesafe.ai/images),
+[TypeSafe OpenAPI 0.2.0](https://api.typesafe.ai/openapi.json),
+[OpenRouter OpenAPI](https://openrouter.ai/openapi.json), and the Cloudflare and
+llama.cpp schemas linked above. These fixtures establish documented wire conformance,
+not a live Box consumer or backend capture.

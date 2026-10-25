@@ -41,12 +41,13 @@ def sandbox_list_record(raw: object, *, active: bool) -> dict[str, Any] | None:
         "runtime_version": raw.get("runtime_version"),
         "policy_hash": raw.get("policy_hash"),
     }
+    path = None
     if active:
-        gobby_home = get_gobby_home()
-        retention_root = gobby_home / SANDBOX_RETENTION_RELATIVE_PATH
+        retention_root = get_gobby_home() / SANDBOX_RETENTION_RELATIVE_PATH
         path = trusted_live_violation_path(raw.get("violation_path")) or _trusted_path(
             raw.get(RETAINED_VIOLATION_PATH_KEY), retention_root
         )
+    if active and path is not None:
         count, _, truncated = _read_violations(path, include_events=False)
         record["violation_count"] = count
         if truncated:
@@ -64,7 +65,7 @@ def sandbox_list_record(raw: object, *, active: bool) -> dict[str, Any] | None:
         else:
             # Historical terminal rows may predate frozen counts. Unknown is honest;
             # listing them must never scan a retained log on every poll.
-            record["violation_count"] = None
+            record["violation_count"] = 0 if active else None
     return record
 
 
@@ -112,6 +113,12 @@ def sandbox_record(
         ):
             count = frozen_count
             count_truncated = raw.get("violation_count_truncated") is True
+        if include_events:
+            stored_events = raw.get("recent_violations")
+            if isinstance(stored_events, list):
+                violations = [
+                    _bounded_command(event) for event in stored_events[-_MAX_EXPOSED_VIOLATIONS:]
+                ]
     record["violation_count"] = count
     if count_truncated:
         record["violation_count_truncated"] = True

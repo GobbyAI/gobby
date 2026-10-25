@@ -31,7 +31,9 @@ from gobby.hub.node_reports import (
     report_size,
 )
 from gobby.hub.remote_pane import apply_report_panes, redact_report_panes
+from gobby.hub.remote_sandbox import apply_sandbox_records, redact_report_sandbox
 from gobby.sessions.machine_scope import is_local_machine_owner
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.project_checkouts import (
     CheckoutConflictError,
     CheckoutRootTakenError,
@@ -191,6 +193,7 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
                 ReportBody,
             )
         )
+        body = redact_report_sandbox(body)
         inbox = node_report_inbox()
         size = report_size(body)
         admission = inbox.admit(
@@ -213,6 +216,25 @@ def create_nodes_router(server: HTTPServer) -> APIRouter:
             await server.run_db(
                 record_remote_workspaces, server.services.database, machine_id, body
             )
+        except BaseException:
+            inbox.release(machine_id, size)
+            raise
+        try:
+            await server.run_db(
+                apply_sandbox_records,
+                LocalAgentRunManager(server.services.database),
+                machine_id,
+                body,
+            )
+        except Exception as exc:
+            inbox.release(machine_id, size)
+            logger.error(
+                "Node sandbox records not applied: machine=%s revision=%s error=%s",
+                machine_id,
+                body.revision,
+                type(exc).__name__,
+            )
+            return JSONResponse({"detail": "sandbox_records_not_applied"}, status_code=500)
         except BaseException:
             inbox.release(machine_id, size)
             raise

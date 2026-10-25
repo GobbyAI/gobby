@@ -5,8 +5,9 @@ execute_mcp_step handler, and template rendering with type coercion.
 """
 
 import json
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcp.types import CallToolResult, TextContent
@@ -14,6 +15,8 @@ from pydantic import ValidationError
 
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.mcp_proxy.tools.spawn_agent import _factory
+from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import SpawnCleanupOnce
+from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -610,6 +613,40 @@ class TestExecuteMCPStep:
 
         with pytest.raises(RuntimeError, match=r"returned error: Unknown MCP tool error$"):
             await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: mock_proxy)
+
+    @pytest.mark.asyncio
+    async def test_spawn_failure_without_message_reaches_pipeline_error(self) -> None:
+        """A spawn that fails with a messageless exception still names its cause in the step."""
+        phase = SpawnPhase(
+            runner=SimpleNamespace(),
+            run_id="run-1",
+            spawn_request=SimpleNamespace(),
+            execute=AsyncMock(side_effect=LookupError()),
+            finalize=AsyncMock(),
+            handler=SimpleNamespace(),
+            spawn_config=SimpleNamespace(),
+            completion_registry=None,
+            cleanup_isolation=False,
+            task_manager=None,
+            child_session_id=None,
+            spawn_identity={"run_id": "run-1"},
+            reasoning=SimpleNamespace(to_dict=dict),
+            cleanup_once=SpawnCleanupOnce(),
+        )
+        with patch(
+            "gobby.mcp_proxy.tools.spawn_agent._spawn_phase.cleanup_failed_spawn", AsyncMock()
+        ):
+            reply = await phase.execute_phase()
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(return_value=reply)
+        step = PipelineStep(
+            id="dev-manager", mcp=MCPStepConfig(server="gobby-agents", tool="spawn_agent")
+        )
+
+        with pytest.raises(RuntimeError) as failed:
+            await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: mock_proxy)
+
+        assert "LookupError" in str(failed.value)
 
     @pytest.mark.asyncio
     async def test_mcp_step_fails_closed_on_sdk_error_result(self) -> None:

@@ -114,7 +114,14 @@ Operations and selector semantics are:
   the file stops at its last line and adds a `range_clamped_to_end_of_file`
   warning; a `start_line` past the end is `invalid_selector`. `symbol` requires one exact
   `path` plus `qualified_name` indexed at the snapshot hash; `commit_metadata`
-  emits one record per changed path (or one empty-change record).
+  emits one record per changed path (or one empty-change record). If a patch
+  makes its serialized item exceed `max_bytes`, the patch becomes an explicit
+  omission marker with a `commit_patch_omitted` warning, preserving identity and
+  changed-path metadata. Completeness is `truncated_patch` (or `paginated` while
+  more items remain), and `complete` is false. Each warning reports the byte
+  budget needed to retrieve the full item. Repeat with that `max_bytes` to
+  recover the patch; hashes and evidence IDs cover the returned record, including
+  its omission marker when present.
 - `{"operation":"search","search":...}`: lanes are `symbol` (exact name or
   qualified name), `lexical_symbol`, `literal`, `regex`, `content`, and
   `hybrid`. `paths` are safe snapshot-relative file or directory scopes;

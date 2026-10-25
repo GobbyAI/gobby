@@ -4,9 +4,13 @@ Every test runs against a fake httpx transport. No test dials a live decision se
 """
 
 import asyncio
+import base64
 import json
 import logging
+import re
+import struct
 import time
+import zlib
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -16,12 +20,19 @@ import pytest
 
 from gobby.ai import decisions
 from gobby.ai.decisions import (
+    BoxAnswer,
+    BoxImage,
+    BoxQuestion,
     ChoiceQuestion,
     DecisionService,
     DecisionsUnavailable,
+    NoulAnswer,
+    ScoreAnswer,
+    ScoreQuestion,
     get_decision_service,
 )
 from gobby.config.ai import DecisionsConfig
+from gobby.llm.image_payloads import MAX_IMAGE_BYTES, MAX_REQUEST_IMAGE_BYTES, MAX_REQUEST_IMAGES
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -223,6 +234,26 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
 @pytest.fixture(autouse=True)
 def _fresh_service_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(decisions, "_service_cache", None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 400])
+async def test_exchange_observer_records_success_and_failure(wire: FakeWire, status: int) -> None:
+    payload = _fixture("systemone_choice_response.json") if status == 200 else {"error": "refused"}
+    wire.handler = lambda _request: httpx.Response(status, json=payload)
+    observed: list[httpx.Response] = []
+    service = DecisionService(_config(), exchange_observer=observed.append)
+
+    if status == 200:
+        await service.choose("capture", STATE, QUESTIONS)
+    else:
+        with pytest.raises(DecisionsUnavailable, match="400"):
+            await service.choose("capture", STATE, QUESTIONS)
+
+    assert len(observed) == 1
+    assert observed[0].status_code == status
+    assert observed[0].json() == payload
+    assert json.loads(observed[0].request.content)["questions"]["triage"]["type"] == "choice"
 
 
 @pytest.mark.asyncio
@@ -912,3 +943,595 @@ async def test_request_limits_never_dial(wire: FakeWire) -> None:
             result = await service.choose("test", STATE, questions)
             assert len(result.answers) == len(questions), (wire_api, name)
         assert len(wire.requests) == len(accepted), wire_api
+
+
+# --- community-label-decisions P1: Noul, Score and Box shapes (#22604) ---
+
+WIRES = ["systemone", "openrouter-decisions", "workers-ai"]
+WIRE_URLS = {
+    "systemone": SYSTEMONE_URL,
+    "openrouter-decisions": "https://openrouter.test/api/alpha/decisions",
+    "workers-ai": "https://cf.test/client/v4/accounts/acct-1/ai/run/@cf/cloudflare/clef",
+}
+WIRE_FIXTURE_PREFIX = {
+    "systemone": "systemone",
+    "openrouter-decisions": "openrouter_decisions",
+    "workers-ai": "workers_ai",
+}
+WIRE_RESPONSE_MODELS = {
+    "systemone": "jev-1.14.0",
+    "openrouter-decisions": "typesafe/jev-1.14-20261014",
+    "workers-ai": "clef",
+}
+PROPOSITIONS: dict[str, str] = {
+    "carry": "The name `Ask Evidence` describes what the files in community c1 have in common.",
+    "split": "The files in community c2 serve two unrelated purposes.",
+    "rename": "The name `helpers` describes what the files in community c3 have in common.",
+}
+NOUL_PROBABILITIES = {"carry": 0.91, "split": 0.12, "rename": 0.5}
+SCORE_LEVELS = ("misleading", "vague", "clear", "clear and specific")
+SCORE_QUESTIONS: dict[str, ScoreQuestion] = {
+    key: ScoreQuestion(instructions=f"Rate the {key} of this label.", levels=SCORE_LEVELS)
+    for key in ("naming", "scope", "tests")
+}
+SCORE_ANSWERS = {
+    "naming": ScoreAnswer(
+        score=1.95, probabilities={"0": 0.05, "1": 0.15, "2": 0.6, "3": 0.2}, confidence=0.6
+    ),
+    "scope": ScoreAnswer(
+        score=0.4, probabilities={"0": 0.7, "1": 0.2, "2": 0.1, "3": 0.0}, confidence=0.7
+    ),
+    "tests": ScoreAnswer(
+        score=2.5, probabilities={"0": 0.0, "1": 0.1, "2": 0.3, "3": 0.6}, confidence=0.55
+    ),
+}
+BOX_MODEL = "typesafe/jev-1.14"
+
+
+def _shape_fixture(wire_api: str, shape: str) -> dict[str, Any]:
+    return _fixture(f"{WIRE_FIXTURE_PREFIX[wire_api]}_{shape}_response.json")
+
+
+def _raw_reply(body: Any) -> Callable[[httpx.Request], httpx.Response]:
+    # json= refuses NaN and infinity, which a Python-side server can emit.
+    return lambda _request: httpx.Response(
+        200, content=json.dumps(body).encode(), headers={"content-type": "application/json"}
+    )
+
+
+def _shape_answer(question: Mapping[str, Any]) -> dict[str, Any]:
+    """A valid answer for any question shape: first option, lowest level, or a centred box."""
+    kind = question["type"]
+    if kind == "choice":
+        options = list(question["criteria"])
+        probabilities = dict.fromkeys(options, 0.0)
+        probabilities[options[0]] = 1.0
+        return {
+            "type": "choice",
+            "choice": options[0],
+            "probabilities": probabilities,
+            "confidence": 0.5,
+        }
+    if kind == "noul":
+        return {"type": "noul", "noul": 0.5}
+    if kind == "score":
+        levels = question["criteria"]
+        return {
+            "type": "score",
+            "score": 0.0,
+            "confidence": 1.0,
+            "legend": {str(index): level for index, level in enumerate(levels)},
+            "probabilities": {str(index): float(index == 0) for index in range(len(levels))},
+        }
+    assert kind == "box", kind
+    return {
+        "type": "box",
+        "box": {"top": 0.1, "bottom": 0.9, "left": 0.1, "right": 0.9},
+        "confidence": 0.9,
+    }
+
+
+def _shape_responder(wire_api: str) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent = json.loads(request.content)
+        body = {
+            "model": sent["model"],
+            "answers": {key: _shape_answer(q) for key, q in sent["questions"].items()},
+            "usage": dict(USAGE),
+        }
+        if wire_api == "workers-ai":
+            body = {"result": body, "success": True, "errors": [], "messages": []}
+        return httpx.Response(200, json=body)
+
+    return handler
+
+
+def _png(width: int, height: int, *, padding: int = 0) -> bytes:
+    """A real grayscale PNG; ``padding`` bytes ride in an ancillary chunk."""
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    rows = b"".join(b"\x00" + bytes(width) for _ in range(height))
+    body = chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+    body += chunk(b"IDAT", zlib.compress(rows))
+    if padding:
+        body += chunk(b"tEXt", b"pad\x00" + b"x" * padding)
+    return b"\x89PNG\r\n\x1a\n" + body + chunk(b"IEND", b"")
+
+
+def _jpeg(width: int, height: int) -> bytes:
+    """JPEG signature plus a baseline SOF0 header carrying the dimensions."""
+    sof = struct.pack(">HBHHB", 11, 8, height, width, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8\xff\xc0" + sof + b"\xff\xd9"
+
+
+def _image(data: bytes, mime_type: str = "image/png") -> BoxImage:
+    assert mime_type in ("image/png", "image/jpeg")
+    return BoxImage(
+        mime_type="image/png" if mime_type == "image/png" else "image/jpeg",
+        data_base64=base64.b64encode(data).decode(),
+    )
+
+
+BOX_QUESTIONS: dict[str, BoxQuestion] = {
+    "logo": BoxQuestion(instructions="Where is the logo?", image=_image(_png(320, 300))),
+    "button": BoxQuestion(
+        instructions="Where is the submit button?", image=_image(_jpeg(400, 300), "image/jpeg")
+    ),
+}
+BOX_ANSWERS = {
+    "logo": BoxAnswer(top=0.1, bottom=0.4, left=0.2, right=0.6, confidence=0.95),
+    "button": BoxAnswer(top=0.5, bottom=0.9, left=0.05, right=0.3, confidence=0.8),
+}
+
+
+async def _assert_cooldown_is_shared(
+    wire: FakeWire, clock: FakeClock, service: DecisionService, shape_call: Any
+) -> None:
+    """A failed shape call fails the next Choice fast, and a failed Choice blocks the shape."""
+    wire.requests.clear()
+    wire.handler = _unauthorized
+    with pytest.raises(DecisionsUnavailable) as opened:
+        await shape_call()
+    assert opened.value.reason == "http_status"
+    with pytest.raises(DecisionsUnavailable) as blocked:
+        await service.choose("test", STATE, QUESTIONS)
+    assert blocked.value.reason == "cooldown"
+    assert len(wire.requests) == 1
+
+    clock.now += 61
+    with pytest.raises(DecisionsUnavailable) as reopened:
+        await service.choose("test", STATE, QUESTIONS)
+    assert reopened.value.reason == "http_status"
+    with pytest.raises(DecisionsUnavailable) as blocked_again:
+        await shape_call()
+    assert blocked_again.value.reason == "cooldown"
+    assert len(wire.requests) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", WIRES)
+async def test_noul_returns_probabilities_by_key(
+    wire: FakeWire, clock: FakeClock, caplog: pytest.LogCaptureFixture, wire_api: str
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    wire.handler = _json_reply(_shape_fixture(wire_api, "noul"))
+    service = DecisionService(_wire_config(wire_api, failure_cooldown_seconds=60))
+
+    result = await service.noul("carry_check", STATE, PROPOSITIONS)
+
+    request = wire.requests[0]
+    assert str(request.url) == WIRE_URLS[wire_api]
+    sent = json.loads(request.content)
+    assert sent["state"] == STATE
+    assert sent["questions"] == {
+        key: {"type": "noul", "instructions": text} for key, text in PROPOSITIONS.items()
+    }
+    assert result.answers == {
+        key: NoulAnswer(probability=probability) for key, probability in NOUL_PROBABILITIES.items()
+    }
+    assert result.response_model == WIRE_RESPONSE_MODELS[wire_api]
+    assert any(
+        record.getMessage().startswith("decisions.call consumer=carry_check")
+        for record in caplog.records
+    )
+
+    # The request profile: 1 to 64 non-empty propositions under valid keys.
+    wire.requests.clear()
+    wire.handler = _must_not_dial
+    rejected: dict[str, dict[str, str]] = {
+        "none": {},
+        "sixty-five": {f"p{index}": "A proposition." for index in range(65)},
+        "empty-proposition": {"carry": ""},
+        "bad-key": {"a/b": "A proposition."},
+    }
+    for name, propositions in rejected.items():
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await service.noul("carry_check", STATE, propositions)
+        assert caught.value.reason == "invalid_request", name
+    with pytest.raises(DecisionsUnavailable) as oversize:
+        await DecisionService(_wire_config(wire_api, max_input_tokens=256)).noul(
+            "carry_check", {"text": "x" * 1200}, PROPOSITIONS
+        )
+    assert oversize.value.reason == "oversize"
+    assert wire.requests == []
+
+    wire.handler = _shape_responder(wire_api)
+    sixty_four = {f"p{index}": "A proposition." for index in range(64)}
+    assert len((await service.noul("carry_check", STATE, sixty_four)).answers) == 64
+
+    await _assert_cooldown_is_shared(
+        wire, clock, service, lambda: service.noul("carry_check", STATE, PROPOSITIONS)
+    )
+
+
+MALFORMED_NOUL_ANSWERS = [
+    pytest.param(lambda b: b["answers"]["carry"].update(type="choice"), id="wrong-type"),
+    pytest.param(lambda b: b["answers"]["carry"].pop("noul"), id="missing-noul"),
+    pytest.param(lambda b: b["answers"]["carry"].update(noul=float("nan")), id="nan-noul"),
+    pytest.param(lambda b: b["answers"]["carry"].update(noul=float("inf")), id="infinite-noul"),
+    pytest.param(lambda b: b["answers"]["carry"].update(noul=1.01), id="above-one"),
+    pytest.param(lambda b: b["answers"]["carry"].update(noul=-0.01), id="below-zero"),
+    pytest.param(lambda b: b["answers"]["carry"].update(noul="0.5"), id="string-noul"),
+    pytest.param(lambda b: b["answers"]["carry"].update(noul=True), id="boolean-noul"),
+    pytest.param(lambda b: b["answers"].pop("rename"), id="missing-key"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutate", MALFORMED_NOUL_ANSWERS)
+async def test_noul_rejects_malformed_answers_as_parse(
+    wire: FakeWire, mutate: Callable[[dict[str, Any]], None]
+) -> None:
+    body = _shape_fixture("systemone", "noul")
+    mutate(body)
+    wire.handler = _raw_reply(body)
+
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await DecisionService(_config()).noul("carry_check", STATE, PROPOSITIONS)
+
+    assert caught.value.reason == "parse"
+
+
+async def _answer_count(service: DecisionService, shape: str, state: dict[str, Any]) -> int:
+    if shape == "choice":
+        return len((await service.choose("test", state, QUESTIONS)).answers)
+    if shape == "noul":
+        return len((await service.noul("test", state, PROPOSITIONS)).answers)
+    return len((await service.score("test", state, SCORE_QUESTIONS)).answers)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+@pytest.mark.parametrize("shape", ["choice", "noul", "score"])
+async def test_estimate_request_tokens_matches_oversize_guard(
+    wire: FakeWire, wire_api: str, shape: str
+) -> None:
+    state = {"members": [f"src/gobby/code_index/module_{index:03d}.py" for index in range(60)]}
+    shape_questions: dict[str, Mapping[str, Any]] = {
+        "choice": QUESTIONS,
+        "noul": PROPOSITIONS,
+        "score": SCORE_QUESTIONS,
+    }
+    questions = shape_questions[shape]
+    estimate = DecisionService(_wire_config(wire_api)).estimate_request_tokens(state, questions)
+    assert estimate > 256
+
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await _answer_count(
+            DecisionService(_wire_config(wire_api, max_input_tokens=estimate - 1)), shape, state
+        )
+    assert caught.value.reason == "oversize"
+    assert wire.requests == []
+
+    wire.handler = _shape_responder(wire_api)
+    answered = await _answer_count(
+        DecisionService(_wire_config(wire_api, max_input_tokens=estimate)), shape, state
+    )
+    assert answered == len(questions)
+    assert len(wire.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", WIRES)
+async def test_score_returns_weighted_levels_by_key(
+    wire: FakeWire, clock: FakeClock, wire_api: str
+) -> None:
+    wire.handler = _json_reply(_shape_fixture(wire_api, "score"))
+    service = DecisionService(_wire_config(wire_api, failure_cooldown_seconds=60))
+
+    result = await service.score("sufficiency", STATE, SCORE_QUESTIONS)
+
+    request = wire.requests[0]
+    assert str(request.url) == WIRE_URLS[wire_api]
+    sent = json.loads(request.content)
+    assert sent["questions"] == {
+        key: {
+            "type": "score",
+            "instructions": question.instructions,
+            "criteria": list(SCORE_LEVELS),
+        }
+        for key, question in SCORE_QUESTIONS.items()
+    }
+    assert result.answers == SCORE_ANSWERS
+    # The consumer knows its own levels; the validated legend is not carried.
+    assert not hasattr(result.answers["naming"], "legend")
+    assert result.response_model == WIRE_RESPONSE_MODELS[wire_api]
+
+    wire.requests.clear()
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as oversize:
+        await DecisionService(_wire_config(wire_api, max_input_tokens=256)).score(
+            "sufficiency", {"text": "x" * 1200}, SCORE_QUESTIONS
+        )
+    assert oversize.value.reason == "oversize"
+    assert wire.requests == []
+
+    await _assert_cooldown_is_shared(
+        wire, clock, service, lambda: service.score("sufficiency", STATE, SCORE_QUESTIONS)
+    )
+
+
+def _naming(body: dict[str, Any]) -> dict[str, Any]:
+    answer: dict[str, Any] = body["answers"]["naming"]
+    return answer
+
+
+MALFORMED_SCORE_ANSWERS: dict[str, Callable[[dict[str, Any]], None]] = {
+    "missing-legend": lambda b: _naming(b).pop("legend"),
+    "missing-probabilities": lambda b: _naming(b).pop("probabilities"),
+    "missing-confidence": lambda b: _naming(b).pop("confidence"),
+    "missing-score": lambda b: _naming(b).pop("score"),
+    "wrong-type": lambda b: _naming(b).update(type="choice"),
+    "legend-keys-off-by-one": lambda b: _naming(b).update(
+        legend={"1": "misleading", "2": "vague", "3": "clear", "4": "clear and specific"}
+    ),
+    "probability-keys-off-by-one": lambda b: _naming(b).update(
+        probabilities={"1": 0.05, "2": 0.15, "3": 0.6, "4": 0.2}
+    ),
+    # Index 0 carries no weight, so the weighted index stays 1.95 and only the sum is wrong.
+    "probabilities-sum-above-one": lambda b: _naming(b).update(
+        probabilities={"0": 0.15, "1": 0.15, "2": 0.6, "3": 0.2}
+    ),
+    "probability-below-zero": lambda b: _naming(b).update(
+        probabilities={"0": -0.05, "1": 0.25, "2": 0.6, "3": 0.2}, score=2.05
+    ),
+    "score-below-zero": lambda b: _naming(b).update(score=-0.5),
+    "score-above-top-level": lambda b: _naming(b).update(score=3.5),
+    "score-not-weighted-index": lambda b: _naming(b).update(score=1.5),
+    "string-score": lambda b: _naming(b).update(score="1.95"),
+    "confidence-above-one": lambda b: _naming(b).update(confidence=1.5),
+    "missing-key": lambda b: b["answers"].pop("tests"),
+}
+
+
+@pytest.mark.asyncio
+async def test_score_rejects_malformed_answers_as_parse(wire: FakeWire) -> None:
+    for name, mutate in MALFORMED_SCORE_ANSWERS.items():
+        body = _shape_fixture("systemone", "score")
+        mutate(body)
+        wire.handler = _raw_reply(body)
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await DecisionService(_config()).score("sufficiency", STATE, SCORE_QUESTIONS)
+        assert caught.value.reason == "parse", name
+
+    # Within (n - 1) x tolerance of the weighted index is consistent.
+    body = _shape_fixture("systemone", "score")
+    _naming(body).update(score=1.952)
+    wire.handler = _raw_reply(body)
+    result = await DecisionService(_config()).score("sufficiency", STATE, SCORE_QUESTIONS)
+    assert result.answers["naming"].score == pytest.approx(1.952)
+
+    wire.requests.clear()
+    wire.handler = _must_not_dial
+    rejected_levels: dict[str, ScoreQuestion] = {
+        "one-level": ScoreQuestion(instructions="Rate it.", levels=("only",)),
+        "eleven-levels": ScoreQuestion(
+            instructions="Rate it.", levels=tuple(f"level {i}" for i in range(11))
+        ),
+        "empty-level": ScoreQuestion(instructions="Rate it.", levels=("bad", "")),
+        "empty-instructions": ScoreQuestion(instructions="", levels=SCORE_LEVELS),
+    }
+    service = DecisionService(_config())
+    for name, question in rejected_levels.items():
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await service.score("sufficiency", STATE, {"naming": question})
+        assert caught.value.reason == "invalid_request", name
+    assert wire.requests == []
+
+    wire.handler = _shape_responder("systemone")
+    for levels in (("low", "high"), tuple(f"level {i}" for i in range(10))):
+        question = ScoreQuestion(instructions="Rate it.", levels=levels)
+        result = await service.score("sufficiency", STATE, {"naming": question})
+        assert set(result.answers["naming"].probabilities) == {str(i) for i in range(len(levels))}
+    assert len(wire.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_box_returns_edges_by_key_per_wire_transport(wire: FakeWire) -> None:
+    # OpenRouter: each image rides inline as an image_url part of the instructions array.
+    openrouter = _wire_config(
+        "openrouter-decisions",
+        model=BOX_MODEL,
+        api_key="sk-or-test",
+        identity_contract="response_version",
+    )
+    wire.handler = _json_reply(_shape_fixture("openrouter-decisions", "box"))
+
+    result = await DecisionService(openrouter).box("evaluate", STATE, BOX_QUESTIONS)
+
+    request = wire.requests[0]
+    sent = json.loads(request.content)
+    assert str(request.url) == WIRE_URLS["openrouter-decisions"]
+    assert sent["questions"] == {
+        key: {
+            "type": "box",
+            "instructions": [
+                question.instructions,
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{question.image.mime_type};base64,"
+                        f"{question.image.data_base64}"
+                    },
+                },
+            ],
+        }
+        for key, question in BOX_QUESTIONS.items()
+    }
+    assert "assets" not in sent
+    assert "images" not in sent
+    assert "typesafe-danger-zone-images" not in request.headers
+    assert result.answers == BOX_ANSWERS
+    assert result.response_model == "typesafe/jev-1.14-20261014"
+    assert result.backend_identity == "response:typesafe/jev-1.14-20261014"
+
+    # systemone: each image is a whole-value asset reference behind the danger-zone header.
+    seen_refs: set[str] = set()
+    for _ in range(2):
+        wire.requests.clear()
+        wire.handler = _json_reply(_shape_fixture("systemone", "box"))
+        result = await DecisionService(_config(model="jev-1.14")).box(
+            "evaluate", STATE, BOX_QUESTIONS
+        )
+        request = wire.requests[0]
+        sent = json.loads(request.content)
+        assert str(request.url) == SYSTEMONE_URL
+        assert request.headers["typesafe-danger-zone-images"] == "true"
+        refs: dict[str, str] = {}
+        for key, question in BOX_QUESTIONS.items():
+            sent_question = sent["questions"][key]
+            assert sent_question["type"] == "box"
+            text, ref = sent_question["instructions"]
+            assert text == question.instructions
+            assert re.fullmatch(r"gobby-image-[0-9a-f]{32}", ref)
+            refs[key] = ref
+        assert sent["assets"] == {
+            refs["logo"]: {
+                "type": "image",
+                "format": "png",
+                "data_base64": BOX_QUESTIONS["logo"].image.data_base64,
+            },
+            refs["button"]: {
+                "type": "image",
+                "format": "jpeg",
+                "data_base64": BOX_QUESTIONS["button"].image.data_base64,
+            },
+        }
+        assert result.answers == BOX_ANSWERS
+        assert seen_refs.isdisjoint(refs.values())
+        seen_refs.update(refs.values())
+    assert len(seen_refs) == 4
+
+    # Workers AI has no Box in Clef's schema: refused before dialing.
+    wire.requests.clear()
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await DecisionService(_wire_config("workers-ai")).box("evaluate", STATE, BOX_QUESTIONS)
+    assert caught.value.reason == "invalid_request"
+    assert wire.requests == []
+
+    # Image bytes never count toward the estimate; their token cost is unknown.
+    probe = DecisionService(openrouter)
+    small = BoxQuestion(instructions="Where is the logo?", image=_image(_png(280, 280)))
+    large = BoxQuestion(
+        instructions="Where is the logo?", image=_image(_png(280, 280, padding=100_000))
+    )
+    assert probe.estimate_request_tokens(STATE, {"logo": small}) == probe.estimate_request_tokens(
+        STATE, {"logo": large}
+    )
+
+
+def _invalid_box_requests() -> dict[str, dict[str, BoxQuestion]]:
+    def one(image: BoxImage, instructions: str = "Where is the logo?") -> dict[str, BoxQuestion]:
+        return {"logo": BoxQuestion(instructions=instructions, image=image)}
+
+    near_limit = _image(_png(280, 280, padding=MAX_IMAGE_BYTES - 4096))
+    over_total = MAX_REQUEST_IMAGE_BYTES // (MAX_IMAGE_BYTES - 4096) + 1
+    assert over_total <= MAX_REQUEST_IMAGES
+    small = _image(_png(280, 280))
+    return {
+        "gif-declared-png": one(_image(b"GIF89a" + bytes(64))),
+        "png-declared-jpeg": one(_image(_png(300, 300), "image/jpeg")),
+        "jpeg-declared-png": one(_image(_jpeg(300, 300))),
+        "not-base64": one(BoxImage(mime_type="image/png", data_base64="!!not base64!!")),
+        "width-279": one(_image(_png(279, 300))),
+        "height-279": one(_image(_png(300, 279))),
+        "width-1569": one(_image(_png(1569, 300))),
+        "jpeg-height-1569": one(_image(_jpeg(300, 1569), "image/jpeg")),
+        "oversized-image": one(_image(_png(280, 280, padding=MAX_IMAGE_BYTES))),
+        "too-many-images": {
+            f"q{index}": BoxQuestion(instructions="Where?", image=small)
+            for index in range(MAX_REQUEST_IMAGES + 1)
+        },
+        "request-bytes-over-total": {
+            f"q{index}": BoxQuestion(instructions="Where?", image=near_limit)
+            for index in range(over_total)
+        },
+        "empty-instructions": one(small, instructions=""),
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+async def test_box_rejects_invalid_images_before_dialing(
+    wire: FakeWire, clock: FakeClock, wire_api: str
+) -> None:
+    wire.handler = _must_not_dial
+    service = DecisionService(_wire_config(wire_api, model=BOX_MODEL, failure_cooldown_seconds=60))
+
+    for name, questions in _invalid_box_requests().items():
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await service.box("evaluate", STATE, questions)
+        assert caught.value.reason == "invalid_request", name
+    assert wire.requests == []
+
+    # The documented bounds are inclusive, and no rejection opened the cooldown.
+    wire.handler = _shape_responder(wire_api)
+    boundary = {
+        "smallest": BoxQuestion(instructions="Where?", image=_image(_png(280, 280))),
+        "largest": BoxQuestion(instructions="Where?", image=_image(_png(1568, 1568))),
+        "jpeg": BoxQuestion(instructions="Where?", image=_image(_jpeg(280, 1568), "image/jpeg")),
+    }
+    result = await service.box("evaluate", STATE, boundary)
+    assert set(result.answers) == set(boundary)
+    assert len(wire.requests) == 1
+
+
+def _logo(body: dict[str, Any]) -> dict[str, Any]:
+    answer: dict[str, Any] = body["answers"]["logo"]
+    return answer
+
+
+MALFORMED_BOX_ANSWERS: dict[str, Callable[[dict[str, Any]], None]] = {
+    "top-below-zero": lambda b: _logo(b)["box"].update(top=-0.1),
+    "right-above-one": lambda b: _logo(b)["box"].update(right=1.1),
+    "nan-edge": lambda b: _logo(b)["box"].update(left=float("nan")),
+    "string-edge": lambda b: _logo(b)["box"].update(bottom="0.4"),
+    "missing-edge": lambda b: _logo(b)["box"].pop("left"),
+    "left-equals-right": lambda b: _logo(b)["box"].update(left=0.6, right=0.6),
+    "left-above-right": lambda b: _logo(b)["box"].update(left=0.7, right=0.6),
+    "top-equals-bottom": lambda b: _logo(b)["box"].update(top=0.4, bottom=0.4),
+    "top-below-bottom-inverted": lambda b: _logo(b)["box"].update(top=0.5, bottom=0.4),
+    "missing-box": lambda b: _logo(b).pop("box"),
+    "missing-confidence": lambda b: _logo(b).pop("confidence"),
+    "null-confidence": lambda b: _logo(b).update(confidence=None),
+    "confidence-above-one": lambda b: _logo(b).update(confidence=1.5),
+    "wrong-type": lambda b: _logo(b).update(type="choice"),
+    "missing-key": lambda b: b["answers"].pop("button"),
+}
+
+
+@pytest.mark.asyncio
+async def test_box_rejects_malformed_answers_as_parse(wire: FakeWire) -> None:
+    service_config = _config(model="jev-1.14")
+    for name, mutate in MALFORMED_BOX_ANSWERS.items():
+        body = _shape_fixture("systemone", "box")
+        mutate(body)
+        wire.handler = _raw_reply(body)
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await DecisionService(service_config).box("evaluate", STATE, BOX_QUESTIONS)
+        assert caught.value.reason == "parse", name
