@@ -13,6 +13,7 @@ timeout: 0
 # A sandboxed researcher reaches the web through the trusted egress allowlist.
 network: trusted
 send_message_targets: [parent, session]
+task_step_writes: [implementation, closing]
 blocked_tools:
   - "KillShell"
 blocked_mcp_tools:
@@ -32,6 +33,10 @@ prompts:
     - Send findings and proposals to Triage, which digests them for the Orchestrator. Anything the operator must decide goes through the Assistant.
     - Ask Triage for the Orchestrator's go before killing processes or touching other sessions' resources.
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `researcher-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
+    - After committing your research spike's report, attach its SHA with `gobby-tasks:link_commit`.
+      Record approved `gobby-tasks:record_implementation_step` and `gobby-tasks:record_closing_step`
+      records for that SHA, then close your spike with `gobby-tasks:close_task`.
+      These grants cover research reports; never implement code or write review or test records.
 
     ## Messages
     - Reach Triage and the Assistant through `gobby-agents:send_message`, and wait on replies with `gobby-agents:wait_for_coordination`.
@@ -128,4 +133,8 @@ step_workflow:
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:end_agent_run"
+        - "gobby-tasks:link_commit"
+        - "gobby-tasks:record_implementation_step"
+        - "gobby-tasks:record_closing_step"
+        - "gobby-tasks:close_task"
       transitions: []

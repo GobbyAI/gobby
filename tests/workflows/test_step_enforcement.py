@@ -110,6 +110,79 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
 
 
 @pytest.mark.asyncio
+async def test_researcher_serve_step_allows_closing_its_research_spike(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    tmp_path: Path,
+) -> None:
+    from gobby.config.tasks import TaskClosePolicyConfig
+    from gobby.tasks.step_records import required_task_steps
+
+    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
+    definition = yaml.safe_load((shared / "researcher.yaml").read_text())
+    definition.pop("network")
+    workflow = definition.pop("step_workflow")
+    variables = {
+        "_agent_blocked_tools": definition["blocked_tools"],
+        "_agent_blocked_mcp_tools": definition["blocked_mcp_tools"],
+        "_agent_type": "researcher",
+    }
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step="serve", workflow_data={**definition, **workflow}
+    )
+    scope_bundle = yaml.safe_load((shared.parent / "rules/roles/seat-write-scope.yaml").read_text())
+    scope_rule = scope_bundle["rules"]["researcher-write-scope"]
+    RuleDefinitionManager(db).create(
+        name="researcher-write-scope",
+        definition_json={key: scope_rule[key] for key in ("event", "when", "effects")},
+        tags=scope_bundle["tags"],
+    )
+    spike_steps = required_task_steps(
+        TaskClosePolicyConfig(enforce_step_records=True),
+        task_type="research_spike",
+        category="research",
+    )
+    close_path = ["link_commit", *(f"record_{step}_step" for step in spike_steps), "close_task"]
+    for tool in close_path:
+        response = await engine.evaluate(
+            _make_event(
+                data={
+                    "tool_name": "mcp__gobby__call_tool",
+                    "tool_input": {
+                        "server_name": "gobby-tasks",
+                        "tool_name": tool,
+                        "arguments": {"task_id": "#1"},
+                    },
+                }
+            ),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert response.decision != "block", (tool, response.reason)
+
+    # Source code stays read-only while the close path opens.
+    code = str(tmp_path / "src/app.py")
+    response = await engine.evaluate(
+        _make_event(
+            data={
+                "tool_name": "Edit",
+                "tool_input": {"file_path": code},
+                "canonical_tool_kind": "write",
+                "canonical_file_paths": [code],
+                "project_path": str(tmp_path),
+                "cwd": str(tmp_path),
+            }
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert response.decision == "block"
+    assert "researcher-write-scope" in (response.reason or "")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("seat", "step"),
     [
