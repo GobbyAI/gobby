@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from gobby.ai.decisions import (
+    _SUM_TOLERANCE,
     BoxImage,
     BoxQuestion,
     ChoiceQuestion,
@@ -46,6 +47,8 @@ def add_decision_flags(parser: argparse.ArgumentParser) -> None:
         default="response_version",
     )
     parser.add_argument("--backend-max-state-tokens", type=int)
+    parser.add_argument("--backend-max-question-tokens", type=int)
+    parser.add_argument("--long-context", action="store_true")
     parser.add_argument("--api-key-secret")
 
 
@@ -71,6 +74,8 @@ def build_decisions_config(
         model=args.model,
         identity_contract=args.identity_contract,
         backend_max_state_tokens=args.backend_max_state_tokens,
+        backend_max_question_tokens=args.backend_max_question_tokens,
+        long_context=args.long_context,
         timeout_seconds=30,
     )
     if args.api_key_secret:
@@ -179,7 +184,57 @@ def _observe_exchange(
         payload = payload.get("result")
     if isinstance(payload, dict):
         exchange["usage"] = _usage(payload)
+        record["_raw_answers"] = payload.get("answers")
     record["exchanges"].append(exchange)
+
+
+def _parse_diagnostics(
+    answers: Any, questions: dict[str, Any], redactions: list[str]
+) -> dict[str, Any]:
+    """Retain bounded failed answers and the Score comparison without changing validation."""
+    raw = json.dumps(answers, ensure_ascii=False)
+    for value in redactions:
+        if value:
+            raw = raw.replace(value, "[redacted]")
+    diagnostic: dict[str, Any] = {"answers": raw[:4096]}
+    comparisons: dict[str, Any] = {}
+    for key, question in questions.items():
+        if question.get("type") != "score" or not isinstance(answers, dict):
+            continue
+        answer = answers.get(key)
+        if not isinstance(answer, dict):
+            continue
+        levels = question["criteria"]
+        raw_probabilities = answer.get("probabilities")
+        probabilities = {}
+        if isinstance(raw_probabilities, dict):
+            probabilities = {
+                str(index): raw_probabilities[str(index)]
+                for index in range(len(levels))
+                if type(raw_probabilities.get(str(index))) in (int, float)
+                and math.isfinite(raw_probabilities[str(index)])
+            }
+        score = answer.get("score")
+        comparisons[key] = {
+            "score": (
+                score
+                if isinstance(score, int | float)
+                and not isinstance(score, bool)
+                and math.isfinite(score)
+                else None
+            ),
+            "probabilities": probabilities,
+            "expected": (
+                sum(int(index) * value for index, value in probabilities.items())
+                if len(probabilities) == len(levels)
+                else None
+            ),
+            "abs_tolerance": (len(levels) - 1) * _SUM_TOLERANCE,
+            "rel_tolerance": 1e-9,
+        }
+    if comparisons:
+        diagnostic["score_comparison"] = comparisons
+    return diagnostic
 
 
 async def _catalog(client: httpx.AsyncClient) -> list[dict[str, str | None]]:
@@ -284,9 +339,19 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
             record["finding"] = {"reason": error.reason, "detail": error.detail}
         except (VisionInputError, ValueError, OSError) as error:
             record["finding"] = {"reason": "image_input", "detail": str(error)}
+        if record.get("finding", {}).get("reason") != "parse":
+            record.pop("_raw_answers", None)
         shapes.append(record)
 
+    # Box preparation supplies image redactions even for earlier shape failures.
+    for record in shapes:
+        if "_raw_answers" in record:
+            record["parse_diagnostics"] = _parse_diagnostics(
+                record.pop("_raw_answers"), record["questions"], redactions
+            )
     headers = {"authorization": f"Bearer {config.api_key}"} if config.api_key else {}
+    if config.long_context:
+        headers["TypeSafe-Danger-Zone-Long-Context"] = "true"
     probes: list[dict[str, Any]] = []
     model = config.model or ""
     async with httpx.AsyncClient(
@@ -338,6 +403,8 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         "request_model": config.model,
         "identity_contract": config.identity_contract,
         "backend_max_state_tokens": limit,
+        "backend_max_question_tokens": config.resolved_backend_max_question_tokens,
+        "long_context": config.long_context,
         "shapes": shapes,
         "probes": probes,
         "measured_chars_per_token": measured_ratio,
