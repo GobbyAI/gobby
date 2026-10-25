@@ -31,6 +31,10 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
   dream, agent, pipeline, feedback or project-purge business logic a second time.
 - Invoke #24706's `gobby_codeindex::jobs::nightly_repair::run` directly. Depend on
   that leaf, never on the #21586 epic: its #24713 cleanup already waits on #21582.
+- #24702 alone owns hourly code-index pruning: code_index_prune in
+  `gobby_codeindex::jobs::HubJobs::ticks()` calls
+  `gobby_code::node::hub::job_prune::prune_all`. Cron adds no second prune
+  binding or tick. #24702 is a transitive prerequisite of #24706.
 - Delete Cron-owned Python scheduler, HTTP and nightly repair code after their
   own parity gates. #24713 owns the subsequent shared code-index helper and
   configuration-key deletion. This plan deletes neither of its two keys.
@@ -42,6 +46,14 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
 - Use `proxy`/`compare` only during the parity transition. After native takeover,
   Cron has no Python fallback. Rollback before deletion uses the same binaries
   and routing edit; rollback after deletion requires the prior coherent release.
+- **Browser ownership ruling (2026-10-24, Orchestrator via Triage).** #24659
+  owns the single native browser-session verifier, including both existing
+  gobby_session cookie classes. Cron's 4.1b registers only the nine /api/cron
+  routes for Caller::Browser and preserves cookie, origin and CSRF behavior
+  route by route. It carries `security-review` and depends on the shared
+  verifier; no Cron verifier, lease-admin browser access or other-family
+  admission is added. The 4.1 switch covers key callers only; Cron cookie
+  traffic remains proxied until 4.1b passes, before 4.2 deletion.
 - Native construction through P3 is passive in production. Only 4.1 activates
   native scheduled/manual admission, reconciliation and system registration,
   after the restart boundary proves Python admission has stopped. Proxy/compare
@@ -80,6 +92,10 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
   Never run the full suite. Native tests use isolated temporary state and ports.
   Cargo runs require the heavy-run grant, set CARGO_BUILD_JOBS=3 and name the
   package. Until #24949 lands, use cargo test instead of nextest (store denial).
+  Consumers of #24883's descriptor contract run
+  `cargo test -p gobby-core --test mcp_contract`; after nextest is restored,
+  `cargo nextest run -p gobby-core --test mcp_contract` selects the whole
+  integration test target, including the two tests outside its named module.
 - New APIs retain existing authentication, project authorization, system-row
   protection and shell restrictions. Cron action dispatch never bypasses the
   native spawn SRT chokepoint. Authenticated node requests route to the hub using
@@ -107,10 +123,12 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
 `kind: framing`
 
 The 2026-10-24 ledger has exactly these 28 rows citing #21582. No row is dropped.
-HTTP ownership is implemented here; CLI/MCP names are explicitly delegated to
-their existing front-door owners. The service contract in 3.4 carries their
-behavior, serialization, errors and restrictions. Delegated rows remain proxied
-until their named owner actually ports them; this plan never marks them native.
+The ten HTTP rows are implemented here and change from `proxied` to `delegated`
+only after their native parity checks pass. The ten CLI and eight MCP rows stay
+`proxied`, with #21571/#21570 owner notes, until those owners port them. The
+service contract in 3.4 carries their behavior, serialization, errors and
+restrictions. Ledger statuses are exactly `proxied`, `delegated` (ported), or
+`dropped by decision #N`; assignment to a future owner does not mark a row done.
 
 | Ledger row | Outcome owner |
 | --- | --- |
@@ -154,6 +172,7 @@ Targets:
 - `tests/contracts/cron/services.json`
 - `tests/contracts/cron/lifecycle.json`
 - `tests/contracts/http/cron.json`
+- `tests/contracts/http/cron-browser.json`
 - `tests/contracts/http/manifest.json::*` — scope-reason: register the Cron corpus with Python origin
 - `tests/contracts/test_cron_oracle.py`
 
@@ -173,10 +192,16 @@ project scope, name uniqueness, parked rows and run child hydration. Record
 status/body plus resulting rows for writes and dispatch calls for actions.
 Normalize only generated IDs, clock fields and measured durations with existing
 corpus mechanisms. Do not normalize statuses, errors, ownership or child links.
+Record ordinary and browser-testing gobby_session cookies separately across all
+nine /api/cron routes, including mutation rows/effects, selector mismatches,
+expiry/revocation, absent/invalid Authorization and missing credentials. Pin
+the current credentialed CORS/preflight responses for allowed and disallowed
+origins and the absence of an extra Cron CSRF-token/Origin rejection. The
+middleware/source citations and shared-verifier ownership are repeated in 4.1b.
 Observed: source inspection only; these new tests have not run.
 Planned: isolated pytest of test_cron_oracle and HTTP corpus recording/replay.
 
-**Granularity:** The three vector files characterize one cross-language parity
+**Granularity:** These fixtures characterize one cross-language parity
 interface, with no implementation or domain ownership transferred by this leaf.
 
 **Acceptance:**
@@ -184,6 +209,7 @@ interface, with no implementation or domain ownership transferred by this leaf.
 - 1.1.2 - Service vectors reproduce CRUD, parking, filtering, protection and serialization. test: `tests/contracts/test_cron_oracle.py::test_service_vectors_match_python`.
 - 1.1.3 - Lifecycle vectors reproduce admission conflicts, durable children, backoff and recovery. test: `tests/contracts/test_cron_oracle.py::test_lifecycle_vectors_match_python`.
 - 1.1.4 - The HTTP fixture records all ten owned routes and error branches, with Python origin. file: `tests/contracts/http/cron.json`.
+- 1.1.5 - Browser vectors record both cookie classes, all nine Cron routes, selector and credential failures, mutation effects, CORS/preflight and current origin/CSRF behavior without normalization of authority. test: `tests/contracts/test_cron_oracle.py::test_browser_vectors_match_python`.
 
 ### 1.2 Native schedule and value model [category: code] (depends: 1.1, #21559)
 `kind: deliverable`
@@ -445,13 +471,16 @@ HubJobs, using its non-overlap guard and returned summary. Native jobs do not
 read nightly_repair_timeout_seconds or maintenance_log_file; remove those
 obsolete fields from the repaired action_config without deleting the config
 keys themselves (#24713). Do not wrap the handler in the retired per-project
-Python repair timeout. Also bind the native hourly-prune handler already
-delivered upstream of #24706. Planned: `cargo test -p gobby-daemon --test
-cron_code_index`; assert one tick owner and one real native invocation.
+Python repair timeout. #24702, upstream of #24706, owns hourly pruning as
+code_index_prune in `gobby_codeindex::jobs::HubJobs::ticks()`, calling
+`gobby_code::node::hub::job_prune::prune_all(..., PruneEntry::Skip)`.
+It also removes the old Python hourly Cron registration. Cron adds no second
+prune binding or tick. Planned: `cargo test -p gobby-daemon --test
+cron_code_index`; assert one nightly scheduler owner and no duplicate prune.
 
 **Acceptance:**
 - 2.6.1 - New/drifted/disabled/parked nightly definitions reconcile correctly and preserve local-zone scheduling. test: `crates/gdaemon/tests/cron_code_index.rs::nightly_definition_preserves_operator_state`.
-- 2.6.2 - A due run calls jobs::nightly_repair once, persists its summary, and neither invokes Python nor imposes the retired project timeout; prune binds its native handler. test: `crates/gdaemon/tests/cron_code_index.rs::native_code_index_jobs_execute_once`.
+- 2.6.2 - A due run calls jobs::nightly_repair once, persists its summary, and neither invokes Python nor imposes the retired project timeout; #24702 remains the only hourly-prune owner, with no Cron prune binding or tick. test: `crates/gdaemon/tests/cron_code_index.rs::native_code_index_jobs_execute_once`.
 - 2.6.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 2.7 Native system-job bindings [category: code] (depends: 2.6, #21563, #21585, #21589)
@@ -536,7 +565,7 @@ runtime state machine.
 ## P3: HTTP family and front-door service handoffs
 `kind: framing`
 
-### 3.1 Cron family and job/run read routes [category: code] (depends: 2.8)
+### 3.1 Cron family and job/run read routes [category: code] (depends: 2.8, #24659)
 `kind: deliverable`
 
 Targets:
@@ -558,9 +587,13 @@ only the listed methods/segments under /api/cron and the one protected-run
 route added by 3.3, never all admin paths. Preserve URI decoding, UUID errors,
 project authorization, status envelopes, count, sort, nullable fields and
 unavailable/404/422/500 behavior from the oracle. Reuse the runtime family's
-principal admission; browser/cookie requests must reach the equivalent native
-auth path at final takeover rather than fall back to deleted Python. The family
-defaults to Proxy until 4.1; compare mutations call only Python. Registering
+principal admission. #24659 owns the single native browser-session verifier;
+#21559's runtime family and #21575's mode gate do not supply cookie verification.
+This leaf depends on that verifier's landed implementation, not merely approval
+of its plan. Keep Cron cookie requests proxied until 4.1b registers the nine
+Cron routes against it and proves parity. No browser claim includes either
+admin Cron endpoint. The family defaults to Proxy until 4.1; compare mutations
+call only Python. Registering
 these native routes does not activate their production scheduler handle.
 Planned: `cargo test -p gobby-cron --test http_reads` and HTTP corpus replay.
 
@@ -582,7 +615,7 @@ for the inventory threshold.
 Targets:
 - `crates/gcron/src/http_writes.rs`
 - `crates/gcron/src/lib.rs`
-- `crates/gcron/src/family.rs` — planned new file: extend claims and routing to the five owned mutation routes
+- `crates/gcron/src/family.rs` — edit the file created by 3.1 to extend claims and routing to the five owned mutation routes
 - `crates/gcron/tests/http_writes.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -614,12 +647,12 @@ Planned: `cargo test -p gobby-cron --test http_writes` and shared corpus replay.
 Targets:
 - `crates/gcron/src/protection.rs`
 - `crates/gcron/src/lib.rs`
-- `crates/gcron/src/family.rs` — planned new file: claim only the exact protected-runs admin route
+- `crates/gcron/src/family.rs` — edit the file created by 3.1 to claim only the exact protected-runs admin route
 - `crates/gdaemon/src/lifecycle/cron_guard.rs`
 - `crates/gdaemon/src/lease/admin_api.rs::*` — scope-reason: expose a bounded native all-active count for local cooperative handoff
 - `crates/gdaemon/src/lifecycle/mod.rs`
 - `crates/gdaemon/src/main.rs::*` — scope-reason: enforce the shared Cron guard from native lifecycle command entry points
-- `crates/gdaemon/src/cron_runtime.rs` — planned new file: expose owner-local protection and forced cancellation to lifecycle commands
+- `crates/gdaemon/src/cron_runtime.rs` — edit the file created by 2.8 to expose owner-local protection and forced cancellation to lifecycle commands
 - `crates/gdaemon/tests/cron_protection.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -652,6 +685,10 @@ non-200 refusal; never synthesize zero. This read requires no scheduler
 activation and makes no mutations. Python's temporary client uses the existing
 daemon client's bounded timeout; Rust calls the same count directly.
 Protected-run reporting cannot substitute for this count.
+The HTTP count endpoint is a temporary bridge for `_lease.py`, owned here by
+#21582. At S3.2, #21571 removes `/api/admin/cron/active-run-count` and its Python
+`_lease.py` consumer together with the final native-client bridge. Native lease
+handoff keeps calling Runs::count_running directly; no HTTP loopback remains.
 
 **Granularity:** Query and lifecycle guard share the same restart lease; testing
 them together proves that reporting and enforcement cannot diverge. Release
@@ -660,8 +697,8 @@ carriers exceed the file-count inspection threshold.
 **Acceptance:**
 - 3.3.1 - GET /api/admin/cron/protected-runs returns the original fields and timeout/owner filtering. test: `crates/gdaemon/tests/cron_protection.rs::protected_runs_query_matches_python`.
 - 3.3.2 - Native lifecycle refuses protected work, waits when requested and force-interrupts only owned protected work; stale/expired leases do not wedge restart. test: `crates/gdaemon/tests/cron_protection.rs::restart_guard_honors_wait_and_force`.
-- 3.3.4 - The authenticated control query counts ordinary unprotected local active runs, excludes foreign-machine work and fails closed on unavailable identity/database; it stays native in Proxy/Compare. test: `crates/gdaemon/tests/cron_protection.rs::active_count_is_local_complete_and_fail_closed`.
-- 3.3.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 3.3.3 - The authenticated control query counts ordinary unprotected local active runs, excludes foreign-machine work and fails closed on unavailable identity/database; it stays native in Proxy/Compare until its documented S3.2 removal with `_lease.py`. test: `crates/gdaemon/tests/cron_protection.rs::active_count_is_local_complete_and_fail_closed`.
+- 3.3.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 3.4 Native service contract for CLI and MCP owners [category: code] (depends: 3.3)
 `kind: deliverable`
@@ -688,10 +725,17 @@ schemas, output/errors and ownership. Restricted agents cannot turn on shell
 execution or bypass protected rows; front-door owners perform their existing
 admission before calling these functions. #21570 owns the MCP adapter and
 Python registry removal; #21571 owns client command rendering and Python CLI
-removal at S3.2. Retained Python storage helpers still serve other Python
-consumers during transition and are retired with their last owner at the
-naming switch, never kept as a supervised daemon dependency.
+removal at S3.2. #21570 removes the Cron MCP adapter's use of
+`src/gobby/runner_cron_client.py` and `src/gobby/storage/cron*.py`; #21571 removes
+the CLI's uses and, as final S3.2 owner, deletes the client, remaining shared
+storage helpers and `_lease.py` consumer plus its temporary native active-count
+HTTP endpoint. Sweep imports and string consumers before deletion; the shared
+helpers remain only until their last live Python caller is ported. Neither
+owner leaves a supervised daemon dependency after the naming switch.
 Planned: `cargo test -p gobby-cron --test service_contract` over 1.1 vectors.
+The #21570 descriptor consumer also runs
+`cargo test -p gobby-core --test mcp_contract` (or nextest with the same
+`--test mcp_contract` target once #24949 lands), never a module-name filter.
 
 **Acceptance:**
 - 3.4.1 - Every delegated CLI/MCP operation maps to one native service with matching defaults/results/errors, including park/wake and ID-or-name lookup. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
@@ -704,7 +748,7 @@ Planned: `cargo test -p gobby-cron --test service_contract` over 1.1 vectors.
 Targets:
 - `crates/gcron/src/compare.rs`
 - `crates/gcron/src/lib.rs`
-- `crates/gcron/src/family.rs` — planned new file: implement the existing proxied-result verification hook
+- `crates/gcron/src/family.rs` — edit the file created by 3.1 to implement the existing proxied-result verification hook
 - `crates/gcron/tests/compare.rs`
 - `tests/contracts/http/manifest.json::*` — scope-reason: mark only proven Cron HTTP cases as native with Python origin
 - `tests/e2e/test_cron_family.py`
@@ -722,7 +766,9 @@ read the returned run ID and child link; never execute another run. A row that
 advanced/disappeared during observation is skipped and must later receive a
 stable controlled case for soak coverage. Store pointers/reasons, not action
 config, commands, prompts or output. Replay all ten HTTP routes in isolated
-native mode and retain the recorded Python origin. Planned: crate comparison
+native key-caller mode and retain the recorded Python origin. Cookie cases in
+cron-browser.json remain a recorded Python oracle until 4.1b, never a native
+parity success. Planned: crate comparison
 tests and isolated e2e compare/replay with one fake child counter.
 
 **Granularity:** More than six target files include release and corpus carriers;
@@ -730,34 +776,39 @@ the single outcome is trustworthy compare evidence for this family.
 
 **Acceptance:**
 - 3.5.1 - Reads and verified writes detect tampered response/state, skip concurrent changes and never duplicate writes or actions. test: `crates/gcron/tests/compare.rs::compare_is_side_effect_free_and_race_aware`.
-- 3.5.2 - All ten owned HTTP cases replay equal natively, with authentication and failure cases and no Python service needed by the native leg. test: `tests/e2e/test_cron_family.py::test_native_cron_corpus_matches_python`.
+- 3.5.2 - All ten owned HTTP cases replay equal natively for key callers, with authentication and failure cases and no Python service needed by that native leg. Cookie parity remains explicitly pending until 4.1b. test: `tests/e2e/test_cron_family.py::test_native_cron_corpus_matches_python`.
 - 3.5.3 - A controlled compare window covers every owned route and action kind with zero mismatches and nonzero stable evidence per case. test: `tests/e2e/test_cron_family.py::test_compare_has_coverage_without_double_dispatch`.
 - 3.5.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## P4: Native takeover and Python retirement
 `kind: framing`
 
-### 4.1 Native default and single-owner scheduler cutover [category: code] (depends: 3.5)
+### 4.1 Native default and single-owner scheduler cutover [category: code] (depends: 3.5, #24659)
 `kind: deliverable`
 
 Targets:
-- `crates/gcron/src/family.rs` — planned new file: make Native the family default after parity
-- `crates/gdaemon/src/cron_runtime.rs` — planned new file: coordinate scheduler admission with the takeover boundary
+- `crates/gcron/src/family.rs` — edit the file created by 3.1 to make Native the family default after parity
+- `crates/gdaemon/src/cron_runtime.rs` — edit the file created by 2.8 to coordinate scheduler admission with the takeover boundary
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: replace Python cron construction with the bounded transition binding
 - `src/gobby/runner_init/orchestration_services.py`
 - `src/gobby/runner_cron_client.py`
 - `tests/scheduler/test_native_cron_transition.py`
 - `src/gobby/servers/routes/admin/_lease.py::*` — scope-reason: consume the complete native local active-run count for cooperative handoff
 - `tests/servers/routes/test_daemon_lease_routes.py::*` — scope-reason: preserve unprotected-run and foreign-machine handoff behavior
-- `tests/e2e/test_cron_family.py` — planned new file: prove native default, backend independence and pre-retirement rollback
+- `tests/e2e/test_cron_family.py` — edit the file created by 3.5 to prove native default, backend independence and pre-retirement rollback
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: release pin for native takeover
 
 **Research context:** RuntimeState's hub lease owns Rust services; Python's
 init_orchestration previously constructed CronExecutor and CronScheduler.
-This is the sole production activation leaf: both scheduled and manual native
-admission remain closed through P3. Resolve ownership once at the existing
+This is the sole production scheduler activation leaf: both scheduled and manual
+native admission remain closed through P3. Its dependency on #24659 requires
+the shared native verifier to have landed. The routing switch here covers key
+callers only: cookie requests continue to Python's Cron router, which uses the
+native client for manual admission. Keep that remainder explicit until 4.1b
+enables native Cron browser claims; Python Cron routes cannot be deleted first.
+Resolve ownership once at the existing
 daemon restart boundary from the same startup routing selection used by the
 Python construction path. Proxy/compare allow only Python admission; Native
 allows only native admission. Drain/stop the outgoing process owner before
@@ -784,19 +835,20 @@ before allowing requests. Drain owned inline work before transfer; durable
 children keep their links. No two owners tick during native/compare/proxy
 transitions. Native is the default only after the 3.5 corpus and compare checks.
 Before Python deletion, proxy rollback and return to default require a routing
-edit/restart of the same binaries. All actions and the protected-run guard work
-with Python killed on the native default. Planned: isolated scoped transition
+edit/restart of the same binaries. All key-caller actions and the protected-run
+guard work with Python killed on the native default; cookie parity is proved
+in 4.1b. Planned: isolated scoped transition
 pytest and test_cron_family e2e; never kill the operator's backend.
 
 **Granularity:** The transition binding and native default share the single
 admission-owner transfer. More than six files are wiring, tests and releases.
 
 **Acceptance:**
-- 4.1.1 - Native is the default only after the restart-bound transfer; Python/native never both admit scheduled or manual work, in-flight runs survive transfer, and pre-deletion proxy rollback excludes native before restoring Python with the same binaries. test: `tests/e2e/test_cron_family.py::test_default_flip_has_one_scheduler_owner`.
-- 4.1.2 - With isolated Python killed, all ten routes, four action kinds, nightly repair, system jobs and restart protection still work in hub/standalone; nodes create no jobs/runs. test: `tests/e2e/test_cron_family.py::test_cron_survives_python_backend_loss`.
+- 4.1.1 - Native is the key-caller default only after the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native never both admit scheduled or manual work, in-flight runs survive transfer, and pre-deletion proxy rollback excludes native before restoring Python with the same binaries. test: `tests/e2e/test_cron_family.py::test_default_flip_has_one_scheduler_owner`.
+- 4.1.2 - With isolated Python killed, key callers can use all ten routes, four action kinds, nightly repair, system jobs and restart protection in hub/standalone; nodes create no jobs/runs. Cookie backend-loss proof waits for 4.1b. test: `tests/e2e/test_cron_family.py::test_cron_survives_python_backend_loss`.
 - 4.1.3 - Transition construction cannot leave Python scheduling live when native admission is enabled or native unavailable. test: `tests/scheduler/test_native_cron_transition.py::test_transition_never_has_two_admission_owners`.
-- 4.1.5 - Cooperative handoff refuses an ordinary unprotected local active run, ignores foreign-machine work and fails closed when the native count is unavailable. test: `tests/servers/routes/test_daemon_lease_routes.py::test_handoff_uses_complete_local_native_cron_count`.
-- 4.1.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 4.1.4 - Cooperative handoff refuses an ordinary unprotected local active run, ignores foreign-machine work and fails closed when the native count is unavailable. test: `tests/servers/routes/test_daemon_lease_routes.py::test_handoff_uses_complete_local_native_cron_count`.
+- 4.1.5 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 4.1a Native delivered-mailbox retention takeover [category: code] (depends: 4.1)
 `kind: deliverable`
@@ -862,13 +914,114 @@ remains outside this leaf.
 - 4.1a.3 - The Python mailbox branch is absent before native retention activates, while communications and attachment cleanup retain bounded offload/startup behavior. test: `tests/communications/test_communications_maintenance.py::test_native_mailbox_takeover_preserves_other_cleanup`.
 - 4.1a.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.2 Delete Cron-owned Python and release the nightly cleanup boundary [category: code] (depends: 4.1a)
+### 4.1b Admit Cron browser routes through the shared verifier [category: code] (depends: 4.1a, #24659)
+`kind: deliverable`
+
+Targets:
+- `crates/gcron/src/browser.rs`
+- `crates/gcron/src/family.rs` — edit the file created by 3.1 to register only Cron browser claims
+- `crates/gcron/src/http_writes.rs` — edit the file created by 3.2 to consume verified browser authority without changing mutation semantics
+- `crates/gcron/src/lib.rs` — edit the file created by 1.2 to export the bounded admission predicate
+- `crates/gcron/Cargo.toml` — edit the manifest created by 1.2 to reuse the shared browser principal type
+- `crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`
+- `crates/gdaemon/tests/cron_browser.rs`
+- `tests/e2e/test_cron_family.py` — edit the file created by 3.5 to prove cookie operation with the isolated Python backend absent
+- `docs/contracts/cron-services.md`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: release pin for bounded Cron browser admission
+
+**Research context:** The Orchestrator assigned the single native browser-cookie
+verifier to #24659 and updated that task's shared-verifier contract on 2026-10-24.
+It must expose both existing cookie classes, their verified user and applicable
+project/session selectors. This leaf depends on its landed implementation;
+approval of the #24659 plan alone cannot open native cookie admission. Reuse
+that verifier's parsing, storage lookup, expiry, revocation and typed principal.
+Cron adds only its route allowlist and authority checks; no second verifier,
+token issuer, session table, query cache or cookie lifecycle is introduced.
+Immediately after expansion, the Orchestrator applies `security-review` to
+this leaf and checks its persisted label before dispatch. M1 remains entirely
+server-derived; no manifest-emitter change or hand-edited label is required.
+Cookie activation stays blocked until a Security Reviewer records an approved
+step for the exact implementation SHA, with all blocking findings disposed.
+
+The allowlist is exactly GET /api/cron/jobs, GET /api/cron/jobs/{job_id},
+GET /api/cron/jobs/{job_id}/runs, GET /api/cron/runs/{run_id}, POST /api/cron/jobs,
+PATCH /api/cron/jobs/{job_id}, DELETE /api/cron/jobs/{job_id},
+POST /api/cron/jobs/{job_id}/toggle and POST /api/cron/jobs/{job_id}/run.
+Use the family's existing method/path matcher for verifier admission and claims,
+including its URI decoding and UUID behavior. Caller::Browser is opt-in for
+these rows only; do not widen Caller::ALL, either /api/admin/cron endpoint,
+lease admin or another family. HEAD/OPTIONS acquire no new business handler;
+the existing CORS layer still answers its applicable preflights.
+
+Python compatibility references are
+`src/gobby/servers/middleware/auth.py::AuthMiddleware.dispatch`,
+`src/gobby/servers/auth_service.py::AuthService.authenticate`,
+AuthService._legacy_rejection, AuthService._cookie_user,
+`src/gobby/servers/browser_sessions.py::browser_route_allowed`, and
+`src/gobby/servers/app_factory.py`'s CORS middleware construction.
+`src/gobby/servers/routes/auth.py::login` continues to issue the same
+gobby_session cookie with HttpOnly, SameSite=Lax and path=/; this leaf changes
+neither issuer nor cookie attributes. Ordinary cookies retain their current
+GET and mutation behavior. Browser-testing cookies retain loopback, live
+managed-authority and project/session selector restrictions: their GETs may
+read, while Cron mutations are refused. Consume verified class/selectors from
+#24659 to enforce this policy, rather than parsing a token or resolving
+managed authority inside Cron. Missing/expired/revoked credentials, forged
+identity/BrowserSession headers and unsupported callers fail before handlers.
+Preserve existing bearer precedence and each route's status/body and side effects
+against 1.1's vectors; failed shared verification never falls back to Python.
+
+Observed evidence is complete gcode source reads: AuthMiddleware.dispatch,
+excerpt_hash `65ab26e9e827b274251c9a8fff4d58cdd22cdd3cefebf6c0acc267245831f5fb`,
+quotes `105| decision = await self.server.run_db(auth_service.authenticate, request)`
+and `138| if not isinstance(body, dict) or not browser_selectors_match(body, project_id):`;
+AuthService.authenticate, excerpt_hash
+`5446a360254d1560903cc90fbf627e5ca101d65f38d32725d63d8fed11a9b79e`,
+quotes `284| if cookie.startswith(BROWSER_COOKIE_PREFIX):` and
+`295| else browser_route_allowed(str(request.scope["method"]), request_path(request))`.
+AuthService._legacy_rejection, excerpt_hash
+`48440f857e5f7cc0ed3a7099c327ed44dd4a98c77e7bc43dc01f35d87962a926`,
+quotes `441| return None if self.validate_session(session_token) else "session_invalid"`.
+`src/gobby/servers/app_factory.py:96-133`, excerpt_hash
+`f916f63b2c3f71bbb83a501e49e9d3c3de37d8f92500edf6bffc0254d5df6595`,
+sets configured origin matching and `127| allow_credentials=True`.
+These inspected Cron/auth paths have no separate Origin or CSRF-token rejection.
+Preserve the observed credentialed CORS/preflight and SameSite behavior; do not
+silently add a stricter policy during this migration. Record same-origin,
+cross-origin and preflight parity rather than assuming CORS rejects a mutation.
+
+Keep cookie traffic proxied until this leaf's shared-verifier and route proofs
+pass. Security reviews the exact admission diff and fixture results; dispose
+all blocking findings before enabling native browser claims. Then prove both
+cookie classes through hub and relaying-node front doors with the isolated
+Python backend absent. Node doors verify no cookie locally. Release and
+rollback use the existing coherent binary and routing boundaries.
+Planned: `cargo test -p gobby-daemon --test cron_browser`, the focused
+test_cron_family cookie case, and the required security review. All state,
+credentials and backend termination remain inside isolated test fixtures.
+
+**Granularity:** One lifecycle owner: opt-in Cron browser admission through an
+existing verifier. The nine routes share one policy and fixture table; targets
+above the six-file inspection threshold include release and evidence carriers.
+The shared verifier remains independently owned by #24659.
+
+**Acceptance:**
+- 4.1b.1 - All nine Cron routes preserve ordinary-cookie GET and mutation status/body, stored effects, credential precedence and expiry/revocation behavior from 1.1 vectors, using only #24659's verifier. test: `crates/gdaemon/tests/cron_browser.rs::cookie_get_and_mutations_match_python`.
+- 4.1b.2 - Browser-testing GET authority and selector/loopback restrictions match Python; mutations, missing/non-cookie/non-key credentials and forged authority are refused before effects. No admin or other-family route gains browser admission. test: `crates/gdaemon/tests/cron_browser.rs::browser_authority_is_route_and_class_bounded`.
+- 4.1b.3 - Same-origin, cross-origin and preflight status/headers/effects match current configured credentialed CORS and cookie behavior, with no new CSRF-token or Origin rejection. test: `crates/gdaemon/tests/cron_browser.rs::origin_and_preflight_match_python`.
+- 4.1b.4 - Both cookie classes work through hub and relaying-node doors with the isolated Python backend absent; nodes verify no cookie locally and Python retirement waits for this proof. test: `tests/e2e/test_cron_family.py::test_cookie_cron_survives_python_backend_loss`.
+- 4.1b.5 - The Orchestrator applies `security-review` after expansion and verifies the persisted label before dispatch. Cookie activation waits for a Security Reviewer's approved step on the exact implementation SHA; the service handoff records scope and disposition of all blocking findings. file: `docs/contracts/cron-services.md`.
+- 4.1b.6 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 4.2 Delete Cron-owned Python and release the nightly cleanup boundary [category: code] (depends: 4.1b)
 `kind: deliverable`
 
 Targets:
 - `src/gobby/scheduler/scheduler.py::*` — operation: delete — scope-reason: native scheduler owns ticking and manual admission
 - `src/gobby/scheduler/executor.py::*` — operation: delete — scope-reason: all four action variants have native bindings
-- `src/gobby/servers/routes/cron.py::*` — operation: delete — scope-reason: ten owned HTTP routes are native
+- `src/gobby/servers/routes/cron.py::*` — operation: delete — scope-reason: its nine Cron HTTP routes are native; the protected-run admin route is retired with its separate consumer
 - `src/gobby/code_index/nightly_repair.py::*` — operation: delete — scope-reason: native scheduler calls the #24706 handler
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: remove transition and nightly registration consumers while retaining other orchestration
 - `src/gobby/runner_init/orchestration_services.py`
@@ -902,10 +1055,12 @@ Targets:
 - `tests/test_runner_init.py::*` — scope-reason: remove deleted constructors from patch/failure fixtures and assert native client wiring
 - `tests/code_index/test_nightly_repair.py::*` — operation: delete — scope-reason: removed implementation has native scheduler/handler coverage
 - `tests/scheduler/test_cron_retirement.py`
-- `tests/e2e/test_cron_family.py` — planned new file: verify operation after Python scheduler/HTTP/nightly deletion
+- `tests/e2e/test_cron_family.py` — edit the file created by 3.5 to verify operation after Python scheduler/HTTP/nightly deletion
 - `docs/contracts/cron-services.md`
 
-**Research context:** The literal cron_scheduler sweep finds app_context,
+**Research context:** 4.1b's reviewed browser admission and backend-loss proof
+must pass before this deletion; 4.1's key-caller takeover alone is insufficient.
+The literal cron_scheduler sweep finds app_context,
 runner, runner_init/servers, runner_broadcasting, lifecycle start/stop,
 HTTP service construction, MCP registry plumbing and admin lease/lifecycle.
 Keep a minimal native-service client only for still-live Python CLI/MCP/domain
@@ -944,33 +1099,39 @@ tests in P1-P3; this leaf verifies absence and retained-client boundaries.
 **Acceptance:**
 - 4.2.1 - Python scheduler/executor/HTTP/nightly modules and nightly init/test consumers are absent; no production import names them. test: `tests/scheduler/test_cron_retirement.py::test_removed_cron_implementations_have_no_readers`.
 - 4.2.2 - Retained Python callers use only the native client; startup, stop, lease queries and MCP run-now never construct an executor or scheduler. test: `tests/scheduler/test_cron_retirement.py::test_retained_callers_have_no_python_execution_path`.
-- 4.2.3 - Native routes/actions/nightly repair/restart protection work after source deletion and have no proxy fallback. test: `tests/e2e/test_cron_family.py::test_retired_python_is_unnecessary`.
+- 4.2.3 - Native key and cookie routes, actions, nightly repair and restart protection work after source deletion and have no proxy fallback; browser authority remains bounded by 4.1b. test: `tests/e2e/test_cron_family.py::test_retired_python_is_unnecessary`.
 - 4.2.4 - #24713's documented boundary has no nightly module reader, and all remaining transitional/shared-helper paths have a naming-switch removal owner. file: `docs/contracts/cron-services.md`.
 
 ### 4.3 Parity ledger and operator handoff [category: docs] (depends: 4.2)
 `kind: deliverable`
 
 Targets:
-- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: mark only the nine delivered Cron HTTP rows native and update delegated-row handoffs
-- `docs/contracts/parity-ledger-status.d/daemon-config-auth-infra.json::*` — scope-reason: record the native protected-run query with its verified owner
+- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: move only the nine proven Cron HTTP rows from proxied to delegated; keep the eighteen CLI/MCP rows proxied with owner notes
+- `docs/contracts/parity-ledger-status.d/daemon-config-auth-infra.json::*` — scope-reason: move the proven protected-run HTTP row from proxied to delegated with its evidence note
 - `docs/contracts/parity-ledger.md`
 - `docs/contracts/cron-services.md`
 - `docs/guides/configuration.md`
 
 **Research context:** The ledger generator reads status fragments; edit the
 fragments then regenerate its Markdown using the existing ledger tooling.
-All 28 rows are accounted for in Parity ownership. Mark ten HTTP rows native
-only after their corpus/backend-loss checks; keep ten CLI and eight MCP rows
-delegated until #21571/#21570 deliver them. Document hub-only ownership, park/
+All 28 rows are accounted for in Parity ownership. Change the ten HTTP rows
+from `proxied` to `delegated` only after key and cookie corpus/backend-loss
+checks, including 4.1b's accepted Security review.
+The ten CLI and eight MCP rows remain `proxied`, with explicit #21571/#21570
+owner notes, until those owners deliver their ports. Use only the ledger's
+three valid statuses: `proxied`, `delegated`, `dropped by decision #N`.
+Document hub-only ownership, park/
 wake, restart --wait/--force, the native default, pre-deletion routing rollback
 and post-deletion prior-release rollback. Carry the S3.2 same-change Python
 removal requirement and exact outstanding client/helper paths into the
-front-door handoff. No new task expansion or operator action happens here.
+front-door handoff. Carry 4.1b's post-expansion Orchestrator label verification
+and exact-SHA Security approved-step gate into that handoff. No new task
+expansion or operator action happens here.
 Planned: ledger consistency check, scoped documentation validation and base/
 expansion plan validation after the adversary stamps M1.
 
 **Acceptance:**
-- 4.3.1 - The two status fragments and regenerated ledger account for all 28 rows truthfully, with ten native HTTP rows and explicit CLI/MCP owners. file: `docs/contracts/parity-ledger.md`.
+- 4.3.1 - The two status fragments and regenerated ledger account for all 28 rows: the ten proven HTTP rows change from `proxied` to `delegated`; the ten CLI and eight MCP rows stay `proxied` with #21571/#21570 owner notes. Only valid ledger statuses are used. file: `docs/contracts/parity-ledger.md`.
 - 4.3.2 - The service handoff records native API mappings, remaining temporary client/helper paths and S3.2 deletion ownership without a Stage2-to-Stage3 cycle. file: `docs/contracts/cron-services.md`.
 - 4.3.3 - Configuration guidance documents native ownership, parking, protected restart and the two rollback boundaries. file: `docs/guides/configuration.md`.
 
@@ -988,9 +1149,22 @@ compare/backend-loss/owner-transfer cases. Production cutover waits for the
 release owner and the protected-run guard. A passing validation parser does
 not attest to future behavior. Josh approves the stamped plan before any
 task expansion; this planning seat neither expands nor dispatches work.
+After approved future expansion, the Orchestrator applies and verifies
+`security-review` on 4.1b before dispatch. Native cookie activation requires a
+Security Reviewer's approved step for the exact implementation SHA.
 
 ## V1 Plan Changelog
 `kind: framing`
+
+2026-10-24: Coordinator review withdrew the prior consensus and stamp. Accepted
+the ledger-status correction and six clarifications: ordered acceptance IDs,
+earlier-created edit targets, #24702's sole prune ownership, #24659's shared
+browser verifier with bounded security-reviewed Cron admission, S3.2 active-count
+bridge removal, and the #21570/#21571 cleanup handoffs now recorded on their
+tasks. Added 4.1b and current-cookie oracle coverage; key takeover precedes cookie
+parity and deletion follows it. Descriptor consumers select the complete
+`--test mcp_contract` target. The old M1 is superseded and will be withdrawn
+whole before fresh narrative validation and adversary review.
 
 2026-10-24: Writer and Plan Adversary reached consensus on all 20 deliverables
 after fresh review of 3e0b2cce525c4cc4b413a7c21c75db72c1611519. CRON-001 is
