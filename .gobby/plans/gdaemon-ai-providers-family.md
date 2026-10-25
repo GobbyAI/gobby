@@ -338,7 +338,11 @@ Targets:
 `tests/cli/`. Generate a committed, versioned JSON corpus from isolated Python
 fixtures: method and path or command, arguments, headers, seeded config and
 journal rows, stub provider behavior, expected response, exit code and
-effects, with only explicitly enumerated volatile fields normalized.
+effects, with only explicitly enumerated volatile fields normalized. The
+`CLI gobby embeddings switch` transport vector, whose Python outcome is an
+uncaught httpx traceback, normalizes stderr to the final exception class and
+message; the traceback's checkout and environment paths are its volatile
+fields.
 
 Stubs make effects observable without real providers. Fake `claude`, `codex`,
 `droid`, `grok`, `agy`, `gcode`, `lms` and `ollama` executables on a temporary
