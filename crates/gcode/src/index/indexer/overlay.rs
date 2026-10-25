@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -7,11 +7,14 @@ use anyhow::Context as _;
 use postgres::Client;
 use wait_timeout::ChildExt;
 
+use crate::cli_error::CliError;
 use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::index::api;
 use crate::index::{parser, walker};
 use crate::models::IndexedFile;
+use crate::project::read_isolation_marker;
+use crate::projection::sync::{self, ProjectionTarget, SilentProjectionProgress};
 use crate::visibility;
 
 use super::file::{
@@ -22,7 +25,9 @@ use super::local_imports::{resolve_local_import_calls, resolve_local_import_inhe
 use super::pipeline::{explicit_route_with_discovery_options, index_discovered_files};
 use super::selector_blob::{self, HeadBlobs};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
-use super::types::{IndexOptions, IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata};
+use super::types::{
+    IndexDegradation, IndexOptions, IndexOutcome, IndexRequest, IndexTarget, OverlayIndexMetadata,
+};
 use super::util::{
     effective_excludes, epoch_secs_str, relative_path, requested_relative_path,
     unsupported_file_types,
@@ -102,7 +107,19 @@ pub(super) fn index_overlay_files(
         anyhow::bail!("overlay indexer requires an overlay project context");
     };
 
+    // Degradations from the parent-first pass belong to this overlay's outcome.
+    let mut parent_degraded = Vec::new();
     if !parent_code_index_exists(conn, parent_project_id, &ctx.machine_id)? {
+        // An overlay-bound managed grant cannot write the parent's rows, so refuse
+        // before any write rather than attempting the parent-first pass.
+        if !ctx.can_write_project_index(conn, parent_project_id)? {
+            return Err(CliError::parent_index_required(
+                parent_root,
+                parent_project_id,
+                overlay_root,
+            )
+            .into());
+        }
         // Index the parent first so the overlay pass has its rows to read. Fully
         // projected unchanged parent files are adopted rather than re-parsed.
         let parent_ctx = ctx.rebased(
@@ -118,7 +135,11 @@ pub(super) fn index_overlay_files(
             require_cpp_semantics: request.require_cpp_semantics,
             sync_projections: request.sync_projections,
         };
-        index_discovered_files(conn, &parent_request, &parent_ctx, options)?;
+        let parent_outcome = index_discovered_files(conn, &parent_request, &parent_ctx, options)?;
+        if request.sync_projections {
+            parent_degraded.extend(sync_parent_projections(&parent_ctx, &parent_outcome));
+        }
+        parent_degraded.extend(parent_outcome.degraded);
     }
 
     timings.phase("overlay.seed");
@@ -143,6 +164,7 @@ pub(super) fn index_overlay_files(
         api::IndexWriteMode::Overlay,
     )?;
     let mut outcome = IndexOutcome::new(overlay_project_id);
+    outcome.degraded = parent_degraded;
     outcome.overlay = Some(OverlayIndexMetadata {
         overlay_project_id: overlay_project_id.clone(),
         overlay_root: overlay_root.to_string_lossy().to_string(),
@@ -159,10 +181,16 @@ pub(super) fn index_overlay_files(
         .map(|path| requested_relative_path(root_path, path))
         .collect::<Vec<_>>();
     let state_filter = explicit_request.then_some(explicit_rels.as_slice());
-    let parent_files = indexed_file_states(conn, machine_id, parent_project_id, state_filter)?;
+    // The base each overlay path reconciles against is its pin, never the
+    // parent's moving rows.
+    let parent_files = pinned_base_states(conn, machine_id, overlay_project_id, state_filter)?;
     let overlay_files = indexed_file_states(conn, machine_id, overlay_project_id, state_filter)?;
 
-    let (ast_by_rel, content_by_rel, import_candidates) = if explicit_request {
+    // `None` means complete discovery is required: `--full`, no pin provenance,
+    // or a Git failure.
+    let divergence = overlay_divergence(request, root_path);
+    let candidate_only = !explicit_request && divergence.is_some();
+    let (mut ast_by_rel, mut content_by_rel, mut import_candidates) = if explicit_request {
         let (ast_by_rel, content_by_rel) = explicit_overlay_file_maps(
             request,
             root_path,
@@ -188,6 +216,17 @@ pub(super) fn index_overlay_files(
                 .cloned(),
         );
         (ast_by_rel, content_by_rel, import_candidates)
+    } else if candidate_only {
+        // Discovery never runs. Unchanged providers are the pinned and owned
+        // paths already loaded here; the routed candidates join them below.
+        let providers: Vec<PathBuf> = parent_files
+            .keys()
+            .chain(overlay_files.keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(|rel| root_path.join(rel))
+            .collect();
+        (HashMap::new(), HashMap::new(), providers)
     } else {
         let (candidates, content_only) = walker::discover_files_with_options(
             root_path,
@@ -200,13 +239,11 @@ pub(super) fn index_overlay_files(
         let content_by_rel = paths_by_relative(root_path, &content_only);
         (ast_by_rel, content_by_rel, candidates)
     };
-    timings.phase("overlay.import_context");
-    let import_context = parser::build_import_resolution_context(root_path, &import_candidates);
     timings.phase("overlay.reconcile");
-    let mut rels = overlay_reconcile_candidates(
+    let mut rels = overlay_reconcile_paths(
         request,
         root_path,
-        parent_root,
+        divergence.as_ref(),
         &ast_by_rel,
         &content_by_rel,
         &parent_files,
@@ -215,6 +252,24 @@ pub(super) fn index_overlay_files(
     if let Some(filter) = request.path_filter.as_deref() {
         rels.retain(|rel| rel_matches_filter(root_path, filter, rel));
     }
+    if candidate_only {
+        (ast_by_rel, content_by_rel) =
+            route_candidates(root_path, &rels, &excludes, ctx.indexing.respect_gitignore);
+        let known: HashSet<PathBuf> = import_candidates.iter().cloned().collect();
+        import_candidates.extend(
+            ast_by_rel
+                .values()
+                .filter(|path| !known.contains(*path))
+                .cloned(),
+        );
+    }
+    // Import resolution is only read when an AST candidate is parsed.
+    timings.phase("overlay.import_context");
+    let import_context = if ast_by_rel.is_empty() {
+        Default::default()
+    } else {
+        parser::build_import_resolution_context(root_path, &import_candidates)
+    };
     let unsupported_paths = rels
         .iter()
         .filter_map(|rel| content_by_rel.get(rel).cloned())
@@ -394,7 +449,8 @@ pub(super) fn index_overlay_files(
         machine_id,
         target,
         start.elapsed().as_millis() as u64,
-        Some(ast_by_rel.len() + content_by_rel.len()),
+        // Candidate-only runs never walk the tree, so they know no eligible total.
+        (!candidate_only).then_some(ast_by_rel.len() + content_by_rel.len()),
         None,
         request.explicit_files.is_empty(),
     )?;
@@ -408,10 +464,57 @@ pub(super) fn index_overlay_files(
     Ok(outcome)
 }
 
-pub(super) fn overlay_reconcile_candidates(
+/// Projects the parent's freshly parsed files under the parent context, with the
+/// same bounded sync the overlay's own files get. Each degraded target becomes
+/// a degradation on the overlay outcome, so a failed parent projection is visible.
+fn sync_parent_projections(
+    parent_ctx: &Context,
+    parent_outcome: &IndexOutcome,
+) -> Vec<IndexDegradation> {
+    let reports = sync::sync_after_index_bounded(
+        parent_ctx,
+        &parent_outcome.graph_file_paths,
+        &parent_outcome.vector_file_paths,
+        sync::DEFAULT_PROJECTION_SYNC_STALL_TIMEOUT,
+        &mut SilentProjectionProgress,
+    );
+    [
+        (ProjectionTarget::Graph, reports.graph),
+        (ProjectionTarget::Vectors, reports.vector),
+    ]
+    .into_iter()
+    .filter(|(_, report)| report.degraded)
+    .map(
+        |(target, report)| IndexDegradation::ParentProjectionSyncFailed {
+            parent_project_id: parent_ctx.project_id.clone(),
+            target,
+            message: report.error.map_or_else(
+                || "projection sync degraded".to_string(),
+                |error| format!("{}: {}", error.kind, error.message),
+            ),
+        },
+    )
+    .collect()
+}
+
+/// The overlay's divergence from the base commit its pins were taken at, or
+/// `None` when complete discovery is required: explicit files are judged
+/// directly, `--full` walks everything, and a divergence that cannot be named
+/// (no pin provenance, or a Git failure) falls back to the same walk.
+fn overlay_divergence(request: &IndexRequest, root_path: &Path) -> Option<HashSet<String>> {
+    if !request.explicit_files.is_empty() || request.full {
+        return None;
+    }
+    let base_commit = read_isolation_marker(root_path)?.pin?.base_commit;
+    overlay_divergent_relative_paths(root_path, &base_commit).ok()
+}
+
+/// Paths to reconcile. Divergence plus owned rows when Git can name the
+/// divergence; otherwise every source the discovery walk and both trees hold.
+fn overlay_reconcile_paths(
     request: &IndexRequest,
     root_path: &Path,
-    parent_root: &Path,
+    divergence: Option<&HashSet<String>>,
     ast_by_rel: &HashMap<String, PathBuf>,
     content_by_rel: &HashMap<String, PathBuf>,
     parent_files: &HashMap<String, IndexedFileState>,
@@ -422,25 +525,9 @@ pub(super) fn overlay_reconcile_candidates(
         for file in &request.explicit_files {
             rels.insert(requested_relative_path(root_path, file));
         }
-    } else if request.full {
-        rels.extend(ast_by_rel.keys().cloned());
-        rels.extend(content_by_rel.keys().cloned());
-        rels.extend(parent_files.keys().cloned());
+    } else if let Some(divergence) = divergence {
+        rels.extend(divergence.iter().cloned());
         rels.extend(overlay_files.keys().cloned());
-    } else if let Ok(divergent) = overlay_divergent_relative_paths(root_path, parent_root) {
-        rels.extend(divergent);
-        rels.extend(overlay_files.keys().cloned());
-        // Parent rows for paths the overlay tree lacks and git cannot report —
-        // gitignored or explicitly indexed in the parent, like the wiki vault —
-        // would otherwise show through the overlay forever and trip every
-        // read-time pre-gate. A missing file with no overlay row is tombstoned
-        // on this pass.
-        rels.extend(
-            parent_files
-                .keys()
-                .filter(|rel| !overlay_files.contains_key(*rel) && !root_path.join(rel).exists())
-                .cloned(),
-        );
     } else {
         rels.extend(ast_by_rel.keys().cloned());
         rels.extend(content_by_rel.keys().cloned());
@@ -451,6 +538,58 @@ pub(super) fn overlay_reconcile_candidates(
     let mut rels: Vec<_> = rels.into_iter().collect();
     rels.sort();
     rels
+}
+
+/// Routes each reconcile path through the same explicit-file rules the
+/// explicit branch uses, so a candidate is classified the way discovery would.
+fn route_candidates(
+    root_path: &Path,
+    rels: &[String],
+    excludes: &[&str],
+    respect_gitignore: bool,
+) -> (HashMap<String, PathBuf>, HashMap<String, PathBuf>) {
+    let mut ast_by_rel = HashMap::new();
+    let mut content_by_rel = HashMap::new();
+    for rel in rels {
+        let abs = root_path.join(rel);
+        let route = explicit_route_with_discovery_options(
+            root_path,
+            &abs,
+            excludes,
+            walker::DiscoveryOptions { respect_gitignore },
+        );
+        match route {
+            ExplicitFileRoute::Ast => {
+                ast_by_rel.insert(rel.clone(), abs);
+            }
+            ExplicitFileRoute::ContentOnly => {
+                content_by_rel.insert(rel.clone(), abs);
+            }
+            ExplicitFileRoute::Skip => {}
+        }
+    }
+    (ast_by_rel, content_by_rel)
+}
+
+#[cfg(test)]
+pub(super) fn overlay_reconcile_candidates(
+    request: &IndexRequest,
+    root_path: &Path,
+    ast_by_rel: &HashMap<String, PathBuf>,
+    content_by_rel: &HashMap<String, PathBuf>,
+    parent_files: &HashMap<String, IndexedFileState>,
+    overlay_files: &HashMap<String, IndexedFileState>,
+) -> Vec<String> {
+    let divergence = overlay_divergence(request, root_path);
+    overlay_reconcile_paths(
+        request,
+        root_path,
+        divergence.as_ref(),
+        ast_by_rel,
+        content_by_rel,
+        parent_files,
+        overlay_files,
+    )
 }
 
 fn paths_by_relative(root_path: &Path, paths: &[PathBuf]) -> HashMap<String, PathBuf> {
@@ -504,7 +643,6 @@ fn indexed_file_states(
     project_id: &str,
     file_paths: Option<&[String]>,
 ) -> anyhow::Result<HashMap<String, IndexedFileState>> {
-    let mut files = HashMap::new();
     let machine_id = crate::db::id_param(machine_id)?;
     let project_id = crate::db::id_param(project_id)?;
     let rows = if let Some(file_paths) = file_paths {
@@ -532,6 +670,52 @@ fn indexed_file_states(
             &[&machine_id, &project_id],
         )?
     };
+    file_states_from_rows(&rows)
+}
+
+/// The base states the overlay's pins serve: each pinned path at the parent
+/// content the pin names. Reconciliation compares against these, never against
+/// the parent's moving rows.
+fn pinned_base_states(
+    conn: &mut Client,
+    machine_id: &str,
+    overlay_project_id: &str,
+    file_paths: Option<&[String]>,
+) -> anyhow::Result<HashMap<String, IndexedFileState>> {
+    let machine_id = crate::db::id_param(machine_id)?;
+    let overlay_project_id = crate::db::id_param(overlay_project_id)?;
+    let rows = if let Some(file_paths) = file_paths {
+        conn.query(
+            "SELECT p.file_path, p.content_hash, p.git_blob_id, f.language
+             FROM code_overlay_pins p
+             JOIN code_indexed_files f
+               ON f.project_id = p.source_project_id
+              AND f.file_path = p.file_path
+              AND f.content_hash = p.content_hash
+             WHERE p.machine_id = $1
+               AND p.overlay_project_id = $2
+               AND p.file_path = ANY($3)",
+            &[&machine_id, &overlay_project_id, &file_paths],
+        )?
+    } else {
+        conn.query(
+            "SELECT p.file_path, p.content_hash, p.git_blob_id, f.language
+             FROM code_overlay_pins p
+             JOIN code_indexed_files f
+               ON f.project_id = p.source_project_id
+              AND f.file_path = p.file_path
+              AND f.content_hash = p.content_hash
+             WHERE p.machine_id = $1 AND p.overlay_project_id = $2",
+            &[&machine_id, &overlay_project_id],
+        )?
+    };
+    file_states_from_rows(&rows)
+}
+
+fn file_states_from_rows(
+    rows: &[postgres::Row],
+) -> anyhow::Result<HashMap<String, IndexedFileState>> {
+    let mut files = HashMap::new();
     for row in rows {
         files.insert(
             row.try_get("file_path")?,
@@ -545,29 +729,17 @@ fn indexed_file_states(
     Ok(files)
 }
 
-/// Paths whose content may differ between the overlay checkout and the
-/// parent's indexed tree: working-tree changes on either side plus every path
-/// that differs between the parent's HEAD and the overlay's HEAD. Every other
-/// path is byte-identical in both checkouts, so the parent's rows already
-/// describe it and it needs no overlay reconciliation.
+/// Paths the overlay changed since the base commit its pins were taken at: its
+/// working-tree changes plus every path its HEAD touches since that base. A
+/// path the parent changed and the overlay merged still counts, because the
+/// overlay's HEAD changed it relative to the pinned content.
 fn overlay_divergent_relative_paths(
     root_path: &Path,
-    parent_root: &Path,
+    base_commit: &str,
 ) -> anyhow::Result<HashSet<String>> {
     let mut paths = git_status_relative_paths(root_path)?;
-    paths.extend(git_status_relative_paths(parent_root)?);
-    let parent_head = git_head_commit(parent_root)?;
-    paths.extend(git_diff_relative_paths(root_path, &parent_head)?);
+    paths.extend(git_diff_relative_paths(root_path, base_commit)?);
     Ok(paths)
-}
-
-fn git_head_commit(root_path: &Path) -> anyhow::Result<String> {
-    let stdout = run_git_with_timeout(root_path, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let head = String::from_utf8_lossy(&stdout).trim().to_string();
-    if head.is_empty() {
-        anyhow::bail!("git rev-parse resolved no HEAD commit");
-    }
-    Ok(head)
 }
 
 fn git_diff_relative_paths(root_path: &Path, base: &str) -> anyhow::Result<HashSet<String>> {

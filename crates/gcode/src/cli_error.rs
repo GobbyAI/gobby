@@ -37,6 +37,7 @@ impl CliError {
 
     pub const CHECKOUT_REQUIRED: &str = "checkout_required";
     pub const CHECKOUT_MISMATCH: &str = "checkout_mismatch";
+    pub const PARENT_INDEX_REQUIRED: &str = "parent_index_required";
 
     /// `root` has no checkout registered on this machine, so gcode cannot
     /// write a primary index for it. `message` states why: no identity file,
@@ -55,6 +56,30 @@ impl CliError {
             recovery: Some(format!(
                 "run `gobby init` in {root} to register this checkout on this machine, \
                  or `gobby projects rebind {project} {root}` for a project Gobby already knows"
+            )),
+            exit_status: 2,
+        }
+    }
+
+    /// `overlay_root` cannot be indexed because its parent has no index on
+    /// this machine and the caller's credential cannot write the parent's
+    /// rows. The recovery names the parent checkout to index first.
+    pub fn parent_index_required(
+        parent_root: &std::path::Path,
+        parent_project_id: &str,
+        overlay_root: &std::path::Path,
+    ) -> Self {
+        let parent = parent_root.display();
+        Self {
+            code: Self::PARENT_INDEX_REQUIRED,
+            message: format!(
+                "overlay {} needs its parent {parent} ({parent_project_id}) indexed on this \
+                 machine, and this credential cannot write the parent index",
+                overlay_root.display()
+            ),
+            recovery: Some(format!(
+                "run `gcode index` in the parent checkout {parent} with a credential that can \
+                 write it, then retry the overlay index"
             )),
             exit_status: 2,
         }

@@ -4,28 +4,38 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
+from psycopg import Error, OperationalError
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from starlette.testclient import TestClient
 
+from gobby.agents.agent_health import bootstrap_accounting_stall_error, session_never_initialized
 from gobby.agents.spawn_executor_providers import _append_code_index_warning
+from gobby.config.tmux import TmuxConfig
+from gobby.hub import remote_cancel, remote_pane
 from gobby.hub.node_commands import CONTRACT_VERSION
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.storage import workspace_machine_scope
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals.runtime import TerminalRuntime
+from gobby.terminals.runtime import SnapshotResult, TerminalRuntime
 from gobby.terminals.services import TerminalServices
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.terminal_fixtures import make_live_terminal
@@ -39,6 +49,12 @@ LOCAL = "37e78430-9ce8-447b-8a68-0688cde4a885"
 OTHER = "37e78430-9ce8-447b-8a68-0688cde4a886"
 FAILURE = "/api/nodes/runs/prompt-delivery-failure"
 WARNING = "/api/nodes/runs/code-index-warning"
+TERMINATE = "/api/nodes/runs/terminate"
+MANIFESTS = "/api/nodes/detection-manifests"
+STALL_PREFIX = "Provider bootstrap/accounting stall: terminal output was visible but"
+INIT_TIMEOUT = re.compile(
+    r"Provider connection timed out: agent never initialized after \d+s \(provider=codex\)"
+)
 SECRETS = ("ABCDEFGHIJKLMNOPQRSTUV", "abcdefghijklmnopqrstuv", "hunter2secret")
 OVERVIEW = "gobby:references/code-index/overview.md"
 
@@ -51,9 +67,22 @@ def _local_machine(monkeypatch: pytest.MonkeyPatch) -> None:
 @dataclass
 class SpyRuntime:
     terminated: list[tuple[str, float]] = field(default_factory=list)
+    alive: bool = True
+    kill_succeeds: bool = True
+
+    async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
+        # Mirrors RemoteTerminalRuntime: the capture reads the tail the route stored.
+        entry = remote_pane.remote_pane_store().get(terminal.id, NODE)
+        tail = entry.pane.tail if entry is not None and entry.pane is not None else ""
+        return SnapshotResult(text=tail, truncated=False, dropped_bytes=None, total_bytes=None)
+
+    async def session_present(self, terminal: Terminal) -> bool:
+        return self.alive
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         self.terminated.append((terminal.id, grace_seconds))
+        if self.kill_succeeds:
+            self.alive = False
 
 
 class SpyTerminalServices(TerminalServices):
@@ -83,7 +112,9 @@ def _headers(machine: str = NODE) -> dict[str, str]:
     }
 
 
-def _harness(db: HubDatabase, session_manager: SessionManager) -> Harness:
+def _harness(
+    db: HubDatabase, session_manager: SessionManager, *, real_runtime: bool = False
+) -> Harness:
     from gobby.servers.routes import node_runs
 
     auth = AuthService(lambda: db)
@@ -92,13 +123,19 @@ def _harness(db: HubDatabase, session_manager: SessionManager) -> Harness:
     )
     runtime = SpyRuntime()
     cleanup = AsyncMock()
+    terminals = (
+        TerminalServices(manager=TerminalManager(db), registry=None)
+        if real_runtime
+        else SpyTerminalServices(db, runtime)
+    )
     services = SimpleNamespace(
         database=db,
         session_manager=session_manager,
-        terminal_services=SpyTerminalServices(db, runtime),
+        terminal_services=terminals,
         agent_lifecycle_monitor=SimpleNamespace(get_cleanup_agent=lambda: cleanup),
     )
-    server = cast(HTTPServer, SimpleNamespace(auth_service=auth, services=services))
+    config = SimpleNamespace(tmux=TmuxConfig())
+    server = cast(HTTPServer, SimpleNamespace(auth_service=auth, services=services, config=config))
     app = FastAPI()
     app.state.database = db
     app.include_router(node_runs.create_node_runs_router(server))
@@ -125,7 +162,16 @@ def node_sessions(
     return parent, child
 
 
-def _run(db: HubDatabase, parent: str, child: str, *, machine: str = NODE) -> str:
+def _run(
+    db: HubDatabase,
+    parent: str,
+    child: str,
+    *,
+    machine: str = NODE,
+    task_id: str | None = None,
+    timeout_seconds: float | None = None,
+    resume_metadata_json: dict[str, object] | None = None,
+) -> str:
     runs = LocalAgentRunManager(db)
     run = runs.create(
         parent_session_id=parent,
@@ -133,6 +179,9 @@ def _run(db: HubDatabase, parent: str, child: str, *, machine: str = NODE) -> st
         provider="codex",
         prompt="work",
         machine_id=machine,
+        task_id=task_id,
+        timeout_seconds=timeout_seconds,
+        resume_metadata_json=resume_metadata_json,
     )
     assert runs.start(run.id) is not None
     started = runs.get(run.id)
@@ -164,11 +213,42 @@ def _warning_body(run_id: str, **overrides: Any) -> dict[str, Any]:
     } | overrides
 
 
+def _terminate_body(run_id: str, **overrides: Any) -> dict[str, Any]:
+    return {
+        "v": CONTRACT_VERSION,
+        "run_id": run_id,
+        "cause": "timeout",
+        "detail": "",
+        "pane_tail": "",
+        "checkpoint": None,
+    } | overrides
+
+
+def _backdate(db: HubDatabase, run_id: str, seconds: int) -> None:
+    started = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+    db.execute("UPDATE agent_runs SET started_at = %s WHERE id = %s", (started, run_id))
+
+
+def _task(db: HubDatabase, project_id: str) -> str:
+    task_id = str(uuid.uuid4())
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO tasks "
+            "(id, project_id, title, task_type, category, validation_criteria, "
+            "created_at, updated_at) "
+            "VALUES (%s, %s, 'terminate task', 'task', 'code', "
+            "'Route fixture task; behavior asserted by the test.', "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (task_id, project_id),
+        )
+    return task_id
+
+
 def _logged(caplog: pytest.LogCaptureFixture) -> str:
     return "\n".join(f"{r.getMessage()} {r.args!r}" for r in caplog.records)
 
 
-@pytest.mark.parametrize("route", [FAILURE, WARNING])
+@pytest.mark.parametrize("route", [FAILURE, WARNING, TERMINATE])
 @pytest.mark.parametrize(
     "proof",
     [
@@ -192,7 +272,7 @@ def test_node_run_routes_identity(
     db = session_manager.db
     parent, child = node_sessions
     run_id = _run(db, parent, child, machine=OTHER if proof == "foreign-run" else NODE)
-    build = _failure_body if route == FAILURE else _warning_body
+    build = {FAILURE: _failure_body, WARNING: _warning_body, TERMINATE: _terminate_body}[route]
     harness = _harness(db, session_manager)
     with harness.client as client:
         if proof in {"missing", "forged", "local"}:
@@ -367,3 +447,546 @@ def test_code_index_warning_redacted(
     kept = json.dumps(stored) + answered + _logged(caplog)
     for secret in SECRETS:
         assert secret not in kept
+
+
+@pytest.mark.parametrize(
+    ("pane", "turns_used", "expected", "is_timeout"),
+    [
+        ("", 0, "Agent exceeded 60s timeout", True),
+        (
+            "working",
+            1,
+            "Agent exceeded 60s timeout\n\n--- Last terminal output ---\nworking",
+            True,
+        ),
+        ("booting codex", 0, STALL_PREFIX, False),
+    ],
+)
+def test_terminate_timeout(
+    session_manager: SessionManager,
+    node_sessions: tuple[str, str],
+    pane: str,
+    turns_used: int,
+    expected: str,
+    is_timeout: bool,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    run_id = _run(db, parent, child, timeout_seconds=60)
+    _backdate(db, run_id, 120)
+    db.execute("UPDATE sessions SET turn_count = %s WHERE id = %s", (turns_used, child))
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        response = client.post(
+            TERMINATE, headers=_headers(), json=_terminate_body(run_id, pane_tail=pane)
+        )
+    assert (response.status_code, response.json()) == (200, {"terminated": True, "retry": False})
+    stored = LocalAgentRunManager(db).get(run_id)
+    assert stored is not None
+    assert harness.runtime.terminated == [(stored.terminal_id, 5.0)]
+    harness.cleanup.assert_awaited_once()
+    await_args = harness.cleanup.await_args
+    assert await_args is not None
+    assert expected in await_args.kwargs["terminal_payload"]
+    assert await_args.kwargs["is_timeout"] is is_timeout
+
+
+def test_terminate_timeout_young_run_retries(
+    session_manager: SessionManager, node_sessions: tuple[str, str]
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    run_id = _run(db, parent, child, timeout_seconds=60)
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        response = client.post(TERMINATE, headers=_headers(), json=_terminate_body(run_id))
+    assert (response.status_code, response.json()) == (200, {"terminated": False, "retry": True})
+    stored = LocalAgentRunManager(db).get(run_id)
+    assert stored is not None and stored.status == "running"
+    assert harness.runtime.terminated == []
+    harness.cleanup.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("initialized", "age", "killed", "retry"),
+    [(False, 200, True, False), (True, 200, False, False), (False, 10, False, True)],
+)
+def test_terminate_init_timeout(
+    session_manager: SessionManager,
+    node_sessions: tuple[str, str],
+    initialized: bool,
+    age: int,
+    killed: bool,
+    retry: bool,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    run_id = _run(db, parent, child)
+    _backdate(db, run_id, age)
+    if initialized:
+        assert session_manager.update(session_id=child, external_id="native-codex") is not None
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        response = client.post(
+            TERMINATE,
+            headers=_headers(),
+            json=_terminate_body(run_id, cause="init_timeout"),
+        )
+    assert (response.status_code, response.json()) == (200, {"terminated": killed, "retry": retry})
+    assert len(harness.runtime.terminated) == (1 if killed else 0)
+    assert harness.cleanup.await_count == (1 if killed else 0)
+    for call in harness.cleanup.await_args_list:
+        assert INIT_TIMEOUT.fullmatch(call.kwargs["terminal_payload"])
+        assert call.kwargs.get("is_timeout", False) is False
+
+
+@pytest.mark.parametrize(
+    ("cause", "detail", "expected_parts"),
+    [
+        (
+            "provider_stall",
+            "rate limited",
+            ("Provider stall: ", "rate limited", "(provider=codex", "pane tail line"),
+        ),
+        ("doom_loop", "", ("doom loop: dismissed loop prompt 3+ times",)),
+    ],
+)
+def test_terminate_stall_and_loop_record_checkpoint(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    cause: str,
+    detail: str,
+    expected_parts: tuple[str, ...],
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    checkpoint = {
+        "ref_name": f"refs/gobby/ckpt/{task_id}/{run_id}",
+        "commit_sha": "c" * 40,
+        "parent_sha": "d" * 40,
+        "files_changed": 3,
+        "message": "checkpoint before terminate",
+    }
+    body = _terminate_body(
+        run_id,
+        cause=cause,
+        detail=detail,
+        pane_tail="pane tail line",
+        checkpoint=checkpoint,
+    )
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        response = client.post(TERMINATE, headers=_headers(), json=body)
+    assert (response.status_code, response.json()) == (200, {"terminated": True, "retry": False})
+    harness.cleanup.assert_awaited_once()
+    await_args = harness.cleanup.await_args
+    assert await_args is not None
+    payload = await_args.kwargs["terminal_payload"]
+    for part in expected_parts:
+        assert part in payload
+    rows = LocalCheckpointManager(db).list_for_task(task_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert (row.run_id, row.session_id, row.task_id) == (run_id, child, task_id)
+    assert {key: getattr(row, key) for key in checkpoint} == checkpoint
+
+
+def _checkpoint(task_id: str, run_id: str) -> dict[str, Any]:
+    return {
+        "ref_name": f"refs/gobby/ckpt/{task_id}/{run_id}",
+        "commit_sha": "c" * 40,
+        "parent_sha": "d" * 40,
+        "files_changed": 3,
+        "message": "checkpoint before terminate",
+    }
+
+
+def test_terminate_retries_failed_cleanup_on_the_bound_terminal(
+    session_manager: SessionManager,
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    run_id = _run(db, parent, child, timeout_seconds=60)
+    _backdate(db, run_id, 120)
+    db.execute("UPDATE sessions SET turn_count = %s WHERE id = %s", (1, child))
+    # The node confirms the kill, so the terminal settles before the first cleanup fails.
+    node = SimpleNamespace(send=AsyncMock(return_value={"stopped": True}))
+    monkeypatch.setattr(remote_cancel, "node_command_client", lambda: node)
+    manager = LocalAgentRunManager(db)
+    harness = _harness(db, session_manager, real_runtime=True)
+    cleanup_calls = 0
+
+    async def cleanup_once(
+        run: AgentRun, *, terminal_payload: str, is_success: bool, is_timeout: bool
+    ) -> None:
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        if cleanup_calls == 1:
+            raise RuntimeError("cleanup lost")
+        manager.fail(run.id, error=terminal_payload)
+
+    harness.cleanup.side_effect = cleanup_once
+    body = _terminate_body(run_id, pane_tail="working")
+    with harness.client as client:
+        first = client.post(TERMINATE, headers=_headers(), json=body)
+        assert (first.status_code, first.json()) == (200, {"terminated": False, "retry": True})
+        stored = manager.get(run_id)
+        assert stored is not None and stored.terminal_id is not None
+        assert stored.pending_terminal_action == "timeout"
+        terminal = TerminalManager(db).get(stored.terminal_id)
+        assert terminal is not None and terminal.state == "exited"
+        second = client.post(TERMINATE, headers=_headers(), json=body)
+    assert (second.status_code, second.json()) == (200, {"terminated": True, "retry": False})
+    assert harness.cleanup.await_count == 2
+    await_args = harness.cleanup.await_args
+    assert await_args is not None
+    assert await_args.kwargs["is_timeout"] is True
+    assert await_args.kwargs["terminal_payload"].startswith(
+        "Agent exceeded 60s timeout\n\n--- Last terminal output ---\nworking"
+    )
+    final = manager.get(run_id)
+    assert final is not None and final.status == "error"
+
+
+def test_terminate_failed_kill_retries_record_one_checkpoint(
+    session_manager: SessionManager, sample_project: dict[str, Any], node_sessions: tuple[str, str]
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    body = _terminate_body(run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id))
+    harness = _harness(db, session_manager)
+    harness.runtime.kill_succeeds = False
+    with harness.client as client:
+        responses = [client.post(TERMINATE, headers=_headers(), json=body) for _ in range(3)]
+    assert [response.json() for response in responses] == [{"terminated": False, "retry": True}] * 3
+    assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
+
+
+def test_concurrent_terminate_requests_record_one_checkpoint(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    body = _terminate_body(run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id))
+    harness = _harness(db, session_manager)
+    harness.runtime.kill_succeeds = False
+    both_missed = Barrier(2)
+    original_get = LocalCheckpointManager.get
+
+    def synchronized_get(self: LocalCheckpointManager, checkpoint_id: str) -> Checkpoint | None:
+        checkpoint = original_get(self, checkpoint_id)
+        if checkpoint is None:
+            both_missed.wait(timeout=10)
+        return checkpoint
+
+    monkeypatch.setattr(LocalCheckpointManager, "get", synchronized_get)
+    with TestClient(harness.client.app, raise_server_exceptions=False) as client:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            requests = [
+                pool.submit(client.post, TERMINATE, headers=_headers(), json=body) for _ in range(2)
+            ]
+            responses = [request.result(timeout=30) for request in requests]
+    assert [response.status_code for response in responses] == [200, 200]
+    assert [response.json() for response in responses] == [{"terminated": False, "retry": True}] * 2
+    assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
+
+
+@pytest.mark.parametrize("error_class", [OperationalError, ForeignKeyViolation, UniqueViolation])
+def test_terminate_checkpoint_errors_prevent_kill(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    error_class: type[Error],
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    harness = _harness(db, session_manager)
+
+    def fail_checkpoint(self: LocalCheckpointManager, checkpoint: Checkpoint) -> Checkpoint:
+        raise error_class("unrelated checkpoint failure")
+
+    monkeypatch.setattr(LocalCheckpointManager, "create", fail_checkpoint)
+    with harness.client as client, pytest.raises(error_class, match="unrelated checkpoint failure"):
+        client.post(
+            TERMINATE,
+            headers=_headers(),
+            json=_terminate_body(
+                run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id)
+            ),
+        )
+    assert harness.runtime.terminated == []
+    run = LocalAgentRunManager(db).get(run_id)
+    assert run is not None and run.pending_terminal_action is None
+
+
+def test_terminate_retry_after_intent_failure_records_one_checkpoint(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    original = LocalAgentRunManager.record_termination_intent
+    intent_calls = 0
+
+    def lose_first_intent(self: LocalAgentRunManager, run: str, **kwargs: Any) -> AgentRun | None:
+        nonlocal intent_calls
+        intent_calls += 1
+        if intent_calls == 1:
+            raise RuntimeError("intent write lost")
+        return original(self, run, **kwargs)
+
+    monkeypatch.setattr(LocalAgentRunManager, "record_termination_intent", lose_first_intent)
+    body = _terminate_body(run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id))
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        first = client.post(TERMINATE, headers=_headers(), json=body)
+        second = client.post(TERMINATE, headers=_headers(), json=body)
+    assert (first.status_code, first.json()) == (200, {"terminated": False, "retry": True})
+    assert (second.status_code, second.json()) == (200, {"terminated": True, "retry": False})
+    assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
+
+
+@pytest.mark.parametrize(
+    ("protected", "closed", "kill_succeeds", "status", "retry", "kills"),
+    [
+        (True, False, True, "running", True, 0),
+        (False, True, True, "running", True, 0),
+        (False, False, False, "running", True, 1),
+        (False, False, True, "error", False, 0),
+    ],
+)
+def test_terminate_refusals(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    protected: bool,
+    closed: bool,
+    kill_succeeds: bool,
+    status: str,
+    retry: bool,
+    kills: int,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    db.execute(
+        "UPDATE tasks SET closed_at = CASE WHEN %s THEN CURRENT_TIMESTAMP END, "
+        "closed_reason = CASE WHEN %s THEN 'done' END WHERE id = %s",
+        (closed, closed, task_id),
+    )
+    run_id = _run(
+        db,
+        parent,
+        child,
+        task_id=task_id,
+        timeout_seconds=60,
+        resume_metadata_json={"reconciliation_pending": True} if protected else None,
+    )
+    _backdate(db, run_id, 120)
+    db.execute("UPDATE agent_runs SET status = %s WHERE id = %s", (status, run_id))
+    harness = _harness(db, session_manager)
+    harness.runtime.kill_succeeds = kill_succeeds
+    with harness.client as client:
+        response = client.post(TERMINATE, headers=_headers(), json=_terminate_body(run_id))
+    assert (response.status_code, response.json()) == (200, {"terminated": False, "retry": retry})
+    stored = LocalAgentRunManager(db).get(run_id)
+    assert stored is not None and stored.status == status
+    assert len(harness.runtime.terminated) == kills
+    harness.cleanup.assert_not_awaited()
+
+
+def test_terminate_pane_tail_redacted(
+    session_manager: SessionManager,
+    node_sessions: tuple[str, str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    remote_pane.remote_pane_store.cache_clear()
+    db = session_manager.db
+    parent, child = node_sessions
+    run_id = _run(db, parent, child)
+    stored = LocalAgentRunManager(db).get(run_id)
+    assert stored is not None
+    body = _terminate_body(
+        run_id,
+        cause="provider_stall",
+        detail="detail sk-ABCDEFGHIJKLMNOPQRSTUV",
+        pane_tail="pane sk-ABCDEFGHIJKLMNOPQRSTUV",
+    )
+    harness = _harness(db, session_manager)
+    with harness.client as client:
+        response = client.post(TERMINATE, headers=_headers(), json=body)
+    assert (response.status_code, response.json()) == (200, {"terminated": True, "retry": False})
+    assert stored.terminal_id is not None
+    entry = remote_pane.remote_pane_store().get(stored.terminal_id, NODE)
+    assert entry is not None and entry.pane is not None
+    assert entry.pane.tail == "pane sk-<redacted>"
+    harness.cleanup.assert_awaited_once()
+    await_args = harness.cleanup.await_args
+    assert await_args is not None
+    payload = await_args.kwargs["terminal_payload"]
+    assert "detail sk-<redacted>" in payload
+    with db.transaction() as conn:
+        row = conn.execute("SELECT * FROM agent_runs WHERE id = %s", (run_id,)).fetchone()
+    kept = repr(entry) + repr(row) + payload + _logged(caplog)
+    for secret in SECRETS:
+        assert secret not in kept
+
+
+def _idle_run(**overrides: Any) -> AgentRun:
+    fields: dict[str, Any] = {
+        "id": "run-idle",
+        "child_session_id": "session-idle",
+        "provider": "codex",
+        "model": None,
+        "agent_name": None,
+        "terminal_id": None,
+        "pid": None,
+        "turns_used": 0,
+        "tool_calls_count": 0,
+    } | overrides
+    return cast(AgentRun, SimpleNamespace(**fields))
+
+
+def _idle_session(**overrides: Any) -> Any:
+    fields: dict[str, Any] = {
+        "id": "session-idle",
+        "external_id": "session-idle",
+        "context_injected": False,
+        "message_count": 0,
+        "turn_count": 0,
+        "tool_call_count": 0,
+        "created_at": "2026-10-25T07:00:00+00:00",
+        "last_activity": None,
+        "updated_at": "2026-10-25T07:00:00+00:00",
+        "transcript_path": None,
+        "transcript_processed": False,
+    } | overrides
+    return SimpleNamespace(**fields)
+
+
+def test_extracted_health_conditions_match_local() -> None:
+    assert session_never_initialized(_idle_run(), _idle_session()) is True
+    initialized = [
+        (_idle_run(), _idle_session(external_id="native-codex")),
+        (_idle_run(), _idle_session(context_injected=True)),
+        (_idle_run(), _idle_session(message_count=1)),
+        (_idle_run(), _idle_session(turn_count=1)),
+        (_idle_run(), _idle_session(tool_call_count=1)),
+        (_idle_run(turns_used=1), _idle_session()),
+        (_idle_run(tool_calls_count=1), _idle_session()),
+        (_idle_run(), _idle_session(last_activity="2026-10-25T07:01:00+00:00")),
+    ]
+    for run, session in initialized:
+        assert session_never_initialized(run, session) is False
+
+    stalled = bootstrap_accounting_stall_error(
+        _idle_run(), _idle_session(), age_seconds=120.0, pane_snapshot="booting codex"
+    )
+    assert stalled is not None and stalled.startswith(STALL_PREFIX)
+    guarded = [
+        (_idle_run(), _idle_session(), "   "),
+        (_idle_run(child_session_id=None), _idle_session(), "booting codex"),
+        (_idle_run(turns_used=1), _idle_session(), "booting codex"),
+        (_idle_run(tool_calls_count=1), _idle_session(), "booting codex"),
+        (_idle_run(), _idle_session(message_count=1), "booting codex"),
+    ]
+    for run, session, pane in guarded:
+        stall = bootstrap_accounting_stall_error(
+            run, session, age_seconds=120.0, pane_snapshot=pane
+        )
+        assert stall is None
+
+
+def _seed_manifest(db: HubDatabase, provider_id: str, content: str) -> None:
+    db.execute(
+        """
+        INSERT INTO detection_manifests (provider_id, version, engine, content, source)
+        VALUES (%s, '1', 1, %s, 'user')
+        ON CONFLICT (provider_id) DO UPDATE
+        SET content = EXCLUDED.content, updated_at = now()
+        """,
+        (provider_id, content),
+    )
+
+
+def _stored_manifests(db: HubDatabase) -> list[dict[str, str]]:
+    rows = db.fetchall("SELECT provider_id, content FROM detection_manifests ORDER BY provider_id")
+    return [{"provider_id": row["provider_id"], "content": row["content"]} for row in rows]
+
+
+def _seeded_manifests(body: dict[str, Any]) -> list[dict[str, str]]:
+    return [row for row in body["manifests"] if row["provider_id"].startswith("zz-mani-")]
+
+
+@pytest.mark.usefixtures("node_sessions")
+def test_detection_manifests_route(session_manager: SessionManager) -> None:
+    db = session_manager.db
+    ids = ("zz-mani-a", "zz-mani-b", "zz-mani-c")
+    for provider_id in ids:
+        db.execute("DELETE FROM detection_manifests WHERE provider_id = %s", (provider_id,))
+    try:
+        _seed_manifest(db, "zz-mani-b", "b v1")
+        _seed_manifest(db, "zz-mani-a", "a v1")
+        harness = _harness(db, session_manager)
+        with harness.client as client:
+            first = client.get(MANIFESTS, headers=_headers())
+            assert first.status_code == 200
+            assert first.json() == {"manifests": _stored_manifests(db)}
+            assert _seeded_manifests(first.json()) == [
+                {"provider_id": "zz-mani-a", "content": "a v1"},
+                {"provider_id": "zz-mani-b", "content": "b v1"},
+            ]
+            etag = first.headers["ETag"]
+            assert etag
+
+            missing = client.get(MANIFESTS)
+            assert (missing.status_code, missing.json()) == (
+                403,
+                {"detail": "node_identity_required"},
+            )
+            forged = client.get(MANIFESTS, headers={**_headers(), "X-Gobby-Front-Door": "forged"})
+            assert (forged.status_code, forged.json()) == (
+                403,
+                {"detail": "node_identity_required"},
+            )
+            local = client.get(MANIFESTS, headers=_headers(LOCAL))
+            assert (local.status_code, local.json()) == (403, {"detail": "machine_is_local"})
+
+            unchanged = client.get(MANIFESTS, headers={**_headers(), "If-None-Match": etag})
+            assert unchanged.status_code == 304
+            assert unchanged.content == b""
+
+            _seed_manifest(db, "zz-mani-b", "b v2")
+            _seed_manifest(db, "zz-mani-c", "c v1")
+            changed = client.get(MANIFESTS, headers={**_headers(), "If-None-Match": etag})
+            assert changed.status_code == 200
+            assert changed.json() == {"manifests": _stored_manifests(db)}
+            assert _seeded_manifests(changed.json()) == [
+                {"provider_id": "zz-mani-a", "content": "a v1"},
+                {"provider_id": "zz-mani-b", "content": "b v2"},
+                {"provider_id": "zz-mani-c", "content": "c v1"},
+            ]
+            assert changed.headers["ETag"] != etag
+    finally:
+        for provider_id in ids:
+            db.execute("DELETE FROM detection_manifests WHERE provider_id = %s", (provider_id,))

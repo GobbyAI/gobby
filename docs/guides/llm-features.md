@@ -189,6 +189,17 @@ and ship decision are pending; their report belongs at
 `docs/evidence/community-labels-2026-09/label-quality.md`. `CommunityLabeler` in
 `src/gobby/code_index/community_labeler.py` owns the execution path.
 
+OpenRouter decisions default to 64,000 tokens per request (`backend_max_state_tokens`)
+and 32,000 for state plus each question (`backend_max_question_tokens`). The separate
+`max_input_tokens` application budget defaults to 8,192; batch packing respects all
+three. Under `ai.decisions`, set `long_context: true` explicitly to raise both backend
+defaults to 262,144 and send `TypeSafe-Danger-Zone-Long-Context: true` on `systemone`
+or `openrouter-decisions`; configure lower maxima if needed. Explicit header acceptance
+on OpenRouter is **UNVERIFIED**. OpenRouter can automatically use its long-context
+provider mode even with this flag off; the flag controls Gobby's limits and emitted
+header. A live capture's diagnostic ceiling is not a ship-config opt-in. See the
+[wire contract and dated evidence](../evidence/decisions/wire-contracts.md).
+
 ## Outside Feature Helpers
 
 `code_index.symbol_summary` does not call `LLMService.call_feature`. `SymbolSummarizer`

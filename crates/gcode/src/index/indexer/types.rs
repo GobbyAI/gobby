@@ -65,6 +65,11 @@ pub enum IndexDegradation {
     CommunityRefreshFailed {
         message: String,
     },
+    ParentProjectionSyncFailed {
+        parent_project_id: String,
+        target: ProjectionTarget,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

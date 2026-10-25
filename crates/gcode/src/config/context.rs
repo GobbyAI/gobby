@@ -347,13 +347,30 @@ impl Context {
     }
 
     pub(crate) fn can_refresh_index(&self) -> anyhow::Result<bool> {
-        if let Some(runtime) = &self.grant_ai
-            && runtime.bundle.principal.kind.is_managed()
-        {
-            let mut conn = db::connect_readonly(&self.database_url)?;
-            return super::managed_scope::can_write(&mut conn, &self.project_id);
+        if !self.is_managed_principal() {
+            return Ok(true);
         }
-        Ok(true)
+        let mut conn = db::connect_readonly(&self.database_url)?;
+        self.can_write_project_index(&mut conn, &self.project_id)
+    }
+
+    /// Whether this context's principal may write `project_id`'s index rows.
+    /// Only managed principals are bound by the database write policy.
+    pub(crate) fn can_write_project_index(
+        &self,
+        conn: &mut Client,
+        project_id: &str,
+    ) -> anyhow::Result<bool> {
+        if !self.is_managed_principal() {
+            return Ok(true);
+        }
+        super::managed_scope::can_write(conn, project_id)
+    }
+
+    fn is_managed_principal(&self) -> bool {
+        self.grant_ai
+            .as_ref()
+            .is_some_and(|runtime| runtime.bundle.principal.kind.is_managed())
     }
 
     pub(crate) fn runtime_config_capture_degraded(&self) -> bool {

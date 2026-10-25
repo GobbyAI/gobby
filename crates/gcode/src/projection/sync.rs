@@ -32,6 +32,15 @@ pub trait ProjectionProgressSink {
     fn finish(&mut self, target: ProjectionTarget);
 }
 
+/// Progress sink for a projection pass that no caller is watching.
+pub(crate) struct SilentProjectionProgress;
+
+impl ProjectionProgressSink for SilentProjectionProgress {
+    fn start(&mut self, _target: ProjectionTarget, _total: usize) {}
+    fn advance(&mut self, _target: ProjectionTarget, _file_path: &str) {}
+    fn finish(&mut self, _target: ProjectionTarget) {}
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectionSyncStatus {
     pub project_id: String,

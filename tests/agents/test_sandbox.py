@@ -3,7 +3,9 @@ Tests for Sandbox Configuration Models.
 """
 
 import json
+import math
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -43,10 +45,11 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn,
 )
 from gobby.cli.installers.agy import _agy_config_dir
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.config.app import DaemonConfig
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
-from gobby.utils.daemon_git import GitFailed, GitTimeout
+from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout
 
 pytestmark = pytest.mark.unit
 
@@ -984,6 +987,16 @@ class TestComputeSandboxPaths:
                 ),
                 id="unavailable",
             ),
+            pytest.param(
+                GitFailed(
+                    status="failed",
+                    argv=("git", "rev-parse"),
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: detected dubious ownership in repository",
+                ),
+                id="nonzero-exit",
+            ),
         ],
     )
     async def test_git_metadata_failure_fails_closed(
@@ -1005,6 +1018,54 @@ class TestComputeSandboxPaths:
             )
 
         run.assert_awaited_once()
+
+    async def test_slow_git_metadata_within_bound_resolves(self, tmp_path: Path) -> None:
+        """Git metadata slower than the old 2 s bound resolves when it fits the new bound."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        simulated_git_seconds = 2.5
+
+        def git_completes_within_deadline(
+            args: Sequence[str], *, cwd: str | Path, timeout: float, **_: object
+        ) -> GitOk | GitTimeout:
+            argv = ("git", *args)
+            if timeout < simulated_git_seconds:
+                return GitTimeout(status="timeout", argv=argv, timeout=timeout)
+            return GitOk(status="ok", argv=argv, stdout=".git\n.git\n", stderr="")
+
+        run = AsyncMock(side_effect=git_completes_within_deadline)
+        with patch("gobby.agents.sandbox.daemon_git.run", new=run):
+            paths = await compute_sandbox_paths(
+                config=SandboxConfig(enabled=True),
+                workspace_path=str(workspace),
+            )
+
+        assert run.await_args is not None
+        assert run.await_args.kwargs["timeout"] > 2.0
+        assert str((workspace / ".git").resolve()) in paths.write_paths
+
+    async def test_git_metadata_hung_past_bound_fails_closed(self, tmp_path: Path) -> None:
+        """A Git call that never completes fails closed, and its deadline stays finite."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        def git_never_completes(
+            args: Sequence[str], *, cwd: str | Path, timeout: float, **_: object
+        ) -> GitTimeout:
+            return GitTimeout(status="timeout", argv=("git", *args), timeout=timeout)
+
+        run = AsyncMock(side_effect=git_never_completes)
+        with (
+            patch("gobby.agents.sandbox.daemon_git.run", new=run),
+            pytest.raises(RuntimeError, match="Failed to resolve Git metadata for sandbox"),
+        ):
+            await compute_sandbox_paths(
+                config=SandboxConfig(enabled=True),
+                workspace_path=str(workspace),
+            )
+
+        assert run.await_args is not None
+        assert 0 < run.await_args.kwargs["timeout"] < math.inf
 
     async def test_linked_worktree_git_metadata_dirs_are_writable(self, tmp_path: Path) -> None:
         """Linked worktree commits need write access to Git metadata outside the worktree."""
@@ -1032,30 +1093,22 @@ class TestComputeSandboxPaths:
         assert _resolve_from(worktree, common_dir) in paths.write_paths
         assert len(paths.write_paths) == len(set(paths.write_paths))
 
-    async def test_isolated_mcp_project_root_is_readable_but_not_writable(
-        self, tmp_path: Path
-    ) -> None:
-        """The MCP server's `uv run --project <main repo>` target must be readable.
+    async def test_isolated_gmcp_entry_adds_no_project_read_root(self, tmp_path: Path) -> None:
+        """An isolated workspace's `gmcp` entry grants no main-repo read root.
 
-        Without it the proxy subprocess dies on the main repo's pyproject.toml
-        and the agent starts with no gobby tools at all (#19097).
+        `_patch_mcp_config_for_isolation` writes the native `gmcp` binary as the
+        gobby entry with no arguments, so the sandbox has no project to read
+        for the MCP server. The retired `uv run --project` wrapper grant
+        (`mcp_config_read_exceptions`, #19097) must not come back.
         """
         main_repo = tmp_path / "main-repo"
         main_repo.mkdir()
         (main_repo / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
         workspace = tmp_path / "worktree"
         workspace.mkdir()
+        gmcp_entry = {"command": gmcp_command(), "args": []}
         (workspace / ".mcp.json").write_text(
-            json.dumps(
-                {
-                    "mcpServers": {
-                        "gobby": {
-                            "command": "uv",
-                            "args": ["run", "--project", str(main_repo), "gobby", "mcp-server"],
-                        }
-                    }
-                }
-            ),
+            json.dumps({"mcpServers": {"gobby": gmcp_entry}}),
             encoding="utf-8",
         )
 
@@ -1064,8 +1117,9 @@ class TestComputeSandboxPaths:
             workspace_path=str(workspace),
         )
 
-        assert str(main_repo.resolve()) in paths.read_paths
+        assert str(main_repo.resolve()) not in paths.read_paths
         assert str(main_repo.resolve()) not in paths.write_paths
+        assert not hasattr(sandbox_policy, "mcp_config_read_exceptions")
 
     async def test_missing_or_malformed_mcp_config_grants_nothing_extra(
         self, tmp_path: Path
