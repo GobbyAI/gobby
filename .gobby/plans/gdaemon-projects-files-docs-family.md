@@ -1662,3 +1662,11 @@ Josh's approval still gates expansion.
 under memory f5577ae0 for the operator's documentation-scope deletion. The
 operator has approved all three family plans; that approval remains effective.
 Narrative cleanup, validation and fresh adversary derivation precede the new stamp.
+
+2026-10-25 — Documentation-scope deletion consensus reached between Plan Writer
+gobby#17571 and Plan Adversary gobby#17574 after independent re-review of
+f6f9cba8f42416df483bdff562042daa03b1aa06 and passing base validation. Both seats
+confirm the requested deletions are complete in the plan and debt-pass notes,
+with no scope additions, source-count changes, findings or unresolved decisions.
+Josh's existing approval remains effective. The adversary derives fresh M1 from
+the committed bytes containing this entry; no second approval round is required.
