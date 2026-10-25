@@ -2496,6 +2496,7 @@ dependencies = [
  "fernet",
  "httpdate",
  "ignore",
+ "jsonschema",
  "log",
  "openssl",
  "postgres",
