@@ -311,6 +311,10 @@ def _writer(
     body, digest = definition
     if step not in body.task_step_writes and not _review_fixer(task, session_id, step, records):
         raise StepRecordError(f"agent definition {body.name} cannot write the {step} step")
+    if body.name == "researcher" and (
+        task.task_type != "research_spike" or task.claimed_by_session_id != session_id
+    ):
+        raise StepRecordError("a researcher can write steps only for its own research spike")
     return body, digest
 
 
