@@ -281,8 +281,6 @@ async def compute_sandbox_paths(
         default_write_paths,
         deny_paths,
         gcode_runtime_write_exceptions,
-        gobby_read_exceptions,
-        mcp_config_read_exceptions,
         provider_credential_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
@@ -291,6 +289,7 @@ async def compute_sandbox_paths(
         toolchain_credential_paths,
         toolchain_read_roots,
     )
+    from gobby.agents.sandbox_read_roots import gobby_read_exceptions
 
     workspace = Path(canonical_path(workspace_path))
     policy_env = os.environ if env is None else env
@@ -325,7 +324,6 @@ async def compute_sandbox_paths(
             *gobby_read_exceptions(policy_env),
             *(tuple(str(path) for path in rtk_paths.read_paths) if rtk_paths else ()),
             *toolchain_read_roots(),
-            *mcp_config_read_exceptions(workspace),
             *provider_reads,
             "~/.ssh/known_hosts",
             *config.extra_read_paths,
