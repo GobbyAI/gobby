@@ -168,6 +168,22 @@ def _case_templates() -> list[dict[str, Any]]:
             platform="darwin",
         )
     )
+    cases.append(
+        _case(
+            "codex-unicode-write-paths",
+            "codex",
+            sandbox=_sandbox(extra_write_paths=["{home}/café/数据"]),
+            home_tree=("café/数据",),
+        )
+    )
+    cases.append(
+        _case(
+            "claude-non-bmp-write-paths",
+            "claude",
+            sandbox=_sandbox(extra_write_paths=["{home}/🙂/extra"]),
+            home_tree=("🙂/extra",),
+        )
+    )
     return cases
 
 
@@ -387,9 +403,16 @@ def _encode_settings(settings: str, table: list[str]) -> dict[str, Any]:
 
 
 def _decode_settings(document: dict[str, Any], table: list[str]) -> str:
-    """Rebuild the oracle's exact settings text from an encoded case."""
+    """Rebuild the oracle's exact settings text from an encoded case.
+
+    The oracle's deny lists pass through deny_paths, which keeps the first of each
+    repeated path. On Linux the two SRT socket aliases are one path, so the filled
+    corpus repeats it. Collapsing repeats here matches the oracle on every host.
+    """
     indices: list[int] = document["filesystem"]["denyWrite"]
-    document["filesystem"]["denyWrite"] = [table[index] for index in indices]
+    filesystem = document["filesystem"]
+    filesystem["denyWrite"] = list(dict.fromkeys(table[index] for index in indices))
+    filesystem["denyRead"] = list(dict.fromkeys(filesystem["denyRead"]))
     return json.dumps(document, sort_keys=True, separators=(",", ":"))
 
 

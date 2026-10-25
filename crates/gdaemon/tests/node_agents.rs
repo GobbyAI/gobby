@@ -20,7 +20,7 @@ use gobby_daemon::nodes::agents::{
 use gobby_daemon::state::NodeServices;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
@@ -1478,6 +1478,33 @@ fn srt_covered(grants: &[String], path: &Path) -> bool {
     grants.iter().any(|grant| path.starts_with(grant))
 }
 
+/// A JSON string as Python's `json.dumps` writes it with `ensure_ascii`: printable
+/// ASCII stays literal, and every other character becomes `\uXXXX`, as surrogate
+/// pairs above the BMP.
+fn srt_json_string(text: &str) -> String {
+    let mut escaped = String::from("\"");
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\u{c}' => escaped.push_str("\\f"),
+            ' '..='~' => escaped.push(character),
+            _ => {
+                let mut units = [0; 2];
+                for unit in character.encode_utf16(&mut units) {
+                    escaped.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
 /// Render JSON with sorted keys and no spaces, as Python's `json.dumps` does with
 /// `sort_keys=True, separators=(",", ":")`.
 fn srt_canonical(value: &Value) -> String {
@@ -1487,9 +1514,7 @@ fn srt_canonical(value: &Value) -> String {
             entries.sort_by(|left, right| left.0.cmp(right.0));
             let fields = entries
                 .into_iter()
-                .map(|(key, item)| {
-                    format!("{}:{}", Value::String(key.clone()), srt_canonical(item))
-                })
+                .map(|(key, item)| format!("{}:{}", srt_json_string(key), srt_canonical(item)))
                 .collect::<Vec<_>>();
             format!("{{{}}}", fields.join(","))
         }
@@ -1497,8 +1522,19 @@ fn srt_canonical(value: &Value) -> String {
             let items = items.iter().map(srt_canonical).collect::<Vec<_>>();
             format!("[{}]", items.join(","))
         }
+        Value::String(text) => srt_json_string(text),
         scalar => scalar.to_string(),
     }
+}
+
+/// Keep the first of each repeated entry, as the oracle's `deny_paths` does. On
+/// Linux the two SRT socket aliases fill to one path, so the corpus repeats it.
+fn srt_dedupe(entries: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| seen.insert(entry.clone()))
+        .collect()
 }
 
 /// The oracle's settings text for one case. The shared deny table is expanded
@@ -1527,7 +1563,19 @@ fn srt_expected_settings(tree: &SrtTree, corpus: &Value, settings: &Value) -> Re
                 .with_context(|| format!("denyWrite index {index} is outside the table"))
         })
         .collect::<Result<Vec<_>>>()?;
-    document["filesystem"]["denyWrite"] = json!(deny_write);
+    let deny_read = document["filesystem"]["denyRead"]
+        .as_array()
+        .context("denyRead is not an array")?
+        .iter()
+        .map(|entry| -> Result<String> {
+            Ok(entry
+                .as_str()
+                .context("denyRead entry is not a string")?
+                .to_owned())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    document["filesystem"]["denyRead"] = json!(srt_dedupe(deny_read));
+    document["filesystem"]["denyWrite"] = json!(srt_dedupe(deny_write));
     Ok(srt_canonical(&document))
 }
 
@@ -1672,6 +1720,18 @@ fn srt_policy_refuses_sensitive_grants() -> Result<()> {
     Ok(())
 }
 
+/// Poll until `path` is a directory, giving up after `within`. Returns whether it appeared.
+fn wait_for_dir(path: &Path, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while !path.is_dir() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
 /// Build a case that asks for the pre-commit prewarm, with an operator store
 /// and optionally a pre-commit config in the workspace.
 fn srt_prewarm_case(
@@ -1718,7 +1778,12 @@ fn pre_commit_store_prewarm() -> Result<()> {
         "the spare fills the run's store"
     );
     assert!(!store.join("operator-marker").exists());
-    assert!(!spare.exists(), "a consumed spare is gone");
+    // Production refills the spare in the background, so the consumed path may
+    // come back. Wait a bounded time for the refill; a spare that never returns fails.
+    assert!(
+        wait_for_dir(&spare, Duration::from_secs(10)),
+        "the consumed spare never refilled within 10s"
+    );
 
     // Without a spare, the operator store is cloned into the run.
     let (tree, inputs) = srt_prewarm_case(root.path(), "clone", &base, true, true)?;
