@@ -16,6 +16,7 @@ from gobby.mcp_proxy.tools.spawn_agent import _implementation as implementation
 from gobby.mcp_proxy.tools.spawn_agent import _resume as resume
 from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards as spawn_guards
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
+from gobby.tasks.state_semantics import is_task_actionable
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
@@ -141,6 +142,7 @@ async def _resume_seat(previous_task: str, explicit_task: str | None) -> tuple[d
 
 @pytest.mark.asyncio
 async def test_resume_without_task_id_inherits_the_previous_runs_open_task() -> None:
+    assert is_task_actionable(TASKS["task-open"])
     result, prepare = await _resume_seat("task-open", explicit_task=None)
 
     assert result["success"] is True, result
@@ -157,6 +159,7 @@ async def test_explicit_task_id_on_resume_wins_over_the_previous_binding() -> No
 
 @pytest.mark.asyncio
 async def test_resume_does_not_inherit_a_closed_tasks_binding() -> None:
+    assert not is_task_actionable(TASKS["task-closed"])
     result, prepare = await _resume_seat("task-closed", explicit_task=None)
 
     # The seat still resumes; it comes back unbound rather than refused.
