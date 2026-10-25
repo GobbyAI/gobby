@@ -6,16 +6,19 @@ pub mod config;
 mod grant;
 mod handshake;
 pub mod secrets;
+mod verify;
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::http::Method;
 use axum::http::request::Parts;
+use axum::http::{Method, StatusCode};
 use axum::routing::{MethodFilter, MethodRouter, on};
 use gobby_core::postgres_pool::Pool;
-use gobby_core::route_family::RouteFamily;
+use gobby_core::route_family::{ProxiedCheck, RouteFamily};
 
 /// Who sent a request, as the front door's authentication left it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +143,16 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for RuntimeFamily {
                 && row.callers.contains(&caller)
                 && row.gate.is_none_or(|gate| gate(parts))
         })
+    }
+
+    fn check_proxied<'a>(
+        &'a self,
+        parts: &'a Parts,
+        request: &'a [u8],
+        status: StatusCode,
+        response: &'a [u8],
+    ) -> Pin<Box<dyn Future<Output = ProxiedCheck> + Send + 'a>> {
+        Box::pin(verify::check(&self.state, parts, request, status, response))
     }
 }
 

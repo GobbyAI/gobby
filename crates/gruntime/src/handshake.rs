@@ -38,15 +38,15 @@ use crate::config::{ActiveState, active_state, json_response};
 use crate::grant::{grant_unavailable, internal, read_fence, unix_now};
 use crate::secrets::{SecretError, SecretStore};
 
-const GRANT_TTL_SECONDS: i64 = 3600;
+pub(crate) const GRANT_TTL_SECONDS: i64 = 3600;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct HandshakeRequest {
-    machine_id: String,
-    project_id: String,
-    session_id: Option<String>,
-    code_overlay_project_id: Option<String>,
+    pub(crate) machine_id: String,
+    pub(crate) project_id: String,
+    pub(crate) session_id: Option<String>,
+    pub(crate) code_overlay_project_id: Option<String>,
 }
 
 pub(crate) async fn handshake(
@@ -206,7 +206,7 @@ fn overlay_claim(claim: Option<&str>, project: Uuid) -> Result<Option<Uuid>, Box
     Ok(Some(overlay))
 }
 
-async fn active_secrets(
+pub(crate) async fn active_secrets(
     store: &SecretStore,
     token: &str,
     active: &ActiveState,
