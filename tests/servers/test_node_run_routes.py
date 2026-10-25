@@ -462,7 +462,7 @@ def test_terminate_timeout(
     parent, child = node_sessions
     run_id = _run(db, parent, child, timeout_seconds=60)
     _backdate(db, run_id, 120)
-    db.execute("UPDATE agent_runs SET turns_used = %s WHERE id = %s", (turns_used, run_id))
+    db.execute("UPDATE sessions SET turn_count = %s WHERE id = %s", (turns_used, child))
     harness = _harness(db, session_manager)
     with harness.client as client:
         response = client.post(

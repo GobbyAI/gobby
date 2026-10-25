@@ -150,6 +150,14 @@ def test_store_follows_report_revisions() -> None:
     assert store.get("term-b", MACHINE) is not None
 
 
+def test_store_lists_only_machines_with_accepted_reports() -> None:
+    store = remote_pane.RemotePaneStore()
+    store.record_tail("term-a", MACHINE, "run-a", "tail")
+    assert store.machine_ids() == ()
+    assert store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())]) == {}
+    assert store.machine_ids() == (MACHINE,)
+
+
 def test_store_marks_terminal_stopped() -> None:
     store = remote_pane.RemotePaneStore()
     store.apply_report(MACHINE, 1, [_agent("run-a", "term-a", _pane())])

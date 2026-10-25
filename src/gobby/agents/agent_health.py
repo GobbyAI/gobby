@@ -53,9 +53,31 @@ def _exits_without_session_end(provider: str) -> bool:
     return HookEventType.STOP in events and HookEventType.SESSION_END not in events
 
 
+def timeout_reason(timeout_seconds: float) -> str:
+    """Reason for a run past its timeout; whole seconds print without a trailing `.0`."""
+    seconds: float | int = int(timeout_seconds) if timeout_seconds.is_integer() else timeout_seconds
+    return f"Agent exceeded {seconds}s timeout"
+
+
 def session_never_initialized(run: AgentRun, session: Any) -> bool:
     """True when neither the run nor its child session shows provider initialization."""
-    raise NotImplementedError
+    # Provisional child setup changes updated_at before the CLI starts.
+    # Only provider registration or confirmed activity proves initialization.
+    if (
+        session.external_id != session.id
+        or session.context_injected
+        or _session_counter(session, "message_count")
+        or _session_counter(session, "turn_count")
+        or _session_counter(session, "tool_call_count")
+        or (run.turns_used or 0) > 0
+        or (run.tool_calls_count or 0) > 0
+    ):
+        return False
+    created = parse_stored_datetime(session.created_at)
+    if created is None:
+        return False
+    activity = parse_stored_datetime(session.last_activity)
+    return activity is None or activity <= created
 
 
 def bootstrap_accounting_stall_error(
@@ -66,7 +88,41 @@ def bootstrap_accounting_stall_error(
     pane_snapshot: str,
 ) -> str | None:
     """Reason for a bootstrap/accounting stall, or None when the run is not stalled."""
-    raise NotImplementedError
+    if not run.child_session_id:
+        return None
+    if (run.tool_calls_count or 0) > 0 or (run.turns_used or 0) > 0:
+        return None
+    if not pane_snapshot.strip():
+        return None
+    if session is None:
+        return None
+
+    message_count = _session_counter(session, "message_count")
+    turn_count = _session_counter(session, "turn_count")
+    tool_call_count = _session_counter(session, "tool_call_count")
+    if message_count or turn_count or tool_call_count:
+        return None
+
+    transcript_path = getattr(session, "transcript_path", None) or "missing"
+    transcript_processed = bool(getattr(session, "transcript_processed", False))
+    context_injected = bool(getattr(session, "context_injected", False))
+    session_updated_at = getattr(session, "updated_at", None) or "unknown"
+    session_created_at = getattr(session, "created_at", None) or "unknown"
+
+    return (
+        "Provider bootstrap/accounting stall: terminal output was visible but "
+        "Gobby session accounting stayed at zero "
+        f"after {age_seconds:.0f}s "
+        f"(provider={run.provider}, model={run.model or 'unknown'}, "
+        f"agent={run.agent_name or 'unknown'}, run_id={run.id}, "
+        f"child_session_id={run.child_session_id}, "
+        f"terminal_id={run.terminal_id or 'none'}, pid={run.pid or 'none'}, "
+        f"context_injected={context_injected}, message_count={message_count}, "
+        f"turn_count={turn_count}, tool_call_count={tool_call_count}, "
+        f"transcript_path={transcript_path}, "
+        f"transcript_processed={transcript_processed}, "
+        f"session_created_at={session_created_at}, session_updated_at={session_updated_at})"
+    )
 
 
 class AgentHealthMonitor:
@@ -181,11 +237,6 @@ class AgentHealthMonitor:
     ) -> str | None:
         if not run.child_session_id:
             return None
-        if (run.tool_calls_count or 0) > 0 or (run.turns_used or 0) > 0:
-            return None
-        if not pane_snapshot.strip():
-            return None
-
         session_manager = self._get_session_manager()
         if session_manager is None:
             return None
@@ -195,34 +246,8 @@ class AgentHealthMonitor:
         except Exception as e:
             logger.debug("Failed to read child session for agent %s: %s", run.id, e)
             return None
-        if session is None:
-            return None
-
-        message_count = _session_counter(session, "message_count")
-        turn_count = _session_counter(session, "turn_count")
-        tool_call_count = _session_counter(session, "tool_call_count")
-        if message_count or turn_count or tool_call_count:
-            return None
-
-        transcript_path = getattr(session, "transcript_path", None) or "missing"
-        transcript_processed = bool(getattr(session, "transcript_processed", False))
-        context_injected = bool(getattr(session, "context_injected", False))
-        session_updated_at = getattr(session, "updated_at", None) or "unknown"
-        session_created_at = getattr(session, "created_at", None) or "unknown"
-
-        return (
-            "Provider bootstrap/accounting stall: terminal output was visible but "
-            "Gobby session accounting stayed at zero "
-            f"after {age_seconds:.0f}s "
-            f"(provider={run.provider}, model={run.model or 'unknown'}, "
-            f"agent={run.agent_name or 'unknown'}, run_id={run.id}, "
-            f"child_session_id={run.child_session_id}, "
-            f"terminal_id={run.terminal_id or 'none'}, pid={run.pid or 'none'}, "
-            f"context_injected={context_injected}, message_count={message_count}, "
-            f"turn_count={turn_count}, tool_call_count={tool_call_count}, "
-            f"transcript_path={transcript_path}, "
-            f"transcript_processed={transcript_processed}, "
-            f"session_created_at={session_created_at}, session_updated_at={session_updated_at})"
+        return bootstrap_accounting_stall_error(
+            run, session, age_seconds=age_seconds, pane_snapshot=pane_snapshot
         )
 
     async def _dead_terminal_reason(self, run: AgentRun) -> str | None:
@@ -318,7 +343,7 @@ class AgentHealthMonitor:
                         continue
                     age = (now - started).total_seconds()
                     if age > run.timeout_seconds:
-                        reason = f"Agent exceeded {run.timeout_seconds}s timeout"
+                        reason = timeout_reason(run.timeout_seconds)
                         is_timeout = True
                         timeout_age = age
                         logger.info(
@@ -474,23 +499,7 @@ class AgentHealthMonitor:
                 if not session or not session.updated_at or not session.created_at:
                     continue
 
-                created = parse_stored_datetime(session.created_at)
-                if created is None:
-                    continue
-                # Provisional child setup changes updated_at before the CLI starts.
-                # Only provider registration or confirmed activity proves initialization.
-                if (
-                    session.external_id != session.id
-                    or session.context_injected
-                    or _session_counter(session, "message_count")
-                    or _session_counter(session, "turn_count")
-                    or _session_counter(session, "tool_call_count")
-                    or (run.turns_used or 0) > 0
-                    or (run.tool_calls_count or 0) > 0
-                ):
-                    continue
-                activity = parse_stored_datetime(session.last_activity)
-                if activity is not None and activity > created:
+                if not session_never_initialized(run, session):
                     continue
 
                 logger.warning(
