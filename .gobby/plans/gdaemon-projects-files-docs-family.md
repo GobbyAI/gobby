@@ -1652,3 +1652,14 @@ metadata unchanged; two additive HTTP routes have exact native-extension entries
 the node-checkout transfer yields36 source owners;1.3 verifies producer/consumer
 edges before admission; waiver decisions use canonical task or plan citations.
 Fresh validation and adversary recheck precede renewed consensus and M1.
+
+2026-10-25 — Coordinator-amendment consensus reached between Plan Writer
+gobby#17571 and Plan Adversary gobby#17574 after independent re-review of
+cba091db4584315ab1d4abd6ce94d66cd7227612 and fresh base validation after the
+shared index refresh. Both seats confirm all coordinator rulings are resolved:
+#24970 owns shared errors/adapters, corrupt policy-field saves refuse unchanged,
+native extensions have exact provenance, the node-checkout row has its Projects
+owner, capability edges are verified before admission, and waiver decisions use
+canonical citations. No findings or governing decisions remain open. The
+adversary derives fresh M1 from the committed bytes containing this entry;
+Josh's approval still gates expansion.
