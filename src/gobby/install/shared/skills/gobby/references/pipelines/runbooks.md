@@ -21,7 +21,7 @@ typing pane the Orchestrator and opens the Assistant beside it in the same tab;
 | --- | --- | --- |
 | `support` | release-manager, triage, archivist, recovery-steward, consolidator | `workspace`, `project_path`, `report_to` |
 | `devteam` | test-writer, developer, code-reviewer, dev-manager | `task`, `workspace`, `report_to` |
-| `team-planning` | plan-writer, plan-adversary | `lane`, `workspace`, `project_path`, `report_to` |
+| `team-planning` | plan-writer, plan-adversary, plan-enhancer | `lane`, `workspace`, `project_path`, `report_to` |
 | `planning` | writer, enhancer, adversary | `workspace` |
 
 ## Support
