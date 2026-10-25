@@ -1533,3 +1533,18 @@ startup and existing selection/override policy. Both findings were accepted;
 no disagreement, unresolved decision or remaining finding remains. Fresh
 project-aware base validation passed. Manifest derivation and operator approval
 remain subsequent gates; no implementation or expansion is authorized here.
+
+2026-10-24 — Plan Writer gobby#17576 and Plan Adversary gobby#17577 renewed
+consensus on 4371f5dde6d1ac745e73c021f4ae6f8ff08bc979 after the
+Orchestrator's revision request. The delegated ledger status, backend-unavailable
+wording, verification separation, scoped pin criterion, naming-switch cleanup,
+source-identity evidence and complete MCP-contract test target are resolved.
+The new 6.0 admits exactly nine Skills GET and eleven mutation rows through
+#24659's one verifier, preserving ordinary and managed cookie classes, selector
+and loopback restrictions, current credentialed CORS, and the cookie proxy
+remainder. The Orchestrator's persisted security-review label check gates
+dispatch; Security approval for the exact SHA gates cookie activation. No
+remaining finding, disagreement or unresolved decision remains. Base validation
+passed; the superseded M1 was withdrawn whole for fresh derivation. Coordinator
+review and Josh approval remain required before expansion, and the planning
+task stays claimed/open until that approval.
