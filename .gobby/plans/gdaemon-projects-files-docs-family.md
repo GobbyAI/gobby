@@ -1541,3 +1541,13 @@ writers, including isolation/identity helpers; verification refresh reuses its
 lock and the sole recovery engine. Add the exact migration-layout waiver and
 expansion-time1.2-to-#24968 producer edge. Combined validation and renewed
 adversary review are required before consensus or a fresh M1 stamp.
+
+2026-10-24 — Renewed debt-amendment consensus reached between Plan Writer
+gobby#17571 and Plan Adversary gobby#17574 after independent re-review of
+ba44dd5d86296d644eaf2210883ff51e180d4950. PA-D01, PA-D02 and PA-D03 are
+resolved. Both seats confirm the shared metadata barrier precedes the sole
+recovery engine, verification refresh shares serialization, the CLI layout
+replacement has its exact waiver, and the existing files capability has its
+concrete assembly prerequisite. No blockers or governing decisions remain open.
+The adversary derives fresh M1 from the committed bytes containing this entry;
+Josh's approval still gates expansion.
