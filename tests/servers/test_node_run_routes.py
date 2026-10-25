@@ -6,15 +6,19 @@ import json
 import logging
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
+from psycopg import Error, OperationalError
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from starlette.testclient import TestClient
 
 from gobby.agents.agent_health import bootstrap_accounting_stall_error, session_never_initialized
@@ -26,7 +30,7 @@ from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.storage import workspace_machine_scope
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.checkpoints import LocalCheckpointManager
+from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
@@ -662,6 +666,71 @@ def test_terminate_failed_kill_retries_record_one_checkpoint(
         responses = [client.post(TERMINATE, headers=_headers(), json=body) for _ in range(3)]
     assert [response.json() for response in responses] == [{"terminated": False, "retry": True}] * 3
     assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
+
+
+def test_concurrent_terminate_requests_record_one_checkpoint(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    body = _terminate_body(run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id))
+    harness = _harness(db, session_manager)
+    harness.runtime.kill_succeeds = False
+    both_missed = Barrier(2)
+    original_get = LocalCheckpointManager.get
+
+    def synchronized_get(self: LocalCheckpointManager, checkpoint_id: str) -> Checkpoint | None:
+        checkpoint = original_get(self, checkpoint_id)
+        if checkpoint is None:
+            both_missed.wait(timeout=10)
+        return checkpoint
+
+    monkeypatch.setattr(LocalCheckpointManager, "get", synchronized_get)
+    with TestClient(harness.client.app, raise_server_exceptions=False) as client:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            requests = [
+                pool.submit(client.post, TERMINATE, headers=_headers(), json=body) for _ in range(2)
+            ]
+            responses = [request.result(timeout=30) for request in requests]
+    assert [response.status_code for response in responses] == [200, 200]
+    assert [response.json() for response in responses] == [{"terminated": False, "retry": True}] * 2
+    assert len(LocalCheckpointManager(db).list_for_task(task_id)) == 1
+
+
+@pytest.mark.parametrize("error_class", [OperationalError, ForeignKeyViolation, UniqueViolation])
+def test_terminate_checkpoint_errors_prevent_kill(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    node_sessions: tuple[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    error_class: type[Error],
+) -> None:
+    db = session_manager.db
+    parent, child = node_sessions
+    task_id = _task(db, sample_project["id"])
+    run_id = _run(db, parent, child, task_id=task_id)
+    harness = _harness(db, session_manager)
+
+    def fail_checkpoint(self: LocalCheckpointManager, checkpoint: Checkpoint) -> Checkpoint:
+        raise error_class("unrelated checkpoint failure")
+
+    monkeypatch.setattr(LocalCheckpointManager, "create", fail_checkpoint)
+    with harness.client as client, pytest.raises(error_class, match="unrelated checkpoint failure"):
+        client.post(
+            TERMINATE,
+            headers=_headers(),
+            json=_terminate_body(
+                run_id, cause="doom_loop", checkpoint=_checkpoint(task_id, run_id)
+            ),
+        )
+    assert harness.runtime.terminated == []
+    run = LocalAgentRunManager(db).get(run_id)
+    assert run is not None and run.pending_terminal_action is None
 
 
 def test_terminate_retry_after_intent_failure_records_one_checkpoint(

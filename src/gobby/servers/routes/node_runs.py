@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
+from psycopg.errors import UniqueViolation
 from pydantic import BaseModel, ValidationError
 
 from gobby.agents.agent_health import (
@@ -158,20 +159,25 @@ def _record_checkpoint(
     record_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{run.id}:{checkpoint.commit_sha}"))
     if manager.get(record_id) is not None:
         return
-    manager.create(
-        Checkpoint(
-            id=record_id,
-            task_id=task_id,
-            session_id=run.child_session_id,
-            run_id=run.id,
-            ref_name=checkpoint.ref_name,
-            commit_sha=checkpoint.commit_sha,
-            parent_sha=checkpoint.parent_sha,
-            files_changed=checkpoint.files_changed,
-            message=checkpoint.message,
-            created_at=datetime.now(UTC),
+    try:
+        manager.create(
+            Checkpoint(
+                id=record_id,
+                task_id=task_id,
+                session_id=run.child_session_id,
+                run_id=run.id,
+                ref_name=checkpoint.ref_name,
+                commit_sha=checkpoint.commit_sha,
+                parent_sha=checkpoint.parent_sha,
+                files_changed=checkpoint.files_changed,
+                message=checkpoint.message,
+                created_at=datetime.now(UTC),
+            )
         )
-    )
+    except UniqueViolation as exc:
+        # Another request may insert this run/commit after our lookup missed.
+        if exc.diag.constraint_name != "checkpoints_pkey":
+            raise
 
 
 async def _body[T: BaseModel](request: Request, model: type[T]) -> T:
