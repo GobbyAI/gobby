@@ -308,7 +308,9 @@ pub(super) fn index_discovered_files(
         start.elapsed().as_millis() as u64,
         Some(eligible_files),
         (request.full && request.path_filter.is_none()).then_some(env!("CARGO_PKG_VERSION")),
-        true,
+        // A path-scoped run reconciles only its filter. Advancing the watermark
+        // would hide unreconciled changes from the freshness pre-gate.
+        request.path_filter.is_none(),
     )?;
     outcome.durations.stats_ms = stats_start.elapsed().as_millis() as u64;
     outcome.durations.total_ms = start.elapsed().as_millis() as u64;

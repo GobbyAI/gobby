@@ -1,4 +1,5 @@
-//! Lock-free, hash-free freshness pre-gate.
+//! Lock-free freshness probes: a hash-free pre-gate, and the stale-path list a
+//! read-only checkout reports instead of serving its rows silently.
 //!
 //! `project_changed_since` answers one question without taking the per-project
 //! advisory lock and without hashing any file: has anything under the project
@@ -8,7 +9,7 @@
 //! to the existing lock + incremental reconcile, which is exactly as correct as
 //! before.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -169,6 +170,88 @@ pub fn project_changed_since(
         return true;
     }
     false
+}
+
+/// Worktree paths a checkout that cannot refresh its index must not serve
+/// silently: a served file whose bytes differ from its served hash, a served
+/// path no longer discovered, and a discovered indexable file no row serves.
+/// `served` maps each visible path to the content hash it serves. A served file
+/// whose inode predates the threshold is taken as unchanged without being
+/// opened; the rest are hashed, so a touched file with the same bytes is not
+/// reported.
+pub fn stale_paths(
+    project_root: &Path,
+    last_indexed_at: Option<SystemTime>,
+    served: &HashMap<String, String>,
+    extra_excludes: &[String],
+    options: walker::DiscoveryOptions,
+) -> Vec<String> {
+    let Ok(root) = project_root.canonicalize() else {
+        return served.keys().cloned().collect();
+    };
+    let threshold = last_indexed_at.map(|at| at.checked_sub(SKEW_MARGIN).unwrap_or(at));
+    let excludes = effective_excludes(extra_excludes);
+    let mut stale = Vec::new();
+    let mut discovered = HashSet::new();
+    // Discovery's dedup, keyed the same way: first file per canonical path wins.
+    let mut seen = HashSet::new();
+
+    for file in walker::walk_files(&root, options) {
+        let path = file.path.as_path();
+        let key = if file.direct {
+            path.to_path_buf()
+        } else {
+            path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+        };
+        if !seen.insert(key) {
+            continue;
+        }
+        let Ok(rel) = relative_path(path, &root) else {
+            continue;
+        };
+
+        if let Some(threshold) = threshold
+            && file.direct
+            && served.contains_key(&rel)
+            && let Ok(meta) = path.metadata()
+            && meta.modified().is_ok_and(|modified| modified <= threshold)
+            && status_unchanged_since(&meta, threshold)
+        {
+            if walker::passes_path_filters(&root, path, &excludes)
+                && walker::indexable_len(meta.len())
+            {
+                discovered.insert(rel);
+            }
+            continue;
+        }
+
+        if walker::classify_file(&root, path, &excludes).is_none() {
+            continue;
+        }
+        discovered.insert(rel.clone());
+        let changed = match served.get(&rel) {
+            None => true,
+            Some(hash) => {
+                crate::index::hasher::file_content_hash(path)
+                    .ok()
+                    .as_deref()
+                    != Some(hash.as_str())
+            }
+        };
+        if changed {
+            stale.push(rel);
+        }
+    }
+
+    stale.extend(
+        served
+            .keys()
+            .filter(|rel| !discovered.contains(rel.as_str()))
+            .cloned(),
+    );
+    stale.sort();
+    stale.dedup();
+    stale
 }
 
 /// Returns `true` when one explicitly requested overlay file differs from the

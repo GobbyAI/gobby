@@ -68,6 +68,7 @@ fn public_surface_is_pinned() {
         "mod contract",
         "mod evidence",
         "mod index",
+        "mod node",
         "mod test_env",
         "use CodeFactWriteRequest",
         "use CodeFactWriteSummary",

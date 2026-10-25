@@ -113,6 +113,7 @@ fn freshness_warning(quiet: bool, status: &freshness::FreshnessStatus) -> Option
     }
     match status {
         freshness::FreshnessStatus::SkippedBusy(_) => status.busy_warning(),
+        freshness::FreshnessStatus::Stale(_) => status.stale_warning(),
         freshness::FreshnessStatus::Degraded(error) => Some(format!(
             "warning: index refresh failed ({error}); serving existing index \
              (pass --allow-stale to skip this check)"
