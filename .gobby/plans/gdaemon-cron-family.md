@@ -18,7 +18,8 @@ standalone runs the same owner, and nodes neither start it nor mutate its rows.
 This work needs to exist: the ledger still names Python for all 28 rows. Existing
 front-door routing and native code-index handlers solve part of the problem;
 reuse them. There is no second scheduler, plugin registry, queue broker or new
-database schema. Each deliverable below is one independently verifiable outcome.
+database service. Three nullable run-output metadata columns are the sole schema
+addition. Each deliverable below is one independently verifiable outcome.
 
 ## Decision Record
 `kind: framing`
@@ -46,9 +47,9 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
 - Use `proxy`/`compare` only during the parity transition. After native takeover,
   Cron has no Python fallback. Rollback before deletion uses the same binaries
   and routing edit; rollback after deletion requires the prior coherent release.
-- **Browser ownership ruling (2026-10-24, Orchestrator via Triage).** A shared
-  verifier-only implementation outcome created from #24659 owns both existing
-  gobby_session cookie classes. Cron's 4.1b registers only the nine /api/cron
+- **Browser ownership ruling (2026-10-24, Orchestrator via Triage).** #24967's
+  shared verifier-only implementation owns both existing
+  gobby_session cookie classes. Cron's 4.1b registers only the ten /api/cron
   routes for Caller::Browser and preserves cookie, origin and CSRF behavior
   route by route. It carries `security-review` and depends on the shared
   verifier; no Cron verifier, lease-admin browser access or other-family
@@ -58,6 +59,18 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
   native scheduled/manual admission, reconciliation and system registration,
   after the restart boundary proves Python admission has stopped. Proxy/compare
   retain Python ownership. Isolated tests explicitly exercise native ownership.
+- **Debt disposition (2026-10-24, Orchestrator via Triage).** Adopt D1-D7 from
+  the committed #24961 report, retaining K1's concurrency, ownership and durable
+  child contracts. Correct accidental behavior through the shared #24963
+  behavior-waiver manifest; no whole Cron surface is dropped. Native readiness
+  must assert each approved replacement, rather than mask or skip a difference.
+  #24964 owns the shared native CORS/preflight boundary independently of #24659.
+- D7 preserves complete raw shell output in shared files_home storage from
+  #24968; 1,048,576 bytes bounds only the inline decoded copy, split equally
+  between prefix/tail. The amended ruling retains Josh's full-output preference
+  (memory 6b880faa). Existing Cron run deletion/retention in 2.2 owns overflow
+  cleanup; #24702 remains exclusively the code-index prune owner. Add one native
+  output read plus MCP/CLI handoffs, with 64 KiB default/1 MiB maximum reads.
 - **Mailbox scope ruling (2026-10-24, Orchestrator via Triage).** Port today's
   delivered-mailbox retention against inter_session_messages, preserving its
   cutoff, bounded batch and cadence. Remove only the Python mailbox branch.
@@ -75,32 +88,126 @@ coordination route, including the Stage 2/Stage 3 ordering clarification:
 ## Pre-expansion capability bindings
 `kind: framing`
 
-The Orchestrator's CRON-004/005 ruling establishes two named implementation
+The Orchestrator's CRON-004/005 ruling establishes the following implementation
 prerequisites. These are capability bindings, not dependencies on approval of
 another plan or on a family's whole retirement root:
 
-- **Shared browser-cookie verifier implementation, owner created from #24659
-  before Cron expansion.** Bind 3.1, 4.1 and 4.1b to that implementation-only
+- **Shared browser-cookie verifier implementation, #24967.** Bind 3.1, 4.1
+  and 4.1b to that implementation-only
   outcome, including both gobby_session classes and verified class/selectors.
   Exclude #24659's root and cookie retirement: that retirement waits for
   #24713, which already waits for Cron #21582. Plan approval is not landed
   service evidence.
-- **Shared native CORS/preflight boundary, owner filed under #21542 after the
-  three route-family debt passes report.** Bind 4.1b to this separate shared
+- **Shared native CORS/preflight boundary, #24964 under #21542.** Bind 4.1b to this separate shared
   front-door implementation outcome. Every family consumes one configured
   credentialed CORS boundary on success and auth errors, with applicable
   unauthenticated preflight handled before authentication. This outcome is
   separate from the cookie verifier; do not fold it into #24659 or implement
   CORS independently in Cron.
+- **Shared files_home safe I/O, #24968.** Bind 2.2/2.3 and the output-read
+  outcome to this implementation-only capability outside both family roots.
+  Reuse held-root descriptor open, private 0600 sibling temp raw-stream writing,
+  file/directory fsync, durable replace, descriptor range reads and expected-
+  object conditional unlink. Runtime injects this shared capability; gcron
+  gains no dependency on gprojects, Projects' root or its retirement.
 
-Before Cron expansion, the Orchestrator carries the updated capability scope
-through its owning approval/expansion process, creates/resolves both concrete
-implementation task references, inserts their blocked-by edges in the named deliverable headings,
-checks the full cross-plan graph for cycles and refreshes the canonical
-reviewed bytes. Base and expansion validation and a fresh adversary-derived
-M1 must cover those resolved references. Cron cannot expand or dispatch while
-either binding is unresolved. Implementation/activation additionally requires
-landed proof of each capability; a planning-task closure never supplies it.
+The headings bind #24967 and #24964 directly. Before Cron expansion, the
+Orchestrator checks the full cross-plan graph for cycles and carries each
+capability's scope through its owning approval process. Base/expansion validation
+and fresh adversary-derived M1 cover these concrete edges. Dispatch/activation
+requires landed capability proof, including exact-SHA Security approval of the
+shared verifier; a planning-task closure never supplies it. Neither edge waits
+on #24659 or its retirement branch. #24963 is the shared waiver/readiness
+prerequisite, and #24968 is the shared byte-storage prerequisite. These are
+concrete implementation task references, not unbound future owners.
+
+## Debt corrections and shared conventions
+`kind: framing`
+
+Evidence authority is `.gobby/plans/research/cron-family-debt.md` at
+0df80561ea3953af4db3afb386d730960407ba08. Its D1-D7 dispositions are approved
+behavior changes, not whole-surface removals. #24963 owns the single manifest
+`docs/contracts/parity-waivers.json`, its schema/loader and all shared consumers.
+1.1 adds Cron entries with required fields id, surface (the exact ledger key),
+behaviour, decision and replacement. IDs use lowercase kebab components in
+`<family>.<surface-slug>.<behaviour-slug>` and stay stable once cited:
+
+- D1: `cron.patch-job.schedule-validation` for HTTP PATCH /api/cron/jobs/{job_id};
+  decision `.gobby/plans/gdaemon-cron-family.md#3.2`.
+- D2: `cron.patch-job.presence-and-merge`, `cron.mcp-update-job.presence-and-merge`
+  and `cron.cli-edit.presence-and-merge` for the corresponding PATCH, MCP
+  gobby-cron:update_cron_job and CLI gobby cron edit surfaces;
+  decision `.gobby/plans/gdaemon-cron-family.md#1.3`.
+- D3: `cron.list-jobs.pagination`, `cron.mcp-list-jobs.pagination` and
+  `cron.cli-list.pagination` for HTTP GET /api/cron/jobs, MCP
+  gobby-cron:list_cron_jobs and CLI gobby cron list;
+  decision `.gobby/plans/gdaemon-cron-family.md#3.1`.
+- D4: `cron.toggle-job.future-schedule`, `cron.mcp-toggle-job.future-schedule`
+  and `cron.cli-toggle.future-schedule` for POST /api/cron/jobs/{job_id}/toggle,
+  MCP gobby-cron:toggle_cron_job and CLI gobby cron toggle;
+  decision `.gobby/plans/gdaemon-cron-family.md#1.3`.
+- D5: `cron.patch-job.atomic-schedule-edit`,
+  `cron.mcp-update-job.atomic-schedule-edit` and
+  `cron.cli-edit.atomic-schedule-edit` for the three update surfaces above;
+  decision `.gobby/plans/gdaemon-cron-family.md#1.3`.
+- D6: `cron.run-job.timeout-reap`, `cron.mcp-run-job.timeout-reap` and
+  `cron.cli-run.timeout-reap` for HTTP POST /api/cron/jobs/{job_id}/run,
+  MCP gobby-cron:run_cron_job and CLI gobby cron run; these cover their shared
+  scheduled/manual shell lifecycle contract without accepting leaked processes;
+  decision `.gobby/plans/gdaemon-cron-family.md#2.3`.
+- D7: `cron.get-run.output-budget`, `cron.list-runs.output-budget`,
+  `cron.mcp-list-runs.output-budget` and `cron.cli-runs.output-budget` for HTTP
+  GET /api/cron/runs/{run_id}, GET /api/cron/jobs/{job_id}/runs, MCP
+  gobby-cron:list_cron_runs and CLI gobby cron runs;
+  decision `.gobby/plans/gdaemon-cron-family.md#2.3`.
+- D7 additive retrieval: `cron.get-run-output.native-extension`,
+  `cron.mcp-get-run-output.native-extension` and `cron.cli-output.native-extension`
+  for HTTP GET /api/cron/runs/{run_id}/output, MCP
+  gobby-cron:get_cron_run_output and CLI gobby cron output. Their native-only
+  extension cases retain explicit provenance and never fabricate Python parity;
+  decision `.gobby/plans/gdaemon-cron-family.md#3.1a`.
+
+Each listed ID is one exact-surface entry, not a wildcard or Cron-owned format.
+Its decision cites this plan's owning section under #24952. The replacement
+binds the approved plan section/decision, exact operation/input, recorded Python
+response/effect, required native response/effect and reason. Keep recorded Python
+origin. Ledger generation, corpus/replay and compare consume the same #24963
+entry and report its citation as Waived for changed behavior, or native-extension
+for the additive surfaces; an additive surface without its entry fails. Unlisted
+differences fail. Neither a
+normalization mask nor Skipped is a waiver. Sequential cases outside the named
+correction remain equal. Native race/cleanup assertions supplement the Python
+oracle where reproducing its bug would be unsafe or nondeterministic.
+
+Use one **native domain-error convention** across family adapters: validation,
+missing, forbidden, conflict, capacity, unavailable and internal are distinct
+typed classes. Preserve intentional existing wire envelopes with explicit
+transport adapters; Cron's corrected schedule validation uses 400 with
+`{"detail":"Invalid cron schedule"}`, forbidden remains 403, and unexpected
+internal errors reveal no database diagnostics. Changed envelopes require an
+exact #24963 waiver. Reuse shared runtime error facilities where sufficient;
+this plan creates no Cron exception framework or unrelated envelope migration.
+
+Use one **presence-preserving partial-update convention** across HTTP, MCP and
+CLI service adapters: Absent leaves a field unchanged, Clear is explicit null,
+and Set(value) supplies a value. Clear is accepted for description, display_name,
+and schedule fields inactive under the merged schedule_type. Reject null for
+name, schedule_type, timezone, action_type, action_config and enabled, and for
+the active schedule's required field. Preserve display_name's empty-string
+reset. Merge under the row lock, validate that candidate, then write once;
+repeating the existing schedule_type does not require resending stored fields.
+Empty updates retain the existing no-fields rejection.
+
+Use #24963's **shared parity-readiness convention**: at least one ordinary
+Passed case, explicit expected-native assertions for every cited Waived case,
+and stable coverage of every required case. A report containing only Skipped
+fails; an unwaived Skipped case cannot establish readiness. Transient race
+diagnostics remain possible, but each required case must receive stable proof.
+Use #24964's **shared outer CORS/preflight convention**: configured headers on
+success and auth errors and applicable unauthenticated preflight before auth,
+without family-local CORS code. Conflict with another family's error,
+presence, readiness or CORS convention goes through Triage to the Orchestrator
+before review; a family does not silently fork the shared contract.
 
 ## Constraints
 `kind: framing`
@@ -159,6 +266,16 @@ only after their native parity checks pass. The ten CLI and eight MCP rows stay
 service contract in 3.4 carries their behavior, serialization, errors and
 restrictions. Ledger statuses are exactly `proxied`, `delegated` (ported), or
 `dropped by decision #N`; assignment to a future owner does not mark a row done.
+All approved D1-D7 deviations carry the applicable #24963 behavior ID in ledger
+owner notes and the service/corpus/compare evidence. They do not change the
+28-row inventory or create a whole-surface dropped status.
+The amended D7 also adds HTTP GET /api/cron/runs/{run_id}/output here, MCP
+gobby-cron:get_cron_run_output in #21570, and CLI gobby cron output in #21571.
+These are three additive native surfaces, not replacements for original rows.
+4.3 records the delivered new HTTP row as delegated (29 Cron-owned/handoff rows
+at that point); each front-door owner adds its new delegated row only when its
+adapter is delivered. The final cross-owner inventory is 31 rows. Never claim
+an unimplemented new adapter is proxied through a nonexistent Python handler.
 
 | Ledger row | Outcome owner |
 | --- | --- |
@@ -190,11 +307,14 @@ restrictions. Ledger statuses are exactly `proxied`, `delegated` (ported), or
 | MCP gobby-cron:toggle_cron_job | #21570; 3.4 service/schema handoff |
 | MCP gobby-cron:update_cron_job | #21570; 3.4 service/schema handoff |
 | HTTP GET /api/admin/cron/protected-runs | 3.3.1 |
+| HTTP GET /api/cron/runs/{run_id}/output | additive D7; 3.1a.1-3.1a.3 |
+| MCP gobby-cron:get_cron_run_output | additive D7; #21570; 3.4 service handoff |
+| CLI gobby cron output | additive D7; #21571; 3.4 service handoff |
 
 ## P1: Portable schedule and storage contracts
 `kind: framing`
 
-### 1.1 Characterize Cron behavior before takeover [category: test]
+### 1.1 Characterize Cron behavior before takeover [category: test] (depends: #24963)
 `kind: deliverable`
 
 Targets:
@@ -202,9 +322,11 @@ Targets:
 - `tests/contracts/cron/services.json`
 - `tests/contracts/cron/lifecycle.json`
 - `tests/contracts/http/cron.json`
+- `tests/contracts/http/cron-output.json`
 - `tests/contracts/http/cron-browser.json`
 - `tests/contracts/http/manifest.json::*` — scope-reason: register the Cron corpus with Python origin
 - `tests/contracts/test_cron_oracle.py`
+- `docs/contracts/parity-waivers.json`
 
 **Research context:** Existing oracles are
 `src/gobby/storage/cron_schedule.py::compute_next_run`,
@@ -222,12 +344,86 @@ project scope, name uniqueness, parked rows and run child hydration. Record
 status/body plus resulting rows for writes and dispatch calls for actions.
 Normalize only generated IDs, clock fields and measured durations with existing
 corpus mechanisms. Do not normalize statuses, errors, ownership or child links.
+The #24961 report at 0df80561ea3953af4db3afb386d730960407ba08 establishes
+D1-D7's approved corrections. Record original Python evidence unchanged and bind
+native expectations through the real per-surface IDs in Debt corrections and
+shared conventions. This leaf adds every listed Cron entry to
+`docs/contracts/parity-waivers.json` after #24963 supplies its format/loader.
+Each entry records exact ledger surface, one-sentence behaviour, decision
+the exact decision path/section enumerated above and the required native
+replacement; fixtures retain original Python observations separately. Include invalid expression/timestamp/no-future
+PATCH, nullable clears and stored-field merges, more than 50 jobs with retired
+rows and equal timestamps, expired ordinary toggle versus protected park/wake,
+concurrent schedule edits, TERM-ignoring children and oversized/invalid-UTF-8
+output. K1's admission rollback, owner scoping and child-link-before-dispatched
+remain unwaived. Native race and cleanup assertions supplement the oracle;
+do not reproduce a Python leak or nondeterministic race as the native golden.
+
+This leaf's exact manifest inventory (each surface below uses its full ledger
+key, including the HTTP/CLI/MCP prefix) is:
+- D1: `cron.patch-job.schedule-validation`, HTTP PATCH /api/cron/jobs/{job_id},
+  decision `.gobby/plans/gdaemon-cron-family.md#3.2`; schedule errors become
+  safe 400 `{"detail":"Invalid cron schedule"}` with no write.
+- D2: `cron.patch-job.presence-and-merge`,
+  `cron.mcp-update-job.presence-and-merge`, `cron.cli-edit.presence-and-merge`,
+  respectively HTTP PATCH /api/cron/jobs/{job_id}, MCP
+  gobby-cron:update_cron_job, CLI gobby cron edit; decision
+  `.gobby/plans/gdaemon-cron-family.md#1.3`. Absent/Clear/Set retains omissions,
+  clears nullable description/display_name/inactive schedule fields only, and
+  validates merged stored fields; required nulls reject, empty display name resets.
+- D3: `cron.list-jobs.pagination`, `cron.mcp-list-jobs.pagination`,
+  `cron.cli-list.pagination`, respectively HTTP GET /api/cron/jobs, MCP
+  gobby-cron:list_cron_jobs, CLI gobby cron list; decision
+  `.gobby/plans/gdaemon-cron-family.md#3.1`. HTTP/MCP default 50/max 200 keyset
+  pages sort created_at DESC,id DESC, filter retired rows before limit and
+  return page count/nullable next_cursor. CLI walks 50-row pages for a complete
+  listing; ordinary render shapes stay intact.
+- D4: `cron.toggle-job.future-schedule`,
+  `cron.mcp-toggle-job.future-schedule`, `cron.cli-toggle.future-schedule`,
+  respectively HTTP POST /api/cron/jobs/{job_id}/toggle, MCP
+  gobby-cron:toggle_cron_job, CLI gobby cron toggle; decision
+  `.gobby/plans/gdaemon-cron-family.md#1.3`. Ordinary invalid/expired enable
+  fails unchanged (HTTP safe 400); protected park/wake remains unwaived.
+- D5: `cron.patch-job.atomic-schedule-edit`,
+  `cron.mcp-update-job.atomic-schedule-edit`, `cron.cli-edit.atomic-schedule-edit`,
+  respectively the D2 surfaces; decision
+  `.gobby/plans/gdaemon-cron-family.md#1.3`. One row lock covers merge,
+  validation and next-run write; deterministic edit/admission tests preserve CAS.
+- D6: `cron.run-job.timeout-reap`, `cron.mcp-run-job.timeout-reap`,
+  `cron.cli-run.timeout-reap`, respectively HTTP POST /api/cron/jobs/{job_id}/run,
+  MCP gobby-cron:run_cron_job, CLI gobby cron run; decision
+  `.gobby/plans/gdaemon-cron-family.md#2.3`. Timeout/cancellation force-kill
+  and await disposable TERM-ignoring children; timeout failure envelopes stay.
+- D7: `cron.get-run.output-budget`, `cron.list-runs.output-budget`,
+  `cron.mcp-list-runs.output-budget`, `cron.cli-runs.output-budget`,
+  respectively HTTP GET /api/cron/runs/{run_id}, HTTP GET
+  /api/cron/jobs/{job_id}/runs, MCP gobby-cron:list_cron_runs, CLI gobby cron runs;
+  decision `.gobby/plans/gdaemon-cron-family.md#2.3`. Only the inline decoded
+  copy is capped at 1,048,576 UTF-8 bytes (first/last 524,288); complete raw bytes
+  persist through #24968, with total raw bytes/truncation/output_url and
+  run-deletion-owned cleanup. Old unknown metadata stays absent.
+- D7 extensions: `cron.get-run-output.native-extension`,
+  `cron.mcp-get-run-output.native-extension`, `cron.cli-output.native-extension`,
+  respectively HTTP GET /api/cron/runs/{run_id}/output, MCP
+  gobby-cron:get_cron_run_output, CLI gobby cron output; decision
+  `.gobby/plans/gdaemon-cron-family.md#3.1a`. Reads default 65,536/max 1,048,576
+  bytes, raw HTTP/CLI and MCP base64, with existing run/project auth. These
+  report native-extension with citation and native provenance, never Waived
+  Python success. Missing registry entries fail the shared gates.
+
 Record ordinary and browser-testing gobby_session cookies separately across all
-nine /api/cron routes, including mutation rows/effects, selector mismatches,
+nine existing /api/cron routes, including mutation rows/effects, selector mismatches,
 expiry/revocation, absent/invalid Authorization and missing credentials. Pin
 the current credentialed CORS/preflight responses for allowed and disallowed
 origins and the absence of an extra Cron CSRF-token/Origin rejection. The
 middleware/source citations and shared-verifier ownership are repeated in 4.1b.
+The new tenth Cron/browser route, GET /api/cron/runs/{run_id}/output, is the
+approved D7 native extension. Its separate cron-output.json fixture records
+native provenance, exact raw range/limit/auth errors and both cookie classes'
+read authority; it is not a Python success oracle. Include full raw bytes after
+the inline cap and invalid-UTF8 cases, storage failures, project substitution,
+run deletion and overflow cleanup. Its new MCP/CLI mappings carry their exact
+native-extension IDs to the front-door owners.
 Observed: source inspection only; these new tests have not run.
 Planned: isolated pytest of test_cron_oracle and HTTP corpus recording/replay.
 
@@ -236,12 +432,74 @@ interface, with no implementation or domain ownership transferred by this leaf.
 
 **Acceptance:**
 - 1.1.1 - Schedule vectors reproduce Python results at fixed instants, including field order and DST. test: `tests/contracts/test_cron_oracle.py::test_schedule_vectors_match_python`.
-- 1.1.2 - Service vectors reproduce CRUD, parking, filtering, protection and serialization. test: `tests/contracts/test_cron_oracle.py::test_service_vectors_match_python`.
-- 1.1.3 - Lifecycle vectors reproduce admission conflicts, durable children, backoff and recovery. test: `tests/contracts/test_cron_oracle.py::test_lifecycle_vectors_match_python`.
-- 1.1.4 - The HTTP fixture records all ten owned routes and error branches, with Python origin. file: `tests/contracts/http/cron.json`.
-- 1.1.5 - Browser vectors record both cookie classes, all nine Cron routes, selector and credential failures, mutation effects, CORS/preflight and current origin/CSRF behavior without normalization of authority. test: `tests/contracts/test_cron_oracle.py::test_browser_vectors_match_python`.
+- 1.1.2 - Service vectors retain original Python CRUD, parking, filtering, protection and serialization evidence and bind D1-D5/D7 native replacements to exact #24963 behavior IDs. test: `tests/contracts/test_cron_oracle.py::test_service_vectors_match_python`.
+- 1.1.3 - Lifecycle vectors reproduce admission conflicts, durable children, backoff and recovery; D5-D7 native race/cleanup/resource assertions cite exact waivers. test: `tests/contracts/test_cron_oracle.py::test_lifecycle_vectors_match_python`.
+- 1.1.4 - The original ten HTTP routes/error branches retain Python origin; the additive raw-output read has explicit approved native-extension provenance, bounded range/auth/failure/retention cases and no fabricated Python equality. file: `tests/contracts/http/cron.json`; file: `tests/contracts/http/cron-output.json`.
+- 1.1.5 - Browser vectors record both cookie classes for the nine Python Cron routes plus explicit native-extension authority for the tenth output read; selectors, credentials, effects and CORS/CSRF policy are not normalized. test: `tests/contracts/test_cron_oracle.py::test_browser_vectors_match_python`.
+- 1.1.6 - Every D1-D7 Cron waiver has its real stable per-surface ID, exact ledger surface, behaviour, approved decision and replacement in the one shared manifest; the oracle binds both Python observations and native assertions to it. file: `docs/contracts/parity-waivers.json`.
 
-### 1.2 Native schedule and value model [category: code] (depends: 1.1, #21559)
+### 1.1a Durable bounded-output metadata schema [category: code] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gcore/assets/schema/migrations/478_cron_output_capture.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register the migration and refresh the embedded schema identity
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the cron_runs column catalog
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: refresh latest-version/checksum/root identity literals and golden grant bindings
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: assert the three nullable output metadata columns and refreshed identity
+- `crates/gcore/tests/cron_output_capture.rs`
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: refresh and verify the derived embedded-schema identity contract
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerate latest-version/checksum/assets-root identity
+- `tests/runtime_grants/golden/brokered_datastores.json::*` — scope-reason: re-sign the updated schema identity
+- `tests/runtime_grants/golden/direct_datastores.json::*` — scope-reason: re-sign the updated schema identity
+- `tests/runtime_grants/golden/old_client_new_grant.json::*` — scope-reason: re-sign the updated schema identity
+- `tests/runtime_grants/golden/payload_skew_unknown_field.json::*` — scope-reason: re-sign the updated schema identity
+- `tests/runtime_grants/golden/unavailable_datastores.json::*` — scope-reason: re-sign the updated schema identity
+- `crates/gdaemon/Cargo.toml`
+- `crates/gcode/Cargo.toml`
+- `crates/ghook/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: release pins for the shared gcore schema change
+
+**Research context:** The Orchestrator approved D7's fixed output budget and
+amended its storage design to typed nullable columns, not JSONB, plus the
+overflow reference needed to preserve full raw output. Source
+evidence `crates/gcore/assets/schema/baseline.sql:2384-2400`, excerpt_hash
+`4c7dee8671d3b18caef2b66518a0b7f82c738002b8ac6b913038923f993e8f55`,
+shows `2392|     output text,` and `2393|     error text,` with no capture
+metadata. Add output_bytes_seen BIGINT, output_truncated BOOLEAN and
+output_overflow_ref TEXT to cron_runs through one additive migration. Leave old
+rows NULL/NULL/NULL; add no backfill, table, storage service or config knob.
+The runtime role's existing table grants cover these columns. A new shell
+completion writes all three together. The reference is a files_home-relative
+`cron/<run-UUID>/output.raw` locator, never a caller-provided or absolute path.
+Historical/non-shell rows keep NULL when capture facts are unknown.
+
+478 is the next free migration at plan time. At the executor's starting tip,
+take the next free number and use it consistently in the filename, migration
+registry and every derived carrier. Preserve the shipped baseline and prior
+migration receipts. Reuse the schema/identity regeneration and golden-grant
+signing path documented by the runtime-family migration; update embedded
+assets, catalog, grant identity, Python identity and all five signed fixtures
+together. Sweep literal latest-version/checksum consumers before committing.
+The gcore dependency change bumps gcode, gdaemon and ghook by one patch with
+lock/pins; rebuild other affected dependents, including gclient, at the release
+owner's coordinated cutover. No live database migration occurs in planning.
+Planned: isolated `cargo test -p gobby-core --features postgres --test
+cron_output_capture --test schema_contract --test catalog_manifest_freshness`,
+`cargo test -p gobby-daemon --test cli_contract`, release-pin pytest and
+`tests/runtime_grants/test_golden_vectors.py` on the isolated hub.
+
+**Granularity:** More than six production targets are the one additive schema
+change's mandatory identity, signed-fixture and release carriers. They must
+commit together; model/executor changes remain separately owned below.
+
+**Acceptance:**
+- 1.1a.1 - Fresh and upgraded schemas expose nullable BIGINT output_bytes_seen, BOOLEAN output_truncated and TEXT output_overflow_ref; old rows retain NULL/NULL/NULL and existing output is unchanged. test: `crates/gcore/tests/cron_output_capture.rs::output_capture_migration_preserves_existing_runs`.
+- 1.1a.2 - Embedded schema, catalog, Python expectation, CLI identity and signed grants all identify the same migration bytes. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+- 1.1a.3 - gcode, gdaemon and ghook receive this leaf's patch bumps, lock and pins. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 1.2 Native schedule and value model [category: code] (depends: 1.1a, #21559)
 `kind: deliverable`
 
 Targets:
@@ -269,7 +527,16 @@ position, aliases and day semantics before evaluation; keep timezone and
 calendar compatibility in this module. Restrict the parser's additional syntax
 to what the Python API accepted. A vector difference requires a compatibility
 fix, never silent schedule widening or loss. UTF-8/JSON/timestamps retain Python
-wire formatting. This leaf adds no ticking task or database migrations.
+wire formatting. Carry 1.1a's nullable output_bytes_seen, output_truncated and
+output_overflow_ref as typed optional fields. Omit unknown metadata from
+old/non-shell full and brief JSON. For newly captured shell output emit byte
+count/truncation, including zero/false, plus output_url pointing to
+/api/cron/runs/{run_id}/output; retain the storage locator internally. The output
+string stays unchanged below the inline budget. These new
+shell metadata fields and bounded-output cases use the exact D7
+`cron.get-run.output-budget`, `cron.list-runs.output-budget`,
+`cron.mcp-list-runs.output-budget` and `cron.cli-runs.output-budget` entries
+from #24963, never a broad JSON mask. This leaf adds no ticking task or migration.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-cron --test schedule`, plus pins.
 
 **Granularity:** More than six production targets are the package setup and its
@@ -277,7 +544,7 @@ required release carriers. One pure schedule/value contract remains the outcome.
 
 **Acceptance:**
 - 1.2.1 - Every schedule vector gives the Python next instant or no next instant, and accepts/rejects the same grammar. test: `crates/gcron/tests/schedule.rs::schedule_vectors_match_python`.
-- 1.2.2 - Job/run/child JSON matches full and brief service vectors, preserving aware UTC values and nulls. test: `crates/gcron/tests/schedule.rs::models_match_python_wire`.
+- 1.2.2 - Job/run/child full and brief JSON preserve aware UTC/null values; shell metadata follows the four exact D7 surface waivers while old/non-shell payloads remain unchanged. test: `crates/gcron/tests/schedule.rs::models_match_python_wire`.
 - 1.2.3 - gcode, gdaemon and ghook receive this leaf's patch bumps, lock and pins. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ### 1.3 Native job repository and system-row mutations [category: code] (depends: 1.2)
@@ -301,14 +568,35 @@ the distinct system-bookkeeping update path. Parking is enabled=true with
 next_run_at=NULL; wake recomputes the schedule. Ordinary toggle/edit/delete
 cannot alter protected system definitions. Registration is a name-unique
 upsert that preserves a parked row while repairing definition drift.
+The approved #24961 D2/D4/D5 corrections use the shared #24963 entries
+`cron.patch-job.presence-and-merge`, `cron.patch-job.atomic-schedule-edit` and
+`cron.toggle-job.future-schedule`, plus their MCP/CLI counterparts recorded by
+1.1. Use Absent/Clear/Set consistently: only description, display_name and
+inactive schedule fields accept Clear; required name/type/timezone/action/
+enabled fields and the active schedule's required value reject null.
+Keep the empty display-name reset and no-fields rejection. Lock the job row,
+check protection, merge existing fields with the patch, validate the candidate,
+compute next_run_at and commit all fields in that same transaction. Repeating
+the existing schedule_type retains its stored schedule values. An invalid
+expression/timestamp or enabled candidate with no future occurrence is a typed
+validation error with no write. No second scheduler/global admission lock is
+introduced for edits. Ordinary toggle-on similarly refuses expired/invalid
+schedules without changing the row; protected park/wake remains an intentional
+enabled=true,next_run_at=NULL contract and is not prohibited by this guard.
+The list query applies retired-row/project/enabled filtering before LIMIT,
+orders created_at DESC,id DESC and supports 50-default/1..200 keyset pages
+under `cron.list-jobs.pagination`; its HTTP contract belongs to 3.1.
 Read existing project deletion callers before preserving their batch contract;
 native bindings are owned by 2.7. No new generic repository layer is needed.
 Planned: isolated `cargo test -p gobby-cron --test jobs` and release-pin pytest.
 
 **Acceptance:**
-- 1.3.1 - CRUD, filtering, prefix cleanup, timestamp/interval normalization and duplicate names match service vectors. test: `crates/gcron/tests/jobs.rs::job_mutations_match_python`.
+- 1.3.1 - CRUD, SQL-before-limit retired filtering, deterministic keyset pages, prefix cleanup, normalization and duplicate names match service vectors plus the exact D3 waiver. test: `crates/gcron/tests/jobs.rs::job_mutations_match_python`.
 - 1.3.2 - System protection, bookkeeping, park/wake and idempotent drift reconciliation preserve parked state across restart. test: `crates/gcron/tests/jobs.rs::system_rows_remain_protected_and_parked`.
 - 1.3.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 1.3.4 - Concurrent interval/timezone edits serialize merge, protection, validation, next-instant calculation and write under one job-row lock; each committed combination is self-consistent. test: `crates/gcron/tests/jobs.rs::concurrent_schedule_edits_validate_committed_candidate`.
+- 1.3.5 - Absent/null/value updates follow field nullability and validate merged stored fields; repeated schedule_type succeeds without resending its unchanged value, and invalid candidates write nothing. test: `crates/gcron/tests/jobs.rs::patch_presence_and_merged_validation_are_atomic`.
+- 1.3.6 - Toggle-on refuses expired/invalid ordinary schedules unchanged while protected park/wake retains its separate enabled-null-next contract. test: `crates/gcron/tests/jobs.rs::toggle_requires_future_schedule_without_breaking_park`.
 
 ## P2: One hub scheduler and native action bindings
 `kind: framing`
@@ -339,6 +627,13 @@ and distinguishes missing job, active job (409) and capacity exhausted (429).
 Run ownership is local machine UUID plus a fresh scheduler_owner per daemon.
 Dispatched children do not consume scheduler slots; overlap still follows
 active child state. Reuse child hydration queries instead of a second ledger.
+K1's CAS/insertion rollback boundary remains unwaived. For D5, a concurrent
+Jobs schedule edit holds only its job-row lock; admission takes its existing
+advisory lock before the due-row CAS. An edit never acquires that global lock
+after taking the row lock. A changed due value makes the scheduled CAS fail,
+not admit the old occurrence. Test edit-versus-admission with deterministic
+barriers and validate the committed schedule/run pair under
+`cron.patch-job.atomic-schedule-edit` and its adapter-specific entries.
 Planned: `cargo test -p gobby-cron --test admission` against isolated PostgreSQL,
 including competing native/native and native/Python transactions.
 
@@ -347,14 +642,18 @@ including competing native/native and native/Python transactions.
 - 2.1.2 - Manual runs respect machine capacity and per-job uniqueness without moving schedules; all three rejection cases remain distinct. test: `crates/gcron/tests/admission.rs::manual_admission_matches_python`.
 - 2.1.3 - Run read/list/child hydration match lifecycle vectors without mutating foreign-machine rows. test: `crates/gcron/tests/admission.rs::run_queries_preserve_owner_and_children`.
 - 2.1.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 2.1.5 - A competing schedule edit and due admission obey the row/CAS ordering without deadlock, a stale occurrence or an inconsistent committed next instant. test: `crates/gcron/tests/admission.rs::schedule_edit_and_admission_share_consistent_row_order`.
 
-### 2.2 Scheduler tick, reconciliation and shutdown [category: code] (depends: 2.1)
+### 2.2 Scheduler tick, reconciliation and shutdown [category: code] (depends: 2.1, #24968)
 `kind: deliverable`
 
 Targets:
 - `crates/gcron/src/scheduler.rs`
 - `crates/gcron/src/lib.rs`
 - `crates/gcron/src/recovery.rs`
+- `crates/gcron/src/output_files.rs`
+- `crates/gcron/src/runs.rs` — edit the file created by 2.1 to couple all run deletion to owned-output cleanup
+- `crates/gcron/src/jobs.rs` — edit the file created by 1.3 to retain output cleanup on job deletion/cascade
 - `crates/gcron/tests/scheduler.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -372,22 +671,58 @@ never fail another live owner's work. Use Tokio task tracking and cancellation
 already used by RuntimeState; no persisted second queue. Stop admission first,
 then bounded drain/cancel/finalize owned inline runs while durable children
 remain separately owned. Callback failures cannot undo committed completion.
+Full raw output uses #24968's shared held-files_home descriptors, injected by
+the runtime. Its Python compatibility mechanism is
+`src/gobby/paths.py::open_files_home_descendant`, lines 173-198, excerpt_hash
+`507d158e62195fcbee805760a6e82c2c408aef3e13d37d77b79b5d0715616955`,
+including `180|     """Open a descendant file through the held files_home fd (no-follow)."""`
+and `191|         return os.open(parts[-1], open_flags, mode, dir_fd=directory_fd)`.
+Consume the native #24968 port for private 0600 temp creation, stream writing,
+fsync/replace/directory-fsync, held-descriptor range reads and expected-object
+conditional unlink. New output_files functions bind this capability only to
+`cron/<run-UUID>/output.raw` and sibling private partial files; they are not a
+second files_home implementation, attachment lifecycle or generic artifact store.
+
+D7 overflow follows Cron's existing cleanup_old_runs eligibility and six-hour
+cleanup cadence using cleanup_after_days: only non-pending/non-running rows
+older than the cutoff are pruned. No new TTL and no #24702 dependency. All run
+deletion paths, including job/project cascade, collect owned output locators
+before row deletion, commit deletion, then conditionally unlink the expected
+objects. Unlink failure remains recoverable: the same startup/cleanup lifecycle
+checks deterministic run-UUID directories and retries orphan cleanup when the
+row no longer exists. A still-existing run, including an active writer with an
+unpublished reference, prevents orphan deletion. Never unlink another object's
+replacement or rely on a removed DB reference to rediscover its path. Bound
+each namespace scan to 500 entries with continuation in the existing lease-
+owned cleanup loop; this is deletion recovery, not an independent TTL/queue.
+At crash recovery preserve any partial raw bytes for the failed owned run,
+finish safe publication where provable, and record capture failure explicitly
+otherwise. Stop writers before lease transfer. Test DB commit/unlink failures,
+process loss between commit and unlink, and active/foreign locator protection.
 Planned: `cargo test -p gobby-cron --test scheduler`, with frozen time,
 two-machine fixtures, injected transaction/callback failures and crash restart.
+
+**Granularity:** One hub scheduler owns ticking, recovery and run retention;
+raw-output deletion is part of that same lifecycle. Shared storage implementation
+is #24968. Additional targets attach deletion paths and release carriers.
 
 **Acceptance:**
 - 2.2.1 - Tick/backoff/retention and once-job disabling match lifecycle vectors. test: `crates/gcron/tests/scheduler.rs::ticks_and_bookkeeping_match_python`.
 - 2.2.2 - Restart, stale and orphan handling affect only the intended machine/owner and active child links normalize correctly. test: `crates/gcron/tests/scheduler.rs::recovery_is_machine_and_owner_scoped`.
 - 2.2.3 - Lease loss and shutdown stop admission, reap cron parent sessions and terminalize owned inline work without cancelling durable children. test: `crates/gcron/tests/scheduler.rs::shutdown_drains_and_releases_owned_work`.
 - 2.2.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 2.2.5 - Pruning and every explicit/cascade run deletion remove owned raw output with the same cutoff/lifecycle; no code-index tick or new TTL is introduced. test: `crates/gcron/tests/scheduler.rs::run_deletion_owns_raw_output_retention`.
+- 2.2.6 - Startup/cleanup recover committed-delete/unlink failures idempotently while active runs and substituted/foreign objects retain their bytes. test: `crates/gcron/tests/scheduler.rs::raw_output_cleanup_recovers_without_foreign_unlink`.
 
-### 2.3 Bounded shell and handler action execution [category: code] (depends: 2.2)
+### 2.3 Bounded shell and handler action execution [category: code] (depends: 2.2, #24968)
 `kind: deliverable`
 
 Targets:
 - `crates/gcron/src/executor.rs`
 - `crates/gcron/src/lib.rs`
 - `crates/gcron/src/shell.rs`
+- `crates/gcron/src/output_files.rs` — edit the file created by 2.2 to stream raw shell bytes through the shared capability
+- `crates/gcron/src/runs.rs` — edit the file created by 2.1 to persist inline output and all capture metadata in one completion update
 - `crates/gcron/tests/executor.rs`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
@@ -399,18 +734,56 @@ Targets:
 Keep four explicit action variants, a fixed handler-name match supplied by
 gdaemon and typed ActionOutcome. Handler outer timeout comes from action_config
 or CronConfig; shell uses its current command/args/cwd contract and 60-second
-default. Spawn argv directly, never through a shell parser. Capture combined
-stdout/stderr, replacement-decode invalid UTF-8, store full output and bound the
-error tail at 2,000 characters. Timeout/cancellation kills and awaits the owned
-process so no child is leaked. Normalize mapping/string results into completed,
+default. Spawn argv directly, never through a shell parser. Preserve one combined
+stdout/stderr stream. D7 deliberately corrects unbounded communicate(): spool
+every raw byte from the first read through #24968's private temp descriptor,
+using a fixed-size buffer and disk backpressure instead of accumulating it.
+Retain this complete raw file even below the inline cap, so invalid UTF-8 is
+exactly retrievable. Publish by file-fsync/replace/directory-fsync before
+persisting its reference; a capture/publication failure kills/reaps the owned
+child and fails explicitly without claiming complete output. Keep provable
+partial bytes for recovery. Never reopen a pathname or expose the private locator
+as a caller-controlled read path. In parallel count all raw bytes observed,
+decode invalid UTF-8 with replacement incrementally and preserve incomplete codepoints
+across input chunks. Retain at most 1,048,576 encoded UTF-8 bytes of decoded
+text: at overflow, concatenate its first and last at most 524,288 bytes, trimming
+at codepoint boundaries without adding a marker. Count raw input bytes before
+replacement; the budget applies to decoded UTF-8 bytes, so replacement expansion
+also cannot exceed it. Output at/below the decoded budget stays exact and
+output_truncated=false. Above it sets true; even after the limit, continue
+draining to avoid a blocked child. No unbounded intermediate buffer, output
+storage service or configurable cap is introduced. Persist output_bytes_seen,
+output_truncated and output_overflow_ref with output/error in one completion
+write to 1.1a's columns. New shell runs retain all three facts, including a
+published empty raw file for zero bytes/false; historical/non-shell unknowns
+stay NULL. The cap affects only the inline copy and never discards raw bytes.
+Run payloads expose the derived output_url; 3.1a serves byte ranges without
+loading the whole file. Bound the error tail at 2,000 characters.
+The four D7 read/history surface waivers from 1.1 cover changed output and new
+metadata; ordinary output text remains exact.
+
+D6 deliberately strengthens Python's timeout terminate-without-wait behavior.
+Timeout/cancellation kills and awaits the owned process, escalating to a force
+kill if TERM is ignored, then drains the bounded pipe before terminalization.
+Use the existing runtime process/cancellation facility; do not leave an owned
+child alive when a terminal run is reported. Cite `cron.run-job.timeout-reap`,
+`cron.mcp-run-job.timeout-reap` and `cron.cli-run.timeout-reap`; preserve the
+existing timeout failure envelope. Test only disposable children, including
+one ignoring TERM. Normalize mapping/string results into completed,
 failed or skipped and persist output/error before reporting completion.
 Unknown actions/handlers and missing required config fail with typed errors.
 Planned: `cargo test -p gobby-cron --test executor` with temporary fake commands.
 
+**Granularity:** One inline executor owns timeout/cancellation, bounded inline
+capture and durable raw publication before terminal completion. The shared
+files_home capability and scheduler-owned retention stay external to that
+outcome. More than six targets connect its existing run model and release.
+
 **Acceptance:**
 - 2.3.1 - Handler results, timeout selection, unknown actions and errors match lifecycle vectors. test: `crates/gcron/tests/executor.rs::inline_results_match_python`.
-- 2.3.2 - Shell argv/cwd/output/failure tails match vectors, and timeout/cancellation leaves no process. test: `crates/gcron/tests/executor.rs::shell_actions_are_bounded_and_reaped`.
+- 2.3.2 - Shell argv/cwd/ordinary output/failure tails match vectors; D6 force-kills and awaits a TERM-ignoring disposable child on timeout and cancellation before reporting a terminal run. test: `crates/gcron/tests/executor.rs::shell_actions_are_bounded_and_reaped`.
 - 2.3.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 2.3.4 - D7 retains the complete raw stream in #24968 storage while bounding the decoded inline copy to 1,048,576 UTF-8 bytes; count/truncation/reference commit together, exact/multibyte/invalid-byte boundaries reload correctly, and storage failure never reports successful full capture. test: `crates/gcron/tests/executor.rs::shell_output_budget_is_durable_and_utf8_safe`.
 
 ### 2.4 Durable agent dispatch and cron parent sessions [category: code] (depends: 2.3, #21562, #21564)
 `kind: deliverable`
@@ -595,7 +968,7 @@ runtime state machine.
 ## P3: HTTP family and front-door service handoffs
 `kind: framing`
 
-### 3.1 Cron family and job/run read routes [category: code] (depends: 2.8)
+### 3.1 Cron family and job/run read routes [category: code] (depends: 2.8, #24964, #24967)
 `kind: deliverable`
 
 Targets:
@@ -617,18 +990,37 @@ only the listed methods/segments under /api/cron and the one protected-run
 route added by 3.3, never all admin paths. Preserve URI decoding, UUID errors,
 project authorization, status envelopes, count, sort, nullable fields and
 unavailable/404/422/500 behavior from the oracle. Reuse the runtime family's
-principal admission. The named pre-expansion binding **shared browser-cookie
-verifier implementation, owner created from #24659 before Cron expansion**
-supplies the single native verifier, independently of cookie retirement;
+principal admission. #24967's implementation-only shared browser-cookie
+verifier supplies the single native verifier, independently of cookie retirement;
 #21559's runtime family and #21575's mode gate do not supply cookie verification.
-The Orchestrator resolves that implementation-only task into this heading and
-refreshes reviewed bytes before Cron expansion; this leaf cannot dispatch
-without that binding and landed verifier proof. Keep Cron cookie requests
-proxied until 4.1b registers the nine
+This leaf cannot dispatch without landed #24967 verifier proof.
+The #24964 shared outer CORS/preflight boundary is also required from the first
+native key-caller read; browser API-key callers need it before cookie activation.
+Keep Cron cookie requests proxied until 4.1b registers the ten
 Cron routes against it and proves parity. No browser claim includes either
 admin Cron endpoint. The family defaults to Proxy until 4.1; compare mutations
 call only Python. Registering
 these native routes does not activate their production scheduler handle.
+For approved D3, GET /api/cron/jobs accepts limit (default 50, range 1..200)
+and optional cursor. Order created_at DESC,id DESC; apply project, enabled and
+retired-automation SQL predicates before LIMIT. The cursor is unpadded base64url
+of the last returned [UTC RFC3339 created_at, canonical UUID] JSON pair;
+subsequent queries use a strict tuple-less-than bound. It grants no authority:
+reapply project/caller filters on every page. Reject malformed cursors with
+400 `{"detail":"Invalid cursor"}` and out-of-range limits with the normal
+422 parameter-validation response. Fetch one extra row to determine continuation;
+return next_cursor as that last returned pair only when another row exists,
+otherwise null. count remains returned-page length. Equal timestamps use id
+as the deterministic tie-breaker; inserts newer than the cursor do not shift
+older pages. This is keyset traversal, not a frozen snapshot: later mutations
+may change membership, but an unchanged matching row is neither duplicated nor
+hidden by retired rows. Cite `cron.list-jobs.pagination` in #24963; no other
+ordering or envelope difference is waived.
+Run reads consume `cron.get-run.output-budget` and
+`cron.list-runs.output-budget`: expose known D7 output_bytes_seen and
+output_truncated in full/brief payloads, omit unknown historical/non-shell facts,
+and keep ordinary output text exact. Use the shared native domain-error
+convention with intentional existing envelopes; no route-local error framework.
 Planned: `cargo test -p gobby-cron --test http_reads` and HTTP corpus replay.
 
 **Granularity:** The four reads are one read-only family surface over the same
@@ -636,14 +1028,75 @@ repository, with one acceptance per ledger row. Shared release targets account
 for the inventory threshold.
 
 **Acceptance:**
-- 3.1.1 - GET /api/cron/jobs matches filtering, count, display names and errors. test: `crates/gcron/tests/http_reads.rs::list_jobs_matches_python`.
+- 3.1.1 - GET /api/cron/jobs preserves display names and page count while the exact D3 waiver asserts default 50/max 200 cursor pages, SQL-before-limit retirement filtering, deterministic equal-timestamp order, null-at-end and invalid cursor/limit errors across more than 50 rows. test: `crates/gcron/tests/http_reads.rs::list_jobs_matches_python`.
 - 3.1.2 - GET /api/cron/jobs/{job_id} matches existing, missing and malformed IDs. test: `crates/gcron/tests/http_reads.rs::get_job_matches_python`.
-- 3.1.3 - GET /api/cron/jobs/{job_id}/runs matches bounds, ordering and child hydration. test: `crates/gcron/tests/http_reads.rs::list_runs_matches_python`.
-- 3.1.4 - GET /api/cron/runs/{run_id} matches row and not-found behavior. test: `crates/gcron/tests/http_reads.rs::get_run_matches_python`.
+- 3.1.3 - GET /api/cron/jobs/{job_id}/runs preserves history bounds, ordering and child hydration and asserts D7's bounded output/known metadata through cron.list-runs.output-budget. test: `crates/gcron/tests/http_reads.rs::list_runs_matches_python`.
+- 3.1.4 - GET /api/cron/runs/{run_id} preserves existing/missing row behavior and asserts D7's bounded output/known metadata through cron.get-run.output-budget. test: `crates/gcron/tests/http_reads.rs::get_run_matches_python`.
 - 3.1.5 - Family claims, principals, node-to-hub routing and method/path boundaries enforce the existing authorization contract. test: `crates/gcron/tests/http_reads.rs::claims_and_auth_are_bounded`.
 - 3.1.6 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 3.2 Job mutations and immediate execution routes [category: code] (depends: 3.1)
+### 3.1a Bounded raw-output retrieval [category: code] (depends: 3.1, #24968)
+`kind: deliverable`
+
+Targets:
+- `crates/gcron/src/http_output.rs`
+- `crates/gcron/src/output_files.rs` — edit the file created by 2.2 to read the admitted run's raw bytes through shared held descriptors
+- `crates/gcron/src/family.rs` — edit the file created by 3.1 to claim the additional output-read route
+- `crates/gcron/src/lib.rs`
+- `crates/gcron/tests/http_output.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: release pin for bounded raw-output retrieval
+
+**Research context:** The amended D7 ruling preserves complete raw output and
+approves GET /api/cron/runs/{run_id}/output, default 65,536 bytes and maximum
+1,048,576 bytes per read. Consume #24968's held-root descendant and descriptor
+range streaming capability; gcron owns only the admitted run/locator binding.
+The existing storage mechanism is src/gobby/paths.py::open_files_home_descendant
+at lines 173-198, excerpt_hash
+`507d158e62195fcbee805760a6e82c2c408aef3e13d37d77b79b5d0715616955`;
+the native implementation is external #24968, not a Python runtime dependency.
+Use the stored output_overflow_ref only after run/job/project authorization.
+Validate the expected run-UUID namespace and regular-file identity through the
+shared capability. Never accept a filesystem path or locator from the request,
+reopen a pathname, load the complete file, or give a node local storage access.
+
+Without Range, offset defaults to 0 and limit to 65,536 (range 1..1,048,576);
+return 200 raw application/octet-stream bytes, X-Output-Bytes-Seen and
+X-Next-Offset headers, omitting the latter at EOF. Support one standard bytes
+Range including closed/open/suffix forms, clamp its end at EOF, and return 206
+with Content-Range and Accept-Ranges. A requested span beyond 1,048,576 bytes
+is 400 rather than an unbounded read; a wholly out-of-bounds range is 416 with
+Content-Range: bytes */total. Reject
+multipart ranges, malformed ranges or mixed Range and explicit offset/limit
+with 400. Invalid numeric query bounds use 422. An active unpublished capture is
+409, missing run/output or historical/non-shell unknown raw bytes is 404, and
+known capture/storage failure is 503; do not substitute the lossy inline string.
+Use Cache-Control:no-store and nosniff, preserve raw invalid UTF-8, and close
+the held descriptor on completion/cancellation. An unbounded HTTP download is
+not a hidden second path around the read limit.
+
+`cron.get-run-output.native-extension` records this additive native surface's
+approved contract/provenance through #24963. Original get-run/list-runs JSON
+stays a run envelope with inline output/metadata/output_url, never raw-response
+overloading. The family stays passive/Proxy through P3; isolated native mode
+tests the new route. Native default enables it in 4.1, and 4.1b admits its cookie
+read through the same bounded project authority, making ten Cron browser
+routes and eleven native HTTP routes including protected-runs.
+Planned: `cargo test -p gobby-cron --test http_output` using temporary files_home
+and isolated run rows, including invalid bytes, range boundaries and auth errors.
+
+**Granularity:** One read service/route owns streaming, bounds and refusals;
+the external storage implementation and existing run-retention owner are reused.
+Release carriers account for the inventory threshold.
+
+**Acceptance:**
+- 3.1a.1 - Raw reads reconstruct the complete shell byte stream beyond the inline cap, including invalid UTF-8, while each response stays within the approved default/max bound. test: `crates/gcron/tests/http_output.rs::raw_output_is_complete_and_bounded`.
+- 3.1a.2 - Single ranges, EOF, malformed/oversized/multipart requests, query bounds and active/missing/failed capture errors follow the specified statuses and headers. test: `crates/gcron/tests/http_output.rs::range_and_capture_states_are_explicit`.
+- 3.1a.3 - Project/caller substitution, forged locators, symlink/ancestor swaps and cancellation never reveal another run's bytes or reopen an unsafe path; node reads use the hub relay. test: `crates/gcron/tests/http_output.rs::raw_output_authority_and_descriptor_are_bounded`.
+- 3.1a.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+### 3.2 Job mutations and immediate execution routes [category: code] (depends: 3.1a)
 `kind: deliverable`
 
 Targets:
@@ -660,8 +1113,24 @@ Targets:
 _validate_schedule_fields, create_job, update_job, delete_job, toggle_job and
 run_job_now. Reuse native Jobs and Scheduler admission, never route-local SQL
 or an alternate manual executor. Match project resolution, required schedule
-fields, enum/type validation, omitted versus null values, ignored empty update
-fields, protection status 403 and exact existing error envelopes. Run-now
+fields, enum/type validation and protection status 403. Adopt the shared
+Absent/Clear/Set convention, not Python's blanket None dropping. Explicit null
+clears description/display_name and inactive schedule fields; it cannot clear
+required fields or the active schedule's required value. Preserve the empty
+display-name reset and existing no-fields rejection. Jobs merges/validates
+under its row lock; a repeated schedule_type uses stored values. For PATCH, D1 schedule
+validation (invalid expression/timestamp/no future occurrence) returns 400
+`{"detail":"Invalid cron schedule"}` and leaves the row unchanged, rather
+than PATCH's accidental Python 500. Required-null/type failures keep the normal
+422 validation response. D4 toggle-on of an invalid/expired ordinary job uses
+that same safe 400 and writes nothing; protected park/wake is unaffected.
+Consume `cron.patch-job.schedule-validation`, `cron.patch-job.presence-and-merge`,
+`cron.patch-job.atomic-schedule-edit` and `cron.toggle-job.future-schedule`
+from #24963. Use the shared typed domain-error classification and intentional
+wire-envelope adapters; unexpected internal errors expose no DB diagnostics.
+Create retains its existing oracle error envelope; D1 does not waive a create
+response difference.
+Run-now
 returns the admitted run and maps active conflict to 409, capacity to 429 and
 missing scheduler to 503. Mutating compare requests execute Python only once;
 3.5 adds observation of committed effects, never a second native action.
@@ -669,9 +1138,9 @@ Planned: `cargo test -p gobby-cron --test http_writes` and shared corpus replay.
 
 **Acceptance:**
 - 3.2.1 - POST /api/cron/jobs matches create validation, project resolution, status/body and stored rows. test: `crates/gcron/tests/http_writes.rs::create_job_matches_python`.
-- 3.2.2 - PATCH /api/cron/jobs/{job_id} matches partial fields, no-fields error and system protection. test: `crates/gcron/tests/http_writes.rs::update_job_matches_python`.
+- 3.2.2 - PATCH follows D1/D2/D5 exact waivers: safe 400 schedule rejection with no write, presence-preserving nullable clears and merged stored-field validation; no-fields and 403 protection remain intact. test: `crates/gcron/tests/http_writes.rs::update_job_matches_python`.
 - 3.2.3 - DELETE /api/cron/jobs/{job_id} matches success, missing and protected rows. test: `crates/gcron/tests/http_writes.rs::delete_job_matches_python`.
-- 3.2.4 - POST /api/cron/jobs/{job_id}/toggle matches ordinary rows and refuses system rows. test: `crates/gcron/tests/http_writes.rs::toggle_job_matches_python`.
+- 3.2.4 - POST toggle preserves protection and normal rows; the exact D4 waiver returns safe 400 and an unchanged row for expired/invalid ordinary toggle-on without changing protected park/wake. test: `crates/gcron/tests/http_writes.rs::toggle_job_matches_python`.
 - 3.2.5 - POST /api/cron/jobs/{job_id}/run uses shared admission and matches 200/404/409/429/503. test: `crates/gcron/tests/http_writes.rs::run_now_matches_python`.
 - 3.2.6 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
@@ -766,17 +1235,48 @@ storage helpers and `_lease.py` consumer plus its temporary native active-count
 HTTP endpoint. Sweep imports and string consumers before deletion; the shared
 helpers remain only until their last live Python caller is ported. Neither
 owner leaves a supervised daemon dependency after the naming switch.
+Carry #24961 D1-D7's exact #24963 IDs from 1.1 into every affected operation
+mapping, distinguishing ordinary Passed cases from explicit native replacements.
+Use the single native domain-error classification (validation/missing/forbidden/
+conflict/capacity/unavailable/internal) and preserve each adapter's intentional
+envelope. HTTP's corrected schedule failure is safe 400; MCP and CLI expose
+the same typed validation without copying the accidental PATCH server failure.
+Apply Absent/Clear/Set at the service boundary with the field-specific nullable
+contract from 1.3; adapter defaults never turn omitted values into Clear.
+The D2/D4/D5 entries for MCP/CLI explicitly bind merged-candidate, atomic edit
+and toggle-on invariants to their exact ledger surfaces.
+
+D3 traversal is fixed: HTTP and MCP return one page, default 50, limit 1..200,
+optional cursor and next_cursor null at end. #21570 adds optional limit/cursor
+parameters and continuation output to list_cron_jobs, retaining success/jobs/
+page-count fields, under `cron.mcp-list-jobs.pagination`. It never silently
+walks all pages into an unbounded tool result. CLI list walks 50-row pages
+through this same service for the complete listing, preserving its existing
+text/JSON shape under `cron.cli-list.pagination`. Both retain filters and the
+created_at DESC,id DESC keyset contract; only CLI aggregates the listing.
 Planned: `cargo test -p gobby-cron --test service_contract` over 1.1 vectors.
 The #21570 descriptor consumer also runs
 `cargo test -p gobby-core --test mcp_contract` (or nextest with the same
 `--test mcp_contract` target once #24949 lands), never a module-name filter.
+The approved additive adapters are MCP get_cron_run_output (#21570) and CLI
+gobby cron output (#21571), both calling 3.1a's same native bounded service.
+Use offset default 0 and limit default 65,536/max 1,048,576. HTTP/CLI return raw
+bytes; MCP returns run_id, offset, data_base64, bytes_returned, total_bytes and
+next_offset (null at EOF), preserving invalid UTF-8 exactly. CLI accepts the run
+ID plus optional --offset/--limit and writes the selected chunk to stdout.
+Neither adapter silently fetches unbounded data; repeated bounded reads can
+reconstruct the full raw stream. Transfer the exact
+`cron.mcp-get-run-output.native-extension` and `cron.cli-output.native-extension`
+waivers, runtime/project admission and 404/409/503 failure semantics with the
+handoff. The original eighteen adapter rows remain owned as before; these two
+new surfaces become delegated ledger rows when their owners deliver them.
 
 **Acceptance:**
-- 3.4.1 - Every delegated CLI/MCP operation maps to one native service with matching defaults/results/errors, including park/wake and ID-or-name lookup. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
-- 3.4.2 - Restricted-caller shell/protection contracts and the explicit #21570/#21571 removal handoffs are complete. file: `docs/contracts/cron-services.md`.
+- 3.4.1 - Every CLI/MCP operation maps to one native service, preserving ordinary defaults/results/errors and asserting exact D1-D7 native replacements, field presence, atomic edit/toggle guards, bounded MCP pages and CLI traversal; park/wake and ID-or-name lookup remain intact. test: `crates/gcron/tests/service_contract.rs::delegated_operations_match_service_vectors`.
+- 3.4.2 - Restricted-caller shell/protection, per-surface waivers, shared conventions, explicit #21570/#21571 cleanup, bounded list traversal and new raw-output adapter/ledger handoffs are complete. file: `docs/contracts/cron-services.md`.
 - 3.4.3 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 3.5 Side-effect-safe comparison and native corpus replay [category: code] (depends: 3.4)
+### 3.5 Side-effect-safe comparison and native corpus replay [category: code] (depends: 3.4, #24963)
 `kind: deliverable`
 
 Targets:
@@ -804,20 +1304,35 @@ native key-caller mode and retain the recorded Python origin. Cookie cases in
 cron-browser.json remain a recorded Python oracle until 4.1b, never a native
 parity success. Planned: crate comparison
 tests and isolated e2e compare/replay with one fake child counter.
+Use #24963's shared `docs/contracts/parity-waivers.json` loader/readiness
+contract. For D1-D7 load 1.1's exact per-surface IDs and preserve their Python
+oracle. A Waived outcome proves the specified native response and state/cleanup
+effect and reports its decision citation; unrelated differences fail. Never
+execute a second live mutation to verify changed Python behavior: preserve the
+observed Python result, prove the replacement in isolated native replay/effect
+tests, and associate that evidence with the shared waiver outcome. Unchanged
+stable live cases remain ordinary Passed evidence. No mask or Skipped result
+substitutes for a waiver. Require at least one ordinary Passed case and stable
+proof of every required route/action/correction case; all-Skipped and unwaived-
+Skipped readiness fail. Race skips remain diagnostic until that case is rerun
+stably. D5 uses deterministic interleavings, D6 disposable-process liveness and
+D7 exact raw bytes/inline limits/reload/retrieval/retention assertions. Zero
+mismatches alone does not establish coverage. The additive output-read route
+is an explicit D7 native extension, not fabricated Python-origin evidence.
 
 **Granularity:** More than six target files include release and corpus carriers;
 the single outcome is trustworthy compare evidence for this family.
 
 **Acceptance:**
 - 3.5.1 - Reads and verified writes detect tampered response/state, skip concurrent changes and never duplicate writes or actions. test: `crates/gcron/tests/compare.rs::compare_is_side_effect_free_and_race_aware`.
-- 3.5.2 - All ten owned HTTP cases replay equal natively for key callers, with authentication and failure cases and no Python service needed by that native leg. Cookie parity remains explicitly pending until 4.1b. test: `tests/e2e/test_cron_family.py::test_native_cron_corpus_matches_python`.
-- 3.5.3 - A controlled compare window covers every owned route and action kind with zero mismatches and nonzero stable evidence per case. test: `tests/e2e/test_cron_family.py::test_compare_has_coverage_without_double_dispatch`.
+- 3.5.2 - All ten original HTTP cases replay ordinary parity or exact cited #24963 replacements; the additive output route has explicit native-extension coverage, origin, auth and effect assertions. Native legs require no Python; cookie proof waits for 4.1b. test: `tests/e2e/test_cron_family.py::test_native_cron_corpus_matches_python`.
+- 3.5.3 - Controlled compare covers every required route/action/correction with stable evidence, zero unwaived mismatches and at least one ordinary Passed case; all-Skipped or unwaived-Skipped readiness fails and Waived needs its citation plus native effect proof. test: `tests/e2e/test_cron_family.py::test_compare_has_coverage_without_double_dispatch`.
 - 3.5.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## P4: Native takeover and Python retirement
 `kind: framing`
 
-### 4.1 Native default and single-owner scheduler cutover [category: code] (depends: 3.5)
+### 4.1 Native default and single-owner scheduler cutover [category: code] (depends: 3.5, #24967)
 `kind: deliverable`
 
 Targets:
@@ -837,11 +1352,10 @@ Targets:
 **Research context:** RuntimeState's hub lease owns Rust services; Python's
 init_orchestration previously constructed CronExecutor and CronScheduler.
 This is the sole production scheduler activation leaf: both scheduled and manual
-native admission remain closed through P3. Bind this leaf before Cron expansion
-to **shared browser-cookie verifier implementation, owner created from #24659
-before Cron expansion**, excluding the planning/root/retirement outcome.
-The Orchestrator resolves the concrete task and refreshes reviewed bytes;
-dispatch requires that binding and landed verifier proof. The routing switch here covers key
+native admission remain closed through P3. #24967 supplies the shared
+implementation-only browser verifier, excluding #24659's planning/root/retirement
+outcome. Dispatch requires its landed exact-SHA Security-approved proof.
+The routing switch here covers key
 callers only: cookie requests continue to Python's Cron router, which uses the
 native client for manual admission. Keep that remainder explicit until 4.1b
 enables native Cron browser claims; Python Cron routes cannot be deleted first.
@@ -871,6 +1385,9 @@ a new feature flag. A takeover failure restores the previous admission owner
 before allowing requests. Drain owned inline work before transfer; durable
 children keep their links. No two owners tick during native/compare/proxy
 transitions. Native is the default only after the 3.5 corpus and compare checks.
+That gate consumes #24963's shared readiness result: every D1-D7 correction
+has its exact manifest ID and native replacement/effect proof, at least one
+ordinary case is Passed, and no required case relies on unwaived Skipped.
 Before Python deletion, proxy rollback and return to default require a routing
 edit/restart of the same binaries. All key-caller actions and the protected-run
 guard work with Python killed on the native default; cookie parity is proved
@@ -882,7 +1399,7 @@ admission-owner transfer. More than six files are wiring, tests and releases.
 
 **Acceptance:**
 - 4.1.1 - Native is the key-caller default only after the restart-bound transfer; cookie requests stay proxied until 4.1b. Python/native never both admit scheduled or manual work, in-flight runs survive transfer, and pre-deletion proxy rollback excludes native before restoring Python with the same binaries. test: `tests/e2e/test_cron_family.py::test_default_flip_has_one_scheduler_owner`.
-- 4.1.2 - With isolated Python killed, key callers can use all ten routes, four action kinds, nightly repair, system jobs and restart protection in hub/standalone; nodes create no jobs/runs. Cookie backend-loss proof waits for 4.1b. test: `tests/e2e/test_cron_family.py::test_cron_survives_python_backend_loss`.
+- 4.1.2 - With isolated Python killed, key callers can use the original ten HTTP routes plus bounded raw-output retrieval, four actions, nightly repair, system jobs and restart protection in hub/standalone; nodes create no jobs/runs. Cookie proof waits for 4.1b. test: `tests/e2e/test_cron_family.py::test_cron_survives_python_backend_loss`.
 - 4.1.3 - Transition construction cannot leave Python scheduling live when native admission is enabled or native unavailable. test: `tests/scheduler/test_native_cron_transition.py::test_transition_never_has_two_admission_owners`.
 - 4.1.4 - Cooperative handoff refuses an ordinary unprotected local active run, ignores foreign-machine work and fails closed when the native count is unavailable. test: `tests/servers/routes/test_daemon_lease_routes.py::test_handoff_uses_complete_local_native_cron_count`.
 - 4.1.5 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
@@ -951,7 +1468,7 @@ remains outside this leaf.
 - 4.1a.3 - The Python mailbox branch is absent before native retention activates, while communications and attachment cleanup retain bounded offload/startup behavior. test: `tests/communications/test_communications_maintenance.py::test_native_mailbox_takeover_preserves_other_cleanup`.
 - 4.1a.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.1b Admit Cron browser routes through the shared verifier [category: code] (depends: 4.1a)
+### 4.1b Admit Cron browser routes through the shared verifier [category: code] (depends: 4.1a, #24964, #24967)
 `kind: deliverable`
 
 Targets:
@@ -968,14 +1485,11 @@ Targets:
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: release pin for bounded Cron browser admission
 
-**Research context:** This leaf has two named pre-expansion bindings:
-**shared browser-cookie verifier implementation, owner created from #24659
-before Cron expansion**, and **shared native CORS/preflight boundary, owner
-filed under #21542 after the three route-family debt passes report**.
-The Orchestrator resolves concrete implementation-only task references into
-this heading, cycle-checks and refreshes reviewed bytes before Cron expansion;
-neither a planning approval nor a whole-family retirement root is a substitute.
-Dispatch and activation require those resolved bindings and landed proof of
+**Research context:** This leaf binds directly to #24967's shared browser-cookie
+verifier implementation and #24964's shared native CORS/preflight boundary.
+Neither #24659, a planning approval nor a whole-family retirement root is a
+substitute. The Orchestrator checks the cross-plan graph before expansion.
+Dispatch and activation require landed proof of
 both capabilities. The shared verifier must expose both existing cookie
 classes, verified user and applicable project/session selectors. Reuse its
 parsing, storage lookup, expiry, revocation and typed principal.
@@ -991,6 +1505,10 @@ The allowlist is exactly GET /api/cron/jobs, GET /api/cron/jobs/{job_id},
 GET /api/cron/jobs/{job_id}/runs, GET /api/cron/runs/{run_id}, POST /api/cron/jobs,
 PATCH /api/cron/jobs/{job_id}, DELETE /api/cron/jobs/{job_id},
 POST /api/cron/jobs/{job_id}/toggle and POST /api/cron/jobs/{job_id}/run.
+The tenth route is GET /api/cron/runs/{run_id}/output, approved by the amended
+D7 ruling. Its run/project lookup, byte bounds and range errors use 3.1a's
+native service. Both cookie classes may read only within their existing
+verified project/session authority; a caller cannot substitute a locator.
 Use the family's existing method/path matcher for verifier admission and claims,
 including its URI decoding and UUID behavior. Caller::Browser is opt-in for
 these rows only; do not widen Caller::ALL, either /api/admin/cron endpoint,
@@ -999,7 +1517,7 @@ The separate shared native boundary answers applicable unauthenticated
 preflights before auth and applies configured credentialed CORS headers to
 native success and auth-error responses. Python app_factory's current layer
 does not run after backend loss; it is the compatibility oracle, not the
-native owner. Cron registers its existing nine-route method/path policy with
+native owner. Cron registers its ten-route method/path policy with
 the shared boundary and adds no independent CORS implementation.
 
 Python compatibility references are
@@ -1017,8 +1535,10 @@ read, while Cron mutations are refused. Consume verified class/selectors from
 the shared verifier to enforce this policy, rather than parsing a token or resolving
 managed authority inside Cron. Missing/expired/revoked credentials, forged
 identity/BrowserSession headers and unsupported callers fail before handlers.
-Preserve existing bearer precedence and each route's status/body and side effects
-against 1.1's vectors; failed shared verification never falls back to Python.
+Preserve existing bearer precedence and original routes' status/body/effects
+against 1.1's Python vectors plus exact D1-D7 waiver assertions. The new output
+read uses its approved native-extension vectors. Failed shared verification
+never falls back to Python.
 
 Observed evidence is complete gcode source reads: AuthMiddleware.dispatch,
 excerpt_hash `65ab26e9e827b274251c9a8fff4d58cdd22cdd3cefebf6c0acc267245831f5fb`,
@@ -1050,12 +1570,12 @@ test_cron_family cookie case, and the required security review. All state,
 credentials and backend termination remain inside isolated test fixtures.
 
 **Granularity:** One lifecycle owner: opt-in Cron browser admission through the
-shared prerequisite capabilities. The nine routes share one policy and fixture table; targets
+shared prerequisite capabilities. The ten routes share one policy and fixture table; targets
 above the six-file inspection threshold include release and evidence carriers.
 The verifier and outer CORS boundary remain independently owned prerequisites.
 
 **Acceptance:**
-- 4.1b.1 - All nine Cron routes preserve ordinary-cookie GET and mutation status/body, stored effects, credential precedence and expiry/revocation behavior from 1.1 vectors, using only the bound shared-verifier implementation after its landed proof. test: `crates/gdaemon/tests/cron_browser.rs::cookie_get_and_mutations_match_python`.
+- 4.1b.1 - Nine original routes preserve ordinary-cookie status/body/effects under 1.1's Python vectors and exact D1-D7 waivers; the tenth output read follows its approved raw-byte contract. All use #24967 after landed proof, preserving credential precedence and expiry/revocation. test: `crates/gdaemon/tests/cron_browser.rs::cookie_get_and_mutations_match_python`.
 - 4.1b.2 - Browser-testing GET authority and selector/loopback restrictions match Python; mutations, missing/non-cookie/non-key credentials and forged authority are refused before effects. No admin or other-family route gains browser admission. test: `crates/gdaemon/tests/cron_browser.rs::browser_authority_is_route_and_class_bounded`.
 - 4.1b.3 - The bound shared native CORS boundary preserves same-origin/cross-origin status, headers and effects on success and auth-error responses, and handles applicable unauthenticated preflight before auth after Python backend loss. Current cookie behavior gains no stricter CSRF-token or Origin rejection. test: `crates/gdaemon/tests/cron_browser.rs::origin_and_preflight_match_python`.
 - 4.1b.4 - Both cookie classes work through hub and relaying-node doors with the isolated Python backend absent; nodes verify no cookie locally and Python retirement waits for this proof. test: `tests/e2e/test_cron_family.py::test_cookie_cron_survives_python_backend_loss`.
@@ -1153,7 +1673,7 @@ tests in P1-P3; this leaf verifies absence and retained-client boundaries.
 `kind: deliverable`
 
 Targets:
-- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: move only the nine proven Cron HTTP rows from proxied to delegated; keep the eighteen CLI/MCP rows proxied with owner notes
+- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: delegate the nine proven original Cron HTTP rows, add the delivered native output HTTP row and retain original CLI/MCP rows with owner notes
 - `docs/contracts/parity-ledger-status.d/daemon-config-auth-infra.json::*` — scope-reason: move the proven protected-run HTTP row from proxied to delegated with its evidence note
 - `docs/contracts/parity-ledger.md`
 - `docs/contracts/cron-services.md`
@@ -1167,6 +1687,21 @@ checks, including 4.1b's accepted Security review.
 The ten CLI and eight MCP rows remain `proxied`, with explicit #21571/#21570
 owner notes, until those owners deliver their ports. Use only the ledger's
 three valid statuses: `proxied`, `delegated`, `dropped by decision #N`.
+Also record the delivered additive GET /api/cron/runs/{run_id}/output as
+delegated, retaining its native-extension origin and exact
+`cron.get-run-output.native-extension` citation. #21570/#21571 add the new MCP
+get_cron_run_output/CLI cron output rows when delivered; document their owner
+handoffs now without fabricating a proxied Python implementation. Thus this
+handoff accounts for all original 28 plus the new HTTP row, and the complete
+cross-owner inventory reaches 31 after both adapter additions land.
+The ledger generator, replay and readiness consume #24963's same
+docs/contracts/parity-waivers.json entries. Link every D1-D7 affected owner
+note to its exact surface waiver and explicit replacement proof. A Waived case
+does not drop its surface, normalize an unrelated difference or excuse missing
+stable evidence. Document the single error/presence/readiness/CORS conventions
+and #24968 output storage/run-owned retention. Include the amended full-raw
+retention ruling, inline budget, raw byte count, retrieval limits and capture
+failure semantics in cron-services.md.
 Document hub-only ownership, park/
 wake, restart --wait/--force, the native default, pre-deletion routing rollback
 and post-deletion prior-release rollback. Carry the S3.2 same-change Python
@@ -1178,7 +1713,7 @@ Planned: ledger consistency check, scoped documentation validation and base/
 expansion plan validation after the adversary stamps M1.
 
 **Acceptance:**
-- 4.3.1 - The two status fragments and regenerated ledger account for all 28 rows: the ten proven HTTP rows change from `proxied` to `delegated`; the ten CLI and eight MCP rows stay `proxied` with #21571/#21570 owner notes. Only valid ledger statuses are used. file: `docs/contracts/parity-ledger.md`.
+- 4.3.1 - All original 28 rows remain accounted: ten proven HTTP rows become delegated and eighteen CLI/MCP rows stay proxied with their owners. The new output HTTP row is delegated with native provenance; the two new adapter rows are explicit #21570/#21571 delivery handoffs. Every D1-D7 affected row cites its exact shared waiver; only valid statuses are used. file: `docs/contracts/parity-ledger.md`.
 - 4.3.2 - The service handoff records native API mappings, remaining temporary client/helper paths and S3.2 deletion ownership without a Stage2-to-Stage3 cycle. file: `docs/contracts/cron-services.md`.
 - 4.3.3 - Configuration guidance documents native ownership, parking, protected restart and the two rollback boundaries. file: `docs/guides/configuration.md`.
 
@@ -1199,11 +1734,24 @@ task expansion; this planning seat neither expands nor dispatches work.
 After approved future expansion, the Orchestrator applies and verifies
 `security-review` on 4.1b before dispatch. Native cookie activation requires a
 Security Reviewer's approved step for the exact implementation SHA.
-Cron expansion also waits for both named capability bindings to become concrete,
-cycle-checked implementation task edges in freshly reviewed/validated bytes.
+Cron expansion requires cycle-checked concrete #24963/#24964/#24967/#24968
+implementation edges in freshly reviewed/validated bytes. Dispatch/activation
+requires landed shared-capability proof. The #24961 debt report is folded into
+D1-D7 exact-surface waivers and K1 is retained; #24963 readiness rejects zero-
+Passed/all-Skipped evidence. D7's full raw storage/retrieval/retention and
+three nullable schema columns are explicit, separately verified outcomes.
 
 ## V1 Plan Changelog
 `kind: framing`
+
+2026-10-24: Incorporated the Orchestrator's #24961 debt dispositions and later
+clarifications: D1-D7 exact shared waivers, K1 retained, concrete pagination,
+presence/error/readiness conventions, #24963/#24964/#24967/#24968 prerequisite
+bindings, additive schema and raw-output retrieval outcomes. The initial
+lossy D7 proposal was amended to preserve all raw bytes under Josh's existing
+preference; only the inline copy is bounded, and Cron run deletion owns its
+overflow. HTTP/MCP/CLI traversal and new output handoffs are concrete.
+Fresh adversary consensus and M1 derivation remain required for these bytes.
 
 2026-10-24: Accepted CRON-004/005 under the Orchestrator's explicit binding
 ruling. Only the early shared-verifier implementation may gate Cron; exclude
