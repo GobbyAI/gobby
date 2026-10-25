@@ -33,6 +33,10 @@ inputs:
     type: string
     default: "test-writer,developer,code-reviewer,dev-manager"
     description: "Comma-separated seat kinds: dev-manager, test-writer, developer, code-reviewer"
+  reviewer_agent:
+    type: string
+    required: true
+    description: "Reviewer agent the code-reviewer seat runs: code-reviewer, docs-reviewer or research-reviewer"
   fresh_reviewer:
     type: boolean
     default: false
@@ -120,6 +124,7 @@ steps:
         team_id: "${{ inputs.team_id }}"
         fresh_reviewer: "${{ inputs.fresh_reviewer }}"
         exclude_reviewers: "${{ inputs.exclude_reviewers }}"
+        reviewer_agent: "${{ inputs.reviewer_agent }}"
 
   - id: dev-manager
     condition: "${{ not inputs.fresh_reviewer and 'dev-manager' in inputs.seats.split(',') }}"
@@ -194,7 +199,7 @@ steps:
       server: gobby-agents
       tool: spawn_agent
       arguments:
-        agent: code-reviewer
+        agent: "${{ inputs.reviewer_agent }}"
         title: >-
           ${{ steps.admit.output.branch
           + (' fresh code reviewer' if inputs.fresh_reviewer else ' code reviewer') }}

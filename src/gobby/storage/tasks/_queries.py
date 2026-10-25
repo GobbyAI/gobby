@@ -19,6 +19,7 @@ from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._models import Task, task_type_filter_values
 from gobby.storage.tasks._ordering import TaskOrderKey, order_task_keys
 from gobby.storage.tasks._read import _escape_like_pattern
+from gobby.storage.tasks._team_blockers import team_resolved_blocker_sql
 from gobby.tasks.state_semantics import validate_task_state
 
 
@@ -46,6 +47,7 @@ def _external_blocker_exists_sql(task_alias: str = "t") -> str:
               )
               SELECT 1 FROM ancestors WHERE ancestor_id = {task_alias}.id
           )
+          AND NOT {team_resolved_blocker_sql("blocker", task_alias)}
     )
     """
 

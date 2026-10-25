@@ -25,6 +25,13 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionab
 logger = logging.getLogger(__name__)
 
 
+def _is_team_manager(agent_body: Any) -> bool:
+    """Whether the spawned definition is a team manager, which never claims its bound task."""
+    if agent_body is None:
+        return False
+    return agent_body.workflows.variables.get("team_manager") is True
+
+
 def _title_auto_claimed_session(session_manager: Any, session_id: str, task: Any) -> None:
     """Apply the task title after spawn-time auto-claiming."""
     try:
@@ -188,7 +195,12 @@ async def finalize_executed_spawn(
         except Exception as e:
             logger.debug("Failed to fire agent_started event for %s: %s", run_id, e)
 
-        if resolved_task_id and task_manager:
+        if resolved_task_id and task_manager and _is_team_manager(agent_body):
+            logger.info(
+                "Skipping auto-claim for task %s; team managers hold no claim",
+                f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+            )
+        elif resolved_task_id and task_manager:
             try:
                 task_obj = await asyncio.to_thread(task_manager.get_task, resolved_task_id)
                 if not task_obj or not is_task_actionable(task_obj):

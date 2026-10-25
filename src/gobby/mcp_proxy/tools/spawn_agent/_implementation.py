@@ -104,6 +104,7 @@ async def spawn_agent_impl(
     checkout_mode: Literal["none", "worktree", "clone"] | None = None,
     branch_name: str | None = None,
     base_branch: str | None = None,
+    worktree_dir_name: str | None = None,  # Epic-team sub-worktree directory, set by team dispatch
     clone_id: str | None = None,  # Reuse existing clone instead of creating new isolation
     worktree_id: str | None = None,  # Reuse existing worktree instead of creating new isolation
     cleanup_isolation_on_failure: bool = False,
@@ -441,6 +442,7 @@ async def spawn_agent_impl(
         provider=effective_provider,
         parent_session_id=parent_session_id,
         phase_timings_ms=phase_timings_ms,
+        worktree_dir_name=worktree_dir_name,
     )
     if droid_mode == "interactive" and effective_provider != "droid":
         return {

@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
+from gobby.tasks.lifecycle_access import session_grants
 from gobby.tasks.state_semantics import is_task_claimed_by_session
 from gobby.workflows.agent_models import AgentStepWorkflowBody
 from gobby.workflows.reserved_variables import DEVELOPER_HANDOFF_TASKS_VARIABLE
@@ -27,13 +28,13 @@ _CANDIDATE_LATCH_VARIABLES = (
 )
 
 
-def _unbounced_submitted_candidate(instance: AgentStepInstance) -> bool:
-    """A developer's sent candidate that no reviewer has bounced."""
+def _unbounced_submitted_candidate(db: HubDatabase, instance: AgentStepInstance) -> bool:
+    """A maker's sent candidate that no reviewer has bounced."""
     return (
-        instance.agent_name == "developer"
-        and instance.current_step == "submit"
+        instance.current_step == "submit"
         and bool(instance.variables.get("candidate_sent"))
         and not instance.variables.get("bounced")
+        and session_grants(db, instance.session_id, "implementation")
     )
 
 
@@ -92,7 +93,7 @@ def release_lost_binding(
     defaults = copy.deepcopy(snapshot.variables)
     # Handoffs outlive any one binding; only observing their close retires them.
     defaults.pop(DEVELOPER_HANDOFF_TASKS_VARIABLE, None)
-    if _unbounced_submitted_candidate(instance):
+    if _unbounced_submitted_candidate(db, instance):
         # A release is not a bounce: a same-task re-claim resumes the candidate at submit.
         for name in _CANDIDATE_LATCH_VARIABLES:
             defaults[name] = instance.variables.get(name, defaults.get(name))

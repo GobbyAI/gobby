@@ -79,8 +79,65 @@ def write_paths_match(
     return bool(paths) and all(re.fullmatch(pattern, str(path)) for path in paths)
 
 
+WORKSPACE_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+# Daemon-owned repository metadata and project config never live in a seat's folder.
+_WORKSPACE_PROTECTED_NAMES = frozenset({".git", ".gobby"})
+
+
+def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
+    """Workspace folders a seat may write: its session folder and its epic folder."""
+    from gobby.agents.agent_workspaces import agent_workspace_write_dirs as write_dirs
+
+    return write_dirs(variables)
+
+
+def _workspace_write_refused(path: Path, root: Path, allowed: list[Path]) -> bool:
+    if not path.is_relative_to(root):
+        return False
+    for directory in allowed:
+        if path.is_relative_to(directory):
+            return any(
+                part in _WORKSPACE_PROTECTED_NAMES for part in path.relative_to(directory).parts
+            )
+    return True
+
+
+def agent_workspace_write_violation(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+    variables: Mapping[str, Any],
+) -> bool:
+    """True when a write lands under the workspace root outside the seat's own or epic folder.
+
+    Inside those folders a ``.git`` or ``.gobby`` component is refused as well. Other tools
+    are not writes here: a read of a predecessor folder is the read rule's concern.
+    """
+    from gobby.agents.agent_workspaces import workspaces_root
+
+    data = event_data or {}
+    if data.get("tool_name") not in WORKSPACE_WRITE_TOOLS and (
+        data.get("canonical_tool_kind") != "write"
+    ):
+        return False
+    root = resolve_tool_path(str(workspaces_root()), None)
+    paths = _resolved_write_paths(event_data, tool_input)
+    if root is None or not paths:
+        return False
+    base = current_tool_cwd(data) or current_project_root(data)
+    allowed = [
+        directory
+        for directory in (
+            resolve_tool_path(raw, base) for raw in agent_workspace_write_dirs(variables)
+        )
+        if directory is not None
+    ]
+    return any(_workspace_write_refused(path, root, allowed) for path in paths)
+
+
 PATH_CONDITION_HELPERS: dict[str, Callable[..., Any]] = {
     "touches_docker_policy_path": touches_docker_policy_path,
     "write_paths_within": write_paths_within,
     "write_paths_match": write_paths_match,
+    "agent_workspace_write_dirs": agent_workspace_write_dirs,
+    "agent_workspace_write_violation": agent_workspace_write_violation,
 }

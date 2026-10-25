@@ -7,6 +7,8 @@ session linking, and session variable management.
 import logging
 from typing import Any
 
+from gobby.agents.team_lifecycle import seat_team
+from gobby.agents.team_scope import epic_team_above
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._authorization import has_delegated_agent_run
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
@@ -124,6 +126,18 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 f"Cannot claim task {resolved_id}: task is closed",
                 TaskToolErrorCode.TASK_CLOSED,
             )
+
+        # A descendant of an active epic team is claimed by that team's seats only.
+        epic_team = epic_team_above(ctx.task_manager.db, resolved_id)
+        if epic_team is not None:
+            seat = seat_team(ctx.task_manager.db, resolved_session_id)
+            if seat is None or seat.team_id != epic_team.team_id:
+                return task_error(
+                    f"Task {resolved_id} is under epic team {epic_team.team_id}; "
+                    "only that team's seats may claim it",
+                    TaskToolErrorCode.TASK_CLAIM_CONFLICT,
+                    team_id=epic_team.team_id,
+                )
 
         current_owner = get_claimed_session_id(task)
         already_selected = (

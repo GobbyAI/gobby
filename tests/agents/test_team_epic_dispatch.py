@@ -125,7 +125,7 @@ def new_task(
 
 
 async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
-    """An admitted epic team whose running Dev Manager seat holds the epic claim."""
+    """An admitted epic team with its running Dev Manager seat, which never claims."""
     db = world.case.db
     runbook = world.child(epic)
     binding = await world.admit(runbook, epic)
@@ -142,7 +142,6 @@ async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
     runs.start(run.id)
     SessionVariableManager(db).merge_variables(manager, {"_agent_type": "dev-manager"})
     SessionManager(db).update_terminal_pickup_metadata(manager, agent_run_id=run.id)
-    LocalTaskManager(db).claim_task(epic.id, manager, force=True)
     return EpicTeam(world, epic, runbook, binding, manager)
 
 
@@ -181,6 +180,25 @@ async def delete_tree(
 
 
 @pytest.mark.asyncio
+async def test_live_team_epic_survives_its_last_leaf_close(world: TeamWorld) -> None:
+    """A live team's epic stays open when its last leaf closes (Dev Manager ruling).
+
+    The manager holds no claim, so the parent-close cascade has nothing to stop at. The
+    team's live binding must stop it, or closing the last leaf closes the bound epic
+    before the epic tip is landed and its closing record written.
+    """
+    epic = new_task(world, "Keep the bound epic open", epic=True)
+    leaf = new_task(world, "The only leaf", parent=epic)
+    team = await epic_team(world, epic)
+    tasks = LocalTaskManager(world.case.db)
+
+    tasks.close_task(leaf.id, reason="moot", closed_in_session_id=team.manager)
+
+    assert tasks.get_task(leaf.id).closed_at is not None
+    assert tasks.get_task(epic.id).closed_at is None
+
+
+@pytest.mark.asyncio
 async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
     epic = new_task(world, TITLE, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=epic)
@@ -216,6 +234,109 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
         reply = await team.spawn(agent, **target)
         assert reply.get("success") is not True, (agent, target, reply)
     assert len(world.launches) == before
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_resumes_its_seat_outside_dispatch(world: TeamWorld) -> None:
+    """A resume names a stored seat and reuses its tree, so dispatch takes no part in it."""
+    db = world.case.db
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    seat = world.case.session("developer", parent=team.runbook.id)
+    LocalAgentRunManager(db).create(
+        parent_session_id=team.runbook.id,
+        provider="claude",
+        prompt="Implement the leaf.",
+        agent_name="developer",
+        child_session_id=seat,
+        task_id=leaf.id,
+    )
+    SessionVariableManager(db).merge_variables(seat, {"_agent_type": "developer"})
+
+    resumed = await team.spawn("developer", resume_session_id=seat)
+
+    assert resumed.get("success") is True, resumed
+    assert world.launches[-1]["resume_session_id"] == seat
+
+
+def stored_reviewer_seat(world: TeamWorld, team: EpicTeam, agent: str) -> str:
+    """An ended reviewer seat with a stored run, which a resume names."""
+    seat = world.case.session(agent, parent=team.runbook.id)
+    LocalAgentRunManager(world.case.db).create(
+        parent_session_id=team.runbook.id,
+        provider="claude",
+        prompt="Review the team tree.",
+        agent_name=agent,
+        child_session_id=seat,
+    )
+    SessionVariableManager(world.case.db).merge_variables(seat, {"_agent_type": agent})
+    return seat
+
+
+@pytest.mark.asyncio
+async def test_resumed_reviewer_is_refused_beside_a_live_seat(world: TeamWorld) -> None:
+    """A resume joins the team's one live seat per definition, as a fresh spawn does."""
+    epic = new_task(world, TITLE, epic=True)
+    new_task(world, "Code leaf", parent=epic)
+    team = await epic_team(world, epic)
+    live = await team.spawn("code-reviewer", worktree_id=team.binding.worktree_id)
+    assert live.get("success") is True, live
+    seat = stored_reviewer_seat(world, team, "code-reviewer")
+    before = len(world.launches)
+
+    resumed = await team.spawn("code-reviewer", resume_session_id=seat)
+
+    assert resumed.get("success") is not True, resumed
+    assert resumed.get("error_code") == "reviewer_seat_live"
+    assert len(world.launches) == before
+    assert reviewer_bindings(team) == {"code-reviewer": live["run_id"]}
+
+
+@pytest.mark.asyncio
+async def test_resumed_reviewer_takes_its_definitions_binding(world: TeamWorld) -> None:
+    """A resumed reviewer's new run replaces the ended one in its definition's binding."""
+    epic = new_task(world, TITLE, epic=True)
+    new_task(world, "Code leaf", parent=epic)
+    team = await epic_team(world, epic)
+    fresh = await team.spawn("code-reviewer", worktree_id=team.binding.worktree_id)
+    assert fresh.get("success") is True, fresh
+    LocalAgentRunManager(world.case.db).complete(fresh["run_id"])
+    seat = stored_reviewer_seat(world, team, "code-reviewer")
+
+    resumed = await team.spawn("code-reviewer", resume_session_id=seat)
+
+    assert resumed.get("success") is True, resumed
+    assert reviewer_bindings(team) == {"code-reviewer": resumed["run_id"]}
+
+
+@pytest.mark.asyncio
+async def test_single_team_manager_spawns_no_fresh_seat(world: TeamWorld) -> None:
+    """A single-task team runs the redesign flow: its runbook starts the seats, and its manager
+    only resumes them. A fresh spawn from its manager is refused, never launched."""
+    db = world.case.db
+    task = new_task(world, "Single task")
+    runbook = world.child(task)
+    await world.admit(runbook, task)
+    manager = world.case.session("dev-manager", parent=runbook.id)
+    runs = LocalAgentRunManager(db)
+    run = runs.create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt="Manage the task.",
+        agent_name="dev-manager",
+        child_session_id=manager,
+        task_id=task.id,
+    )
+    runs.start(run.id)
+    SessionVariableManager(db).merge_variables(manager, {"_agent_type": "dev-manager"})
+    SessionManager(db).update_terminal_pickup_metadata(manager, agent_run_id=run.id)
+    launches = len(world.launches)
+
+    refused = await world.direct_spawn(manager, agent="developer", task_id=task.id)
+
+    assert refused.get("error_code") == "team_manager_scope", refused
+    assert len(world.launches) == launches
 
 
 @pytest.mark.asyncio

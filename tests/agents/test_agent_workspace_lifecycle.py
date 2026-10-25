@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
+from gobby.agents.agent_workspaces import workspace_handoff_references
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
 from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -134,7 +135,7 @@ async def test_session_folder_binding(
     # A seat without a definition writes under default/.
     plain = pane.register("plain-ext")
     _activate(pane, plain, "startup")
-    assert SessionVariableManager(temp_db).get_variables(plain).get("_agent_type") is None
+    assert SessionVariableManager(temp_db).get_variables(plain).get("_agent_type") == "default"
     expected = _folder(home, pane, "default", plain)
     assert _workspace(temp_db, plain)[0] == expected
 
@@ -145,6 +146,26 @@ async def test_session_folder_binding(
     manual_folder = _workspace(temp_db, manual)[0]
     assert manual_folder == _folder(home, pane, manual_type or "default", manual)
     assert manual_folder not in (folder, expected)
+
+
+@pytest.mark.asyncio
+async def test_handoff_references_name_the_bound_folder(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pane = _pane(temp_db, tmp_path, monkeypatch, "handoff-refs")
+    home = (tmp_path / "gobby-home").resolve()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    _define(temp_db, WORKER, persistent=False)
+    seat = pane.predecessor_id
+    assert (await apply_agent_definition_impl(WORKER, temp_db, seat))["success"]
+    _activate(pane, seat, "startup")
+
+    folder, _ = _workspace(temp_db, seat)
+    assert folder is not None
+    assert workspace_handoff_references(temp_db, seat) == [f"Agent workspace: {folder}"]
+    assert workspace_handoff_references(temp_db, None) == []
+    unknown = "21000000-0000-4000-8000-0000000000ff"
+    assert workspace_handoff_references(temp_db, unknown) == []
 
 
 @pytest.mark.asyncio

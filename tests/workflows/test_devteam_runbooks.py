@@ -178,7 +178,8 @@ def test_runbook_seat_catalogues() -> None:
     devteam_spawns = _spawns(devteam)
     assert list(devteam_spawns) == DEVTEAM_SEATS
     for seat, arguments in devteam_spawns.items():
-        assert arguments["agent"] == seat
+        expected = "${{ inputs.reviewer_agent }}" if seat == "code-reviewer" else seat
+        assert arguments["agent"] == expected
         assert arguments["checkout_mode"] == "none"
         assert arguments["project_path"] == "${{ steps.admit.output.project_path }}"
     assert [seat for seat, arguments in devteam_spawns.items() if "task_id" in arguments] == [

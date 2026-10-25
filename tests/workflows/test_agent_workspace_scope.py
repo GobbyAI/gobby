@@ -61,12 +61,14 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
 
 
 def _event(data: dict[str, Any], session_id: str) -> HookEvent:
+    # The platform session id rides in metadata, as the hook handlers stamp it in production.
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=session_id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data=data,
+        metadata={"_platform_session_id": session_id},
     )
 
 

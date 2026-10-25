@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.agents.team_lifecycle import ADMISSION_STEP, TeamBinding, admit_team
+from gobby.agents.team_lifecycle import TeamBinding, admit_team
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.runbook_seat_tools import register_runbook_seat_tools
@@ -24,6 +24,7 @@ from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import Task
+from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import get_current_session_id, session_context_for_test

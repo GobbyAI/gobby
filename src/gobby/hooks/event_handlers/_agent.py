@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 
 import psycopg
 
+from gobby.agents.agent_workspaces import schedule_workspace_commit
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
@@ -675,6 +676,10 @@ class AgentEventHandlerMixin(EventHandlersBase):
         session_id = event.metadata.get("_platform_session_id")
 
         is_handoff_trigger = trigger in {"manual", "user", "compact"}
+        workspace_project_id = event.project_id or self._resolve_project_id(
+            event.project_id, event.cwd
+        )
+        schedule_workspace_commit(workspace_project_id, "pre_compact", loop=self._event_loop)
 
         if session_id:
             self.logger.debug("PRE_COMPACT (%s): session %s", trigger, session_id)

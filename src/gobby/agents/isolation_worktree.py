@@ -135,7 +135,9 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         # Generate worktree path
         project_name = Path(self._git_manager.repo_path).name
-        worktree_path = self._generate_worktree_path(branch_name, project_name)
+        worktree_path = self._generate_worktree_path(
+            branch_name, project_name, config.worktree_dir_name
+        )
 
         # Create git worktree
         result = await self._git_manager.create_worktree(
@@ -282,8 +284,10 @@ class WorktreeIsolationHandler(IsolationHandler):
         )
         return warning + original_prompt
 
-    def _generate_worktree_path(self, branch_name: str, project_name: str) -> str:
-        """Generate a unique worktree path in ~/.gobby/worktrees/."""
+    def _generate_worktree_path(
+        self, branch_name: str, project_name: str, dir_name: str | None = None
+    ) -> str:
+        """Generate a unique worktree path in ~/.gobby/worktrees/; ``dir_name`` wins if given."""
         # Sanitize branch name for use in path
-        safe_branch = branch_name.replace("/", "-").replace("\\", "-")
+        safe_branch = dir_name or branch_name.replace("/", "-").replace("\\", "-")
         return str(Path.home() / ".gobby" / "worktrees" / project_name / safe_branch)

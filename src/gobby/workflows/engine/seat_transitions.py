@@ -15,6 +15,7 @@ from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
+from gobby.tasks.lifecycle_access import session_grants
 from gobby.tasks.step_records import landing_review_approval, list_task_step_records
 from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
@@ -165,7 +166,7 @@ def candidate_binding_error(
     if reason is None and (event is None or event.fields.get("EVENT") != "CANDIDATE"):
         return None
     instance = AgentStepInstanceManager(db).get_for_session(session_id)
-    if instance is None or not instance.enabled or instance.agent_name != "code-reviewer":
+    if instance is None or not instance.enabled or not session_grants(db, session_id, "review"):
         return None
     if reason is None and event is not None:
         state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
@@ -248,16 +249,20 @@ def advance_seat(
     step = instance.current_step
     state = {**variables, **instance.variables}
     tasks = LocalTaskManager(db)
-    if role == "developer" and step == "route_skills" and mcp_tool == ("gobby-tasks", "get_task"):
+    if (
+        step == "route_skills"
+        and mcp_tool == ("gobby-tasks", "get_task")
+        and session_grants(db, session_id, "implementation")
+    ):
         task = _requested_task(tasks, state.get("assigned_task_id"), tool_input.get("task_id"))
         if task is None or task.claimed_by_session_id != session_id:
             return {}
         skills = build_claimed_task_extra_skill_state({"claimed_tasks": {task.id: {}}}, tasks)
         return {"additional_skills": skills["claimed_task_extra_skills"], "skills_routed": True}
-    if role == "code-reviewer" and mcp_tool in {
-        ("gobby-tasks", "get_task"),
-        ("gobby-tasks", "record_review_step"),
-    }:
+    if (
+        mcp_tool in {("gobby-tasks", "get_task"), ("gobby-tasks", "record_review_step")}
+        and session_grants(db, session_id, "review")
+    ):
         task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
         task = _requested_task(tasks, task_id, tool_input.get("task_id"))
         if task is not None and isinstance(sha, str) and state.get("candidate_received"):
@@ -275,7 +280,7 @@ def advance_seat(
         except CandidateMessageError:
             continue
         changes: dict[str, Any] = {}
-        if role == "code-reviewer" and event is not None:
+        if event is not None and session_grants(db, session_id, "review"):
             changes = _reviewer_message(db, session_id, state, event, variables)
         elif role in {"log-monitor", "metrics-monitor"} and message.from_session == session_id:
             changes = _monitor_message(
@@ -296,7 +301,11 @@ def advance_seat(
             elif match and step == "stamp" and match[1] == "CONSENSUS_WITHDRAWN":
                 if not state.get("consensus_sha") or match[2] == state.get("consensus_sha"):
                     changes = {"bounced": True, "consensus": False}
-        elif role == "developer" and step == "submit" and event is not None:
+        elif (
+            step == "submit"
+            and event is not None
+            and session_grants(db, session_id, "implementation")
+        ):
             if (
                 message.to_session == session_id
                 and _same_task(db, state.get("assigned_task_id"), event)

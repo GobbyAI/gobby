@@ -76,14 +76,13 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
 
 
 def _epic(world: TeamWorld, title: str) -> tuple[Task, Task]:
-    """An epic claimed by the case's claimant, with one open code leaf."""
+    """An unclaimed epic with one open code leaf; its Dev Manager never claims it."""
     tasks = LocalTaskManager(world.case.db)
     epic = tasks.create_task(
         world.case.project_id,
         title,
         task_type="epic",
         created_in_session_id=world.case.creator,
-        claimed_by_session_id=world.case.claimant,
     )
     leaf = tasks.create_task(
         world.case.project_id,

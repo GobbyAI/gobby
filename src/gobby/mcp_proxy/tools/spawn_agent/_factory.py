@@ -12,7 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.agents.team_lifecycle import SeatTarget
+from gobby.agents.team_dispatch import dispatch_for_caller, record_dispatch
+from gobby.agents.team_lifecycle import SeatTarget, TeamAdmissionRefused
 
 # A module reference: remote_spawn imports this package, so its names may not exist yet.
 from gobby.hub import remote_spawn
@@ -495,6 +496,32 @@ def create_spawn_agent_registry(
         elif reserved_run_id is not None:
             return {"success": False, "error": "reserved_run_id requires a pipeline caller"}
 
+        # An epic team's Dev Manager spawns inside its epic scope. A resumed reviewer is checked
+        # against the team's live seats and rebinds; any other resume reuses the seat's recorded
+        # tree, so it takes no scope. Other callers take the path below.
+        dispatch = None
+        if caller_session_id is not None and db is not None:
+            try:
+                dispatch = await asyncio.to_thread(
+                    dispatch_for_caller,
+                    db,
+                    caller_session_id,
+                    agent_body=agent_body,
+                    agent=agent,
+                    task_id=task_id,
+                    checkout_mode=checkout_mode,
+                    branch_name=branch_name,
+                    base_branch=base_branch,
+                    worktree_id=worktree_id,
+                    resumed=resume_session_id is not None,
+                )
+            except TeamAdmissionRefused as exc:
+                return {"success": False, "error": str(exc), "error_code": exc.code}
+        if dispatch is not None:
+            resolved_parent_session_id = dispatch.parent_session_id
+            branch_name, base_branch = dispatch.branch_name, dispatch.base_branch
+            worktree_id = dispatch.worktree_id
+
         # Compose prompt — hooks inject agent instructions via session_start,
         # so no preamble prepend needed here.
         effective_prompt = prompt
@@ -734,6 +761,7 @@ def create_spawn_agent_registry(
             checkout_mode=checkout_mode,
             branch_name=branch_name,
             base_branch=base_branch,
+            worktree_dir_name=dispatch.worktree_dir_name if dispatch is not None else None,
             clone_id=clone_id,
             worktree_id=worktree_id,
             cleanup_isolation_on_failure=cleanup_isolation_on_failure,
@@ -776,6 +804,8 @@ def create_spawn_agent_registry(
             ),
             project_context_authoritative=project_context_authoritative,
         )
+        if dispatch is not None and db is not None:
+            await asyncio.to_thread(record_dispatch, db, dispatch, result)
 
         return result
 

@@ -8,6 +8,7 @@ surfaces: [spawn, persona]
 provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
+persistent_workspace: true
 timeout: 0
 send_message_targets: [parent, session, project, global]
 blocked_mcp_tools:

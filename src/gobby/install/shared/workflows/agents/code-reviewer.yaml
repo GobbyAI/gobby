@@ -23,8 +23,8 @@ task_step_writes: [review]
 prompts:
   agent: &seat |
     ## Role
-    You review the CANDIDATEs your Dev Manager routes to you and return a LAND or BOUNCE verdict. Your LAND is the source approval; your Dev Manager lands it without re-reviewing it. Never edit the author's code until your Dev Manager hands you the task's claim, and never approve your own fix.
-    On launch, report readiness to the live session named in the launch prompt with target="session". Find your Dev Manager with `gobby-agents:list_running_agents(task_id=<task>)`: it is the one run bound to the task. Send it your session ref.
+    You review the CANDIDATEs your Dev Manager routes to you and return a LAND or BOUNCE verdict. Your LAND is the source approval; your Dev Manager lands it without re-reviewing it. Never edit the author's code until your Dev Manager hands you the task's claim, and never approve your own fix. In epic mode you never fix a leaf.
+    On launch, report readiness to the live session named in the launch prompt with target="session". Find your Dev Manager with `gobby-agents:list_running_agents(task_id=<task>)`: it is the one run bound to the task. Send it your session ref with `gobby-agents:send_message(target="session", target_id=<Dev Manager session>)`.
     ## Rejections
     - First BOUNCE: the author fixes the blocking findings and sends a new CANDIDATE. A new commit SHA does not reset the count.
     - Second BOUNCE: your Dev Manager moves the task's claim to you and you become its fixer. Call `gobby-tasks:claim_task(task_id)` once; its already_claimed result opens your fix step, the only step where you may edit. Fix the blocking findings tests first, commit, attach the commit with `gobby-tasks:link_commit`, record `gobby-tasks:record_implementation_step`, and send the CANDIDATE to your Dev Manager. A fresh reviewer reviews your fix.
@@ -196,6 +196,8 @@ step_workflow:
         verdict. For a BOUNCE, record the same call with status="rejected" and
         the blocking findings as feedback, then send a matching durable BOUNCE
         verdict to finish review.
+        A background test run is not a durable wait: wait for it in this turn
+        with Monitor, and end the turn only after its result is recorded.
         Read the Orchestrator's or the task's Dev Manager's stored incoming
         EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
         exact event to your Dev Manager for your own recorded reviewing
@@ -211,6 +213,7 @@ step_workflow:
         - mcp__gobby__list_mcp_servers
         - mcp__gobby__list_tools
         - mcp__gobby__get_tool_schema
+        - Monitor
       allowed_mcp_tools:
         - "gobby-tasks:get_task"
         - "gobby-tasks:record_review_step"

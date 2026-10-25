@@ -26,7 +26,7 @@ import yaml
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
 from gobby.agents.sync import get_bundled_agents_path
-from gobby.agents.team_lifecycle import ADMISSION_STEP, TeamBinding
+from gobby.agents.team_lifecycle import TeamBinding
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -47,6 +47,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
@@ -850,8 +851,18 @@ def _team_runbook(db: HubDatabase, task: Task, team_id: str) -> str:
         project_id=PROJECT_ID,
     )
     step = executions.create_step_execution(execution.id, ADMISSION_STEP)
-    team = {item.name: f"{team_id}-{item.name}" for item in fields(TeamBinding)}
-    team.update(team_id=team_id, task_id=task.id, project_id=PROJECT_ID)
+    team: dict[str, Any] = {
+        item.name: f"{team_id}-{item.name}"
+        for item in fields(TeamBinding)
+        if item.name not in {"reviewers", "mode"}
+    }
+    team.update(
+        team_id=team_id,
+        task_id=task.id,
+        project_id=PROJECT_ID,
+        reviewers={},
+        mode="single",
+    )
     executions.update_step_execution(step.id, output_json=json.dumps({"team": team}))
     session = SessionManager(db).register(
         external_id=f"pipeline-{execution.id}",

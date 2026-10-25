@@ -261,6 +261,22 @@ async def test_reviewer_never_fixes_in_epic_mode(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_hand_off_refuses_task_outside_epic_team(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    outsider = new_task(world, "Outside the epic")
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    other_developer = team.seat("developer", "implementation")
+    tasks.claim_task(outsider.id, developer, force=True)
+
+    refused = await hand_off(tools, team, outsider, developer, other_developer)
+    assert refused.get("error_code") == "team_manager_required", refused
+    assert tasks.get_task(outsider.id).claimed_by_session_id == developer
+
+
+@pytest.mark.asyncio
 async def test_third_rejection_holds_epic(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     epic = new_task(world, TITLE, epic=True)
@@ -363,7 +379,8 @@ async def test_epic_tip_rejection_repairs_through_leaf(world: TeamWorld) -> None
     assert not approved(team.db, first, "review")
     assert approved(team.db, second, "review")
     assert not sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
-    submit(team.db, reviewer, first, "review", "approved", 2, fix)
+    # The leaf has no rejection of its own, so its rewritten review is its round one.
+    submit(team.db, reviewer, first, "review", "approved", 1, fix)
     new_tip = team.link_tip()
     assert sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
 

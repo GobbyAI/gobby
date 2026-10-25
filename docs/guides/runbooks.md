@@ -132,6 +132,12 @@ rounds and the claim already handed to one of the excluded reviewers. When the
 launch fails, the Orchestrator escalates the task rather than substituting
 another reviewer.
 
+### Epic mode
+
+A team bound to an epic runs in epic mode. Its binding is an epic with open non-epic descendants, and each leaf is one of those descendants at any depth. The team's tree is `wt-epic-<seq>-<slug>` on branch `epic/<seq>/main`. Each sub-worktree leaf works on `epic/<seq>/<leaf-seq>` in `wt-epic-<seq>-<leaf-seq>-<slug>`, cut from epic main. The Dev Manager holds the epic claim, and each seat's spawn is scoped by its step grant.
+
+Launch the runbook with `task` set to the epic and `reviewer_agent` set to the precedence winner over the leaves' approvals. The Dev Manager's epic phases are in its procedure reference. In epic mode no reviewer fixes a leaf: a leaf that exhausts its review rounds escalates, and the epic escalates once.
+
 ## Launch planning
 
 The Orchestrator launches `team-planning` with `lane`, `workspace`,
