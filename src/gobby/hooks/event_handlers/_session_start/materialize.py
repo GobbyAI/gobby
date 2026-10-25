@@ -293,6 +293,19 @@ def _bind_clear_successor(
             exc,
         )
     try:
+        from gobby.agents.agent_workspaces import bind_session_workspace, schedule_workspace_commit
+
+        bind_session_workspace(
+            handler._session_manager.db, successor_id, inherit_from=predecessor_id
+        )
+        schedule_workspace_commit(
+            getattr(session_obj, "project_id", None), "clear_binding", loop=handler._event_loop
+        )
+    except Exception as exc:
+        handler.logger.warning(
+            "Failed to bind agent workspace for clear successor %s: %s", successor_id, exc
+        )
+    try:
         from gobby.sessions.title_lifecycle import apply_clear_successor_title
 
         apply_clear_successor_title(handler._session_manager, successor_id, predecessor)
@@ -438,6 +451,16 @@ def activate_materialized_session(
             rebound = handler._session_manager.get(session_id)
             if rebound is not None:
                 session_obj = rebound
+    if handler._session_manager is not None:
+        try:
+            from gobby.agents.agent_workspaces import bind_epic_workspace, bind_session_workspace
+
+            bind_session_workspace(handler._session_manager.db, session_id)
+            bind_epic_workspace(handler._session_manager.db, session_id)
+        except Exception as exc:
+            handler.logger.warning(
+                "Failed to bind agent workspace for session %s: %s", session_id, exc
+            )
     rehydrate_found_work_gate_arm(handler, session_id)
     # Context-reuse expiry runs only after the newcomer is bound and holds the
     # claims, so a superseded successor is expired after its handoff moved on.

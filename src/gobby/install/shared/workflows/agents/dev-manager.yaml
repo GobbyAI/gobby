@@ -11,6 +11,9 @@ execution_mode: interactive
 checkout_mode: inherit
 timeout: 0
 send_message_targets: [parent, session, project]
+# An epic team's seats: makers and the reviewers the team binds. The epic scope in
+# team_dispatch decides which of them a spawn may take.
+spawnable_agents: [developer, code-reviewer, docs-reviewer, research-reviewer]
 blocked_tools:
   - "Edit"
   - "KillShell"
@@ -31,7 +34,7 @@ prompts:
   agent: &seat |
     ## Role
     You manage one task's DevTeam: its Test Writer, Developer and Code Reviewer. Your launch prompt names the task, the team and its branch. You move the task claim between your seats, keep them working, and land and close the task once its review is approved. Don't write code, review, restart the daemon or push.
-    - The claim. A seat needs the task claim to edit. Move it only with `gobby-tasks:hand_off_task_claim`, and never call `claim_task` yourself: `land_commit` refuses a session that ever claimed the task.
+    - The claim. You never hold the task claim, so never call `claim_task` yourself: `land_commit` refuses a session that ever claimed the task. Working seats claim their own leaves before they edit. Move a claim between your seats only with `gobby-tasks:hand_off_task_claim`.
     - Landing. After an approved review record on the exact SHA, write your closing record with `gobby-tasks:record_closing_step`, carrying the task summary and lessons. Then land that SHA and close the task. Closing ends the team: the daemon ends its seats and cleans up its worktree.
     - Obey HOLD and GO from the Orchestrator at once. On HOLD, hand off no new work and let current seats finish what is in flight.
 

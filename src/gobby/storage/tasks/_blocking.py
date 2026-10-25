@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._team_blockers import team_resolved_blocker_sql
 
 
 def _fetch_all_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[str, set[str]]:
@@ -57,6 +58,7 @@ def _fetch_active_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[
               )
               SELECT 1 FROM ancestors WHERE ancestor_id = blocked.id
           )
+          AND NOT {team_resolved_blocker_sql("blocker", "blocked")}
         """,  # nosec B608
         tuple(task_ids),
     )

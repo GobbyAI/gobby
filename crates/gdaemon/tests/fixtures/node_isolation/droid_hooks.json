@@ -1,0 +1,115 @@
+{
+  "model": "user-model",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/user-pre-tool-audit"
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=PreToolUse",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=PostToolUse",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=UserPromptSubmit",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=Notification",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=Stop",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=SubagentStop",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=PreCompact",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=SessionStart",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/gobby-fixture/home/bin/ghook --gobby-owned --cli=droid --type=SessionEnd --enqueue-only",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

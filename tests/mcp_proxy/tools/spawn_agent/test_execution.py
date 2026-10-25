@@ -384,6 +384,97 @@ async def test_auto_claim_survives_runner_without_session_manager(
     cleanup.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_team_manager_spawn_takes_no_task_claim(
+    isolation_context: IsolationContext,
+) -> None:
+    """A team manager spawned on its task never claims it (Dev Manager ruling).
+
+    The manager lands and closes its team's task, and land_commit refuses a session
+    that ever claimed the task. Its seats take the claim on their leaves instead.
+    """
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    parent_session_id = "21000000-0000-4000-8000-000000000001"
+    child_session_id = "21000000-0000-4000-8000-000000000002"
+    task_id = "21000000-0000-4000-8000-000000000004"
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = SimpleNamespace(
+        claimed_by_session_id=None,
+        closed_at=None,
+        escalated_at=None,
+    )
+    session_manager = MagicMock()
+    runner = SimpleNamespace(run_storage=MagicMock())
+    spawn_result = SimpleNamespace(
+        success=True,
+        child_session_id=child_session_id,
+        terminal_id=None,
+        pid=None,
+        error=None,
+    )
+    # The shipped Dev Manager definition sets team_manager; only its variables matter here.
+    dev_manager_body = SimpleNamespace(
+        workflows=SimpleNamespace(variables={"team_manager": True}),
+        step_workflow=None,
+    )
+
+    with (
+        patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.start_run_or_cleanup",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as start_run,
+        patch("gobby.runner_broadcasting.fire_agent_event") as fire_event,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
+        ) as update_title,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn",
+            new_callable=AsyncMock,
+        ) as cleanup,
+        patch(
+            "gobby.mcp_proxy.tools.spawn_agent._execution.build_spawn_response",
+            return_value={"success": True, "status": "starting"},
+        ),
+    ):
+        result = await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-team-manager-no-claim",
+            session_manager=session_manager,
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_checkout_mode="worktree",
+            base_commit_sha=None,
+            handler=SimpleNamespace(commit_environment=None),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=True,
+            task_manager=task_manager,
+            parent_session_id=parent_session_id,
+            effective_provider="claude",
+            resolved_task_id=task_id,
+            task_seq_num=24824,
+            db=None,
+            agent_body=dev_manager_body,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+
+    assert result == {"success": True, "status": "starting"}
+    start_run.assert_awaited_once()
+    assert start_run.await_args is not None
+    assert start_run.await_args.kwargs["child_session_id"] == child_session_id
+    fire_event.assert_called_once()
+    assert fire_event.call_args.args[0] == "agent_started"
+    task_manager.get_task.assert_not_called()
+    task_manager.claim_task.assert_not_called()
+    update_title.assert_not_called()
+    cleanup.assert_not_awaited()
+
+
 class TestSpawnAgentIsolation:
     """Tests for spawn_agent isolation parameter."""
 

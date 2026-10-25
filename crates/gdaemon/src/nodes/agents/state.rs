@@ -45,7 +45,7 @@ pub struct WorkspaceRecord {
     pub mode: WorkspaceMode,
     pub path: PathBuf,
     pub branch_name: String,
-    pub base_branch: String,
+    pub base_branch: Option<String>,
     pub source_root: PathBuf,
     pub reused: bool,
 }

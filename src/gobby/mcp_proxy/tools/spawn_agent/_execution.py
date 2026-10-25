@@ -25,6 +25,13 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionab
 logger = logging.getLogger(__name__)
 
 
+def _is_team_manager(agent_body: Any) -> bool:
+    """Whether the spawned definition is a team manager, which never claims its bound task."""
+    if agent_body is None:
+        return False
+    return agent_body.workflows.variables.get("team_manager") is True
+
+
 def _title_auto_claimed_session(session_manager: Any, session_id: str, task: Any) -> None:
     """Apply the task title after spawn-time auto-claiming."""
     try:
@@ -190,7 +197,12 @@ async def finalize_executed_spawn(
 
         # Closing-capable managers need the run's task binding, but must stay out
         # of claimant history so they can independently land their team's work.
-        if (
+        if resolved_task_id and task_manager and _is_team_manager(agent_body):
+            logger.info(
+                "Skipping auto-claim for task %s; team managers hold no claim",
+                f"#{task_seq_num}" if task_seq_num else resolved_task_id,
+            )
+        elif (
             resolved_task_id
             and task_manager
             and (agent_body is None or "closing" not in agent_body.task_step_writes)

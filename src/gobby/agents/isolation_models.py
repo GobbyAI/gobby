@@ -38,6 +38,18 @@ def _sanitize_branch_name(value: str) -> str:
     return ref or f"agent/{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
 
+def title_slug(title: str) -> str:
+    """The title slug task branches and team trees share: lowercase hyphenated words, 40 max.
+
+    Empty when the title has no slug characters.
+    """
+    slug = title.lower().replace(" ", "-")
+    # Keep only alphanumeric and hyphens
+    slug = "".join(c for c in slug if c.isalnum() or c == "-")
+    slug = "-".join(part for part in slug.split("-") if part)
+    return slug[:40].rstrip("-")
+
+
 @dataclass
 class SpawnConfig:
     """Configuration passed to isolation handlers."""
@@ -54,6 +66,9 @@ class SpawnConfig:
     provider: str
     parent_session_id: str
     phase_timings_ms: dict[str, float] = field(default_factory=dict)
+    # Explicit worktree directory name under ~/.gobby/worktrees/<project>; None derives it
+    # from the branch name.
+    worktree_dir_name: str | None = None
     preserve_existing_worktree: bool = False
 
 
@@ -97,13 +112,7 @@ def generate_branch_name(config: SpawnConfig) -> str:
         return _sanitize_branch_name(config.branch_name)
 
     if config.task_seq_num and config.task_title:
-        # Generate slug from task title
-        slug = config.task_title.lower().replace(" ", "-")
-        # Keep only alphanumeric and hyphens
-        slug = "".join(c for c in slug if c.isalnum() or c == "-")
-        slug = "-".join(part for part in slug.split("-") if part)
-        # Truncate to 40 chars
-        slug = slug[:40]
+        slug = title_slug(config.task_title)
         suffix = f"-{slug}" if slug else ""
         return _sanitize_branch_name(f"task-{config.task_seq_num}{suffix}")
 

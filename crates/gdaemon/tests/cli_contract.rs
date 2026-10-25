@@ -76,8 +76,11 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     let fields = identity
         .as_object()
         .expect("schema identity must be a JSON object");
+    // serde_json's preserve_order keeps emitted key order, so compare the exact set sorted.
+    let mut keys = fields.keys().map(String::as_str).collect::<Vec<_>>();
+    keys.sort_unstable();
     assert_eq!(
-        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        keys,
         [
             "assets_root_hash",
             "baseline_checksum",

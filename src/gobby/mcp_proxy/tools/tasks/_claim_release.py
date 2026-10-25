@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from gobby.agents.team_lifecycle import seat_team
+from gobby.agents.team_lifecycle import TeamBinding, seat_team
+from gobby.agents.team_scope import open_leaf_below
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
@@ -16,7 +17,12 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
-from gobby.tasks.lifecycle_access import is_operator_coordinator, session_agent_definition
+from gobby.storage.team_records import EPIC_MODE
+from gobby.tasks.lifecycle_access import (
+    is_operator_coordinator,
+    session_agent_definition,
+    session_grants,
+)
 from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.task_claim_state import task_edited_checkout_paths, task_edited_file_set
@@ -173,6 +179,13 @@ def _bound_dev_manager(ctx: RegistryContext, caller: Session, task_id: str) -> b
     )
 
 
+def _team_task(db: HubDatabase, team: TeamBinding, task_id: str) -> bool:
+    """The team's own task, or in epic mode an open leaf below its epic."""
+    if team.task_id == task_id:
+        return True
+    return team.mode == EPIC_MODE and open_leaf_below(db, team.task_id, task_id) is not None
+
+
 def _recipient_refusal(
     db: HubDatabase, caller_id: str, recipient: Session, task_id: str, epoch: int
 ) -> dict[str, str] | None:
@@ -222,8 +235,8 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
             team = seat_team(db, caller.id)
             if (
                 team is None
-                or team.task_id != resolved_id
-                or not _bound_dev_manager(ctx, caller, resolved_id)
+                or not _team_task(db, team, resolved_id)
+                or not _bound_dev_manager(ctx, caller, team.task_id)
             ):
                 return {
                     "error": "Only the task's Dev Manager may hand off its claim",
@@ -244,6 +257,15 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                 return {
                     "error": "The holder and the recipient must be seats of the task's team",
                     "error_code": "team_seat_required",
+                }
+            if (
+                team.mode == EPIC_MODE
+                and session_grants(db, recipient.id, "review")
+                and not session_grants(db, recipient.id, "implementation")
+            ):
+                return {
+                    "error": "An epic reviewer never takes a claim; findings go to a developer",
+                    "error_code": "reviewer_claim_forbidden",
                 }
             if holder.id == recipient.id:
                 return {"error": "The recipient already holds the claim", "error_code": "same_seat"}
