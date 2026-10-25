@@ -14,6 +14,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,9 +31,13 @@ from gobby.ai import (
     TextGenerationService,
     decisions,
 )
-from gobby.code_index.models import StoredCommunity
+from gobby.code_index.models import IndexedProject, IndexWriteMode, StoredCommunity
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.config.code_index import CodeIndexCommunityLabelConfig, CodeIndexConfig
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 from scripts import community_label_study, decisions_live_capture
+from tests.code_index.conftest import PROJECT_ID
 from tests.scripts.conftest import (
     ALIAS_MODEL,
     BACKEND,
@@ -576,3 +581,74 @@ def test_ship_configuration_follows_each_branch(
     code, results = _score(bare, _rate(bare, g_regresses, "regressed.csv"), capture)
     assert code == 0
     _assert_ships(results, _off_everywhere("false"))
+
+
+def test_missing_capture_cost_fails_cost_bar(
+    tmp_path: Path, openrouter_wire: OpenRouterWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    capture = _capture(tmp_path, openrouter_wire, cost_per_token=1e-8)
+    text = capture.read_text(encoding="utf-8")
+    match = re.search(r"```json\s*(.*?)```", text, re.DOTALL)
+    assert match is not None
+    payload = json.loads(match[1])
+    for probe in payload["probes"]:
+        probe.get("usage", {}).pop("cost", None)
+    capture.write_text(
+        text[: match.start(1)] + json.dumps(payload) + text[match.end(1) :], encoding="utf-8"
+    )
+    _fresh_decisions(monkeypatch)
+    openrouter_wire.choice = _admit_odd
+    prepared = _prepare(tmp_path, "missing-cost")
+    assert prepared.code == 0
+
+    code, results = _score(prepared, _rate(prepared, _rule_two_ratings), capture)
+
+    assert code == 0
+    assert "| decision_cost_usd | undefined |" in results
+    _assert_ships(results, _off_everywhere("false"))
+
+
+def test_live_loader_scopes_machine_and_omits_stored_labels(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = require_machine_id()
+    foreign = "21000000-0000-4000-8000-999999999999"
+    storage = CodeIndexStorage(temp_db)
+    storage.upsert_project_stats(
+        IndexedProject(id=PROJECT_ID, root_path=str(tmp_path)), mode=IndexWriteMode.OVERLAY
+    )
+    temp_db.execute(
+        "INSERT INTO machines (id, owner_user_id) SELECT %s, owner_user_id "
+        "FROM machines WHERE id = %s",
+        (foreign, local),
+    )
+    for machine, cid in ((local, 1), (foreign, 2)):
+        temp_db.execute(
+            "INSERT INTO code_communities (machine_id, project_id, community_id, member_count, "
+            "members, representatives, internal_edges, cohesion, boundary, member_signature, "
+            "label_deterministic, label, label_source, label_candidates, label_model, "
+            "labeled_signature) VALUES (%s, %s, %s, 3, %s, %s, 2, 0.5, '[]'::jsonb, %s, "
+            "%s, %s, 'model', %s, 'stored-model', %s)",
+            (
+                machine,
+                PROJECT_ID,
+                cid,
+                ["a.py", "b.py", "c.py"],
+                ["a.py"],
+                f"{cid:016x}",
+                "Deterministic Area",
+                STORED_LABEL,
+                ["Deterministic Area"],
+                f"{cid:016x}",
+            ),
+        )
+    monkeypatch.setattr(
+        "gobby.storage.hub.runtime.runtime_hub_database", lambda **_kwargs: nullcontext(temp_db)
+    )
+
+    rows = community_label_study._load_communities(PROJECT_ID)
+
+    assert [(row.machine_id, row.community_id) for row in rows] == [(local, 1)]
+    assert rows[0].label == rows[0].label_source == ""
+    assert rows[0].label_model is rows[0].labeled_signature is None
+    assert rows[0].members == ["a.py", "b.py", "c.py"]
