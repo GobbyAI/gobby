@@ -2227,3 +2227,15 @@ production cutover or task expansion have been performed during planning.
 
 - 2026-10-25 — Initial narrative by Plan Writer gobby#17712 for #25066;
   awaiting adversarial review by gobby#17713; no consensus claimed.
+- 2026-10-25 — Consensus between Plan Writer gobby#17712 and Plan Adversary
+  gobby#17713 on narrative 27c530f985032d0e7e550bbce63abaa740c45ffc. The
+  revisions applied the Orchestrator's rulings: leaf 6.0 owns the web-chat
+  health seam, `CapabilityRefreshCoordinator` stays a Python non-goal, and the
+  `crates/gdaemon/src/main.rs` contention with the skills plan is recorded.
+  AI-ADV-01 is resolved: 7.6 moves switch ownership only across a restart that
+  ends the outgoing task, with the e2e recovery case 7.6.6. AI-ADV-02 is
+  resolved: 7.4 keeps the journal-first build order, tested by 7.4.5. Enhancer
+  dispositions: ENH-001 folded into AI-ADV-01, ENH-002 added test 7.3.5 only,
+  ENH-003 rejected, ENH-004 added wording on 4.1.2 and 4.1.3, and ENH-F1-001
+  rejected the restart gate and labelled 7.6.6. No findings or decisions
+  remain open.
