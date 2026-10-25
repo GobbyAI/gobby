@@ -546,7 +546,6 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     tasks.claim_task(done.id, developer, force=True)
     done_sha = commit_work(db, tree, done, "done.py")
     submit(db, developer, done, "implementation", "approved", 1, sha=done_sha)
-    submit(db, reviewer, done, "review", "approved", 1, sha=done_sha)
 
     # The escalated leaf holds the epic: the epic escalates once, and dispatch stops.
     state = sync_epic_review(db, team.binding.team_id)
@@ -578,6 +577,9 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     assert (lifted.held, lifted.holds) == (False, ())
     allowed = await team.spawn("developer", task_id=waiting.id, checkout_mode="worktree")
     assert allowed.get("success") is True, allowed
+
+    # A held team refuses new review rounds, so the finished leaf is reviewed once the hold lifts.
+    submit(db, reviewer, done, "review", "approved", 1, sha=done_sha)
 
     # The reset leaf is worked again in its new epoch, and the waiting leaf finishes.
     tasks.claim_task(stuck.id, developer, force=True)

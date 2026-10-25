@@ -57,6 +57,7 @@ from gobby.worktrees.git import WorktreeGitManager
 logger = logging.getLogger(__name__)
 _PIPELINE_SOURCE = "pipeline"
 _PIPELINE_PREFIX = "pipeline-"
+_SEAT_DEPTH_LIMIT = 5
 _TREE_FIELDS = frozenset({"worktree_id", "worktree_path"})
 
 
@@ -589,6 +590,18 @@ def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
     return parents
 
 
+def _pipeline_ancestor(sessions: SessionManager, session_id: str) -> Session | None:
+    """The nearest pipeline session at or above ``session_id``, within the agent depth limit."""
+    session = sessions.get(session_id)
+    for _ in range(_SEAT_DEPTH_LIMIT):
+        if session is None:
+            return None
+        if session.source == _PIPELINE_SOURCE:
+            return session
+        session = sessions.get(session.parent_session_id) if session.parent_session_id else None
+    return None
+
+
 def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
     """The admitted team whose runbook launched this seat, or None outside any team.
 
@@ -601,7 +614,7 @@ def seat_team(db: HubDatabase, session_id: str) -> TeamBinding | None:
     if seat is None:
         return None
     for parent_id in _seat_parents(db, seat):
-        runbook = sessions.get(parent_id)
+        runbook = _pipeline_ancestor(sessions, parent_id)
         if runbook is None:
             continue
         try:

@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.isolation_models import SpawnConfig, generate_branch_name
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, seat_team
 from gobby.agents.team_teardown import reconcile_team_teardowns
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.agents import AgentRun
@@ -178,6 +178,28 @@ async def test_descendant_claims_scoped_to_team(world: TeamWorld) -> None:
     unrelated = new_task(world, "Unrelated task")
     reply = await claim(outsider, unrelated)
     assert reply.get("success") is True, reply
+
+
+@pytest.mark.asyncio
+async def test_dispatched_seat_resolves_its_team_and_claims_its_leaf(world: TeamWorld) -> None:
+    """A seat the Dev Manager spawns sits under that manager, and the manager under the runbook."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    team = await world.admit(runbook, epic)
+    manager = world.case.session("dev-manager", parent=runbook.id)
+    seat = world.case.session("developer", parent=manager)
+
+    binding = seat_team(db, seat)
+    assert binding is not None and binding.team_id == team.team_id
+
+    with session_context_for_test(seat):
+        reply = cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(leaf.id).claimed_by_session_id == seat
 
 
 @pytest.mark.asyncio
