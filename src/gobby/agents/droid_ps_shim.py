@@ -1,8 +1,11 @@
-"""Ad-hoc re-signed ``ps`` for sandboxed Droid agents.
+"""Ad-hoc re-signed ``ps`` for sandboxed SRT seats.
 
-TODO(#22407): Remove this module and its wiring in ``srt_runtime`` once Factory
-fixes ``factory-execute-supervisor``. This is a workaround for an upstream defect,
-not a Gobby design choice, and it should be deleted the moment Droid ships a fix.
+Every SRT launch puts this shim first on PATH (#25069). Seatbelt denies exec of
+setuid ``/bin/ps``, so without it a sandboxed seat cannot run ``ps`` at all.
+
+TODO(#22407): Droid's supervisor, the upstream defect that first needed this shim,
+SIGKILLs its process group when its ``ps`` probe fails. Drop Droid's dependency once
+Factory ships a fix. Reviewer seats keep the shim for stall diagnosis (#25069).
 Upstream issue: https://github.com/Factory-AI/factory/issues/33
 
 Droid runs every ``Execute`` command under an inline bash supervisor that probes
@@ -62,8 +65,8 @@ def droid_ps_shim_dir() -> Path | None:
     """Return a directory holding an execable ``ps``, or None when unavailable.
 
     Keyed by the digest of ``/bin/ps`` so a system update lands in a new directory
-    rather than serving a stale copy. Failure is non-fatal: the spawn proceeds and
-    Droid's ``Execute`` stays broken exactly as it is without the shim.
+    rather than serving a stale copy. Failure is non-fatal: the spawn proceeds without
+    the shim, and a sandboxed bare ``ps`` stays unavailable.
     """
     if sys.platform != "darwin" or not SYSTEM_PS.exists() or not CODESIGN.exists():
         return None
@@ -87,15 +90,13 @@ def droid_ps_shim_dir() -> Path | None:
         finally:
             staged.unlink(missing_ok=True)
     except (OSError, subprocess.SubprocessError) as exc:
-        logger.warning(
-            "Droid ps shim unavailable; sandboxed Droid Execute will fail closed: %s", exc
-        )
+        logger.warning("ps shim unavailable; sandboxed ps will fail closed: %s", exc)
         return None
     return directory
 
 
 def ps_shim_path_env(directory: Path | None, env: Mapping[str, str]) -> dict[str, str]:
-    """Prepend the shim directory to PATH so Droid's supervisor resolves it first."""
+    """Prepend the shim directory to PATH so a sandboxed bare ``ps`` resolves to it first."""
     if directory is None:
         return {}
     existing = env.get("PATH", "")

@@ -18,9 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-# TODO(#22407): workaround for an upstream Droid defect (factory-execute-supervisor
-# SIGKILLs every Execute command when its `ps` probe cannot run).
-# ON REMOVAL: delete this import outright -- nothing replaces it.
+# Re-signed `ps` shim for every SRT seat (#22407 Droid Execute, #25069 reviewer diagnostics):
+# seatbelt denies exec of setuid /bin/ps, so the shim is the only ps a sandboxed seat can run.
+# ON REMOVAL: delete this import with the ps shim block in prepare_sandbox_launch.
 from gobby.agents.droid_ps_shim import droid_ps_shim_dir, ps_shim_path_env
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox_cargo import sandbox_cargo_environment
@@ -653,12 +653,12 @@ async def prepare_sandbox_launch(
         # read-only. bwrap masks denied temp roots before running SRT's seccomp
         # helper, and seat-run e2e tests verify the operator install.
         paths.read_paths.append(str(srt_install_root().resolve()))
-    # TODO(#22407): workaround for an upstream Droid defect. Seatbelt denies exec of
-    # setuid /bin/ps, so Droid's supervisor reads its failed probe as owner death and
-    # SIGKILLs its own process group, killing every Execute command.
-    # ON REMOVAL: delete this whole block -- nothing replaces it.
+    # Seatbelt denies exec of setuid /bin/ps. Droid's supervisor SIGKILLs its process
+    # group when its ps probe fails (#22407), and reviewer seats need ps for stall
+    # diagnosis (#25069), so every SRT launch gets the shim readable and first on PATH.
+    # ON REMOVAL: delete this block only once no SRT seat needs a ps binary.
     ps_shim_dir: Path | None = None
-    if config.backend == "srt" and provider == "droid":
+    if config.backend == "srt":
         ps_shim_dir = await asyncio.to_thread(droid_ps_shim_dir)
         if ps_shim_dir is not None:
             paths.read_paths.append(str(ps_shim_dir.resolve()))
