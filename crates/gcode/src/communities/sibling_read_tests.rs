@@ -209,22 +209,18 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
             assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
             // The sibling changed on disk after its rows were written. A reader that
             // cannot refresh must not slice the live file with the stale byte offsets.
-            let current = fs::read(sibling_root.join(rel)).unwrap();
-            let rows =
-                crate::visibility::visible_symbols_for_file(managed.client(), &ctx, rel).unwrap();
-            let body = rows
-                .iter()
-                .find(|symbol| symbol.name == "sibling_only")
-                .expect("sibling_only is visible");
+            let located = crate::commands::symbol_at::symbol_at_repo(
+                &ctx,
+                managed.client(),
+                &sibling_root,
+                "src/lib.rs:1",
+                None,
+            )
+            .unwrap();
             assert_eq!(
-                String::from_utf8_lossy(
-                    current
-                        .get(body.byte_start..body.byte_end)
-                        .unwrap_or_default()
-                )
-                .trim_end(),
+                located.snippet.trim_end(),
                 "pub fn sibling_only() {}",
-                "symbol-at must slice the current file with its current byte range"
+                "symbol-at must return the current body after the sibling changed"
             );
             let current_callers = GrepOptions {
                 pattern: "sibling_only",

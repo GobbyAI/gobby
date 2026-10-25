@@ -68,18 +68,29 @@ pub fn requested_file_for_freshness(
     )?)
 }
 
-pub fn run(
+/// The symbol-at answer for one location: the selected symbol, its source
+/// snippet, and how the location matched it.
+pub(crate) struct SymbolAtResult {
+    pub(crate) symbol: Symbol,
+    pub(crate) snippet: String,
+    lookup: SymbolAtLookup,
+    source_len: usize,
+    symbol_bytes: usize,
+}
+
+/// Result-returning symbol-at beneath [`run`]'s print layer, so callers and
+/// tests read the selected body without parsing output.
+pub(crate) fn symbol_at_repo(
     ctx: &Context,
+    conn: &mut postgres::Client,
     cwd: &std::path::Path,
     location: &str,
     line: Option<usize>,
-    format: Format,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<SymbolAtResult> {
     let request = parse_location(location, line)?;
     let requested_file =
         scope::resolve_path_input(ctx, cwd, scope::ScopedPathInput::ExactFile(&request.file))?;
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let symbols = visibility::visible_symbols_for_file(&mut conn, ctx, &requested_file)?;
+    let symbols = visibility::visible_symbols_for_file(conn, ctx, &requested_file)?;
     if symbols.is_empty() {
         bail!("No visible symbols found for file: {requested_file}");
     }
@@ -110,26 +121,46 @@ pub fn run(
     .ok_or_else(|| anyhow!("No visible symbols found for file: {requested_file}"))?;
     let lookup = lookup_for_selection(requested_file, &request, &selected);
     let (snippet, symbol_bytes) = symbol_source(&source, selected.symbol);
+    Ok(SymbolAtResult {
+        symbol: selected.symbol.clone(),
+        snippet,
+        lookup,
+        source_len: source.len(),
+        symbol_bytes,
+    })
+}
 
-    if symbol_bytes > 0 && source.len() > symbol_bytes {
+pub fn run(
+    ctx: &Context,
+    cwd: &std::path::Path,
+    location: &str,
+    line: Option<usize>,
+    format: Format,
+) -> anyhow::Result<()> {
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let result = symbol_at_repo(ctx, &mut conn, cwd, location, line)?;
+
+    if result.symbol_bytes > 0 && result.source_len > result.symbol_bytes {
         let url = gobby_core::daemon_url::daemon_url()?;
         savings::report_savings(
             &url,
-            source.len(),
-            symbol_bytes,
+            result.source_len,
+            result.symbol_bytes,
             ctx.grant_ai.as_ref().map(|grant| &grant.bundle),
         );
     }
 
-    if let Some(diagnostic) = fallback_diagnostic(selected.symbol, &lookup, ctx.quiet) {
+    if let Some(diagnostic) = fallback_diagnostic(&result.symbol, &result.lookup, ctx.quiet) {
         eprintln!("{diagnostic}");
     }
 
     match format {
-        Format::Json => {
-            output::print_json(&symbol_at_json_value(selected.symbol, &snippet, &lookup)?)
-        }
-        Format::Text => output::print_text(&snippet),
+        Format::Json => output::print_json(&symbol_at_json_value(
+            &result.symbol,
+            &result.snippet,
+            &result.lookup,
+        )?),
+        Format::Text => output::print_text(&result.snippet),
     }
 }
 
