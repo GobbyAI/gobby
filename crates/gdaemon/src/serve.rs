@@ -219,6 +219,7 @@ pub fn run() -> Result<()> {
                 }
             };
             crate::nodes::hooks::drain::boot_release(&node.hook_ledger).await?;
+            crate::nodes::agents::workspace::retry_removals(&node.agents).await?;
             let mut heartbeat = crate::heartbeat::HeartbeatHost::new();
             crate::nodes::hooks::drain::register_jobs(&mut heartbeat, node.clone())?;
             let http = bind_listeners(&bootstrap.bind_host, bootstrap.daemon_port).await?;
