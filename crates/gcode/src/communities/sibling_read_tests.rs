@@ -146,7 +146,7 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
             ("GCODE_FRESHNESS_INFLIGHT", None),
         ],
         || {
-            let ctx = Context::resolve_with_services(
+            let mut ctx = Context::resolve_with_services(
                 Some(sibling_root.to_str().unwrap()),
                 true,
                 ServiceConfigSelection::database_only(),
@@ -195,18 +195,30 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
                 Format::Json,
             )
             .unwrap();
+            assert_eq!(
+                ensure_fresh(&ctx, FreshnessScope::Project).unwrap(),
+                FreshnessStatus::Checked,
+                "an unchanged worktree is not stale"
+            );
             fs::write(
                 sibling_root.join(rel),
                 "// stale\npub fn sibling_only() {}\npub fn caller() { sibling_only(); }\n",
             )
             .unwrap();
+            ctx.quiet = false;
             crate::test_env::clear_captured_logs();
             assert_eq!(
                 ensure_fresh(&ctx, FreshnessScope::Project).unwrap(),
-                FreshnessStatus::Checked
+                FreshnessStatus::Stale(vec![rel.to_string()])
             );
             crate::dispatch::ensure_project_fresh(&ctx, false).unwrap();
-            assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
+            let warnings = crate::test_env::captured_logs(log::Level::Warn);
+            assert!(
+                warnings
+                    .iter()
+                    .any(|line| line.contains("gcode index is stale for 1 path(s)")),
+                "{warnings:?}"
+            );
             // The sibling changed on disk after its rows were written. A reader that
             // cannot refresh must not slice the live file with the stale byte offsets.
             let located = crate::commands::symbol_at::symbol_at_repo(
@@ -244,6 +256,19 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
                     .matched_lines,
                 2,
                 "grep -w must return the sibling's current definition and caller"
+            );
+            // A file the merge added is served by no row, so grep reads it live too.
+            fs::write(
+                sibling_root.join("src/extra.rs"),
+                "pub fn later() { sibling_only(); }\n",
+            )
+            .unwrap();
+            assert_eq!(
+                grep_repo(&ctx, managed.client(), &current_callers)
+                    .unwrap()
+                    .matched_lines,
+                3,
+                "grep -w must also read a file no row serves"
             );
             let error = crate::commands::index::run(
                 &ctx,

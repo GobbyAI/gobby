@@ -7,6 +7,7 @@ use super::scope;
 use crate::{
     config::Context,
     db,
+    index::{hasher, import_resolution::ImportResolutionContext, parser},
     models::Symbol,
     output::{self, Format},
     savings, visibility,
@@ -98,6 +99,10 @@ pub(crate) fn symbol_at_repo(
     let source_path = ctx.project_root.join(&requested_file);
     let source = std::fs::read(&source_path)
         .with_context(|| format!("failed to read {}", source_path.display()))?;
+    let symbols = current_symbols(ctx, &requested_file, symbols, &source)?;
+    if symbols.is_empty() {
+        bail!("No visible symbols found for file: {requested_file}");
+    }
     let byte_offset = request
         .column
         .map(|column| line_column_to_byte_offset(&source, request.line, column))
@@ -128,6 +133,32 @@ pub(crate) fn symbol_at_repo(
         source_len: source.len(),
         symbol_bytes,
     })
+}
+
+/// Symbols of `source` as the worktree holds it now. Served rows describe the
+/// version the index was built from; when the bytes differ, the live file is
+/// reparsed, so the byte ranges match the slice taken from those same bytes.
+fn current_symbols(
+    ctx: &Context,
+    file: &str,
+    served: Vec<Symbol>,
+    source: &[u8],
+) -> anyhow::Result<Vec<Symbol>> {
+    let Some(first) = served.first() else {
+        return Ok(served);
+    };
+    if first.file_content_hash == hasher::content_hash(source) {
+        return Ok(served);
+    }
+    let parsed = parser::parse_source_with_semantic(
+        &ctx.project_root.join(file),
+        &ctx.project_id,
+        &ctx.project_root,
+        source.to_vec(),
+        &ImportResolutionContext::default(),
+        None,
+    )?;
+    Ok(parsed.map(|parsed| parsed.symbols).unwrap_or_default())
 }
 
 pub fn run(

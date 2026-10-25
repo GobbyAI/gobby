@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use postgres::Client;
 use postgres::types::ToSql;
@@ -15,6 +15,7 @@ use crate::commands::indexed_paths;
 use crate::commands::token_budget;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
+use crate::freshness;
 use crate::output::{self, Format};
 use crate::search::fts;
 use crate::utils::i64_to_usize;
@@ -118,12 +119,7 @@ pub(crate) struct GrepResult {
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_indexed_chunks(
-        &mut conn,
-        ctx,
-        &filters,
-        content_prefilter::content_literal(&options),
-    )?;
+    let loaded = load_chunks_for_read(&mut conn, ctx, &filters, &options)?;
     let scan_options = GrepOptions {
         max_count: None,
         offset: 0,
@@ -264,16 +260,61 @@ pub(crate) fn grep_repo(
     options: &GrepOptions<'_>,
 ) -> anyhow::Result<GrepResult> {
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_indexed_chunks(
-        conn,
-        ctx,
-        &filters,
-        content_prefilter::content_literal(options),
-    )?;
+    let loaded = load_chunks_for_read(conn, ctx, &filters, options)?;
     let mut result = grep_chunks_with_filters(&loaded.chunks, options, &filters)?;
     result.truncated |= loaded.truncated;
     attach_coverage_gap(conn, ctx, &filters, options, &loaded, &mut result)?;
     Ok(result)
+}
+
+/// Indexed chunks in scope for a read, with the stale paths of a read-only
+/// checkout swapped for their live content. The index rows for those paths
+/// describe bytes the worktree no longer has, and a new file has no rows at all.
+fn load_chunks_for_read(
+    conn: &mut Client,
+    ctx: &Context,
+    filters: &GrepFilters,
+    options: &GrepOptions<'_>,
+) -> anyhow::Result<LoadedIndexedChunks> {
+    let mut loaded = load_indexed_chunks(
+        conn,
+        ctx,
+        filters,
+        content_prefilter::content_literal(options),
+    )?;
+    let stale = freshness::read_only_stale_paths(conn, ctx, None)?;
+    if stale.is_empty() {
+        return Ok(loaded);
+    }
+    let stale_set: HashSet<&str> = stale.iter().map(String::as_str).collect();
+    loaded
+        .chunks
+        .retain(|chunk| !stale_set.contains(chunk.file_path.as_str()));
+    loaded.chunks.extend(live_chunks(ctx, filters, &stale));
+    loaded.chunks.sort_by(|a, b| {
+        a.file_path
+            .cmp(&b.file_path)
+            .then_with(|| a.line_start.cmp(&b.line_start))
+    });
+    Ok(loaded)
+}
+
+/// One whole-file chunk per stale path, read from the live worktree. The matcher
+/// numbers lines from `line_start`, so a single chunk starting at line 1 is exact.
+/// A path that no longer exists contributes nothing.
+fn live_chunks(ctx: &Context, filters: &GrepFilters, stale: &[String]) -> Vec<IndexedContentChunk> {
+    stale
+        .iter()
+        .filter(|path| filters.matches(path.as_str()))
+        .filter_map(|path| {
+            let bytes = std::fs::read(ctx.project_root.join(path)).ok()?;
+            Some(IndexedContentChunk {
+                file_path: path.clone(),
+                line_start: 1,
+                content: String::from_utf8_lossy(&bytes).into_owned(),
+            })
+        })
+        .collect()
 }
 
 fn load_indexed_chunks(

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -22,6 +23,10 @@ pub enum FreshnessStatus {
     /// carrying that holder's identity when it could be read.
     SkippedBusy(Option<String>),
     Degraded(String),
+    /// This checkout cannot refresh the index, and these paths are stale: their
+    /// visible rows serve bytes the worktree no longer has, or the worktree holds
+    /// indexable files no row serves.
+    Stale(Vec<String>),
 }
 
 impl FreshnessStatus {
@@ -43,6 +48,28 @@ impl FreshnessStatus {
             }
         })
     }
+
+    /// Warning for stale paths a read-only checkout reports, naming up to three.
+    pub fn stale_warning(&self) -> Option<String> {
+        let Self::Stale(paths) = self else {
+            return None;
+        };
+        let shown = paths
+            .iter()
+            .take(3)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = match paths.len().saturating_sub(3) {
+            0 => String::new(),
+            count => format!(", +{count} more"),
+        };
+        Some(format!(
+            "warning: gcode index is stale for {} path(s) this checkout cannot refresh \
+             ({shown}{more}); results for them may be out of date",
+            paths.len()
+        ))
+    }
 }
 
 pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<FreshnessStatus> {
@@ -50,9 +77,20 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         return Ok(FreshnessStatus::Checked);
     }
 
-    // Read-only parent and sibling scopes must never attempt index writes.
+    // Read-only parent and sibling scopes must never attempt index writes, and
+    // must not serve rows the worktree has moved past without saying so.
     if !ctx.can_refresh_index()? {
-        return Ok(FreshnessStatus::Checked);
+        let mut conn = db::connect_readonly(&ctx.database_url)?;
+        let files = match &scope {
+            FreshnessScope::Project => None,
+            FreshnessScope::Files(paths) => Some(paths.as_slice()),
+        };
+        let stale = read_only_stale_paths(&mut conn, ctx, files)?;
+        return Ok(if stale.is_empty() {
+            FreshnessStatus::Checked
+        } else {
+            FreshnessStatus::Stale(stale)
+        });
     }
 
     // Lock-free pre-gate for whole-project reads: if nothing on disk is newer
@@ -101,6 +139,57 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
             }
         }
     }
+}
+
+/// Paths a checkout that cannot refresh its index must report: visible rows whose
+/// served bytes differ from the worktree, served paths that are gone, and
+/// indexable files no row serves. `files` narrows the check to the requested
+/// paths; `None` checks the whole checkout. Empty when the checkout can refresh,
+/// because `ensure_fresh` has already brought its index current.
+pub(crate) fn read_only_stale_paths(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    files: Option<&[PathBuf]>,
+) -> anyhow::Result<Vec<String>> {
+    if ctx.can_refresh_index()? {
+        return Ok(Vec::new());
+    }
+    let served: HashMap<String, String> = visibility::visible_tree(conn, ctx)?
+        .into_iter()
+        .map(|file| (file.file_path, file.content_hash))
+        .collect();
+    let excludes = &ctx.indexing.extra_excludes;
+    let mut stale = match files {
+        None => {
+            let machine_id = db::id_param(&ctx.machine_id)?;
+            let last_indexed_at = project_last_indexed_at(conn, &machine_id, &ctx.project_id)?;
+            let options = crate::index::walker::DiscoveryOptions {
+                respect_gitignore: ctx.indexing.respect_gitignore,
+            };
+            api::stale_paths(
+                &ctx.project_root,
+                last_indexed_at,
+                &served,
+                excludes,
+                options,
+            )
+        }
+        Some(files) => files
+            .iter()
+            .map(|path| crate::index::normalize_storage_path(path))
+            .filter(|file| {
+                api::explicit_file_changed(
+                    &ctx.project_root,
+                    file,
+                    served.get(file).map(String::as_str),
+                    excludes,
+                )
+            })
+            .collect(),
+    };
+    stale.sort();
+    stale.dedup();
+    Ok(stale)
 }
 
 /// Degraded detail for a failed refresh. A hub failure's `postgres::Error`

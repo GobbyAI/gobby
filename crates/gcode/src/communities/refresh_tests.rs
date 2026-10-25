@@ -278,8 +278,9 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             assert_eq!(parent_symbols[0].name, "located");
             assert_eq!(parent_symbols[0].line_start, 1);
 
-            // Parent reads are admitted, but only the overlay is writable.
-            // A stale parent must serve its index without attempting an RLS-denied refresh.
+            // Parent reads are admitted, but only the overlay is writable. A stale
+            // parent must not attempt an RLS-denied refresh, and must say that its
+            // rows no longer describe the worktree.
             fs::write(
                 parent_root.join(rel),
                 "// stale parent\npub fn located() {}\n",
@@ -291,19 +292,24 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
                     .expect("parent write authority")
             );
             crate::test_env::clear_captured_logs();
+            let stale = FreshnessStatus::Stale(vec![rel.to_string()]);
             assert_eq!(
                 ensure_fresh(&parent_ctx, FreshnessScope::Files(vec![PathBuf::from(rel)]))
                     .expect("read-only parent freshness skips writes"),
-                FreshnessStatus::Checked
+                stale
             );
             assert_eq!(
                 ensure_fresh(&parent_ctx, FreshnessScope::Project)
                     .expect("read-only project freshness skips writes"),
-                FreshnessStatus::Checked
+                stale
             );
             crate::dispatch::ensure_project_fresh(&parent_ctx, false)
                 .expect("read-only parent dispatch skips writes");
-            assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
+            assert!(
+                crate::test_env::captured_logs(log::Level::Warn)
+                    .iter()
+                    .any(|line| line.contains("gcode index is stale for 1 path(s)"))
+            );
             fs::write(parent_root.join(rel), "pub fn located() {}\n")
                 .expect("restore parent source");
 
@@ -593,11 +599,15 @@ fn managed_worktree_refresh_updates_offsets_and_denies_foreign_overlay() {
             assert_eq!(
                 ensure_fresh(&review_ctx, FreshnessScope::Project)
                     .expect("read-only review skips refresh"),
-                FreshnessStatus::Checked
+                FreshnessStatus::Stale(vec![rel.to_string()])
             );
             crate::dispatch::ensure_project_fresh(&review_ctx, false)
                 .expect("read-only review dispatch skips writes");
-            assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
+            assert!(
+                crate::test_env::captured_logs(log::Level::Warn)
+                    .iter()
+                    .any(|line| line.contains("gcode index is stale for 1 path(s)"))
+            );
             let write_error = crate::commands::index::run(
                 &review_ctx,
                 &foreign_root,
