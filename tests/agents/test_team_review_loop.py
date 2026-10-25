@@ -237,7 +237,11 @@ def devteam_context(inputs: dict[str, Any]) -> dict[str, Any]:
     values.update(inputs)
     # With no live seat, the guard launches every requested seat, as check_runbook_seats does.
     requested = "code-reviewer" if values["fresh_reviewer"] else values["seats"]
-    guard = {"workspace_id": WORKSPACE, "launch": requested.split(",")}
+    guard: dict[str, Any] = {
+        "workspace_id": WORKSPACE,
+        "launch": requested.split(","),
+        "live": {},
+    }
     return {
         "inputs": values,
         "steps": {"guard": {"output": guard}},

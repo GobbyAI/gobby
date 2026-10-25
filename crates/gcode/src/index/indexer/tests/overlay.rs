@@ -9,10 +9,11 @@ use super::super::types::IndexRequest;
 use super::super::{IndexOptions, index_files};
 use super::fixtures::{git, git_output, write_file, write_isolation_marker};
 use super::serial_db::{
-    cleanup_summary_preservation_project, connect_summary_preservation_test_db, machine_context,
-    test_symbol, unique_test_uuid, write_postgres_parsed_file_facts_with_root,
+    SummaryPreservationCleanup, cleanup_summary_preservation_project,
+    connect_summary_preservation_test_db, machine_context, seed_primary_checkout, test_symbol,
+    test_uuid_param, unique_test_uuid, write_postgres_parsed_file_facts_with_root,
 };
-use crate::config::ProjectIndexScope;
+use crate::config::{CodeVectorSettings, Context, ProjectIndexScope};
 use crate::db;
 use crate::index::hasher;
 use crate::visibility;
@@ -528,4 +529,433 @@ fn overlay_reconciliation_actions_cover_inherit_shadow_add_delete() {
         overlay_reconcile_action(false, None, None, Some(&overlay), true),
         OverlayReconcileAction::DeleteOverlay
     );
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_index_indexes_a_missing_parent_first() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+    let rel = "src/lib.rs";
+    let unchanged = "src/unchanged.rs";
+    write_file(&parent_root, rel, b"pub fn parent_only() {}\n");
+    write_file(&parent_root, unchanged, b"pub fn unchanged() {}\n");
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    write_file(&overlay_root, rel, b"pub fn overlay_only() {}\n");
+    git(
+        &overlay_root,
+        &hooks,
+        &["commit", "-q", "-am", "overlay change"],
+    );
+
+    let overlay_project_id = unique_test_uuid("gcode-overlay-missing-parent");
+    let parent_project_id = unique_test_uuid("gcode-overlay-missing-parent-root");
+    cleanup_summary_preservation_project(&mut conn, &overlay_project_id)
+        .expect("pre-clean overlay rows");
+    cleanup_summary_preservation_project(&mut conn, &parent_project_id)
+        .expect("pre-clean parent rows");
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+    // The parent has a checkout on this machine but no file states yet.
+    seed_primary_checkout(&mut conn, &parent_project_id, &parent_root)
+        .expect("seed parent checkout");
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&test_uuid_param(&parent_project_id)],
+    )
+    .expect("seed parent project state row");
+
+    // The unchanged parent file already has fully projected content, so the
+    // parent-first pass must adopt it rather than re-parse it.
+    let unchanged_hash = crate::index::hasher::file_content_hash(&parent_root.join(unchanged))
+        .expect("hash unchanged parent file");
+    let unchanged_file = crate::models::IndexedFile {
+        id: crate::models::IndexedFile::make_id(&parent_project_id, unchanged, &unchanged_hash),
+        project_id: parent_project_id.clone(),
+        file_path: unchanged.to_string(),
+        language: "rust".to_string(),
+        content_hash: unchanged_hash,
+        symbol_count: 41,
+        byte_size: 4096,
+        indexed_at: String::new(),
+    };
+    crate::index::api::upsert_file(&mut conn, &unchanged_file)
+        .expect("seed fully projected parent content");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = TRUE, vectors_synced = TRUE
+         WHERE id = $1",
+        &[&test_uuid_param(&unchanged_file.id)],
+    )
+    .expect("mark parent projections complete");
+
+    let ctx = Context {
+        database_url,
+        project_root: overlay_root.clone(),
+        project_id: overlay_project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Overlay {
+            overlay_project_id: overlay_project_id.clone(),
+            overlay_root: overlay_root.clone(),
+            parent_project_id: parent_project_id.clone(),
+            parent_root: parent_root.clone(),
+        },
+    };
+    index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay index indexes the missing parent first");
+
+    let parent_uuid = test_uuid_param(&parent_project_id);
+    let machine_uuid = test_uuid_param(&ctx.machine_id);
+    let parent_states: Vec<String> = conn
+        .query(
+            "SELECT file_path FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2
+             ORDER BY file_path",
+            &[&machine_uuid, &parent_uuid],
+        )
+        .expect("load parent file states")
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        parent_states,
+        vec![rel.to_string(), unchanged.to_string()],
+        "the parent is indexed on this machine before the overlay pass"
+    );
+    let adopted_symbols: i32 = conn
+        .query_one(
+            "SELECT symbol_count FROM code_indexed_files WHERE id = $1",
+            &[&test_uuid_param(&unchanged_file.id)],
+        )
+        .expect("load adopted parent content")
+        .get(0);
+    assert_eq!(
+        adopted_symbols, 41,
+        "a fully projected unchanged parent file is adopted, not re-parsed"
+    );
+    let visible: Vec<String> = visibility::visible_symbols_for_file(&mut conn, &ctx, rel)
+        .expect("read visible symbols")
+        .into_iter()
+        .map(|symbol| format!("{}:{}", symbol.project_id, symbol.name))
+        .collect();
+    assert_eq!(
+        visible,
+        vec![format!("{overlay_project_id}:overlay_only")],
+        "the overlay serves its own diverged file after the parent-first pass"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_index_reports_parent_projection_failure_for_parsed_parent_files() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+    let rel = "src/lib.rs";
+    write_file(&parent_root, rel, b"pub fn parent_only() {}\n");
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    write_file(&overlay_root, rel, b"pub fn overlay_only() {}\n");
+    git(
+        &overlay_root,
+        &hooks,
+        &["commit", "-q", "-am", "overlay change"],
+    );
+
+    let overlay_project_id = unique_test_uuid("gcode-overlay-parent-sync");
+    let parent_project_id = unique_test_uuid("gcode-overlay-parent-sync-root");
+    cleanup_summary_preservation_project(&mut conn, &overlay_project_id)
+        .expect("pre-clean overlay rows");
+    cleanup_summary_preservation_project(&mut conn, &parent_project_id)
+        .expect("pre-clean parent rows");
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &parent_project_id, &parent_root)
+        .expect("seed parent checkout");
+    conn.execute(
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&test_uuid_param(&parent_project_id)],
+    )
+    .expect("seed parent project state row");
+
+    // The parent has no file states, so `src/lib.rs` is parsed during the
+    // parent-first pass. Graph and vector projection need the parent context.
+    let ctx = Context {
+        database_url,
+        project_root: overlay_root.clone(),
+        project_id: overlay_project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        machine_id: gobby_core::machine::read_local_machine_id().expect("read machine id"),
+        runtime_config_capture_degraded: false,
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        grant_ai: None,
+        index_scope: ProjectIndexScope::Overlay {
+            overlay_project_id: overlay_project_id.clone(),
+            overlay_root: overlay_root.clone(),
+            parent_project_id: parent_project_id.clone(),
+            parent_root: parent_root.clone(),
+        },
+    };
+    let outcome = index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay index parses the missing parent first");
+
+    assert!(
+        outcome.degraded.iter().any(|degradation| matches!(
+            degradation,
+            crate::index::indexer::IndexDegradation::ParentProjectionSyncFailed {
+                parent_project_id: id,
+                target: crate::projection::sync::ProjectionTarget::Graph,
+                ..
+            } if id == &parent_project_id
+        )),
+        "the parsed parent file is projected under the parent context and its failed graph sync is reported: {:?}",
+        outcome.degraded
+    );
+}
+
+#[test]
+#[cfg(gcode_postgres_tests)]
+#[serial_test::serial(serial_db, serial_env)]
+fn overlay_index_refuses_missing_parent_under_overlay_grant() {
+    let refusal = overlay_index_cli_missing_parent_refusal(false);
+    assert_eq!(refusal.code, "parent_index_required");
+    assert_eq!(refusal.exit_status, 2);
+}
+
+#[test]
+#[cfg(gcode_postgres_tests)]
+#[serial_test::serial(serial_db, serial_env)]
+fn overlay_index_cli_explicit_path_refuses_missing_parent_under_overlay_grant() {
+    let refusal = overlay_index_cli_missing_parent_refusal(true);
+    assert_eq!(refusal.code, "parent_index_required");
+    assert_eq!(refusal.exit_status, 2);
+}
+
+#[cfg(gcode_postgres_tests)]
+fn overlay_index_cli_missing_parent_refusal(explicit_path: bool) -> crate::cli_error::CliError {
+    use crate::cli_error::CliError;
+    use crate::communities::serial_db::{managed_overlay_principal, seeded_project};
+    use crate::config::ServiceConfigSelection;
+    use gobby_core::grant::{DirectConnections, managed_direct_grant, write_managed_bootstrap};
+
+    let (mut owner, database_url, parent_id, _parent_cleanup) =
+        seeded_project("overlay-missing-parent-grant");
+    let tmp = tempfile::tempdir().expect("temporary workspace");
+    let root = tmp.path().canonicalize().expect("canonical root");
+    let parent_root = root.join("parent");
+    let overlay_root = root.join("overlay");
+    let rel = "src/lib.rs";
+    for workspace in [&parent_root, &overlay_root] {
+        std::fs::create_dir_all(workspace.join(".gobby")).expect("create identity directory");
+        write_file(workspace, rel, b"pub fn located() {}\n");
+        std::fs::write(
+            workspace.join(".gobby/project.json"),
+            serde_json::json!({"id": parent_id}).to_string(),
+        )
+        .expect("write project identity");
+    }
+    std::fs::write(
+        overlay_root.join(".gobby/isolation.json"),
+        serde_json::json!({
+            "parent_project_id": parent_id,
+            "parent_project_path": parent_root,
+        })
+        .to_string(),
+    )
+    .expect("write overlay marker");
+    let overlay_id = crate::project::code_index_id_for_root(&overlay_root);
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_id.clone(),
+    };
+    // The grant is bound to this overlay and the parent has no index yet, so
+    // the parent-first pass would need a parent write this credential lacks.
+    let managed = managed_overlay_principal(
+        &mut owner,
+        &database_url,
+        &parent_id,
+        &parent_root,
+        &overlay_root,
+        db::id_param(&overlay_id).expect("overlay UUID"),
+    );
+
+    let home = root.join("home");
+    std::fs::create_dir_all(&home).expect("create isolated home");
+    std::fs::write(home.join("machine_id"), managed.machine_id.to_string())
+        .expect("write fixture machine identity");
+    let mut grant = managed_direct_grant(
+        &parent_id,
+        &managed.machine_id.to_string(),
+        &DirectConnections::postgres(&managed.managed_database_url),
+    );
+    grant.principal.kind = gobby_core::grant::PrincipalKind::ToolChat;
+    grant.principal.execution_id = Some(managed.execution_id.to_string());
+    grant.principal.session_id = Some(managed.session_id.to_string());
+    let bootstrap =
+        write_managed_bootstrap(&home, &grant.with_checksum()).expect("write fixture grant");
+    // A bound but non-serving endpoint keeps grant acquisition away from the
+    // user's daemon, including inherited daemon URL overrides.
+    let daemon = std::net::TcpListener::bind("127.0.0.1:0").expect("isolated endpoint");
+    let daemon_url = format!("http://{}", daemon.local_addr().expect("endpoint address"));
+    let refusal = temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home.as_os_str())),
+            (
+                gobby_core::grant::MANAGED_BOOTSTRAP_ENV,
+                Some(bootstrap.as_os_str()),
+            ),
+            ("GOBBY_DAEMON_URL", Some(std::ffi::OsStr::new(&daemon_url))),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
+            ("GOBBY_AGENT_API_TOKEN", None),
+            ("GCODE_FRESHNESS_INFLIGHT", None),
+        ],
+        || {
+            let ctx = Context::resolve_with_services(
+                Some(overlay_root.to_str().expect("UTF-8 overlay root")),
+                true,
+                ServiceConfigSelection::database_only().parent_optional(),
+            )
+            .expect("resolve managed overlay grant");
+            assert!(
+                ctx.can_refresh_index().expect("overlay write authority"),
+                "the grant writes its own overlay"
+            );
+            let error = crate::commands::index::run(
+                &ctx,
+                &overlay_root,
+                explicit_path.then(|| overlay_root.to_string_lossy().into_owned()),
+                None,
+                false,
+                false,
+                false,
+                false,
+                crate::output::Format::Json,
+            )
+            .expect_err("managed overlay grant cannot index its missing parent");
+            let typed = error
+                .downcast_ref::<CliError>()
+                .unwrap_or_else(|| panic!("typed parent refusal, got {error:#}"));
+            let parent_root_text = parent_root.to_str().expect("UTF-8 parent root");
+            assert!(
+                typed.message.contains(parent_root_text),
+                "{}",
+                typed.message
+            );
+            assert!(
+                typed
+                    .recovery
+                    .as_deref()
+                    .is_some_and(|text| text.contains(parent_root_text)),
+                "{:?}",
+                typed.recovery
+            );
+            typed.clone()
+        },
+    );
+
+    let parent_file_states: i64 = owner
+        .query_one(
+            "SELECT count(*) FROM code_indexed_file_states WHERE project_id = $1",
+            &[&db::id_param(&parent_id).expect("parent UUID")],
+        )
+        .expect("count parent file states")
+        .get(0);
+    assert_eq!(
+        parent_file_states, 0,
+        "a refused overlay index writes no parent rows"
+    );
+    refusal
 }

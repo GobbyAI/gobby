@@ -51,7 +51,10 @@ class ScopeTeam:
 
 
 def tree_is_live(tree: Worktree) -> bool:
-    return tree.status == WorktreeStatus.ACTIVE.value and Path(tree.worktree_path).is_dir()
+    # A landing marks an open task's tree merged while its team keeps working on it. Closed tasks
+    # are refused before this check, so the merged marker alone does not end the team's tree.
+    live = {WorktreeStatus.ACTIVE.value, WorktreeStatus.MERGED.value}
+    return tree.status in live and Path(tree.worktree_path).is_dir()
 
 
 def epic_names(task: Task) -> tuple[str, str]:

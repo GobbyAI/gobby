@@ -1,4 +1,3 @@
-use crate::config;
 use crate::config::Context;
 use crate::index::api::{
     self, IndexDegradation, IndexOutcome, IndexProgressSink, IndexRequest, UnsupportedFileType,
@@ -408,8 +407,7 @@ fn resolve_index_context(
 ) -> anyhow::Result<(Context, Option<std::path::PathBuf>)> {
     let Some(p) = path else {
         return Ok((
-            clone_context(
-                ctx,
+            ctx.rebased(
                 ctx.project_root.clone(),
                 ctx.project_id.clone(),
                 ctx.index_scope.clone(),
@@ -435,50 +433,15 @@ fn resolve_index_context(
                 short_id(&ctx.project_id)
             );
         }
-        let mut conn = crate::db::connect_readonly(&ctx.database_url)?;
-        crate::config::validate_parent_code_index(
-            &mut conn,
-            &identity.index_scope,
-            &ctx.machine_id,
-        )?;
         Ok((
-            clone_context(ctx, target_root, identity.project_id, identity.index_scope),
+            ctx.rebased(target_root, identity.project_id, identity.index_scope),
             target_filter,
         ))
     } else {
         Ok((
-            clone_context(
-                ctx,
-                target_root,
-                ctx.project_id.clone(),
-                ctx.index_scope.clone(),
-            ),
+            ctx.rebased(target_root, ctx.project_id.clone(), ctx.index_scope.clone()),
             target_filter,
         ))
-    }
-}
-
-fn clone_context(
-    ctx: &Context,
-    project_root: std::path::PathBuf,
-    project_id: String,
-    index_scope: config::ProjectIndexScope,
-) -> Context {
-    config::Context {
-        database_url: ctx.database_url.clone(),
-        project_root,
-        project_id,
-        quiet: ctx.quiet,
-        falkordb: ctx.falkordb.clone(),
-        qdrant: ctx.qdrant.clone(),
-        embedding: ctx.embedding.clone(),
-        code_vectors: ctx.code_vectors.clone(),
-        machine_id: ctx.machine_id.clone(),
-        runtime_config_capture_degraded: ctx.runtime_config_capture_degraded(),
-        indexing: ctx.indexing.clone(),
-        daemon_url: ctx.daemon_url.clone(),
-        grant_ai: None,
-        index_scope,
     }
 }
 

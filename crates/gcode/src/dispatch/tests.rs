@@ -82,6 +82,14 @@ fn graph_and_vector_commands_request_only_needed_services() {
 }
 
 #[test]
+fn only_overlay_readers_require_the_parent_index() {
+    assert!(!services_for(&["status"]).require_parent_index);
+    assert!(!services_for(&["index"]).require_parent_index);
+    assert!(services_for(&["search-content", "needle"]).require_parent_index);
+    assert!(config::ServiceConfigSelection::default().require_parent_index);
+}
+
+#[test]
 fn invalidate_requests_projection_cleanup_services() {
     assert_eq!(
         services_for(&[

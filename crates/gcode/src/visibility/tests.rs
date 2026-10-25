@@ -24,6 +24,36 @@ fn overlay_symbols_for_files_sql_batches_paths_and_preserves_overlay_shadowing()
     assert!(sql.contains("shadow.file_path = p.file_path"));
     assert!(!sql.contains("cs.file_path = $4"));
 }
+
+#[test]
+#[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]
+#[serial_test::serial(serial_db)]
+fn visible_tree_reads_only_the_context_machine() -> anyhow::Result<()> {
+    let mut fixture = pin_fixture::PinFixture::new()?;
+    let parent = fixture.parent();
+    fixture.version(&parent, "kept.rs", "old", "pinned_original")?;
+    fixture.pin(&parent, "kept.rs", "old")?;
+    let local = fixture.ctx.clone();
+    assert_eq!(
+        visible_tree(&mut fixture.conn, &local)?.len(),
+        1,
+        "the local machine sees its parent rows"
+    );
+    let foreign = crate::config::Context {
+        machine_id: uuid::Uuid::new_v5(
+            &crate::models::CODE_INDEX_UUID_NAMESPACE,
+            b"visible-tree-foreign-machine",
+        )
+        .to_string(),
+        ..local
+    };
+    assert!(
+        visible_tree(&mut fixture.conn, &foreign)?.is_empty(),
+        "a foreign Context reads only its own machine's rows"
+    );
+    Ok(())
+}
+
 #[test]
 #[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL")]
 #[serial_test::serial(serial_db)]

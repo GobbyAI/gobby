@@ -2,6 +2,7 @@
 
 import tomllib
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -63,7 +64,7 @@ class TestFinders:
         with patch("pathlib.Path.is_dir", return_value=False):
             assert _find_project_root() is None
 
-    def test_find_mcp_config(self, tmp_path) -> None:
+    def test_find_mcp_config(self, tmp_path: Path) -> None:
         cwd_config = tmp_path / ".mcp.json"
 
         with (
@@ -98,6 +99,7 @@ class TestHookResponseConverters:
         res = _response_to_prompt_output({"decision": "block", "reason": "No", "context": "ctx"})
         assert res["decision"] == "block"
         assert res["reason"] == "No"
+        assert res["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
 
     def test_pre_tool_output(self) -> None:
@@ -106,6 +108,7 @@ class TestHookResponseConverters:
         # Block
         res = _response_to_pre_tool_output({"decision": "block", "reason": "No"})
         assert "hookSpecificOutput" in res
+        assert res["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert res["hookSpecificOutput"]["permissionDecisionReason"] == "No"
         assert "reason" not in res
@@ -123,6 +126,7 @@ class TestHookResponseConverters:
                 "auto_approve": True,
             }
         )
+        assert res["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert res["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "updatedInput" not in res["hookSpecificOutput"]
         assert res["hookSpecificOutput"]["permissionDecisionReason"].startswith(
@@ -134,12 +138,14 @@ class TestHookResponseConverters:
         res = _response_to_pre_tool_output(
             {"modified_input": {"a": 1}, "auto_approve": True, "context": "ctx"}
         )
+        assert res["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert res["hookSpecificOutput"]["updatedInput"] == {"a": 1}
         assert res["hookSpecificOutput"]["permissionDecision"] == "allow"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
 
         # Just context
         res = _response_to_pre_tool_output({"context": "pure ctx"})
+        assert res["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
         assert res["hookSpecificOutput"]["additionalContext"] == "pure ctx"
 
     def test_post_tool_output(self) -> None:
@@ -147,13 +153,16 @@ class TestHookResponseConverters:
 
         # Just context
         res = _response_to_post_tool_output({"context": "ctx"})
+        assert res["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
         assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
 
     def test_stop_output(self) -> None:
         assert _response_to_stop_output(None) == SyncHookJSONOutput()
         res = _response_to_stop_output({"decision": "block", "context": "ctx"})
         assert res["decision"] == "block"
-        assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
+        # The SDK has no Stop TypedDict; production builds this payload as Any.
+        hook = cast(dict[str, Any], res["hookSpecificOutput"])
+        assert hook["additionalContext"] == "ctx"
 
     def test_compact_output(self) -> None:
         ctx = build_compaction_context(
@@ -164,7 +173,9 @@ class TestHookResponseConverters:
 
         assert _response_to_compact_output(None) == SyncHookJSONOutput()
         res = _response_to_compact_output({"context": "ctx"})
-        assert res["hookSpecificOutput"]["additionalContext"] == "ctx"
+        # The SDK has no PreCompact TypedDict; production builds this payload as Any.
+        hook = cast(dict[str, Any], res["hookSpecificOutput"])
+        assert hook["additionalContext"] == "ctx"
 
     def test_subagent_output(self) -> None:
         assert _response_to_subagent_output(None, "SubagentStart") == SyncHookJSONOutput()

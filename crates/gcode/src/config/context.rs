@@ -70,6 +70,7 @@ pub struct ServiceConfigSelection {
     pub qdrant: bool,
     pub embedding: bool,
     pub code_vectors: bool,
+    pub require_parent_index: bool,
 }
 
 impl ServiceConfigSelection {
@@ -83,12 +84,21 @@ impl ServiceConfigSelection {
         }
     }
 
+    /// Reads that never go through the parent's code index.
+    pub const fn parent_optional(self) -> Self {
+        Self {
+            require_parent_index: false,
+            ..self
+        }
+    }
+
     pub const fn all() -> Self {
         Self {
             falkordb: true,
             qdrant: true,
             embedding: true,
             code_vectors: true,
+            require_parent_index: true,
         }
     }
 
@@ -98,6 +108,7 @@ impl ServiceConfigSelection {
             qdrant: false,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -107,6 +118,7 @@ impl ServiceConfigSelection {
             qdrant: false,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -116,6 +128,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -125,6 +138,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: false,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 
@@ -134,6 +148,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: true,
             code_vectors: true,
+            require_parent_index: true,
         }
     }
 
@@ -143,6 +158,7 @@ impl ServiceConfigSelection {
             qdrant: true,
             embedding: true,
             code_vectors: false,
+            require_parent_index: true,
         }
     }
 }
@@ -331,13 +347,30 @@ impl Context {
     }
 
     pub(crate) fn can_refresh_index(&self) -> anyhow::Result<bool> {
-        if let Some(runtime) = &self.grant_ai
-            && runtime.bundle.principal.kind.is_managed()
-        {
-            let mut conn = db::connect_readonly(&self.database_url)?;
-            return super::managed_scope::can_write(&mut conn, &self.project_id);
+        if !self.is_managed_principal() {
+            return Ok(true);
         }
-        Ok(true)
+        let mut conn = db::connect_readonly(&self.database_url)?;
+        self.can_write_project_index(&mut conn, &self.project_id)
+    }
+
+    /// Whether this context's principal may write `project_id`'s index rows.
+    /// Only managed principals are bound by the database write policy.
+    pub(crate) fn can_write_project_index(
+        &self,
+        conn: &mut Client,
+        project_id: &str,
+    ) -> anyhow::Result<bool> {
+        if !self.is_managed_principal() {
+            return Ok(true);
+        }
+        super::managed_scope::can_write(conn, project_id)
+    }
+
+    fn is_managed_principal(&self) -> bool {
+        self.grant_ai
+            .as_ref()
+            .is_some_and(|runtime| runtime.bundle.principal.kind.is_managed())
     }
 
     pub(crate) fn runtime_config_capture_degraded(&self) -> bool {
@@ -365,6 +398,32 @@ impl Context {
                 .map_err(|error| error.context(CliError::project_required()))?,
         };
         Self::resolve_from_root(project_root, project_override.is_some(), quiet, services)
+    }
+
+    /// The same connection, identity and service settings, rebased onto another project.
+    pub(crate) fn rebased(
+        &self,
+        project_root: PathBuf,
+        project_id: String,
+        index_scope: ProjectIndexScope,
+    ) -> Self {
+        Self {
+            database_url: self.database_url.clone(),
+            project_root,
+            project_id,
+            quiet: self.quiet,
+            falkordb: self.falkordb.clone(),
+            qdrant: self.qdrant.clone(),
+            embedding: self.embedding.clone(),
+            code_vectors: self.code_vectors.clone(),
+            machine_id: self.machine_id.clone(),
+            runtime_config_capture_degraded: self.runtime_config_capture_degraded(),
+            indexing: self.indexing.clone(),
+            daemon_url: self.daemon_url.clone(),
+            // Rebasing changes the target checkout, not the credential's authority.
+            grant_ai: self.grant_ai.clone(),
+            index_scope,
+        }
     }
 
     fn resolve_from_root(
@@ -397,7 +456,9 @@ impl Context {
             &identity.root,
         )?;
         let machine_id = gobby_core::machine::read_local_machine_id()?;
-        validate_parent_code_index(&mut conn, &index_scope, &machine_id)?;
+        if services.require_parent_index {
+            validate_parent_code_index(&mut conn, &index_scope, &machine_id)?;
+        }
         let (embedding, indexing, code_vectors) =
             services_from_acquired_settings(&acquired, services)?;
         let grant_ai = Some(GrantAiRuntime {
@@ -682,6 +743,25 @@ fn normalize_project_id(project_id: &str) -> anyhow::Result<String> {
         .with_context(|| format!("--project-id must be a UUID, got `{project_id}`"))
 }
 
+/// Whether the parent project has any file states on this machine.
+pub(crate) fn parent_code_index_exists(
+    conn: &mut Client,
+    parent_project_id: &str,
+    machine_id: &str,
+) -> anyhow::Result<bool> {
+    let machine_id = db::id_param(machine_id)?;
+    let exists = conn
+        .query_one(
+            "SELECT EXISTS(
+                SELECT 1 FROM code_indexed_file_states
+                WHERE machine_id = $1 AND project_id = $2
+            )",
+            &[&machine_id, &db::id_param(parent_project_id)?],
+        )
+        .and_then(|row| row.try_get::<_, bool>(0))?;
+    Ok(exists)
+}
+
 pub(crate) fn validate_parent_code_index(
     conn: &mut Client,
     scope: &ProjectIndexScope,
@@ -696,18 +776,7 @@ pub(crate) fn validate_parent_code_index(
         return Ok(());
     };
 
-    let machine_id = db::id_param(machine_id)?;
-    let exists = conn
-        .query_one(
-            "SELECT EXISTS(
-                SELECT 1 FROM code_indexed_file_states
-                WHERE machine_id = $1 AND project_id = $2
-            )",
-            &[&machine_id, &db::id_param(parent_project_id)?],
-        )
-        .and_then(|row| row.try_get::<_, bool>(0))?;
-
-    if !exists {
+    if !parent_code_index_exists(conn, parent_project_id, machine_id)? {
         anyhow::bail!(
             "parent code index missing for {} ({})",
             parent_root.display(),
