@@ -43,3 +43,5 @@ def test_unowned_refusal_routes_recovery_through_the_operator_then_edit_write() 
     assert "Assistant" in reason, reason
     assert re.search(r"\brevert", reason, re.IGNORECASE), reason
     assert re.search(r"\bEdit\b", reason) and re.search(r"\bWrite\b", reason), reason
+    assert reason.splitlines()[-1] == "Redo the intended change with Edit/Write, then retry."
+    assert "Then retry." not in reason.splitlines()
