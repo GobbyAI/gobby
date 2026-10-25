@@ -204,3 +204,27 @@ Sources retrieved by researcher gobby#17515 on 2026-10-24, transcribed in
 [OpenRouter OpenAPI](https://openrouter.ai/openapi.json), and
 [Cloudflare Clef schema](https://github.com/cloudflare/cloudflare-docs/blob/production/src/content/workers-ai-models/clef.json).
 These are documented-schema fixtures; runtime support still requires a live capture.
+
+## 8. Strict Score profile (retrieved 2026-10-24)
+
+Gobby sends `type: score`, non-empty string `instructions` and `criteria`, an ordered
+array of 2 to 10 non-empty levels, lowest first. The strict response profile requires
+`type`, `score`, `confidence`, `legend` and `probabilities`. Legend and probability keys
+are exactly `"0"` through `"n-1"`; the legend matches the requested levels. Probabilities
+and confidence must be finite in [0,1], with the probabilities summing to 1 within 0.001.
+The finite score lies in [0,n-1] and equals the probability-weighted index within
+`(n-1) * 0.001`. A missing or inconsistent field raises `DecisionsUnavailable("parse")`.
+The returned answer omits the validated legend. Consumers compare `score / (n-1)` with
+their position threshold; a Score position is not Choice confidence.
+
+The three `*_score_response.json` fixtures cover three four-level questions on every
+wire. Score shares the transport, request estimator, cooldown and identity path with
+Choice and Noul. The schema hash includes the question type and level count.
+
+The sources listed in section 7 and the same dated research transcript pin these
+differences: TypeSafe OpenAPI 0.2.0 allows one level while its
+[Score prose](https://docs.typesafe.ai/primitives/score) requires 2 to 10. OpenRouter
+requires only `type` and `score` in answers, so omission of its optional legend,
+probabilities or confidence fails Gobby's profile. Cloudflare and the
+[llama.cpp systemone reference](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1systemone-typesafe-compatible-system-one-api)
+specify 2 to 10 levels. Fixtures do not establish runtime compatibility.

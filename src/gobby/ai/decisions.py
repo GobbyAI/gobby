@@ -164,7 +164,7 @@ class DecisionService:
         """Return validated Choice answers, or raise ``DecisionsUnavailable``."""
         return await self._request(consumer, state, questions, _parse_choice, timeout_seconds)
 
-    async def _request[Q: (ChoiceQuestion, str), A](
+    async def _request[Q: (ChoiceQuestion, str, ScoreQuestion), A](
         self,
         consumer: str,
         state: Mapping[str, Any],
@@ -231,7 +231,7 @@ class DecisionService:
         timeout_seconds: float | None = None,
     ) -> DecisionResult[ScoreAnswer]:
         """Return validated Score answers, or raise ``DecisionsUnavailable``."""
-        raise NotImplementedError("community-label-decisions 1.2")
+        return await self._request(consumer, state, questions, _parse_score, timeout_seconds)
 
     async def box(
         self,
@@ -331,7 +331,7 @@ class DecisionService:
                 await asyncio.wait({card})
 
 
-def _check_request(questions: Mapping[str, ChoiceQuestion | str]) -> None:
+def _check_request(questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion]) -> None:
     if not 1 <= len(questions) <= _MAX_QUESTIONS:
         raise DecisionsUnavailable(
             "invalid_request", f"{len(questions)} questions; 1 to {_MAX_QUESTIONS} allowed"
@@ -344,6 +344,11 @@ def _check_request(questions: Mapping[str, ChoiceQuestion | str]) -> None:
         instructions = question if isinstance(question, str) else question.instructions
         if not isinstance(instructions, str) or not instructions.strip():
             raise DecisionsUnavailable("invalid_request", "instructions must be non-empty text")
+        if isinstance(question, ScoreQuestion) and (
+            not 2 <= len(question.levels) <= 10
+            or any(not isinstance(level, str) or not level.strip() for level in question.levels)
+        ):
+            raise DecisionsUnavailable("invalid_request", "Score takes 2 to 10 non-empty levels")
         if isinstance(question, ChoiceQuestion) and (
             not _MIN_OPTIONS <= len(question.criteria) <= _MAX_OPTIONS
             or any(
@@ -376,6 +381,12 @@ def _request_body(
 def _question_body(question: ChoiceQuestion | str | ScoreQuestion | BoxQuestion) -> dict[str, Any]:
     if isinstance(question, str):
         return {"type": "noul", "instructions": question}
+    if isinstance(question, ScoreQuestion):
+        return {
+            "type": "score",
+            "instructions": question.instructions,
+            "criteria": list(question.levels),
+        }
     if isinstance(question, ChoiceQuestion):
         return {
             "type": "choice",
@@ -457,6 +468,33 @@ def _parse_noul(raw: Any, proposition: str) -> NoulAnswer:
     return NoulAnswer(probability=_unit(raw.get("noul")))
 
 
+def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
+    if not isinstance(raw, dict) or raw.get("type") != "score":
+        raise _parse_error("answer is not a score")
+    legend = {str(index): level for index, level in enumerate(question.levels)}
+    if raw.get("legend") != legend:
+        raise _parse_error("legend does not match the requested levels")
+    raw_probabilities = raw.get("probabilities")
+    if not isinstance(raw_probabilities, dict) or raw_probabilities.keys() != legend.keys():
+        raise _parse_error("probabilities do not match the levels")
+    probabilities = {key: _unit(value) for key, value in raw_probabilities.items()}
+    if not math.isclose(sum(probabilities.values()), 1.0, abs_tol=_SUM_TOLERANCE):
+        raise _parse_error("probabilities do not sum to 1")
+    score = raw.get("score")
+    maximum = len(question.levels) - 1
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, int | float)
+        or not math.isfinite(score)
+        or not 0 <= score <= maximum
+    ):
+        raise _parse_error("score is not a finite index within the requested levels")
+    expected = sum(int(key) * value for key, value in probabilities.items())
+    if not math.isclose(score, expected, abs_tol=maximum * _SUM_TOLERANCE):
+        raise _parse_error("score differs from the probability-weighted index")
+    return ScoreAnswer(float(score), probabilities, _unit(raw.get("confidence")))
+
+
 def _parse_choice(raw: Any, question: ChoiceQuestion) -> ChoiceAnswer:
     if not isinstance(raw, dict) or raw.get("type") != "choice":
         raise _parse_error("answer is not a choice")
@@ -534,10 +572,12 @@ def _card_identity(payload: Any, model: str, backend_max: int) -> str | None:
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _schema_hash(questions: Mapping[str, ChoiceQuestion | str]) -> str:
-    shape = {
+def _schema_hash(questions: Mapping[str, ChoiceQuestion | str | ScoreQuestion]) -> str:
+    shape: dict[str, dict[str, object]] = {
         key: {"type": "choice", "options": sorted(question.criteria)}
         if isinstance(question, ChoiceQuestion)
+        else {"type": "score", "levels": len(question.levels)}
+        if isinstance(question, ScoreQuestion)
         else {"type": "noul"}
         for key, question in questions.items()
     }
