@@ -35,6 +35,7 @@ from gobby.tasks.step_records import (
     StepSubmission,
     TaskStep,
     TaskStepRecord,
+    list_task_step_records,
     record_task_step,
 )
 from gobby.utils.session_context import session_context_for_test
@@ -798,13 +799,25 @@ async def read_candidate(
     message = messages.create_message(sender, reviewer, content)
     registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
     add_messaging_tools(registry, messages, SessionManager(db), db)
-    arguments = {"message_id": message.id}
+    return await complete_seat_tool(
+        db, reviewer, registry, "get_inter_session_message", {"message_id": message.id}
+    )
+
+
+async def complete_seat_tool(
+    db: HubDatabase,
+    reviewer: str,
+    registry: InternalToolRegistry,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> tuple[dict[str, Any], AgentStepInstance]:
+    """Call the real tool and deliver its result to the seat's completion engine."""
     with session_context_for_test(reviewer):
-        result = cast(dict[str, Any], await registry.call("get_inter_session_message", arguments))
-    assert result["success"] is True, result
+        result = cast(dict[str, Any], await registry.call(tool_name, arguments))
+    assert "error" not in result, result
     call = {
-        "server_name": "gobby-agents",
-        "tool_name": "get_inter_session_message",
+        "server_name": registry.name,
+        "tool_name": tool_name,
         "arguments": arguments,
     }
     data = {"tool_name": "mcp__gobby__call_tool", "tool_input": call, "tool_output": result}
@@ -889,9 +902,26 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
     assert instance.variables["candidate_received"] is True
     assert instance.variables["candidate_task"] == task_id
 
-    review, written = submit_moot(db, team.sol, task_id, "review", 1)
-    assert written is True
+    task_tools = create_task_registry(LocalTaskManager(db))
+    recorded, instance = await complete_seat_tool(
+        db,
+        team.sol,
+        task_tools,
+        "record_review_step",
+        {
+            "task_id": task_id,
+            "status": "approved",
+            "disposition": "moot",
+            "epoch": team.task.review_epoch,
+            "round_number": 1,
+            "feedback": "Independent review confirms the work is moot.",
+        },
+    )
+    assert recorded["created"] is True
+    review = list_task_step_records(db, task_id)[-1]
     assert (review.status, review.disposition, review.commit_sha) == ("approved", "moot", None)
+    assert review.session_id == team.sol
+    assert_candidate_cleared(instance)
 
     submit_moot(db, team.manager, task_id, "closing", 1)
     task_tools = create_task_registry(LocalTaskManager(db))
@@ -899,6 +929,105 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
         closed = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
     assert closed.get("closed") is True, closed
     assert LocalTaskManager(db).get_task(task_id).closed_reason == "moot"
+
+
+def assert_candidate_cleared(instance: AgentStepInstance) -> None:
+    assert instance.current_step == "await"
+    assert {
+        key: instance.variables[key]
+        for key in (
+            "candidate_received",
+            "verdict_ready",
+            "candidate_task",
+            "candidate_sha",
+            "candidate_disposition",
+            "candidate_owner",
+            "candidate_received_at",
+        )
+    } == {
+        "candidate_received": False,
+        "verdict_ready": False,
+        "candidate_task": None,
+        "candidate_sha": None,
+        "candidate_disposition": None,
+        "candidate_owner": None,
+        "candidate_received_at": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_rejected_moot_review_stays_active_until_own_bounce(world: TeamWorld) -> None:
+    team = await team_in_moot_review(world)
+    db, task_id = world.case.db, team.task.id
+    reviewer_at_await(db, team.sol)
+    grant_review_writes(db, team.sol, world.case.project_id)
+    _, active = await read_candidate(
+        db, team.sol, team.manager, team.task, None, disposition="moot"
+    )
+    task_tools = create_task_registry(LocalTaskManager(db))
+    recorded, rejected = await complete_seat_tool(
+        db,
+        team.sol,
+        task_tools,
+        "record_review_step",
+        {
+            "task_id": task_id,
+            "status": "rejected",
+            "disposition": "moot",
+            "epoch": team.task.review_epoch,
+            "round_number": 1,
+            "feedback": "The requested work remains necessary.",
+        },
+    )
+    assert recorded["created"] is True
+    review = list_task_step_records(db, task_id)[-1]
+    assert (review.status, review.disposition, review.commit_sha) == ("rejected", "moot", None)
+    assert review.session_id == team.sol
+    tasks = LocalTaskManager(db)
+    task = tasks.get_task(task_id)
+    assert task.review_fail_count == 1
+    assert not task.commits
+    assert rejected.current_step == "review"
+    assert rejected.variables == active.variables
+
+    _, reconciled = await complete_seat_tool(
+        db, team.sol, task_tools, "get_task", {"task_id": task_id}
+    )
+    assert reconciled.current_step == "review"
+    assert reconciled.variables == active.variables
+
+    messages = InternalToolRegistry(name="gobby-agents", description="Reviewer BOUNCE")
+    add_messaging_tools(messages, InterSessionMessageManager(db), SessionManager(db), db)
+    sent, completed = await complete_seat_tool(
+        db,
+        team.sol,
+        messages,
+        "send_message",
+        {
+            "target": "session",
+            "target_id": team.manager,
+            "content": (
+                f"EVENT=CANDIDATE_VERDICT TASK=#{team.task.seq_num} "
+                "DISPOSITION=moot VERDICT=BOUNCE NOTE=The work remains necessary."
+            ),
+        },
+    )
+    assert sent["success"] is True
+    assert_candidate_cleared(completed)
+    assert task.claimed_by_session_id is not None
+    with session_context_for_test(task.claimed_by_session_id):
+        implementation = await task_tools.call(
+            "record_implementation_step",
+            {
+                "task_id": task_id,
+                "status": "approved",
+                "disposition": "moot",
+                "epoch": task.review_epoch,
+                "round_number": 2,
+                "feedback": "Reconsidered the rejected disposition without a linked commit.",
+            },
+        )
+    assert implementation.get("created") is True, implementation
 
 
 @pytest.mark.asyncio
