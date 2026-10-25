@@ -16,6 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.agents.team_lifecycle import seat_team
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -23,6 +24,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 from gobby.storage.workspaces import WorkspaceManager
+from gobby.utils.uuid_validation import parse_uuid_reference
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 PIPELINE_CHILD_PREFIX = "pipeline-"
@@ -77,6 +79,7 @@ def check_runbook_seats(
     report_to: str | None = None,
     require_report_to: bool = False,
     skip_live_seats: bool = False,
+    team_id: str | None = None,
     tab_title: str | None = None,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
@@ -91,7 +94,8 @@ def check_runbook_seats(
 
     ``launch`` names the seats to start. With ``skip_live_seats`` it leaves out each seat
     whose agent already has an active run on this machine with a live session in this
-    project, and ``live`` maps those seats to that session. ``tab_exists`` says whether the
+    project, and ``live`` maps those seats to that session. With ``team_id``, only runs
+    admitted to that team count. ``tab_exists`` says whether the
     workspace has the tab titled ``tab_title``; two such tabs refuse.
     """
     if (require_report_to and report_to is None) or (
@@ -99,6 +103,11 @@ def check_runbook_seats(
     ):
         raise RunbookSeatRefusal("report_to must be a nonempty session ref")
     seats = _requested_seats(requested, catalogue)
+    if team_id is not None:
+        team_uuid = parse_uuid_reference(team_id)
+        if team_uuid is None:
+            raise RunbookSeatRefusal(f"team {team_id} requires a full execution UUID for team_id")
+        team_id = str(team_uuid)
     try:
         return _admit(
             stores,
@@ -106,6 +115,7 @@ def check_runbook_seats(
             caller_session_id=caller_session_id,
             workspace=workspace,
             skip_live_seats=skip_live_seats,
+            team_id=team_id,
             tab_title=tab_title,
         )
     except RunbookSeatRefusal:
@@ -157,6 +167,7 @@ def _admit(
     caller_session_id: str,
     workspace: str,
     skip_live_seats: bool,
+    team_id: str | None,
     tab_title: str | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
@@ -185,7 +196,7 @@ def _admit(
         workspace_id=workspace_id,
     )
     _refuse_unresolved_agents(stores.definitions, project_id, seats)
-    live = _live_seats(stores, session, seats) if skip_live_seats else {}
+    live = _live_seats(stores, session, seats, team_id=team_id) if skip_live_seats else {}
     return AdmittedSeats(
         workspace_id=workspace_id,
         seats=seats,
@@ -197,7 +208,11 @@ def _admit(
 
 
 def _live_seats(
-    stores: RunbookSeatStores, caller: Session, seats: Sequence[CatalogueSeat]
+    stores: RunbookSeatStores,
+    caller: Session,
+    seats: Sequence[CatalogueSeat],
+    *,
+    team_id: str | None,
 ) -> dict[str, str]:
     """Map each seat whose agent runs here with a live session in the project to that session."""
     runs = stores.runs.list_active_for_machine(caller.machine_id, limit=READ_BOUND + 1)
@@ -213,6 +228,10 @@ def _live_seats(
                 and child.project_id == caller.project_id
                 and child.status in LIVE_SESSION_STATUSES
             ):
+                if team_id is not None:
+                    team = seat_team(stores.sessions.db, child.id)
+                    if team is None or team.team_id != team_id:
+                        continue
                 live[seat.name] = child.id
                 break
     return live

@@ -126,7 +126,10 @@ async def _team_with_live(
 
 
 @pytest.mark.asyncio
-async def test_rerun_with_team_id_launches_only_the_missing_seats(world: TeamWorld) -> None:
+@pytest.mark.parametrize("uppercase_team_id", [False, True])
+async def test_rerun_with_team_id_launches_only_the_missing_seats(
+    world: TeamWorld, uppercase_team_id: bool
+) -> None:
     """Live seats come from the team's own runs: no tab exists and other teams' seats don't count."""
     workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
     task, other = world.case.task(TITLE), world.case.task("Another team task")
@@ -134,6 +137,9 @@ async def test_rerun_with_team_id_launches_only_the_missing_seats(world: TeamWor
         world, task, workspace, ("dev-manager", "test-writer", "code-reviewer")
     )
     other_team_id = await _team_with_live(world, other, workspace, ("developer",))
+    if uppercase_team_id:
+        team_id = team_id.upper()
+        other_team_id = other_team_id.upper()
 
     rerun = _inputs(task, workspace, world.case.creator, team_id)
     other_rerun = _inputs(other, workspace, world.case.creator, other_team_id)

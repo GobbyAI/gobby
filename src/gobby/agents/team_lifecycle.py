@@ -117,7 +117,9 @@ async def admit_team(
     if team_id is not None:
         team_uuid = parse_uuid_reference(team_id)
         if team_uuid is None:
-            raise TeamAdmissionRefused("team_missing", f"team {team_id} is not an execution id")
+            raise TeamAdmissionRefused(
+                "team_missing", f"team {team_id} requires a full execution UUID for team_id"
+            )
         team_id = str(team_uuid)
     caller = await asyncio.to_thread(_team_caller, db, caller_session_id)
     target = await asyncio.to_thread(_open_task, db, task, caller.project_id)
