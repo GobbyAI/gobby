@@ -1744,6 +1744,16 @@ three nullable schema columns are explicit, separately verified outcomes.
 ## V1 Plan Changelog
 `kind: framing`
 
+2026-10-24: Writer and Plan Adversary reached fresh consensus on all 23
+deliverables after review of 1933fe8b40d66913a57a54ea52fdee963c0085cc, with
+no blocking or nit findings and no unresolved decisions. D1-D7's approved
+corrections and native extensions use the shared waiver/readiness contract;
+K1 remains intact. The plan binds the concrete shared verifier, CORS and
+files_home owners, preserves complete raw output with bounded inline/retrieval
+copies and run-owned retention, and accounts for all 28 original plus three
+additive surfaces. This consensus supersedes the earlier withdrawn stamp;
+fresh adversary-derived M1 must bind these exact narrative bytes.
+
 2026-10-24: Incorporated the Orchestrator's #24961 debt dispositions and later
 clarifications: D1-D7 exact shared waivers, K1 retained, concrete pagination,
 presence/error/readiness conventions, #24963/#24964/#24967/#24968 prerequisite
