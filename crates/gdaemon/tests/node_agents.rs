@@ -22,6 +22,7 @@ use std::{
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 use workspace_fixtures::{
@@ -517,6 +518,14 @@ async fn restart_fails_unlaunched_runs() -> Result<()> {
     Ok(())
 }
 
+fn never() -> bool {
+    false
+}
+
+fn always() -> bool {
+    true
+}
+
 fn repair_env<'a>(home: &'a Path, hooks_dir: &'a Path, claude_json: &'a Path) -> RepairEnv<'a> {
     RepairEnv {
         home,
@@ -637,7 +646,7 @@ async fn worktree_prepared_with_record_first() -> Result<()> {
         base_branch: Some("no-such-base".into()),
         ..planned.clone()
     };
-    workspace::prepare(&agents, "run-1", &broken, "codex", &env)
+    workspace::prepare(&agents, "run-1", &broken, "codex", &env, &never)
         .await
         .expect_err("a missing base must fail preparation");
     let persisted = persisted_state(&home)?;
@@ -646,7 +655,7 @@ async fn worktree_prepared_with_record_first() -> Result<()> {
     assert_eq!(on_disk.workspace.as_ref(), Some(&broken));
     assert!(!broken.path.exists(), "no worktree exists when git fails");
 
-    workspace::prepare(&agents, "run-1", &planned, "codex", &env).await?;
+    workspace::prepare(&agents, "run-1", &planned, "codex", &env, &never).await?;
     assert!(planned.path.join("README.md").is_file());
     let worktrees = git(&source, &["worktree", "list", "--porcelain"])?;
     assert!(worktrees.contains(&planned.path.display().to_string()));
@@ -655,6 +664,86 @@ async fn worktree_prepared_with_record_first() -> Result<()> {
             .trim()
             .is_empty()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prepare_cancelled_before_create_keeps_record_without_workspace() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+
+    let planned = workspace::plan_workspace(
+        "run-11",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/cancelled"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-11").await?;
+
+    let error = workspace::prepare(&agents, "run-11", &planned, "codex", &env, &always)
+        .await
+        .expect_err("a cancelled preparation must not proceed");
+    assert!(format!("{error:#}").contains("cancelled"), "{error:#}");
+    let persisted = persisted_state(&home)?;
+    let on_disk = persisted.runs.get("run-11").expect("run is persisted");
+    assert_eq!(on_disk.phase, RunPhase::Preparing);
+    assert_eq!(on_disk.workspace.as_ref(), Some(&planned));
+    assert!(
+        !planned.path.exists(),
+        "no worktree exists when cancelled before create"
+    );
+    let worktrees = git(&source, &["worktree", "list", "--porcelain"])?;
+    assert!(!worktrees.contains(&planned.path.display().to_string()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prepare_cancelled_after_create_skips_repair() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+
+    let planned = workspace::plan_workspace(
+        "run-12",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/cancel-late"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-12").await?;
+
+    // The first check runs before create and passes; the second runs between create and repair.
+    let checks = AtomicUsize::new(0);
+    let cancel = || checks.fetch_add(1, Ordering::SeqCst) >= 1;
+    let error = workspace::prepare(&agents, "run-12", &planned, "codex", &env, &cancel)
+        .await
+        .expect_err("cancellation after create must stop preparation");
+    assert!(format!("{error:#}").contains("cancelled"), "{error:#}");
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
+    assert!(
+        planned.path.join("README.md").is_file(),
+        "create ran before the cancel"
+    );
+    assert!(
+        !planned.path.join(".mcp.json").exists(),
+        "repair must not run after cancel"
+    );
+    let persisted = persisted_state(&home)?;
+    let on_disk = persisted.runs.get("run-12").expect("run is persisted");
+    assert_eq!(on_disk.phase, RunPhase::Preparing);
+    assert_eq!(on_disk.workspace.as_ref(), Some(&planned));
     Ok(())
 }
 
@@ -688,7 +777,7 @@ async fn clone_prepared_with_record_first() -> Result<()> {
         base_branch: Some("no-such-base".into()),
         ..planned.clone()
     };
-    workspace::prepare(&agents, "run-2", &broken, "codex", &env)
+    workspace::prepare(&agents, "run-2", &broken, "codex", &env, &never)
         .await
         .expect_err("a missing base must fail preparation");
     let persisted = persisted_state(&home)?;
@@ -697,7 +786,7 @@ async fn clone_prepared_with_record_first() -> Result<()> {
     assert_eq!(on_disk.workspace.as_ref(), Some(&broken));
     assert!(!broken.path.exists(), "no clone exists when git fails");
 
-    workspace::prepare(&agents, "run-2", &planned, "codex", &env).await?;
+    workspace::prepare(&agents, "run-2", &planned, "codex", &env, &never).await?;
     assert!(planned.path.join("README.md").is_file());
     assert_eq!(
         git(&planned.path, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim(),
@@ -809,7 +898,7 @@ async fn failed_removal_keeps_record_and_retries() -> Result<()> {
     .expect("worktree mode plans a record");
     let agents = NodeAgents::open(&home)?;
     accept_run(&agents, "run-4").await?;
-    workspace::prepare(&agents, "run-4", &record, "codex", &env).await?;
+    workspace::prepare(&agents, "run-4", &record, "codex", &env, &never).await?;
     {
         let mut state = agents.state.lock().await;
         state.removals.insert("run-4".into(), record.clone());
@@ -1167,7 +1256,7 @@ async fn existing_workspace_used_in_place() -> Result<()> {
 
     let agents = NodeAgents::open(&home)?;
     accept_run(&agents, "run-10").await?;
-    workspace::prepare(&agents, "run-10", &record, "codex", &env).await?;
+    workspace::prepare(&agents, "run-10", &record, "codex", &env, &never).await?;
 
     assert_eq!(
         fs::read_to_string(earlier.join("scratch.txt"))?,

@@ -57,13 +57,16 @@ pub fn plan_workspace(
 }
 
 /// Commits the run's `preparing` phase with `record`, then creates the
-/// workspace (unless reused) and repairs it.
+/// workspace (unless reused) and repairs it. `cancel` is checked after the
+/// commit and again between create and repair. A cancel leaves the `preparing`
+/// record in place so cleanup stays durable.
 pub async fn prepare(
     agents: &NodeAgents,
     run_id: &str,
     record: &WorkspaceRecord,
     provider: &str,
     env: &RepairEnv<'_>,
+    cancel: &(dyn Fn() -> bool + Sync),
 ) -> Result<()> {
     {
         let mut state = agents.state.lock().await;
@@ -75,10 +78,17 @@ pub async fn prepare(
         run.workspace = Some(record.clone());
         state.commit(&agents.home, &agents.changed)?;
     }
+    checkpoint(cancel, "before create")?;
     if !record.reused {
         create(record).await?;
     }
+    checkpoint(cancel, "before repair")?;
     repair::repair(&record.source_root, &record.path, provider, env).await
+}
+
+fn checkpoint(cancel: &(dyn Fn() -> bool + Sync), step: &str) -> Result<()> {
+    ensure!(!cancel(), "preparation cancelled {step}");
+    Ok(())
 }
 
 /// Removes a workspace and its branch. A missing path or branch counts as removed.

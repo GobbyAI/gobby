@@ -5,9 +5,17 @@ mod hygiene;
 mod seed;
 
 use super::workspace::git_output;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
-use std::{collections::HashSet, fs, path::Path, time::Duration};
+use std::{
+    collections::HashSet,
+    fs::{self, OpenOptions},
+    io::{ErrorKind, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
 
 /// Node-local inputs that repair reads from the environment in production.
 /// Tests inject them so nothing touches the real home or the real `uv`.
@@ -402,17 +410,55 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .parent()
         .with_context(|| format!("{} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    let name = path
-        .file_name()
-        .with_context(|| format!("{} has no file name", path.display()))?
-        .to_string_lossy();
-    let temporary = parent.join(format!(".{name}.{}.tmp", std::process::id()));
-    fs::write(&temporary, bytes).with_context(|| format!("write {}", temporary.display()))?;
+    let temporary = write_temp(path, bytes, 0o666)?;
     if let Err(error) = fs::rename(&temporary, path) {
         let _ = fs::remove_file(&temporary);
         return Err(error).with_context(|| format!("replace {}", path.display()));
     }
     Ok(())
+}
+
+/// Attempts at a free temp name before giving up. Names carry a process-wide
+/// counter, so a clash only comes from a file someone else planted.
+const TEMP_ATTEMPTS: u32 = 64;
+
+/// Writes `bytes` to a new sibling of `path` created exclusively with `mode`, and
+/// returns its path. The caller renames it into place. `create_new` never follows
+/// a planted symlink, and the mode is applied at creation, not after.
+fn write_temp(path: &Path, bytes: &[u8], mode: u32) -> Result<PathBuf> {
+    static ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} has no file name", path.display()))?
+        .to_string_lossy()
+        .into_owned();
+    for _ in 0..TEMP_ATTEMPTS {
+        let attempt = ATTEMPTS.fetch_add(1, Ordering::Relaxed);
+        let temporary =
+            path.with_file_name(format!(".{name}.{}.{attempt}.tmp", std::process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(&temporary)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(error).with_context(|| format!("write {}", temporary.display()));
+                }
+                return Ok(temporary);
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("create {}", temporary.display()));
+            }
+        }
+    }
+    bail!(
+        "could not create a temporary file beside {}",
+        path.display()
+    )
 }
 
 #[cfg(test)]
