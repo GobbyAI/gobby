@@ -16,7 +16,7 @@ mod timing;
 mod types;
 mod util;
 
-pub use freshness_probe::{explicit_file_changed, project_changed_since};
+pub use freshness_probe::{explicit_file_changed, project_changed_since, stale_paths};
 pub use lifecycle::invalidate;
 #[cfg(all(test, gcode_postgres_tests))]
 pub(crate) use lifecycle::refresh_communities;
@@ -29,6 +29,7 @@ pub use types::{
     CommunityRefreshReport, IndexDegradation, IndexDurations, IndexOptions, IndexOutcome,
     IndexProgressSink, IndexRequest, UnsupportedFileType,
 };
+pub(crate) use util::effective_excludes;
 
 #[cfg(test)]
 mod stale_cleanup_tests;

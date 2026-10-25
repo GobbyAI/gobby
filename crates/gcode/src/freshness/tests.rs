@@ -1,5 +1,7 @@
 use super::*;
+use crate::commands::grep::{GrepOptions, grep_repo};
 use crate::models::CODE_INDEX_UUID_NAMESPACE;
+use crate::output::Format;
 use postgres::Client;
 use std::path::Path;
 
@@ -983,4 +985,341 @@ fn overlay_explicit_file_grep_refreshes_each_file_edited_before_the_first_read()
 
     invalidate_test_project(&overlay_ctx);
     invalidate_test_project(&parent_ctx);
+}
+
+// #25123: a worktree overlay that merges a parent commit changing an indexed
+// file must serve the merged content. Before the merge the overlay owns rows
+// for the file; after a fast-forward its HEAD equals the parent's HEAD, and the
+// parent index lags that HEAD, so git sees no divergence to reconcile.
+const MERGE_SEED_SOURCE: &str =
+    "pub fn current_body() -> u8 {\n    1\n}\n\npub fn caller() -> u8 {\n    current_body()\n}\n";
+const MERGED_SOURCE: &str = "pub fn added_header() -> u8 {\n    0\n}\n\npub fn current_body() -> u8 {\n    2\n}\n\npub fn caller() -> u8 {\n    current_body()\n}\n\npub fn second_caller() -> u8 {\n    current_body()\n}\n";
+
+fn git_in(dir: &Path, hooks: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=Gcode Test",
+            "-c",
+            "user.email=gcode@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+        ])
+        .arg(format!("core.hooksPath={}", hooks.display()))
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Parent indexed at the seed; worktree overlay indexed at the seed; the parent
+/// commits `MERGED_SOURCE` without reindexing; the worktree fast-forwards onto it.
+fn merged_worktree_pair(label: &str) -> (tempfile::TempDir, Context, Context) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let hooks = tmp.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = tmp.path().join("parent");
+    let overlay_root = tmp.path().join("overlay");
+    let rel = "src/lib.rs";
+    std::fs::create_dir_all(parent_root.join("src")).expect("create parent src");
+    std::fs::write(parent_root.join(rel), MERGE_SEED_SOURCE).expect("write seed source");
+    git_in(&parent_root, &hooks, &["init", "-q"]);
+    git_in(&parent_root, &hooks, &["add", "."]);
+    git_in(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    git_in(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+
+    let parent_ctx =
+        postgres_context_with_root(&test_project_id(&format!("{label}-parent")), &parent_root);
+    let mut overlay_ctx =
+        postgres_context_with_root(&test_project_id(&format!("{label}-overlay")), &overlay_root);
+    overlay_ctx.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_ctx.project_id.clone(),
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_ctx.project_id.clone(),
+        parent_root: parent_root.clone(),
+    };
+    let seed_sha = git_in(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    invalidate_test_project(&parent_ctx);
+    invalidate_test_project(&overlay_ctx);
+    full_index(&parent_ctx);
+    let parent_path = parent_root.canonicalize().expect("canonical parent root");
+    let parent_str = parent_path.to_str().expect("utf-8 parent path").to_string();
+    // The isolation marker names the clean base the worktree was created from.
+    let write_marker = |base: &str| {
+        let marker = serde_json::json!({
+            "parent_project_path": parent_str,
+            "parent_project_id": parent_ctx.project_id,
+            "base_commit": base,
+            "ancestor_checkout_path": parent_str,
+            "ancestor_checkout_identity": parent_ctx.project_id,
+        });
+        std::fs::create_dir_all(overlay_root.join(".gobby")).expect("create gobby dir");
+        std::fs::write(
+            overlay_root.join(".gobby").join("isolation.json"),
+            marker.to_string(),
+        )
+        .expect("write isolation marker");
+    };
+    write_marker(&seed_sha);
+    pin_parent_versions(&overlay_ctx, &parent_ctx, &[rel]);
+
+    // The parent commits the change; its index does not follow the new HEAD.
+    std::fs::write(parent_root.join(rel), MERGED_SOURCE).expect("write merged source");
+    git_in(
+        &parent_root,
+        &hooks,
+        &["commit", "-q", "-am", "parent change"],
+    );
+    full_index(&parent_ctx);
+    // The worktree fast-forwards onto the parent's commit.
+    let merged_sha = git_in(&parent_root, &hooks, &["rev-parse", "HEAD"]);
+    git_in(
+        &overlay_root,
+        &hooks,
+        &["merge", "-q", "--ff-only", &merged_sha],
+    );
+    // The merged file's mtime must be newer than the overlay's index time.
+    backdate_project_index(&overlay_ctx, 3600.0);
+    (tmp, parent_ctx, overlay_ctx)
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn merged_worktree_symbol_at_serves_the_merged_body() {
+    let (tmp, parent_ctx, overlay_ctx) = merged_worktree_pair("gcode-merge-symbol");
+    let rel = "src/lib.rs";
+    // symbol-at checks freshness for its file before it reads the symbol rows.
+    let status = ensure_fresh(
+        &overlay_ctx,
+        FreshnessScope::Files(vec![PathBuf::from(rel)]),
+    )
+    .expect("symbol-at freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+
+    let source = std::fs::read(tmp.path().join("overlay").join(rel)).expect("read merged source");
+    let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect readonly");
+    let symbols = visibility::visible_symbols_for_file(&mut conn, &overlay_ctx, rel)
+        .expect("visible symbols");
+    let body = symbols
+        .iter()
+        .find(|symbol| symbol.name == "current_body")
+        .expect("current_body is visible");
+    let snippet = String::from_utf8_lossy(
+        source
+            .get(body.byte_start..body.byte_end)
+            .unwrap_or_default(),
+    )
+    .into_owned();
+    assert_eq!(
+        snippet.trim_end(),
+        "pub fn current_body() -> u8 {\n    2\n}",
+        "symbol-at must slice the merged file with the rows' current byte range"
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn merged_worktree_grep_finds_every_current_caller() {
+    let (_tmp, parent_ctx, overlay_ctx) = merged_worktree_pair("gcode-merge-grep");
+    // An unscoped grep checks freshness for the whole project.
+    let status =
+        ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("grep freshness status");
+    assert_eq!(status, FreshnessStatus::Checked);
+
+    assert_eq!(
+        current_caller_lines(&overlay_ctx),
+        vec![5, 10, 14],
+        "grep -w must return the merged definition and both callers"
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+/// `grep -w` over the overlay must name every current line that mentions `current_body`.
+fn current_caller_lines(overlay_ctx: &Context) -> Vec<usize> {
+    let mut conn = db::connect_readonly(&overlay_ctx.database_url).expect("connect readonly");
+    let options = GrepOptions {
+        pattern: "current_body",
+        paths: &[],
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: true,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+    let result = grep_repo(overlay_ctx, &mut conn, &options).expect("grep merged worktree");
+    let mut lines: Vec<usize> = result
+        .matches
+        .iter()
+        .filter(|found| found.path == "src/lib.rs")
+        .map(|found| found.line)
+        .collect();
+    lines.sort_unstable();
+    lines
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn merged_worktree_grep_survives_a_filtered_overlay_index() {
+    let (tmp, parent_ctx, overlay_ctx) = merged_worktree_pair("gcode-merge-filtered");
+    let overlay_root = tmp.path().join("overlay");
+    // The merged file and an unrelated file are an hour old, well outside the
+    // mtime skew margin the freshness pre-gate allows.
+    let an_hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    let other = overlay_root.join("src/other.rs");
+    std::fs::write(&other, "pub fn other() {}\n").expect("write unrelated file");
+    for path in [overlay_root.join("src/lib.rs"), other] {
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(an_hour_ago))
+            .expect("age the file");
+    }
+    // A path-scoped index of one unrelated file, the way `gcode index <dir>` runs it.
+    let request = crate::index::api::IndexRequest {
+        project_root: overlay_root,
+        path_filter: Some(std::path::PathBuf::from("src/other.rs")),
+        explicit_files: Vec::new(),
+        full: false,
+        require_cpp_semantics: false,
+        sync_projections: false,
+    };
+    crate::index::api::index_files(
+        request,
+        &overlay_ctx,
+        crate::index::api::IndexOptions::default(),
+    )
+    .expect("filtered overlay index");
+
+    // An unscoped grep checks freshness for the whole project.
+    ensure_fresh(&overlay_ctx, FreshnessScope::Project).expect("grep freshness status");
+    assert_eq!(
+        current_caller_lines(&overlay_ctx),
+        vec![5, 10, 14],
+        "grep -w must return the merged definition and both callers after a filtered index"
+    );
+
+    invalidate_test_project(&overlay_ctx);
+    invalidate_test_project(&parent_ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn path_filtered_primary_index_keeps_unindexed_changes_visible() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).expect("create src");
+    let lib = root.join("src/lib.rs");
+    let other = root.join("src/other.rs");
+    std::fs::write(&lib, "pub fn before() {}\n").expect("write lib.rs");
+    std::fs::write(&other, "pub fn other() {}\n").expect("write other.rs");
+    // Both files are an hour old, so the pre-gate judges only what the test changes.
+    let an_hour_ago = SystemTime::now() - std::time::Duration::from_secs(3600);
+    set_mtime(&lib, an_hour_ago);
+    set_mtime(&other, an_hour_ago);
+
+    let ctx =
+        postgres_context_with_root(&test_project_id("gcode-freshness-filtered-primary"), root);
+    invalidate_test_project(&ctx);
+    full_index(&ctx);
+
+    // lib.rs changes after the whole-tree index but before a path-scoped run
+    // advances the watermark: a whole-tree-current index would still refresh it.
+    backdate_project_index(&ctx, 3600.0);
+    std::fs::write(&lib, "pub fn after() {}\n").expect("rewrite lib.rs");
+    set_mtime(
+        &lib,
+        SystemTime::now() - std::time::Duration::from_secs(1800),
+    );
+
+    // A path-scoped index of one unrelated file, the way `gcode index <dir>` runs it.
+    let request = crate::index::api::IndexRequest {
+        project_root: root.to_path_buf(),
+        path_filter: Some(std::path::PathBuf::from("src/other.rs")),
+        explicit_files: Vec::new(),
+        full: false,
+        require_cpp_semantics: false,
+        sync_projections: false,
+    };
+    crate::index::api::index_files(request, &ctx, crate::index::api::IndexOptions::default())
+        .expect("filtered primary index");
+
+    ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
+    let mut conn = db::connect_readonly(&ctx.database_url).expect("connect readonly");
+    let options = GrepOptions {
+        pattern: "after",
+        paths: &[],
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: true,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+    let result = grep_repo(&ctx, &mut conn, &options).expect("grep rewritten lib.rs");
+    let lines: Vec<usize> = result
+        .matches
+        .iter()
+        .filter(|found| found.path == "src/lib.rs")
+        .map(|found| found.line)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![1],
+        "a path-scoped index must not hide a whole-tree change from the next read"
+    );
+
+    invalidate_test_project(&ctx);
 }
