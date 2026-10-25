@@ -600,9 +600,9 @@ def _superseding_run_db(storage: CodeIndexStorage, community_ids: set[int]) -> A
             community_id in community_ids
         ):
             storage.db.execute(
-                """UPDATE code_communities SET member_signature = 'refreshed'
+                """UPDATE code_communities SET member_signature = %s
                    WHERE machine_id = %s AND project_id = %s AND community_id = %s""",
-                (require_machine_id(), PROJECT_ID, community_id),
+                ("f" * 16, require_machine_id(), PROJECT_ID, community_id),
             )
         return func(*args, **kwargs)
 
