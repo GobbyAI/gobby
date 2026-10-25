@@ -26,6 +26,7 @@ from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.storage.tasks import LocalTaskManager
 
 if TYPE_CHECKING:
+    from gobby.code_index.context import CodeIndexContext
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.llm.service import LLMService
@@ -41,6 +42,7 @@ def create_task_ops_registry(
     completion_registry: "CompletionEventRegistry | None" = None,
     mcp_manager_resolver: "Callable[[], MCPClientManager | None] | None" = None,
     review_learning_service: "ReviewLearningService | None" = None,
+    code_index: "CodeIndexContext | None" = None,
 ) -> InternalToolRegistry:
     """Create a task ops tool registry with cold-path task tools.
 
@@ -48,6 +50,7 @@ def create_task_ops_registry(
         task_manager: LocalTaskManager instance
         startup_config: DaemonConfig fallback before runtime readiness
         config_resolver: per-operation current DaemonConfig resolver
+        code_index: the daemon's code indexer; landings refresh its managed launch
 
     Returns:
         InternalToolRegistry with ops task tools registered
@@ -81,6 +84,6 @@ def create_task_ops_registry(
     registry.merge_from(create_reindex_registry(ctx))
 
     # Merge landing tools
-    registry.merge_from(create_landing_registry(ctx))
+    registry.merge_from(create_landing_registry(ctx, code_index=code_index))
 
     return registry

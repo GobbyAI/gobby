@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.code_index.context import CodeIndexContext
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -90,7 +91,8 @@ async def test_land_commit_requires_session_and_forwards_resolved_task(
         created_in_session_id=caller.id,
         validation_criteria="Forward the resolved task and candidate SHA to the landing service.",
     )
-    registry = create_task_ops_registry(tasks)
+    code_index = MagicMock(spec=CodeIndexContext)
+    registry = create_task_ops_registry(tasks, code_index=code_index)
     sha = "a" * 40
     response = {"landed": True, "mode": "ff", "landed_tip": sha}
     service = AsyncMock(return_value=response)
@@ -115,4 +117,5 @@ async def test_land_commit_requires_session_and_forwards_resolved_task(
         task=tasks.get_task(task.id),
         caller_session_id=caller.id,
         commit_sha=sha,
+        code_index=code_index,
     )
