@@ -269,6 +269,22 @@ fn overlay_incremental_index_shadows_parent_rows_for_commit_diverged_files() {
             "parent-only-hash",
         )],
     );
+    // An overlay with no pin inherits nothing: the pin is what lets the overlay
+    // serve the parent's path, as `gcode pin` records it.
+    let pin_machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &db::id_param(&pin_machine_id).expect("machine id"),
+            &db::id_param(&overlay_project_id).expect("overlay id"),
+            &rel,
+            &db::id_param(&parent_project_id).expect("parent id"),
+            &parent_hash,
+        ],
+    )
+    .expect("pin parent path");
 
     let ctx = Context {
         database_url,
@@ -1222,6 +1238,10 @@ pub(super) fn cleanup_summary_preservation_project(
 ) -> anyhow::Result<()> {
     let project_id = db::id_param(project_id)?;
     let mut tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
+        &[&project_id],
+    )?;
     tx.execute(
         "DELETE FROM code_indexed_file_states WHERE project_id = $1",
         &[&project_id],

@@ -124,14 +124,34 @@ pub fn resolve_default_import_symbol_id(
     )?))
 }
 
+// The overlay's effective view: its own active symbols plus symbols of the
+// content its pins serve for paths it does not shadow. A pinned provider that
+// the overlay never re-indexed resolves here; the parent's moving rows never do.
 const LOCAL_CALLEE_FROM: &str = "
-         FROM code_symbols s
-         JOIN code_indexed_file_states cifs
-           ON cifs.project_id = s.project_id
-          AND cifs.file_path = s.file_path
-          AND cifs.content_hash = s.file_content_hash
-          AND cifs.machine_id = $1
-         WHERE s.project_id = $2 AND s.name = $4";
+         FROM (
+            SELECT s.*
+            FROM code_symbols s
+            JOIN code_indexed_file_states cifs
+              ON cifs.project_id = s.project_id
+             AND cifs.file_path = s.file_path
+             AND cifs.content_hash = s.file_content_hash
+             AND cifs.machine_id = $1
+            WHERE s.project_id = $2 AND s.name = $4
+            UNION ALL
+            SELECT s.*
+            FROM code_overlay_pins p
+            JOIN code_symbols s
+              ON s.project_id = p.source_project_id
+             AND s.file_path = p.file_path
+             AND s.file_content_hash = p.content_hash
+            WHERE p.machine_id = $1 AND p.overlay_project_id = $2 AND s.name = $4
+              AND NOT EXISTS (
+                  SELECT 1 FROM code_indexed_file_states shadow
+                  WHERE shadow.machine_id = $1 AND shadow.project_id = $2
+                    AND shadow.file_path = p.file_path
+              )
+         ) s
+         WHERE TRUE";
 
 fn query_exact_file_candidates(
     conn: &mut impl GenericClient,

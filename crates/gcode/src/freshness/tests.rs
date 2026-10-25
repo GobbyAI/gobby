@@ -224,6 +224,35 @@ fn tombstone_count(ctx: &Context) -> usize {
     visibility::tombstone_count(&mut conn, ctx)
 }
 
+/// Pins each parent path at the parent content it indexes, the way `gcode pin`
+/// records what an overlay serves for a path it does not shadow.
+fn pin_parent_paths(
+    parent_ctx: &Context,
+    overlay_ctx: &Context,
+    parent_root: &Path,
+    rels: &[&str],
+) {
+    let mut conn =
+        db::connect_readwrite(&overlay_ctx.database_url).expect("connect test PostgreSQL hub");
+    for &rel in rels {
+        let hash = crate::index::hasher::file_content_hash(&parent_root.join(rel))
+            .expect("hash parent content");
+        conn.execute(
+            "INSERT INTO code_overlay_pins
+                (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &db::id_param(&overlay_ctx.machine_id).expect("machine id"),
+                &db::id_param(&overlay_ctx.project_id).expect("overlay id"),
+                &rel,
+                &db::id_param(&parent_ctx.project_id).expect("parent id"),
+                &hash,
+            ],
+        )
+        .expect("pin parent path");
+    }
+}
+
 fn visible_symbol_names(ctx: &Context, file_path: &str) -> Vec<String> {
     let mut conn = db::connect_readwrite(&ctx.database_url).expect("connect test PostgreSQL hub");
     visibility::visible_symbols_for_file(&mut conn, ctx, file_path)
@@ -423,6 +452,7 @@ mod serial_db {
         invalidate_test_project(&parent_ctx);
         invalidate_test_project(&overlay_ctx);
         full_index(&parent_ctx);
+        pin_parent_paths(&parent_ctx, &overlay_ctx, &parent_root, &["src/lib.rs"]);
         full_index(&overlay_ctx);
         assert_eq!(
             visible_symbol_names(&overlay_ctx, "src/lib.rs"),
@@ -588,18 +618,22 @@ mod serial_db {
         invalidate_test_project(&parent_ctx);
         invalidate_test_project(&overlay_ctx);
         full_index(&parent_ctx);
+        pin_parent_paths(
+            &parent_ctx,
+            &overlay_ctx,
+            &parent_root,
+            &["src/lib.rs", "README.md", "generated/page.md"],
+        );
         full_index(&overlay_ctx);
         assert_eq!(tombstone_count(&overlay_ctx), 1);
 
-        // Every worktree path is inherited from the parent and older than
-        // the overlay's index: nothing to refresh, no lock taken.
+        // Every worktree path is served through its pin and older than the
+        // overlay's index: nothing to refresh, no lock taken.
         assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
 
-        // A parent index newer than the overlay's changes the rows the
-        // overlay inherits; no worktree mtime can show that.
+        // A parent index newer than the overlay's changes nothing the overlay
+        // serves: its pins name the content, so the gate stays quiet.
         backdate_project_index(&overlay_ctx, 3600.0);
-        assert!(project_needs_refresh(&overlay_ctx).expect("pre-gate"));
-        full_index(&overlay_ctx);
         assert!(!project_needs_refresh(&overlay_ctx).expect("pre-gate"));
 
         // Deleting an inherited file in the worktree trips the gate; once

@@ -119,6 +119,24 @@ fn candidate_imports_keep_unchanged_providers() {
         "precondition: the parent resolves its importer call to the provider it serves"
     );
 
+    // Setup only: the overlay serves its unchanged provider through a pin at the
+    // parent's content, as C1.4 pins its paths. Assertions below are unchanged.
+    let provider_hash = crate::index::hasher::file_content_hash(&parent_root.join("src/util.js"))
+        .expect("hash parent provider");
+    conn.execute(
+        "INSERT INTO code_overlay_pins
+            (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+         VALUES ($1, $2, $3, $4, $5)",
+        &[
+            &db::id_param(&machine_id).expect("machine id"),
+            &db::id_param(&overlay_project_id).expect("overlay id"),
+            &"src/util.js",
+            &db::id_param(&parent_project_id).expect("parent id"),
+            &provider_hash,
+        ],
+    )
+    .expect("pin parent provider");
+
     let mut overlay_ctx = machine_context(
         &database_url,
         &overlay_project_id,
@@ -1454,6 +1472,10 @@ mod serial_db {
     pub(super) fn cleanup(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = db::id_param(project_id)?;
         let mut tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
+            &[&project_id],
+        )?;
         tx.execute(
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             &[&project_id],

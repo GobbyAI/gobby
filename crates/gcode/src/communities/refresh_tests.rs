@@ -909,6 +909,12 @@ fn overlay_refresh_seeds_prior_rows_from_parent() {
     let root = Path::new("/tmp").join(&parent_id);
     seed_file(&mut conn, &parent_id, &root, "pkg/a.py", &["pkg.b"]);
     seed_file(&mut conn, &parent_id, &root, "pkg/b.py", &["pkg.a"]);
+    pin_parent_files(
+        &mut conn,
+        &parent_id,
+        &overlay_id,
+        &["pkg/a.py", "pkg/b.py"],
+    );
     let parent_ctx = test_context(database_url.clone(), &parent_id, ProjectIndexScope::Single);
     refresh_project_communities(&mut conn, &parent_ctx).expect("refresh parent");
     let parent_uuid = db::id_param(&parent_id).expect("parent id");
@@ -1001,6 +1007,12 @@ fn overlay_refresh_seeds_parent_rows_as_managed_principal() {
         overlay_uuid,
     );
     let ctx = overlay_context(database_url, &parent_id, &overlay_id);
+    pin_parent_files(
+        &mut owner,
+        &parent_id,
+        &overlay_id,
+        &["pkg/a.py", "pkg/b.py"],
+    );
 
     let report = refresh_project_communities(managed.client(), &ctx)
         .expect("refresh overlay through managed principal");
@@ -1022,6 +1034,12 @@ fn overlay_first_refresh_commits_when_partition_matches_parent() {
     let root = Path::new("/tmp").join(&parent_id);
     seed_file(&mut conn, &parent_id, &root, "pkg/a.py", &["pkg.b"]);
     seed_file(&mut conn, &parent_id, &root, "pkg/b.py", &["pkg.a"]);
+    pin_parent_files(
+        &mut conn,
+        &parent_id,
+        &overlay_id,
+        &["pkg/a.py", "pkg/b.py"],
+    );
     let parent_ctx = test_context(database_url.clone(), &parent_id, ProjectIndexScope::Single);
     refresh_project_communities(&mut conn, &parent_ctx).expect("refresh parent");
     let parent_signature = project_state(&mut conn, &parent_id).1;
@@ -1677,6 +1695,36 @@ fn latency_context(database_url: String, project_id: &str, root: &Path) -> Conte
     }
 }
 
+fn seeded_content_hash(file_path: &str) -> String {
+    format!("hash-{}", file_path.replace('/', "-"))
+}
+
+/// Pins parent files at the content `seed_file` indexed them with, the way
+/// `gcode pin` records what an overlay serves for a path it does not shadow.
+fn pin_parent_files(
+    conn: &mut postgres::Client,
+    parent_id: &str,
+    overlay_id: &str,
+    file_paths: &[&str],
+) {
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("machine id");
+    for &file_path in file_paths {
+        conn.execute(
+            "INSERT INTO code_overlay_pins
+                (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &db::id_param(&machine_id).expect("machine id"),
+                &db::id_param(overlay_id).expect("overlay id"),
+                &file_path,
+                &db::id_param(parent_id).expect("parent id"),
+                &seeded_content_hash(file_path),
+            ],
+        )
+        .expect("pin parent file");
+    }
+}
+
 fn seed_file(
     conn: &mut postgres::Client,
     project_id: &str,
@@ -1684,7 +1732,7 @@ fn seed_file(
     file_path: &str,
     modules: &[&str],
 ) {
-    let content_hash = format!("hash-{}", file_path.replace('/', "-"));
+    let content_hash = seeded_content_hash(file_path);
     let file = IndexedFile {
         id: IndexedFile::make_id(project_id, file_path, &content_hash),
         project_id: project_id.to_string(),
@@ -2341,6 +2389,10 @@ impl Drop for ManagedPrincipal {
 
 fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
     let project_id = db::id_param(project_id)?;
+    conn.execute(
+        "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1",
+        &[&project_id],
+    )?;
     conn.execute(
         "DELETE FROM code_communities WHERE project_id = $1",
         &[&project_id],
