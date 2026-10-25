@@ -110,6 +110,33 @@ if [ -n "$GOBBY_PROTECTED_REF" ]; then
     # Pipes, not here-documents (see _restore_stdin). gobby_refuse exits only its
     # pipeline's subshell, so each pipeline passes the refusal on.
     printf '%s\n' "$GOBBY_REF_LINES" | while read -r gobby_old gobby_new gobby_ref; do
+        if [ "$gobby_ref" = "ORIG_HEAD" ]; then
+            # merge/pull save ORIG_HEAD before rewriting the index and
+            # worktree. Refusing their later branch update cannot undo that
+            # rewrite. This transaction has no incoming target to classify, so
+            # even allowed-path merges must use the landing path. Resolve the
+            # caller's HEAD too: a lane's ORIG_HEAD must remain unrestricted.
+            gobby_checkout_ref=$(git symbolic-ref -q HEAD)
+            case $? in
+            0|1) ;;
+            *) gobby_refuse "cannot resolve the current checkout's HEAD" ;;
+            esac
+            if [ "$gobby_checkout_ref" = "$GOBBY_PROTECTED_REF" ]; then
+                gobby_checkout_dir=$(git rev-parse --absolute-git-dir) ||
+                    gobby_refuse "cannot find the current checkout's git directory"
+                # worktree add populates HEAD under a lock before creating its
+                # first ORIG_HEAD. Allow only that clean initialization; a
+                # populated locked worktree already has ORIG_HEAD.
+                if [ "$gobby_checkout_dir" != "$GOBBY_COMMON_DIR" ] &&
+                    [ -f "$gobby_checkout_dir/locked" ] &&
+                    ! git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1 &&
+                    git diff-index --cached --quiet HEAD -- && git diff-files --quiet --
+                then
+                    continue
+                fi
+                gobby_refuse "checkout-changing operations cannot update ORIG_HEAD directly"
+            fi
+        fi
         [ "$gobby_ref" = "$GOBBY_PROTECTED_REF" ] || continue
         case $gobby_new in
         *[!0]*) ;;

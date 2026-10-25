@@ -4,7 +4,8 @@ Gobby is fleet management for AI coding agents, a local-first control plane:
 persistent sessions, task graphs, workflows, hooks, MCP proxying, agents, memory,
 and deterministic automation around the tools developers already use.
 
-Last refreshed: 2026-10-06 (stage status and decisions 19–23). This document
+Last refreshed: 2026-10-06 (stage status and decisions 19–23); Stage 3
+amended 2026-10-24 (S3.4 merged into S3.2, decision 15). This document
 is the roadmap and the architecture decision record. The live tracker is
 #21542 Gobby 1.0: front door, strangler port, hub and node.
 
@@ -61,8 +62,9 @@ reparenting is called out explicitly.
 ## Naming
 
 Today, `gobby` is the Python daemon and the CLI that operates it. That is the
-one name that changes hands, and it changes hands once, at S3.2 — well into
-Stage 3, after the front door has landed and Stage 2 absorption is complete.
+one name that changes hands, and it changes hands once, at S3.2 — the last
+Stage 3 step, after Stage 2 absorption is complete and the S3.3 parity ledger
+is proven and verified.
 Until that moment `gobby` means what it means today.
 
 At S3.2 the Rust client takes the name. `gclient` — the herdr-derived terminal
@@ -73,12 +75,11 @@ workspace plus the daily operator verbs, carried over the public API. The
 date: the client must genuinely carry the verbs first, which is why S3.2 depends
 on S3.1.
 
-The Python package steps aside rather than disappearing. Its console script and
-entry point rename to `gobby-backend`; `gdaemon` spawns and supervises it as an
-internal backend, and humans stop typing it in normal use. Operator-only Python
-commands the Rust client has not absorbed yet stay reachable as
-`gobby-backend <cmd>`. That transitional name lives from S3.2 until S3.4 removes
-the package entirely.
+Python is removed at the naming switch. There is no transitional
+`gobby-backend` name and no supervised-backend mode: the change that hands
+`gobby` to the Rust client also deletes the Python package, so no Python
+command stays reachable afterwards. Rollback is through GitHub history and
+pinned released versions, not a Python backend kept alive beside `gdaemon`.
 
 Nothing else moves. `gdaemon` (package `gobby-daemon`) is the Rust daemon
 throughout, growing from today's bridgehead into the front door at Stage 1 and
@@ -303,19 +304,20 @@ S2.8's M1 adoption/epoch work has no S2.2 transport dependency. Its D2
 #23219 terminal WS/relay waits on S2.2 #21558 native WS transport.
 The former Stage 0 hardening prerequisite is complete.
 
-### Stage 3 — the client takes the name, then Python retires (#21545)
+### Stage 3 — the client takes the name and Python retires (#21545)
 
 | Ref | Step | Exit |
 | --- | --- | --- |
 | **S3.1** · #21571 | Operator verbs on the client | The client carries the daily verbs over the public API; the 175-module `src/gobby/cli/` tail is inventoried with a keep, absorb, or drop decision each |
-| **S3.2** · #21573 | The naming switch: `gclient` → `gobby`, Python → `gobby-backend` | `gobby` on PATH is the Rust client, and `gobby start` brings up story A end to end |
+| **S3.2** · #21573 | The naming switch, with Python removed: `gclient` → `gobby`, and the same change deletes the Python daemon package, the Python installers, the proxy's compare scaffolding, and `pyproject.toml` (the former #21574 scope) | `gobby` on PATH is the Rust client; `gobby start` brings up story A end to end; all golden corpora green against `gdaemon` alone with no Python running; rollback is GitHub history and pinned released versions |
 | **S3.3** · #21572 | Planned parity ledger at `docs/contracts/parity-ledger.md` | Every row `delegated` or dropped by a recorded decision |
-| **S3.4** · #21574 | Retire `gobby-backend` | One commit; all golden corpora green against `gdaemon` alone |
+| **S3.4** · #21574 | Merged into S3.2 (decision 15, amended 2026-10-24) | — |
 
 Edges: `S3.1` ← #21334 terminal client, `S1.1`, `S1.3` (the four lifecycle
-verbs), `S2`; `S3.2` ← `S3.1`; `S3.4` ← `S3.3`, `S2`.
-S3.1 starts after Stage 2 (#21544) completes and lands before S3.2 to S3.4
-begin. The naming switch and the Python retirement follow it.
+verbs), `S2`; `S3.2` ← `S3.1`, `S3.3`, `S2`.
+S3.1 starts after Stage 2 (#21544) completes and lands before S3.2 and S3.3
+begin. The naming switch removes Python once S3.3 proves parity and the
+golden corpora verify it.
 
 ### Stage 4 — hub and node live, story B (#21546)
 
@@ -492,10 +494,14 @@ separate planning effort before implementation.
     on 2026-09-09). The datastore tunnel, the machine-scoped PostgreSQL role
     under row-level security, and the transitional Python node were dropped
     before any of them was built.
-15. **Naming: `gobby` is the client and interface** (2026-09-01), taken from
-    `gclient` as soon as it carries the daily operator verbs (S3.2). The
-    Python package becomes `gobby-backend` until it retires at S3.4;
-    `gdaemon` and `gterm` keep their names.
+15. **Naming: `gobby` is the client and interface** (2026-09-01; amended
+    2026-10-24), taken from `gclient` at S3.2. `gdaemon` and `gterm` keep
+    their names. Amended 2026-10-24 (Josh, via the Assistant): S3.2 and S3.4
+    merge, and Python is removed at the naming switch once parity is proven
+    and verified (S3.3 ledger resolved, Stage 2 complete, golden corpora green
+    against `gdaemon` alone). There is no `gobby-backend` rename and no
+    supervised-backend mode. Rollback is via GitHub history and pinned
+    released versions.
 16. **The absorbed daemon is composed from family crates** (2026-09-09).
     Mechanism: workspace crates statically linked into `gdaemon` — no dylib
     plugins (no stable ABI; tokio across a dylib boundary yields two runtimes)
@@ -580,7 +586,7 @@ separate planning effort before implementation.
 24. Operator verbs follow Stage 2 and precede the rest of Stage 3 (2026-10-06). Josh, on
     #21571 Operator verbs on the client: "Ok, it needs to be after stage 2 but before stage 3."
     This supersedes his earlier Stage 4 idea. S3.1 starts after #21544 Stage 2 completes and
-    lands before S3.2 to S3.4 begin.
+    lands before S3.2 to S3.4 begin. (S3.4 has since merged into S3.2; decision 15.)
 
 25. **Scratchpad path scope belongs to the executing node** (2026-10-18;
     #20438 agent-side temp roots). Filesystem classification runs node-side;

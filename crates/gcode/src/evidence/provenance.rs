@@ -257,7 +257,10 @@ pub(super) fn read_patch(
     if args.last() == Some(&"--") {
         return Ok(String::new());
     }
-    git_text(repo_root, &args)
+    String::from_utf8(git(repo_root, &args, None)?).map_err(|error| EvidenceError::Git {
+        operation: "git diff".to_string(),
+        message: error.to_string(),
+    })
 }
 
 pub(super) fn load_commit_binding(repo_root: &Path, commit_oid: &str) -> Result<CommitBinding> {

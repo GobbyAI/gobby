@@ -90,28 +90,48 @@ class _AgentRunRuntimeMixin:
         self: _AgentRunRuntimeHost,
         run_id: str,
         updates: Mapping[str, Any],
+        *,
+        report_revision: int | None = None,
+        final: bool = False,
     ) -> AgentRun | None:
         """Atomically merge keys into the sandbox block of resume metadata."""
-        if not updates:
+        if not updates and report_revision is None:
             return self.get(run_id)
+        patch = dict(updates)
+        guard = ""
+        guard_params: tuple[object, ...] = ()
+        if report_revision is not None:
+            patch["report_revision"] = report_revision
+            if final:
+                patch["report_final"] = True
+            # PostgreSQL rechecks these predicates after waiting for a concurrent UPDATE.
+            guard = """
+                AND (resume_metadata_json -> 'sandbox' ->> 'report_final')
+                    IS DISTINCT FROM 'true'
+                AND (%s OR COALESCE(
+                    (resume_metadata_json -> 'sandbox' ->> 'report_revision')::bigint, 0
+                ) < %s)
+            """
+            guard_params = (final, report_revision)
         now = utc_now()
         cursor = self.db.execute(
-            """
+            f"""
             UPDATE agent_runs
             SET resume_metadata_json = jsonb_set(
-                    COALESCE(resume_metadata_json, '{}'::jsonb),
-                    '{sandbox}',
+                    COALESCE(resume_metadata_json, '{{}}'::jsonb),
+                    '{{sandbox}}',
                     CASE
                         WHEN jsonb_typeof(resume_metadata_json -> 'sandbox') = 'object'
                         THEN resume_metadata_json -> 'sandbox'
-                        ELSE '{}'::jsonb
+                        ELSE '{{}}'::jsonb
                     END || %s::jsonb,
                     true
                 ),
                 updated_at = %s
             WHERE id = %s
+            {guard}
             """,
-            (dump_resume_metadata(updates), now, run_id),
+            (dump_resume_metadata(patch), now, run_id, *guard_params),
         )
         if not _positive_rowcount(cursor):
             return None
