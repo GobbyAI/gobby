@@ -247,3 +247,27 @@ async def test_fresh_reviewer_names_the_live_dev_manager_session(world: TeamWorl
 
     assert _launched(run, context) == ["code-reviewer"]
     assert _names_dev_manager(_seat_prompt(run, "code-reviewer", context), live["dev-manager"])
+
+
+@pytest.mark.asyncio
+async def test_seats_launched_without_a_dev_manager_fall_back_to_report_to(
+    world: TeamWorld,
+) -> None:
+    """A launch with no Dev Manager renders the report_to fallback, not a session lookup.
+
+    The executor records a condition-skipped step as ``{"output": None}``, so a seat prompt
+    must check that output before it reads the Dev Manager's session ref.
+    """
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    inputs = _inputs(task, workspace, world.case.creator, None)
+    inputs["seats"] = "test-writer,developer,code-reviewer"
+    run = _execution(world, task, inputs)
+    context = await _admit(world, run, inputs)
+    context["steps"]["dev-manager"] = {"output": None}
+
+    assert _launched(run, context) == ["test-writer", "developer", "code-reviewer"]
+    for seat in ("test-writer", "developer", "code-reviewer"):
+        prompt = _seat_prompt(run, seat, context)
+        assert "No Dev Manager session ref is known" in prompt, seat
+        assert f'target_id="{world.case.creator}"' in prompt, seat
