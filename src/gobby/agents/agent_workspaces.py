@@ -296,14 +296,21 @@ async def _maybe_gc(project_id: str) -> None:
         stamp.touch()
 
 
+def _workspace_project_ids() -> list[str]:
+    """Every project with a workspace anchor or Git directory, including unbootstrapped ones.
+
+    A session's first write creates its anchor folder before any Git directory exists.
+    """
+    return sorted(
+        {entry.name.removesuffix(".git") for entry in workspaces_root().glob("*") if entry.is_dir()}
+    )
+
+
 async def run_workspace_cron(_job: CronJob) -> str:
     """Commit every project's workspace and run its weekly ``git gc --auto``."""
     committed = 0
     failed = 0
-    for gitdir in sorted(workspaces_root().glob("*.git")):
-        if not gitdir.is_dir():
-            continue
-        project_id = gitdir.name.removesuffix(".git")
+    for project_id in _workspace_project_ids():
         try:
             if await commit_workspace(project_id, WORKSPACE_CRON_TRIGGER):
                 committed += 1

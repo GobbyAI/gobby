@@ -348,6 +348,16 @@ def _require_independent_reviewer(
         raise StepRecordError("a session with task-attributed edits cannot review its own task")
 
 
+def _refuse_held_team(db: HubDatabase, session_id: str) -> None:
+    # Local imports: team_lifecycle and team_review import this module at load time.
+    from gobby.agents.team_lifecycle import seat_team
+    from gobby.agents.team_review import seat_team_held
+
+    binding = seat_team(db, session_id)
+    if binding is not None and seat_team_held(db, binding):
+        raise StepRecordError("a held epic team records no new review round")
+
+
 def record_task_step(
     db: HubDatabase,
     *,
@@ -416,6 +426,7 @@ def record_task_step(
         elif submission.status == "approved" and task.commits:
             raise StepRecordError("linked work requires commit evidence, not a no-work disposition")
         if step == "review":
+            _refuse_held_team(db, session_id)
             if security and not _is_security_reviewer_seat(conn, session_id):
                 raise StepRecordError(
                     "a security approval comes only from a running security-reviewer seat"

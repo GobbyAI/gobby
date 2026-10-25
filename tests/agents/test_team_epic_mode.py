@@ -190,8 +190,6 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
     root_leaf = new_task(world, "Root leaf", parent=epic)
     runbook = world.child(epic)
     team = await world.admit(runbook, epic)
-    manager = world.case.session("dev-manager", parent=runbook.id)
-    tasks.claim_task(epic.id, manager, force=True)
 
     deleted: list[TeamBinding] = []
 
@@ -212,7 +210,7 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
     tasks.close_task(nested_leaf.id, reason="done")
     assert tasks.get_task(phase.id).closed_at is not None
     assert await teardown_pass() == []
-    # The manager's claim stops the cascade at the bound epic.
+    # The live team stops the cascade at the bound epic; the manager never claims it.
     tasks.close_task(root_leaf.id, reason="done")
     assert tasks.get_task(epic.id).closed_at is None
     assert await teardown_pass() == []

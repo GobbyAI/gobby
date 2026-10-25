@@ -151,7 +151,7 @@ def new_task(
 
 
 async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
-    """An admitted epic team whose running Dev Manager seat holds the epic claim."""
+    """An admitted epic team with a running Dev Manager seat. The manager never claims the epic."""
     db = world.case.db
     runbook = world.child(epic)
     binding = await world.admit(runbook, epic)
@@ -168,7 +168,6 @@ async def epic_team(world: TeamWorld, epic: Task) -> EpicTeam:
     runs.start(run.id)
     SessionVariableManager(db).merge_variables(manager, {"_agent_type": "dev-manager"})
     SessionManager(db).update_terminal_pickup_metadata(manager, agent_run_id=run.id)
-    LocalTaskManager(db).claim_task(epic.id, manager, force=True)
     return EpicTeam(world, epic, runbook, binding, manager)
 
 
@@ -310,7 +309,6 @@ async def test_third_rejection_holds_epic(world: TeamWorld) -> None:
     tasks.de_escalate_task(leaf.id, reason="Triage audited reset")
     assert tasks.get_task(leaf.id).review_epoch == epoch + 1
     tasks.de_escalate_task(epic.id, reason="Triage audited reset")
-    tasks.claim_task(epic.id, team.manager)
     lifted = sync_epic_review(team.db, team.binding.team_id)
     assert (lifted.held, lifted.holds) == (False, ())
     allowed = await team.spawn_developer(waiting)
@@ -345,7 +343,6 @@ async def test_held_team_refuses_a_new_review_round_on_another_leaf(world: TeamW
     # Lifting the hold accepts the same round.
     tasks.de_escalate_task(leaf.id, reason="Triage audited reset")
     tasks.de_escalate_task(epic.id, reason="Triage audited reset")
-    tasks.claim_task(epic.id, team.manager)
     assert not sync_epic_review(team.db, team.binding.team_id).held
     submit(team.db, reviewer, waiting, "review", "approved", 1, sha)
     statuses = [r.status for r in list_task_step_records(team.db, waiting.id) if r.step == "review"]
@@ -373,7 +370,7 @@ async def test_blocked_leaf_holds_epic(world: TeamWorld) -> None:
     assert (state.held, state.holds) == (True, (leaf.id,))
     assert not state.epic_tip_ready
     current = tasks.get_task(epic.id)
-    assert (current.escalated_at, current.claimed_by_session_id) == (None, team.manager)
+    assert (current.escalated_at, current.claimed_by_session_id) == (None, None)
 
     # Nothing is detached or reverted.
     held_leaf = tasks.get_task(leaf.id)

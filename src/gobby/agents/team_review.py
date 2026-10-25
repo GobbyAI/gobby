@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from gobby.agents.team_lifecycle import (
     TeamAdmissionRefused,
+    TeamBinding,
     _admission_step,
     _binding,
     _merge,
@@ -19,7 +20,7 @@ from gobby.agents.team_lifecycle import (
 from gobby.agents.team_scope import EPIC_TASK_TYPE, ancestor_ids, open_descendants
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
-from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError
+from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.step_records import (
     approved_task_step,
@@ -58,6 +59,16 @@ def _externally_blocked(db: HubDatabase, epic_id: str, leaf_id: str) -> bool:
     return any(epic_id not in ancestor_ids(db, str(row["depends_on"])) for row in rows)
 
 
+def _epic_leaves(db: HubDatabase, epic_id: str) -> list[Task]:
+    """The open leaves under an epic, read from the store."""
+    tasks = LocalTaskManager(db)
+    return [
+        tasks.get_task(scoped.id)
+        for scoped in open_descendants(db, epic_id)
+        if scoped.task_type != EPIC_TASK_TYPE
+    ]
+
+
 def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
     """Derive team ``team_id``'s review state; escalate its epic once on a third rejection."""
     executions = LocalPipelineExecutionManager(db, None)
@@ -71,11 +82,7 @@ def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
 
     tasks = LocalTaskManager(db)
     epic = tasks.get_task(binding.task_id)
-    leaves = [
-        tasks.get_task(scoped.id)
-        for scoped in open_descendants(db, epic.id)
-        if scoped.task_type != EPIC_TASK_TYPE
-    ]
+    leaves = _epic_leaves(db, epic.id)
     exhausted = [leaf for leaf in leaves if leaf.escalated_at is not None]
     if exhausted and epic.escalated_at is None:
         with contextlib.suppress(TaskAlreadyEscalatedError):
@@ -121,4 +128,20 @@ def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
         holds=tuple(holds),
         next_reviewers=next_reviewers,
         epic_tip_ready=epic_tip_ready,
+    )
+
+
+def seat_team_held(db: HubDatabase, binding: TeamBinding) -> bool:
+    """Whether an epic team is held, read from the store without persisting anything.
+
+    Mirrors the holds ``sync_epic_review`` records, so a seat is refused before a pass runs.
+    """
+    if binding.mode != EPIC_MODE:
+        return False
+    epic = LocalTaskManager(db).get_task(binding.task_id)
+    if epic.escalated_at is not None:
+        return True
+    return any(
+        leaf.escalated_at is not None or _externally_blocked(db, epic.id, leaf.id)
+        for leaf in _epic_leaves(db, epic.id)
     )
