@@ -267,8 +267,6 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                     "error": "An epic reviewer never takes a claim; findings go to a developer",
                     "error_code": "reviewer_claim_forbidden",
                 }
-            if holder.id == recipient.id:
-                return {"error": "The recipient already holds the claim", "error_code": "same_seat"}
             # claim_task_for_agent re-takes these exact locks, so the ownership check, the
             # dirty-file check and the move commit as one transfer.
             with db.transaction_immediate(AgentTaskClaimMutation(recipient.id)) as conn:
@@ -281,6 +279,11 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                     return {"error": "Task not found", "error_code": "task_not_found"}
                 if row["closed_at"] is not None or str(row["claimed_by_session_id"]) != holder.id:
                     return dict(_STALE_HOLDER)
+                if holder.id == recipient.id:
+                    return {
+                        "error": "The recipient already holds the claim",
+                        "error_code": "same_seat",
+                    }
                 refusal = _recipient_refusal(
                     db, caller.id, recipient, resolved_id, int(row["review_epoch"])
                 )
