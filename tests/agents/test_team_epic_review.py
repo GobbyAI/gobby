@@ -318,6 +318,41 @@ async def test_third_rejection_holds_epic(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+async def test_held_team_refuses_a_new_review_round_on_another_leaf(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    epic = new_task(world, TITLE, epic=True)
+    leaf, waiting = new_task(world, "Code leaf", parent=epic), new_task(world, "Next", parent=epic)
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
+    tasks.claim_task(leaf.id, developer, force=True)
+    reject_rounds(team, leaf, developer, reviewer, 3)
+    assert sync_epic_review(team.db, team.binding.team_id).held
+
+    # In-flight implementation on another leaf still completes; its new review round does not.
+    tasks.claim_task(waiting.id, developer, force=True)
+    sha = team.commit(waiting, "next.py")
+    submit(team.db, developer, waiting, "implementation", "approved", 1, sha)
+    with pytest.raises(StepRecordError, match="held"):
+        submit(team.db, reviewer, waiting, "review", "approved", 1, sha)
+    assert not [r for r in list_task_step_records(team.db, waiting.id) if r.step == "review"]
+
+    # The hold is read from the store, so a second attempt is refused the same way.
+    assert sync_epic_review(team.db, team.binding.team_id).held
+    with pytest.raises(StepRecordError, match="held"):
+        submit(team.db, reviewer, waiting, "review", "approved", 1, sha)
+
+    # Lifting the hold accepts the same round.
+    tasks.de_escalate_task(leaf.id, reason="Triage audited reset")
+    tasks.de_escalate_task(epic.id, reason="Triage audited reset")
+    tasks.claim_task(epic.id, team.manager)
+    assert not sync_epic_review(team.db, team.binding.team_id).held
+    submit(team.db, reviewer, waiting, "review", "approved", 1, sha)
+    statuses = [r.status for r in list_task_step_records(team.db, waiting.id) if r.step == "review"]
+    assert statuses == ["approved"]
+
+
+@pytest.mark.asyncio
 async def test_blocked_leaf_holds_epic(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     epic = new_task(world, TITLE, epic=True)
