@@ -197,7 +197,7 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
             .unwrap();
             fs::write(
                 sibling_root.join(rel),
-                "// stale\npub fn sibling_only() {}\n",
+                "// stale\npub fn sibling_only() {}\npub fn caller() { sibling_only(); }\n",
             )
             .unwrap();
             crate::test_env::clear_captured_logs();
@@ -207,6 +207,48 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
             );
             crate::dispatch::ensure_project_fresh(&ctx, false).unwrap();
             assert!(crate::test_env::captured_logs(log::Level::Warn).is_empty());
+            // The sibling changed on disk after its rows were written. A reader that
+            // cannot refresh must not slice the live file with the stale byte offsets.
+            let current = fs::read(sibling_root.join(rel)).unwrap();
+            let rows =
+                crate::visibility::visible_symbols_for_file(managed.client(), &ctx, rel).unwrap();
+            let body = rows
+                .iter()
+                .find(|symbol| symbol.name == "sibling_only")
+                .expect("sibling_only is visible");
+            assert_eq!(
+                String::from_utf8_lossy(
+                    current
+                        .get(body.byte_start..body.byte_end)
+                        .unwrap_or_default()
+                )
+                .trim_end(),
+                "pub fn sibling_only() {}",
+                "symbol-at must slice the current file with its current byte range"
+            );
+            let current_callers = GrepOptions {
+                pattern: "sibling_only",
+                paths: &[],
+                globs: &[],
+                fixed_strings: true,
+                ignore_case: false,
+                word: true,
+                context: None,
+                before_context: None,
+                after_context: None,
+                max_count: None,
+                offset: 0,
+                token_budget: None,
+                files_with_matches: false,
+                format: Format::Json,
+            };
+            assert_eq!(
+                grep_repo(&ctx, managed.client(), &current_callers)
+                    .unwrap()
+                    .matched_lines,
+                2,
+                "grep -w must return the sibling's current definition and caller"
+            );
             let error = crate::commands::index::run(
                 &ctx,
                 &sibling_root,
