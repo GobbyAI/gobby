@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import math
+import sys
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -102,7 +103,12 @@ def _usage(payload: dict[str, Any]) -> dict[str, int | float]:
 
 
 async def _probe(
-    client: httpx.AsyncClient, config: DecisionsConfig, model: str, chars: int, name: str
+    client: httpx.AsyncClient,
+    config: DecisionsConfig,
+    model: str,
+    chars: int,
+    name: str,
+    redactions: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
@@ -119,6 +125,7 @@ async def _probe(
         record["status"] = response.status_code
         if not response.is_success:
             record["finding"] = f"http_status: {response.status_code}"
+            record["response_error"] = _response_error(response, redactions)
             return record
         payload = response.json()
         if config.wire_api == "workers-ai" and isinstance(payload, dict):
@@ -137,10 +144,28 @@ async def _probe(
     return record
 
 
+def _response_error(response: httpx.Response, redactions: tuple[str, ...]) -> dict[str, str]:
+    """Keep bounded HTTP diagnostics without reflected credentials or image bytes."""
+    body = response.text
+    content_type = response.headers.get("content-type", "")
+    for value in redactions:
+        if value:
+            # Redact before truncating so a boundary cannot expose part of a secret.
+            body = body.replace(value, "[redacted]")
+            content_type = content_type.replace(value, "[redacted]")
+    return {"content_type": content_type[:128], "body": body[:1024]}
+
+
 def _observe_exchange(
-    config: DecisionsConfig, record: dict[str, Any], response: httpx.Response
+    config: DecisionsConfig,
+    record: dict[str, Any],
+    response: httpx.Response,
+    *,
+    redactions: list[str],
 ) -> None:
     exchange: dict[str, Any] = {"status": response.status_code}
+    if not response.is_success:
+        exchange["response_error"] = _response_error(response, tuple(redactions))
     if config.wire_api == "openrouter-decisions":
         sent = json.loads(response.request.content)
         exchange["privacy_verified"] = sent.get("provider") == PRIVACY
@@ -157,8 +182,42 @@ def _observe_exchange(
     record["exchanges"].append(exchange)
 
 
+async def _catalog(client: httpx.AsyncClient) -> list[dict[str, str | None]]:
+    response = await client.get(
+        "https://openrouter.ai/api/v1/models", params={"output_modalities": "decisions"}
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        raise ValueError("catalog response must contain a data list")
+    return [
+        {"id": item["id"], "canonical_slug": item.get("canonical_slug")}
+        for item in payload["data"]
+        if isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+        and (item.get("canonical_slug") is None or isinstance(item["canonical_slug"], str))
+    ]
+
+
+async def _list_catalog(config: DecisionsConfig) -> list[dict[str, str | None]]:
+    headers = {"authorization": f"Bearer {config.api_key}"}
+    async with httpx.AsyncClient(
+        headers=headers, timeout=config.timeout_seconds, trust_env=False, follow_redirects=False
+    ) as client:
+        listing = await _catalog(client)
+    prefix = config.model or ""
+    return [
+        item
+        for item in listing
+        if any(
+            value == prefix or value.startswith(prefix + "-") for value in item.values() if value
+        )
+    ]
+
+
 async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[str, Any]:
     shapes: list[dict[str, Any]] = []
+    redactions = [config.api_key] if config.api_key else []
     # Services are intentionally independent: one shape's cooldown cannot hide another.
     for shape in ("choice", "noul", "score", "box"):
         record: dict[str, Any] = {
@@ -169,7 +228,8 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         }
 
         service = DecisionService(
-            config, exchange_observer=partial(_observe_exchange, config, record)
+            config,
+            exchange_observer=partial(_observe_exchange, config, record, redactions=redactions),
         )
         try:
             if shape == "choice":
@@ -207,6 +267,7 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
                     }
                 }
                 _, mime, encoded, _ = await prepare_image_data(str(args.box_image.resolve()))
+                redactions.append(encoded)
                 if mime not in ("image/png", "image/jpeg"):
                     raise ValueError("Box capture requires PNG or JPEG")
                 image = BoxImage(
@@ -232,7 +293,9 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         headers=headers, timeout=config.timeout_seconds, trust_env=False, follow_redirects=False
     ) as client:
         for chars in (4096, 8192):
-            probes.append(await _probe(client, config, model, chars, "chars-per-token"))
+            probes.append(
+                await _probe(client, config, model, chars, "chars-per-token", tuple(redactions))
+            )
         # Differencing cancels fixed question/envelope overhead in input_tokens.
         measured_ratio: float | None = None
         overhead = 0.0
@@ -249,9 +312,9 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         limit = config.resolved_backend_max_state_tokens
         for name, multiplier in (("just-under", 0.99), ("over-limit", 1.05)):
             chars = max(0, int((limit * multiplier - overhead) * ratio))
-            probes.append(await _probe(client, config, model, chars, name))
-        pinned = await _probe(client, config, model, 4096, "pinned-model")
-        alias = await _probe(client, config, args.alias, 4096, "alias")
+            probes.append(await _probe(client, config, model, chars, name, tuple(redactions)))
+        pinned = await _probe(client, config, model, 4096, "pinned-model", tuple(redactions))
+        alias = await _probe(client, config, args.alias, 4096, "alias", tuple(redactions))
         probes.extend((pinned, alias))
         alias_matches = pinned.get("response_model") is not None and pinned.get(
             "response_model"
@@ -259,15 +322,11 @@ async def _capture(config: DecisionsConfig, args: argparse.Namespace) -> dict[st
         canonical: dict[str, Any] = {}
         if config.wire_api == "openrouter-decisions":
             try:
-                response = await client.get(
-                    "https://openrouter.ai/api/v1/models", params={"output_modalities": "decisions"}
-                )
-                response.raise_for_status()
-                data = response.json().get("data", [])
+                data = await _catalog(client)
                 canonical = {
                     str(item["id"]): item.get("canonical_slug")
                     for item in data
-                    if isinstance(item, dict) and item.get("id") in (model, args.alias)
+                    if item["id"] in (model, args.alias)
                 }
                 if not canonical.get(model):
                     canonical["finding"] = "request model has no canonical_slug in listing"
@@ -298,11 +357,35 @@ def main(
     """Capture Choice, Noul, Score and Box round trips plus raw probes into a dated section."""
     parser = argparse.ArgumentParser(description=__doc__)
     add_decision_flags(parser)
-    parser.add_argument("--alias", required=True)
-    parser.add_argument("--box-image", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--list-catalog", action="store_true", help="List matching OpenRouter IDs only"
+    )
+    parser.add_argument("--alias")
+    parser.add_argument("--box-image", type=Path)
+    parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+    if args.list_catalog:
+        if args.wire_api != "openrouter-decisions" or not args.api_key_secret:
+            parser.error(
+                "--list-catalog requires --wire-api openrouter-decisions and --api-key-secret"
+            )
+    elif args.alias is None or args.box_image is None or args.out is None:
+        parser.error("capture requires --alias, --box-image and --out")
     config = build_decisions_config(args, resolve_secret)
+    if args.list_catalog:
+        try:
+            listing = asyncio.run(_list_catalog(config))
+        except httpx.HTTPStatusError as error:
+            print(f"Catalog unavailable: HTTP {error.response.status_code}", file=sys.stderr)
+            return 1
+        except (httpx.HTTPError, ValueError):
+            print("Catalog unavailable: transport or response format failure", file=sys.stderr)
+            return 1
+        rendered = json.dumps(listing, indent=2)
+        if config.api_key:
+            rendered = rendered.replace(config.api_key, "[redacted]")
+        print(rendered)
+        return 0
     capture = asyncio.run(_capture(config, args))
     date = datetime.now(UTC).date().isoformat()
     section = (
