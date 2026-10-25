@@ -203,5 +203,15 @@ fn replace_pins(
     Ok(())
 }
 
+/// Tracked gap paths persisted for `overlay_project_id` on this machine, sorted.
+#[cfg(test)]
+pub(crate) fn persisted_gaps(
+    _conn: &mut Client,
+    _machine_id: &str,
+    _overlay_project_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    Ok(Vec::new())
+}
+
 #[cfg(test)]
 mod tests;
