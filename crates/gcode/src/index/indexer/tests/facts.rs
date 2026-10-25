@@ -1,10 +1,165 @@
+use self::serial_db::{ProjectCleanup, cleanup, local_machine_id, unique_id};
 use super::super::file::write_parsed_file_facts;
 use super::super::sink::CodeFactSink;
+use super::super::{IndexOptions, IndexRequest, index_files};
+use super::fixtures::{git, write_file};
+use super::serial_db::machine_context;
+use crate::config::ProjectIndexScope;
+use crate::db;
 use crate::db::GraphFileFacts;
 use crate::models::{
     CallRelation, CallTargetKind, ContentChunk, ImportRelation, IndexedFile, InheritanceRelation,
     ParseResult, Symbol,
 };
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn candidate_imports_keep_unchanged_providers() {
+    let database_url = crate::test_env::postgres_test_database_url("candidate import providers");
+    let mut conn = db::connect_readwrite(&database_url).expect("connect");
+    let base = tempfile::tempdir().expect("create temp base");
+    let hooks = base.path().join("hooks");
+    std::fs::create_dir_all(&hooks).expect("create hooks dir");
+    let parent_root = base.path().join("parent");
+    std::fs::create_dir_all(&parent_root).expect("create parent root");
+    let overlay_root = base.path().join("overlay");
+
+    // The provider is unchanged in both trees. Only the importer diverges, by a
+    // commit on the overlay branch, so the provider is not a candidate.
+    write_file(
+        &parent_root,
+        "src/util.js",
+        b"export function helper() { return 1; }\n",
+    );
+    write_file(
+        &parent_root,
+        "src/app.js",
+        b"import { helper } from './util.js';\nexport function run() { return helper(); }\n",
+    );
+    git(&parent_root, &hooks, &["init", "-q"]);
+    git(&parent_root, &hooks, &["add", "."]);
+    git(&parent_root, &hooks, &["commit", "-q", "-m", "seed"]);
+    git(
+        &parent_root,
+        &hooks,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "wt",
+            overlay_root.to_str().expect("utf-8 overlay path"),
+        ],
+    );
+    write_file(
+        &overlay_root,
+        "src/app.js",
+        b"import { helper } from './util.js';\nexport function run() { return helper() + 1; }\n",
+    );
+    git(
+        &overlay_root,
+        &hooks,
+        &["commit", "-q", "-am", "importer change"],
+    );
+
+    let parent_project_id = unique_id("gcode-candidate-provider-parent");
+    let overlay_project_id = unique_id("gcode-candidate-provider-overlay");
+    cleanup(&mut conn, &parent_project_id).expect("pre-clean parent");
+    cleanup(&mut conn, &overlay_project_id).expect("pre-clean overlay");
+    let _parent_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+    let _overlay_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let machine_id = local_machine_id();
+    super::serial_db::seed_primary_checkout(&mut conn, &parent_project_id, &parent_root)
+        .expect("seed parent checkout");
+
+    let parent_ctx = machine_context(&database_url, &parent_project_id, &parent_root, &machine_id);
+    index_files(
+        IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &parent_ctx,
+        IndexOptions::default(),
+    )
+    .expect("index parent");
+
+    let helper_id: uuid::Uuid = conn
+        .query_one(
+            "SELECT id FROM code_symbols WHERE project_id = $1 AND name = 'helper'",
+            &[&db::id_param(&parent_project_id).expect("parent id")],
+        )
+        .expect("parent provider symbol")
+        .get(0);
+    let parent_call = conn
+        .query_one(
+            "SELECT callee_target_kind, callee_symbol_id FROM code_calls
+             WHERE project_id = $1 AND callee_name = 'helper'",
+            &[&db::id_param(&parent_project_id).expect("parent id")],
+        )
+        .expect("parent importer call");
+    let parent_kind: String = parent_call.get(0);
+    let parent_symbol: Option<uuid::Uuid> = parent_call.get(1);
+    assert_eq!(
+        (parent_kind.as_str(), parent_symbol),
+        ("symbol", Some(helper_id)),
+        "precondition: the parent resolves its importer call to the provider it serves"
+    );
+
+    let mut overlay_ctx = machine_context(
+        &database_url,
+        &overlay_project_id,
+        &overlay_root,
+        &machine_id,
+    );
+    overlay_ctx.index_scope = ProjectIndexScope::Overlay {
+        overlay_project_id: overlay_project_id.clone(),
+        overlay_root: overlay_root.clone(),
+        parent_project_id: parent_project_id.clone(),
+        parent_root: parent_root.clone(),
+    };
+    index_files(
+        IndexRequest {
+            project_root: overlay_root.clone(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &overlay_ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay index");
+
+    let call = conn
+        .query_one(
+            "SELECT callee_target_kind, callee_symbol_id FROM code_calls
+             WHERE project_id = $1 AND callee_name = 'helper'",
+            &[&db::id_param(&overlay_project_id).expect("overlay id")],
+        )
+        .expect("overlay importer call");
+    let target_kind: String = call.get(0);
+    let symbol_id: Option<uuid::Uuid> = call.get(1);
+    assert_eq!(
+        (target_kind.as_str(), symbol_id),
+        ("symbol", Some(helper_id)),
+        "the importer's call resolves to the unchanged provider the parent serves"
+    );
+}
 
 #[derive(Default)]
 struct RecordingCodeFactSink {
@@ -864,9 +1019,9 @@ mod serial_db {
         assert_eq!(row.target_kind, "symbol");
     }
 
-    struct ProjectCleanup {
-        database_url: String,
-        project_id: String,
+    pub(super) struct ProjectCleanup {
+        pub(super) database_url: String,
+        pub(super) project_id: String,
     }
 
     impl Drop for ProjectCleanup {
@@ -886,7 +1041,7 @@ mod serial_db {
         target_module: Option<String>,
     }
 
-    fn local_machine_id() -> String {
+    pub(super) fn local_machine_id() -> String {
         gobby_core::machine::read_local_machine_id().expect("read machine id")
     }
 
@@ -1296,7 +1451,7 @@ mod serial_db {
         .expect("mark synced");
     }
 
-    fn cleanup(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
+    pub(super) fn cleanup(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = db::id_param(project_id)?;
         let mut tx = conn.transaction()?;
         tx.execute(
@@ -1339,7 +1494,7 @@ mod serial_db {
         Ok(())
     }
 
-    fn unique_id(prefix: &str) -> String {
+    pub(super) fn unique_id(prefix: &str) -> String {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("epoch")

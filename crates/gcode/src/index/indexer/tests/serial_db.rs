@@ -13,7 +13,12 @@ use crate::visibility;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-fn machine_context(database_url: &str, project_id: &str, root: &Path, machine: &str) -> Context {
+pub(super) fn machine_context(
+    database_url: &str,
+    project_id: &str,
+    root: &Path,
+    machine: &str,
+) -> Context {
     Context {
         machine_id: machine.to_string(),
         database_url: database_url.to_string(),
@@ -1154,14 +1159,14 @@ fn parsed_snapshot_keeps_parent_and_symbol_content_keys_consistent_during_rewrit
     assert_eq!(orphan_count, 0);
 }
 
-fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
+pub(super) fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
     let database_url = crate::test_env::postgres_test_database_url("indexer serial DB tests");
     let conn = db::connect_readwrite(&database_url)
         .expect("connect summary preservation PostgreSQL test database");
     (conn, database_url)
 }
 
-fn unique_test_uuid(prefix: &str) -> String {
+pub(super) fn unique_test_uuid(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
@@ -1211,7 +1216,7 @@ impl Drop for SummaryPreservationCleanup {
     }
 }
 
-fn cleanup_summary_preservation_project(
+pub(super) fn cleanup_summary_preservation_project(
     conn: &mut postgres::Client,
     project_id: &str,
 ) -> anyhow::Result<()> {
@@ -1281,7 +1286,7 @@ fn write_postgres_parsed_file_facts(
     );
 }
 
-fn write_postgres_parsed_file_facts_with_root(
+pub(super) fn write_postgres_parsed_file_facts_with_root(
     conn: &mut postgres::Client,
     project_id: &str,
     root_path: &Path,
@@ -1319,7 +1324,7 @@ fn write_postgres_parsed_file_facts_with_root(
     tx.commit().expect("commit parsed write transaction");
 }
 
-fn test_symbol(
+pub(super) fn test_symbol(
     project_id: &str,
     rel: &str,
     file_content_hash: &str,
