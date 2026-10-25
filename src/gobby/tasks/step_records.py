@@ -358,6 +358,54 @@ def _refuse_held_team(db: HubDatabase, session_id: str) -> None:
         raise StepRecordError("a held epic team records no new review round")
 
 
+def _advance_implementation(
+    conn: Transaction,
+    task: Task,
+    records: list[TaskStepRecord],
+    review: TaskStepRecord,
+    now: datetime,
+) -> None:
+    """Advance the owner's open implementation step to an approved review's commit, in one write.
+
+    Only a pending or in_progress current-epoch implementation record advances. A prior approval
+    of an older commit is not carried to a new tip, so its implementer must re-approve it. The
+    derived row keeps the implementer's identity, because the close gate reads that step and the
+    reviewer must stay independent.
+    """
+    current = current_task_steps(records, task.review_epoch).get("implementation")
+    if current is None or current.status not in {"pending", "in_progress"}:
+        return
+    advanced = TaskStepRecord(
+        status="approved",
+        epoch=review.epoch,
+        round_number=review.round_number,
+        feedback=f"Advanced by approved review {review.id} of {review.commit_sha}.",
+        commit_sha=review.commit_sha,
+        id=str(uuid4()),
+        task_id=task.id,
+        step="implementation",
+        sequence=review.sequence + 1,
+        agent_definition=current.agent_definition,
+        agent_definition_version=current.agent_definition_version,
+        agent_definition_hash=current.agent_definition_hash,
+        session_id=current.session_id,
+        created_at=now,
+        updated_at=now,
+    )
+    conn.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (
+            advanced.id,
+            task.id,
+            advanced.session_id,
+            STEP_RECORD_AUTHOR_TYPE,
+            advanced.model_dump_json(),
+        ),
+    )
+    conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task.id))
+
+
 def record_task_step(
     db: HubDatabase,
     *,
@@ -491,6 +539,8 @@ def record_task_step(
                     review_feedback=submission.feedback,
                     review_fail_count=count,
                 )
+            if submission.status == "approved" and submission.commit_sha:
+                _advance_implementation(conn, task, records, record, now)
         else:
             # Final close freshness includes every step change, not only reviews.
             conn.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (now, task_id))

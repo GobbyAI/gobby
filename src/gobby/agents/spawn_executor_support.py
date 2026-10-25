@@ -30,6 +30,7 @@ from gobby.agents.spawn_cache_policy import (
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 from gobby.utils.terminal_output import redact_terminal_output
 
 if TYPE_CHECKING:
@@ -581,14 +582,9 @@ def _codex_mcp_config_overrides(
     if not project_path:
         return []
     _validate_codex_gobby_tool_allowlist()
-    # The main environment is provisioned outside the managed sandbox. Syncing
-    # here can try to reinstall its editable package into a read-only checkout,
-    # closing stdio before the required MCP initialization response.
-    args = ["run", "--no-sync", "--project", project_path, "gobby", "mcp-server"]
-    args_toml = "[" + ",".join(json.dumps(arg) for arg in args) + "]"
     overrides = [
-        'mcp_servers.gobby.command="uv"',
-        f"mcp_servers.gobby.args={args_toml}",
+        f"mcp_servers.gobby.command={json.dumps(gmcp_command())}",
+        "mcp_servers.gobby.args=[]",
         # Managed work cannot begin without task and workflow tools. Optional
         # servers may be omitted from Codex's first-turn tool catalog.
         "mcp_servers.gobby.required=true",

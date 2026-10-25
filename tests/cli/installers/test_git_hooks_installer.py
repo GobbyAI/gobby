@@ -1434,12 +1434,17 @@ def test_gobby_sections_chain_to_foreign_hook_content(tmp_path: Path) -> None:
     git.ok(repo, "push", "-q", str(tmp_path / "remote.git"), ":refs/heads/gone")
     git.ok(repo, "checkout", "-q", "-b", "side")
     git.commit(repo, "docs/side.md", "side\n")
-    git.ok(repo, "checkout", "-q", "main")
-    git.ok(repo, "merge", "-q", "--no-ff", "-m", "merge side", "side", GOBBY_MERGE="1")
+    # Detach the main checkout so no branch is protected there, then work on
+    # main from a linked worktree: the guard refuses a merge that moves a
+    # protected checkout's HEAD, and Gobby lands code only through land_commit.
+    git.ok(repo, "checkout", "-q", "--detach")
+    work = tmp_path / "work"
+    git.ok(repo, "worktree", "add", "-q", str(work), "main")
+    git.ok(work, "merge", "-q", "--no-ff", "-m", "merge side", "side", GOBBY_MERGE="1")
     merged = git.ok(repo, "rev-parse", "main")
-    git.ok(repo, "commit", "-q", "--amend", "-m", "merge side, amended")
+    git.ok(work, "commit", "-q", "--amend", "-m", "merge side, amended")
     amended = git.ok(repo, "rev-parse", "main")
-    refused = git.run(repo, "commit", "-q", "--allow-empty", "-m", "x", FOREIGN_REFUSE="1")
+    refused = git.run(work, "commit", "-q", "--allow-empty", "-m", "x", FOREIGN_REFUSE="1")
     log = git.log.read_text()
 
     assert f"== reference-transaction prepared\n{old} {new} refs/heads/main\n" in log
