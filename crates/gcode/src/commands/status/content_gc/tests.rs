@@ -855,6 +855,35 @@ mod serial_db {
         assert_eq!(totals.failed_versions, 0);
         assert_eq!(content_row_count(&mut conn, &pinned_id), 1);
 
+        // The daemon prunes the source project under a principal scoped to it. Row-level
+        // security hides pin rows owned by other overlays from that principal, yet the
+        // pin still roots the version: prune skips it instead of failing the delete on
+        // code_overlay_pins_source_content_fkey.
+        seed_primary_checkout(&mut conn, &project_id, root.path());
+        let principal = ScopedPrincipal::issue(&mut conn, &database_url, &project_id);
+        let scoped_services = test_context(&principal.database_url, &project_id);
+        let scoped_totals = prune_content_versions_with(
+            &scoped_services,
+            std::slice::from_ref(&pinned),
+            || false,
+            |project_id| Ok(test_context(&principal.database_url, project_id)),
+            delete_candidate_projections,
+            code_graph::cleanup_orphans,
+        )
+        .unwrap_or_else(|error| {
+            panic!("scoped prune must skip a pinned version instead of aborting: {error:#}")
+        });
+        assert_eq!(scoped_totals.deleted_versions, 0);
+        assert_eq!(scoped_totals.failed_versions, 0);
+        assert_eq!(content_row_count(&mut conn, &pinned_id), 1);
+        assert!(
+            discover_content_gc(&principal.database_url, 17, Some(&project_id))
+                .expect("discover GC candidates as the scoped principal")
+                .is_empty(),
+            "a version another overlay pins is never a candidate for the scoped principal",
+        );
+        drop(principal);
+
         conn.execute(
             "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1",
             &[&db::id_param(&overlay_id).expect("overlay pin uuid")],
@@ -897,6 +926,74 @@ mod serial_db {
             ],
         )
         .expect("insert overlay pin");
+    }
+
+    /// A managed gcode principal bound to one project, as the daemon's maintenance
+    /// launches use. Revoked and its session removed on drop.
+    struct ScopedPrincipal {
+        database_url: String,
+        owner_database_url: String,
+        execution_id: uuid::Uuid,
+        credential_generation: i32,
+        session_id: uuid::Uuid,
+    }
+
+    impl ScopedPrincipal {
+        /// The project needs its registry row (`seed_primary_checkout`) first.
+        fn issue(owner: &mut postgres::Client, database_url: &str, project_id: &str) -> Self {
+            let machine_id = db::id_param(
+                &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+            )
+            .expect("machine id is a uuid");
+            let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+            let session_id = uuid::Uuid::new_v4();
+            let execution_id = uuid::Uuid::new_v4();
+            let password = format!("gobby-gc-scoped-{}", uuid::Uuid::new_v4().simple());
+            owner
+                .execute(
+                    "INSERT INTO sessions(id, external_id, machine_id, source, project_id)
+                     VALUES ($1, $2, $3, 'test', $4)",
+                    &[
+                        &session_id,
+                        &format!("gc-scoped-{session_id}"),
+                        &machine_id,
+                        &project_uuid,
+                    ],
+                )
+                .expect("seed scoped principal session");
+            let issued = owner
+                .query_one(
+                    "SELECT role_name::TEXT, credential_generation
+                     FROM gobby_agent_auth.issue_tool_principal(
+                         $1, $2, $3, clock_timestamp() + INTERVAL '10 minutes', $4
+                     )",
+                    &[&execution_id, &session_id, &machine_id, &password],
+                )
+                .expect("issue scoped gcode principal");
+            let role_name: String = issued.get(0);
+            Self {
+                database_url: format!(
+                    "{database_url}{}user={role_name}&password={password}",
+                    if database_url.contains('?') { '&' } else { '?' }
+                ),
+                owner_database_url: database_url.to_string(),
+                execution_id,
+                credential_generation: issued.get(1),
+                session_id,
+            }
+        }
+    }
+
+    impl Drop for ScopedPrincipal {
+        fn drop(&mut self) {
+            if let Ok(mut owner) = db::connect_readwrite(&self.owner_database_url) {
+                let _ = owner.query_opt(
+                    "SELECT gobby_agent_auth.revoke_principal($1, $2)",
+                    &[&self.execution_id, &self.credential_generation],
+                );
+                let _ = owner.execute("DELETE FROM sessions WHERE id = $1", &[&self.session_id]);
+            }
+        }
     }
 
     struct ProjectCleanup {
