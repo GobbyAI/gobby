@@ -88,6 +88,12 @@
               "min_probability": 0.5,
               "mode": "off"
             },
+            "community_label_sufficiency": {
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "min_score": 0.5,
+              "mode": "off"
+            },
             "found_work": {
               "accept_above": 0.9,
               "accept_below": 0.1,
@@ -1172,6 +1178,12 @@
               "evaluated_backend": null,
               "evaluated_model": null,
               "min_probability": 0.5,
+              "mode": "off"
+            },
+            "community_label_sufficiency": {
+              "evaluated_backend": null,
+              "evaluated_model": null,
+              "min_score": 0.5,
               "mode": "off"
             },
             "found_work": {

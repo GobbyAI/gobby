@@ -339,6 +339,17 @@ class RerankConsumerConfig(_DecisionConsumerConfig):
     )
 
 
+class ScoreConsumerConfig(_DecisionConsumerConfig):
+    """Decision consumer with a minimum position ``score / (levels - 1)``."""
+
+    min_score: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Minimum Score position (score / (levels - 1)) to accept a name.",
+    )
+
+
 class CascadeConsumerConfig(_DecisionConsumerConfig):
     """Decision consumer that settles confident cases and escalates the rest."""
 
@@ -414,6 +425,10 @@ class DecisionsConfig(BaseModel):
     community_label_carry: RerankConsumerConfig = Field(
         default_factory=RerankConsumerConfig,
         description="Code-index stale community label carry check.",
+    )
+    community_label_sufficiency: ScoreConsumerConfig = Field(
+        default_factory=ScoreConsumerConfig,
+        description="Code-index deterministic community label sufficiency check.",
     )
     tool_rerank: RerankConsumerConfig = Field(
         default_factory=RerankConsumerConfig,

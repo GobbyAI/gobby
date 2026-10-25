@@ -19,6 +19,7 @@ from gobby.ai.decisions import (
     DecisionResult,
     DecisionService,
     DecisionsUnavailable,
+    ScoreQuestion,
     get_decision_service,
 )
 from gobby.ai.text_generation import TextGenerationRequest
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
         DecisionConsumerMode,
         DecisionsConfig,
         RerankConsumerConfig,
+        ScoreConsumerConfig,
     )
     from gobby.config.code_index import CodeIndexConfig
 
@@ -59,6 +61,12 @@ _LABEL_SCHEMA: dict[str, Any] = {
 }
 _MAX_PROMPT_MEMBERS = 40
 _MAX_PROMPT_DATA_CHARS = 8000
+_SUFFICIENCY_LEVELS = (
+    "misleading: the name points at the wrong purpose",
+    "vague: the name fits but says little",
+    "clear: the name says what the files share",
+    "clear and specific: the name says what the files share and how they differ from their neighbors",
+)
 
 
 class CommunityLabelOutcome(StrEnum):
@@ -119,11 +127,14 @@ class CommunityLabeler:
         run_db: RunDb,
     ) -> dict[int, CommunityLabelOutcome]:
         """Generate, validate, and store names; stamp every rejection or failure."""
+        batch_size = len(communities)
         config = self._decisions_resolver() if self._decisions_resolver else None
         if config is not None and (not config.api_base or not config.model):
             config = None
         remaining, carried = await self._carry(project_id, communities, storage, run_db, config)
-        communities = remaining
+        communities, sufficient = await self._sufficiency(
+            project_id, remaining, storage, run_db, config
+        )
         generated = await self.generate_batch(communities)
         for community in communities:
             result = generated[community.community_id]
@@ -176,13 +187,14 @@ class CommunityLabeler:
             )
         if attempted:
             await run_db(storage.mark_community_labels_attempted, attempted)
-        if outcomes or carried:
+        if batch_size:
             logger.info(
                 "code_index.community_label.batch",
                 extra={
                     "project_id": project_id,
                     "outcomes": dict(Counter(outcome.value for outcome in outcomes.values())),
                     "carried": carried,
+                    "sufficient": sufficient,
                 },
             )
         return outcomes
@@ -261,6 +273,73 @@ class CommunityLabeler:
             )
         return [c for c in communities if c.community_id not in settled], carried
 
+    async def _sufficiency(
+        self,
+        project_id: str,
+        communities: Sequence[StoredCommunity],
+        storage: CodeIndexStorage,
+        run_db: RunDb,
+        config: DecisionsConfig | None,
+    ) -> tuple[list[StoredCommunity], int]:
+        if config is None or config.community_label_sufficiency.mode == "off":
+            return list(communities), 0
+        policy = config.community_label_sufficiency
+        questions = {
+            f"c{c.community_id}": ScoreQuestion(
+                instructions=(
+                    f"Rate how well the name `{c.label_deterministic}` describes what the files "
+                    f"in community c{c.community_id} have in common."
+                ),
+                levels=_SUFFICIENCY_LEVELS,
+            )
+            for c in communities
+        }
+        states = {f"c{c.community_id}": _community_state(c) for c in communities}
+        service = get_decision_service(config)
+        decisions = await _decide(
+            service, config, "community_label_sufficiency", states, questions, service.score
+        )
+        settled: set[int] = set()
+        sufficient = 0
+        for community in communities:
+            key = f"c{community.community_id}"
+            decision = decisions[key]
+            mode = policy.mode
+            position = None
+            outcome = "insufficient"
+            if isinstance(decision, DecisionsUnavailable):
+                outcome = "unavailable"
+            else:
+                mode = self._effective_mode(config, policy, decision.backend_identity)
+                position = decision.answers[key].score / (len(_SUFFICIENCY_LEVELS) - 1)
+                if mode == "enforce" and position >= policy.min_score:
+                    written = await run_db(
+                        storage.update_community_label,
+                        project_id,
+                        community.community_id,
+                        community.member_signature,
+                        label=community.label_deterministic,
+                        label_source="deterministic",
+                        label_confidence=None,
+                        label_model=decision.response_model,
+                        labeled_signature=community.member_signature,
+                    )
+                    settled.add(community.community_id)
+                    outcome = "sufficient" if written else "superseded"
+                    sufficient += bool(written)
+            logger.debug(
+                "code_index.community_label.sufficiency",
+                extra={
+                    "project_id": project_id,
+                    "community_id": community.community_id,
+                    "member_signature": community.member_signature,
+                    "outcome": outcome,
+                    "mode": mode,
+                    "position": position,
+                },
+            )
+        return [c for c in communities if c.community_id not in settled], sufficient
+
     async def _gate(
         self,
         communities: Sequence[StoredCommunity],
@@ -299,7 +378,7 @@ class CommunityLabeler:
     def _effective_mode(
         self,
         config: DecisionsConfig,
-        policy: ChoiceConsumerConfig | RerankConsumerConfig,
+        policy: ChoiceConsumerConfig | RerankConsumerConfig | ScoreConsumerConfig,
         identity: str | None,
     ) -> DecisionConsumerMode:
         if policy.mode != "enforce":
@@ -420,7 +499,7 @@ def _community_state(community: StoredCommunity) -> dict[str, Any]:
     }
 
 
-async def _decide[Q: (ChoiceQuestion, str), A](
+async def _decide[Q: (ChoiceQuestion, str, ScoreQuestion), A](
     service: DecisionService,
     config: DecisionsConfig,
     consumer: str,
