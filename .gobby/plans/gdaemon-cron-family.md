@@ -1815,6 +1815,13 @@ three nullable schema columns are explicit, separately verified outcomes.
 ## V1 Plan Changelog
 `kind: framing`
 
+2026-10-25: Writer and Plan Adversary reached renewed consensus on all 23
+deliverables after review of 1029acc61d30a2a5d30e3218cda2ab4a3fe4a1be, with
+no blocking or nit findings and no unresolved decisions. The coordinator
+amendments preserve the shared error owner and exact safe-error waivers,
+Range-only HTTP output, complete raw capture, internal count boundary and
+security gates. Fresh adversary-derived M1 must bind these narrative bytes.
+
 2026-10-25: Withdrew the superseded M1 whole after the coordinator-repair
 commit, preserving its bytes in Git history. This narrative requires fresh
 adversary consensus, derivation and base/expansion checks before handoff.
