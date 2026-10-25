@@ -184,7 +184,8 @@ def _context(inputs: dict[str, Any]) -> dict[str, Any]:
     values.update(workspace="pilot-workspace", report_to="gobby#14972", **inputs)
     return {
         "inputs": values,
-        "steps": {"guard": {"output": {"workspace_id": WORKSPACE}}},
+        # A fresh dry run has no live seats; the seat prompts read this map unconditionally.
+        "steps": {"guard": {"output": {"workspace_id": WORKSPACE, "live": {}}}},
         "_string_inputs": frozenset(
             name for name, spec in DEVTEAM.inputs.items() if spec.get("type") == "string"
         ),
