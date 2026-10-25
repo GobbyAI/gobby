@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -214,3 +215,20 @@ async def test_team_tree_pin_failure_still_admits(
 
     assert git_in(team.worktree_path, "branch", "--show-current") == team.branch
     assert world.tree_ids() == [team.worktree_id]
+
+
+async def test_short_team_id_resolves_or_names_the_full_uuid(world: TeamWorld) -> None:
+    """A short team_id prefix joins its team, or refuses by naming the full-UUID requirement."""
+    task = world.case.task(TITLE)
+    original = world.child(task)
+    team = await world.admit(original, task)
+    world.finish(original)
+    replacement = world.child(task)
+
+    outcome: TeamBinding | TeamAdmissionRefused
+    try:
+        outcome = await world.admit(replacement, task, team_id=team.team_id[:8])
+    except TeamAdmissionRefused as refused:
+        outcome = refused
+
+    assert outcome == team or re.search(r"full.*uuid|uuid.*full", str(outcome), re.I), outcome
