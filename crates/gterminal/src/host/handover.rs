@@ -280,20 +280,16 @@ pub fn monotonic_now_ns() -> u64 {
         .saturating_add(now.tv_nsec as u64)
 }
 
-/// Writes the state file durably with mode 0600: a private temporary file,
-/// `fsync`, rename over `path`, then `fsync` of the directory.
+/// Writes the state file durably with mode 0600: `stage_state`, then
+/// `commit_state`.
 pub fn write_state(path: &Path, state: &HandoverState) -> io::Result<()> {
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no name"))?;
-    let temp = dir.join(format!(
-        ".{}.{}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
+    commit_state(&stage_state(path, state)?, path)
+}
+
+/// Writes `state` to a private temporary file beside `path` and `fsync`s it.
+/// Nothing reads the temporary file until `commit_state` puts it in place.
+pub fn stage_state(path: &Path, state: &HandoverState) -> io::Result<PathBuf> {
+    let temp = staged_path(path)?;
     let _ = fs::remove_file(&temp);
     let written = (|| {
         let mut file = fs::OpenOptions::new()
@@ -303,14 +299,49 @@ pub fn write_state(path: &Path, state: &HandoverState) -> io::Result<()> {
             .open(&temp)?;
         serde_json::to_writer(&mut file, state)?;
         file.flush()?;
-        file.sync_all()?;
-        fs::rename(&temp, path)?;
-        fs::File::open(dir)?.sync_all()
+        file.sync_all()
     })();
-    if written.is_err() {
-        let _ = fs::remove_file(&temp);
+    match written {
+        Ok(()) => Ok(temp),
+        Err(err) => {
+            let _ = fs::remove_file(&temp);
+            Err(err)
+        }
     }
-    written
+}
+
+/// Renames a staged state file over `path`, then `fsync`s the directory.
+pub fn commit_state(staged: &Path, path: &Path) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
+    let committed = fs::rename(staged, path).and_then(|()| fs::File::open(dir)?.sync_all());
+    if committed.is_err() {
+        let _ = fs::remove_file(staged);
+    }
+    committed
+}
+
+/// Removes the state file at `path` and any staged temporary file for it.
+pub fn remove_state(path: &Path) {
+    let _ = fs::remove_file(path);
+    if let Ok(temp) = staged_path(path) {
+        let _ = fs::remove_file(temp);
+    }
+}
+
+fn staged_path(path: &Path) -> io::Result<PathBuf> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "state path has no name"))?;
+    Ok(dir.join(format!(
+        ".{}.{}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    )))
 }
 
 /// Reads a state file, refusing a format this image does not support.

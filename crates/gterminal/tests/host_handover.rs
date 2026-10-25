@@ -1723,6 +1723,19 @@ fn rollback_case(case: &RollbackCase) -> Value {
         try_ping(&dir, UPGRADE_TOKEN).is_some(),
         "{label}: the host answers"
     );
+    // Rollback removes the state file and its temporary file; only the
+    // directory a case put in the state file's place remains.
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read the socket dir")
+        .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+        .filter(|name| name.contains(STATE_FILE))
+        .collect();
+    let kept: &[&str] = if case.block_state_file {
+        &[STATE_FILE]
+    } else {
+        &[]
+    };
+    assert_eq!(leftovers, kept, "{label}: rollback leaves no state");
     shutdown(&mut host, &mut writer);
     after
 }
@@ -1859,6 +1872,29 @@ fn capture_finishing_inside_drain_rolls_back_with_live_panes() {
         tamper_pin: false,
     });
     assert_eq!(after["upgrade"]["last_outcome"]["reason"], "soft_deadline");
+}
+
+/// The state write and pin check are bounded by the soft cutoff, like quiesce
+/// and capture. A write that is still running there rolls back inside the
+/// reserve instead of running into the hard alarm with every pane.
+#[test]
+fn overdue_state_write_rolls_back_with_live_panes() {
+    let after = rollback_case(&RollbackCase {
+        label: "soft-cutoff-in-write",
+        // The write job outlives the hard deadline by a second.
+        fault: |_| json!({"write_past_cutoff_ms": 4000}),
+        outcome: "aborted",
+        reason: "soft_deadline",
+        errno: None,
+        stalled_writer: false,
+        block_state_file: false,
+        exiting_pane: false,
+        tamper_pin: false,
+    });
+    assert_eq!(
+        after["upgrade"]["last_outcome"]["reason"], "soft_deadline",
+        "{after}"
+    );
 }
 
 #[test]
