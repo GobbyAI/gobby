@@ -517,8 +517,9 @@ def _main_with_task_worktree(tmp_path: Path) -> tuple[Path, Path]:
 @pytest.mark.usefixtures("stub_srt_verifier")
 @pytest.mark.parametrize("recorded", ["worktree_id", "no_isolation_ids"])
 @pytest.mark.parametrize("caller", ["inherited_main_checkout", "explicit_project_path"])
+@pytest.mark.parametrize("checkout", [None, "none"])
 async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
-    tmp_path: Path, recorded: str, caller: str
+    tmp_path: Path, recorded: str, caller: str, checkout: Literal["none"] | None
 ) -> None:
     main, lane_path = _main_with_task_worktree(tmp_path)
     explicit = tmp_path / "explicit"
@@ -595,6 +596,7 @@ async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
             session_manager=sessions,
             parent_session_id="parent",
             target_project_id="project",
+            checkout_mode=checkout,
             resume_session_id="gobby#123",
             reserved_run_id="new-run",
             project_path=project_path,
