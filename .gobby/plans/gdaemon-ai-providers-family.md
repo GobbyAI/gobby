@@ -2239,3 +2239,728 @@ production cutover or task expansion have been performed during planning.
   ENH-003 rejected, ENH-004 added wording on 4.1.2 and 4.1.3, and ENH-F1-001
   rejected the restart gate and labelled 7.6.6. No findings or decisions
   remain open.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Executable 19-row characterization corpus
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '0.1.1: The corpus inventory equals the exact 19-key ledger
+    predicate, every key has a success case and a representative failure case, and
+    a key outside the family is rejected. test: `tests/contracts/test_ai_parity_corpus.py::test_inventory_matches_ai_ledger`.
+
+    0.1.2: Running the collector twice against reset isolated state gives the same
+    normalized fixtures, ordering, stdout, stderr, exit codes and recorded stub effects.
+    test: `tests/contracts/test_ai_parity_corpus.py::test_collection_is_reproducible`.
+
+    0.1.3: Each of the 15 HTTP rows records the full admission matrix, including `missing_grant`
+    401, `forged_identity` 401 and `stale_epoch` 409 on the eight grant rows. test:
+    `tests/contracts/test_ai_parity_corpus.py::test_http_admission_matrix`.
+
+    0.1.4: Each of the seven changed behaviors resolves to one exact-surface test
+    waiver with explicit native assertions, while untouched cases on the same surface
+    stay `Passed`. test: `tests/contracts/test_ai_parity_corpus.py::test_debt_waivers_are_behavior_scoped`.
+
+    0.1.5: Skipped-only reports, unwaived `Skipped`, stale or missing waiver decisions
+    and an unrelated injected regression fail readiness even beside a valid `Waived`
+    case. test: `tests/contracts/test_ai_parity_corpus.py::test_waiver_does_not_hide_unrelated_diff`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:0.1:0.1.1
+  - covers:gdaemon-ai-providers-family:0.1:0.1.2
+  - covers:gdaemon-ai-providers-family:0.1:0.1.3
+  - covers:gdaemon-ai-providers-family:0.1:0.1.4
+  - covers:gdaemon-ai-providers-family:0.1:0.1.5
+  tdd: false
+  source_section: '0.1'
+  assigned_agent: developer
+- title: Crate, three family shells, configuration snapshot and status reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '1.1.1: `HTTP GET /api/embeddings/status` matches Python''s
+    payload for configured, unconfigured, cloud-default and endpoint cases. test:
+    `crates/gai/tests/status.rs::embeddings_status_matches_python`.
+
+    1.1.2: `HTTP GET /api/embeddings/doctor` matches Python and keeps the `endpoint`,
+    `model` and `dim` fields gcode''s peer report reads. test: `crates/gai/tests/status.rs::embeddings_doctor_matches_python`.
+
+    1.1.3: `HTTP GET /api/llm/vision/status` matches Python''s capability status,
+    including endpoint image modality and the unavailable codex, grok and droid bindings.
+    test: `crates/gai/tests/status.rs::vision_status_matches_python`.
+
+    1.1.4: The registry builds the same bindings, order, availability and reasons
+    as Python for every non-audio capability across the fixture configurations. test:
+    `crates/gai/tests/status.rs::registry_matches_python_builder`.
+
+    1.1.5: Each family claims only its own implemented rows, the longest prefix routes
+    switch paths to `ai-embedding-switch`, absent configuration keeps all three on
+    Proxy, a node composes none, and every claim fails closed until admission is bound.
+    test: `crates/gai/tests/status.rs::families_are_scoped_and_fail_closed`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:1.1:1.1.1
+  - covers:gdaemon-ai-providers-family:1.1:1.1.2
+  - covers:gdaemon-ai-providers-family:1.1:1.1.3
+  - covers:gdaemon-ai-providers-family:1.1:1.1.4
+  - covers:gdaemon-ai-providers-family:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Native embedding generation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `HTTP POST /api/embeddings` matches Python for string
+    and list input, query and document prefixes, the default model and the reserved
+    fields. test: `crates/gai/tests/embed.rs::embed_matches_python`.
+
+    1.2.2: Unconfigured, unavailable, provider-error and malformed-response cases
+    match Python''s status and envelope, with `error` as the capability-unavailable
+    key. test: `crates/gai/tests/embed.rs::embed_errors_match_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:1.2:1.2.1
+  - covers:gdaemon-ai-providers-family:1.2:1.2.2
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Feature-profile candidate contract
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: The contract equals `DEFAULT_PROFILE_CANDIDATES` in
+    order, candidates and reasoning pins, and a changed entry on either side fails.
+    test: `tests/ai/test_profile_candidates_contract.py::test_contract_matches_python_defaults`.
+
+    2.1.2: The Rust loader returns the same three ordered lists and rejects a contract
+    with an unknown profile or version. test: `crates/gai/tests/profiles.rs::profile_candidates_match_contract`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:2.1:2.1.1
+  - covers:gdaemon-ai-providers-family:2.1:2.1.2
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Text-generation service and endpoint adapters
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Candidate order matches Python for explicit candidates,
+    provider and model, configured and contract profile defaults, and a bare provider.
+    test: `crates/gai/tests/generation.rs::candidate_order_matches_python`.
+
+    2.2.2: Fallback, aggregate errors and the circuit breaker''s open, skip and recovery
+    behavior match Python. test: `crates/gai/tests/generation.rs::fallback_and_breaker_match_python`.
+
+    2.2.3: Per-candidate and total timeouts and the cold-spawn concurrency limit match
+    Python. test: `crates/gai/tests/generation.rs::timeouts_and_cold_spawn_limit_match_python`.
+
+    2.2.4: The reasoning gate, prompt-echo rejection and image filter match Python.
+    test: `crates/gai/tests/generation.rs::request_gates_match_python`.
+
+    2.2.5: Endpoint adapters match Python''s wire requests and parsed results for
+    every protocol, vLLM `auto`, images, usage and key handling. test: `crates/gai/tests/generation.rs::endpoint_adapters_match_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:2.2:2.2.1
+  - covers:gdaemon-ai-providers-family:2.2:2.2.2
+  - covers:gdaemon-ai-providers-family:2.2:2.2.3
+  - covers:gdaemon-ai-providers-family:2.2:2.2.4
+  - covers:gdaemon-ai-providers-family:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: CLI provider adapters
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: The runner reproduces Python''s environment, working
+    directory, session, exit-error text, timeout and process-group cleanup, and leaves
+    no orphan process. test: `crates/gai/tests/cli_adapters.rs::runner_isolation_and_cleanup_match_python`.
+
+    2.3.2: The Claude adapter matches the SDK''s recorded argv, environment, stream-json
+    exchange, images, usage, retries and blank-output error. test: `crates/gai/tests/cli_adapters.rs::claude_adapter_matches_python`.
+
+    2.3.3: The Codex adapter matches Python, including responses-wire endpoints, and
+    the endpoint key appears only in the child environment. test: `crates/gai/tests/cli_adapters.rs::codex_adapter_matches_python`.
+
+    2.3.4: The Droid adapter matches Python''s argv, isolated home and seeding. test:
+    `crates/gai/tests/cli_adapters.rs::droid_adapter_matches_python`.
+
+    2.3.5: The Grok adapter matches Python''s argv and parsing. test: `crates/gai/tests/cli_adapters.rs::grok_adapter_matches_python`.
+
+    2.3.6: The Agy adapter matches Python''s argv, display-name resolution and parsing.
+    test: `crates/gai/tests/cli_adapters.rs::agy_adapter_matches_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:2.3:2.3.1
+  - covers:gdaemon-ai-providers-family:2.3:2.3.2
+  - covers:gdaemon-ai-providers-family:2.3:2.3.3
+  - covers:gdaemon-ai-providers-family:2.3:2.3.4
+  - covers:gdaemon-ai-providers-family:2.3:2.3.5
+  - covers:gdaemon-ai-providers-family:2.3:2.3.6
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Native text generation route
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `HTTP POST /api/llm/generate` matches Python''s routing,
+    defaults, timeout caps, images and response fields. test: `crates/gai/tests/generate.rs::generate_matches_python`.
+
+    2.4.2: Unavailable, invalid, failed and unconfigured requests match Python''s
+    status and `code` envelope. test: `crates/gai/tests/generate.rs::generate_errors_match_python`.
+
+    2.4.3: The `cwd` case reports `Waived` with its exact entry and decision, and
+    every other case on the row stays `Passed`. test: `crates/gai/tests/generate.rs::unused_cwd_is_waived`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:2.4:2.4.1
+  - covers:gdaemon-ai-providers-family:2.4:2.4.2
+  - covers:gdaemon-ai-providers-family:2.4:2.4.3
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Local endpoint context observations
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: Endpoint routes, fingerprints and refresh keys match
+    Python for every protocol and configuration change. test: `crates/gai/tests/local_context.rs::endpoint_routes_match_python`.
+
+    2.5.2: Each collector produces Python''s observation, diagnostics and effective
+    limit from recorded stub responses. test: `crates/gai/tests/local_context.rs::collectors_match_python`.
+
+    2.5.3: Stored rows, namespace, generation and lock interleave with Python''s writer
+    without lost or torn snapshots. test: `crates/gai/tests/local_context.rs::store_interoperates_with_python`.
+
+    2.5.4: Shared in-flight refresh, supersession, invalidation and the process-local
+    `get_observation` rule match Python. test: `crates/gai/tests/local_context.rs::refresh_service_matches_python`.
+
+    2.5.5: Endpoint generation refreshes before each request, and a refresh failure
+    is logged without failing generation. test: `crates/gai/tests/local_context.rs::generation_refresh_is_best_effort`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:2.5:2.5.1
+  - covers:gdaemon-ai-providers-family:2.5:2.5.2
+  - covers:gdaemon-ai-providers-family:2.5:2.5.3
+  - covers:gdaemon-ai-providers-family:2.5:2.5.4
+  - covers:gdaemon-ai-providers-family:2.5:2.5.5
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Read-only gcode tool runtime and endpoint tool loop
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '3.1.1: Policy validation matches Python for read-only, allowed,
+    nested and unknown tools and for every rejected metacharacter. test: `crates/gai/tests/tool_runtime.rs::policy_matches_python`.
+
+    3.1.2: gcode execution matches Python''s argv, working directory, stripped environment,
+    timeout, stdout cap and stderr tail. test: `crates/gai/tests/tool_runtime.rs::gcode_execution_matches_python`.
+
+    3.1.3: The endpoint loop matches Python''s turns, tool results, limits and stop
+    reasons through `run_tool_loop`. test: `crates/gai/tests/tool_runtime.rs::endpoint_tool_loop_matches_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:3.1:3.1.1
+  - covers:gdaemon-ai-providers-family:3.1:3.1.2
+  - covers:gdaemon-ai-providers-family:3.1:3.1.3
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Provider tool-chat styles
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: The loopback MCP server matches Python''s protocol
+    version, bearer check, request bound, loopback bind, budgets and teardown. test:
+    `crates/gai/tests/tool_chat_styles.rs::loopback_mcp_server_matches_python`.
+
+    3.2.2: The Claude style exposes the `repo` tools and matches Python''s turns,
+    stop reasons and investigation fields. test: `crates/gai/tests/tool_chat_styles.rs::claude_style_matches_python`.
+
+    3.2.3: The Codex app-server style matches Python''s JSON-RPC exchange and dynamic
+    tool results. test: `crates/gai/tests/tool_chat_styles.rs::codex_style_matches_python`.
+
+    3.2.4: The Droid style matches Python''s stream exchange and MCP use. test: `crates/gai/tests/tool_chat_styles.rs::droid_style_matches_python`.
+
+    3.2.5: The Grok ACP style matches Python''s session and policy. test: `crates/gai/tests/tool_chat_styles.rs::grok_style_matches_python`.
+
+    3.2.6: Fallback happens only on capability unavailability, and one deadline bounds
+    every style. test: `crates/gai/tests/tool_chat_styles.rs::fallback_and_deadline_match_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:3.2:3.2.1
+  - covers:gdaemon-ai-providers-family:3.2:3.2.2
+  - covers:gdaemon-ai-providers-family:3.2:3.2.3
+  - covers:gdaemon-ai-providers-family:3.2:3.2.4
+  - covers:gdaemon-ai-providers-family:3.2:3.2.5
+  - covers:gdaemon-ai-providers-family:3.2:3.2.6
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Native chat completions with managed tool credentials
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: `HTTP POST /api/llm/chat/completions` matches Python''s
+    request validation, message split, response, `finish_reason` map and investigation
+    fields. test: `crates/gai/tests/chat.rs::chat_completions_match_python`.
+
+    3.3.2: Each run issues one managed tool credential bound to the session and checked
+    project root, the child receives it, and it is revoked on success, failure and
+    cancellation; an overlay mismatch refuses before any spawn. test: `crates/gai/tests/chat.rs::managed_tool_credential_lifecycle`.
+
+    3.3.3: Missing session, unavailable capability and adapter failure match Python''s
+    status and body. test: `crates/gai/tests/chat.rs::chat_errors_match_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:3.3:3.3.1
+  - covers:gdaemon-ai-providers-family:3.3:3.3.2
+  - covers:gdaemon-ai-providers-family:3.3:3.3.3
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Native vision extraction
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '4.1.1: `HTTP POST /api/llm/vision/extract` matches Python
+    for Claude, endpoint and responses-wire bindings. test: `crates/gai/tests/vision.rs::extract_matches_python`.
+
+    4.1.2: Upload bounds, content types, unavailable bindings and adapter failures
+    match Python''s status and body, and an over-limit or interrupted upload leaves
+    no file. test: `crates/gai/tests/vision.rs::upload_bounds_and_errors_match_python`.
+
+    4.1.3: Temporary files are private and created exclusively under an allowlisted
+    suffix, so a traversal-style filename never selects a path. They are deleted after
+    every request outcome and swept after 24 hours, and the sweep removes a symlink
+    without touching its target. test: `crates/gai/tests/vision.rs::temp_files_are_private_and_swept`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:4.1:4.1.1
+  - covers:gdaemon-ai-providers-family:4.1:4.1.2
+  - covers:gdaemon-ai-providers-family:4.1:4.1.3
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Full capability snapshot with Voice audio bindings
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: `HTTP GET /api/llm/status` matches Python''s full snapshot
+    across the fixture configurations. test: `crates/gai/tests/llm_status.rs::llm_status_matches_python`.
+
+    4.2.2: Audio bindings follow the Voice seam''s answer and Python''s configuration
+    rules, with matching reasons when unavailable. test: `crates/gai/tests/llm_status.rs::audio_bindings_use_voice_seam`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:4.2:4.2.1
+  - covers:gdaemon-ai-providers-family:4.2:4.2.2
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: 'Native admission binding and the #25068 contract'
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '5.1.1: The eight `ai` rows declare exactly Python''s grant
+    capability, mode and effectful flag, and grant callers are admitted or refused
+    with Python''s codes before any effect. test: `crates/gai/tests/admission.rs::grant_rows_match_python`.
+
+    5.1.2: Agent tokens with matching, mismatched, revoked and expired identity get
+    Python''s outcomes for both `bind_identity` settings. test: `crates/gai/tests/admission.rs::agent_token_classes_match_python`.
+
+    5.1.3: API keys, the local operator and ordinary cookies keep Python''s per-route
+    permissions, and managed cookies are refused on mutations. test: `crates/gai/tests/admission.rs::operator_and_browser_classes_match_python`.
+
+    5.1.4: Without a bound Admitted value the row stays proxied, unavailable authority
+    returns 503, and no second verifier exists in the crate. test: `crates/gai/tests/admission.rs::admission_fails_closed_without_shared_seam`.
+
+    5.1.5: The admission record names the persisted `security-review` label, the pre-dispatch
+    check and the approved step for the exact SHA; absent or stale approval holds
+    native admission. behavior: "AI admission security gate" in `docs/contracts/ai-native.md`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:5.1:5.1.1
+  - covers:gdaemon-ai-providers-family:5.1:5.1.2
+  - covers:gdaemon-ai-providers-family:5.1:5.1.3
+  - covers:gdaemon-ai-providers-family:5.1:5.1.4
+  - covers:gdaemon-ai-providers-family:5.1:5.1.5
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: ai family activation and coherent release
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '7.0'
+  validation_criteria: '5.2.1: Proxy, compare and native states affect only the eight
+    `ai` rows; compare runs read rows only, effectful rows run once, and rollback
+    to Proxy preserves state. test: `crates/gdaemon/tests/ai_cutover.rs::ai_cutover_is_scoped_and_single_effect`.
+
+    5.2.2: With the Python backend unavailable, all eight rows run natively for grant,
+    agent-token, API-key and cookie callers on hub and standalone, and a node keeps
+    its current backend. test: `tests/e2e/test_ai_native.py::test_ai_rows_work_without_python_backend`.
+
+    5.2.3: Readiness rejects zero-Passed, all-Skipped and unwaived-Skipped reports
+    and unknown or stale waivers, and requires the exact `unused-cwd` entry beside
+    ordinary `Passed` cases. test: `crates/gdaemon/tests/ai_cutover.rs::waiver_readiness_gates_ai_activation`.
+
+    5.2.4: Shipping manifests, lock and pins agree at the required patch increment.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    5.2.5: The runbook records build and installed hashes, compared cases, rollback
+    command, announcement, health, the Security approval for 5.1 and native smoke
+    evidence. behavior: "ai activation evidence" in `docs/contracts/ai-native.md`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:5.2:5.2.1
+  - covers:gdaemon-ai-providers-family:5.2:5.2.2
+  - covers:gdaemon-ai-providers-family:5.2:5.2.3
+  - covers:gdaemon-ai-providers-family:5.2:5.2.4
+  - covers:gdaemon-ai-providers-family:5.2:5.2.5
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Web-chat provider health seam
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '6.0.1: Without a health source the providers family claims
+    no row; with a stub source, each provider''s `available` and `startup_error` reach
+    the caller unchanged, including a `None` error and an unknown provider. test:
+    `crates/gai/tests/provider_health.rs::web_chat_health_seam_contract`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:6.0:6.0.1
+  tdd: true
+  source_section: '6.0'
+  implementation_domain: backend
+- title: Native provider list and model catalog
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  - '6.0'
+  validation_criteria: '6.1.1: `HTTP GET /api/providers` matches Python for installed,
+    missing, deprecated and unsupported providers, every health branch and the endpoint
+    rows. test: `crates/gai/tests/providers.rs::provider_list_matches_python`.
+
+    6.1.2: `HTTP GET /api/providers/models` matches Python''s matrix entries, pending
+    payloads, context precedence, codex responses models and `execution_provider`.
+    test: `crates/gai/tests/providers.rs::provider_models_match_python`.
+
+    6.1.3: Local endpoint groups match Python''s discovery, routability, unavailable
+    reasons, codex gating and 2.5''s context projection. test: `crates/gai/tests/providers.rs::local_model_groups_match_python`.
+
+    6.1.4: Health is read through 6.0''s seam for claude, grok and the other providers
+    with Python''s branch rules, and the rows declare their admission classes. test:
+    `crates/gai/tests/providers.rs::provider_health_uses_native_runtime`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:6.1:6.1.1
+  - covers:gdaemon-ai-providers-family:6.1:6.1.2
+  - covers:gdaemon-ai-providers-family:6.1:6.1.3
+  - covers:gdaemon-ai-providers-family:6.1:6.1.4
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Native provider usage
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: Fresh, stale, missing, unsupported, no-reporter and
+    transient failure cases match Python''s snapshot and persisted row. test: `crates/gai/tests/usage.rs::usage_matches_python`.
+
+    6.2.2: Concurrent requests share one refresh, and the AGY reporter''s argv, 15-second
+    bound and parsing match Python. test: `crates/gai/tests/usage.rs::usage_refresh_is_single_flight`.
+
+    6.2.3: The `details` field matches #23603''s landed contract. test: `crates/gai/tests/usage.rs::usage_details_match_capacity_contract`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:6.2:6.2.1
+  - covers:gdaemon-ai-providers-family:6.2:6.2.2
+  - covers:gdaemon-ai-providers-family:6.2:6.2.3
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: providers family activation and gdaemon release
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  - '5.2'
+  validation_criteria: '6.3.1: Proxy and native states affect only the three providers
+    rows, the family stays on Proxy without #21592''s runtime, and rollback to Proxy
+    restores Python serving. test: `crates/gdaemon/tests/providers_cutover.rs::providers_cutover_is_scoped`.
+
+    6.3.2: With the Python backend unavailable, all three rows run natively for API-key,
+    local operator and cookie callers, `GET /api/providers/models` also for agent
+    tokens, and a node keeps its current backend. test: `tests/e2e/test_providers_native.py::test_provider_rows_work_without_python_backend`.
+
+    6.3.3: Readiness requires ordinary `Passed` cases on each row and rejects zero-Passed,
+    Skipped and any waiver citing a providers row. test: `crates/gdaemon/tests/providers_cutover.rs::readiness_gates_providers_activation`.
+
+    6.3.4: Shipping manifests, lock and pins agree with only gdaemon bumped. test:
+    `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    6.3.5: The runbook records build and installed hashes, the #21592 runtime check,
+    rollback command, announcement, health and native smoke evidence. behavior: "providers
+    activation evidence" in `docs/contracts/ai-native.md`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:6.3:6.3.1
+  - covers:gdaemon-ai-providers-family:6.3:6.3.2
+  - covers:gdaemon-ai-providers-family:6.3:6.3.3
+  - covers:gdaemon-ai-providers-family:6.3:6.3.4
+  - covers:gdaemon-ai-providers-family:6.3:6.3.5
+  tdd: true
+  source_section: '6.3'
+  implementation_domain: backend
+- title: gcore Qdrant alias operations
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '7.0.1: Alias create, list and delete round-trip against a
+    Qdrant stub, and the atomic switch sends every alias action in one request. test:
+    `crates/gcore/src/qdrant/tests.rs::alias_operations_round_trip`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.0:7.0.1
+  tdd: true
+  source_section: '7.0'
+  implementation_domain: backend
+- title: Embedding catalog contract
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '7.1.1: The contract round-trips to Python data identical to
+    the baseline catalog, and the generator''s `--check` passes. test: `tests/ai/test_embedding_catalog_contract.py::test_generated_catalog_is_current`.
+
+    7.1.2: Native lookups, provider resolution and `catalog_summary` output match
+    Python for every key. test: `crates/gai/tests/catalog.rs::catalog_matches_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.1:7.1.1
+  - covers:gdaemon-ai-providers-family:7.1:7.1.2
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Switch journal, coordinator and routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: The four switch routes match Python''s status codes,
+    payloads and `too_late` detail. test: `crates/gai/tests/switch_routes.rs::switch_routes_match_python`.
+
+    7.2.2: Journal rows, keys, phases, lock and completion revision interoperate with
+    Python''s writers. test: `crates/gai/tests/switch_routes.rs::journal_interoperates_with_python`.
+
+    7.2.3: Start, resume, abort and status follow Python''s state machine, including
+    `cleanup_retry`, `too_late`, `timeout` and no startup resume. test: `crates/gai/tests/switch_routes.rs::coordinator_matches_python`.
+
+    7.2.4: Provider detection and vLLM target resolution match Python. test: `crates/gai/tests/switch_routes.rs::start_resolves_provider_like_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.2:7.2.1
+  - covers:gdaemon-ai-providers-family:7.2:7.2.2
+  - covers:gdaemon-ai-providers-family:7.2:7.2.3
+  - covers:gdaemon-ai-providers-family:7.2:7.2.4
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Switch staging through provider APIs
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.2'
+  - '2.4'
+  validation_criteria: '7.3.1: LM Studio setup checks the exact key, reports 404 as
+    a typed LM Studio 0.4.0 requirement, downloads by repository link and quantization,
+    polls within 600 seconds and loads within 120 seconds unless loaded. test: `crates/gai/tests/switch_stage.rs::lmstudio_setup_uses_provider_api`.
+
+    7.3.2: Ollama pulls an absent exact tag until `success` within 600 seconds, vLLM
+    and generic endpoints skip setup, and no server start, CLI or unload occurs. test:
+    `crates/gai/tests/switch_stage.rs::ollama_and_passthrough_setup`.
+
+    7.3.3: The dimension probe and smoke test match Python, and a failure is recorded
+    while the phase stays staging. test: `crates/gai/tests/switch_stage.rs::stage_validation_matches_python`.
+
+    7.3.4: The three model-setup cases report `Waived` with their exact entries, and
+    every other case stays `Passed`. test: `crates/gai/tests/switch_stage.rs::model_setup_cases_are_waived`.
+
+    7.3.5: An abort during LM Studio or Ollama setup, the dimension probe or the smoke
+    test takes effect at the check after staging, as in Python. Staging runs to its
+    end, the run moves to aborted, and nothing is unloaded. Abort returns `timeout`
+    when staging outlasts the 30-second wait and `aborted` otherwise. test: `crates/gai/tests/switch_stage.rs::abort_during_staging_matches_python`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.3:7.3.1
+  - covers:gdaemon-ai-providers-family:7.3:7.3.2
+  - covers:gdaemon-ai-providers-family:7.3:7.3.3
+  - covers:gdaemon-ai-providers-family:7.3:7.3.4
+  - covers:gdaemon-ai-providers-family:7.3:7.3.5
+  tdd: true
+  source_section: '7.3'
+  implementation_domain: backend
+- title: Switch build, flip and garbage collection
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.3'
+  - '7.0'
+  validation_criteria: '7.4.1: Build matches Python''s physical names, dimensions,
+    mismatch recreation, seam calls, watermark and bounded replay. test: `crates/gai/tests/switch_build.rs::build_matches_python`.
+
+    7.4.2: Flip performs the final replay, switches both aliases atomically and records
+    the completion revision. test: `crates/gai/tests/switch_build.rs::flip_matches_python`.
+
+    7.4.3: GC waits for compatible acknowledgements within 120 seconds and deletes
+    only superseded collections, and abort cleanup spares any collection a live alias
+    names. test: `crates/gai/tests/switch_build.rs::gc_and_abort_cleanup_match_python`.
+
+    7.4.4: A resume after interruption in each phase reaches Python''s end state.
+    test: `crates/gai/tests/switch_build.rs::resume_matches_python_per_phase`.
+
+    7.4.5: Build persists `physical_names` before it reads and persists `caught_up_watermark`,
+    on the first run and on resume. A producer upsert and delete recorded at the watermark
+    read are replayed. A failure injected at the watermark read, and another at the
+    first `rebuild` call, each followed by resume, leave the target points equal to
+    the authoritative sources. test: `crates/gai/tests/switch_build.rs::build_publishes_names_before_watermark`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.4:7.4.1
+  - covers:gdaemon-ai-providers-family:7.4:7.4.2
+  - covers:gdaemon-ai-providers-family:7.4:7.4.3
+  - covers:gdaemon-ai-providers-family:7.4:7.4.4
+  - covers:gdaemon-ai-providers-family:7.4:7.4.5
+  tdd: true
+  source_section: '7.4'
+  implementation_domain: backend
+- title: Native embeddings command tree
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.4'
+  - '6.3'
+  validation_criteria: '7.5.1: `catalog` prints 7.1''s summary byte-identical to Python''s
+    output. test: `crates/gai/tests/switch_cli.rs::catalog_output_matches_python`.
+
+    7.5.2: `switch` matches Python''s flags, usage error, missing-key messages, requests,
+    30-second timeout, credential precedence, 401 message, `Error: <detail>` forms,
+    JSON and verbatim output and the `failed` exit, and the model-setup case reports
+    `Waived` with its exact entry. test: `crates/gai/tests/switch_cli.rs::switch_cli_matches_python`.
+
+    7.5.3: A connection failure and a timeout print `Error: <message>` and exit 1,
+    reported `Waived` with the transport entry. test: `crates/gai/tests/switch_cli.rs::switch_transport_failure_is_waived`.
+
+    7.5.4: `doctor` runs the home''s gcode with inherited streams and passes exits
+    0, 10, 11 and 20 through, a missing gcode exits 1, and the case reports `Waived`
+    with the doctor entry. test: `crates/gai/tests/switch_cli.rs::doctor_forwards_to_gcode`.
+
+    7.5.5: Group and command help, unknown commands and usage errors match Click''s
+    text and exit codes. test: `crates/gai/tests/switch_cli.rs::group_matches_python`.
+
+    7.5.6: Readiness over the four CLI rows requires ordinary `Passed` cases beside
+    exactly the three CLI waivers and rejects unknown, stale or missing entries. test:
+    `crates/gai/tests/switch_cli.rs::cli_readiness_requires_exact_waivers`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.5:7.5.1
+  - covers:gdaemon-ai-providers-family:7.5:7.5.2
+  - covers:gdaemon-ai-providers-family:7.5:7.5.3
+  - covers:gdaemon-ai-providers-family:7.5:7.5.4
+  - covers:gdaemon-ai-providers-family:7.5:7.5.5
+  - covers:gdaemon-ai-providers-family:7.5:7.5.6
+  tdd: true
+  source_section: '7.5'
+  implementation_domain: backend
+- title: ai-embedding-switch activation and gdaemon release
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.5'
+  - '6.3'
+  validation_criteria: '7.6.1: Proxy and native states affect only the four HTTP switch
+    rows, other `/api/embeddings` paths stay with `ai`, and rollback to Proxy restores
+    Python serving with the journal intact. test: `crates/gdaemon/tests/embedding_switch_cutover.rs::switch_cutover_is_scoped`.
+
+    7.6.2: With the Python backend unavailable, the four HTTP rows run natively for
+    API-key, local operator and cookie callers and status also for agent tokens, the
+    released `gdaemon embeddings` drives a switch from start to active against isolated
+    Qdrant and an embedding stub, and a node keeps its current backend. test: `tests/e2e/test_embedding_switch_native.py::test_switch_rows_work_without_python_backend`.
+
+    7.6.3: Readiness requires the exact three HTTP waivers beside ordinary `Passed`
+    cases and rejects zero-Passed, Skipped, unknown and stale waivers. test: `crates/gdaemon/tests/embedding_switch_cutover.rs::readiness_gates_switch_activation`.
+
+    7.6.4: Shipping manifests, lock and pins agree with only gdaemon bumped. test:
+    `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    7.6.5: The runbook records build and installed hashes, rollback command, announcement,
+    the pre-flip switch status, health and native smoke evidence. behavior: "embedding
+    switch activation evidence" in `docs/contracts/ai-native.md`.
+
+    7.6.6: This case bypasses the no-`running` precondition to prove recovery. On
+    an isolated daemon, a Proxy-owned run held in staging, building or flipping is
+    interrupted by the flip restart. The old backend process is gone before the new
+    daemon answers. Native status reports the persisted phase, abort returns `not_found`,
+    and the embedding stub and Qdrant receive no request from the old run. One native
+    resume then reaches `active`. The rollback restart does the same for a held native
+    run, with Python resuming it. Each run creates one physical collection set. test:
+    `tests/e2e/test_embedding_switch_native.py::test_route_flip_ends_the_outgoing_switch_run`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.6:7.6.1
+  - covers:gdaemon-ai-providers-family:7.6:7.6.2
+  - covers:gdaemon-ai-providers-family:7.6:7.6.3
+  - covers:gdaemon-ai-providers-family:7.6:7.6.4
+  - covers:gdaemon-ai-providers-family:7.6:7.6.5
+  - covers:gdaemon-ai-providers-family:7.6:7.6.6
+  tdd: true
+  source_section: '7.6'
+  implementation_domain: backend
+- title: Forward the public embeddings CLI
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.6'
+  validation_criteria: '7.7.1: The launcher forwards literal arguments, working directory,
+    environment, streams and exit status, including help, unknown options, Unicode
+    and errors, to the resolved gdaemon, reports a missing binary with exit 1, and
+    imports no embeddings business module. test: `tests/cli/test_embeddings_native_forwarding.py::test_launcher_only_forwards`.
+
+    7.7.2: Every retired Python test expectation maps to 0.1''s corpus and a 7.5 native
+    test, and import and patch-string sweeps find no reference to the removed helpers.
+    test: `tests/cli/test_embeddings_native_forwarding.py::test_retired_cli_tests_have_native_coverage`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:7.7:7.7.1
+  - covers:gdaemon-ai-providers-family:7.7:7.7.2
+  tdd: true
+  source_section: '7.7'
+  implementation_domain: backend
+- title: Publish AI family parity ownership
+  category: docs
+  task_type: feature
+  depends_on:
+  - '7.7'
+  validation_criteria: '8.1.1: The 16 AI rows in the remainder shard are `delegated`
+    with notes citing their leaf, tests and waiver IDs, and every other record is
+    unchanged. behavior: "16 delegated AI parity rows" in `docs/contracts/parity-ledger-status.d/remainder.json`.
+
+    8.1.2: The three providers rows are `delegated` with notes citing 6.1, 6.2 and
+    their tests, and every other record is unchanged. behavior: "3 delegated providers
+    parity rows" in `docs/contracts/parity-ledger-status.d/daemon-config-auth-infra.json`.
+
+    8.1.3: The regenerated ledger matches the shards and the public inventory. test:
+    `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    8.1.4: The guide describes native AI operation, the forwarding CLI and the gcode
+    doctor report. behavior: "native AI operation" in `docs/guides/llm-features.md`.'
+  labels:
+  - covers:gdaemon-ai-providers-family:8.1:8.1.1
+  - covers:gdaemon-ai-providers-family:8.1:8.1.2
+  - covers:gdaemon-ai-providers-family:8.1:8.1.3
+  - covers:gdaemon-ai-providers-family:8.1:8.1.4
+  tdd: false
+  source_section: '8.1'
+  assigned_agent: tech-writer
+```
