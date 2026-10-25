@@ -154,8 +154,14 @@ def _fingerprint(config: DecisionsConfig) -> tuple[object, ...]:
 
 
 class DecisionService:
-    def __init__(self, config: DecisionsConfig) -> None:
+    def __init__(
+        self,
+        config: DecisionsConfig,
+        *,
+        exchange_observer: Callable[[httpx.Response], None] | None = None,
+    ) -> None:
         self._config = config
+        self._exchange_observer = exchange_observer
         self._cooldown_until = 0.0
 
     async def choose(
@@ -293,7 +299,7 @@ class DecisionService:
                         )
                     )
                 payload = await retry_async(
-                    lambda: _post(url, headers, body, budget),
+                    lambda: _post(url, headers, body, budget, self._exchange_observer),
                     max_retries=_ATTEMPTS,
                     delay=_RETRY_DELAY,
                     retry_if=_retryable,
@@ -533,10 +539,16 @@ def _client(timeout_seconds: float) -> httpx.AsyncClient:
 
 
 async def _post(
-    url: str, headers: Mapping[str, str], body: Mapping[str, Any], timeout_seconds: float
+    url: str,
+    headers: Mapping[str, str],
+    body: Mapping[str, Any],
+    timeout_seconds: float,
+    exchange_observer: Callable[[httpx.Response], None] | None = None,
 ) -> Any:
     async with _client(timeout_seconds) as client:
         response = await client.post(url, json=body, headers=headers)
+    if exchange_observer is not None:
+        exchange_observer(response)
     if not 200 <= response.status_code < 300:
         raise _HTTPStatusError(response.status_code)
     try:

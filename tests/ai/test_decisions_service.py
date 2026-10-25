@@ -237,6 +237,26 @@ def _fresh_service_cache(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 400])
+async def test_exchange_observer_records_success_and_failure(wire: FakeWire, status: int) -> None:
+    payload = _fixture("systemone_choice_response.json") if status == 200 else {"error": "refused"}
+    wire.handler = lambda _request: httpx.Response(status, json=payload)
+    observed: list[httpx.Response] = []
+    service = DecisionService(_config(), exchange_observer=observed.append)
+
+    if status == 200:
+        await service.choose("capture", STATE, QUESTIONS)
+    else:
+        with pytest.raises(DecisionsUnavailable, match="400"):
+            await service.choose("capture", STATE, QUESTIONS)
+
+    assert len(observed) == 1
+    assert observed[0].status_code == status
+    assert observed[0].json() == payload
+    assert json.loads(observed[0].request.content)["questions"]["triage"]["type"] == "choice"
+
+
+@pytest.mark.asyncio
 async def test_choose_posts_and_parses_documented_wire(wire: FakeWire) -> None:
     wire.handler = lambda _request: httpx.Response(
         200, json=_fixture("systemone_choice_response.json")

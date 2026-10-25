@@ -32,7 +32,7 @@ def resolve_secret(name: str) -> str:
     return SECRET_VALUE
 
 
-def png(width: int = 8, height: int = 8) -> bytes:
+def png(width: int = 280, height: int = 280) -> bytes:
     """A real grayscale PNG."""
 
     def chunk(kind: bytes, data: bytes) -> bytes:
@@ -84,7 +84,9 @@ class OpenRouterWire:
         input_tokens = len(request.content) // 4
         if input_tokens > BACKEND_MAX_STATE_TOKENS:
             return httpx.Response(400, json={"error": {"message": "context length exceeded"}})
-        if {q["type"] for q in sent["questions"].values()} & self.refused_kinds:
+        refused = {q["type"] for q in sent["questions"].values()} & self.refused_kinds
+        if refused:
+            self.refused_kinds -= refused
             return httpx.Response(400, json={"error": {"message": "question refused"}})
         answers = {key: self._answer(key, q) for key, q in sent["questions"].items()}
         return httpx.Response(

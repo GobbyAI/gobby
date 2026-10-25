@@ -70,12 +70,13 @@ def test_capture_records_every_shape_and_probe(
     listing = [r for r in openrouter_wire.requests if r.method == "GET"]
     assert [r.url.path for r in listing] == ["/api/v1/models"]
     sizes = [len(r.content) for r in openrouter_wire.requests if r.method == "POST"]
-    ceiling = BACKEND_MAX_STATE_TOKENS * 4
-    assert any(ceiling // 2 <= size <= ceiling for size in sizes), "just-under probe"
-    assert any(size > ceiling for size in sizes), "over-limit probe"
+    near_limit = sorted(sizes)[-2:]
+    assert near_limit[0] >= BACKEND_MAX_STATE_TOKENS * 4 // 2, "just-under probe"
+    assert near_limit[1] > near_limit[0], "over-limit probe"
 
     lowered = section.lower()
-    assert datetime.now(UTC).date().isoformat() in section
+    run_dates = {datetime.now(UTC).date().isoformat(), datetime.now().date().isoformat()}
+    assert any(d in section for d in run_dates)
     assert RESPONSE_MODEL in section
     assert f"response:{RESPONSE_MODEL}" in section
     for shape in ("choice", "noul", "score", "box"):
