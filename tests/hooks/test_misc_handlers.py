@@ -831,6 +831,56 @@ class TestWorktreeHandlers:
             ("pin", "/tmp/worktrees/feature-auth"),
         ]
 
+    async def test_worktree_create_marker_records_selected_base_when_head_moved(
+        self, mock_dependencies: dict[str, Any], pin_gateway: MagicMock
+    ) -> None:
+        mock_dependencies["worktree_manager"].get_by_branch.return_value = None
+
+        async def pin(project_root: Path) -> None:
+            return None
+
+        pin_gateway.return_value.pin_project.side_effect = pin
+        git_manager = MagicMock()
+        git_manager.get_current_branch = AsyncMock(return_value="main")
+        # The base commit selected for the worktree, read before the main checkout moves.
+        git_manager.get_local_commit = AsyncMock(return_value="selected-sha")
+        git_manager.repo_path = "/repo"
+        git_manager.run_git_command = AsyncMock(
+            return_value=subprocess.CompletedProcess([], returncode=1, stdout="", stderr="")
+        )
+        git_manager.create_worktree = AsyncMock(return_value=MagicMock(success=True, message="ok"))
+        marker_base_commits: list[str] = []
+
+        async def write_marker(
+            repo_path: str, worktree_path: str, *, base_commit: str | None = None
+        ) -> None:
+            # Without an explicit base_commit the writer records the main checkout HEAD,
+            # which has moved to "moved-sha" since the base was selected.
+            marker_base_commits.append(base_commit or "moved-sha")
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_CREATE, data={"name": "feature-auth"}, source="claude"
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._misc.resolve_project_context",
+                return_value=(git_manager, "proj-123", None),
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.generate_worktree_path",
+                return_value="/tmp/worktrees/feature-auth",
+            ),
+            patch(
+                "gobby.hooks.event_handlers._misc.copy_project_json_to_worktree", new=write_marker
+            ),
+            patch("gobby.hooks.event_handlers._misc.install_provider_hooks"),
+        ):
+            response = await handlers.handle_worktree_create(event)
+
+        assert response.decision == "allow"
+        assert marker_base_commits == ["selected-sha"]
+
     async def test_worktree_create_pin_failure_rolls_back_worktree(
         self, mock_dependencies: dict[str, Any], pin_gateway: MagicMock
     ) -> None:
