@@ -314,6 +314,27 @@ def is_task_coordinator(
     )
 
 
+def is_relaying_dev_manager(
+    db: HubDatabase,
+    event: CandidateEvent,
+    reviewer_session_id: str,
+) -> bool:
+    """Only the task's bound Dev Manager, seated in the reviewer's team, may relay a CANDIDATE."""
+    from gobby.agents.team_lifecycle import seat_team
+    from gobby.mcp_proxy.tools.tasks._claim_release import _can_release
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+
+    sessions = SessionManager(db)
+    caller = sessions.get(event.message.from_session)
+    reviewer = sessions.get(reviewer_session_id)
+    # The team-seat guard keeps the root Orchestrator out; _can_release admits it directly.
+    if caller is None or reviewer is None or seat_team(db, caller.id) is None:
+        return False
+    return _can_release(
+        RegistryContext(task_manager=LocalTaskManager(db)), caller, reviewer, event.task.id
+    )
+
+
 def is_task_reviewer(db: HubDatabase, event: CandidateEvent) -> bool:
     """A review event must come from the task's persisted reviewing assignment."""
     from gobby.storage.session_tasks import SessionTaskManager

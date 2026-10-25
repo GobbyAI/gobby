@@ -196,6 +196,7 @@ def setup_internal_registries(
                 completion_registry=completion_registry,
                 mcp_manager_resolver=mcp_manager_resolver,
                 review_learning_service=review_learning_service,
+                code_index=code_index,
             )
             manager.add_registry(ops_registry)
             logger.debug("Tasks-ops registry initialized")
