@@ -19,13 +19,18 @@ from gobby.tasks.step_records import NoWorkDisposition
 _PREFIX = re.compile(r"^(?:LANE=\S* )?EVENT=(\S+) TASK=(\S+)(?: |$)")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _NO_WORK_DISPOSITIONS = frozenset(get_args(NoWorkDisposition))
+# Events that name a unit by its commit SHA, or by its no-work disposition when no commit exists.
+_SHA_OR_DISPOSITION_EVENTS = frozenset({"CANDIDATE_VERDICT", "CANDIDATE_WITHDRAWN"})
 _CANDIDATE_GRAMMAR = (
     "expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] RUN= WT= "
     "COMMIT=<40-hex> or DISPOSITION=<moot|superseded|wont_do> [NOTE=...]"
 )
 PARK_REASONS = frozenset({"approval", "base_update", "review_only"})
 _COORDINATION_GRAMMAR: dict[str, str] = {
-    "CANDIDATE_WITHDRAWN": "expected EVENT=CANDIDATE_WITHDRAWN TASK=<ref> SHA=<40-hex> [NOTE=...]",
+    "CANDIDATE_WITHDRAWN": (
+        "expected EVENT=CANDIDATE_WITHDRAWN TASK=<ref> SHA=<40-hex> or "
+        "DISPOSITION=<moot|superseded|wont_do> [NOTE=...]"
+    ),
     "CANDIDATE_RESUMED": "expected EVENT=CANDIDATE_RESUMED TASK=<ref> SHA=<40-hex> [NOTE=...]",
     "CANDIDATE_PARKED": (
         "expected EVENT=CANDIDATE_PARKED TASK=<ref> SHA=<40-hex> REASON="
@@ -84,8 +89,8 @@ class CandidateMessageError(ValueError):
 # Canonical field order after EVENT and TASK, as senders are taught. NOTE is last.
 _ENVELOPE_CANONICAL: dict[str, str] = {
     "CANDIDATE": "TASK_TITLE RUN WT COMMIT|DISPOSITION NOTE",
-    "CANDIDATE_WITHDRAWN": "SHA NOTE",
-    "CANDIDATE_VERDICT": "SHA VERDICT TASK_TITLE NOTE",
+    "CANDIDATE_WITHDRAWN": "SHA|DISPOSITION NOTE",
+    "CANDIDATE_VERDICT": "SHA|DISPOSITION VERDICT TASK_TITLE NOTE",
     "PROOF_REQUEST": "SHA NOTE",
 }
 # Ordering the receiver depends on: ranks must not decrease, and unlisted keys are
@@ -94,15 +99,15 @@ _ENVELOPE_CANONICAL: dict[str, str] = {
 # still read; they are never silently dropped.
 _ENVELOPE_RANKS: dict[str, tuple[tuple[str, ...], ...]] = {
     "CANDIDATE": (("TASK_TITLE",), ("RUN", "WT", "COMMIT", "DISPOSITION")),
-    "CANDIDATE_WITHDRAWN": (("SHA",),),
-    "CANDIDATE_VERDICT": (("SHA",), ("VERDICT",), ("TASK_TITLE",)),
+    "CANDIDATE_WITHDRAWN": (("SHA", "DISPOSITION"),),
+    "CANDIDATE_VERDICT": (("SHA", "DISPOSITION"), ("VERDICT",), ("TASK_TITLE",)),
     "PROOF_REQUEST": (("SHA",),),
 }
 # Fields that must be non-empty. TASK is required for every event.
 _ENVELOPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "CANDIDATE": ("RUN", "WT"),
-    "CANDIDATE_WITHDRAWN": ("SHA",),
-    "CANDIDATE_VERDICT": ("SHA", "VERDICT"),
+    "CANDIDATE_WITHDRAWN": (),
+    "CANDIDATE_VERDICT": ("VERDICT",),
     "PROOF_REQUEST": ("SHA",),
 }
 
@@ -181,6 +186,17 @@ def envelope_fields(text: str) -> dict[str, str] | None:
             return fields
         if not fields.get("COMMIT"):
             raise _rejected(event, "COMMIT", "is missing")
+    if event in _SHA_OR_DISPOSITION_EVENTS and "DISPOSITION" in fields:
+        # A no-work unit names no commit: its verdict or withdrawal carries the disposition.
+        if "SHA" in fields:
+            raise _rejected(event, "SHA", "conflicts with DISPOSITION")
+        if fields["DISPOSITION"] not in _NO_WORK_DISPOSITIONS:
+            raise _rejected(event, "DISPOSITION", "must be moot, superseded or wont_do")
+        if event == "CANDIDATE_VERDICT" and fields["VERDICT"] != "BOUNCE":
+            raise _rejected(event, "VERDICT", "must be BOUNCE for a no-work unit")
+        return fields
+    if event in _SHA_OR_DISPOSITION_EVENTS and "SHA" not in fields:
+        raise _rejected(event, "SHA", "is missing")
     sha_key = "COMMIT" if event == "CANDIDATE" else "SHA"
     if re.fullmatch(r"[0-9a-fA-F]{40}", fields[sha_key]) is None:
         raise _rejected(event, sha_key, "must be 40 hex characters")
@@ -276,8 +292,8 @@ def candidate_event(db: HubDatabase, message: InterSessionMessage) -> CandidateE
     if not is_candidate and "SHA" in fields and "COMMIT" in fields:
         return None
     task_ref = fields.get("TASK")
-    # A no-work CANDIDATE carries DISPOSITION instead of COMMIT, so it binds no SHA.
-    no_work = is_candidate and "DISPOSITION" in fields
+    # A no-work unit carries DISPOSITION instead of a commit, so it binds no SHA.
+    no_work = "DISPOSITION" in fields
     sha = fields.get("COMMIT") if is_candidate else fields.get("SHA") or fields.get("COMMIT")
     if not task_ref or (not no_work and (not sha or not _SHA.fullmatch(sha))):
         if (event := fields.get("EVENT")) in _COORDINATION_GRAMMAR:

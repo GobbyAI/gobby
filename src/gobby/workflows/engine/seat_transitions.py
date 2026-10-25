@@ -231,10 +231,13 @@ def _reviewer_message(
     fields = event.fields
     incoming = event.message.to_session == session_id
     same_task = _same_task(db, variables.get("candidate_task"), event)
-    # A unit is its task and its commit, or its task and no-work disposition.
+    # A unit is its task and its commit, or its task and no-work disposition. A no-work unit
+    # holds only while its task has no linked commit; linked work leaves nothing to clear.
     disposition = fields.get("DISPOSITION")
+    open_unit = disposition is None or not event.task.commits
     same_unit = (
         same_task
+        and open_unit
         and event.sha == variables.get("candidate_sha")
         and disposition == variables.get("candidate_disposition")
     )
@@ -243,6 +246,7 @@ def _reviewer_message(
         not variables.get("candidate_received")
         and not variables.get("candidate_task")
         and not variables.get("candidate_sha")
+        and open_unit
         and _same_task(db, session_variables.get("candidate_task"), event)
         and event.sha == session_variables.get("candidate_sha")
         and disposition == session_variables.get("candidate_disposition")

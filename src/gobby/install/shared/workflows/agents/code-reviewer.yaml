@@ -198,9 +198,11 @@ step_workflow:
         round_number=<review_fail_count + 1>, feedback=<your evidence>) with no
         commit_sha, the counts read as below. Record it, then send your Dev Manager
         one prose note naming the task and disposition; the approved record is
-        what lets it close the task. If the work is not moot, record no approval
-        and send your Dev Manager the evidence in prose. A no-commit unit has no
-        BOUNCE verdict.
+        what lets it close the task. If the work is not moot, record the same call
+        with status="rejected", the same disposition and your evidence as feedback,
+        then send a matching durable BOUNCE verdict to finish review:
+        EVENT=CANDIDATE_VERDICT TASK=#NNNNN DISPOSITION=<same> VERDICT=BOUNCE NOTE=<findings>.
+        The developer keeps implementing and sends a commit CANDIDATE once it links real work.
         For a commit candidate, review against the current project integration
         head with gcode and git diff, citing code claims through gcode evidence.
         A LAND needs your approved review step record for the exact SHA: call
@@ -214,10 +216,10 @@ step_workflow:
         A background test run is not a durable wait: wait for it in this turn
         with Monitor, and end the turn only after its result is recorded.
         Read the Orchestrator's or the task's Dev Manager's stored incoming
-        EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
-        exact event to your Dev Manager for your own recorded reviewing
-        assignment. The claimant, author, unrelated reviewers and other Dev
-        Managers cannot withdraw this unit.
+        EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or with this
+        exact task and DISPOSITION for a no-work unit, or send that exact event to
+        your Dev Manager for your own recorded reviewing assignment. The claimant,
+        author, unrelated reviewers and other Dev Managers cannot withdraw this unit.
       allowed_tools:
         - Bash
         - Read
