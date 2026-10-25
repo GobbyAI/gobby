@@ -37,7 +37,9 @@ LIVE_CONFIG_MODULES = {
 }
 
 
-def _capture(tmp_path: Path, wire_api: str = "openrouter-decisions") -> tuple[int, str]:
+def _capture(
+    tmp_path: Path, wire_api: str = "openrouter-decisions", *extra: str
+) -> tuple[int, str]:
     out = tmp_path / "capture.md"
     argv = [
         *decision_flags(),
@@ -53,9 +55,64 @@ def _capture(tmp_path: Path, wire_api: str = "openrouter-decisions") -> tuple[in
         str(write_png(tmp_path)),
         "--out",
         str(out),
+        *extra,
     ]
     code = decisions_live_capture.main(argv, resolve_secret=resolve_secret)
     return code, out.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+def test_capture_long_context_is_explicit_on_shapes_and_probes(
+    tmp_path: Path, openrouter_wire: OpenRouterWire, wire_api: str
+) -> None:
+    code, section = _capture(tmp_path, wire_api, "--long-context")
+    assert code == 0
+    requests = [r for r in openrouter_wire.requests if r.method == "POST"]
+    assert len(requests) == 10
+    assert all(r.headers.get("TypeSafe-Danger-Zone-Long-Context") == "true" for r in requests)
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    assert capture["long_context"] is True
+    assert capture["backend_max_question_tokens"] == 262144
+
+
+@pytest.mark.parametrize("wire_api", ["systemone", "openrouter-decisions"])
+def test_capture_retains_bounded_redacted_score_parse_diagnostics(
+    tmp_path: Path,
+    openrouter_wire: OpenRouterWire,
+    monkeypatch: pytest.MonkeyPatch,
+    wire_api: str,
+) -> None:
+    original = openrouter_wire.handle
+    image = base64.b64encode(png()).decode()
+
+    def inconsistent(request: httpx.Request) -> httpx.Response:
+        response = original(request)
+        if request.method == "POST" and "clarity" in json.loads(request.content)["questions"]:
+            payload = response.json()
+            answer = payload["answers"]["clarity"]
+            answer.update(score=1.95, probabilities={"0": 0.0, "1": 0.04, "2": 0.96})
+            answer["debug"] = f"{SECRET_VALUE} {image} " + "x" * 5000
+            return httpx.Response(200, json=payload)
+        return response
+
+    monkeypatch.setattr(openrouter_wire, "handle", inconsistent)
+    code, section = _capture(tmp_path, wire_api)
+    assert code == 0
+    capture = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    score = next(s for s in capture["shapes"] if s["shape"] == "score")
+    assert score["finding"]["reason"] == "parse"
+    detail = score.get("parse_diagnostics")
+    assert detail is not None, "failed validation must retain the numeric answer"
+    assert len(detail["answers"]) <= 4096
+    comparison = detail["score_comparison"]["clarity"]
+    assert comparison["score"] == 1.95
+    assert comparison["probabilities"] == {"0": 0.0, "1": 0.04, "2": 0.96}
+    assert comparison["expected"] == pytest.approx(1.96)
+    assert comparison["abs_tolerance"] == 0.002
+    assert comparison["rel_tolerance"] == 1e-9
+    assert SECRET_VALUE not in section
+    assert image not in section
+    assert all("parse_diagnostics" not in s for s in capture["shapes"] if s["shape"] != "score")
 
 
 def test_capture_records_every_shape_and_probe(

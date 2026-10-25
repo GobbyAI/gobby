@@ -76,15 +76,41 @@ Recorded from plan Decisions 2, 8 and 10. Not re-read from source this seat.
 - Choice answers: OpenRouter's reference marks `probabilities` and `confidence`
   optional. The parser requires them, the stricter reading, so a Choice answer without them
   raises `parse`.
-- Documented input limit: 32,000 tokens for the whole input, state plus questions
-  (`https://openrouter.ai/docs/guides/community/jev.md`, retrieved 2026-09-30 per
-  Decision 8).
+- Gobby defaults follow TypeSafe's documented normal context: 64,000 tokens for
+  state plus all questions, and 32,000 for state plus any one question.
+  `ai.decisions.backend_max_state_tokens` configures the whole-request maximum;
+  `backend_max_question_tokens` configures the latter. `max_input_tokens` remains
+  the application request budget (8,192 by default), strictly below the request
+  maximum. Service checks and community batch packing enforce both limits using
+  the text estimate. Image token cost remains unknown until the response.
+- `long_context: true` explicitly opts into 262,144-token defaults for both limits
+  and sends `TypeSafe-Danger-Zone-Long-Context: true` on `systemone` and
+  `openrouter-decisions`. Explicit limits can lower those defaults. Larger
+  OpenRouter limits require this opt-in; Workers AI does not support the flag.
+  OpenRouter acceptance of this caller-supplied header is **UNVERIFIED**.
+- TypeSafe's direct API requires that header for long context. OpenRouter separately
+  documents automatic long context above about 32,000 **bytes** of text or for any
+  image; the local limits do not control that provider mode switch. Its advertised
+  route maximum is 262,144 tokens. Sources retrieved 2026-10-25:
+  [TypeSafe context limits](https://docs.typesafe.ai/models#context-length) and
+  [OpenRouter Jev FAQ](https://openrouter.ai/docs/guides/community/jev#frequently-asked-questions).
+  These supersede the 2026-09-30 claim of a 32,000-token whole-input limit.
+- Operator capture run 2, 2026-10-25, used a 262,144-token probe ceiling: the
+  just-under request returned HTTP 200 with `usage.input_tokens: 259427`; the
+  over-limit request returned HTTP 400 with `max_tokens_exceeded`. This observed
+  boundary rejects oversized input rather than returning a truncated success.
+  The capture had no explicit long-context header, so it does not verify that
+  header. Run 2's Score parse failure omitted the returned numeric answer; no
+  rounding diagnosis or tolerance change can be justified from that capture.
+  New captures retain bounded, redacted failed answers and Score comparison data.
+  Capture diagnostic limits never opt the ship configuration into long context.
+  The same run accepted the dated request model `typesafe/jev-1.14-20261014` and
+  returned that version for both the pinned model and dated-model check.
 - Documented error statuses: 400, 401, 402, 403, 404, 413, 429, 500, 502, 503, 524, 529.
   Error body: `{"error": {"code", "message"}}`.
 - Source: `https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request.md`,
   retrieved 2026-09-30 per Decision 1. Not re-fetched this seat.
-- Unverified: oversize behavior (a 413 is documented, its truncation is not), decision-specific
-  rate limits, and whether a dated slug is accepted as a request model.
+- Unverified: decision-specific rate limits and explicit long-context header acceptance.
 
 ## 4. Cloudflare Workers AI Clef (`workers-ai`)
 
@@ -174,7 +200,7 @@ per Decision 15. Not re-read this seat.
 | --- | --- |
 | `systemone` (Kev) | `/v1/models` card key names; live `usage.input_tokens` semantics against the card |
 | `systemone` (TypeSafe) | Live `usage.input_tokens`; the documented `model` resolution |
-| `openrouter-decisions` | Oversize behavior; decision rate limits; dated slug acceptance |
+| `openrouter-decisions` | Explicit long-context header acceptance; decision rate limits |
 | `workers-ai` | Error statuses and bodies; rate limits; `usage.input_tokens` scope; truncation point; versioning |
 | LM Studio `systemone` | Response shape; `usage.input_tokens`; `model` echo; input limit; bearer; just-in-time loading |
 

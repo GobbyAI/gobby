@@ -830,6 +830,28 @@ async def test_gate_batches_fit_the_request_ceiling(
     _assert_requests_fit(decision_wire.bodies, tight)
 
 
+async def test_gate_batches_fit_the_question_context_ceiling(
+    code_storage: CodeIndexStorage, decision_wire: DecisionWire
+) -> None:
+    batch = [_area(code_storage, community_id) for community_id in range(300, 320)]
+    decision_wire.choices = {f"c{c.community_id}": ("generated", 0.9) for c in batch}
+    config = _decisions(
+        max_input_tokens=60000,
+        backend_max_question_tokens=1024,
+        community_label=_consumer("enforce"),
+    )
+    outcomes = await _gated_labeler(_generates(*batch), lambda: config).label_batch(
+        PROJECT_ID, batch, storage=code_storage, run_db=_run_db
+    )
+    assert outcomes == {c.community_id: "gate_admitted" for c in batch}
+    assert len(decision_wire.bodies) >= 2
+    service = decisions.DecisionService(config)
+    for body in decision_wire.bodies:
+        for key, raw in body["questions"].items():
+            question = ChoiceQuestion(raw["instructions"], raw["criteria"])
+            assert service.estimate_request_tokens(body["state"], {key: question}) <= 1024
+
+
 async def test_enforce_without_matching_evaluation_runs_as_shadow(
     code_storage: CodeIndexStorage,
     decision_wire: DecisionWire,

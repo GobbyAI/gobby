@@ -31,7 +31,7 @@ DecisionsWireAPI = Literal["systemone", "openrouter-decisions", "workers-ai"]
 DecisionConsumerMode = Literal["off", "shadow", "enforce"]
 _DECISIONS_BACKEND_MAX_STATE_TOKENS: dict[str, int] = {
     "systemone": 65536,
-    "openrouter-decisions": 32000,
+    "openrouter-decisions": 64000,
     "workers-ai": 65536,
 }
 # Cloudflare's input schema allows only these, and the URL path is built from the model.
@@ -406,12 +406,24 @@ class DecisionsConfig(BaseModel):
     max_input_tokens: int = Field(
         default=8192,
         ge=256,
-        description="Request input ceiling; below the backend's maximum state tokens.",
+        description="Application request input budget; below the backend's whole-request maximum.",
     )
     backend_max_state_tokens: int | None = Field(
         default=None,
         gt=0,
-        description="Backend state-token maximum; unset uses the wire's documented default.",
+        description="Backend whole-request token maximum; unset uses the wire's default.",
+    )
+    backend_max_question_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        description="State plus one question maximum; OpenRouter defaults to 32000 tokens.",
+    )
+    long_context: bool = Field(
+        default=False,
+        description=(
+            "Opt into TypeSafe long context: 262144-token defaults and the Long-Context header "
+            "on systemone/OpenRouter. Header acceptance on OpenRouter is UNVERIFIED."
+        ),
     )
     failure_cooldown_seconds: float = Field(
         default=60,
@@ -449,10 +461,29 @@ class DecisionsConfig(BaseModel):
         """Return the explicit backend maximum or the wire's default."""
         if self.backend_max_state_tokens is not None:
             return self.backend_max_state_tokens
+        if self.long_context:
+            return 262144
         return _DECISIONS_BACKEND_MAX_STATE_TOKENS[self.wire_api]
+
+    @property
+    def resolved_backend_max_question_tokens(self) -> int | None:
+        """Return the state-plus-question ceiling, when the backend has one."""
+        if self.backend_max_question_tokens is not None:
+            return self.backend_max_question_tokens
+        if self.long_context:
+            return 262144
+        return 32000 if self.wire_api == "openrouter-decisions" else None
 
     @model_validator(mode="after")
     def validate_decisions(self) -> DecisionsConfig:
+        if self.long_context and self.wire_api == "workers-ai":
+            raise ValueError("long_context requires systemone or openrouter-decisions")
+        if self.wire_api == "openrouter-decisions" and not self.long_context:
+            if self.resolved_backend_max_state_tokens > 64000 or (
+                self.resolved_backend_max_question_tokens is not None
+                and self.resolved_backend_max_question_tokens > 32000
+            ):
+                raise ValueError("larger OpenRouter context limits require long_context=true")
         if self.api_base is not None and self.model is None:
             raise ValueError("model is required when api_base is set")
         if (
