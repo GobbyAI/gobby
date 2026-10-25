@@ -236,6 +236,52 @@
           "default": "off",
           "description": "off ignores the decision, shadow records it, enforce acts on it."
         },
+        "ai.decisions.community_label_carry.evaluated_backend": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision backend whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.community_label_carry.evaluated_model": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Decision model whose evaluation justifies enforce mode."
+        },
+        "ai.decisions.community_label_carry.min_probability": {
+          "type": "number",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 0.5,
+          "description": "Minimum decision probability to keep a candidate."
+        },
+        "ai.decisions.community_label_carry.mode": {
+          "type": "string",
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": "off",
+          "description": "off ignores the decision, shadow records it, enforce acts on it."
+        },
         "ai.decisions.failure_cooldown_seconds": {
           "type": "number",
           "namespace": "ai.decisions",

@@ -411,6 +411,10 @@ class DecisionsConfig(BaseModel):
         default_factory=ChoiceConsumerConfig,
         description="Code-index community label gating.",
     )
+    community_label_carry: RerankConsumerConfig = Field(
+        default_factory=RerankConsumerConfig,
+        description="Code-index stale community label carry check.",
+    )
     tool_rerank: RerankConsumerConfig = Field(
         default_factory=RerankConsumerConfig,
         description="MCP tool search reranking.",

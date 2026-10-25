@@ -30,7 +30,12 @@ if TYPE_CHECKING:
     from gobby.ai.text_generation import TextGenerationService
     from gobby.code_index.models import StoredCommunity
     from gobby.code_index.storage import CodeIndexStorage
-    from gobby.config.ai import ChoiceConsumerConfig, DecisionConsumerMode, DecisionsConfig
+    from gobby.config.ai import (
+        ChoiceConsumerConfig,
+        DecisionConsumerMode,
+        DecisionsConfig,
+        RerankConsumerConfig,
+    )
     from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
@@ -117,6 +122,8 @@ class CommunityLabeler:
         config = self._decisions_resolver() if self._decisions_resolver else None
         if config is not None and (not config.api_base or not config.model):
             config = None
+        remaining, carried = await self._carry(project_id, communities, storage, run_db, config)
+        communities = remaining
         generated = await self.generate_batch(communities)
         for community in communities:
             result = generated[community.community_id]
@@ -169,15 +176,90 @@ class CommunityLabeler:
             )
         if attempted:
             await run_db(storage.mark_community_labels_attempted, attempted)
-        if outcomes:
+        if outcomes or carried:
             logger.info(
                 "code_index.community_label.batch",
                 extra={
                     "project_id": project_id,
                     "outcomes": dict(Counter(outcome.value for outcome in outcomes.values())),
+                    "carried": carried,
                 },
             )
         return outcomes
+
+    async def _carry(
+        self,
+        project_id: str,
+        communities: Sequence[StoredCommunity],
+        storage: CodeIndexStorage,
+        run_db: RunDb,
+        config: DecisionsConfig | None,
+    ) -> tuple[list[StoredCommunity], int]:
+        if config is None or config.community_label_carry.mode == "off":
+            return list(communities), 0
+        policy = config.community_label_carry
+        stale = [
+            c
+            for c in communities
+            if c.label_source == "model"
+            and c.labeled_signature is not None
+            and c.labeled_signature != c.member_signature
+        ]
+        questions: dict[str, str] = {}
+        states: dict[str, dict[str, Any]] = {}
+        for community in stale:
+            label = sanitize_community_label(community.label, members=community.members)
+            if label is not None:
+                key = f"c{community.community_id}"
+                questions[key] = (
+                    f"The name `{label}` describes what the files in community "
+                    f"{key} have in common."
+                )
+                states[key] = _community_state(community)
+        service = get_decision_service(config)
+        decisions = await _decide(
+            service, config, "community_label_carry", states, questions, service.noul
+        )
+        settled: set[int] = set()
+        carried = 0
+        for community in stale:
+            key = f"c{community.community_id}"
+            decision = decisions.get(key)
+            mode = policy.mode
+            probability = None
+            outcome = "regenerated"
+            if isinstance(decision, DecisionsUnavailable):
+                outcome = "unavailable"
+            elif decision is not None:
+                mode = self._effective_mode(config, policy, decision.backend_identity)
+                probability = decision.answers[key].probability
+                if mode == "enforce" and probability >= policy.min_probability:
+                    written = await run_db(
+                        storage.update_community_label,
+                        project_id,
+                        community.community_id,
+                        community.member_signature,
+                        label=community.label,
+                        label_source=community.label_source,
+                        label_confidence=community.label_confidence,
+                        label_model=community.label_model,
+                        labeled_signature=community.member_signature,
+                    )
+                    settled.add(community.community_id)
+                    outcome = "kept" if written else "superseded"
+                    carried += bool(written)
+            logger.debug(
+                "code_index.community_label.carry",
+                extra={
+                    "project_id": project_id,
+                    "community_id": community.community_id,
+                    "member_signature": community.member_signature,
+                    "outcome": outcome,
+                    "mode": mode,
+                    "probability": probability,
+                },
+            )
+        return [c for c in communities if c.community_id not in settled], carried
 
     async def _gate(
         self,
@@ -215,7 +297,10 @@ class CommunityLabeler:
         return await _decide(service, config, "community_label", states, questions, service.choose)
 
     def _effective_mode(
-        self, config: DecisionsConfig, policy: ChoiceConsumerConfig, identity: str | None
+        self,
+        config: DecisionsConfig,
+        policy: ChoiceConsumerConfig | RerankConsumerConfig,
+        identity: str | None,
     ) -> DecisionConsumerMode:
         if policy.mode != "enforce":
             return policy.mode
@@ -335,7 +420,7 @@ def _community_state(community: StoredCommunity) -> dict[str, Any]:
     }
 
 
-async def _decide[Q: ChoiceQuestion, A](
+async def _decide[Q: (ChoiceQuestion, str), A](
     service: DecisionService,
     config: DecisionsConfig,
     consumer: str,
