@@ -504,6 +504,37 @@ symlink/traversal escapes. Network sources are acquired on the hub; local
 content is read on the selected node. CLI-local operations call the same local
 implementation directly when standalone.
 
+Every Skills effect carries a unique request ID, connection identity,
+`deadline_unix_ms` and a positive `max_run_ms` capped at 600,000. The hub sets
+both from the caller's remaining budget. On receipt the node rejects expired
+deadlines and starts a monotonic timer bounded by both the remaining deadline
+and max_run_ms; wall-clock skew can shorten or reject work, never remove the
+monotonic bound. This is private transport metadata, not a new public MCP input
+or configurable job system. The proposed `skills.cancel` control command names
+an existing request ID on the same connection; repeated/unknown cancellations
+are idempotent and cannot cancel another connection's work.
+
+Keep a Skills-only supervisor for each outbound request in
+`crates/gdaemon/src/nodes/skills.rs`. A caller drop closes its response receiver;
+the supervisor observes closure, hub timeout or shutdown, sends cancellation
+over the existing channel, and retains cleanup ownership until the node's
+terminal reply. Do not depend on dropping `CommandSender::request`: observed
+`PendingGuard::drop` only performs `45| entries.remove(&self.id);` in
+`crates/gdaemon/src/nodes/registry.rs`, excerpt_hash
+`3ab45311ec290fe6c87ac8eb2554fa833295c20a7c04d43760c17d298d6c3a34`.
+Use existing Tokio oneshot/watch channels and tracked tasks; add no general job
+queue or new cancellation dependency. If cancellation delivery/acknowledgement
+fails, report cleanup-unconfirmed diagnostics, never success or a replay; the
+node-enforced deadline still bounds work.
+
+The node receiver tracks each Skills future and its cancellation signal within
+the live connection. Deadline/cancel stops owned preparation work, drains it,
+then emits its one terminal reply; cancellation acknowledgement follows drain.
+Short atomic file publication either finishes or abandons its owned stage before
+acknowledgement. Disconnect/shutdown cancels and drains all connection-owned
+Skills work before reconnect. Unknown late replies are discarded. The next
+connection never inherits a previous request or child process.
+
 Split `crates/gdaemon/src/node_commands.rs` by moving its existing workspace
 command/payload/result types into the new
 `crates/gdaemon/src/node_commands/workspace.rs`, preserving public re-exports
@@ -526,6 +557,10 @@ publication, dependency preparation and remote acquisition remain separate.
 - 2.1.3 - The protocol split preserves existing wire fixtures and public
   type consumers, and every affected production file stays below 1,000 lines.
   test: `crates/gdaemon/tests/skills_node.rs::protocol_extension_preserves_existing_commands`.
+- 2.1.4 - Caller drop and timeout cancel a held node effect over a healthy
+  connection; expired commands, duplicate cancellation, late replies and
+  disconnect/reconnect preserve connection/request ownership and drain work.
+  test: `crates/gdaemon/tests/skills_node.rs::remote_effect_lifetime_is_bounded`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test skills_node`;
 `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test node_command_corpus corpus_round_trips`.
@@ -685,10 +720,33 @@ Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test inst
 Targets:
 - `crates/gskills/src/lib.rs`
 - `crates/gskills/src/bundled.rs`
+- `crates/gskills/src/startup.rs`
 - `crates/gskills/assets/bundled-skills.json`
 - `scripts/build_bundled_skills_asset.py`
 - `crates/gskills/src/http.rs`
 - `crates/gskills/tests/bundled.rs`
+- `crates/gdaemon/src/front_door/skills.rs`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: invoke native Skills dev synchronization after startup guards and before spawning the compatibility backend or serving Skills requests
+- `crates/gdaemon/src/main.rs::Command`
+- `crates/gdaemon/src/main.rs::main`
+- `src/gobby/skills/native_sync.py`
+- `src/gobby/sync_registry.py::SYNC_TARGETS`
+- `src/gobby/runner_init/storage.py::run_startup_content_sync`
+- `tests/runner_init/test_runner_init_storage.py::*` — scope-reason: preserve guarded dev startup and rule migration assertions while asserting Skills is skipped by the Python publisher
+- `tests/test_runner_lifecycle.py::*` — scope-reason: update startup synchronization expectations for the single native Skills publisher
+- `tests/skills/test_native_sync.py`
+- `tests/skills/test_reference_migration.py::*` — scope-reason: direct Skills aggregation integration coverage uses the native bridge while preserving reference-migration assertions
+- `crates/gdaemon/tests/skills_startup.rs`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup.py` — no-edit-reason: the first-install aggregator call keeps its signature and result fields while its Skills entry delegates natively.
+- `src/gobby/cli/installers/shared.py` — no-edit-reason: the thin aggregator wrapper forwards the existing only/skip_types contract unchanged.
+- `src/gobby/cli/sync.py` — no-edit-reason: explicit sync and reinstall retain their existing selection, integrity checks and aggregate result handling.
+- `src/gobby/mcp_proxy/tools/workflows/_import.py` — no-edit-reason: reload keeps its selected types and aggregate result contract through the central Skills delegation.
+- `tests/cli/installers/test_bundled_sync_logging.py` — no-edit-reason: its substituted SYNC_TARGETS and aggregate logging assertions retain the same tuple/result contract.
+- `tests/cli/test_cli_sync_coverage.py` — no-edit-reason: content-type selection and substituted aggregator entries retain their current shape and behavior.
+- `tests/mcp_proxy/tools/workflows/test_registry_surface.py` — no-edit-reason: the registry tuple retains the same Skills content-type name and callable contract.
+- `tests/sync/test_integrity.py` — no-edit-reason: integrity type-name mapping is unchanged by the Skills callable's module path.
 
 **Research context:** `src/gobby/skills/sync.py`,
 `src/gobby/storage/skills/_bundled.py`, and the route
@@ -702,9 +760,73 @@ preserve user-installed/project skills and the established override policy.
 The asset generator is build/test tooling; runtime restoration uses native
 bytes and database transactions. Source edits require asset-freshness checks.
 
-**Granularity:** Seven production targets include generated-asset plumbing;
-the single outcome is authoritative bundled restoration, separate from
-external installation.
+The lifecycle trigger is explicit. In hub/standalone authority modes,
+serve composition calls the native bundled service directly, after database,
+worktree and source-integrity preflight and before spawning the Python
+compatibility backend or exposing Skills routes. It uses the existing
+`src/gobby/utils/dev.py::is_dev_mode` contract: the current directory or an
+ancestor is the Gobby source project. In dev mode it reads the checked, clean
+installed source snapshot through the native loader and synchronizes it once.
+This retains live-source development behavior rather than always substituting
+possibly older embedded bytes. A repeated clean startup is idempotent. A node
+never publishes, and non-dev startup performs no bundled Skills sync even on
+an empty database. Installation is the separate first-seed trigger.
+
+Port the effective source-integrity decision from
+`src/gobby/sync/integrity.py::dirty_bundled_content_refusal` into the native
+startup helper: dirty/untracked protected inputs and incomplete Git/manifest
+checks refuse before any publish; ownership attribution remains diagnostic;
+the existing `GOBBY_ALLOW_DIRTY_BUNDLED_CONTENT` override applies only when
+exactly `1`. Preserve linked-worktree startup refusal. Native source reads use
+the same verified install root, never the caller's arbitrary checkout.
+Observed `src/gobby/runner_init/storage.py::bundled_content_refusal` states
+`51| must precede every bundled publish in init_startup_content.`, excerpt_hash
+`d11863b46039dc9071111495c6b427812c6a26933762fc9d553f01e7520385aa`;
+`run_startup_content_sync` states `65| Non-dev startup skips the aggregator and user-template import.`,
+excerpt_hash `3cfc4238f2108fda567cb553f7f312ebbe58215968cc065d21649cbe0977934d`.
+
+At this ownership handoff, Python dev startup calls its existing aggregator
+with `skip_types={"skills"}` while retaining other content sync and the always-run
+rule-disposition migration. Native Skills startup publication owns this step
+for all REST backend selections, including proxy rollback; route rollback does
+not reassign bundled publication to a second process. This code ships with
+6.1's native family release, so there is no installed intermediate state with
+both publishers enabled. A compatibility-backend restart does not repeat native
+startup sync.
+
+Explicit install, sync, reinstall and workflow-reload calls keep their public
+aggregator entry points. Change only the Skills row of the existing
+`SYNC_TARGETS` to a thin `src/gobby/skills/native_sync.py` adapter. It invokes
+the private native command `gdaemon skills-internal sync-bundled --json` via
+the existing managed-binary resolver and subprocess conventions. Pass the
+same supplied database identity from the existing `HubDatabase.conninfo`
+contract through `GOBBY_DATABASE_URL` in the child
+environment and the verified source root as a literal path argument; never
+serialize credentials into command arguments or logs. The private command
+opens the shared pool, verifies schema identity, calls the Rust bundled service
+directly and exits with the existing aggregate result fields. It never starts
+serve, calls the Python aggregator, or dispatches through the public Skills CLI,
+so delegation cannot recurse and works with the daemon/Python backend absent.
+Missing or incompatible native binaries fail explicitly without Python fallback.
+
+For first install or explicit non-dev sync, use the embedded generated asset;
+explicit dev sync uses the verified source snapshot. Keep existing caller-side
+only/skip_types selection and dirty-source/force policy, with equivalent native
+content/path validation before persistence. The strict dirty-source refusal is
+the startup rule; an explicit operator sync has already selected authorized
+types through its existing dev/force/integrity policy and must not be refused
+by accidentally applying startup-only policy again. The private local command
+is operator-only and is not exposed through the agent gateway. The central
+adapter handles only Skills and
+leaves the install/sync/workflow callers listed above as transitional no-edit
+consumers. They retire with their owning families/global naming switch, not by
+duplicating their implementation here.
+
+**Granularity:** The production target count exceeds six because one bundled
+publication owner crosses native startup, private install invocation and the
+existing Python aggregator. These are direct triggers of the same idempotent
+transactional service, with no new scheduler or independent registry lifecycle.
+Source acquisition and external installation remain separate leaves.
 
 **Acceptance:**
 
@@ -715,8 +837,22 @@ external installation.
   sources, and configured bundled-size violations fail visibly.
   test: `crates/gskills/tests/bundled.rs::bundled_asset_and_sync_are_current`.
 
+- 2.6.3 - Native dev startup synchronizes once before serving or launching
+  Python; repeated startup is idempotent, dirty/unreadable inputs refuse before
+  writes, the exact existing override is honored, and non-dev/node startup
+  writes no bundled rows. Installed overrides remain intact.
+  test: `crates/gdaemon/tests/skills_startup.rs::startup_policy_preserves_single_publisher`.
+- 2.6.4 - A fresh non-dev installation and explicit sync/reinstall seed native
+  rows through the private command with no running daemon/Python backend;
+  only/skip_types, counts, warnings/errors and database identity are preserved,
+  delegation cannot recurse, and missing binaries fail without a second
+  publisher. test: `tests/skills/test_native_sync.py::test_explicit_aggregation_delegates_skills_once`.
+
 Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test bundled`;
-run the generator in check mode without mutating the operator's registry.
+`CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test skills_startup`;
+the native-sync, reference-migration and affected runner tests with the protected
+Python prefix; run the generator in check mode without mutating the operator's
+registry. First-install tests use temporary state and the isolated test database.
 
 ## P3: Native script preparation
 `kind: framing`
@@ -766,6 +902,9 @@ Targets:
 - `crates/gskills/src/runtime.rs`
 - `crates/gskills/src/process.rs`
 - `crates/gskills/tests/runtime.rs`
+- `crates/gdaemon/src/node_commands/skills.rs`
+- `crates/gdaemon/src/nodes/skills.rs`
+- `crates/gdaemon/tests/skills_runtime_cancellation.rs`
 
 **Research context:**
 `src/gobby/skills/materialization.py::_runtime_spec`, `_ensure_dependencies`,
@@ -776,7 +915,14 @@ dependency staging, browser expectation/revision and cache markers, environment
 projection, warnings, 180-second command timeout and five-second termination
 grace. Commands run as argument arrays on the selected node. Cancellation kills
 only the owned process group and waits for it; no detached install continues
-after a failed request. Use deterministic fake Node/package/browser fixtures
+after acknowledged cancellation. Wire materialization's preparation futures
+to 2.1's connection/request cancellation signal and node-enforced deadline;
+the request supervisor retains remote cleanup ownership if the hub tool future
+is dropped. On deadline/cancel/disconnect send termination to the owned process
+group, wait up to five seconds, escalate to kill if needed, and reap children
+before the node terminal/cancel acknowledgement or reconnect. A healthy channel
+continues serving pings and unrelated requests during preparation and drain.
+Use deterministic fake Node/package/browser fixtures
 for unit tests and one admitted isolated runtime smoke. No new package manager
 or scheduler is introduced.
 
@@ -788,8 +934,19 @@ or scheduler is introduced.
 - 3.2.2 - Timeout, disconnect and cancellation leave no owned child running,
   no false readiness marker, and a reusable prior complete generation.
   test: `crates/gskills/tests/runtime.rs::runtime_failures_drain_owned_processes`.
+- 3.2.3 - With the hub/node channel healthy and a fake npm/browser child
+  blocked, cancellation or timeout of the hub caller cancels/drains that child
+  before acknowledgement; a following request succeeds. Disconnect/reconnect,
+  duplicate cancel and cancellation-delivery failure are separately exercised,
+  with deadline enforcement and explicit unconfirmed-cleanup diagnostics.
+  test: `crates/gdaemon/tests/skills_runtime_cancellation.rs::hub_cancellation_drains_remote_runtime`.
 
-Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test runtime`.
+**Granularity:** More than six production targets remain one runtime-readiness
+outcome: the remote adapter consumes 2.1's already implemented request lifetime
+and owns process draining, with integrated node/hub proof alongside local tests.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo test -p gobby-skills --test runtime`;
+`CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test skills_runtime_cancellation`.
 
 ## P4: Publish the native internal-tool family
 `kind: framing`
