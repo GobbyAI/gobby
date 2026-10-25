@@ -24,7 +24,7 @@ use gobby_terminal::protocol::{
 use gobby_terminal::terminal_theme::{RgbColor, TerminalTheme, ThemeDeclaration};
 use handover_support::{
     ino, is_zombie, launch, list_rows, mtime_ns, pgid_file, restore, wait_until, Bound, HelperPane,
-    HelperSpec, BOUND_FILE, WAIT,
+    HelperSpec, StateEdit, BOUND_FILE, WAIT,
 };
 use host_support::{
     connect, recv_json, rpc, temp_socket_dir, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
@@ -742,6 +742,88 @@ fn setup_failure_in_new_image_falls_back() {
     }
 }
 
+/// #24946: the handover runs between the running release and its successor,
+/// so this image restores the state file gterm 0.1.15 wrote (it carries no
+/// `next_attachment`) with every pane live.
+#[test]
+fn previous_release_state_restores_every_pane() {
+    let dir = temp_socket_dir();
+    let mut spec = HelperSpec::new(dir.path(), vec![echo_pane("ht-a"), echo_pane("ht-b")]);
+    spec.state_edit = StateEdit::PreviousRelease;
+    let host = restore(&spec);
+
+    let restored = committed_restores(dir.path(), "previous-release");
+    assert_eq!(restored.len(), 1, "one restore: {restored:?}");
+    assert!(
+        restored[0].contains("Succeeded"),
+        "this image committed, without a fallback: {restored:?}"
+    );
+    let mut control = host.control();
+    let mut listed: Vec<String> = list_rows(&mut control)
+        .iter()
+        .map(|row| row["host_terminal_id"].as_str().unwrap_or_default().into())
+        .collect();
+    listed.sort();
+    assert_eq!(listed, ["ht-a", "ht-b"], "every carried pane is restored");
+    assert_writes_echo(&mut control, "previous-release", &["ht-a", "ht-b"]);
+}
+
+/// #24946: a new image that cannot read the state file at all still execs
+/// the earlier image the attempt recorded, over the unchanged state file and
+/// carried fds, so no live pane is dropped.
+#[test]
+fn unreadable_state_falls_back_with_every_pane_live() {
+    let dir = temp_socket_dir();
+    let path = |name: &str| dir.path().join(name);
+    let mut spec = HelperSpec::new(dir.path(), vec![echo_pane("ht-a"), echo_pane("ht-b")]);
+    spec.state_edit = StateEdit::UnknownObserverBind;
+    let ran = path("fallback-args");
+    // The earlier image records its arguments, then keeps the carried fds open.
+    spec.fallback_script = Some(format!(
+        "echo \"$@\" > '{}.tmp' && mv '{0}.tmp' '{0}'\nexec sleep 600",
+        ran.display()
+    ));
+    let mut host = launch(&spec);
+    host.wait_captured();
+
+    let deadline = Instant::now() + WAIT;
+    while !ran.exists() {
+        if let Some(status) = host.wait_exit(Duration::from_millis(20)) {
+            panic!(
+                "the restore ended ({status}) without falling back, dropping every pane: {}",
+                host.diagnostics()
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the earlier image never ran: {}",
+            host.diagnostics()
+        );
+    }
+    let args = std::fs::read_to_string(&ran).expect("fallback args");
+    let state = path(STATE_FILE);
+    assert!(
+        args.contains(&format!("--resume-state {}", state.display()))
+            && args.contains("--resume-fallback"),
+        "the earlier image resumes the same state file as a fallback: {args:?}"
+    );
+    assert!(state.exists(), "the state file is left for the fallback");
+    for id in ["ht-a", "ht-b"] {
+        let pgid: i32 = std::fs::read_to_string(path(&pgid_file(id)))
+            .expect("pgid file")
+            .trim()
+            .parse()
+            .expect("pgid");
+        // SAFETY: signal 0 only checks that the pane leader exists.
+        let alive = unsafe { libc::kill(pgid, 0) } == 0;
+        assert!(alive && !is_zombie(pgid as u32), "{id} survives");
+    }
+    assert!(
+        host.wait_exit(Duration::ZERO).is_none(),
+        "the host process lives on as the earlier image"
+    );
+}
+
 #[test]
 fn fallback_failure_and_wedged_restore_end_the_process() {
     let panes = || vec![echo_pane("ht-a"), echo_pane("ht-b")];
@@ -1044,6 +1126,65 @@ fn upgrade_keeps_pids_epoch_and_panes() {
         assert_writes_echo(&mut ctl, attempt_id, &ids(&panes));
     }
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    shutdown(&mut host, &mut ctl);
+}
+
+/// #24946: a restore that fails in the new image ends in a fallback whose
+/// outcome names why, so the daemon driving the install gets a typed error
+/// rather than a bare `fallback`.
+#[test]
+fn fallback_outcome_names_why_the_restore_failed() {
+    let mut host = live_host(&[("GTERM_RESTORE_FAULT", "decode:ht-1")]);
+    let dir = host.socket_dir().to_path_buf();
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let panes = echo_panes(&mut host, &mut ctl, 1);
+    let rows = expected_rows(&panes);
+
+    let accepted = host_upgrade(&mut ctl, &gterm_bin(), "typed-fallback", Value::Null);
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "typed-fallback", OUTCOME_WAIT);
+    assert_outcome(&after, "typed-fallback", "fallback", None);
+    let reason = &after["upgrade"]["last_outcome"]["reason"];
+    assert!(
+        reason.as_str().is_some_and(|reason| !reason.is_empty()),
+        "a fallback names its restore failure: {after}"
+    );
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    assert_eq!(pane_rows(&mut ctl), rows, "the panes survive the fallback");
+    assert_writes_echo(&mut ctl, "typed-fallback", &ids(&panes));
+    shutdown(&mut host, &mut ctl);
+}
+
+/// #24946: outside the handover, a second host started on a live host's
+/// socket dir refuses, leaving the live host, its sockets, and its pidfile
+/// alone, so two live hosts never share one socket dir.
+#[test]
+fn second_host_on_a_live_socket_dir_refuses() {
+    let mut host = live_host(&[]);
+    let dir = host.socket_dir().to_path_buf();
+    let control_ino = ino(&dir.join(CONTROL_SOCKET));
+    let frames_ino = ino(&dir.join(FRAMES_SOCKET));
+
+    let mut second = spawn_host_with_env(&dir, &[], &[], &[]);
+    let status = host_support::wait_exit(&mut second, Duration::from_secs(15))
+        .expect("the second host exits");
+
+    assert!(!status.success(), "the second host refuses: {status}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join(PID_FILE))
+            .expect("pidfile")
+            .trim(),
+        host.id().to_string(),
+        "the live host keeps its pidfile"
+    );
+    assert_eq!(ino(&dir.join(CONTROL_SOCKET)), control_ino);
+    assert_eq!(ino(&dir.join(FRAMES_SOCKET)), frames_ino);
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    assert_eq!(
+        ping(&mut ctl)["host_pid"],
+        host.id(),
+        "the live host answers"
+    );
     shutdown(&mut host, &mut ctl);
 }
 
@@ -1582,8 +1723,38 @@ fn rollback_case(case: &RollbackCase) -> Value {
         try_ping(&dir, UPGRADE_TOKEN).is_some(),
         "{label}: the host answers"
     );
+    // Rollback removes the state file; only the directory a case put in its
+    // place remains.
+    let kept: &[&str] = if case.block_state_file {
+        &[STATE_FILE]
+    } else {
+        &[]
+    };
+    wait_state_files(&dir, label, kept);
     shutdown(&mut host, &mut writer);
     after
+}
+
+/// Waits until the socket dir's state and staged files are `kept`: a late
+/// write job removes the file it staged only when it ends.
+fn wait_state_files(dir: &Path, label: &str, kept: &[&str]) {
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let mut left: Vec<_> = std::fs::read_dir(dir)
+            .expect("read the socket dir")
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name.contains(STATE_FILE))
+            .collect();
+        left.sort();
+        if left == kept {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{label}: state files left: {left:?}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Plan gterm-host-handover 1.3.4. The cases run on their own hosts at once,
@@ -1718,6 +1889,67 @@ fn capture_finishing_inside_drain_rolls_back_with_live_panes() {
         tamper_pin: false,
     });
     assert_eq!(after["upgrade"]["last_outcome"]["reason"], "soft_deadline");
+}
+
+/// The state write and pin check are bounded by the soft cutoff, like quiesce
+/// and capture. A write that is still running there rolls back inside the
+/// reserve instead of running into the hard alarm with every pane.
+#[test]
+fn overdue_state_write_rolls_back_with_live_panes() {
+    let after = rollback_case(&RollbackCase {
+        label: "soft-cutoff-in-write",
+        // The write job outlives the hard deadline by a second.
+        fault: |_| json!({"write_past_cutoff_ms": 4000}),
+        outcome: "aborted",
+        reason: "soft_deadline",
+        errno: None,
+        stalled_writer: false,
+        block_state_file: false,
+        exiting_pane: false,
+        tamper_pin: false,
+    });
+    assert_eq!(
+        after["upgrade"]["last_outcome"]["reason"], "soft_deadline",
+        "{after}"
+    );
+}
+
+#[test]
+fn retry_after_a_late_state_write_keeps_its_own_state() {
+    let mut host = live_host(&[]);
+    let dir = host.socket_dir().to_path_buf();
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    let panes = echo_panes(&mut host, &mut ctl, 2);
+    let before = ping(&mut ctl);
+    let mut upgrader = connect_control(&dir, UPGRADE_TOKEN);
+
+    // A rolls back at its soft cutoff. Its write job is left running and
+    // stages a second past A's hard deadline, inside B's hold before exec.
+    let late = json!({"write_past_cutoff_ms": 4000});
+    let accepted = host_upgrade(&mut upgrader, &gterm_bin(), "late-write", late);
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "late-write", OUTCOME_WAIT);
+    assert_outcome(&after, "late-write", "aborted", Some("soft_deadline"));
+
+    // No job owns this one: a dead host staged it.
+    let orphan = dir.join(format!(".{STATE_FILE}.orphan.tmp"));
+    std::fs::write(&orphan, b"{}").expect("plant an orphaned staged file");
+    let hold = json!({"hold_before_exec_ms": 5000});
+    let accepted = upgrade_once_idle(&mut upgrader, &gterm_bin(), "after-late-write", hold);
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    let after = wait_outcome(&dir, UPGRADE_TOKEN, "after-late-write", OUTCOME_WAIT);
+    assert_outcome(&after, "after-late-write", "succeeded", None);
+    assert_eq!(after["generation"], 1, "{after}");
+    assert_eq!(after["host_pid"], host.id(), "{after}");
+    assert_eq!(after["host_epoch"], before["host_epoch"], "{after}");
+
+    for pane in &panes {
+        assert!(process_exists(pane.pgid), "{} lives", pane.host_terminal_id);
+    }
+    let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
+    assert_writes_echo(&mut ctl, "after-late-write", &ids(&panes));
+    wait_state_files(&dir, "after-late-write", &[]);
+    shutdown(&mut host, &mut ctl);
 }
 
 #[test]

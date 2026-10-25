@@ -398,6 +398,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "dd1caa8e162f9e3535bd21d527d0d9c8a9687aae129974cba78e3f379a1edcf9",
         sql: include_str!("../../assets/schema/migrations/477_runbook_task_states.sql"),
     },
+    EmbeddedMigration {
+        version: 478,
+        filename: "478_code_pin_source_read_scope.sql",
+        checksum: "8ebfda5ca6488116f6fe4e09d44d268358c6204ad606b0e444453c744b67d9cf",
+        sql: include_str!("../../assets/schema/migrations/478_code_pin_source_read_scope.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

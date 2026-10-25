@@ -99,6 +99,23 @@ pub struct HelperSpec {
     /// Arguments only the helper's own exec of the pin receives; the state
     /// file's argv, which a fallback runs with, leaves them out.
     pub primary_args: Vec<String>,
+    /// How the written state file differs from what this build captures.
+    pub state_edit: StateEdit,
+    /// A shell script pinned and recorded as the earlier image, in place of
+    /// `previous_image`; it runs when the new image falls back.
+    pub fallback_script: Option<String>,
+}
+
+/// An edit the helper applies to the state file after writing it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StateEdit {
+    None,
+    /// The file as gterm 0.1.15, the previous release, wrote it: without
+    /// `next_attachment`.
+    PreviousRelease,
+    /// The first pane names an observer bind this image does not know, as a
+    /// later release might write it.
+    UnknownObserverBind,
 }
 
 impl HelperSpec {
@@ -117,6 +134,8 @@ impl HelperSpec {
             previous_image: None,
             alarm_secs: None,
             primary_args: Vec::new(),
+            state_edit: StateEdit::None,
+            fallback_script: None,
         }
     }
 }
@@ -467,6 +486,13 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
         });
     }
 
+    let fallback_pin = spec.fallback_script.as_ref().map(|body| {
+        let script = dir.join("fallback-image.sh");
+        std::fs::write(&script, format!("#!/bin/sh\n{body}\n")).expect("fallback script");
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
+            .expect("fallback script mode");
+        image::pin_image(&dir.join("fallback-images"), &script).expect("pin fallback script")
+    });
     let argv = vec![
         "gterm".to_string(),
         "host".to_string(),
@@ -482,12 +508,17 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
         attempt: UpgradeAttempt {
             attempt_id: "attempt-handover".into(),
             candidate_sha256: pin.sha256.clone(),
-            previous_sha256: pin.sha256.clone(),
+            previous_sha256: fallback_pin
+                .as_ref()
+                .map_or_else(|| pin.sha256.clone(), |fallback| fallback.sha256.clone()),
         },
-        previous_image: spec
-            .previous_image
-            .clone()
-            .unwrap_or_else(|| pin.path.clone()),
+        previous_image: match &fallback_pin {
+            Some(fallback) => fallback.path.clone(),
+            None => spec
+                .previous_image
+                .clone()
+                .unwrap_or_else(|| pin.path.clone()),
+        },
         argv: argv.clone(),
         control_listener_fd: control,
         frames_listener_fd: frames,
@@ -498,6 +529,7 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
     };
     let state_path = dir.join(STATE_FILE);
     write_state(&state_path, &state).expect("write state");
+    edit_state(&state_path, spec.state_edit);
     let bound = Bound {
         control_ino: ino(&dir.join(CONTROL_SOCKET)),
         frames_ino: ino(&dir.join(FRAMES_SOCKET)),
@@ -523,6 +555,30 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
         .arg("--resume-state")
         .arg(&state_path)
         .exec()
+}
+
+/// Rewrites the state file in place, keeping its mode, per `edit`.
+fn edit_state(path: &Path, edit: StateEdit) {
+    if edit == StateEdit::None {
+        return;
+    }
+    let mut state: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("read state")).expect("state json");
+    match edit {
+        StateEdit::None => {}
+        StateEdit::PreviousRelease => {
+            state
+                .as_object_mut()
+                .expect("state object")
+                .remove("next_attachment")
+                .expect("this build writes next_attachment");
+        }
+        StateEdit::UnknownObserverBind => {
+            state["panes"][0]["observer_bind"] =
+                serde_json::json!({"state": "from_a_later_release"});
+        }
+    }
+    std::fs::write(path, serde_json::to_vec(&state).expect("encode state")).expect("edit state");
 }
 
 /// Binds a listener the way `run` does and leaks it for the next image.

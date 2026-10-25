@@ -260,6 +260,7 @@ fn global_prune_sweep_rechecks_and_continues_after_failures() {
 }
 
 mod serial_db {
+    use super::super::super::content_gc::delete_unreferenced_content_row;
     use super::*;
     use crate::db;
 
@@ -310,6 +311,299 @@ mod serial_db {
         let orphan_discovery = discover_project_scoped_records(&orphan_context, 17)
             .expect("discover target orphan project");
         assert!(orphan_discovery.machine_states.is_empty());
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn purged_overlay_releases_pins() {
+        let (mut conn, database_url) = connect_test_db();
+        let source_id = unique_test_project_id("gcode-prune-pin-source");
+        let purged_id = unique_test_project_id("gcode-prune-pin-purged");
+        let live_id = unique_test_project_id("gcode-prune-pin-live");
+        let project_ids = [&source_id, &purged_id, &live_id];
+        for project_id in project_ids {
+            cleanup_project(&mut conn, project_id).expect("pre-clean project rows");
+        }
+        let _cleanups = project_ids.map(|project_id| ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        });
+        let source_root = git_init_root();
+        seed_pin_project(&mut conn, &source_id, &source_root.path().to_string_lossy());
+        let released = seed_old_version(&mut conn, &source_id, "src/released.rs", "pin-released");
+        let kept = seed_old_version(&mut conn, &source_id, "src/kept.rs", "pin-kept");
+        // The purged overlay's checkout is gone, so the stale sweep owns it; the live
+        // overlay still pins another version of the same source.
+        seed_pin_project(&mut conn, &purged_id, &format!("/tmp/{purged_id}"));
+        seed_pin_project(&mut conn, &live_id, &source_root.path().to_string_lossy());
+        seed_pin(
+            &mut conn,
+            &purged_id,
+            &source_id,
+            "src/released.rs",
+            "pin-released",
+        );
+        seed_pin(&mut conn, &live_id, &source_id, "src/kept.rs", "pin-kept");
+        assert!(
+            candidate_ids(&database_url, &source_id).is_empty(),
+            "pinned versions are not GC candidates while their pins exist",
+        );
+
+        let purge_context = prune_test_context(database_url.clone(), &purged_id, false);
+        let discovery =
+            discover_project_scoped_records(&purge_context, 17).expect("discover purged overlay");
+        assert_eq!(
+            discovery
+                .machine_states
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            [purged_id.as_str()]
+        );
+        let totals = mutate_project_scoped_stale(&discovery);
+        assert_eq!(totals.deleted, 1);
+        assert_eq!(totals.failed, 0);
+
+        assert_eq!(
+            pins_owned_by(&mut conn, &purged_id),
+            Vec::<(String, String)>::new(),
+            "purging an overlay removes the pin rows it owns",
+        );
+        assert_eq!(
+            pins_owned_by(&mut conn, &live_id),
+            vec![("src/kept.rs".to_string(), source_id.clone())],
+            "purging an overlay leaves other overlays' pins",
+        );
+        assert_eq!(
+            candidate_ids(&database_url, &source_id),
+            vec![released.clone()],
+            "the released source version becomes collectable; the live pin keeps its version",
+        );
+
+        for file_id in [&released, &kept] {
+            delete_unreferenced_content_row(&mut conn, file_id).expect("collect source version");
+        }
+        assert_eq!(content_row_count(&mut conn, &released), 0);
+        assert_eq!(content_row_count(&mut conn, &kept), 1);
+
+        // Manual invalidation shares the transaction: it drops the overlay's own pin.
+        crate::index::indexer::invalidate(&mut conn, &live_id, None)
+            .expect("invalidate live overlay");
+        assert_eq!(
+            pins_owned_by(&mut conn, &live_id),
+            Vec::<(String, String)>::new(),
+            "invalidating an overlay removes the pin rows it owns",
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn nested_pin_chain_preserves_source_version() {
+        let (mut conn, database_url) = connect_test_db();
+        let source_id = unique_test_project_id("gcode-prune-chain-source");
+        let middle_id = unique_test_project_id("gcode-prune-chain-middle");
+        let leaf_id = unique_test_project_id("gcode-prune-chain-leaf");
+        let project_ids = [&source_id, &middle_id, &leaf_id];
+        for project_id in project_ids {
+            cleanup_project(&mut conn, project_id).expect("pre-clean project rows");
+        }
+        let _cleanups = project_ids.map(|project_id| ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        });
+        let source_root = git_init_root();
+        seed_pin_project(&mut conn, &source_id, &source_root.path().to_string_lossy());
+        let middle_only = seed_old_version(&mut conn, &source_id, "src/middle.rs", "chain-middle");
+        let shared = seed_old_version(&mut conn, &source_id, "src/shared.rs", "chain-shared");
+        // The intermediate overlay is stale; the leaf overlay of it stays live.
+        seed_pin_project(&mut conn, &middle_id, &format!("/tmp/{middle_id}"));
+        let middle_version = seed_old_version(&mut conn, &middle_id, "src/own.rs", "chain-own");
+        seed_pin_project(&mut conn, &leaf_id, &source_root.path().to_string_lossy());
+        seed_pin(
+            &mut conn,
+            &middle_id,
+            &source_id,
+            "src/middle.rs",
+            "chain-middle",
+        );
+        seed_pin(
+            &mut conn,
+            &middle_id,
+            &source_id,
+            "src/shared.rs",
+            "chain-shared",
+        );
+        // The leaf pins the intermediate's own version and a source version it shares.
+        seed_pin(&mut conn, &leaf_id, &middle_id, "src/own.rs", "chain-own");
+        seed_pin(
+            &mut conn,
+            &leaf_id,
+            &source_id,
+            "src/shared.rs",
+            "chain-shared",
+        );
+
+        let purge_context = prune_test_context(database_url.clone(), &middle_id, false);
+        let discovery = discover_project_scoped_records(&purge_context, 17)
+            .expect("discover intermediate overlay");
+        let totals = mutate_project_scoped_stale(&discovery);
+        assert_eq!(totals.deleted, 1);
+        assert_eq!(totals.failed, 0);
+
+        assert_eq!(
+            pins_owned_by(&mut conn, &middle_id),
+            Vec::<(String, String)>::new(),
+            "purging the intermediate overlay removes the pins it owns",
+        );
+        assert_eq!(
+            pins_owned_by(&mut conn, &leaf_id),
+            vec![
+                ("src/own.rs".to_string(), middle_id.clone()),
+                ("src/shared.rs".to_string(), source_id.clone()),
+            ],
+            "the live descendant keeps every pin, including those naming the purged overlay",
+        );
+        assert_eq!(
+            candidate_ids(&database_url, &source_id),
+            vec![middle_only.clone()],
+            "only the version no live descendant pins becomes collectable",
+        );
+
+        // Even a direct collection attempt keeps every version the leaf still pins.
+        for file_id in [&middle_only, &shared, &middle_version] {
+            delete_unreferenced_content_row(&mut conn, file_id).expect("collect chain version");
+        }
+        assert_eq!(content_row_count(&mut conn, &middle_only), 0);
+        assert_eq!(content_row_count(&mut conn, &shared), 1);
+        assert_eq!(
+            content_row_count(&mut conn, &middle_version),
+            1,
+            "the purged overlay's own version stays while the leaf pins it",
+        );
+    }
+
+    fn git_init_root() -> tempfile::TempDir {
+        let root = tempfile::tempdir().expect("create scratch git root");
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root.path())
+            .arg("init")
+            .arg("-q")
+            .status()
+            .expect("run git init");
+        assert!(status.success());
+        root
+    }
+
+    fn local_machine_uuid() -> uuid::Uuid {
+        db::id_param(&gobby_core::machine::read_local_machine_id().expect("read local machine id"))
+            .expect("local machine id is a uuid")
+    }
+
+    fn seed_pin_project(conn: &mut postgres::Client, project_id: &str, root: &str) {
+        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+        conn.execute(
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+            &[&project_uuid],
+        )
+        .expect("insert indexed project identity");
+        conn.execute(
+            "INSERT INTO code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, $3, 1, 1, NOW(), 0)",
+            &[&local_machine_uuid(), &project_uuid, &root],
+        )
+        .expect("insert indexed project state");
+    }
+
+    /// An unreferenced content version past the retention window.
+    fn seed_old_version(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) -> String {
+        let file_id = test_uuid(project_id, &format!("{file_path}:{content_hash}"));
+        conn.execute(
+            "INSERT INTO code_indexed_files
+                (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
+                 graph_synced, vectors_synced, indexed_at, last_referenced_at)
+             VALUES ($1, $2, $3, 'rust', $4, 0, 19, false, false,
+                 NOW() - INTERVAL '60 days', NOW() - INTERVAL '60 days')",
+            &[
+                &file_id,
+                &db::id_param(project_id).expect("test project id is a uuid"),
+                &file_path,
+                &content_hash,
+            ],
+        )
+        .expect("insert content version");
+        file_id.to_string()
+    }
+
+    fn seed_pin(
+        conn: &mut postgres::Client,
+        overlay_project_id: &str,
+        source_project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO code_overlay_pins
+                (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &local_machine_uuid(),
+                &db::id_param(overlay_project_id).expect("overlay project uuid"),
+                &file_path,
+                &db::id_param(source_project_id).expect("source project uuid"),
+                &content_hash,
+            ],
+        )
+        .expect("insert overlay pin");
+    }
+
+    fn pins_owned_by(
+        conn: &mut postgres::Client,
+        overlay_project_id: &str,
+    ) -> Vec<(String, String)> {
+        conn.query(
+            "SELECT file_path, source_project_id::text
+             FROM code_overlay_pins
+             WHERE overlay_project_id = $1
+             ORDER BY file_path",
+            &[&db::id_param(overlay_project_id).expect("overlay project uuid")],
+        )
+        .expect("read overlay pins")
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect()
+    }
+
+    fn candidate_ids(database_url: &str, project_id: &str) -> Vec<String> {
+        discover_content_gc(database_url, 17, Some(project_id))
+            .expect("discover GC candidates")
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect()
+    }
+
+    fn content_row_count(conn: &mut postgres::Client, file_id: &str) -> i64 {
+        conn.query_one(
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_files WHERE id = $1",
+            &[&db::id_param(file_id).expect("file id is a uuid")],
+        )
+        .expect("count content rows")
+        .get(0)
     }
 
     struct ProjectCleanup {
@@ -453,6 +747,11 @@ mod serial_db {
 
     fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = db::id_param(project_id)?;
+        conn.execute(
+            "DELETE FROM code_overlay_pins
+             WHERE overlay_project_id = $1 OR source_project_id = $1",
+            &[&project_id],
+        )?;
         conn.execute(
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             &[&project_id],

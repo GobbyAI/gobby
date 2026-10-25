@@ -17,7 +17,8 @@ CALL_RE = re.compile(
 
 
 def _production_prefix(source: str) -> str:
-    return source.split("#[cfg(test)]", 1)[0]
+    # Test-only declarations and helpers can precede more production functions.
+    return re.split(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*\{", source, maxsplit=1)[0]
 
 
 def _postgres_call_inventory() -> dict[str, dict[str, int]]:
@@ -25,7 +26,17 @@ def _postgres_call_inventory() -> dict[str, dict[str, int]]:
     for root in RUST_ROOTS:
         for path in sorted(root.rglob("*.rs")):
             relative = path.relative_to(ROOT).as_posix()
-            if "/tests/" in relative or path.name == "tests.rs" or path.name.endswith("_tests.rs"):
+            if (
+                "/tests/" in relative
+                or path.name == "tests.rs"
+                or path.name.endswith("_tests.rs")
+                # External modules enabled only for tests/test support.
+                or relative
+                in {
+                    "crates/gcode/src/visibility/pin_fixture.rs",
+                    "crates/gcode/src/test_env.rs",
+                }
+            ):
                 continue
             counts = Counter(CALL_RE.findall(_production_prefix(path.read_text())))
             if counts:
@@ -36,6 +47,19 @@ def _postgres_call_inventory() -> dict[str, dict[str, int]]:
 def _load_manifest() -> dict[str, Any]:
     assert MANIFEST.exists(), "managed gcode privilege manifest is required"
     return cast(dict[str, Any], json.loads(MANIFEST.read_text()))
+
+
+def test_inventory_keeps_calls_after_test_only_items() -> None:
+    source = """
+#[cfg(test)]
+mod fixture;
+#[cfg(test)]
+fn reset_counter() {}
+fn production() { conn.query("SELECT 1", &[]); }
+#[cfg(test)]
+mod tests { fn test_query() { conn.execute("SELECT 2", &[]); } }
+"""
+    assert Counter(CALL_RE.findall(_production_prefix(source))) == {"query": 1}
 
 
 def test_manifest_covers_every_rust_database_call_at_head() -> None:
@@ -78,6 +102,11 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"],
         "scope_column": "overlay_project_id",
         "machine_scope_column": "machine_id",
+        "scope_note": (
+            "SELECT also exposes pins referencing the bound write project's content "
+            "across all machines for retention; mutations remain limited to the bound "
+            "write project and issuing machine"
+        ),
     }
     assert relations["projects"]["operations"] == ["SELECT"]
     assert "columns" not in relations["projects"]
