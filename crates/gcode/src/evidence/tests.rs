@@ -1009,6 +1009,58 @@ fn commit_metadata_recovers_binding_within_default_budget_for_oversized_patch() 
     Ok(())
 }
 
+#[test]
+fn commit_metadata_reports_omitted_patch_and_recovers_it_with_larger_budget() -> anyhow::Result<()>
+{
+    let (temporary, mut binding) = source_repo()?;
+    let repo = temporary.path();
+    std::fs::write(repo.join("large.txt"), "large change\n".repeat(2_000))?;
+    git(repo, &["add", "large.txt"])?;
+    binding.commit_oid = commit(repo, "large change")?;
+    binding.tree_oid = git(repo, &["rev-parse", "HEAD^{tree}"])?;
+    let library = EvidenceLibrary::new(
+        repo,
+        binding.clone(),
+        Arc::new(FakeFacts::for_source(&binding)),
+    )?;
+    let mut metadata = request(
+        &binding,
+        EvidenceOperation::Read {
+            read: ReadSelector::CommitMetadata { commit_oid: None },
+        },
+    );
+    let bounded = library.query(metadata.clone())?;
+    assert!(!bounded.complete);
+    assert_eq!(
+        serde_json::to_value(bounded.completeness)?,
+        "truncated_patch"
+    );
+    assert!(bounded.warnings.iter().any(|warning| {
+        warning.code == "commit_patch_omitted" && warning.path.as_deref() == Some("large.txt")
+    }));
+    let EvidenceItem::CommitMetadata(omitted) = &bounded.items[0] else {
+        panic!("expected commit metadata");
+    };
+    assert!(omitted.patch.contains("patch omitted"));
+    assert_eq!(
+        omitted.record_hash,
+        super::source::canonical_hash(&(&omitted.changed_path, &omitted.patch))?
+    );
+
+    metadata.max_bytes = 100_000;
+    let full = library.query(metadata)?;
+    assert!(full.complete);
+    assert_eq!(full.completeness, Completeness::Complete);
+    assert!(full.warnings.is_empty());
+    let EvidenceItem::CommitMetadata(restored) = &full.items[0] else {
+        panic!("expected commit metadata");
+    };
+    assert_eq!(restored.patch.matches("+large change\n").count(), 2_000);
+    assert_ne!(restored.record_hash, omitted.record_hash);
+    assert_ne!(restored.evidence_id, omitted.evidence_id);
+    Ok(())
+}
+
 fn assert_commit_metadata_contract() -> anyhow::Result<()> {
     let temporary = tempfile::tempdir()?;
     let repo = temporary.path();

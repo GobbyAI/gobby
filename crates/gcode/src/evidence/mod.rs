@@ -337,7 +337,7 @@ impl EvidenceLibrary {
         let request_fingerprint = source::canonical_hash(&(&canonical, self.working_tree))?;
         let query_result = match &canonical.operation {
             EvidenceOperation::Search { search } => search::execute(self, search)?,
-            EvidenceOperation::Read { read } => read::execute(self, read)?,
+            EvidenceOperation::Read { read } => read::execute(self, read, canonical.max_bytes)?,
             EvidenceOperation::Graph { graph } => graph::execute(self, graph)?,
             EvidenceOperation::Communities { communities } => {
                 communities::execute(self, communities)?
