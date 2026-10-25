@@ -992,6 +992,14 @@ task expansion; this planning seat neither expands nor dispatches work.
 ## V1 Plan Changelog
 `kind: framing`
 
+2026-10-24: Writer and Plan Adversary reached consensus on all 20 deliverables
+after fresh review of 3e0b2cce525c4cc4b413a7c21c75db72c1611519. CRON-001 is
+resolved by passive native services until the exclusive restart-bound owner
+transfer; CRON-002 by current-schema delivered-mailbox retention under the
+explicit Orchestrator ruling, with #22340 remaining parked; CRON-003 by the
+complete local active-run count used for lease handoff. No blocking or nit
+findings and no unresolved questions remain.
+
 2026-10-24: Accepted CRON-001/002/003: keep pre-cutover native services passive;
 port current-schema mailbox retention under the Orchestrator ruling without
 unparking #22340; preserve complete local active-run handoff counting through
