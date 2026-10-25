@@ -5,7 +5,7 @@ mod fake_gterm;
 #[path = "node_support/workspace_fixtures.rs"]
 mod workspace_fixtures;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use gobby_core::bootstrap::parse_hub_database_bootstrap;
 use gobby_daemon::node_commands::{
     ExitReason, ReportExit, SpawnMode, SpawnWorkspace, WorkspaceMode,
@@ -13,12 +13,14 @@ use gobby_daemon::node_commands::{
 use gobby_daemon::nodes::agents::{
     NodeAgents,
     repair::{self, RepairEnv},
+    sandbox::{PolicyInputs, checkout_component, gcode_runtime_digest, resolve_srt_policy},
     state::{AgentState, ExitRecord, RunPhase, RunRecord, WorkspaceRecord},
     workspace,
 };
 use gobby_daemon::state::NodeServices;
 use serde_json::{Value, json};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
@@ -1302,5 +1304,512 @@ async fn existing_workspace_used_in_place() -> Result<()> {
         format!("{err:#}").contains(&outside.display().to_string()),
         "{err:#}"
     );
+    Ok(())
+}
+
+// Plan 2.4: the spawn-time SRT policy. The corpus holds the Python oracle's
+// placeholder-form output; each case fills the placeholders with this host's tree.
+
+const SRT_RUN_ID: &str = "node-srt-corpus";
+const SRT_FIXTURE_CHECKOUT: &str = "/gobby-srt-fixture/checkout";
+const SRT_PROVIDERS: [&str; 5] = ["claude", "codex", "grok", "droid", "agy"];
+
+fn srt_corpus() -> Result<Value> {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/node_srt/corpus.json");
+    Ok(serde_json::from_str(&fs::read_to_string(path)?)?)
+}
+
+fn srt_entries<'a>(corpus: &'a Value, key: &str) -> Result<&'a [Value]> {
+    corpus[key]
+        .as_array()
+        .map(Vec::as_slice)
+        .with_context(|| format!("corpus {key} is not an array"))
+}
+
+fn srt_case_inputs(corpus: &Value, name: &str) -> Result<Value> {
+    let case = srt_entries(corpus, "cases")?
+        .iter()
+        .find(|case| case["name"] == name)
+        .with_context(|| format!("corpus has no case {name}"))?;
+    Ok(case["inputs"].clone())
+}
+
+fn srt_text(value: &Value, key: &str) -> Result<String> {
+    Ok(value[key]
+        .as_str()
+        .with_context(|| format!("corpus field {key} is not a string"))?
+        .to_owned())
+}
+
+fn srt_host_platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    }
+}
+
+/// One case's tree, named the way the Python replay names its layout.
+struct SrtTree {
+    layout: BTreeMap<&'static str, String>,
+}
+
+impl SrtTree {
+    fn new(case_dir: &Path) -> Result<Self> {
+        fs::create_dir_all(case_dir)?;
+        let root = fs::canonicalize(case_dir)?;
+        let gobby_home = root.join("gobby-home");
+        let workspace = root.join("workspace");
+        let uid = fs::metadata(&root)?.uid();
+        let named = [
+            ("home", root.join("home")),
+            ("gobby_home", gobby_home.clone()),
+            ("workspace", workspace.clone()),
+            ("main", root.join("main")),
+            ("bin", root.join("bin")),
+            ("tmp", root.join("tmp")),
+            ("run_root", gobby_home.join("run/sandbox").join(SRT_RUN_ID)),
+            (
+                "srt_socket",
+                fs::canonicalize("/tmp")?.join(format!("gobby-srt-{uid}")),
+            ),
+        ];
+        let mut layout: BTreeMap<&'static str, String> = named
+            .into_iter()
+            .map(|(name, path)| (name, path.display().to_string()))
+            .collect();
+        // The oracle also emits the unresolved spelling of the socket root.
+        layout.insert("srt_socket_literal", format!("/tmp/gobby-srt-{uid}"));
+        layout.insert("checkout", checkout_component(&workspace));
+        layout.insert(
+            "gcode_runtime",
+            gobby_home
+                .join("gcode-runtime")
+                .join(gcode_runtime_digest(&workspace))
+                .display()
+                .to_string(),
+        );
+        Ok(Self { layout })
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        PathBuf::from(&self.layout[name])
+    }
+
+    fn fill_text(&self, text: &str) -> String {
+        self.layout
+            .iter()
+            .fold(text.to_owned(), |text, (name, real)| {
+                text.replace(&format!("{{{name}}}"), real)
+            })
+    }
+
+    fn fill(&self, value: &Value) -> Value {
+        match value {
+            Value::String(text) => Value::String(self.fill_text(text)),
+            Value::Array(items) => Value::Array(items.iter().map(|item| self.fill(item)).collect()),
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(key, item)| (key.clone(), self.fill(item)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    /// Create the directories, provider executables, repositories and project
+    /// config that the case's inputs name.
+    fn materialize(&self, inputs: &Value) -> Result<()> {
+        for name in ["home", "gobby_home", "bin", "tmp", "workspace", "main"] {
+            fs::create_dir_all(self.path(name))?;
+        }
+        for relative in srt_entries(inputs, "home_tree")? {
+            let relative = relative
+                .as_str()
+                .context("home_tree entry is not a string")?;
+            fs::create_dir_all(self.path("home").join(relative))?;
+        }
+        for provider in SRT_PROVIDERS {
+            let executable = self.path("bin").join(provider);
+            fs::write(&executable, "#!/bin/sh\n")?;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))?;
+        }
+        for repo in [self.path("workspace"), self.path("main")] {
+            git(&repo, &["init", "-q"])?;
+        }
+        if let Some(project) = inputs.get("project_json").filter(|value| !value.is_null()) {
+            let config = self.path("main").join(".gobby");
+            fs::create_dir_all(&config)?;
+            fs::write(config.join("project.json"), serde_json::to_vec(project)?)?;
+        }
+        Ok(())
+    }
+}
+
+/// Build the policy inputs from a case's placeholder-form inputs.
+fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
+    let filled = tree.fill(inputs);
+    Ok(PolicyInputs {
+        provider: srt_text(&filled, "provider")?,
+        sandbox: serde_json::from_value(filled["sandbox"].clone())?,
+        source_root: PathBuf::from(srt_text(&filled, "source_root")?),
+        project_id: srt_text(&filled, "project_id")?,
+        session_id: srt_text(&filled, "session_id")?,
+        workspace: PathBuf::from(srt_text(&filled, "workspace")?),
+        home: tree.path("home"),
+        gobby_home: tree.path("gobby_home"),
+        env: serde_json::from_value(filled["env"].clone())?,
+        provider_executable: Some(PathBuf::from(srt_text(&filled, "provider_executable")?)),
+        daemon_port: u16::try_from(filled["daemon_port"].as_u64().context("daemon_port")?)?,
+        websocket_port: u16::try_from(
+            filled["websocket_port"]
+                .as_u64()
+                .context("websocket_port")?,
+        )?,
+        run_id: srt_text(&filled, "run_id")?,
+        prewarm_pre_commit_store: filled["prewarm_pre_commit_store"]
+            .as_bool()
+            .context("prewarm_pre_commit_store is not a bool")?,
+    })
+}
+
+fn srt_covered(grants: &[String], path: &Path) -> bool {
+    grants.iter().any(|grant| path.starts_with(grant))
+}
+
+/// A JSON string as Python's `json.dumps` writes it with `ensure_ascii`: printable
+/// ASCII stays literal, and every other character becomes `\uXXXX`, as surrogate
+/// pairs above the BMP.
+fn srt_json_string(text: &str) -> String {
+    let mut escaped = String::from("\"");
+    for character in text.chars() {
+        match character {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{8}' => escaped.push_str("\\b"),
+            '\u{c}' => escaped.push_str("\\f"),
+            ' '..='~' => escaped.push(character),
+            _ => {
+                let mut units = [0; 2];
+                for unit in character.encode_utf16(&mut units) {
+                    escaped.push_str(&format!("\\u{unit:04x}"));
+                }
+            }
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+/// Render JSON with sorted keys and no spaces, as Python's `json.dumps` does with
+/// `sort_keys=True, separators=(",", ":")`.
+fn srt_canonical(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+            entries.sort_by(|left, right| left.0.cmp(right.0));
+            let fields = entries
+                .into_iter()
+                .map(|(key, item)| format!("{}:{}", srt_json_string(key), srt_canonical(item)))
+                .collect::<Vec<_>>();
+            format!("{{{}}}", fields.join(","))
+        }
+        Value::Array(items) => {
+            let items = items.iter().map(srt_canonical).collect::<Vec<_>>();
+            format!("[{}]", items.join(","))
+        }
+        Value::String(text) => srt_json_string(text),
+        scalar => scalar.to_string(),
+    }
+}
+
+/// Keep the first of each repeated entry, as the oracle's `deny_paths` does. On
+/// Linux the two SRT socket aliases fill to one path, so the corpus repeats it.
+fn srt_dedupe(entries: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    entries
+        .into_iter()
+        .filter(|entry| seen.insert(entry.clone()))
+        .collect()
+}
+
+/// The oracle's settings text for one case. The shared deny table is expanded
+/// through the case's indices, with this host's paths filled in.
+fn srt_expected_settings(tree: &SrtTree, corpus: &Value, settings: &Value) -> Result<String> {
+    let table = srt_entries(corpus, "deny_write_table")?
+        .iter()
+        .map(|entry| -> Result<String> {
+            let entry = entry
+                .as_str()
+                .context("deny_write_table entry is not a string")?;
+            Ok(tree.fill_text(entry))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut document = tree.fill(settings);
+    let deny_write = document["filesystem"]["denyWrite"]
+        .as_array()
+        .context("denyWrite is not an array")?
+        .iter()
+        .map(|index| -> Result<String> {
+            let index = index.as_u64().context("denyWrite index is not a number")?;
+            let index = usize::try_from(index)?;
+            table
+                .get(index)
+                .cloned()
+                .with_context(|| format!("denyWrite index {index} is outside the table"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let deny_read = document["filesystem"]["denyRead"]
+        .as_array()
+        .context("denyRead is not an array")?
+        .iter()
+        .map(|entry| -> Result<String> {
+            Ok(entry
+                .as_str()
+                .context("denyRead entry is not a string")?
+                .to_owned())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    document["filesystem"]["denyRead"] = json!(srt_dedupe(deny_read));
+    document["filesystem"]["denyWrite"] = json!(srt_dedupe(deny_write));
+    Ok(srt_canonical(&document))
+}
+
+#[test]
+fn srt_settings_match_python_corpus() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let cases = srt_entries(&corpus, "cases")?;
+    assert!(!cases.is_empty(), "the corpus records no cases");
+    let fixture = Path::new(SRT_FIXTURE_CHECKOUT);
+    assert_eq!(
+        corpus["path_digests"],
+        json!({
+            "fixture_checkout": SRT_FIXTURE_CHECKOUT,
+            "checkout_component": checkout_component(fixture),
+            "gcode_runtime_digest": gcode_runtime_digest(fixture),
+        }),
+        "the path hashes differ from the Python oracle's"
+    );
+
+    let root = tempfile::tempdir()?;
+    for case in cases {
+        if case["platform"]
+            .as_str()
+            .is_some_and(|platform| platform != srt_host_platform())
+        {
+            continue;
+        }
+        let name = srt_text(case, "name")?;
+        let tree = SrtTree::new(&root.path().join(&name))?;
+        tree.materialize(&case["inputs"])?;
+        let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &case["inputs"])?)?;
+        assert_eq!(
+            String::from_utf8(policy.settings)?,
+            srt_expected_settings(&tree, &corpus, &case["expected"]["settings"])?,
+            "{name}: sandbox settings"
+        );
+        let expected = tree.fill(&case["expected"]);
+        assert_eq!(
+            policy.env,
+            serde_json::from_value::<BTreeMap<String, String>>(expected["env"].clone())?,
+            "{name}: run environment"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn srt_spawn_time_grants() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let root = tempfile::tempdir()?;
+
+    // The payload's domains and capabilities pass through; registries are forced on.
+    let mut inputs = srt_case_inputs(&corpus, "claude-srt-empty")?;
+    inputs["sandbox"] = json!({
+        "enabled": true,
+        "backend": "srt",
+        "mode": "permissive",
+        "allow_network": true,
+        "extra_read_paths": [],
+        "extra_write_paths": [],
+        "extra_deny_read_paths": [],
+        "extra_deny_write_paths": [],
+        "allowed_domains": ["crates.io", "example.com"],
+        "denied_domains": ["evil.example"],
+        "allow_git_network": true,
+        "allow_package_registries": false,
+        "allow_unix_sockets": ["/var/run/example.sock"],
+    });
+    let tree = SrtTree::new(&root.path().join("payload"))?;
+    tree.materialize(&inputs)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    assert_eq!(policy.sandbox.allowed_domains, ["crates.io", "example.com"]);
+    assert_eq!(policy.sandbox.denied_domains, ["evil.example"]);
+    assert!(policy.sandbox.allow_network);
+    assert!(policy.sandbox.allow_git_network);
+    assert_eq!(policy.sandbox.allow_unix_sockets, ["/var/run/example.sock"]);
+    assert!(
+        policy.sandbox.allow_package_registries,
+        "every srt run gets package registries"
+    );
+
+    // Cache variables, CARGO_HOME, CARGO_TARGET_DIR and the hook inbox are writable.
+    let grants = &policy.sandbox.extra_write_paths;
+    let run_cache = tree.path("run_root").join("cache");
+    for (key, value) in &policy.env {
+        if Path::new(value).starts_with(&run_cache)
+            || key == "CARGO_HOME"
+            || key == "CARGO_TARGET_DIR"
+        {
+            assert!(
+                srt_covered(grants, Path::new(value)),
+                "{key}={value} is not writable"
+            );
+        }
+    }
+    let inbox = tree.path("home").join(".gobby/hooks/inbox");
+    assert!(
+        srt_covered(grants, &inbox),
+        "the hook inbox is not writable"
+    );
+    assert!(
+        !grants.iter().any(|grant| grant.ends_with(".nextest")),
+        "the nextest store is granted without a declaration"
+    );
+
+    // The nextest store is granted only when the source checkout declares it.
+    let lane = srt_case_inputs(&corpus, "claude-nextest-lane")?;
+    let tree = SrtTree::new(&root.path().join("nextest"))?;
+    tree.materialize(&lane)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &lane)?)?;
+    let store = fs::canonicalize(tree.path("main"))?.join(".nextest");
+    assert!(
+        policy
+            .sandbox
+            .extra_write_paths
+            .iter()
+            .any(|grant| Path::new(grant) == store),
+        "a declared nextest store is granted: {store:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn srt_policy_refuses_sensitive_grants() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let refusals = srt_entries(&corpus, "refusals")?;
+    assert!(!refusals.is_empty(), "the corpus records no refusals");
+    let root = tempfile::tempdir()?;
+    for refusal in refusals {
+        let name = srt_text(refusal, "name")?;
+        let tree = SrtTree::new(&root.path().join(&name))?;
+        tree.materialize(&refusal["inputs"])?;
+        let error = resolve_srt_policy(&srt_policy_inputs(&tree, &refusal["inputs"])?).expect_err(
+            &format!("{name}: a grant under a sensitive or credential root is refused"),
+        );
+        assert_eq!(
+            error.to_string(),
+            tree.fill_text(&srt_text(refusal, "error")?),
+            "{name}: refusal message"
+        );
+    }
+    Ok(())
+}
+
+/// Poll until `path` is a directory, giving up after `within`. Returns whether it appeared.
+fn wait_for_dir(path: &Path, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    while !path.is_dir() {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
+/// Build a case that asks for the pre-commit prewarm, with an operator store
+/// and optionally a pre-commit config in the workspace.
+fn srt_prewarm_case(
+    root: &Path,
+    name: &str,
+    base: &Value,
+    flag: bool,
+    config: bool,
+) -> Result<(SrtTree, Value)> {
+    let tree = SrtTree::new(&root.join(name))?;
+    let operator = tree.path("home").join("operator-pre-commit");
+    let mut inputs = base.clone();
+    inputs["prewarm_pre_commit_store"] = json!(flag);
+    inputs["env"]["PRE_COMMIT_HOME"] = json!(operator.display().to_string());
+    tree.materialize(&inputs)?;
+    fs::create_dir_all(&operator)?;
+    fs::write(operator.join("operator-marker"), "operator")?;
+    if config {
+        fs::write(
+            tree.path("workspace").join(".pre-commit-config.yaml"),
+            "repos: []\n",
+        )?;
+    }
+    Ok((tree, inputs))
+}
+
+#[test]
+fn pre_commit_store_prewarm() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let base = srt_case_inputs(&corpus, "claude-srt-empty")?;
+    let root = tempfile::tempdir()?;
+
+    // A spare under the managed root is consumed into the run's store.
+    let (tree, inputs) = srt_prewarm_case(root.path(), "spare", &base, true, true)?;
+    let spare = tree
+        .path("gobby_home")
+        .join("runtime/managed-executions/.pre-commit-store-spare");
+    fs::create_dir_all(&spare)?;
+    fs::write(spare.join("spare-marker"), "spare")?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let store = PathBuf::from(&policy.env["XDG_CACHE_HOME"]).join("pre-commit");
+    assert!(
+        store.join("spare-marker").is_file(),
+        "the spare fills the run's store"
+    );
+    assert!(!store.join("operator-marker").exists());
+    // Production refills the spare in the background, so the consumed path may
+    // come back. Wait a bounded time for the refill; a spare that never returns fails.
+    assert!(
+        wait_for_dir(&spare, Duration::from_secs(10)),
+        "the consumed spare never refilled within 10s"
+    );
+
+    // Without a spare, the operator store is cloned into the run.
+    let (tree, inputs) = srt_prewarm_case(root.path(), "clone", &base, true, true)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let store = PathBuf::from(&policy.env["XDG_CACHE_HOME"]).join("pre-commit");
+    assert!(
+        store.join("operator-marker").is_file(),
+        "the operator store is cloned"
+    );
+
+    // A failed clone only warns: the run still resolves and gets no store.
+    let (tree, inputs) = srt_prewarm_case(root.path(), "failed-clone", &base, true, true)?;
+    let unreadable = tree
+        .path("home")
+        .join("operator-pre-commit/operator-marker");
+    fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000))?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let store = PathBuf::from(&policy.env["XDG_CACHE_HOME"]).join("pre-commit");
+    assert!(!store.exists(), "a failed clone leaves no partial store");
+
+    // Without the flag, or without the config, nothing is copied.
+    for (name, flag, config) in [("flag-off", false, true), ("no-config", true, false)] {
+        let (tree, inputs) = srt_prewarm_case(root.path(), name, &base, flag, config)?;
+        let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+        let store = PathBuf::from(&policy.env["XDG_CACHE_HOME"]).join("pre-commit");
+        assert!(!store.exists(), "{name}: nothing is copied");
+    }
     Ok(())
 }
