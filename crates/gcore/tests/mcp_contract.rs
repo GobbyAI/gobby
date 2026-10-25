@@ -374,54 +374,54 @@ mod mcp_contract {
             .is_ok()
         );
     }
-}
-#[test]
-fn python_float_and_escape_boundaries() {
-    use gobby_core::mcp::canonical_definition_json;
-    use serde_json::json;
+    #[test]
+    fn python_float_and_escape_boundaries() {
+        use gobby_core::mcp::canonical_definition_json;
+        use serde_json::json;
 
-    assert_eq!(
-        canonical_definition_json("\u{7f}", &json!([1e-5, 1e-7, 1e16, 1e15, -0.0])),
-        r#"{"description":"\u007f","input_schema":[1e-05,1e-07,1e+16,1000000000000000.0,-0.0]}"#
-    );
-}
-
-#[test]
-fn output_schema_uses_serialized_fields() {
-    use gobby_core::mcp::{ToolDefinition, ToolFamily, ToolRegistry, ToolServer};
-    use schemars::JsonSchema;
-    use serde::Deserialize;
-
-    #[derive(Deserialize, JsonSchema)]
-    struct Request {}
-    #[derive(JsonSchema, serde::Serialize)]
-    struct Output {
-        #[serde(skip_serializing)]
-        _internal: String,
-        #[serde(skip_deserializing)]
-        visible: String,
+        assert_eq!(
+            canonical_definition_json("\u{7f}", &json!([1e-5, 1e-7, 1e16, 1e15, -0.0])),
+            r#"{"description":"\u007f","input_schema":[1e-05,1e-07,1e+16,1000000000000000.0,-0.0]}"#
+        );
     }
-    struct Family;
-    impl ToolFamily for Family {
-        fn server(&self) -> ToolServer {
-            ToolServer::new(
-                "output",
-                "Output",
-                vec![
-                    ToolDefinition::new("get", "Get", |_, _: Request| async {
-                        Ok(serde_json::Value::Null)
-                    })
-                    .output_schema::<Output>(),
-                ],
-            )
+
+    #[test]
+    fn output_schema_uses_serialized_fields() {
+        use gobby_core::mcp::{ToolDefinition, ToolFamily, ToolRegistry, ToolServer};
+        use schemars::JsonSchema;
+        use serde::Deserialize;
+
+        #[derive(Deserialize, JsonSchema)]
+        struct Request {}
+        #[derive(JsonSchema, serde::Serialize)]
+        struct Output {
+            #[serde(skip_serializing)]
+            _internal: String,
+            #[serde(skip_deserializing)]
+            visible: String,
         }
+        struct Family;
+        impl ToolFamily for Family {
+            fn server(&self) -> ToolServer {
+                ToolServer::new(
+                    "output",
+                    "Output",
+                    vec![
+                        ToolDefinition::new("get", "Get", |_, _: Request| async {
+                            Ok(serde_json::Value::Null)
+                        })
+                        .output_schema::<Output>(),
+                    ],
+                )
+            }
+        }
+        let registry = ToolRegistry::new(vec![Box::new(Family)]).unwrap();
+        let schema = registry
+            .tool("output", "get")
+            .unwrap()
+            .output_schema()
+            .unwrap();
+        assert!(schema["properties"].get("_internal").is_none());
+        assert_eq!(schema["properties"]["visible"]["type"], "string");
     }
-    let registry = ToolRegistry::new(vec![Box::new(Family)]).unwrap();
-    let schema = registry
-        .tool("output", "get")
-        .unwrap()
-        .output_schema()
-        .unwrap();
-    assert!(schema["properties"].get("_internal").is_none());
-    assert_eq!(schema["properties"]["visible"]["type"], "string");
 }
