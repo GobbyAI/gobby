@@ -121,6 +121,54 @@ fn mismatch(pointer: &str) -> ProxiedCheck {
 }
 
 #[tokio::test]
+async fn canonical_overlay_claims_verify() -> Result<()> {
+    database_case(async |db| {
+        let canonical = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+        let exchange = Exchange::issue(db).await?;
+        // Both issuers put the canonical UUID in the signed grant, even when
+        // the request uses another accepted spelling.
+        let response = exchange.resigned(|grant| {
+            grant.principal.code_overlay_project_id = Some(canonical.to_owned());
+            Ok(())
+        })?;
+        for overlay in [
+            "3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+            "{3F2504E0-4F89-11D3-9A0C-0305E82C3301}",
+            "urn:uuid:3F2504E0-4F89-11D3-9A0C-0305E82C3301",
+        ] {
+            let mut request = exchange.request.clone();
+            request["code_overlay_project_id"] = json!(overlay);
+            assert_eq!(
+                exchange
+                    .check(&serde_json::to_vec(&request)?, &response)
+                    .await?,
+                ProxiedCheck::Verified
+            );
+
+            let mut different = request.clone();
+            different["code_overlay_project_id"] = json!(Uuid::new_v4().to_string());
+            assert_eq!(
+                exchange
+                    .check(&serde_json::to_vec(&different)?, &response)
+                    .await?,
+                mismatch("/grant/principal/code_overlay_project_id")
+            );
+
+            let mut invalid = request;
+            invalid["code_overlay_project_id"] = json!("invalid-overlay");
+            assert_eq!(
+                exchange
+                    .check(&serde_json::to_vec(&invalid)?, &response)
+                    .await?,
+                mismatch("/request")
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn python_issued_grant_verifies() -> Result<()> {
     database_case(async |db| {
         let exchange = Exchange::issue(db).await?;

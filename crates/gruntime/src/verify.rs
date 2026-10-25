@@ -12,6 +12,7 @@ use gobby_core::grant::{
 use gobby_core::route_family::ProxiedCheck;
 use serde::Deserialize;
 use serde_json::Value;
+use uuid::Uuid;
 
 use crate::capabilities::capabilities_from_snapshot;
 use crate::config::active_state;
@@ -104,7 +105,13 @@ async fn verify(
         project_id: request.project_id,
         execution_id: None,
         session_id: request.session_id,
-        code_overlay_project_id: request.code_overlay_project_id,
+        code_overlay_project_id: request
+            .code_overlay_project_id
+            .as_deref()
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(|_| "/request")?
+            .map(|overlay| overlay.to_string()),
     };
     if let Some(pointer) = first_difference(
         &serde_json::to_value(expected).map_err(|_| "/grant/principal")?,
