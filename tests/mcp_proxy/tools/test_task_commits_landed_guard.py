@@ -185,14 +185,20 @@ async def test_failed_audit_write_keeps_every_link_and_writes_no_event(
 
 
 @pytest.mark.asyncio
-async def test_detached_main_checkout_refuses_the_unlink_of_a_landed_commit(
+@pytest.mark.parametrize(
+    "head_command",
+    [("checkout", "--detach"), ("symbolic-ref", "HEAD", "refs/remotes/origin/main")],
+    ids=["detached", "non-branch-symref"],
+)
+async def test_main_checkout_without_a_branch_refuses_the_unlink_of_a_landed_commit(
+    head_command: tuple[str, ...],
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     integration_repo: tuple[Path, str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, landed, unlanded = integration_repo
-    _git(repo, "checkout", "--detach")
+    _git(repo, *head_command)
     monkeypatch.setattr(
         "gobby.tasks.land_commit.require_root", lambda db, project_id, machine_id: str(repo)
     )
@@ -204,7 +210,7 @@ async def test_detached_main_checkout_refuses_the_unlink_of_a_landed_commit(
     manager.link_commit(task.id, landed)
     manager.link_commit(task.id, unlanded)
 
-    with pytest.raises(commit_unlink.CommitUnlinkRefused, match="detached HEAD"):
+    with pytest.raises(commit_unlink.CommitUnlinkRefused, match="not on a branch"):
         await commit_unlink.unlink_commit_audited(
             manager, manager.get_task(task.id), landed, reason="Superseded", actor="session-1"
         )
