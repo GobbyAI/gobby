@@ -145,8 +145,9 @@ SCRIPT /private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-lag7b7s1/t
 Offline verification read all 42 captured payloads and rows, recomputed request
 hashes, sizes and latency percentiles, checked the reported usage and answer
 vectors across all accepted rows, and asserted the exact field/path relationships
-listed above. The two request artifacts here are byte-for-byte copies of each
-run's `payload-1.json`. This documentation pass made no live inference calls.
+listed above. The two request artifacts here are indented copies of each run's
+`payload-1.json`, identical after parsing, with one trailing newline added. This
+documentation pass made no live inference calls.
 
 Measured latencies in seconds, in attempt order 1–20, are preserved here so the
 percentiles remain independently recomputable without the temporary directories:
