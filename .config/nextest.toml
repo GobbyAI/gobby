@@ -70,6 +70,14 @@ filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | binary(frame_
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
+# gobby-terminals has its own host_lifecycle binary. The override above matches
+# package gobby-terminal only, so this binary ran unserialized and its
+# explicit_drain test (#24228) could overlap sibling tests in the capture-pipe
+# race described above. Group it with the other host_lifecycle binary.
+filter = 'package(gobby-terminals) & binary(host_lifecycle)'
+test-group = 'gterm-pty'
+
+[[profile.default.overrides]]
 filter = 'package(gobby-client) & test(late_control_reply_cannot_settle_a_newer_request)'
 slow-timeout = { period = "60s", terminate-after = 2 }
 test-group = 'gterm-pty'
