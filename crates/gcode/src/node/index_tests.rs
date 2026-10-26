@@ -260,6 +260,7 @@ fn prior_path_reparse_counts_each_file_once() -> anyhow::Result<()> {
     let prior = first.partial.expect("the first request reports its counts");
 
     // A different writer removes one prior request's facts before finalization.
+    h.forget_state(&project, &paths[0])?;
     h.forget_facts(&project, &paths[0])?;
     let batch = FinalBatch {
         prior: Some(prior),
