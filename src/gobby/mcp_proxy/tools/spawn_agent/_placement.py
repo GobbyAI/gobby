@@ -47,14 +47,18 @@ async def preflight_placement(
     project_context_authoritative: bool,
     session_manager: Any | None = None,
     agent_name: str | None = None,
+    seat_title: str | None = None,
     resume_session_id: str | None = None,
     replaces_tab: str | None = None,
 ) -> PlacedLaunch | dict[str, Any] | None:
-    """Resolve a placement before any side effect; return a refusal reply or ``None``."""
+    """Resolve a placement before any side effect; return a refusal reply or ``None``.
+
+    ``seat_title`` is a defined seat's definition name; it replaces a split's pane title.
+    """
     if placement is None:
         return None
     try:
-        parsed = AgentPlacement.parse(placement)
+        parsed = AgentPlacement.parse(placement).for_seat(seat_title)
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc) or type(exc).__name__)
     try:

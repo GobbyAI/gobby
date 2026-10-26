@@ -97,6 +97,8 @@ READ_ONLY_SEATS = {
     "design-reviewer",
     "recovery-steward",
     "consolidator",
+    "docs-reviewer",
+    "research-reviewer",
 }
 WRITE_SCOPE_RULES = {"assistant": "assistant-write-scope", "archivist": "archivist-write-scope"}
 STEP_SEATS = {
@@ -130,6 +132,8 @@ SEND_MESSAGE_TARGETS = {
     "security-reviewer": ["parent", "session"],
     "debugger": ["parent", "session"],
     "design-reviewer": ["parent", "session"],
+    "docs-reviewer": ["parent", "session"],
+    "research-reviewer": ["parent", "session"],
     "recovery-steward": ["parent", "session"],
     "consolidator": ["parent", "session"],
     "docs-reviewer": ["parent", "session"],

@@ -4,7 +4,7 @@ tags: [roles, seat, enforcement, gobby, default]
 # for an empty path set.
 rules:
   researcher-write-scope:
-    description: "The Researcher writes only research artifacts"
+    description: "The Researcher writes only research artifacts and its agent workspace folder"
     event: before_tool
     enabled: true
     priority: 15
@@ -16,11 +16,12 @@ rules:
     effects:
       - type: block
         reason: >-
-          The Researcher writes only under `<project>/.gobby/plans/research/`.
-          Name the target with a literal path inside it. Source code remains read-only.
+          The Researcher writes only under `<project>/.gobby/plans/research/` or its
+          agent workspace folder (named in your Agent Workspace section). Name the target
+          with a literal path inside one of them. Source code remains read-only.
 
   assistant-write-scope:
-    description: "The Assistant writes only under docs/"
+    description: "The Assistant writes only under docs/ and its agent workspace folder"
     event: before_tool
     enabled: true
     priority: 15
@@ -32,11 +33,12 @@ rules:
     effects:
       - type: block
         reason: >-
-          The Assistant writes only under `docs/`. Name the target with a literal
-          path inside it.
+          The Assistant writes only under `docs/` or its agent workspace folder (named
+          in your Agent Workspace section). Name the target with a literal path inside
+          one of them.
 
   archivist-write-scope:
-    description: "The Archivist writes only dated workspace reports"
+    description: "The Archivist writes only dated workspace reports and its agent workspace folder"
     event: before_tool
     enabled: true
     priority: 15
@@ -53,4 +55,5 @@ rules:
         reason: >-
           The Archivist writes only the dated digest at
           `<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md`, or its `.tmp.<pid>.<12 lowercase hex>`
-          staging sibling. Name it with a literal absolute path.
+          staging sibling, or files in its agent workspace folder (named in your Agent
+          Workspace section). Name the target with a literal absolute path.

@@ -115,7 +115,12 @@ pub fn pane_corners<W: WorkspaceView>(
         .map_or_else(
             || pane.display_name().to_owned(),
             |agent| {
-                let reference = agent_reference(ws, chrome, agent);
+                // A defined seat's header is its definition name alone: no ref, counter or slug.
+                let reference = if agent.agent_definition_name.is_some() {
+                    String::new()
+                } else {
+                    agent_reference(ws, chrome, agent)
+                };
                 let definition = agent.definition_label();
                 if reference.is_empty() {
                     definition

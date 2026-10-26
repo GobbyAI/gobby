@@ -64,8 +64,8 @@ def test_main_reads_only_checkout_digest(
 def test_current_queues_exclude_history_and_expand_ranges_in_recorded_order() -> None:
     content = (
         "## Previous-day summary — 2026-10-11\nOld #900\n"
-        "## Lane queues — current\n"
-        "| Lane | Epic | Worktree | Seats and work | Queued next | Parked |\n"
+        "## Epic queues — current\n"
+        "| Queue | Epic | Worktree | Seats and work | Queued next | Parked |\n"
         "| --- | --- | --- | --- | --- | --- |\n"
         f"| 1 Runbooks | #22691 Runbooks | lane-1 | {'old #800 ' * 40000} "
         "| #24087–#24092; gobby#16332; #24089 | #24145 Reporter |\n"
@@ -73,16 +73,16 @@ def test_current_queues_exclude_history_and_expand_ranges_in_recorded_order() ->
         "## Standing rules recorded 2026-10-11\n#600 old rule\n"
     )
     result = digest_projection(content, "queues")
-    assert result["lanes"] == [
+    assert result["queues"] == [
         {
-            "lane": "1 Runbooks",
+            "queue": "1 Runbooks",
             "epic": "#22691 Runbooks",
             "worktree": "lane-1",
             "queue_refs": [f"#{number}" for number in range(24087, 24093)],
             "parked_refs": ["#24145"],
         },
         {
-            "lane": "1B",
+            "queue": "1B",
             "epic": "#22691 Runbooks",
             "worktree": "lane-1-2",
             "queue_refs": ["#24160"],
@@ -147,11 +147,11 @@ def test_main_pages_complete_entries_under_byte_budget(
         expected = [f"- {i} {text}" for i in range(7)] + ["missing heading", "missing heading"]
         key = "entries"
     elif section == "queues":
-        content = "## Lane queues — current\n" + "".join(
+        content = "## Epic queues — current\n" + "".join(
             f"| {i} | epic | {text} | ignored | #1 | #2 |\n" for i in range(1, 8)
         )
         expected = [str(i) for i in range(1, 8)]
-        key = "lanes"
+        key = "queues"
     else:
         content = "## Orchestrator updates — current\n" + "".join(
             f"- {topic} {text}\n" for topic in ("close backlog", "hold", "Consolidator", "ROADMAP")
@@ -178,7 +178,7 @@ def test_main_pages_complete_entries_under_byte_budget(
         if section == "decisions":
             seen.extend(entry["text"] for entry in page["evidence"][key])
         elif section == "queues":
-            seen.extend(entry["lane"] for entry in page["evidence"][key])
+            seen.extend(entry["queue"] for entry in page["evidence"][key])
         else:
             seen.extend(entry for values in page["evidence"].values() for entry in values)
         if page["next_offset"] is None:
