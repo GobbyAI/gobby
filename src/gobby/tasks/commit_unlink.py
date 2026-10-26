@@ -56,8 +56,9 @@ async def unlink_commit_audited(
     """Unlink ``commit_sha`` from ``task`` and record who removed it and why.
 
     Raises CommitUnlinkRefused for a landed or unproven commit and ValueError when the
-    commit is not linked. Blank reason or actor is refused before any mutation, so the
-    audit row cannot fail after the link is gone.
+    commit is not linked. Blank reason or actor is refused before any mutation. The
+    removal and its audit row share one transaction, so a failed audit write keeps every
+    link and records no event.
     """
     if not reason.strip():
         raise ValueError("A reason is required to unlink a commit.")
@@ -66,12 +67,13 @@ async def unlink_commit_audited(
     refusal = await integration_refusal(task_manager.db, task, commit_sha)
     if refusal is not None:
         raise CommitUnlinkRefused(refusal)
-    updated = task_manager.unlink_commit(task.id, commit_sha)
-    TaskLifecycleEventManager(task_manager.db).record_lifecycle_event(
-        task.id,
-        "commit:linked",
-        "commit:unlinked",
-        f"Unlinked {commit_sha}: {reason.strip()}",
-        by_actor=actor.strip(),
-    )
+    with task_manager.db.transaction():
+        updated = task_manager.unlink_commit(task.id, commit_sha)
+        TaskLifecycleEventManager(task_manager.db).record_lifecycle_event(
+            task.id,
+            "commit:linked",
+            "commit:unlinked",
+            f"Unlinked {commit_sha}: {reason.strip()}",
+            by_actor=actor.strip(),
+        )
     return updated

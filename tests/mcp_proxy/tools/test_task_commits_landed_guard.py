@@ -141,3 +141,44 @@ async def test_unlink_refuses_a_blank_reason_before_any_mutation(
         )
     assert manager.get_task(task.id).commits == ["abc1234"]
     assert TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id) == []
+
+
+@pytest.mark.asyncio
+async def test_failed_audit_write_keeps_every_link_and_writes_no_event(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    integration_repo: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, landed, unlanded = integration_repo
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=(repo, "main")),
+    )
+
+    class _FailingAudit:
+        def __init__(self, db: HubDatabase) -> None:
+            self.db = db
+
+        def record_lifecycle_event(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr(commit_unlink, "TaskLifecycleEventManager", _FailingAudit)
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"], "Superseded candidate", category="research", validation_criteria="x"
+    )
+    manager.link_commit(task.id, landed)
+    manager.link_commit(task.id, unlanded)
+
+    with pytest.raises(RuntimeError, match="audit insert failed"):
+        await commit_unlink.unlink_commit_audited(
+            manager,
+            manager.get_task(task.id),
+            unlanded,
+            reason="Superseded by #24970",
+            actor="session-1",
+        )
+
+    assert manager.get_task(task.id).commits == [landed, unlanded]
+    assert TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id) == []
