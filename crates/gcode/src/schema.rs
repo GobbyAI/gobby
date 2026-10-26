@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use gobby_core::grant::GrantError;
 use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
@@ -220,6 +221,7 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
 
     let missing_columns = missing_table_columns(client, &schema, TABLE_CONTRACTS)?;
     if !missing_columns.is_empty() {
+        ensure_inspected_tables_readable(client, &schema)?;
         bail!(
             "PostgreSQL hub is missing required code-index columns: {}. {MIGRATION_HINT}",
             missing_columns.join(", ")
@@ -234,6 +236,42 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// `information_schema.columns` lists only columns the session role can see, so an
+/// unreadable table looks like missing columns. Absent columns count as migration
+/// debt only after the current role still holds login authority and every inspected
+/// table is readable by it. A revoked login keeps working on an open connection, so
+/// it is checked here rather than assumed from the session's existence.
+fn ensure_inspected_tables_readable(client: &mut Client, schema: &str) -> anyhow::Result<()> {
+    let can_login: bool = client
+        .query_one(
+            "SELECT rolcanlogin FROM pg_roles WHERE rolname = current_user",
+            &[],
+        )
+        .context("failed to check login authority of the current role")?
+        .try_get(0)
+        .context("failed to decode login authority check")?;
+    if !can_login {
+        return Err(GrantError::Expired.into());
+    }
+
+    for contract in TABLE_CONTRACTS {
+        let qualified = format!("{schema}.{}", contract.name);
+        let row = client
+            .query_one(
+                "SELECT has_table_privilege(current_user, $1::text, 'SELECT')",
+                &[&qualified],
+            )
+            .with_context(|| format!("failed to check SELECT privilege on `{qualified}`"))?;
+        let readable: bool = row
+            .try_get(0)
+            .context("failed to decode PostgreSQL privilege check")?;
+        if !readable {
+            return Err(GrantError::Expired.into());
+        }
+    }
     Ok(())
 }
 
@@ -309,6 +347,10 @@ fn missing_table_columns(
 fn required_relation_regclass_name(schema: &str, relation: &str) -> String {
     format!("{schema}.{relation}")
 }
+
+#[cfg(test)]
+#[path = "schema/authority_tests.rs"]
+mod authority_tests;
 
 #[cfg(test)]
 mod tests {

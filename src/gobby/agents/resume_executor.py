@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import psycopg
 
+from gobby.agents.agent_workspaces import grant_seat_workspace_paths
 from gobby.agents.codex_oss import (
     codex_local_transport_strategy,
     codex_oss_provider_for_local_endpoint,
@@ -263,6 +264,7 @@ async def resume_agent_run(
     initial_variables["resumed_from_agent_run_id"] = original_run.id
     metadata["initial_variables"] = initial_variables
 
+    agent_name = _metadata_str(resume_metadata, "agent_slug") or original_run.agent_name
     try:
         config_runtime = getattr(runner, "config_runtime", None)
         config_snapshot = config_runtime.capture().snapshot if config_runtime is not None else None
@@ -276,7 +278,7 @@ async def resume_agent_run(
             project_id=project_id,
             source=provider,
             workflow_name=_metadata_str(resume_metadata, "workflow"),
-            agent_name=_metadata_str(resume_metadata, "agent_slug") or original_run.agent_name,
+            agent_name=agent_name,
             initial_variables=initial_variables,
             git_branch=_metadata_str(resume_metadata, "branch_name"),
             prompt=prompt,
@@ -338,14 +340,35 @@ async def resume_agent_run(
     )
     # The successor already exists: a refusal or a cancellation parks it exactly once.
     # A cancelled verifier thread finishes on its own; it reads only the SRT install.
+    # A snapshot from before the seat's workspace grants names no folder of its own. Grant
+    # them as spawn does, and create the grant directories before the sandbox starts.
+    from gobby.agents.spawn_executor_providers import ensure_sandbox_write_directories
+
     try:
         sandbox_config = await asyncio.to_thread(resolve_resume_sandbox, resume_metadata)
+        sandbox_config = await asyncio.to_thread(
+            grant_seat_workspace_paths,
+            sandbox_config,
+            runner.run_storage.db,
+            spawn_context.session_id,
+            agent_name,
+        )
+        await asyncio.to_thread(
+            ensure_sandbox_write_directories,
+            sandbox_config,
+            cwd,
+            _metadata_str(resume_metadata, "project_path"),
+        )
     except asyncio.CancelledError:
         await run_to_completion(park())
         raise
     except SandboxRequiredError:
         await run_to_completion(park())
         return ResumeAgentResult(False, run_id=run_id, error="sandbox_required")
+    except (OSError, ValueError) as exc:
+        await run_to_completion(park())
+        error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
+        return ResumeAgentResult(False, run_id=run_id, error=error)
     daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
     websocket = getattr(daemon_config, "websocket", None)
     websocket_port = int(getattr(websocket, "port", 60888))

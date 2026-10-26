@@ -1471,6 +1471,10 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         prewarm_pre_commit_store: filled["prewarm_pre_commit_store"]
             .as_bool()
             .context("prewarm_pre_commit_store is not a bool")?,
+        // Null on every case but the workspace one: `as_str`/`as_u64` read null as absent.
+        definition: filled["definition"].as_str().map(str::to_owned),
+        session_seq: filled["session_seq"].as_u64(),
+        epic_seq: filled["epic_seq"].as_u64(),
     })
 }
 
@@ -1695,6 +1699,53 @@ fn srt_spawn_time_grants() -> Result<()> {
             .any(|grant| Path::new(grant) == store),
         "a declared nextest store is granted: {store:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn srt_agent_workspace_grants_match_python_corpus() -> Result<()> {
+    // #25148: a spawned seat writes its own `<definition>/session-<seq>/` folder and
+    // its team's `epics/epic-<seq>/` folder under the project's workspace anchor,
+    // and nothing wider under `agents_workspaces`.
+    let corpus = srt_corpus()?;
+    let inputs = srt_case_inputs(&corpus, "claude-agent-workspace")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(&root.path().join("agent-workspace"))?;
+    tree.materialize(&inputs)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+
+    let workspaces = tree.path("gobby_home").join("agents_workspaces");
+    let anchor = workspaces.join(srt_text(&inputs, "project_id")?);
+    let own = anchor.join(srt_text(&inputs, "definition")?).join(format!(
+        "session-{}",
+        inputs["session_seq"].as_u64().context("session_seq")?
+    ));
+    let epic = anchor.join("epics").join(format!(
+        "epic-{}",
+        inputs["epic_seq"].as_u64().context("epic_seq")?
+    ));
+    let grants = &policy.sandbox.extra_write_paths;
+    assert!(
+        srt_covered(grants, &own),
+        "the seat's own folder is writable: {own:?} in {grants:?}"
+    );
+    assert!(
+        srt_covered(grants, &epic),
+        "the bound epic folder is writable: {epic:?} in {grants:?}"
+    );
+    let own_parent = own.parent().context("own folder parent")?;
+    let epic_parent = epic.parent().context("epic folder parent")?;
+    for wider in [
+        workspaces.as_path(),
+        anchor.as_path(),
+        own_parent,
+        epic_parent,
+    ] {
+        assert!(
+            !srt_covered(grants, wider),
+            "{wider:?} must stay unwritable: {grants:?}"
+        );
+    }
     Ok(())
 }
 

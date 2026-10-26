@@ -262,6 +262,41 @@ pub fn seed_test_checkout(
     Ok(())
 }
 
+/// Binds the managed grant's DSN role to exactly one live principal for `project_id`.
+/// The hub's RLS helpers fail closed on zero or duplicate live bindings, so the
+/// fixture replaces any prior binding for the project rather than stacking one.
+pub fn seed_test_principal_binding(
+    client: &mut postgres::Client,
+    project_id: &str,
+) -> Result<(), String> {
+    let machine_id = gobby_core::machine::read_local_machine_id()
+        .map_err(|error| format!("read local machine id: {error:#}"))?;
+    let machine_id = uuid::Uuid::parse_str(&machine_id)
+        .map_err(|error| format!("parse local machine id {machine_id:?}: {error}"))?;
+    let project_uuid = uuid::Uuid::parse_str(project_id)
+        .map_err(|error| format!("parse test project id {project_id:?}: {error}"))?;
+    let managed_execution_id = uuid::Uuid::new_v5(
+        &uuid::Uuid::NAMESPACE_URL,
+        format!("gcode-test-principal:{project_id}").as_bytes(),
+    );
+    client
+        .execute(
+            "DELETE FROM gobby_agent_auth.principal_bindings WHERE project_id = $1",
+            &[&project_uuid],
+        )
+        .map_err(|error| format!("clear prior principal binding: {error}"))?;
+    client
+        .execute(
+            "INSERT INTO gobby_agent_auth.principal_bindings
+             (role_name, owner_kind, managed_execution_id, project_id,
+              issuing_machine_id, expires_at, credential_generation)
+             VALUES (session_user, 'agent_run', $1, $2, $3, now() + interval '1 hour', 1)",
+            &[&managed_execution_id, &project_uuid, &machine_id],
+        )
+        .map_err(|error| format!("seed managed principal binding: {error}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

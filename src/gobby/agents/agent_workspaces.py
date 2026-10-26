@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.worktree_checkpoint import CHECKPOINT_AUTHOR_EMAIL, CHECKPOINT_AUTHOR_NAME
 from gobby.paths import get_gobby_home
 from gobby.storage.cron import CronJobStorage
@@ -516,16 +517,11 @@ def _epic_folder(db: HubDatabase, binding: TeamBinding) -> Path | None:
     return epic_workspace_dir(binding.project_id, epic.seq_num)
 
 
-def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:
-    """Bind the epic folder for a seat run of a live epic team; None outside one.
-
-    Every seat run of the team binds the same folder, sub-worktree developers included. A
-    single-task team has no epic folder, and a team whose epic has closed names none.
-    """
+def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
+    """The epic folder of a seat run of a live epic team; None outside one."""
     from gobby.agents.team_lifecycle import seat_team
     from gobby.agents.team_scope import live_teams
     from gobby.storage.team_records import EPIC_MODE
-    from gobby.workflows.state_manager import SessionVariableManager
 
     binding = seat_team(db, session_id)
     if binding is None or binding.mode != EPIC_MODE:
@@ -533,7 +529,54 @@ def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:
     live = live_teams(db, [binding.task_id]).get(binding.task_id)
     if live is None or live.team_id != binding.team_id:
         return None
-    folder = _epic_folder(db, binding)
+    return _epic_folder(db, binding)
+
+
+def spawn_workspace_write_paths(
+    db: HubDatabase, session_id: str, definition: str | None
+) -> list[str]:
+    """The folders a spawned seat may write: its own session folder and its epic folder.
+
+    Computed at spawn, before the session starts and binds its folder, from the same
+    definition and sequence number that ``bind_session_workspace`` uses.
+    """
+    location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
+    if location is None or location["project_id"] is None or location["seq_num"] is None:
+        return []
+    folders = [session_workspace_dir(location["project_id"], definition, location["seq_num"])]
+    epic = _seat_epic_folder(db, session_id)
+    if epic is not None:
+        folders.append(epic)
+    return [str(folder) for folder in folders]
+
+
+def grant_seat_workspace_paths(
+    config: SandboxConfig, db: HubDatabase, session_id: str, definition: str | None
+) -> SandboxConfig:
+    """Return ``config`` with the seat's workspace folders among its write grants, once each.
+
+    Spawn and resume both apply this, so a relaunched seat carries the folders its spawn
+    granted even when its stored snapshot predates them.
+    """
+    granted = [
+        path
+        for path in spawn_workspace_write_paths(db, session_id, definition)
+        if path not in config.extra_write_paths
+    ]
+    if not granted:
+        return config
+    return config.model_copy(update={"extra_write_paths": [*config.extra_write_paths, *granted]})
+
+
+def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:
+    """Bind the epic folder for a seat run of a live epic team; None outside one.
+
+    Every seat run of the team binds the same folder, sub-worktree developers included. A
+    single-task team has no epic folder, and a team whose epic has closed names none.
+    """
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    folder = _seat_epic_folder(db, session_id)
     if folder is None:
         return None
     folder.mkdir(parents=True, exist_ok=True)
