@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn symbols_for_file_sql_qualifies_joined_symbol_columns() {
-    let sql = symbols_for_files_sql(false);
+    let sql = symbols_for_files_sql(false, false);
 
     assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
     assert!(sql.contains("FROM code_symbols cs"));
@@ -13,7 +13,7 @@ fn symbols_for_file_sql_qualifies_joined_symbol_columns() {
 
 #[test]
 fn overlay_symbols_for_files_sql_batches_paths_and_preserves_overlay_shadowing() {
-    let sql = symbols_for_files_sql(true);
+    let sql = symbols_for_files_sql(true, false);
 
     assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
     assert!(sql.contains("cs.file_path = ANY($3)"));
