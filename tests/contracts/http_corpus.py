@@ -19,7 +19,18 @@ from typing import Any
 
 import httpx
 
-from scripts.parity_waivers import DIFF, NATIVE_EXTENSION, PASSED, WAIVED, Waiver, WaiverError
+from scripts.generate_parity_ledger import ADDITIVE_SURFACES, collect_surfaces
+from scripts.parity_waivers import (
+    DIFF,
+    NATIVE_EXTENSION,
+    PASSED,
+    WAIVED,
+    WAIVERS_PATH,
+    Waiver,
+    WaiverError,
+    load_waivers,
+    surface_matches,
+)
 
 CORPUS_DIR = Path(__file__).resolve().parent / "http"
 MANIFEST_NAME = "manifest.json"
@@ -260,17 +271,23 @@ def record_cases(
     return written
 
 
+def load_replay_waivers(path: Path = WAIVERS_PATH) -> dict[str, Waiver]:
+    """Load the committed waiver manifest against the ledger's surface inventory."""
+    return load_waivers(path, surfaces=collect_surfaces(), additive_surfaces=ADDITIVE_SURFACES)
+
+
 def replay_case(
     client: httpx.Client,
     case: Mapping[str, Any],
     *,
     operator: Mapping[str, str],
     grant: Mapping[str, str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return ``(expected, actual)`` normalized responses for a committed case."""
+    waivers: Mapping[str, Waiver],
+) -> tuple[ReplayResult, dict[str, Any]]:
+    """Send a committed case and classify its normalized response; return both."""
     response = send_case(client, case, operator=operator, grant=grant)
-    expected: dict[str, Any] = normalize_case(case)["response"]
-    return expected, normalize_response(case, response)
+    actual = normalize_response(case, response)
+    return classify_replay(case, actual, waivers), actual
 
 
 @dataclass(frozen=True)
@@ -301,16 +318,26 @@ def classify_replay(
     """
     waiver_id = case.get("waiver")
     if waiver_id is None:
+        if "response" not in case:
+            raise CorpusError(f"{case['name']} has no Python response and no waiver")
         expected = normalize_case(case)["response"]
         if _normalized_response(case, actual) == expected:
             return ReplayResult(outcome=PASSED)
         return ReplayResult(outcome=DIFF)
     if waiver_id not in waivers:
         raise WaiverError(f"Case cites unknown waiver {waiver_id!r}")
+    waiver = waivers[waiver_id]
+    request = case["request"]
+    if not surface_matches(waiver.surface, request["method"], request["path"]):
+        raise WaiverError(
+            f"{request['method']} {request['path']} is not waiver {waiver_id!r}'s surface "
+            f"{waiver.surface!r}"
+        )
+    if waiver.native_extension and "response" in case:
+        raise CorpusError(f"Native-extension waiver {waiver_id!r} cannot cite a Python response")
     native = case.get("native_response")
     if native is None:
         raise CorpusError(f"Waived case {waiver_id!r} must assert its native_response")
-    waiver = waivers[waiver_id]
     if _normalized_response(case, actual) != _normalized_response(case, native):
         return ReplayResult(outcome=DIFF)
     outcome = NATIVE_EXTENSION if waiver.native_extension else WAIVED

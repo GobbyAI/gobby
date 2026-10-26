@@ -27,6 +27,7 @@ _FIELDS = frozenset({"id", "surface", "behaviour", "decision", "replacement"})
 _SEGMENT = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 _ID_RE = re.compile(rf"{_SEGMENT}\.{_SEGMENT}\.{_SEGMENT}")
 _DECISION_RE = re.compile(r"#[1-9][0-9]*|\.gobby/plans/[A-Za-z0-9._-]+\.md#[A-Za-z0-9._-]+")
+_HTTP_SURFACE_RE = re.compile(r"HTTP ([A-Z]+) (/\S*)")
 
 
 class WaiverError(ValueError):
@@ -117,3 +118,22 @@ def load_waivers(
             f"Additive surfaces without a native-extension entry: {', '.join(uncovered)}"
         )
     return loaded
+
+
+def surface_matches(surface: str, method: str, path: str) -> bool:
+    """Return whether an ``HTTP`` surface key, with optional ``{name}`` segments, covers a request.
+
+    The method must match exactly. A ``{name}`` route segment matches one non-empty path
+    segment, and every other segment must match literally.
+    """
+    match = _HTTP_SURFACE_RE.fullmatch(surface)
+    if match is None or match.group(1) != method:
+        return False
+    template = match.group(2).split("/")
+    actual = path.split("/")
+    if len(template) != len(actual):
+        return False
+    return all(
+        (segment.startswith("{") and segment.endswith("}") and bool(value)) or segment == value
+        for segment, value in zip(template, actual, strict=True)
+    )

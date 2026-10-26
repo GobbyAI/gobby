@@ -11,6 +11,8 @@ use std::sync::{Mutex, PoisonError};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::front_door::waivers::{WaiverManifest, is_native_extension, surface_matches};
+
 /// The log's file name under `<home>/logs/`.
 pub const LOG_FILE: &str = "front-door-compare.jsonl";
 
@@ -25,6 +27,7 @@ pub enum Outcome {
     Mismatch,
     Skipped,
     Waived,
+    NativeExtension,
 }
 
 /// The parity waiver a changed behaviour reports under: its exact manifest id and
@@ -120,7 +123,7 @@ impl Report {
         for outcome in self.families.values().flat_map(BTreeMap::keys) {
             match outcome {
                 Outcome::Match | Outcome::Verified => passed = true,
-                Outcome::Waived => {}
+                Outcome::Waived | Outcome::NativeExtension => {}
                 Outcome::Diff | Outcome::NativeError | Outcome::Mismatch | Outcome::Skipped => {
                     return false;
                 }
@@ -132,7 +135,7 @@ impl Report {
 
 /// Counts the records at `path` whose `ts` is at or after `since`. A malformed line
 /// is an error.
-pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
+pub fn report(path: &Path, since: Option<i64>, manifest: &WaiverManifest) -> Result<Report> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     let mut report = Report {
@@ -149,7 +152,7 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
         report.first_ts = Some(report.first_ts.map_or(record.ts, |ts| ts.min(record.ts)));
         report.last_ts = Some(report.last_ts.map_or(record.ts, |ts| ts.max(record.ts)));
         report.total += 1;
-        if record.outcome == Outcome::Waived {
+        if matches!(record.outcome, Outcome::Waived | Outcome::NativeExtension) {
             let waiver = record.waiver.as_ref().with_context(|| {
                 format!(
                     "{}:{}: waived record names no waiver",
@@ -157,6 +160,9 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
                     index + 1
                 )
             })?;
+            if let Err(reason) = check_waiver(manifest, &record, waiver) {
+                bail!("{}:{}: {reason}", path.display(), index + 1);
+            }
             let counted = report
                 .waived
                 .entry(waiver.id.clone())
@@ -164,15 +170,15 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
                     decision: waiver.decision.clone(),
                     count: 0,
                 });
-            if counted.decision != waiver.decision {
-                bail!(
-                    "{}:{}: waiver {} cites two decisions",
-                    path.display(),
-                    index + 1,
-                    waiver.id
-                );
-            }
             counted.count += 1;
+        } else if let Some(waiver) = &record.waiver {
+            bail!(
+                "{}:{}: {:?} record cannot cite waiver {}",
+                path.display(),
+                index + 1,
+                record.outcome,
+                waiver.id
+            );
         }
         *report
             .families
@@ -182,4 +188,34 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
             .or_default() += 1;
     }
     Ok(report)
+}
+
+/// Why a waived record does not match its committed manifest entry, when it does not.
+fn check_waiver(
+    manifest: &WaiverManifest,
+    record: &Record,
+    waiver: &WaiverRef,
+) -> std::result::Result<(), String> {
+    let entry = manifest
+        .get(&waiver.id)
+        .ok_or_else(|| format!("waiver {} is not in the manifest", waiver.id))?;
+    if is_native_extension(&waiver.id) != (record.outcome == Outcome::NativeExtension) {
+        return Err(format!(
+            "waiver {} cannot back a {:?} record",
+            waiver.id, record.outcome
+        ));
+    }
+    if entry.decision != waiver.decision {
+        return Err(format!(
+            "waiver {} cites {}, but the manifest records {}",
+            waiver.id, waiver.decision, entry.decision
+        ));
+    }
+    if !surface_matches(&entry.surface, &record.method, &record.path) {
+        return Err(format!(
+            "{} {} is not waiver {}'s surface {}",
+            record.method, record.path, waiver.id, entry.surface
+        ));
+    }
+    Ok(())
 }
