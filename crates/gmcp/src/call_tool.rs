@@ -177,7 +177,7 @@ where
     if prepared.server_name == "gobby-workflows" && prepared.tool_name == "wait_for_completion" {
         return json!({"success":false,"error_code":"TOOL_REMOVED",
             "server_name":"gobby-workflows","tool_name":"wait_for_completion",
-            "error":"gobby-workflows.wait_for_completion was removed. Start the agent or pipeline, persist its run_id or execution_id, then resume from the daemon's durable completion notification and inspect get_task, get_agent_result, or get_pipeline_status."});
+            "error":"gobby-workflows:wait_for_completion was removed. Start the agent or pipeline, persist its run_id or execution_id, then resume from the daemon's durable completion notification and inspect get_task, get_agent_result, or get_pipeline_status."});
     }
     let request = Arc::clone(&prepared);
     let result = guarded_call(
