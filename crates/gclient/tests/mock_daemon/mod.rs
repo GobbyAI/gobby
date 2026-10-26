@@ -868,10 +868,18 @@ async fn serve_websocket(
     let mut event_rx = events.subscribe();
     let (released_tx, mut released_rx) =
         tokio::sync::mpsc::unbounded_channel::<(String, Vec<Value>, Option<Value>)>();
+    // Released workspace ops come back here, so their apply, drain and write
+    // run in this loop with every other op's.
+    let (held_tx, mut held_rx) = tokio::sync::mpsc::unbounded_channel::<(Value, usize)>();
     loop {
         tokio::select! {
             Some((kind, events, reply)) = released_rx.recv() => {
                 write_reply(&mut websocket, &state, &kind, events, reply).await?;
+            }
+            Some((request, occurrence)) = held_rx.recv() => {
+                let reply = websocket_reply(&state, &request, occurrence);
+                let before = websocket_events_before_reply(&state, &request, reply.as_ref());
+                write_reply(&mut websocket, &state, "workspace_op", before, reply).await?;
             }
             incoming = websocket.next() => {
                 let Some(Ok(message)) = incoming else { break };
@@ -886,7 +894,9 @@ async fn serve_websocket(
                     _ => continue,
                 };
                 let Ok(value) = serde_json::from_str::<Value>(&text) else { continue };
-                {
+                // Received ops are recorded on arrival, held or not. A workspace op's
+                // ordinal is fixed here too, so a held op keeps the ordinal it arrived with.
+                let occurrence = {
                     let mut state = state.lock().expect("mock state");
                     state.requests.push(RequestRecord {
                         method: "WS".into(),
@@ -897,30 +907,30 @@ async fn serve_websocket(
                     if let Some(kind) = value.get("type").and_then(Value::as_str) {
                         state.activity.push(format!("WS {kind}"));
                     }
-                    // Received ops are recorded on arrival, held or not.
                     if value.get("type").and_then(Value::as_str) == Some("workspace_op") {
                         state.workspace_requests.push(value.clone());
+                        workspace_ordinal(&state.workspace_requests, &value)
+                    } else {
+                        0
                     }
-                }
+                };
                 let kind = value.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
                 // A held workspace op has not run yet. Its effects and events happen at
                 // release, as a slow op publishes at commit; running it at receipt would
-                // stamp its seq ahead of events the daemon sent in the meantime.
+                // stamp its seq ahead of events the daemon sent in the meantime. The
+                // released op returns to this loop, which applies, drains and writes it.
                 let deferred = (kind == "workspace_op")
                     .then(|| take_ws_hold(&state, &kind, &value))
                     .flatten();
                 if let Some(release) = deferred {
-                    let state = Arc::clone(&state);
-                    let released = released_tx.clone();
+                    let held = held_tx.clone();
                     tokio::spawn(async move {
                         release.notified().await;
-                        let reply = websocket_reply(&state, &value);
-                        let before = websocket_events_before_reply(&state, &value, reply.as_ref());
-                        let _ = released.send((kind, before, reply));
+                        let _ = held.send((value, occurrence));
                     });
                     continue;
                 }
-                let reply = websocket_reply(&state, &value);
+                let reply = websocket_reply(&state, &value, occurrence);
                 let before = websocket_events_before_reply(&state, &value, reply.as_ref());
                 let hold = reply.as_ref().and_then(|_| take_ws_hold(&state, &kind, &value));
                 if let Some(release) = hold {
@@ -976,6 +986,19 @@ async fn serve_websocket(
     Ok(())
 }
 
+/// `request`'s place among the received workspace ops of its kind, counting
+/// itself: the first of its op is 1. Callers record the request first.
+fn workspace_ordinal(received: &[Value], request: &Value) -> usize {
+    let op = request
+        .get("op")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    received
+        .iter()
+        .filter(|received| received.get("op").and_then(Value::as_str) == Some(op))
+        .count()
+}
+
 /// Take the first hold that matches `request`, if any.
 fn take_ws_hold(state: &Mutex<MockState>, kind: &str, request: &Value) -> Option<Arc<Notify>> {
     let mut state = state.lock().expect("mock state");
@@ -1015,7 +1038,13 @@ async fn write_reply(
     Ok(())
 }
 
-fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Value> {
+/// The reply to `request`; `occurrence` is its ordinal among workspace ops,
+/// fixed when it arrived.
+fn websocket_reply(
+    state: &Arc<Mutex<MockState>>,
+    request: &Value,
+    occurrence: usize,
+) -> Option<Value> {
     let kind = request.get("type")?.as_str()?;
     if state
         .lock()
@@ -1264,11 +1293,6 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
                 .get("op")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let occurrence = state
-                .workspace_requests
-                .iter()
-                .filter(|request| request.get("op").and_then(Value::as_str) == Some(op))
-                .count();
             if let Some(index) = state
                 .workspace_refusals_at
                 .iter()
