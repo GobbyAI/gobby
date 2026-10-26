@@ -502,8 +502,8 @@ def _community_state(
     if generated is None:
         state["candidates"] = community.label_candidates
     else:
-        # Choice criteria already contain each candidate and the generated name.
-        state["generated"] = {"rationale": generated.rationale}
+        # Keep the proposed name next to its rationale as decision evidence.
+        state["generated"] = {"name": generated.name, "rationale": generated.rationale}
     if (
         len(representatives) > _MAX_PROMPT_MEMBERS
         or len(json.dumps(state)) > _MAX_PROMPT_DATA_CHARS
