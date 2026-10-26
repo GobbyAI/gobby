@@ -683,6 +683,10 @@ async def spawn_agent_impl(
         task_id=resolved_task_id,
         task_ref=task_id,
         cleanup=cleanup_unattached_spawn,
+        session_manager=session_manager,
+        caller_ref=parent_session_id,
+        agent_name=requested_agent_name,
+        resume_session_id=resume_session_id,
     )
     if lease_response is not None:
         return lease_response if placed is None else task_active_refusal(lease_response)

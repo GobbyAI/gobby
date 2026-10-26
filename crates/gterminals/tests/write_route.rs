@@ -174,20 +174,31 @@ async fn fixture() -> anyhow::Result<Fixture> {
 
 /// Attaches a viewer and takes control, returning the attachment and the
 /// lease claim as the route's JSON carries it.
-async fn claim(leases: &Registry, terminal: Uuid) -> anyhow::Result<(leases::Attachment, Value)> {
+fn requester() -> leases::Requester {
+    leases::Requester {
+        connection: Uuid::new_v4(),
+        caller: Uuid::new_v4(),
+    }
+}
+
+async fn claim(
+    leases: &Registry,
+    terminal: Uuid,
+) -> anyhow::Result<(leases::Attachment, leases::Requester, Value)> {
+    let req = requester();
     let attachment = leases
         .attach(
             terminal,
-            Uuid::new_v4(),
+            req,
             Viewer::Web,
             Backend::Native,
             leases::Delivery::Proxy,
         )
         .await?;
-    let control = leases.take_control(attachment, true).await?;
+    let control = leases.take_control(attachment, req, true).await?;
     anyhow::ensure!(control.granted, "control granted");
     let lease = json!({"attachment_id": attachment.id, "generation": control.generation});
-    Ok((attachment, lease))
+    Ok((attachment, req, lease))
 }
 
 fn step(kind: &str, payload: &[u8]) -> Value {
@@ -230,7 +241,7 @@ async fn wait_idle(route: &Route) {
 #[tokio::test]
 async fn route_calls_return_typed_per_step_outcomes() -> anyhow::Result<()> {
     let fx = fixture().await?;
-    let (_attachment, lease) = claim(&fx.leases, fx.terminal).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, fx.terminal).await?;
     let t = fx.terminal;
 
     let reply = fx
@@ -381,7 +392,7 @@ async fn route_calls_return_typed_per_step_outcomes() -> anyhow::Result<()> {
 async fn held_action_binds_token_row_and_lease_generation() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (attachment, lease) = claim(&fx.leases, t).await?;
+    let (attachment, attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let held = fx
         .route
@@ -402,8 +413,13 @@ async fn held_action_binds_token_row_and_lease_generation() -> anyhow::Result<()
         .await;
     assert_eq!(reply, json!({"status": "delivered"}));
 
-    fx.leases.release_control(attachment).await?;
-    let retaken = fx.leases.take_control(attachment, true).await?;
+    fx.leases
+        .release_control(attachment, attachment_req)
+        .await?;
+    let retaken = fx
+        .leases
+        .take_control(attachment, attachment_req, true)
+        .await?;
     anyhow::ensure!(retaken.granted, "control regranted");
     let current = json!({"attachment_id": attachment.id, "generation": retaken.generation});
     let before = fx.native.payloads().len();
@@ -482,7 +498,7 @@ async fn held_action_binds_token_row_and_lease_generation() -> anyhow::Result<()
 async fn a_logical_hold_binds_the_registry_snapshot_for_every_origin() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, _lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, _lease) = claim(&fx.leases, t).await?;
     let held = fx
         .route
         .handle(
@@ -503,17 +519,18 @@ async fn a_logical_hold_binds_the_registry_snapshot_for_every_origin() -> anyhow
     let reply = fx.route.handle(&fx.authority(), automatic.clone()).await;
     assert_eq!(reply, json!({"status": "delivered"}), "{reply}");
 
+    let other_req = requester();
     let other = fx
         .leases
         .attach(
             t,
-            Uuid::new_v4(),
+            other_req,
             Viewer::Web,
             Backend::Native,
             leases::Delivery::Proxy,
         )
         .await?;
-    let taken = fx.leases.take_control(other, true).await?;
+    let taken = fx.leases.take_control(other, other_req, true).await?;
     anyhow::ensure!(taken.granted, "control taken by another attachment");
     let reply = fx.route.handle(&fx.authority(), automatic).await;
     assert_eq!(refusal_code(&reply), "stale_lease", "{reply}");
@@ -525,7 +542,7 @@ async fn a_logical_hold_binds_the_registry_snapshot_for_every_origin() -> anyhow
 async fn token_rotation_and_lost_replies_never_replay_writes() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
     let held = fx
         .route
         .handle(
@@ -598,7 +615,7 @@ async fn token_rotation_and_lost_replies_never_replay_writes() -> anyhow::Result
 async fn route_admits_each_operation_maximum_and_refuses_over_limit_steps() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
     let paste_limit = 1024 * 1024;
     let input_limit = 64 * 1024;
 
@@ -779,7 +796,7 @@ async fn route_admits_each_operation_maximum_and_refuses_over_limit_steps() -> a
 async fn oversized_control_request_writes_zero_bytes_and_keeps_the_slot() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let oversized = "A".repeat(gobby_terminals::control::MAX_CONTROL_LINE + 1);
     let reply = fx
@@ -818,7 +835,7 @@ async fn oversized_control_request_writes_zero_bytes_and_keeps_the_slot() -> any
 async fn queued_write_is_admitted_when_an_idle_hold_lapses() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
     let held = fx
         .route
         .handle(
@@ -845,7 +862,7 @@ async fn queued_write_is_admitted_when_an_idle_hold_lapses() -> anyhow::Result<(
 async fn queued_writes_are_refused_once_their_token_retires() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let (entered, release) = fx.native.hold_next();
     let route = fx.route.clone();
@@ -876,7 +893,7 @@ async fn a_held_write_from_a_retired_token_is_refused_under_the_current_hold() -
 {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
     let retired = fx.authority();
     let _rotated = fx.token.install("token-2".into());
     let current = fx.authority();
@@ -943,7 +960,7 @@ async fn a_delayed_sequence_step_is_refused_once_its_token_retires() -> anyhow::
 async fn an_abandoned_queued_write_never_reaches_the_runtime() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let (entered, release) = fx.native.hold_next();
     let route = fx.route.clone();
@@ -982,7 +999,7 @@ async fn an_abandoned_queued_write_never_reaches_the_runtime() -> anyhow::Result
 async fn acquire_waits_behind_unheld_work_in_flight() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let (entered, release) = fx.native.hold_next();
     let route = fx.route.clone();
@@ -1008,7 +1025,7 @@ async fn acquire_waits_behind_unheld_work_in_flight() -> anyhow::Result<()> {
 async fn a_second_acquire_waits_for_the_active_hold_to_release() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
     let first = fx.route.handle(&fx.authority(), acquire.clone()).await;
@@ -1041,7 +1058,7 @@ async fn a_second_acquire_waits_for_the_active_hold_to_release() -> anyhow::Resu
 async fn a_waiter_from_a_retired_token_is_refused_and_takes_no_hold() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     let acquire = json!({"call": "acquire_action", "terminal_id": t, "lease": lease});
     let first = fx.route.handle(&fx.authority(), acquire.clone()).await;
@@ -1289,7 +1306,7 @@ async fn a_wake_retired_between_its_prelude_and_enter_keeps_the_partial_latch() 
 async fn a_panicking_runtime_settles_its_effect_as_uncertain() -> anyhow::Result<()> {
     let fx = fixture().await?;
     let t = fx.terminal;
-    let (_attachment, lease) = claim(&fx.leases, t).await?;
+    let (_attachment, _attachment_req, lease) = claim(&fx.leases, t).await?;
 
     fx.native.arm_panic();
     let reply = fx

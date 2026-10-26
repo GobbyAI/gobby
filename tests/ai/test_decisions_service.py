@@ -1567,3 +1567,365 @@ async def test_box_rejects_malformed_answers_as_parse(wire: FakeWire) -> None:
         with pytest.raises(DecisionsUnavailable) as caught:
             await DecisionService(service_config).box("evaluate", STATE, BOX_QUESTIONS)
         assert caught.value.reason == "parse", name
+
+
+# --- Request byte ceiling and guard-matrix gaps (#22604 round 2) ---
+
+DEFAULT_BYTE_FLOOR = 4 * 8192 + 3  # the smallest max_request_bytes the default token budget allows
+IDENTITY_MODES = ["model_card", "response_version"]
+# Non-ASCII text and escaped control characters: UTF-8 bytes, characters and escapes all differ.
+UTF8_STATE: dict[str, Any] = {"finding": "naïve café — 模块 重复导入 \t\x07\x01 end"}
+WIDE_STATE: dict[str, Any] = {
+    "members": [f"src/gobby/code_index/module_{index:03d}.py" for index in range(60)]
+}
+SEVERITY = ChoiceQuestion(
+    instructions="Rate the finding’s severity — 严重性.",
+    criteria={"high": "Breaks users", "low": "Cosmetic"},
+)
+
+
+def _large_logo() -> dict[str, BoxQuestion]:
+    """A Box request whose asset bytes dwarf its textual token estimate."""
+    image = _image(_png(320, 300, padding=60000))
+    assert len(base64.b64decode(image.data_base64)) < MAX_IMAGE_BYTES
+    return {"logo": BoxQuestion(instructions="Where is the 标志 logo?", image=image)}
+
+
+def _require_max_request_bytes() -> None:
+    assert "max_request_bytes" in DecisionsConfig.model_fields
+
+
+@pytest.mark.asyncio
+async def test_full_utf8_body_byte_limit_before_dispatch(wire: FakeWire) -> None:
+    _require_max_request_bytes()
+    questions = _large_logo()
+    wire.handler = _shape_responder("systemone")
+
+    unbounded = DecisionService(_config())
+    await unbounded.box("test", UTF8_STATE, questions)
+    sent = wire.requests[0].content
+    size = len(sent)
+    # The asset makes the body large while the text estimate still fits the token budget.
+    assert unbounded.estimate_request_tokens(UTF8_STATE, questions) <= 8192
+    assert size - 1 >= DEFAULT_BYTE_FLOOR
+    assert len(sent.decode()) < size
+    assert len(json.dumps(json.loads(sent))) != size
+
+    at_cap = DecisionService(_config(max_request_bytes=size))
+    assert at_cap.request_fits(UTF8_STATE, questions)
+    await at_cap.box("test", UTF8_STATE, questions)
+    assert len(wire.requests) == 2
+    assert len(wire.requests[1].content) == size
+
+    over_cap = DecisionService(_config(max_request_bytes=size - 1))
+    assert not over_cap.request_fits(UTF8_STATE, questions)
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await over_cap.box("test", UTF8_STATE, questions)
+    assert caught.value.reason == "oversize"
+    assert len(wire.requests) == 2
+
+    assert get_decision_service(_config(max_request_bytes=size)) is not get_decision_service(
+        _config()
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_413_is_unavailable_without_retry_and_opens_cooldown(wire: FakeWire) -> None:
+    _require_max_request_bytes()
+    wire.handler = _status(413)
+    service = DecisionService(_config())
+
+    with pytest.raises(DecisionsUnavailable) as refused:
+        await service.choose("test", STATE, QUESTIONS)
+    assert (refused.value.reason, refused.value.detail) == ("http_status", "HTTP 413")
+    assert len(wire.requests) == 1
+    with pytest.raises(DecisionsUnavailable) as blocked:
+        await service.choose("test", STATE, QUESTIONS)
+    assert blocked.value.reason == "cooldown"
+    assert len(wire.requests) == 1
+
+    # A local preflight oversize builds no client and leaves the service available.
+    preflight = DecisionService(_config(max_request_bytes=DEFAULT_BYTE_FLOOR))
+    wire.requests.clear()
+    wire.client_kwargs.clear()
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as oversize:
+        await preflight.box("test", STATE, _large_logo())
+    assert oversize.value.reason == "oversize"
+    assert wire.client_kwargs == []
+    wire.handler = _responder("systemone")
+    result = await preflight.choose("test", STATE, QUESTIONS)
+    assert result.answers["triage"].choice == "keep"
+    assert len(wire.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_contract", IDENTITY_MODES)
+async def test_systemone_identity_modes_share_the_estimate_boundary(
+    wire: FakeWire, identity_contract: str
+) -> None:
+    estimate = DecisionService(
+        _config(identity_contract=identity_contract)
+    ).estimate_request_tokens(WIDE_STATE, QUESTIONS)
+    assert estimate > 256
+
+    over = DecisionService(
+        _config(identity_contract=identity_contract, max_input_tokens=estimate - 1)
+    )
+    assert not over.request_fits(WIDE_STATE, QUESTIONS)
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await over.choose("test", WIDE_STATE, QUESTIONS)
+    assert caught.value.reason == "oversize"
+    assert (wire.requests, wire.client_kwargs) == ([], [])
+
+    at = DecisionService(_config(identity_contract=identity_contract, max_input_tokens=estimate))
+    assert at.request_fits(WIDE_STATE, QUESTIONS)
+    wire.handler = _card_handler(lambda: _card("/models/kev-a"))
+    result = await at.choose("test", WIDE_STATE, QUESTIONS)
+    assert result.backend_identity is not None
+    assert [request.url.path for request in wire.requests].count("/v1/systemone") == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_question_choice_fits_each_branch_but_not_the_aggregate(
+    wire: FakeWire,
+) -> None:
+    question = ChoiceQuestion("Choose " + "x" * 1200, TRIAGE.criteria)
+    questions = {"a": question, "b": question}
+    probe = DecisionService(_config())
+    branch = probe.estimate_request_tokens(STATE, {"a": question})
+    total = probe.estimate_request_tokens(STATE, questions)
+    assert 256 <= branch < total - 1
+
+    service = DecisionService(_config(max_input_tokens=total - 1))
+    assert all(service.request_fits(STATE, {key: question}) for key in questions)
+    assert not service.request_fits(STATE, questions)
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await service.choose("test", STATE, questions)
+    assert caught.value.reason == "oversize"
+    assert wire.requests == []
+
+    wire.handler = _responder("systemone")
+    result = await service.choose("test", STATE, {"a": question})
+    assert set(result.answers) == {"a"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_contract", IDENTITY_MODES)
+@pytest.mark.parametrize("limit", ["tokens", "bytes"])
+async def test_oversize_constructs_no_client_card_or_post(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch, identity_contract: str, limit: str
+) -> None:
+    poisoned = {"on": True}
+    real_client, real_post, real_card = (
+        httpx.AsyncClient,
+        decisions._post,
+        decisions._fetch_card_identity,
+    )
+
+    def guard(name: str) -> None:
+        if poisoned["on"]:
+            raise AssertionError(f"an oversize request reached {name}")
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        guard("the client constructor")
+        return real_client(**kwargs)
+
+    def post(*args: Any, **kwargs: Any) -> Any:
+        guard("the decision POST")
+        return real_post(*args, **kwargs)
+
+    def card(*args: Any, **kwargs: Any) -> Any:
+        guard("the model-card GET")
+        return real_card(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    monkeypatch.setattr(decisions, "_post", post)
+    monkeypatch.setattr(decisions, "_fetch_card_identity", card)
+    if limit == "bytes":
+        _require_max_request_bytes()
+        service = DecisionService(
+            _config(identity_contract=identity_contract, max_request_bytes=DEFAULT_BYTE_FLOOR)
+        )
+    else:
+        service = DecisionService(
+            _config(identity_contract=identity_contract, max_input_tokens=256)
+        )
+
+    for _ in range(2):
+        with pytest.raises(DecisionsUnavailable) as caught:
+            if limit == "bytes":
+                await service.box("test", STATE, _large_logo())
+            else:
+                await service.choose("test", {"text": "x" * 1200}, QUESTIONS)
+        assert caught.value.reason == "oversize"
+    assert wire.requests == []
+
+    # Preflight opened no cooldown: the next fitting request dials once.
+    poisoned["on"] = False
+    wire.handler = _card_handler(lambda: _card("/models/kev-a"))
+    result = await service.choose("test", STATE, QUESTIONS)
+    assert result.answers["triage"].choice == "keep"
+    assert [request.url.path for request in wire.requests].count("/v1/systemone") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_contract", IDENTITY_MODES)
+@pytest.mark.parametrize("status", [429, 504])
+async def test_retry_resends_identical_bodies_within_limits(
+    wire: FakeWire, identity_contract: str, status: int
+) -> None:
+    _require_max_request_bytes()
+    questions = {"triage": TRIAGE, "severity": SEVERITY}
+    state = {**UTF8_STATE, **WIDE_STATE}
+    config = _config(identity_contract=identity_contract, max_request_bytes=DEFAULT_BYTE_FLOOR)
+    failures = [status]
+    answer = _card_handler(lambda: _card("/models/kev-a"))
+
+    def handler(request: httpx.Request) -> Any:
+        if request.url.path == "/v1/systemone" and failures:
+            return httpx.Response(failures.pop())
+        return answer(request)
+
+    wire.handler = handler
+    service = DecisionService(config)
+
+    result = await service.choose("test", state, questions)
+
+    assert set(result.answers) == set(questions)
+    posts = [request.content for request in wire.requests if request.url.path == "/v1/systemone"]
+    assert len(posts) == 2
+    assert posts[0] == posts[1]
+    assert set(json.loads(posts[0])["questions"]) == set(questions)
+    assert service.estimate_request_tokens(state, questions) <= config.max_input_tokens
+    assert all(len(body) <= DEFAULT_BYTE_FLOOR for body in posts)
+
+
+# --- Score: two-decimal wire rounding profile (#22604) ---
+
+# OpenRouter capture row 7 (2026-10-26): every number on the hundredth grid, score 1.95 against a
+# weighted index of 1.96.
+CAPTURED_SCORE_LEVELS = ("vague", "clear", "clear and specific")
+CAPTURED_SCORE_RESPONSE: dict[str, Any] = {
+    "model": "typesafe/jev-1.14-20261014",
+    "answers": {
+        "clarity": {
+            "type": "score",
+            "score": 1.95,
+            "legend": {"0": "vague", "1": "clear", "2": "clear and specific"},
+            "probabilities": {"0": 0, "1": 0.04, "2": 0.96},
+            "confidence": 0.94,
+        }
+    },
+    "usage": {"input_tokens": 318, "output_tokens": 18, "cost": 1.3356e-05},
+    "id": "gen-dec-1792980245-QbgfDJYxlpVCF9BOd5SR",
+    "provider": "TypeSafe",
+}
+
+
+def _score_reply(score: float, probabilities: list[float]) -> dict[str, Any]:
+    return {
+        "model": "jev-latest",
+        "answers": {
+            "rating": {
+                "type": "score",
+                "score": score,
+                "legend": {str(index): f"level {index}" for index in range(len(probabilities))},
+                "probabilities": {str(index): p for index, p in enumerate(probabilities)},
+                "confidence": 0.9,
+            }
+        },
+        "usage": dict(USAGE),
+    }
+
+
+async def _scored(wire: FakeWire, score: float, probabilities: list[float]) -> float:
+    """Answer one Score question over ``len(probabilities)`` levels; return the parsed score."""
+    wire.handler = _raw_reply(_score_reply(score, probabilities))
+    question = ScoreQuestion(
+        instructions="Rate it.", levels=tuple(f"level {i}" for i in range(len(probabilities)))
+    )
+    result = await DecisionService(_config()).score("sufficiency", STATE, {"rating": question})
+    return result.answers["rating"].score
+
+
+@pytest.mark.asyncio
+async def test_score_accepts_two_decimal_wire_rounding(wire: FakeWire) -> None:
+    wire.handler = _raw_reply(CAPTURED_SCORE_RESPONSE)
+    service = DecisionService(
+        _wire_config("openrouter-decisions", model="typesafe/jev-1.14-20261014")
+    )
+    question = ScoreQuestion(
+        instructions="Rate how specifically the description identifies the shape.",
+        levels=CAPTURED_SCORE_LEVELS,
+    )
+
+    result = await service.score(
+        "sufficiency",
+        {"description": "A red square is centered on a white background."},
+        {"clarity": question},
+    )
+
+    answer = result.answers["clarity"]
+    assert answer.score == 1.95
+    assert answer.probabilities == {"0": 0.0, "1": 0.04, "2": 0.96}
+    assert answer.confidence == 0.94
+    assert result.response_model == "typesafe/jev-1.14-20261014"
+
+
+# Bound for n levels: 0.005 * (floor(n * n / 4) + 1). On-grid deltas inside it pass; the next
+# cent fails. Scores straddle the weighted index in both directions.
+QUANTIZED_SCORE_CASES = [
+    pytest.param([0.5, 0.5], [0.51, 0.49], [0.52, 0.48], id="n2-bound-0.01"),
+    pytest.param([0.2, 0.3, 0.5], [1.31, 1.29], [1.32, 1.28], id="n3-bound-0.015"),
+    pytest.param([0.1, 0.2, 0.3, 0.4], [2.02, 1.98], [2.03, 1.97], id="n4-bound-0.025"),
+    pytest.param(
+        [0.02, 0.03, 0.05, 0.1, 0.2, 0.2, 0.2, 0.1, 0.05, 0.05],
+        [5.11, 4.85],
+        [5.12, 4.84],
+        id="n10-bound-0.13",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("probabilities", "accepted", "rejected"), QUANTIZED_SCORE_CASES)
+async def test_score_quantized_error_bound_scales_with_level_count(
+    wire: FakeWire, probabilities: list[float], accepted: list[float], rejected: list[float]
+) -> None:
+    for score in accepted:
+        assert await _scored(wire, score, probabilities) == score
+    for score in rejected:
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await _scored(wire, score, probabilities)
+        assert caught.value.reason == "parse", score
+
+
+@pytest.mark.asyncio
+async def test_score_quantized_bound_tolerates_float_representation(wire: FakeWire) -> None:
+    # Exactly on the bound in cents, yet the binary difference lands just past it.
+    n2, n10 = [0.5, 0.5], [0.02, 0.03, 0.05, 0.1, 0.2, 0.2, 0.2, 0.1, 0.05, 0.05]
+    for score, probabilities, bound in ((0.51, n2, 0.01), (4.85, n10, 0.13)):
+        weighted = sum(index * p for index, p in enumerate(probabilities))
+        assert abs(score - weighted) > bound
+        assert await _scored(wire, score, probabilities) == score
+    # A grid probability carried with float noise is still on the grid.
+    assert await _scored(wire, 1.31, [0.2, 0.1 + 0.2, 0.5]) == 1.31
+
+
+@pytest.mark.asyncio
+async def test_score_keeps_high_precision_consistency_tolerance(wire: FakeWire) -> None:
+    on_grid = [0.2, 0.3, 0.5]  # weighted index 1.3; the old n=3 tolerance is 0.002
+    off_grid = [0.2, 0.295, 0.505]  # weighted index 1.305
+
+    # A higher-precision score keeps the tight tolerance.
+    assert await _scored(wire, 1.3015, on_grid) == 1.3015
+    # Any probability off the hundredth grid keeps it too, even with an on-grid score.
+    assert await _scored(wire, 1.306, off_grid) == 1.306
+    for score, probabilities in ((1.305, on_grid), (1.31, off_grid)):
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await _scored(wire, score, probabilities)
+        assert caught.value.reason == "parse", (score, probabilities)

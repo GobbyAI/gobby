@@ -109,6 +109,7 @@ def _insert_community(
     label_confidence: float | None = None,
     label_model: str | None = None,
     labeled_signature: str | None = None,
+    representatives: Sequence[str] | None = None,
 ) -> StoredCommunity:
     storage.upsert_project_stats(
         IndexedProject(id=PROJECT_ID, root_path="/tmp/gobby-community-label-tests"),
@@ -128,7 +129,7 @@ def _insert_community(
             community_id,
             len(members),
             list(members),
-            list(members[:1]),
+            list(members[:1] if representatives is None else representatives),
             len(members) - 1,
             0.5,
             f"{community_id:016x}",
@@ -681,10 +682,12 @@ async def test_gate_admits_at_threshold_and_rejects_below(
     state = next(body["state"] for body in decision_wire.bodies if "c5" in body["questions"])
     wide_state = state["communities"]["c5"]
     others = sorted(set(wide.members) - set(wide.representatives))
-    assert wide_state["members"] == (wide.representatives + others)[:40]
+    assert wide_state["members"] == others[: 40 - len(wide.representatives)]
     assert wide_state["representatives"] == wide.representatives
-    assert wide_state["candidates"] == wide.label_candidates
+    assert "candidates" not in wide_state
     assert wide_state["generated"] == {"name": _named(5), "rationale": "Area 5."}
+    assert wide_state["member_count"] == 50
+    assert wide_state["omitted_member_count"] == 10
 
     # A transport failure is not a decision: it stamps the attempt only.
     failing = _area(code_storage, 4)
@@ -1202,3 +1205,215 @@ async def test_sufficiency_runs_alone_and_all_off_sends_nothing(
     )
     assert outcomes == {92: "written_model", 93: "written_model"}
     assert len(decision_wire.bodies) == requests_before
+
+
+# --- Choice evidence: de-dup, shared bounds, and the rationale boundary (#22604 round 2) ---
+
+EVIDENCE_FILE_LIMIT = 40
+EVIDENCE_CHAR_LIMIT = 8000
+
+
+def _generates_by_label(
+    *communities: StoredCommunity, rationale: Callable[[int], str] | None = None
+) -> ScriptedJSONAdapter:
+    """Script names by the deterministic-label line, which leads the bounded prompt."""
+    return ScriptedJSONAdapter(
+        {
+            f"deterministic_label: {c.label_deterministic}\n": {
+                "name": _named(c.community_id),
+                "rationale": rationale(c.community_id) if rationale else f"Area {c.community_id}.",
+            }
+            for c in communities
+        }
+    )
+
+
+def _evidence_chars(entry: dict[str, Any]) -> int:
+    """Serialized evidence size in JSON-escaped characters (``ensure_ascii`` escapes)."""
+    return len(json.dumps(entry))
+
+
+def _state_entries(wire: DecisionWire, kind: str, key: str) -> list[dict[str, Any]]:
+    return [
+        body["state"]["communities"][key]
+        for body in wire.bodies
+        if key in body["questions"] and body["questions"][key]["type"] == kind
+    ]
+
+
+def _assert_bounded_evidence(entry: dict[str, Any], community: StoredCommunity) -> None:
+    representatives, members = entry["representatives"], entry["members"]
+    others = sorted(set(community.members) - set(community.representatives))
+    assert representatives == community.representatives
+    assert set(representatives).isdisjoint(members)
+    assert len(set(members)) == len(members)
+    # Whole paths only, in the stable remaining order.
+    assert set(members) <= set(others)
+    assert members == [path for path in others if path in set(members)]
+    assert len(representatives) + len(members) <= EVIDENCE_FILE_LIMIT
+    assert _evidence_chars(entry) <= EVIDENCE_CHAR_LIMIT
+    assert entry["member_count"] == community.member_count
+    assert entry["omitted_member_count"] == (
+        community.member_count - len(representatives) - len(members)
+    )
+
+
+async def test_choice_state_deduplicates_without_changing_answer_identity(
+    code_storage: CodeIndexStorage, decision_wire: DecisionWire
+) -> None:
+    root = "src/gobby/area500"
+    shared = [f"{root}/service.py", f"{root}/models.py", f"{root}/api.py"]
+    rest = [f"{root}/{name}.py" for name in ("helpers", "errors", "config", "routes", "cache")]
+    admitted = _area(code_storage, 500, members=[*shared, *rest], representatives=shared)
+    rejected = _area(code_storage, 501)
+    decision_wire.choices = {"c500": ("generated", 0.9), "c501": ("deterministic_1", 0.9)}
+    config = _decisions(community_label=_consumer("enforce"))
+
+    outcomes = await _gated_labeler(
+        _generates_by_label(admitted, rejected), lambda: config
+    ).label_batch(PROJECT_ID, [admitted, rejected], storage=code_storage, run_db=_run_db)
+
+    assert outcomes == {500: "gate_admitted", 501: "gate_rejected"}
+    choices = decision_wire.questions("choice")
+    assert set(choices) == {"c500", "c501"}
+    assert "c500" in choices["c500"]["instructions"]
+    assert choices["c500"]["criteria"] == {
+        "generated": _named(500),
+        "deterministic_0": admitted.label_candidates[0],
+        "deterministic_1": admitted.label_candidates[1],
+    }
+    [entry] = _state_entries(decision_wire, "choice", "c500")
+    assert entry["representatives"] == shared
+    assert entry["members"] == sorted(rest)
+    assert entry["member_count"] == 8
+    assert entry["omitted_member_count"] == 0
+    # The criteria already carry the candidates. The state keeps the generated
+    # name as the exact text of the generated option.
+    assert "candidates" not in entry
+    assert entry["generated"] == {"name": _named(500), "rationale": "Area 500."}
+    assert entry["generated"]["name"] == choices["c500"]["criteria"]["generated"]
+    _assert_decided(
+        code_storage,
+        admitted,
+        label=_named(500),
+        label_source="model",
+        label_confidence=0.9,
+        label_model=RESPONSE_MODEL,
+    )
+    _assert_decided(
+        code_storage,
+        rejected,
+        label=rejected.label_candidates[1],
+        label_source="deterministic",
+        label_confidence=0.9,
+        label_model=RESPONSE_MODEL,
+    )
+
+
+async def test_decision_evidence_has_stable_bounds_and_omission_count(
+    code_storage: CodeIndexStorage, decision_wire: DecisionWire
+) -> None:
+    count_root = "src/gobby/area510"
+    counted = _area(
+        code_storage,
+        510,
+        members=[f"{count_root}/part_{index:02d}.py" for index in range(60)],
+        label=STALE_NAME,
+        label_source="model",
+        label_confidence=0.82,
+        label_model="jev-1.13.0",
+        labeled_signature="stale-signature",
+    )
+    # Each path escapes to roughly 390 JSON characters, so 40 of them cannot fit 8000.
+    unicode_root = "src/gobby/area511/文档"
+    byte_heavy = _area(
+        code_storage,
+        511,
+        members=[f"{unicode_root}/{'模块' * 30}_{index:02d}.py" for index in range(40)],
+        label=STALE_NAME,
+        label_source="model",
+        label_confidence=0.82,
+        label_model="jev-1.13.0",
+        labeled_signature="stale-signature",
+    )
+    batch = [counted, byte_heavy]
+    decision_wire.choices = {"c510": ("generated", 0.9), "c511": ("generated", 0.9)}
+    decision_wire.noul = {"c510": 0.2, "c511": 0.2}
+    decision_wire.score = {key: [1.0, 0.0, 0.0, 0.0] for key in ("c510", "c511")}
+    config = _decisions(
+        community_label=_consumer("shadow"),
+        community_label_carry=_consumer("shadow"),
+        community_label_sufficiency=_consumer("shadow"),
+    )
+
+    await _gated_labeler(_generates_by_label(*batch), lambda: config).label_batch(
+        PROJECT_ID, batch, storage=code_storage, run_db=_run_db
+    )
+
+    assert decision_wire.kinds() == {"choice", "noul", "score"}
+    for kind in ("choice", "noul", "score"):
+        [counted_entry] = _state_entries(decision_wire, kind, "c510")
+        [heavy_entry] = _state_entries(decision_wire, kind, "c511")
+        _assert_bounded_evidence(counted_entry, counted)
+        _assert_bounded_evidence(heavy_entry, byte_heavy)
+        # The count bound keeps the first 40 unique files.
+        others = sorted(set(counted.members) - set(counted.representatives))
+        assert counted_entry["members"] == others[:39]
+        assert counted_entry["omitted_member_count"] == 20
+        # The character bound omits whole files and counts them.
+        assert heavy_entry["members"]
+        assert heavy_entry["omitted_member_count"] > 0
+
+
+async def test_required_representatives_cannot_fit_is_typed_oversize(
+    code_storage: CodeIndexStorage,
+    decision_wire: DecisionWire,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    root = "src/gobby/area520"
+    representatives = [f"{root}/{letter * 3000}.py" for letter in "abc"]
+    assert len(json.dumps(representatives)) > EVIDENCE_CHAR_LIMIT
+    unfit = _area(
+        code_storage,
+        520,
+        members=[*representatives, f"{root}/helpers.py"],
+        representatives=representatives,
+    )
+    fits = _area(code_storage, 521)
+    decision_wire.choices = {"c520": ("generated", 0.9), "c521": ("generated", 0.9)}
+    config = _decisions(community_label=_consumer("enforce"))
+
+    outcomes = await _gated_labeler(_generates_by_label(unfit, fits), lambda: config).label_batch(
+        PROJECT_ID, [unfit, fits], storage=code_storage, run_db=_run_db
+    )
+
+    assert outcomes == {520: "transport_failed", 521: "gate_admitted"}
+    events = {event["community_id"]: event for event in _events(caplog, OUTCOME_EVENT)}
+    assert events[520]["decision_unavailable"] == "oversize"
+    _assert_attempt_only(code_storage, unfit)
+    assert set(decision_wire.questions("choice")) == {"c521"}
+    # No request carries a partial required path.
+    sent = json.dumps(decision_wire.bodies)
+    assert not any(path[: len(root) + 200] in sent for path in representatives)
+
+
+async def test_generated_rationale_schema_boundary(
+    code_storage: CodeIndexStorage, decision_wire: DecisionWire
+) -> None:
+    at_limit = _area(code_storage, 530)
+    over_limit = _area(code_storage, 531)
+    rationales = {530: "r" * 120, 531: "r" * 121}
+    decision_wire.choices = {"c530": ("generated", 0.9), "c531": ("generated", 0.9)}
+    config = _decisions(community_label=_consumer("enforce"))
+
+    outcomes = await _gated_labeler(
+        _generates_by_label(at_limit, over_limit, rationale=rationales.__getitem__),
+        lambda: config,
+    ).label_batch(PROJECT_ID, [at_limit, over_limit], storage=code_storage, run_db=_run_db)
+
+    assert outcomes == {530: "gate_admitted", 531: "schema_rejected"}
+    assert set(decision_wire.questions("choice")) == {"c530"}
+    [entry] = _state_entries(decision_wire, "choice", "c530")
+    assert entry["generated"]["rationale"] == rationales[530]
+    _assert_attempt_only(code_storage, over_limit)

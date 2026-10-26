@@ -623,7 +623,11 @@ async def test_spawn_rules_let_a_team_manager_resume_a_session(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
 ) -> None:
-    """The seat rule exempts only a team manager's resume; its fresh spawn stays blocked."""
+    """The seat rule exempts a team manager's spawn_agent calls, resume and fresh alike.
+
+    Spawn admission, not this rule, bounds a fresh spawn to the team's scope. A
+    non-manager seat stays blocked (see the network-override test above).
+    """
     _only_rules_enabled(
         temp_db,
         SEAT_NO_SPAWN,
@@ -647,8 +651,7 @@ async def test_spawn_rules_let_a_team_manager_resume_a_session(
     )
 
     assert resumed.decision == "allow"
-    assert new_spawn.decision == "block"
-    assert SEAT_NO_SPAWN in (new_spawn.reason or "")
+    assert new_spawn.decision == "allow"
 
 
 def test_spawn_any_wildcard_stands_alone() -> None:

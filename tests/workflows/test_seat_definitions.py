@@ -136,6 +136,8 @@ SEND_MESSAGE_TARGETS = {
     "research-reviewer": ["parent", "session"],
     "recovery-steward": ["parent", "session"],
     "consolidator": ["parent", "session"],
+    "docs-reviewer": ["parent", "session"],
+    "research-reviewer": ["parent", "session"],
 }
 # The Assistant and Orchestrator are root panes under the interactive rules.
 ROOT_PANE_INCLUDES = ["tag:default"]

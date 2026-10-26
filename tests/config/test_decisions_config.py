@@ -270,3 +270,42 @@ def test_decisions_consumer_rows_defaults() -> None:
         assert _decisions(**{consumer: {"mode": "shadow"}}).model_dump()[consumer]["mode"] == (
             "shadow"
         )
+
+
+def test_max_request_bytes_config_bound() -> None:
+    assert "max_request_bytes" in DecisionsConfig.model_fields
+    assert DecisionsConfig().model_dump()["max_request_bytes"] is None
+
+    for rejected in (0, -1):
+        with pytest.raises(ValidationError) as excinfo:
+            _decisions(max_request_bytes=rejected)
+        assert [error["loc"] for error in excinfo.value.errors()] == [("max_request_bytes",)]
+
+    # Every byte of a request whose token estimate fits must fit too: 4 * tokens + 3 bytes.
+    for tokens in (256, 8192):
+        exact = _decisions(max_input_tokens=tokens, max_request_bytes=4 * tokens + 3)
+        assert exact.model_dump()["max_request_bytes"] == 4 * tokens + 3
+        _assert_byte_rule_rejects(max_input_tokens=tokens, max_request_bytes=4 * tokens + 2)
+        assert _decisions(max_input_tokens=tokens).model_dump()["max_request_bytes"] is None
+
+    assert _decisions(max_input_tokens=16383, max_request_bytes=65536).max_input_tokens == 16383
+    assert _decisions(max_request_bytes=65536).max_input_tokens == 8192
+    # 16384 fits the default 65536-token systemone context, so only the byte rule rejects it.
+    assert _decisions(max_input_tokens=16384).resolved_backend_max_state_tokens == 65536
+    _assert_byte_rule_rejects(max_input_tokens=16384, max_request_bytes=65536)
+
+    # The token-context rule stays separate from the byte rule.
+    with pytest.raises(ValidationError) as excinfo:
+        _decisions(max_input_tokens=65536, max_request_bytes=4 * 65536 + 3)
+    [error] = excinfo.value.errors()
+    assert "backend_max_state_tokens" in error["msg"]
+    assert "max_request_bytes" not in error["msg"]
+
+
+def _assert_byte_rule_rejects(**values: Any) -> None:
+    with pytest.raises(ValidationError) as excinfo:
+        _decisions(**values)
+    [error] = excinfo.value.errors()
+    assert error["type"] == "value_error"
+    assert "max_request_bytes" in error["msg"]
+    assert "backend_max_state_tokens" not in error["msg"]

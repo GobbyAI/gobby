@@ -148,6 +148,7 @@ def _fingerprint(config: DecisionsConfig) -> tuple[object, ...]:
         config.identity_contract,
         config.timeout_seconds,
         config.max_input_tokens,
+        config.max_request_bytes,
         config.resolved_backend_max_state_tokens,
         config.resolved_backend_max_question_tokens,
         config.long_context,
@@ -196,10 +197,18 @@ class DecisionService:
             _check_request(questions, config.wire_api)
             body = _request_body(model, config.wire_api, state, questions)
             estimated = _estimate_body_tokens(body)
-            _check_request_tokens(body, config, estimated)
+            wire_body = _check_request_limits(body, config, estimated)
             if _now() < self._cooldown_until:
                 raise DecisionsUnavailable("cooldown", "a recent decision failure is cooling down")
-            result = await self._dial(base, model, questions, body, timeout_seconds, parse_answer)
+            result = await self._dial(
+                base,
+                model,
+                questions,
+                wire_body,
+                timeout_seconds,
+                parse_answer,
+                has_images="assets" in body,
+            )
             outcome = "ok"
             return result
         except DecisionsUnavailable as error:
@@ -278,7 +287,7 @@ class DecisionService:
         """Apply the same request and branch budgets used before dialing."""
         body = _request_body(self._config.model or "", self._config.wire_api, state, questions)
         try:
-            _check_request_tokens(body, self._config, _estimate_body_tokens(body))
+            _check_request_limits(body, self._config, _estimate_body_tokens(body))
         except DecisionsUnavailable:
             return False
         return True
@@ -288,9 +297,11 @@ class DecisionService:
         base: str,
         model: str,
         questions: Mapping[str, Q],
-        body: dict[str, Any],
+        body: bytes,
         timeout_seconds: float | None,
         parse_answer: Callable[[Any, Q], A],
+        *,
+        has_images: bool,
     ) -> DecisionResult[A]:
         config = self._config
         budget = config.timeout_seconds
@@ -304,7 +315,7 @@ class DecisionService:
         headers = {"authorization": f"Bearer {config.api_key}"} if config.api_key else {}
         if config.long_context:
             headers["TypeSafe-Danger-Zone-Long-Context"] = "true"
-        if config.wire_api == "systemone" and "assets" in body:
+        if config.wire_api == "systemone" and has_images:
             headers["TypeSafe-Danger-Zone-Images"] = "true"
         card: asyncio.Task[str | None] | None = None
         try:
@@ -434,7 +445,7 @@ def _request_body(
     return body
 
 
-def _check_request_tokens(body: dict[str, Any], config: DecisionsConfig, estimated: int) -> None:
+def _check_request_limits(body: dict[str, Any], config: DecisionsConfig, estimated: int) -> bytes:
     if estimated > config.max_input_tokens:
         raise DecisionsUnavailable(
             "oversize", f"~{estimated} tokens exceeds {config.max_input_tokens}"
@@ -445,6 +456,14 @@ def _check_request_tokens(body: dict[str, Any], config: DecisionsConfig, estimat
             branch = {**body, "questions": {key: question}}
             if _estimate_body_tokens(branch) > limit:
                 raise DecisionsUnavailable("oversize", f"question {key} exceeds {limit} tokens")
+    wire_body = json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(
+        "utf-8"
+    )
+    if config.max_request_bytes is not None and len(wire_body) > config.max_request_bytes:
+        raise DecisionsUnavailable(
+            "oversize", f"{len(wire_body)} bytes exceeds {config.max_request_bytes}"
+        )
+    return wire_body
 
 
 def _estimate_body_tokens(body: dict[str, Any]) -> int:
@@ -571,12 +590,14 @@ def _client(timeout_seconds: float) -> httpx.AsyncClient:
 async def _post(
     url: str,
     headers: Mapping[str, str],
-    body: Mapping[str, Any],
+    body: bytes,
     timeout_seconds: float,
     exchange_observer: Callable[[httpx.Response], None] | None = None,
 ) -> Any:
     async with _client(timeout_seconds) as client:
-        response = await client.post(url, json=body, headers=headers)
+        response = await client.post(
+            url, content=body, headers={"content-type": "application/json", **headers}
+        )
     if exchange_observer is not None:
         exchange_observer(response)
     if not 200 <= response.status_code < 300:
@@ -646,6 +667,20 @@ def _parse_box(raw: Any, question: BoxQuestion) -> BoxAnswer:
     return BoxAnswer(top, bottom, left, right, _unit(raw.get("confidence")))
 
 
+def _score_abs_tolerance(score: float, probabilities: dict[str, float]) -> float:
+    """Allow observed hundredth-grid wire rounding; retain the high-precision profile."""
+    level_count = len(probabilities)
+    if all(
+        math.isclose(value, round(value, 2), rel_tol=0.0, abs_tol=1e-12)
+        for value in (score, *probabilities.values())
+    ):
+        # Normalized rounding errors sum to zero. With weights 0..n-1, their
+        # worst weighted sum is .005 * floor(n²/4), plus .005 for score rounding.
+        # The final epsilon covers binary representation at the exact bound.
+        return 0.005 * (level_count * level_count // 4 + 1) + 1e-12
+    return (level_count - 1) * _SUM_TOLERANCE
+
+
 def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
     if not isinstance(raw, dict) or raw.get("type") != "score":
         raise _parse_error("answer is not a score")
@@ -668,7 +703,7 @@ def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
     ):
         raise _parse_error("score is not a finite index within the requested levels")
     expected = sum(int(key) * value for key, value in probabilities.items())
-    if not math.isclose(score, expected, abs_tol=maximum * _SUM_TOLERANCE):
+    if not math.isclose(score, expected, abs_tol=_score_abs_tolerance(score, probabilities)):
         raise _parse_error("score differs from the probability-weighted index")
     return ScoreAnswer(float(score), probabilities, _unit(raw.get("confidence")))
 

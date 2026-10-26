@@ -83,7 +83,7 @@ _CANDIDATE_DEFAULTS = {
 
 _CANDIDATE_GRAMMAR = (
     "CANDIDATE not bound: expected EVENT=CANDIDATE TASK=<ref> [TASK_TITLE=...] "
-    "RUN= WT= COMMIT=<40-hex> [NOTE=...]"
+    "RUN= WT= COMMIT=<40-hex> or DISPOSITION=<moot|superseded|wont_do> [NOTE=...]"
 )
 
 # Session and project ids are native uuid columns in PostgreSQL.
@@ -276,6 +276,12 @@ class SeatRun:
     async def intake(self, task: Task, sha: str = SHA) -> None:
         await self.incoming(
             f"LANE=1 EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree COMMIT={sha} NOTE=ready"
+        )
+
+    async def intake_no_work(self, task: Task, disposition: str = "moot") -> None:
+        await self.incoming(
+            f"LANE=1 EVENT=CANDIDATE TASK={task.id} RUN=run WT=tree "
+            f"DISPOSITION={disposition} NOTE=ready"
         )
 
     def record_approval(self, task: Task, sha: str = SHA, author: str = SESSION_ID) -> None:
@@ -675,6 +681,83 @@ async def test_own_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) ->
     assert run.vars["candidate_sha"] is None
 
 
+async def test_own_no_work_bounce_clears_the_code_reviewer_unit(temp_db: HubDatabase) -> None:
+    """The Code Reviewer's BOUNCE of a no-work unit ends it, as a commit unit's BOUNCE does."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake_no_work(task)
+    assert run.step == "review"
+    assert run.vars["candidate_received"] is True
+    assert run.vars["candidate_disposition"] == "moot"
+    await run.send(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot"
+    )
+    assert run.step == "await"
+    assert run.vars["candidate_received"] is False
+
+
+async def test_peer_no_work_bounce_keeps_the_code_reviewer_in_review(temp_db: HubDatabase) -> None:
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake_no_work(task)
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot",
+        PEER_ID,
+    )
+    assert run.step == "review"
+    assert run.vars["candidate_received"] is True
+    assert run.vars["candidate_disposition"] == "moot"
+
+
+async def test_commit_bounce_does_not_clear_a_no_work_unit(temp_db: HubDatabase) -> None:
+    """A commit verdict names a SHA that the no-work unit does not hold, so it leaves the unit."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake_no_work(task)
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={SHA} VERDICT=BOUNCE NOTE=HIGH")
+    assert run.step == "review"
+    assert run.vars["candidate_received"] is True
+
+
+async def test_linked_commit_makes_the_no_work_bounce_stale(temp_db: HubDatabase) -> None:
+    """Once the task links work, its no-work unit is no longer the one a BOUNCE can clear."""
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake_no_work(task)
+    LocalTaskManager(run.db).link_commit(task.id, SHA)
+    await run.send(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot"
+    )
+    assert run.step == "review"
+    assert run.vars["candidate_received"] is True
+
+
+async def test_coordinator_withdraws_only_the_exact_no_work_unit(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
+    run = SeatRun(temp_db, "code-reviewer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task()
+    await run.intake_no_work(task)
+    await run.incoming(
+        f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} DISPOSITION=wont_do", COORDINATOR_ID
+    )
+    assert run.step == "review"
+    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={SHA}", COORDINATOR_ID)
+    assert run.step == "review"
+    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} DISPOSITION=moot", PEER_ID)
+    assert run.step == "review"
+    await run.incoming(f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} DISPOSITION=moot", COORDINATOR_ID)
+    assert run.step == "await"
+    assert run.vars["candidate_received"] is False
+
+
 async def test_developer_submit_returns_to_implement_on_reviewer_request(
     linked_developer: tuple[SeatRun, Task, str, str],
 ) -> None:
@@ -684,6 +767,42 @@ async def test_developer_submit_returns_to_implement_on_reviewer_request(
     assert run.step == "implement"
     assert run.vars["implementation_complete"] is False
     assert await run.admits_native("Bash", {"command": "git status"})
+
+
+async def test_developer_without_a_commit_stays_in_implement_on_no_work_bounce(
+    temp_db: HubDatabase,
+) -> None:
+    """A no-work unit names no commit, so the developer never leaves implement for it."""
+    run = SeatRun(temp_db, "developer")
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot",
+        PEER_ID,
+    )
+    assert run.step == "implement"
+    assert run.vars["implementation_complete"] is False
+
+
+async def test_developer_submit_refuses_a_no_work_bounce_for_a_linked_task(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    """A task with a linked commit cannot be bounced through a no-work disposition."""
+    run, task, _, _ = linked_developer
+    await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} DISPOSITION=moot VERDICT=BOUNCE NOTE=not moot",
+        PEER_ID,
+    )
+    assert run.step == "submit"
 
 
 async def test_developer_submit_return_refused_for_unowned_task(

@@ -143,7 +143,7 @@ def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> 
         "characters",
         "compressing prose into shorthand",
         "session-scoped Markdown working-context",
-        "project-relative path",
+        "agent workspace folder",
         "`clear_session=false` during planning, review, or ongoing task work",
         "`true` only for a root/coordinator",
         "after closing the",
@@ -173,7 +173,7 @@ def test_handoff_guidance_preserves_friction_without_historical_overflow(
         "including resolved friction",
         "Never copy earlier reflections into a new handoff",
         "friction actually recurs",
-        "project-relative path",
+        "agent workspace folder",
         "never append epoch histories or move discarded history and reflections into it",
         "before compaction",
     ):

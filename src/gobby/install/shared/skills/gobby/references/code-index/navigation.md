@@ -14,10 +14,14 @@ absolute paths map into the checkout or overlay. Multiple positional paths
 and globs use OR semantics, for example
 `gcode tree crates/gcode/src 'docs/**/*.md'`. Tree has positional filters, not
 grep's `--glob` flag. Use `--project <path-or-name>` to select another indexed
-project. For a sibling worktree, `--project <worktree-path>` reads its branch from
-any checkout of that project: the overlay indexes changed files and serves the rest
-from the parent. Writes stay scoped to the caller's checkout; another project or
-machine returns `code_overlay_mismatch`.
+project. Never infer cross-project write authority from successful discovery.
+For a sibling worktree, `--project <worktree-path>` reads its branch from
+any checkout of that project. The read serves the overlay-owned files plus pinned
+inherited versions of the other files, which are read by content hash. Writes stay
+scoped to the caller's checkout; another project or machine returns
+`code_overlay_mismatch`. Staleness is judged against the selected worktree's files,
+not the parent's index time, so a stale overlay cannot refresh from another checkout
+and may return stale or missing results for affected paths, with a stale-index WARN.
 
 Navigation uses a 2,000-token compact-text page budget by default. Collection
 pages contain whole semantic items; an oversized first item remains complete.
@@ -39,4 +43,4 @@ the plan coverage reference for its grammar.
 
 Guide: [Operating model](../../../../../../../../docs/guides/gcode-user-guide.md#operating-model).
 
-_Last verified: 2026-10-22_
+_Last verified: 2026-10-26_

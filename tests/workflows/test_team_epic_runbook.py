@@ -136,6 +136,13 @@ def test_epic_procedures() -> None:
     assert _missing(guide, (r"epic mode", r"epic/<seq>/main", r"wt-epic-<seq>")) == []
 
 
+def test_reviewer_procedures_state_the_no_work_bounce() -> None:
+    """Each reviewer names the no-commit BOUNCE the step machine accepts (#25080)."""
+    for reviewer in REVIEWERS:
+        text = flat((PROCEDURES / f"{reviewer}.md").read_text()).lower()
+        assert "disposition=<moot|superseded|wont_do> verdict=bounce" in text, reviewer
+
+
 def test_runbook_guide_says_the_dev_manager_never_claims_the_epic() -> None:
     # No claim on the epic: the Dev Manager lands and closes it, and land_commit refuses a
     # session that ever claimed the task. The runtime skip is pinned by
@@ -184,6 +191,7 @@ def _context(inputs: dict[str, Any]) -> dict[str, Any]:
     values.update(workspace="pilot-workspace", report_to="gobby#14972", **inputs)
     return {
         "inputs": values,
+        # A fresh dry run has no live seats; the seat prompts read this map unconditionally.
         "steps": {
             "guard": {"output": {"workspace_id": WORKSPACE, "live": {}, "tab_exists": False}}
         },

@@ -76,6 +76,12 @@ pub enum Viewer {
     Web,
     Gclient,
 }
+/// The client connection and bound caller that issue a registry operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Requester {
+    pub connection: Uuid,
+    pub caller: Uuid,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Attachment {
     pub terminal_id: Uuid,
@@ -208,6 +214,7 @@ struct Terminal {
 struct Record {
     token: Attachment,
     connection: Uuid,
+    caller: Uuid,
     viewer: Viewer,
     backend: Backend,
     delivery: Delivery,
@@ -269,6 +276,26 @@ impl Terminal {
             .get_mut(&token.id)
             .filter(|r| r.token == token && !r.finalized)
             .ok_or(Error::StaleAttachment)
+    }
+    fn record_owned(
+        &self,
+        token: Attachment,
+        requester: Requester,
+        allow_finalized: bool,
+    ) -> Result<&Record, Error> {
+        let r = self.record(token, allow_finalized)?;
+        if r.connection != requester.connection || r.caller != requester.caller {
+            return Err(Error::StaleAttachment);
+        }
+        Ok(r)
+    }
+    fn record_owned_mut(
+        &mut self,
+        token: Attachment,
+        requester: Requester,
+    ) -> Result<&mut Record, Error> {
+        self.record_owned(token, requester, false)?;
+        self.record_mut(token)
     }
     fn elect(&mut self) -> Option<Sizing> {
         let old = self.view.sizing_owner;
@@ -427,11 +454,12 @@ impl Registry {
     pub async fn attach(
         &self,
         terminal: Uuid,
-        connection: Uuid,
+        requester: Requester,
         viewer: Viewer,
         backend: Backend,
         delivery: Delivery,
     ) -> Result<Attachment, Error> {
+        let connection = requester.connection;
         let mut state = self.state.lock().await;
         state.healthy(self, Some(connection))?;
         if state.admission_closed {
@@ -451,6 +479,7 @@ impl Registry {
             Record {
                 token,
                 connection,
+                caller: requester.caller,
                 viewer,
                 backend,
                 delivery,
@@ -475,13 +504,14 @@ impl Registry {
     pub async fn take_control(
         &self,
         attachment: Attachment,
+        requester: Requester,
         takeover: bool,
     ) -> Result<Control, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal_mut(attachment)?;
-        t.record(attachment, false)?;
+        t.record_owned(attachment, requester, false)?;
         let generation = t.view.generation;
         if t.view.holder == Some(attachment.id) {
             // A repeated take is the holder's retry after a refused host grant.
@@ -531,12 +561,16 @@ impl Registry {
             input,
         })
     }
-    pub async fn release_control(&self, attachment: Attachment) -> Result<Control, Error> {
+    pub async fn release_control(
+        &self,
+        attachment: Attachment,
+        requester: Requester,
+    ) -> Result<Control, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal(attachment)?;
-        t.record(attachment, false)?;
+        t.record_owned(attachment, requester, false)?;
         if t.view.holder != Some(attachment.id) {
             return Ok(Control {
                 granted: false,
@@ -578,10 +612,14 @@ impl Registry {
     pub async fn finalize(
         &self,
         attachment: Attachment,
+        requester: Requester,
         reason: &str,
     ) -> Result<Option<Finalized>, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
+        state
+            .terminal(attachment)?
+            .record_owned(attachment, requester, true)?;
         self.finalize_locked(&mut state, attachment, reason, None::<&Pool>)
             .await
     }
@@ -728,13 +766,14 @@ impl Registry {
     pub async fn resize(
         &self,
         attachment: Attachment,
+        requester: Requester,
         rows: i64,
         cols: i64,
     ) -> Result<Sizing, Error> {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal_mut(attachment)?;
-        t.record(attachment, false)?;
+        t.record_owned(attachment, requester, false)?;
         let geometry = dimensions(rows, cols)?;
         let sequence = increment(t.resize_sequence)?;
         let r = t.record_mut(attachment)?;
@@ -747,12 +786,15 @@ impl Registry {
     pub async fn set_viewport(
         &self,
         attachment: Attachment,
+        requester: Requester,
         rows: i64,
         cols: i64,
     ) -> Result<(u16, u16), Error> {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
-        let r = state.terminal_mut(attachment)?.record_mut(attachment)?;
+        let r = state
+            .terminal_mut(attachment)?
+            .record_owned_mut(attachment, requester)?;
         let geometry = dimensions(rows, cols)?;
         r.view.viewport = Some(geometry);
         Ok(geometry)
@@ -760,12 +802,15 @@ impl Registry {
     pub async fn set_scroll(
         &self,
         attachment: Attachment,
+        requester: Requester,
         rows: i64,
         max: i64,
     ) -> Result<ScrollApplied, Error> {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
-        let r = state.terminal_mut(attachment)?.record_mut(attachment)?;
+        let r = state
+            .terminal_mut(attachment)?
+            .record_owned_mut(attachment, requester)?;
         if rows.unsigned_abs() > MAX_SAFE_INTEGER || max.unsigned_abs() > MAX_SAFE_INTEGER {
             return Err(Error::SafeIntegerOverflow);
         }
@@ -780,6 +825,7 @@ impl Registry {
     pub async fn admit_write(
         &self,
         attachment: Attachment,
+        requester: Requester,
         expected_generation: u64,
         seq: u64,
         kind: &str,
@@ -788,7 +834,7 @@ impl Registry {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
         let t = state.terminal_mut(attachment)?;
-        t.record(attachment, false)?;
+        t.record_owned(attachment, requester, false)?;
         if seq > MAX_SAFE_INTEGER || expected_generation > MAX_SAFE_INTEGER {
             return Err(Error::SafeIntegerOverflow);
         }
@@ -841,13 +887,16 @@ impl Registry {
     pub async fn complete_write(
         &self,
         attachment: Attachment,
+        requester: Requester,
         seq: u64,
         outcome: &str,
         reason: Option<&str>,
     ) -> Result<(), Error> {
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
-        let r = state.terminal_mut(attachment)?.record_mut(attachment)?;
+        let r = state
+            .terminal_mut(attachment)?
+            .record_owned_mut(attachment, requester)?;
         if seq > MAX_SAFE_INTEGER {
             return Err(Error::SafeIntegerOverflow);
         }

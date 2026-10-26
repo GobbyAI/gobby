@@ -85,7 +85,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
             FreshnessScope::Project => None,
             FreshnessScope::Files(paths) => Some(paths.as_slice()),
         };
-        let stale = read_only_stale_paths(&mut conn, ctx, files)?;
+        let stale = stale_served_paths(&mut conn, ctx, files)?;
         return Ok(if stale.is_empty() {
             FreshnessStatus::Checked
         } else {
@@ -141,19 +141,17 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
     }
 }
 
-/// Paths a checkout that cannot refresh its index must report: visible rows whose
+/// Paths a checkout must report as not current: visible rows whose
 /// served bytes differ from the worktree, served paths that are gone, and
 /// indexable files no row serves. `files` narrows the check to the requested
-/// paths; `None` checks the whole checkout. Empty when the checkout can refresh,
-/// because `ensure_fresh` has already brought its index current.
-pub(crate) fn read_only_stale_paths(
+/// paths; `None` checks the whole checkout. Runs for writable checkouts too: a
+/// refresh skipped on a busy lock or degraded by an error leaves served rows the
+/// worktree has moved past, and only the disk comparison can report that.
+pub(crate) fn stale_served_paths(
     conn: &mut postgres::Client,
     ctx: &Context,
     files: Option<&[PathBuf]>,
 ) -> anyhow::Result<Vec<String>> {
-    if ctx.can_refresh_index()? {
-        return Ok(Vec::new());
-    }
     let served: HashMap<String, String> = visibility::visible_tree(conn, ctx)?
         .into_iter()
         .map(|file| (file.file_path, file.content_hash))
