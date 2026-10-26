@@ -31,7 +31,7 @@ def derivation_fingerprint(
     """Invalidate durable snapshots whenever their derivation inputs change."""
     payload = json.dumps(
         {
-            "derivation_version": 48,
+            "derivation_version": 49,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -110,6 +110,9 @@ class EvidenceSnapshot:
     degraded: tuple[str, ...]
     parsed_from_offset: int = 0
     latest_record_at: datetime | None = None
+    #: Size and mtime of an archive's file, the identity its parse is reused under. Empty
+    #: for a live transcript, which is tracked by its byte watermark instead.
+    archive_identity: str = ""
     #: Per-path snapshots of the session's supplemental transcripts (Claude
     #: subagents), carried in the primary's record so one session keeps one
     #: cache slot. Subagent files are append-only, so after one full parse
@@ -123,6 +126,7 @@ class EvidenceSnapshot:
             self.watermark,
             self.tail_len,
             self.tail_sha256,
+            self.archive_identity,
             tuple(sorted((path, s.checkpoint()) for path, s in self.supplemental.items())),
         )
 

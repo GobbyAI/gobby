@@ -1,8 +1,8 @@
 """The runs a stream snapshot keeps, and what a resumed stop sends back for them.
 
-A stream stop resumes from a lean snapshot: the runs a later record can still rewrite,
-plus the last run, which the next record may settle. Every other run is final, so the
-stream already holds its last state and nothing later changes it.
+A stop resumes from a lean snapshot: background jobs still awaiting a receipt, the newest
+settled runs a later record can rewrite, and the last run. Other runs are final for the
+snapshot. The stream keeps the open failures and greens the gate still reads.
 """
 
 from __future__ import annotations
@@ -16,13 +16,33 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
 )
 
+#: Settled rewritable runs a snapshot keeps. Older settled runs are final: a receipt that
+#: rewrites one of them is not reconciled on resume.
+_SETTLED_WINDOW = 16
+
 
 def lean_runs(runs: Sequence[TranscriptValidationRun]) -> tuple[TranscriptValidationRun, ...]:
-    """The rewritable runs in order, then the last run."""
+    """Background jobs awaiting a receipt, the newest settled rewritable runs, then the last run.
+
+    A pending job keeps its place at any age, because its receipt can arrive at any stop.
+    The settled window is fixed, so a long session of finished background jobs keeps the
+    same snapshot size.
+    """
     if not runs:
         return ()
-    rewritable = tuple(run for run in runs[:-1] if _rewritable(run))
-    return (*rewritable, runs[-1])
+    head = runs[:-1]
+    rewritable = [index for index, run in enumerate(head) if _rewritable(run)]
+    settled = [index for index in rewritable if not _pending(head[index])]
+    kept = {index for index in rewritable if _pending(head[index])}
+    kept.update(settled[-_SETTLED_WINDOW:])
+    return (*(head[index] for index in sorted(kept)), runs[-1])
+
+
+def _pending(run: TranscriptValidationRun) -> bool:
+    """A background job whose completion receipt has not arrived yet."""
+    return run.exit_code is None and (
+        run.background_job_id is not None or run.background_output_path is not None
+    )
 
 
 def _rewritable(run: TranscriptValidationRun) -> bool:

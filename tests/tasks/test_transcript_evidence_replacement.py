@@ -10,6 +10,8 @@ never moves the stream's checkpoint behind its back.
 from __future__ import annotations
 
 import asyncio
+import gzip
+import json
 import random
 from collections.abc import Callable
 from dataclasses import replace
@@ -19,10 +21,15 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.transcript_io import _iter_archive_lines
+from gobby.storage.session_models import Session
 from gobby.tasks import transcript_evidence
 from gobby.tasks.transcript_evidence_cache import clear_snapshots, read_snapshot, write_snapshot
+from gobby.tasks.transcript_evidence_delta import lean_runs
 from gobby.tasks.transcript_evidence_models import TranscriptValidationRun
 from gobby.tasks.transcript_evidence_stream import TranscriptEvidenceStream
+from gobby.tasks.transcript_outcomes import EvidenceOutcome
+from gobby.tasks.transcript_validation_ledger import TranscriptValidationLedger
 from gobby.workflows import validation_cover
 from gobby.workflows.found_work_gate import unresolved_validation_failures
 from tests.tasks.test_transcript_evidence import (
@@ -314,3 +321,148 @@ async def test_stream_matches_full_derivation_across_random_replacement_sequence
             _write_jsonl(transcript, records)
         streamed, full = await _stream_and_full(transcript, tmp_path, stream)
         assert _findings(streamed) == _findings(full), f"seed {seed} step {step} ({choice})"
+
+
+def _validation_run(command: str, order: int, outcome: EvidenceOutcome) -> TranscriptValidationRun:
+    at = BASE_TIME + timedelta(seconds=order)
+    return TranscriptValidationRun(
+        session_id="session",
+        source="claude",
+        command=command,
+        categories=("test",),
+        matcher_id="pytest",
+        label="pytest",
+        outcome=outcome,
+        started_at=at,
+        completed_at=at,
+        order=order,
+        exit_code=0 if outcome == "success" else 1,
+        run_id=order,
+    )
+
+
+def _settled_background(index: int) -> TranscriptValidationRun:
+    run = _validation_run(f"uv run pytest tests/tasks/test_{index}.py -q", index + 1, "success")
+    return replace(run, background_job_id=f"job-{index}")
+
+
+def test_lean_runs_keeps_a_fixed_window_of_settled_background_runs() -> None:
+    short = lean_runs(tuple(_settled_background(index) for index in range(100)))
+    long = lean_runs(tuple(_settled_background(index) for index in range(1000)))
+    assert len(long) == len(short)
+
+
+def test_ledger_view_keeps_a_fixed_window_of_greens_and_every_open_failure() -> None:
+    def view(greens: int) -> tuple[TranscriptValidationRun, ...]:
+        failure = _validation_run("uv run pytest tests/tasks/test_fail.py -q", 0, "failure")
+        runs = [
+            failure,
+            *(
+                _validation_run(
+                    f"uv run pytest tests/tasks/test_ok_{index}.py -q", index + 1, "success"
+                )
+                for index in range(greens)
+            ),
+        ]
+        return TranscriptValidationLedger.of(None, runs).reduced()
+
+    short = view(100)
+    long = view(1000)
+    assert len(long) == len(short)
+    assert any(run.command.endswith("test_fail.py -q") for run in long)
+
+
+def _write_archive(session: Session, archive_dir: Path, records: list[dict[str, Any]]) -> None:
+    archive = archive_dir / f"{session.external_id}.jsonl.gz"
+    with gzip.open(archive, "wt", encoding="utf-8") as handle:
+        handle.write("\n".join(json.dumps(record) for record in records) + "\n")
+
+
+@pytest.mark.asyncio
+async def test_archive_is_parsed_once_while_its_identity_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parses: list[str] = []
+    real_lines = _iter_archive_lines
+
+    def counting_lines(path: str) -> Any:
+        parses.append(path)
+        return real_lines(path)
+
+    monkeypatch.setattr(transcript_evidence, "_iter_archive_lines", counting_lines)
+    clear_snapshots()
+    archive_dir = tmp_path / "archives"
+    archive_dir.mkdir()
+    transcript = tmp_path / "claude.jsonl"
+    session = _session("claude", transcript)
+    _write_archive(
+        session,
+        archive_dir,
+        _pytest(
+            "uv run pytest tests/tasks/test_old.py -q", "old", BASE_TIME + timedelta(seconds=1), 0
+        ),
+    )
+    _write_jsonl(
+        transcript,
+        _pytest(
+            "uv run pytest tests/tasks/test_live.py -q",
+            "live-0",
+            BASE_TIME + timedelta(minutes=1),
+            0,
+        ),
+    )
+    stream = TranscriptEvidenceStream()
+    counts: list[int] = []
+    for step in range(3):
+        if step:
+            _append_jsonl(
+                transcript,
+                _pytest(
+                    "uv run pytest tests/tasks/test_live.py -q",
+                    f"live-{step}",
+                    BASE_TIME + timedelta(minutes=1, seconds=10 * step),
+                    0,
+                ),
+            )
+        parses.clear()
+        await _derive(session, BASE_TIME, tmp_path, stream=stream, archive_dir=str(archive_dir))
+        counts.append(len(parses))
+    assert counts == [1, 0, 0]
+
+
+async def _two_transcript_runs(root: Path, greens: int) -> tuple[TranscriptValidationRun, ...]:
+    archive_dir = root / "archives"
+    archive_dir.mkdir(parents=True)
+    transcript = root / "claude.jsonl"
+    session = _session("claude", transcript)
+    _write_archive(
+        session,
+        archive_dir,
+        _pytest(
+            "uv run pytest tests/tasks/test_old.py -q", "old", BASE_TIME + timedelta(seconds=1), 0
+        ),
+    )
+    records: list[dict[str, Any]] = []
+    for index in range(greens):
+        records += _pytest(
+            f"uv run pytest tests/tasks/test_ok_{index}.py -q",
+            f"green-{index}",
+            BASE_TIME + timedelta(minutes=1, seconds=10 * index),
+            0,
+        )
+    _write_jsonl(transcript, records)
+    evidence = await _derive(
+        session, BASE_TIME, root, stream=TranscriptEvidenceStream(), archive_dir=str(archive_dir)
+    )
+    return evidence.validation_runs
+
+
+@pytest.mark.asyncio
+async def test_two_transcript_stream_output_does_not_grow_with_distinct_greens(
+    tmp_path: Path,
+) -> None:
+    clear_snapshots()
+    small = await _two_transcript_runs(tmp_path / "small", 100)
+    clear_snapshots()
+    large = await _two_transcript_runs(tmp_path / "large", 200)
+    assert len(large) == len(small)

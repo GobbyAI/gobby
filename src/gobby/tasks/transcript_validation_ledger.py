@@ -2,14 +2,14 @@
 
 The gate's unresolved-failure check reads a green only through its command signature
 (command, categories, segments) and its order, and reads a failure only while no green
-covers it. The ledger therefore keeps one green per signature, the latest-ordered, and
-every failure no green covers. The gate decides the same over those runs as over the
-full history, at a cost bounded by open failures and distinct signatures.
+covers it. The ledger therefore judges every failure against every green it is given,
+then keeps the open failures and the newest ``GREEN_WINDOW`` greens, one per signature.
+A green outside that window no longer covers a failure judged on a later stop.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from dataclasses import astuple
 from typing import Self
 
@@ -20,80 +20,47 @@ from gobby.workflows.validation_cover import (
     ran_in_scratchpad,
 )
 
+#: Greens a reduced view keeps, newest first.
+GREEN_WINDOW = 64
+
 _Signature = tuple[object, ...]
-_Change = tuple[TranscriptValidationRun | None, TranscriptValidationRun]
 
 
 class TranscriptValidationLedger:
-    """Greens by signature and open failures for one session, bound to one project tree."""
+    """Open failures and the newest greens of one session, bound to one project tree."""
 
     def __init__(self, project_path: str | None) -> None:
         self.project_path = project_path
-        self._greens: dict[_Signature, TranscriptValidationRun] = {}
-        self._open: dict[int, TranscriptValidationRun] = {}
+        self._greens: tuple[TranscriptValidationRun, ...] = ()
+        self._open: tuple[TranscriptValidationRun, ...] = ()
 
     @classmethod
     def of(cls, project_path: str | None, runs: Iterable[TranscriptValidationRun]) -> Self:
+        """Judge each failure in ``runs`` against every green in them, then keep the window."""
         ledger = cls(project_path)
-        ledger._absorb(runs)
+        fresh = [run for run in runs if run.categories]
+        newest: dict[_Signature, TranscriptValidationRun] = {}
+        for run in fresh:
+            if run.outcome != "success":
+                continue
+            signature = _signature(run)
+            held = newest.get(signature)
+            if held is None or run.order >= held.order:
+                newest[signature] = run
+        greens = tuple(newest.values())
+        ledger._open = tuple(
+            failure
+            for failure in fresh
+            if failure.outcome == "failure"
+            and _eligible(failure, project_path)
+            and not any(_closes(green, failure, project_path) for green in greens)
+        )
+        ledger._greens = tuple(sorted(greens, key=lambda run: run.order)[-GREEN_WINDOW:])
         return ledger
 
-    def apply(self, changes: Sequence[_Change]) -> bool:
-        """Fold ``(previous, current)`` replacements in.
-
-        Returns False when a green left the set or moved earlier, since closure then
-        stops being monotone; the caller rebuilds from the held runs.
-        """
-        added: list[TranscriptValidationRun] = []
-        for previous, current in changes:
-            if previous is not None:
-                if _is_green(previous) and not _keeps_green(previous, current):
-                    return False
-                self._open.pop(previous.run_id, None)
-            added.append(current)
-        self._absorb(added)
-        return True
-
     def reduced(self) -> tuple[TranscriptValidationRun, ...]:
-        """Open failures and one green per signature, in creation order."""
-        return tuple(
-            sorted((*self._open.values(), *self._greens.values()), key=lambda run: run.order)
-        )
-
-    def _absorb(self, runs: Iterable[TranscriptValidationRun]) -> None:
-        """Fold runs in with greens first, so each failure is judged against the final greens."""
-        fresh = [run for run in runs if run.categories]
-        greens = [run for run in fresh if run.outcome == "success"]
-        for green in greens:
-            signature = _signature(green)
-            held = self._greens.get(signature)
-            if held is None or green.order >= held.order:
-                self._greens[signature] = green
-        # Open failures were already judged against every earlier green, so only these close them.
-        self._open = {
-            run_id: failure
-            for run_id, failure in self._open.items()
-            if not any(_closes(green, failure, self.project_path) for green in greens)
-        }
-        for failure in (run for run in fresh if run.outcome == "failure"):
-            if not _eligible(failure, self.project_path):
-                continue
-            if not any(
-                _closes(green, failure, self.project_path) for green in self._greens.values()
-            ):
-                self._open[failure.run_id] = failure
-
-
-def _is_green(run: TranscriptValidationRun) -> bool:
-    return bool(run.categories) and run.outcome == "success"
-
-
-def _keeps_green(previous: TranscriptValidationRun, current: TranscriptValidationRun) -> bool:
-    return (
-        _is_green(current)
-        and _signature(current) == _signature(previous)
-        and current.order >= previous.order
-    )
+        """Open failures and the green window, in creation order."""
+        return tuple(sorted((*self._open, *self._greens), key=lambda run: run.order))
 
 
 def _signature(run: TranscriptValidationRun) -> _Signature:

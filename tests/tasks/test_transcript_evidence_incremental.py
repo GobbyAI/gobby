@@ -9,6 +9,7 @@ import multiprocessing
 import os
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -30,6 +31,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceDelta,
     TranscriptPathDelta,
+    TranscriptValidationRun,
 )
 from gobby.tasks.transcript_evidence_snapshots import (
     clear_evidence_snapshots,
@@ -728,6 +730,16 @@ async def test_supplemental_transcripts_resume_from_the_session_snapshot(
     assert parse_counts == [len(primary_records), len(subagent_records) + len(appended)]
 
 
+def _gate_findings(evidence: TranscriptEvidence) -> tuple[TranscriptValidationRun, ...]:
+    """The failures the stop gate reads as unresolved, with their position ignored.
+
+    A stream keeps one green per command and the newest window of greens, not every run,
+    so the gate's reading is the parity it must match.
+    """
+    unresolved = unresolved_validation_failures(evidence.validation_runs, owner_handoff=False)
+    return tuple(replace(run, order=0) for run in unresolved)
+
+
 @pytest.mark.asyncio
 async def test_stream_extends_to_the_full_derivation_across_supplemental_appends(
     tmp_path: Path, pool_calls: list[PoolCall]
@@ -782,7 +794,7 @@ async def test_stream_extends_to_the_full_derivation_across_supplemental_appends
 
     # One appended run per transcript crossed the pool, not the whole window.
     assert [payload.record_count for _, payload in pool_calls] == [2]
-    assert extended == await _derive(session, BASE_TIME, tmp_path)
+    assert _gate_findings(extended) == _gate_findings(await _derive(session, BASE_TIME, tmp_path))
 
     # A default (full-mode) derivation keeps its snapshot under its own key, so it leaves
     # the stream's checkpoint alone: the next stop resumes and transfers only the appends.
@@ -808,7 +820,7 @@ async def test_stream_extends_to_the_full_derivation_across_supplemental_appends
     pool_calls.clear()
     resumed = await _derive(session, BASE_TIME, tmp_path, stream=stream)
     assert [payload.record_count for _, payload in pool_calls] == [2]
-    assert resumed == await _derive(session, BASE_TIME, tmp_path)
+    assert _gate_findings(resumed) == _gate_findings(await _derive(session, BASE_TIME, tmp_path))
 
 
 def test_stream_refuses_a_resumed_delta_built_on_a_superseded_checkpoint() -> None:

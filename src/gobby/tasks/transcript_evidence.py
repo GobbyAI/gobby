@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -307,7 +308,8 @@ def _derive_transcript_evidence_sync(
         )
         for index, path in enumerate(paths)
     )
-    updated = results[0][1]
+    # An archive primary has no live snapshot to store; its archives are the session's only paths.
+    updated = None if paths[0].endswith(".gz") else results[0][1]
     if updated is not None:
         updated = replace(
             updated,
@@ -346,6 +348,27 @@ def _derive_transcript_path_evidence(
     return evidence, snapshot
 
 
+def _archive_identity(path: str) -> str:
+    """Size and mtime name an archive's content, so a rewritten archive changes identity."""
+    stat = os.stat(path)
+    return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def _archived_evidence(
+    session: Session, resume: EvidenceSnapshot, attempted_paths: list[str]
+) -> tuple[TranscriptEvidence, EvidenceSnapshot, tuple[TranscriptValidationRun, ...]]:
+    """Evidence of an archive whose identity the held parse still matches."""
+    evidence = TranscriptEvidence(
+        validation_runs=tuple(run for run in resume.runs if run.categories),
+        command_runs=tuple(run for run in resume.runs if not run.categories),
+        attempted_paths=tuple(attempted_paths),
+        sessions=(session.id,),
+        degraded_capabilities=resume.degraded,
+        latest_record_at=resume.latest_record_at,
+    )
+    return evidence, resume, resume.runs
+
+
 def _derive_transcript_path_delta(
     session: Session,
     path: str,
@@ -366,14 +389,18 @@ def _derive_transcript_path_delta(
         window_start,
         detection_config,
     )
-    if resume is not None and (
-        resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
-    ):
+    if resume is not None and (resume.fingerprint != fingerprint or resume.transcript_path != path):
         resume = None
 
     read: TranscriptRead | None = None
+    archive_identity = ""
     try:
         if path.endswith(".gz"):
+            # An archive's parse holds while its size and mtime do not change.
+            archive_identity = _archive_identity(path)
+            if resume is not None and resume.archive_identity == archive_identity:
+                return _archived_evidence(session, resume, attempted_paths)
+            resume = None
             lines = list(_iter_archive_lines(path))
         else:
             if resume is not None:
@@ -442,6 +469,21 @@ def _derive_transcript_path_delta(
             parsed_from_offset=resume.watermark if resume is not None else 0,
             latest_record_at=state.latest_record_at,
         )
+    elif archive_identity:
+        snapshot = EvidenceSnapshot(
+            fingerprint=fingerprint,
+            transcript_path=path,
+            watermark=0,
+            tail_len=0,
+            tail_sha256="",
+            parser_state={},
+            pending={},
+            order=state.order,
+            runs=tuple(snapshot_runs(state.runs)),
+            degraded=tuple(dict.fromkeys(state.degraded)),
+            latest_record_at=state.latest_record_at,
+            archive_identity=archive_identity,
+        )
     logger.debug(
         "Derived validation transcript evidence",
         extra={
@@ -507,7 +549,8 @@ def _derive_transcript_delta_sync(
         )
         for index, path in enumerate(paths)
     )
-    updated = results[0][1]
+    # An archive primary has no live snapshot to store; its archives are the session's only paths.
+    updated = None if paths[0].endswith(".gz") else results[0][1]
     if updated is not None:
         updated = replace(
             updated,
