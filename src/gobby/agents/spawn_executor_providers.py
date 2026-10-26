@@ -14,7 +14,7 @@ from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.agent_workspaces import spawn_workspace_write_paths
+from gobby.agents.agent_workspaces import grant_seat_workspace_paths
 from gobby.agents.constants import (
     CLAUDE_MANAGED_AGENT_ENV,
     GOBBY_AGENT_RUN_ID,
@@ -152,7 +152,7 @@ def _agent_prompt_prefix(request: SpawnRequest) -> str:
     )
 
 
-def _ensure_sandbox_write_directories(
+def ensure_sandbox_write_directories(
     config: SandboxConfig, workspace: str, project_path: str | None
 ) -> None:
     """Create declared directory grants before cache paths enrich the policy."""
@@ -230,22 +230,16 @@ async def _prepare_provider_sandbox(
         ):
             # The seat's folders are declared grants: the ensure step below creates them
             # before the sandbox starts, since SRT cannot enforce a denyWrite under an absent root.
-            workspace_paths = await asyncio.to_thread(
-                spawn_workspace_write_paths,
+            sandbox_config = await asyncio.to_thread(
+                grant_seat_workspace_paths,
+                sandbox_config,
                 request.session_manager._storage.db,
                 spawn_context.session_id,
                 request.agent_name,
             )
-            granted = [
-                path for path in workspace_paths if path not in sandbox_config.extra_write_paths
-            ]
-            if granted:
-                sandbox_config = sandbox_config.model_copy(
-                    update={"extra_write_paths": [*sandbox_config.extra_write_paths, *granted]}
-                )
         if sandbox_config is not None and sandbox_config.enabled:
             await asyncio.to_thread(
-                _ensure_sandbox_write_directories,
+                ensure_sandbox_write_directories,
                 sandbox_config,
                 request.cwd,
                 request.project_path,

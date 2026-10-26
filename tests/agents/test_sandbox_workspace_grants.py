@@ -3,7 +3,8 @@
 A sandboxed seat writes ``<definition>/session-<seq>/`` under the project's
 workspace anchor and, on an epic team, the team's ``epics/epic-<seq>/`` folder.
 The grant is computed when the seat is spawned (the SessionStart binding runs
-later, inside the sandbox) and replayed on resume. Nothing wider under the
+later, inside the sandbox) and again on resume, so a snapshot from before the
+grant still relaunches with it. Nothing wider under the
 anchor is ever writable, and the daemon's credential roots stay denied.
 """
 
@@ -11,11 +12,13 @@ from __future__ import annotations
 
 from fnmatch import fnmatchcase
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents import resume_executor
 from gobby.agents.agent_workspaces import (
     WORKSPACE_DIR_VARIABLE,
     epic_workspace_dir,
@@ -35,6 +38,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.agents.test_resume_executor import (
+    _original_run,
+    _patch_common,
+    _resume_metadata,
+    _runner,
+)
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TeamWorld, make_team_world
 from tests.fixtures.team_teardown_case import admitted_team, seated_team
@@ -271,3 +280,58 @@ async def test_epic_team_seat_also_gets_its_epic_folder(world: TeamWorld, tmp_pa
         filesystem, paths, {session_workspace_dir(project, DEVELOPER, _seq(db, seat))}
     )
     assert not _covered(filesystem["allowWrite"], epic_dir)
+
+
+@pytest.mark.asyncio
+async def test_resume_grants_an_old_snapshot_its_own_and_live_epic_folders(
+    world: TeamWorld, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relaunched seat whose snapshot predates the grants still writes its own folders."""
+    db = world.case.db
+    project = world.case.project_id
+    epic = _epic(world, "Resumed epic notes")
+    team = await seated_team(world, epic, world.child(epic))
+    seat = team.seats[2]
+    assert epic.seq_num is not None
+    seq = _seq(db, seat)
+    own = session_workspace_dir(project, DEVELOPER, seq)
+    epic_dir = epic_workspace_dir(project, epic.seq_num)
+    predecessor = session_workspace_dir(project, DEVELOPER, seq - 1)
+    predecessor.mkdir(parents=True, exist_ok=True)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+    spawn_context = SimpleNamespace(session_id=seat, env_vars={"GOBBY_SESSION_ID": seat})
+    monkeypatch.setattr(
+        resume_executor, "prepare_terminal_resume", MagicMock(return_value=spawn_context)
+    )
+    prepare = AsyncMock(side_effect=OSError("stop after the replayed config"))
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare)
+    metadata = _resume_metadata()
+    metadata["cwd"] = str(workspace)
+    # The snapshot records the definition the seat was spawned with.
+    metadata["agent_slug"] = DEVELOPER
+    # A snapshot taken before the workspace grants existed: it names no folder at all.
+    metadata["sandbox_config"] = SandboxConfig(enabled=True, backend="srt").model_dump(mode="json")
+    runner = _runner(storage=MagicMock())
+    runner.run_storage.db = db
+
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation_for_launch"):
+        await resume_executor.resume_agent_run(
+            _original_run(),
+            resume_metadata=metadata,
+            runner=runner,
+            session_manager=MagicMock(),
+        )
+
+    assert prepare.await_args is not None
+    config = SandboxConfig.model_validate(prepare.await_args.kwargs["config"])
+    assert config.extra_write_paths.count(str(own)) == 1
+    assert config.extra_write_paths.count(str(epic_dir)) == 1
+    paths = await compute_sandbox_paths(
+        config, str(workspace), provider="codex", env=spawn_context.env_vars
+    )
+    filesystem = render_srt_settings(paths)["filesystem"]
+    _assert_only_own_folders(filesystem, paths, {own, epic_dir})
+    assert not _covered(filesystem["allowWrite"], predecessor)

@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.worktree_checkpoint import CHECKPOINT_AUTHOR_EMAIL, CHECKPOINT_AUTHOR_NAME
 from gobby.paths import get_gobby_home
 from gobby.storage.cron import CronJobStorage
@@ -547,6 +548,24 @@ def spawn_workspace_write_paths(
     if epic is not None:
         folders.append(epic)
     return [str(folder) for folder in folders]
+
+
+def grant_seat_workspace_paths(
+    config: SandboxConfig, db: HubDatabase, session_id: str, definition: str | None
+) -> SandboxConfig:
+    """Return ``config`` with the seat's workspace folders among its write grants, once each.
+
+    Spawn and resume both apply this, so a relaunched seat carries the folders its spawn
+    granted even when its stored snapshot predates them.
+    """
+    granted = [
+        path
+        for path in spawn_workspace_write_paths(db, session_id, definition)
+        if path not in config.extra_write_paths
+    ]
+    if not granted:
+        return config
+    return config.model_copy(update={"extra_write_paths": [*config.extra_write_paths, *granted]})
 
 
 def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:
