@@ -4,7 +4,10 @@
 //! JSON body; the hub answers reads from the database and never from the node's disk.
 
 pub mod hub;
+pub(crate) mod split;
 
+#[cfg(test)]
+mod index_tests;
 #[cfg(test)]
 mod tests;
 
@@ -13,6 +16,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::bm25_health::Bm25Health;
+use crate::index::indexer::{IndexOutcome, UnsupportedFileType};
 use crate::models::{ContentSearchHit, IndexedProject};
 
 /// Operation name the grant names for the whole node family.
@@ -103,4 +107,69 @@ pub struct RouteError {
     pub code: String,
     pub error: String,
     pub message: String,
+}
+
+/// One file's identity as the node reports it: its content hash and, for a clean tracked
+/// file, the Git blob id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileHash {
+    pub path: String,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_blob: Option<String>,
+}
+
+/// Facts the node parsed for one file, for the hub's database half to write.
+/// Stub shape: the implementation replaces this with the `Parsed` and `ContentOnly` payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParsedFileFacts {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexPlanRequest {
+    pub scope: NodeScope,
+    pub full: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_filter: Option<String>,
+    pub files: Vec<FileHash>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexPlanResponse {
+    /// Paths the node must parse: stale, and not adoptable from existing facts.
+    pub parse: Vec<String>,
+    /// Used by the overlay split (1.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_indexed: Option<bool>,
+}
+
+/// Everything the hub needs to finish a run once every file's facts are written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalBatch {
+    pub present: Vec<FileHash>,
+    pub indexed_paths: Vec<String>,
+    pub eligible_files: usize,
+    pub scanned_files: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsupported_file_types: Vec<UnsupportedFileType>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndexApplyRequest {
+    pub scope: NodeScope,
+    pub full: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_filter: Option<String>,
+    pub files: Vec<ParsedFileFacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_batch: Option<FinalBatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndexApplyResponse {
+    /// Paths whose facts the node must parse again. A non-empty list skips the post-pass.
+    pub reparse: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<IndexOutcome>,
 }

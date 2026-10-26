@@ -8,7 +8,8 @@ use crate::commands::status::current::collect;
 use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
 use crate::node::{
-    ContentCandidates, NodeScope, RouteError, SearchContentRequest, StatusReport, StatusRequest,
+    ContentCandidates, IndexApplyRequest, IndexApplyResponse, IndexPlanRequest, IndexPlanResponse,
+    NodeScope, RouteError, SearchContentRequest, StatusReport, StatusRequest,
 };
 
 /// The verified principal a hub read runs as.
@@ -91,6 +92,24 @@ pub fn search_content(
     };
     content_candidates(&mut conn, &ctx, &request.query, query)
         .map_err(|error| route_error("read_failed", error))
+}
+
+/// Plans a Primary index run on a read-only connection, without the project lock.
+/// Stub: the implementation runs `plan_primary` (see 1.4).
+pub fn plan_index(
+    _scope: &HubScope,
+    _request: IndexPlanRequest,
+) -> Result<IndexPlanResponse, RouteError> {
+    todo!("1.4 hub: plan_primary on a read-only connection")
+}
+
+/// Applies one request's parsed facts, and on the final batch the post-pass, under the
+/// project lock. Stub: the implementation runs `apply_primary` (see 1.4).
+pub fn apply_index(
+    _scope: &HubScope,
+    _request: IndexApplyRequest,
+) -> Result<IndexApplyResponse, RouteError> {
+    todo!("1.4 hub: apply_primary under index_lock::with_project_lock")
 }
 
 fn connect(ctx: &Context) -> Result<postgres::Client, RouteError> {
