@@ -2424,6 +2424,34 @@ fn bound_blob_reads_resolve_every_path_past_the_argv_budget() -> anyhow::Result<
 }
 
 #[test]
+fn bound_blob_cache_holds_at_most_its_cap_of_paths() -> anyhow::Result<()> {
+    use super::source::BOUND_BLOB_CACHE_CAP;
+    let temporary = tempfile::tempdir()?;
+    let repo = temporary.path();
+    initialize_repo(repo)?;
+    std::fs::write(repo.join("present.txt"), "present bytes")?;
+    git(repo, &["add", "present.txt"])?;
+    let commit_oid = commit(repo, "one file")?;
+    let binding = RepositoryBinding {
+        project_id: "project-1".to_string(),
+        tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
+        commit_oid,
+    };
+    let paths = (0..=BOUND_BLOB_CACHE_CAP)
+        .map(|index| format!("absent/cached-path-{index:06}.rs"))
+        .collect::<Vec<_>>();
+    let facts = Arc::new(FakeFacts::for_source(&binding));
+    let library = EvidenceLibrary::new(repo, binding, facts)?;
+    library.prefetch_bound_blobs(paths.iter().map(String::as_str));
+    let cached = library.blob_cache.lock().expect("bound blob cache lock").len();
+    assert!(
+        cached <= BOUND_BLOB_CACHE_CAP,
+        "cached {cached} blobs, cap is {BOUND_BLOB_CACHE_CAP}"
+    );
+    Ok(())
+}
+
+#[test]
 fn evidence_git_calls_do_not_grow_with_cited_paths() -> anyhow::Result<()> {
     let (temporary, binding) = cited_paths_repo()?;
     let root = temporary.path();

@@ -5,6 +5,9 @@ use crate::codewiki_facts::FileFact;
 use std::io::Read as _;
 use std::path::{Component, Path};
 
+/// Most bound blobs one evidence invocation keeps in its cache.
+pub(super) const BOUND_BLOB_CACHE_CAP: usize = 1024;
+
 impl EvidenceLibrary {
     pub(super) fn entry(&self, path: &str) -> Result<&FileFact> {
         validate_repo_path(path)?;
