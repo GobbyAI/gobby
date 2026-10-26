@@ -170,26 +170,36 @@ def test_agent_run_pane_stays_its_run_row_when_a_codex_thread_names_it(
     assert thread_row.terminal_id is None
 
 
-def test_close_reviewer_run_row_leaves_the_roster_when_it_ends(
+def test_running_close_reviewer_is_listed_until_its_run_ends(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
 ) -> None:
-    # #23438: a running close reviewer is listed with its pane until its run ends.
+    # #23438: a running task-close reviewer is listed with its pane until its run ends.
     project_id = sample_project["id"]
     terminals = TerminalManager(temp_db)
     runs = LocalAgentRunManager(temp_db)
     roster = AttentionStateManager(temp_db)
     parent = _session(session_manager, project_id, _live_cli())
-    run = runs.create(parent_session_id=parent.id, provider="claude", prompt="close review")
+    child = _session(session_manager, project_id, _live_cli())
+    run = runs.create(
+        parent_session_id=parent.id,
+        provider="codex",
+        prompt="close review",
+        agent_name="task-close-reviewer",
+        child_session_id=child.id,
+    )
     reviewer_pane = _native_row(terminals, project_id, agent_run_id=run.id)
     runs.update_runtime(run.id, terminal_id=reviewer_pane.id)
+    assert runs.start(run.id) is not None
 
     running = roster.load_roster_rows(live_session_statuses=["active"])
     listed = [row for row in running if row.kind == "run" and row.source_id == run.id]
-    assert [row.terminal_id for row in listed] == [reviewer_pane.id]
+    assert [(row.terminal_id, row.session_id, row.definition_title) for row in listed] == [
+        (reviewer_pane.id, child.id, "task-close-reviewer")
+    ]
 
-    runs.complete(run.id, result="SUCCESS")
+    assert runs.complete(run.id, result="SUCCESS") is not None
 
     ended = roster.load_roster_rows(live_session_statuses=["active"])
     assert not [row for row in ended if row.kind == "run" and row.source_id == run.id]
