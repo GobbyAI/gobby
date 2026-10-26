@@ -71,9 +71,12 @@ test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
 # gobby-terminals has its own host_lifecycle binary. The override above matches
-# package gobby-terminal only, so this binary ran unserialized and its
-# explicit_drain test (#24228) could overlap sibling tests in the capture-pipe
-# race described above. Group it with the other host_lifecycle binary.
+# package gobby-terminal only, so this binary ran unserialized. explicit_drain
+# spawns no process, so its LEAK-FAIL can only come from a co-running test that
+# holds its inherited capture pipe. A 500ms probe of the unserialized config
+# (#24228) leaked in 13 of 80 full-binary iterations, 3 of them on explicit_drain;
+# the same probe leaked 0 of 40 with this group and 0 of 40 for explicit_drain
+# run alone. Group it with the other host_lifecycle binary.
 filter = 'package(gobby-terminals) & binary(host_lifecycle)'
 test-group = 'gterm-pty'
 
