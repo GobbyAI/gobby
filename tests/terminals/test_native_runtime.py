@@ -497,6 +497,56 @@ async def test_submit_enter_waits_out_the_tmux_paste_gap(
     assert [item["kind"] for item in host.writes] == ["text", "key"]
 
 
+def _long_kickoff() -> str:
+    """A single-line kickoff of 2,600+ characters; #23445 saw the head lost at this size."""
+    text = " ".join(f"({n}) Run the focused tests, then report what changed." for n in range(1, 60))
+    assert len(text) >= 2_600
+    assert "\n" not in text
+    return text
+
+
+async def test_long_text_submit_is_one_bracketed_paste_then_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long kickoff reaches a native pane as one paste, not a typed stream, then a separate Enter.
+
+    In #23445 typed kickoffs of 2,000 to 2,600 characters reached Claude Code with
+    their head missing, while 130-character ones arrived intact. A paste is one unit
+    the child reads as text, so its inner text does not submit.
+    """
+    runtime, host = _runtime()
+    host.bracketed_paste = True
+    terminal = _native_terminal(host)
+
+    async def no_gap(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("gobby.terminals.native_runtime.asyncio.sleep", no_gap)
+    text = _long_kickoff()
+
+    delivered = await runtime.write_text(terminal, text, submit=True)
+
+    assert isinstance(delivered, Delivered)
+    assert [item["kind"] for item in host.writes] == ["paste", "key"]
+    assert base64.b64decode(host.writes[0]["data"]) == text.encode("utf-8")
+    assert base64.b64decode(host.writes[1]["data"]) == b"enter"
+    assert host.pty == [b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~", b"\n"]
+
+
+async def test_long_text_without_submit_is_one_bracketed_paste() -> None:
+    """A long text with no submit is still one paste write; nothing is typed as keystrokes."""
+    runtime, host = _runtime()
+    host.bracketed_paste = True
+    terminal = _native_terminal(host)
+    text = _long_kickoff()
+
+    delivered = await runtime.write_text(terminal, text, submit=False)
+
+    assert isinstance(delivered, Delivered)
+    assert [item["kind"] for item in host.writes] == ["paste"]
+    assert host.pty == [b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~"]
+
+
 def test_named_key_bytes_match_the_web_key_bar() -> None:
     """The gterm table and the web key bar are the same bytes for the shared keys."""
     bar = Path("web/src/components/activity/terminal/TerminalKeysBar.tsx").read_text(
