@@ -376,12 +376,14 @@ class TestChatTurnReasoningPersistence:
         session = FakeSession()
         mixin._chat_sessions["conv-effort"] = session
         mixin.session_manager = FakeSessionManager()
+        transport = MagicMock()
+        transport.send_direct = AsyncMock()
 
         await mixin._run_chat_turn(
             conversation_id="conv-effort",
             content="Investigate effort persistence",
             model=None,
-            transport=MagicMock(),
+            transport=transport,
             reasoning_effort="xhigh",
         )
 

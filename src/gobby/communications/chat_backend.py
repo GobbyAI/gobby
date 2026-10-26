@@ -170,13 +170,16 @@ class ChatSessionCommsBackend:
             )
             if (
                 tts_provider is not None
+                and transport.completed
                 and transport.text.strip()
                 and not transport.has_delivered_text
+                and not await transport.uses_transcript_mirror()
             ):
                 voice_delivered = await self._send_voice_reply(
                     context,
                     tts_provider,
                     transport.text,
+                    session_id=transport.session_id,
                 )
         finally:
 
@@ -287,6 +290,8 @@ class ChatSessionCommsBackend:
         context: ResponderContext,
         provider: TTSProvider,
         text: str,
+        *,
+        session_id: str | None,
     ) -> bool:
         try:
             voice = await self._voice_synthesizer(provider, text)
@@ -297,7 +302,7 @@ class ChatSessionCommsBackend:
                 filename="reply.ogg",
                 content_type="audio/ogg",
                 content=text,
-                session_id=context.message.session_id,
+                session_id=session_id,
                 metadata={
                     "platform_destination": context.conversation_id,
                     "voice_note": True,

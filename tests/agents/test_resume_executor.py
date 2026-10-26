@@ -109,6 +109,8 @@ def _resume_metadata() -> dict[str, Any]:
 def _runner(*, storage: MagicMock | None = None) -> SimpleNamespace:
     run_storage = storage or MagicMock()
     run_storage.db = MagicMock()
+    # No session row: these runs carry no seat folder grants.
+    run_storage.db.execute.return_value.fetchone.return_value = None
     running = SimpleNamespace(
         id=str(_SUCCESSOR_ID),
         status="running",

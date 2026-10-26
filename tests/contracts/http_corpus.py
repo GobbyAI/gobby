@@ -13,10 +13,24 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+from scripts.generate_parity_ledger import ADDITIVE_SURFACES, collect_surfaces
+from scripts.parity_waivers import (
+    DIFF,
+    NATIVE_EXTENSION,
+    PASSED,
+    WAIVED,
+    WAIVERS_PATH,
+    Waiver,
+    WaiverError,
+    load_waivers,
+    surface_matches,
+)
 
 CORPUS_DIR = Path(__file__).resolve().parent / "http"
 MANIFEST_NAME = "manifest.json"
@@ -54,6 +68,8 @@ _CASE_KEY_ORDER = (
     "credential",
     "request",
     "response",
+    "waiver",
+    "native_response",
     "mask",
 )
 
@@ -95,6 +111,11 @@ def load_cases(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, Any]]:
         if not isinstance(backend, str) or backend not in BACKEND_VALUES:
             raise CorpusError(f"{file_name}: backend {backend!r} is neither 'up' nor 'down'")
         if family["origin"] == "python" and case["backend"] == "up":
+            waiver_id = case.get("waiver")
+            if isinstance(waiver_id, str) and waiver_id.endswith(".native-extension"):
+                raise CorpusError(
+                    f"{file_name}: native-extension cases require a gdaemon-origin family"
+                )
             cases.append(case)
     return cases
 
@@ -228,10 +249,14 @@ def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def recorded_case(case: Mapping[str, Any], response: httpx.Response) -> dict[str, Any]:
-    """Return ``case`` with its ``response`` replaced by the normalized capture."""
+    """Capture Python responses while retaining waiver and native contract provenance."""
     recorded = copy.deepcopy(dict(case))
-    recorded["response"] = normalize_response(case, response)
-    return {key: recorded[key] for key in _CASE_KEY_ORDER}
+    waiver_id = recorded.get("waiver")
+    if isinstance(waiver_id, str) and waiver_id.endswith(".native-extension"):
+        recorded.pop("response", None)
+    else:
+        recorded["response"] = normalize_response(case, response)
+    return {key: recorded[key] for key in _CASE_KEY_ORDER if key in recorded}
 
 
 def case_bytes(case: Mapping[str, Any]) -> bytes:
@@ -257,14 +282,74 @@ def record_cases(
     return written
 
 
+def load_replay_waivers(path: Path = WAIVERS_PATH) -> dict[str, Waiver]:
+    """Load the committed waiver manifest against the ledger's surface inventory."""
+    return load_waivers(path, surfaces=collect_surfaces(), additive_surfaces=ADDITIVE_SURFACES)
+
+
 def replay_case(
     client: httpx.Client,
     case: Mapping[str, Any],
     *,
     operator: Mapping[str, str],
     grant: Mapping[str, str],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Return ``(expected, actual)`` normalized responses for a committed case."""
+    waivers: Mapping[str, Waiver],
+) -> tuple[ReplayResult, dict[str, Any]]:
+    """Send a committed case and classify its normalized response; return both."""
     response = send_case(client, case, operator=operator, grant=grant)
-    expected: dict[str, Any] = normalize_case(case)["response"]
-    return expected, normalize_response(case, response)
+    actual = normalize_response(case, response)
+    return classify_replay(case, actual, waivers), actual
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    """How one replayed case classifies, with the waiver citation when one applies."""
+
+    outcome: str
+    waiver: str | None = None
+    decision: str | None = None
+
+
+def _normalized_response(case: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
+    document = {"response": copy.deepcopy(dict(response))}
+    normalized: dict[str, Any] = _normalized(document, case["mask"])["response"]
+    return normalized
+
+
+def classify_replay(
+    case: Mapping[str, Any],
+    actual: Mapping[str, Any],
+    waivers: Mapping[str, Waiver],
+) -> ReplayResult:
+    """Classify one replayed case against Python, or against its native contract when waived.
+
+    An unwaived case passes only when the actual response matches the recorded Python response.
+    A waived case cites its waiver and asserts the native response it must match. A native-extension
+    waiver never reports Python success.
+    """
+    waiver_id = case.get("waiver")
+    if waiver_id is None:
+        if "response" not in case:
+            raise CorpusError(f"{case['name']} has no Python response and no waiver")
+        expected = normalize_case(case)["response"]
+        if _normalized_response(case, actual) == expected:
+            return ReplayResult(outcome=PASSED)
+        return ReplayResult(outcome=DIFF)
+    if waiver_id not in waivers:
+        raise WaiverError(f"Case cites unknown waiver {waiver_id!r}")
+    waiver = waivers[waiver_id]
+    request = case["request"]
+    if not surface_matches(waiver.surface, request["method"], request["path"]):
+        raise WaiverError(
+            f"{request['method']} {request['path']} is not waiver {waiver_id!r}'s surface "
+            f"{waiver.surface!r}"
+        )
+    if waiver.native_extension and "response" in case:
+        raise CorpusError(f"Native-extension waiver {waiver_id!r} cannot cite a Python response")
+    native = case.get("native_response")
+    if native is None:
+        raise CorpusError(f"Waived case {waiver_id!r} must assert its native_response")
+    if _normalized_response(case, actual) != _normalized_response(case, native):
+        return ReplayResult(outcome=DIFF)
+    outcome = NATIVE_EXTENSION if waiver.native_extension else WAIVED
+    return ReplayResult(outcome=outcome, waiver=waiver_id, decision=waiver.decision)

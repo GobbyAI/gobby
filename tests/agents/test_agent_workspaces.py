@@ -216,8 +216,7 @@ async def test_timer_bootstraps_the_first_workspace(
     )
     folder = bind_session_workspace(temp_db, session.id)
     assert folder is not None
-    assert not workspace_anchor(project_id).exists()
-    folder.mkdir(parents=True)
+    assert not workspace_git_dir(project_id).exists()
     (folder / "notes.md").write_text("first finding\n")
 
     storage = CronJobStorage(temp_db)

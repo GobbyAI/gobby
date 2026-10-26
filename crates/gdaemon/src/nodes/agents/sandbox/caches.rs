@@ -263,6 +263,42 @@ pub(super) fn agent_cargo_target_dir(inputs: &PolicyInputs) -> String {
     text(&project_root.join(format!("{checkout}-agent")))
 }
 
+/// The seat's workspace grant: `agent_workspaces.py::spawn_workspace_write_paths`, added
+/// right after the nextest grant so the order matches the Python chain.
+pub(super) fn grant_workspace_folders(config: &mut Sandbox, inputs: &PolicyInputs) {
+    for path in workspace_write_paths(inputs) {
+        if !config.extra_write_paths.contains(&path) {
+            config.extra_write_paths.push(path);
+        }
+    }
+}
+
+/// The seat's own session folder and, when it shares one, its epic folder, under the
+/// project's workspace anchor.
+fn workspace_write_paths(inputs: &PolicyInputs) -> Vec<String> {
+    let Some(session_seq) = inputs.session_seq else {
+        return Vec::new();
+    };
+    let anchor = inputs
+        .gobby_home
+        .join("agents_workspaces")
+        .join(&inputs.project_id);
+    let definition = inputs
+        .definition
+        .as_deref()
+        .filter(|definition| !definition.is_empty())
+        .unwrap_or("default");
+    let mut folders = vec![
+        anchor
+            .join(definition)
+            .join(format!("session-{session_seq}")),
+    ];
+    if let Some(epic_seq) = inputs.epic_seq {
+        folders.push(anchor.join("epics").join(format!("epic-{epic_seq}")));
+    }
+    folders.iter().map(|folder| text(folder)).collect()
+}
+
 /// `sandbox_config_for_spawn`: fill the spawn caches and PATH, then grant the project
 /// roots, the cache paths, the Cargo target, and the hook inbox, and force registries on.
 pub(super) fn spawn_grants(

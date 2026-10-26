@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.communications.agent_labels import agent_label, agent_menu_labels
 from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.operator_routing import is_terminal_session
 from gobby.communications.session_delivery import is_attached_operator_message
 from gobby.communications.telegram_access import allowed_senders
 from gobby.storage.session_resolution import is_session_uuid
@@ -96,7 +97,7 @@ class TelegramActionController:
         )
         if (
             session is None
-            or getattr(session, "source", "comms") in {"comms", "web-chat", "web_chat"}
+            or not is_terminal_session(session)
             or message.content_type == "reaction"
         ):
             return False
@@ -124,6 +125,8 @@ class TelegramActionController:
             await self._deliver_inbound(channel, message, session.id, safe_source)
         except Exception:
             logger.exception("Failed to deliver Telegram message %s to %s", message.id, session.id)
+            if message.metadata_json.get("operator_pending"):
+                return True  # Durable input will retry; do not ask the operator to resend it.
             try:
                 await self._feedback(
                     channel, message, "Delivery failed. Please send your message again."
@@ -170,6 +173,7 @@ class TelegramActionController:
             from_session_id=system_session_id(),
             target="session",
             target_id=session_id,
+            message_id=message.id if message.metadata_json.get("operator_pending") else None,
             content=content,
             wake=True,
             message_type="telegram_message",
@@ -181,6 +185,11 @@ class TelegramActionController:
         )
         if not result.success:
             raise RuntimeError(result.error or "Mailbox delivery was rejected")
+        if message.metadata_json.get("operator_pending"):
+            await asyncio.to_thread(
+                self._manager.store.complete_operator_message, message.id, session_id
+            )
+            message.metadata_json.pop("operator_pending", None)
         logger.debug("Telegram message %s wake outcomes: %s", message.id, result.wake_results)
 
     async def _consume_safely(
@@ -228,7 +237,7 @@ class TelegramActionController:
                 session
                 for session in sessions
                 if session.status in LIVE_SESSION_STATUSES
-                and session.source not in {"comms", "web-chat", "web_chat", "system"}
+                and is_terminal_session(session)
                 and getattr(session, "agent_depth", 0) == 0
                 and getattr(session, "agent_run_id", None) is None
             ),
@@ -341,7 +350,7 @@ class TelegramActionController:
         if (
             target is None
             or target.status not in LIVE_SESSION_STATUSES
-            or target.source in {"comms", "web-chat", "web_chat", "system"}
+            or not is_terminal_session(target)
             or getattr(target, "agent_depth", 0) != 0
             or getattr(target, "agent_run_id", None) is not None
         ):

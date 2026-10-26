@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.agent_workspaces import epic_workspace_dir, session_workspace_dir
 from gobby.agents.cargo_target import (
     ensure_agent_cargo_target_dir,
     sandbox_checkout_cargo_target_dir,
@@ -49,6 +50,12 @@ _SESSION_ID = "node-srt-session"
 _DAEMON_PORT = 60887
 _WEBSOCKET_PORT = 60888
 _PROVIDERS = ("claude", "codex", "grok", "droid", "agy")
+# The seat whose agent workspace folders the spawn grants (#25148): its own
+# ``<definition>/session-<seq>/`` and its team's ``epics/epic-<seq>/`` folder.
+_WORKSPACE_CASE = "claude-agent-workspace"
+_WORKSPACE_DEFINITION = "developer"
+_WORKSPACE_SESSION_SEQ = 7
+_WORKSPACE_EPIC_SEQ = 3
 # Variables the oracle reads from the process environment. Each case pins them
 # explicitly, and any that the case does not set is removed.
 _HOST_ENVIRONMENT = (
@@ -108,6 +115,9 @@ def _case(
     home_tree: tuple[str, ...] = (),
     project_json: dict[str, Any] | None = None,
     platform: str | None = None,
+    definition: str | None = None,
+    session_seq: int | None = None,
+    epic_seq: int | None = None,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -118,6 +128,9 @@ def _case(
             "source_root": source_root,
             "project_id": _PROJECT_ID,
             "session_id": _SESSION_ID,
+            "definition": definition,
+            "session_seq": session_seq,
+            "epic_seq": epic_seq,
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -182,6 +195,15 @@ def _case_templates() -> list[dict[str, Any]]:
             "claude",
             sandbox=_sandbox(extra_write_paths=["{home}/🙂/extra"]),
             home_tree=("🙂/extra",),
+        )
+    )
+    cases.append(
+        _case(
+            _WORKSPACE_CASE,
+            "claude",
+            definition=_WORKSPACE_DEFINITION,
+            session_seq=_WORKSPACE_SESSION_SEQ,
+            epic_seq=_WORKSPACE_EPIC_SEQ,
         )
     )
     return cases
@@ -293,6 +315,18 @@ def _pin_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> No
         monkeypatch.setenv(name, value)
 
 
+def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
+    """The seat's own and epic folders the spawn grants, from the case's sequence inputs."""
+    session_seq = inputs["session_seq"]
+    if session_seq is None:
+        return []
+    project_id = str(inputs["project_id"])
+    paths = [str(session_workspace_dir(project_id, inputs["definition"], int(session_seq)))]
+    if inputs["epic_seq"] is not None:
+        paths.append(str(epic_workspace_dir(project_id, int(inputs["epic_seq"]))))
+    return paths
+
+
 def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     """Replay the spawn-time chain the oracle runs for one srt launch."""
     provider = str(inputs["provider"])
@@ -311,6 +345,13 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     ):
         config = config.model_copy(
             update={"extra_write_paths": [*config.extra_write_paths, nextest_store]}
+        )
+    workspace_paths = [
+        path for path in _workspace_write_paths(inputs) if path not in config.extra_write_paths
+    ]
+    if workspace_paths:
+        config = config.model_copy(
+            update={"extra_write_paths": [*config.extra_write_paths, *workspace_paths]}
         )
 
     env["CARGO_TARGET_DIR"] = ensure_agent_cargo_target_dir(workspace, str(inputs["project_id"]))
@@ -515,3 +556,21 @@ def test_corpus_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             mismatches.append(f"{refusal['name']}: refusal message {message!r}")
 
     assert not mismatches, "\n".join(mismatches)
+
+
+def test_agent_workspace_case_grants_only_the_seats_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The oracle grants the seat's own folder and its epic folder, and nothing wider."""
+    template = next(case for case in _case_templates() if case["name"] == _WORKSPACE_CASE)
+    settings, _env, layout = _evaluate(template, tmp_path / "workspace-case", monkeypatch)
+    writes: list[str] = json.loads(settings)["filesystem"]["allowWrite"]
+    root = Path(layout["gobby_home"]) / "agents_workspaces"
+    anchor = root / _PROJECT_ID
+    own = anchor / _WORKSPACE_DEFINITION / f"session-{_WORKSPACE_SESSION_SEQ}"
+    epic = anchor / "epics" / f"epic-{_WORKSPACE_EPIC_SEQ}"
+    granted = {entry for entry in writes if entry == str(root) or entry.startswith(f"{root}/")}
+    assert granted == {str(own), str(epic)}
+    # The Rust replay reads the same recorded case, so the corpus must carry it.
+    recorded = {case["name"] for case in _load_corpus()["cases"]}
+    assert _WORKSPACE_CASE in recorded, sorted(recorded)

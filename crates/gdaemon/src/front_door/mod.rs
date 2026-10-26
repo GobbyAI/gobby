@@ -11,6 +11,7 @@ pub mod routes;
 #[cfg(unix)]
 pub mod terminal_api;
 pub mod tls;
+pub mod waivers;
 pub mod ws;
 
 use std::net::SocketAddr;

@@ -179,6 +179,10 @@
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/cron.py:273` (`create_cron_router::toggle_job`); blocked on #21582 Cron and scheduler to port cron job/run services and hub scheduler parity."
   },
+  "HTTP GET /api/nodes/detection-manifests": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.detection_manifests` serves DB-backed detection manifests with an ETag (introduced by #24391); blocked on #24151 hub half to port node machine ownership checks and manifest serving to Rust."
+  },
   "HTTP POST /api/nodes/checkouts": {
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/nodes.py::create_nodes_router.register_checkout` registers node project checkouts under the front-door key identity; blocked on #24151 hub half to port node machine ownership checks and checkout registration to Rust."
@@ -202,6 +206,10 @@
   "HTTP POST /api/nodes/runs/prompt-delivery-failure": {
     "status": "proxied",
     "note": "Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.prompt_delivery_failure` records node launch prompt-delivery failures; blocked on #24151 hub half to port node machine ownership checks and launch outcome handling to Rust."
+  },
+  "HTTP POST /api/nodes/runs/terminate": {
+    "status": "proxied",
+    "note": "Python handler `src/gobby/servers/routes/node_runs.py::create_node_runs_router.terminate_run` terminates node runs on timeout, init and stall verdicts (introduced by #24390); blocked on #24151 hub half to port node machine ownership checks and run termination to Rust."
   },
   "HTTP POST /api/webhooks/test": {
     "status": "proxied",
