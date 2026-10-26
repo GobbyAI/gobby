@@ -289,6 +289,8 @@ pub struct HostInfo {
     pub epoch: String,
     pub version: String,
     pub adopted: bool,
+    /// Start fingerprint of `pid` when observed; a reused PID reports a different one.
+    pub start_fingerprint: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -666,6 +668,7 @@ async fn health(
             epoch: ping.host_epoch,
             version: ping.version,
             adopted,
+            start_fingerprint: None,
         },
     ))
 }

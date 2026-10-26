@@ -18,6 +18,11 @@ pub(super) async fn process_is_host(pid: u32) -> Result<bool, HostFailure> {
     }
 }
 
+/// Start fingerprint of the live process `pid`; a reused PID reports a different one.
+pub(super) fn process_start_fingerprint(_pid: u32) -> Result<Option<u64>, HostFailure> {
+    Ok(None)
+}
+
 /// Reads the exec-time command name, which survives promotion replacing or
 /// unlinking the running host's executable.
 #[cfg(target_os = "macos")]

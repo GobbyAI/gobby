@@ -153,6 +153,7 @@ pub(super) async fn handshake(
             epoch: ping.host_epoch,
             version: hello.version,
             adopted,
+            start_fingerprint: None,
         },
     ))
 }
