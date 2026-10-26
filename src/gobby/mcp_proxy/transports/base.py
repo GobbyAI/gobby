@@ -223,32 +223,36 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
 
         # Identifies this attempt: an abandoned owner must not write into a later attempt.
         session_ready = self._session_ready
+        disconnect_event = self._disconnect_event
         connected = False
         try:
             async with AsyncExitStack() as stack:
                 transport = await self._open_transport(stack)
                 # Client negotiates the protocol era (server/discover with an
                 # initialize fallback) before publishing the session.
-                self._client_context = Client(
+                client_context = Client(
                     transport,
                     mode=_client_mode_for_config(self.config),
                     client_info=gobby_client_info(),
                 )
-                async with self._client_context as client:
-                    self._session = client.session
+                if self._session_ready is session_ready:
+                    self._client_context = client_context
+                async with client_context as client:
+                    # A handshake that completes after its attempt was abandoned releases
+                    # its client without publishing over a later attempt.
+                    if self._session_ready is session_ready:
+                        self._session = client.session
+                        self._state = ConnectionState.CONNECTED
+                        self._consecutive_failures = 0
+                        logger.debug(
+                            "Connected to %s MCP server: %s",
+                            self._TRANSPORT_LABEL,
+                            self.config.name,
+                        )
+                        connected = True
+                        session_ready.set()
 
-                    self._state = ConnectionState.CONNECTED
-                    self._consecutive_failures = 0
-                    logger.debug(
-                        "Connected to %s MCP server: %s",
-                        self._TRANSPORT_LABEL,
-                        self.config.name,
-                    )
-
-                    connected = True
-                    self._session_ready.set()
-
-                    await self._disconnect_event.wait()
+                    await disconnect_event.wait()
 
                     logger.debug("Disconnect requested for %s", self.config.name)
 

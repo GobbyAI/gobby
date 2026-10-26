@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from mcp.client import Transport
 
+from gobby.mcp_proxy.client_manager.connections import _acquire_connection_lock
 from gobby.mcp_proxy.lazy import CircuitBreaker, CircuitState
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import ConnectionState, MCPError, MCPServerConfig
@@ -316,3 +317,101 @@ async def test_abandoned_owner_unwind_does_not_clobber_a_later_start() -> None:
         await asyncio.gather(first, first_owner, return_exceptions=True)
 
     assert connection.state is ConnectionState.FAILED
+
+
+class FakeHandshakeClient:
+    """Stand-in for the SDK ``Client``; a gated instance absorbs cancellation until ``gate`` opens."""
+
+    def __init__(self, gate: asyncio.Event | None) -> None:
+        self.gate = gate
+        self.session = FakeSession()
+        self.exited = False
+
+    async def __aenter__(self) -> FakeHandshakeClient:
+        if self.gate is not None:
+            while not self.gate.is_set():
+                try:
+                    await self.gate.wait()
+                except asyncio.CancelledError:
+                    continue
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        self.exited = True
+
+
+class HandshakeTransport(OwnerTaskTransportConnection):
+    """Starts a fresh Client per attempt; there is no transport to open."""
+
+    _OWNER_TASK_SHUTDOWN_TIMEOUT = 0.05
+
+    async def _open_transport(self, stack: AsyncExitStack) -> Transport:
+        return cast(Transport, None)
+
+
+async def test_abandoned_handshake_that_completes_late_does_not_publish_over_a_later_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = MCPServerConfig(
+        name="lightspeed",
+        project_id="test-project",
+        transport="stdio",
+        command="unused",
+        connect_timeout=CONNECT_TIMEOUT,
+    )
+    gate = asyncio.Event()
+    clients: list[FakeHandshakeClient] = []
+
+    def make_client(transport: object, **options: object) -> FakeHandshakeClient:
+        client = FakeHandshakeClient(gate if not clients else None)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("gobby.mcp_proxy.transports.base.Client", make_client)
+    connection = HandshakeTransport(config)
+    bound = CONNECT_TIMEOUT + 2 * connection._OWNER_TASK_SHUTDOWN_TIMEOUT + 1.0
+
+    first = asyncio.create_task(connection.connect())
+    abandoned = await wait_for_async_condition(
+        lambda: connection._owner_task, description="the first owner task to start"
+    )
+    assert abandoned is not None
+    try:
+        done, _ = await asyncio.wait({first}, timeout=bound)
+        assert first in done, f"connect() was still blocked after {bound}s"
+        with pytest.raises(MCPError, match="Connection timeout"):
+            first.result()
+        second = await connection.connect()
+        assert second is clients[1].session
+
+        gate.set()
+        await asyncio.wait({abandoned}, timeout=SETTLE_BOUND)
+        assert connection._session is clients[1].session
+        assert connection.state is ConnectionState.CONNECTED
+    finally:
+        gate.set()
+        await connection.disconnect()
+        await asyncio.gather(abandoned, return_exceptions=True)
+
+    assert clients[0].exited
+
+
+async def test_waiter_past_connect_timeout_warns_while_still_queued(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    manager, config, _server = make_manager(monkeypatch)
+    lock = manager._lazy_connector.get_connection_lock(config.id)
+    await lock.acquire()
+    waiter = asyncio.create_task(_acquire_connection_lock(manager, config.id))
+    try:
+        with caplog.at_level("WARNING", logger="gobby.mcp.manager"):
+            await wait_for_async_condition(
+                lambda: "connection lock" in caplog.text,
+                timeout=SETTLE_BOUND,
+                description="the queued waiter to warn",
+            )
+        assert not waiter.done()
+    finally:
+        lock.release()
+        await asyncio.wait({waiter}, timeout=SETTLE_BOUND)
+    assert waiter.result() is lock

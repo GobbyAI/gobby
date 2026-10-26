@@ -47,19 +47,21 @@ async def _acquire_connection_lock(manager: Any, server_id: str) -> asyncio.Lock
     lock = cast(asyncio.Lock, manager._lazy_connector.get_connection_lock(server_id))
     config = manager._configs.get(server_id)
     timeout = config.connect_timeout if config is not None else manager.connection_timeout
+    label = config.name if config is not None else server_id
     # No lock budget: a waiter queues behind the holder and reuses its outcome instead of
     # failing and counting against the breaker. The holder's connect bound limits the hold.
-    started = time.monotonic()
-    await lock.acquire()
-    waited = time.monotonic() - started
-    if waited > timeout:
-        label = config.name if config is not None else server_id
-        logging.getLogger("gobby.mcp.manager").warning(
-            "Waited %.1fs for connection lock for '%s' (connect_timeout %ss)",
-            waited,
-            label,
-            timeout,
-        )
+    # Past connect_timeout, one WARNING fires while the waiter is still queued.
+    warn = asyncio.get_running_loop().call_later(
+        timeout,
+        logging.getLogger("gobby.mcp.manager").warning,
+        "Still waiting for connection lock for '%s' after %ss",
+        label,
+        timeout,
+    )
+    try:
+        await lock.acquire()
+    finally:
+        warn.cancel()
     return lock
 
 
