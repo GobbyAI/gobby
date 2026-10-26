@@ -354,4 +354,5 @@ def test_landed_commit_cannot_be_unlinked_from_a_claimed_task(
     stored = _unwrap(
         mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id, "brief": False})
     )
-    assert landed in (stored.get("commits") or [])
+    # link_commit stores Git's canonical short SHA, so match the stored entry as a prefix.
+    assert any(landed.startswith(sha) for sha in stored.get("commits") or [])

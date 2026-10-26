@@ -302,7 +302,7 @@ async def collect_net_commit_paths_async(
             cwd=repo_path,
             timeout=10,
         )
-        if not isinstance(tracked, GitOk) or tracked.stderr:
+        if not isinstance(tracked, GitOk):
             raise RuntimeError("Cannot determine changed paths absent from the close candidate.")
         # A foreign commit may delete or re-add a path after the last linked touch.
         # Validation targets must exist in the delivered candidate, not the replay.
