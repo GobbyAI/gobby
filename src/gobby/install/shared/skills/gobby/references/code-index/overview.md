@@ -18,6 +18,7 @@ For a sibling worktree, use `gcode --project <worktree-path> ...` from any check
 of that project; its overlay indexes changed files and serves the rest from the parent.
 Writes stay scoped to the caller's checkout. Another project or machine returns
 `code_overlay_mismatch`.
+A sibling overlay serves changed files and parent rows only while it is fresh against the parent; a stale overlay cannot refresh from another checkout and may return no results for affected paths, with a stale-index WARN.
 
 The first raw repository search, navigation, or source read requests this reference.
 After loading, reconsider the blocked command using the guidance. Use `gcode` for
@@ -57,4 +58,4 @@ operator maintenance. Test mutations against isolated fixtures.
 
 Guide: [Code index](../../../../../../../../docs/guides/code-index.md).
 
-_Last verified: 2026-10-22_
+_Last verified: 2026-10-26_
