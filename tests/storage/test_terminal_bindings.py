@@ -170,6 +170,31 @@ def test_agent_run_pane_stays_its_run_row_when_a_codex_thread_names_it(
     assert thread_row.terminal_id is None
 
 
+def test_close_reviewer_run_row_leaves_the_roster_when_it_ends(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    # #23438: a running close reviewer is listed with its pane until its run ends.
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    roster = AttentionStateManager(temp_db)
+    parent = _session(session_manager, project_id, _live_cli())
+    run = runs.create(parent_session_id=parent.id, provider="claude", prompt="close review")
+    reviewer_pane = _native_row(terminals, project_id, agent_run_id=run.id)
+    runs.update_runtime(run.id, terminal_id=reviewer_pane.id)
+
+    running = roster.load_roster_rows(live_session_statuses=["active"])
+    listed = [row for row in running if row.kind == "run" and row.source_id == run.id]
+    assert [row.terminal_id for row in listed] == [reviewer_pane.id]
+
+    runs.complete(run.id, result="SUCCESS")
+
+    ended = roster.load_roster_rows(live_session_statuses=["active"])
+    assert not [row for row in ended if row.kind == "run" and row.source_id == run.id]
+
+
 def test_resolve_live_for_session_context_id_guard_matrix(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
