@@ -62,8 +62,13 @@ impl DomainError {
         }
     }
 
+    /// Attaches structured detail. `Internal` errors carry none: the driver context
+    /// is dropped at construction, so this is a no-op for that class and no adapter
+    /// ever renders detail for it.
     pub fn with_detail(mut self, detail: Value) -> Self {
-        self.detail = Some(detail);
+        if self.class != DomainErrorClass::Internal {
+            self.detail = Some(detail);
+        }
         self
     }
 

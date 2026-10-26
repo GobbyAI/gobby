@@ -37,11 +37,13 @@ wire identifier on every transport.
 - `message`: a safe, operator-facing string. It must never contain driver text, SQL,
   connection strings or credentials.
 - `detail`: optional structured JSON, such as the offending field name. Absent
-  unless the family sets it with `with_detail`.
+  unless the family sets it with `with_detail`. `Internal` errors never carry
+  detail: `with_detail` is a no-op for that class.
 
 `DomainError::internal(source)` builds an `Internal` error with the fixed message
 `an internal error occurred`. It drops `source`, so no adapter can render driver
-text. Callers log the source before converting it.
+text. Callers log the source before converting it. `DomainError::new(Internal,
+message)` renders the caller's message as given; the caller owns its safety.
 
 ## Transport adapters
 
