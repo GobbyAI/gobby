@@ -481,6 +481,37 @@ class LocalCommunicationsStore:
         row = self.db.fetchone("SELECT * FROM comms_messages WHERE id = %s", (message_id,))
         return CommsMessage.from_row(dict(row)) if row else None
 
+    def recover_operator_messages(self, channel_id: str) -> list[CommsMessage]:
+        """Settle already committed mailbox deliveries and return input still pending."""
+        # Mailbox persistence can succeed before the wake or pending-marker update fails.
+        # The stable message ID keeps that input from becoming another Assistant turn.
+        with self.db.transaction() as conn:
+            conn.execute(
+                """UPDATE comms_messages AS c
+                   SET session_id = m.to_session, metadata_json = c.metadata_json - 'operator_pending'
+                   FROM inter_session_messages AS m
+                   WHERE c.channel_id = %s AND c.id = m.id
+                     AND c.metadata_json @> '{"operator_pending": true}'
+                     AND m.message_type = 'telegram_message'""",
+                (channel_id,),
+            )
+        rows = self.db.fetchall(
+            """SELECT * FROM comms_messages WHERE channel_id = %s
+               AND direction = 'inbound' AND metadata_json @> '{"operator_pending": true}'
+               ORDER BY created_at, id""",
+            (channel_id,),
+        )
+        return [CommsMessage.from_row(dict(row)) for row in rows]
+
+    def complete_operator_message(self, message_id: str, session_id: str) -> None:
+        """Record successful mailbox delivery with the effective live recipient."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """UPDATE comms_messages SET session_id = %s,
+                   metadata_json = metadata_json - 'operator_pending' WHERE id = %s""",
+                (session_id, message_id),
+            )
+
     def get_message_by_platform_id(
         self,
         channel_name: str,

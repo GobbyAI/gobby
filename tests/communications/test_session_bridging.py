@@ -58,7 +58,7 @@ def _identity(
 def _store(channels: list[ChannelConfig] | None = None) -> MagicMock:
     store = MagicMock()
     store.list_channels.return_value = channels or []
-    store.create_message.return_value = None
+    store.create_message.side_effect = lambda message: message
     store.get_identity_by_external.return_value = None
     store.find_identities_by_username.return_value = []
     store.create_identity.side_effect = lambda identity: identity
@@ -82,6 +82,7 @@ def _adapter() -> MagicMock:
 
 def _session_store(session_id: str = "auto-session-1") -> MagicMock:
     session_store = MagicMock()
+    session_store.get.return_value.status = "active"
     session = MagicMock()
     session.id = session_id
     session_store.register.return_value = session

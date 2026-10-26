@@ -224,6 +224,22 @@ A live agent can attach a conversation only when its project matches the
 channel's operator binding or selected chat project. Missing or malformed
 ownership and foreign projects are rejected before target persistence.
 
+The enrolled operator's DM must never move to a `web_chat` or communications
+fallback runtime, even when the responder is enabled. Ordinary input goes to
+the live terminal attachment. If that holder expires, disappears, or is an
+invalid saved chat runtime, Gobby selects a live root Assistant in the bound
+project by its installed seat role (`_agent_type=assistant`). If none is
+available, input stays durably queued without creating a session. Polling,
+startup restoration, and session status changes retry delivery. A successful
+mailbox delivery removes the pending marker.
+
+Completed typed Assistant replies mirror once, in full, under the live attached
+session. Thinking indicators and unfinished deltas are not completed replies.
+The operator can use `/agent` and select another live terminal seat to override
+an unresponsive holder without that holder's cooperation. Web-chat runtimes
+are excluded from both attachment and the agent menu. An explicit live reply
+continues to address its originating terminal session.
+
 ## Group authorization
 
 Group chat IDs and user IDs are numeric strings. Telegram supergroup chat IDs

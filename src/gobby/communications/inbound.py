@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import ChannelNotFoundError, CommsAttachment, CommsMessage
+from gobby.communications.operator_routing import drain_operator_messages, is_operator_dm
 from gobby.communications.sticker_vision import apply_sticker_vision
 from gobby.communications.telegram_decisions import (
     accept_decision_callback,
@@ -130,6 +131,7 @@ class InboundCommunications:
                         handled.append(existing)
                         continue
 
+                operator_dm = is_operator_dm(channel, message)
                 if message.identity_id:
                     external_user_id = message.identity_id
                     message.metadata_json["external_user_id"] = external_user_id
@@ -155,6 +157,7 @@ class InboundCommunications:
                         external_username,
                         metadata=identity_meta,
                         conversation_key=_conversation_key(message.metadata_json),
+                        create_session=not operator_dm,
                     )
                     message.session_id = resolution.session_id
                     message.identity_id = resolution.identity.id
@@ -210,6 +213,17 @@ class InboundCommunications:
                         if attached is not None:
                             message.session_id = attached
                             message.metadata_json["session_route"] = "attached"
+
+                command = message.content.strip().split(maxsplit=1)
+                agent_control = command and command[0].split("@", 1)[0].lower() == "/agent"
+                if (
+                    operator_dm
+                    and message.content_type not in {"callback", "reaction"}
+                    and not agent_control
+                ):
+                    message.metadata_json["operator_pending"] = True
+                    if message.metadata_json.get("session_route") not in {"reply", "attached"}:
+                        message.session_id = None
 
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(
@@ -275,6 +289,9 @@ class InboundCommunications:
 
         consumed_ids: set[str] = set()
         for msg in stored:
+            if msg.metadata_json.get("operator_pending"):
+                consumed_ids.add(msg.id)
+                continue
             try:
                 if await manager.handle_session_action(channel_name, msg):
                     consumed_ids.add(msg.id)
@@ -298,6 +315,12 @@ class InboundCommunications:
                         exc_info=True,
                     )
 
+        await drain_operator_messages(manager, channel)
+        for index, message in enumerate(handled):
+            if message.metadata_json.get("operator_pending"):
+                refreshed = await asyncio.to_thread(manager.store.get_message, message.id)
+                if refreshed is not None:
+                    handled[index] = refreshed
         return handled
 
     async def handle_webhook(

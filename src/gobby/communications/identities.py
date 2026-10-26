@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import CommsIdentity
+from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -90,6 +91,8 @@ class IdentityManager:
         metadata: dict[str, Any] | None = None,
         project_id: str | None = None,
         conversation_key: str | None = None,
+        *,
+        create_session: bool = True,
     ) -> IdentityResolution:
         """Resolve sender attribution and the effective inbound conversation session."""
         return self._resolve(
@@ -99,6 +102,7 @@ class IdentityManager:
             metadata=metadata,
             project_id=project_id,
             conversation_key=conversation_key,
+            create_session=create_session,
         )
 
     def _resolve(
@@ -110,6 +114,7 @@ class IdentityManager:
         metadata: dict[str, Any] | None,
         project_id: str | None,
         conversation_key: str | None,
+        create_session: bool = True,
     ) -> IdentityResolution:
         identity = self._store.get_identity_by_external(channel_id, external_user_id)
         link_session_to_identity = conversation_key is None
@@ -129,9 +134,11 @@ class IdentityManager:
 
         session_id = None
         if link_session_to_identity and identity and identity.session_id:
-            session_id = identity.session_id
+            linked = self._session_store.get(identity.session_id)
+            if linked is not None and linked.status in LIVE_SESSION_STATUSES:
+                session_id = identity.session_id
 
-        if not session_id and self._config.auto_create_sessions:
+        if not session_id and create_session and self._config.auto_create_sessions:
             session = self._session_store.register(
                 external_id=session_external_id,
                 machine_id=None,
@@ -143,7 +150,7 @@ class IdentityManager:
 
         if identity:
             needs_update = False
-            if link_session_to_identity and session_id and identity.session_id != session_id:
+            if link_session_to_identity and identity.session_id != session_id:
                 identity.session_id = session_id
                 needs_update = True
             if external_username and identity.external_username != external_username:

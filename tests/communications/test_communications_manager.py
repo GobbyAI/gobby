@@ -311,8 +311,7 @@ async def test_operator_registration_releases_on_request_or_session_end(
                 source="codex",
             )
         )
-        adapter.send_message.assert_awaited_once()
-        assert "No Assistant is running" in adapter.send_message.await_args.args[0].content
+        adapter.send_message.assert_not_awaited()
     else:
         manager.detach_conversation(channel.name, "dm:42", holder.id)
     assert (channel.id, "dm:42") not in manager._conversation_attachments
@@ -1094,7 +1093,27 @@ def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
         return updated
 
     store.update_channel.side_effect = update_channel
-    store.create_message.side_effect = lambda message: message
+    messages: dict[str, CommsMessage] = {}
+
+    def create_message(message: CommsMessage) -> CommsMessage:
+        messages[message.id] = message
+        return message
+
+    def pending_messages(channel_id: str) -> list[CommsMessage]:
+        return [
+            message
+            for message in messages.values()
+            if message.channel_id == channel_id and message.metadata_json.get("operator_pending")
+        ]
+
+    def complete_operator_message(message_id: str, session_id: str) -> None:
+        messages[message_id].session_id = session_id
+        messages[message_id].metadata_json.pop("operator_pending", None)
+
+    store.create_message.side_effect = create_message
+    store.get_message.side_effect = messages.get
+    store.recover_operator_messages.side_effect = pending_messages
+    store.complete_operator_message.side_effect = complete_operator_message
 
     def create_message_with_attachments(
         message: CommsMessage,
@@ -2744,6 +2763,7 @@ async def test_handle_inbound_resolves_identity() -> None:
     mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    cast(MagicMock, manager._session_store).get.return_value.status = "active"
 
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
@@ -3947,6 +3967,8 @@ async def test_telegram_reply_targets_live_origin_or_attached_session_with_share
         identity=identity,
         session_id="session-b",
     )
+    identity.metadata_json["telegram_dm_conversation_id"] = "2222222"
+    store.get_identity_by_external.return_value = identity
     manager.event_callback = AsyncMock()
     mock_adapter = make_adapter(channel_type="telegram")
 
@@ -3984,20 +4006,16 @@ async def test_telegram_reply_targets_live_origin_or_attached_session_with_share
         "1001",
         platform_destination="2222222",
     )
-    manager.event_callback.assert_awaited_once_with(
-        "comms.message_received",
-        message=stored[0],
-    )
+    manager.event_callback.assert_not_awaited()
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_back() -> None:
+async def test_attached_operator_message_routes_to_holder_then_queues() -> None:
     channel = make_channel(channel_type="telegram", config_json={"allow_from": ["42"]})
     channel.config_json["operator_project_id"] = "project-1"
     store = make_store([channel])
     store.get_message_by_platform_id.return_value = None
-    store.create_message.side_effect = lambda message: message
     sessions = MagicMock()
     holder = MagicMock(
         project_id="project-1",
@@ -4025,11 +4043,16 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
             id="identity",
             channel_id=channel.id,
             external_user_id="42",
+            metadata_json={"telegram_dm_conversation_id": "99"},
             created_at=_FIXED_TS,
             updated_at=_FIXED_TS,
         ),
         session_id="comms-session",
     )
+    store.get_identity_by_external.return_value = (
+        manager._identity_manager.resolve_inbound_identity.return_value.identity
+    )
+    sessions.list.return_value = []
     manager.event_callback = AsyncMock()
     mailbox = MagicMock(send=AsyncMock(return_value=MailboxSendResult()))
     manager.set_telegram_action_controller(TelegramActionController(manager, sessions, mailbox))
@@ -4070,14 +4093,16 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
 
     manager.detach_conversation(channel.name, "dm:99", lane.id)
     second = await manager.handle_inbound_messages(channel.name, [inbound()])
-    assert second[0].session_id == "comms-session"
+    assert second[0].session_id is None
     assert "session_route" not in second[0].metadata_json
-    manager.event_callback.assert_awaited_once()
+    assert second[0].metadata_json["operator_pending"] is True
+    manager.event_callback.assert_not_awaited()
 
     manager.attach_conversation(channel.name, "dm:99", holder.id)
     holder.status = "expired"
     third = await manager.handle_inbound_messages(channel.name, [inbound()])
-    assert third[0].session_id == "comms-session"
+    assert third[0].session_id is None
+    assert third[0].metadata_json["operator_pending"] is True
     assert manager.attached_session(channel.id, "dm:99") is None
 
 
