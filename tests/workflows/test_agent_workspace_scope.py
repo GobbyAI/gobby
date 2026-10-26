@@ -549,3 +549,45 @@ async def test_own_and_predecessor_folders_stay_readable(
         ):
             response = await _decide(engine, data, dict(assistant), successor)
             assert response.decision == "allow", (data, response.reason)
+
+
+@pytest.mark.asyncio
+async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    developer = _seat(anchor, "developer", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="developer",
+        folder=anchor / "developer" / "session-50",
+        persistent=False,
+    )
+    # A shell wrapper runs its command string, so the paths inside that string are reads too.
+    sibling = anchor / "developer" / "session-51" / "notes.md"
+    for command in (
+        f'bash -c "cat {sibling}"',
+        f"sh -c 'ls {sibling.parent}'",
+        f'zsh -lc "cat {sibling}"',
+        f'bash -o pipefail -c "cat {sibling}"',
+        f'eval "cat {sibling}"',
+    ):
+        data = _shell(command, project)
+        response = await _decide(engine, data, dict(developer), caller)
+        assert response.decision == "block", (command, response.reason)
+        assert "agent workspace folder is outside" in (response.reason or ""), command
+    # The caller's own folder stays readable through a wrapper.
+    own = anchor / "developer" / "session-50" / "notes.md"
+    data = _shell(f'bash -c "cat {own}"', project)
+    response = await _decide(engine, data, dict(developer), caller)
+    assert response.decision == "allow", (data, response.reason)
