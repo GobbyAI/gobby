@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence, Set
 
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
-from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 NO_WORK_CLOSE_REASONS = frozenset({"moot", "superseded", "wont_do"})
@@ -29,6 +29,7 @@ async def evaluate_close_invariants(
     required_steps: Sequence[str],
     missing_steps: Sequence[str],
     attribution_complete: bool = True,
+    superseded_by: str | None = None,
 ) -> CloseChecklist:
     """Evaluate every gate without changing task, Git, or review state."""
     gates = await _data_invariants(
@@ -39,6 +40,7 @@ async def evaluate_close_invariants(
         integration_repo_path=integration_repo_path,
         integration_ref=integration_ref,
         attribution_complete=attribution_complete,
+        superseded_by=superseded_by,
     )
     details = {"required_steps": list(required_steps), "missing_steps": list(missing_steps)}
     gates.append(
@@ -66,6 +68,7 @@ async def _data_invariants(
     integration_repo_path: str | None,
     integration_ref: str | None,
     attribution_complete: bool,
+    superseded_by: str | None = None,
 ) -> list[CloseGateResult]:
     gates = [
         CloseGateResult(
@@ -121,6 +124,7 @@ async def _data_invariants(
         if integration_ref and integration_repo_path
         else None
     )
+    landed_shas: list[str] = []
     unlanded: list[str] = []
     unresolved: list[str] = []
     for sha in commit_shas:
@@ -133,23 +137,54 @@ async def _data_invariants(
             result = await daemon_git.run(
                 ("merge-base", "--is-ancestor", resolved, tip), cwd=integration_repo_path
             )
-            if not isinstance(result, GitOk):
+            if isinstance(result, GitOk):
+                landed_shas.append(sha)
+            elif isinstance(result, GitFailed) and result.returncode == 1:
                 unlanded.append(sha)
+            else:
+                # Git could not answer, so the commit is neither proven landed nor unlanded.
+                unresolved.append(sha)
     landed = tip is not None and not unresolved and not unlanded
+    # A no-work close may waive unlanded candidates it supersedes, never landed work.
+    superseding = reason.casefold() == "superseded"
+    superseder = (superseded_by or "").strip() or None
+    waivable = (
+        reason.casefold() in NO_WORK_CLOSE_REASONS
+        and tip is not None
+        and bool(unlanded)
+        and not unresolved
+        and not landed_shas
+    )
+    waived = waivable and (superseder is not None or not superseding)
+    if landed:
+        message = "Linked work is on the integration branch."
+    elif waived:
+        message = (
+            f"Unlanded candidates are superseded by {superseder}."
+            if superseding
+            else "Unlanded candidates are waived by the no-work disposition."
+        )
+    elif waivable:
+        message = "Name the superseding task or commit with superseded_by."
+    elif reason.casefold() in NO_WORK_CLOSE_REASONS and landed_shas and unlanded:
+        message = "Landed commits cannot be superseded; close with reason done."
+    else:
+        message = "Linked work must resolve and be an ancestor of the integration tip."
     gates.append(
         CloseGateResult(
             4,
             "integration_ancestry",
-            "passed" if landed else "failed",
-            "Linked work is on the integration branch."
-            if landed
-            else "Linked work must resolve and be an ancestor of the integration tip.",
+            "passed" if landed or waived else "failed",
+            message,
             {
                 "integration_ref": integration_ref,
                 "integration_tip": tip,
                 "integration_repo_path": integration_repo_path,
                 "unresolved_commits": unresolved,
                 "unlanded_commits": unlanded,
+                "landed_commits": landed_shas,
+                "waived_candidates": unlanded if waived else [],
+                "superseded_by": superseder if waived and superseding else None,
             },
         )
     )

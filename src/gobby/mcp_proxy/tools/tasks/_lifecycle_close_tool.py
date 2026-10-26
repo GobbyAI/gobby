@@ -19,6 +19,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         project_path: str | None = None,
         preview: bool = False,
         response_detail: Literal["concise", "diagnostic"] = "concise",
+        superseded_by: str | None = None,
     ) -> dict[str, Any]:
         evaluation = await _evaluate_close(
             ctx,
@@ -27,6 +28,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             commit_sha=commit_sha,
             project_path=project_path,
             response_detail=response_detail,
+            superseded_by=superseded_by,
         )
         if preview or not evaluation.ready or evaluation.already_closed:
             return evaluation.response(preview=preview)
@@ -36,6 +38,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             reason=reason,
             changes_summary=changes_summary or "",
             commit_sha=commit_sha,
+            superseded_by=superseded_by,
         )
 
     registry.register(
@@ -58,6 +61,14 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "default": "done",
                 },
                 "changes_summary": {"type": "string"},
+                "superseded_by": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": (
+                        "Superseding task ref or commit SHA. Required for reason=superseded "
+                        "when linked commits are unlanded; recorded in the closing record."
+                    ),
+                },
                 "commit_sha": {"type": "string", "minLength": 1},
                 "project_path": {"type": "string"},
                 "preview": {"type": "boolean", "default": False},

@@ -47,6 +47,7 @@ def _close_task_in_txn(
     close_ancestors: bool = True,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    closing_note: str | None = None,
 ) -> None:
     """Close a task inside the caller's already-open transaction.
 
@@ -130,6 +131,15 @@ def _close_task_in_txn(
         if current["closed_at"] is not None:
             return
         raise TaskStaleStateError(task_id)
+    if closing_note is not None:
+        # The closing record: written in the same transaction as the close it describes.
+        conn.execute(
+            """
+            INSERT INTO task_lifecycle_events (task_id, from_state, to_state, reason, by_actor)
+            VALUES (%s, NULL, 'closed', %s, %s)
+            """,
+            (task_id, closing_note, persisted_session_id or "close_task"),
+        )
     if close_ancestors:
         _close_eligible_ancestors(
             conn,

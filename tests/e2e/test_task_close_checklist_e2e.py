@@ -94,6 +94,7 @@ def _close(
     *,
     preview: bool = False,
     reason: str = "done",
+    superseded_by: str | None = None,
 ) -> dict[str, Any]:
     arguments: dict[str, Any] = {
         "task_id": task_id,
@@ -103,6 +104,8 @@ def _close(
     }
     if commit_sha is not None:
         arguments["commit_sha"] = commit_sha
+    if superseded_by is not None:
+        arguments["superseded_by"] = superseded_by
     return _unwrap(client.call_tool("gobby-tasks", "close_task", arguments))
 
 
@@ -297,13 +300,20 @@ def test_superseded_task_closes_with_an_unlanded_candidate(
     candidate = _commit(project, "Candidate close module", mcp_client, task_id)
     subprocess.run(["git", "checkout", integration_branch], cwd=project, check=True)
 
-    result = _close(mcp_client, task_id, candidate, reason="superseded")
+    result = _close(mcp_client, task_id, candidate, reason="superseded", superseded_by="#24970")
     assert result["closed"] is True, result
     stored = _unwrap(
         mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id, "brief": False})
     )
     assert stored["state"]["is_closed"] is True
     assert stored["closed_reason"] == "superseded"
+    closing_records = postgres_db.fetchall(
+        "SELECT reason FROM task_lifecycle_events WHERE task_id = %s AND to_state = 'closed'",
+        (task_id,),
+    )
+    assert [record["reason"] for record in closing_records] == [
+        "closed as superseded; superseded by #24970"
+    ]
 
 
 def test_superseded_close_refuses_a_task_with_a_landed_commit(

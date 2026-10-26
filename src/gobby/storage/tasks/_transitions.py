@@ -505,6 +505,7 @@ def close_task(
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    closing_note: str | None = None,
 ) -> Task:
     """Close a task and clear active ownership metadata."""
     collected: list[str] = []
@@ -519,6 +520,7 @@ def close_task(
             force=force,
             closed_ancestors=collected,
             expected_updated_at=expected_updated_at,
+            closing_note=closing_note,
         )
     if closed_ancestors is not None:
         closed_ancestors.extend(collected)

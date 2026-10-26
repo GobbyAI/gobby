@@ -56,7 +56,7 @@ def test_close_has_exactly_five_gates() -> None:
         (False, "landed", "done", True, ("uncommitted_task_edits",)),
         (False, "unlanded", "done", False, ("integration_ancestry",)),
         (False, "invalid", "done", False, ("integration_ancestry",)),
-        (False, "unlanded", "moot", False, ("integration_ancestry",)),
+        (False, "unlanded", "moot", False, ()),
     ],
 )
 @pytest.mark.asyncio
@@ -106,6 +106,40 @@ async def test_all_linked_commits_must_be_landed(repository: tuple[Path, str, st
         missing_steps=(),
     )
     assert [gate.name for gate in result.all_failures] == ["integration_ancestry"]
+
+
+@pytest.mark.parametrize(
+    "commits,superseded_by,failed",
+    [
+        (("unlanded",), "#24970", ()),
+        (("unlanded",), None, ("integration_ancestry",)),
+        (("unlanded", "landed"), "#24970", ("integration_ancestry",)),
+        (("invalid",), "#24970", ("integration_ancestry",)),
+    ],
+)
+@pytest.mark.asyncio
+async def test_superseded_close_waives_only_unlanded_candidates(
+    repository: tuple[Path, str, str],
+    commits: tuple[str, ...],
+    superseded_by: str | None,
+    failed: tuple[str, ...],
+) -> None:
+    from gobby.tasks.close_invariants import evaluate_close_invariants
+
+    repo, landed, unlanded = repository
+    shas = {"landed": landed, "unlanded": unlanded, "invalid": "0" * 40}
+    result = await evaluate_close_invariants(
+        open_children=[],
+        commit_shas=[shas[name] for name in commits],
+        reason="superseded",
+        attributed_checkouts={},
+        integration_repo_path=str(repo),
+        integration_ref="refs/heads/integration",
+        required_steps=(),
+        missing_steps=(),
+        superseded_by=superseded_by,
+    )
+    assert tuple(gate.name for gate in result.all_failures) == failed
 
 
 @pytest.mark.asyncio
@@ -160,6 +194,31 @@ def test_close_is_atomic_and_idempotent(
     assert repeated.updated_at == closed.updated_at
     assert repeated.commits == closed.commits
     assert len(closed.commits or []) == 1
+
+
+def test_closing_note_is_written_only_with_its_close(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    kept = manager.create_task(
+        sample_project["id"], "Kept", validation_criteria="Observable completion."
+    )
+    noted = manager.create_task(
+        sample_project["id"], "Noted", validation_criteria="Observable completion."
+    )
+    manager.close_task(kept.id, reason="moot")
+    manager.close_task(
+        noted.id,
+        reason="superseded",
+        closing_note="closed as superseded; superseded by #24970",
+    )
+    rows = temp_db.fetchall(
+        "SELECT task_id, reason FROM task_lifecycle_events WHERE to_state = 'closed' ORDER BY id"
+    )
+    assert [(str(row["task_id"]), row["reason"]) for row in rows] == [
+        (noted.id, "closed as superseded; superseded by #24970")
+    ]
 
 
 def test_stale_close_does_not_link_commit(

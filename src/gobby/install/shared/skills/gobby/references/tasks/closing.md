@@ -30,7 +30,7 @@ Both leaves and epics use these invariants, in order:
 | `children_closed` | Every child is closed. |
 | `linked_commits` | At least one linked or prospective commit, or an explicit no-work reason. |
 | `uncommitted_task_edits` | Every task-attributed path is clean in its recorded checkout; attribution must be complete. |
-| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
+| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. A no-work close may instead waive unlanded candidates (see below). |
 
 The response exposes `gates`, `can_close`, `closed`, and resolved commit identities.
 Task, caller, machine, and repository authorization are checked before the gates.
@@ -39,9 +39,14 @@ can require another preview or retry.
 
 Close reasons are `done`, `moot`, `superseded`, and `wont_do`.
 The no-work reasons `moot`, `superseded`, and `wont_do` permit a commitless close.
-Explain the disposition in `changes_summary`;
-they do not waive child closure, attributed-file cleanliness, or ancestry checks
-for commits already linked to the task.
+Explain the disposition in `changes_summary`.
+They do not waive child closure or attributed-file cleanliness. For linked commits,
+a no-work close waives only unlanded candidates, which it treats as superseded or
+waived. A linked commit already on the integration branch still fails
+`integration_ancestry`; close such work with `done`. A `superseded` close with
+unlanded linked commits must name the superseding task or commit in `superseded_by`,
+and the closing record stores it as a task lifecycle event. `unlink_commit` refuses
+commits already on the integration branch.
 
 Developers and independent reviewers remain responsible for acceptance criteria,
 test quality, and validation results. The close tool does not score transcripts,

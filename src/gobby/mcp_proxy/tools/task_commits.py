@@ -33,7 +33,7 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
-from gobby.utils.daemon_git import normalize_commit_sha
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git, normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
@@ -71,6 +71,35 @@ def session_machine_id(session_manager: Any | None, project_id: str | None) -> s
             session.machine_id, resource_kind="project_checkout", resource_id=project_id
         )
     return require_local_machine_id(None, resource_kind="project_checkout", resource_id=project_id)
+
+
+async def _integration_refusal(db: Any, task: Any, sha: str) -> str | None:
+    """Return why unlinking ``sha`` is refused, or None when ``sha`` is not landed.
+
+    A commit on the integration branch is delivered work and stays linked. With no
+    registered main checkout or no integration branch, nothing can be landed, so the
+    unlink proceeds. A Git failure or an unanswered ancestry check refuses, because the
+    commit's status is then unproven.
+    """
+    from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+
+    try:
+        target = await main_checkout_target(db, task.project_id)
+    except LandingGitError as exc:
+        return f"Cannot determine the integration branch: {exc}"
+    except ValueError:
+        return None
+    if target is None:
+        return None
+    repo, branch = target
+    result = await daemon_git.run(
+        ("merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"), cwd=repo
+    )
+    if isinstance(result, GitOk):
+        return f"{sha} is on the integration branch; landed commits cannot be unlinked."
+    if isinstance(result, GitFailed) and result.returncode == 1:
+        return None
+    return f"Cannot determine whether {sha} is on the integration branch."
 
 
 def create_commit_registry(
@@ -232,6 +261,9 @@ def create_commit_registry(
         normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
         if normalized is None:
             return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
+        refusal = await _integration_refusal(task_manager.db, current_task, normalized)
+        if refusal is not None:
+            return {"error": refusal}
         try:
             task = task_manager.unlink_commit(resolved_task_id, normalized)
             return {

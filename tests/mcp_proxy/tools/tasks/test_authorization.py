@@ -59,6 +59,18 @@ def task_manager() -> MagicMock:
     return manager
 
 
+@pytest.fixture(autouse=True)
+def no_integration_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authorization is under test here; landed-commit refusal has its own tests."""
+
+    async def unknown_integration(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.task_commits._integration_refusal", unknown_integration
+    )
+
+
 class TestRequireClaimAuthority:
     def test_unclaimed_allowed_without_session_context(self, task_manager: MagicMock) -> None:
         assert require_claim_authority(task_manager, _task(None), "update_task") is None
@@ -283,6 +295,11 @@ class TestLinkTaskToSessionGuard:
         task_manager.db.fetchone.return_value = {"id": "reviewer-run"} if live_reviewer else None
         with ExitStack() as stack:
             tool, writer = _build_link_task_to_session(task_manager, stack)
+            # The mocked db returns the reviewer row for every fetchone, including the
+            # grant lookup's session query, so stub the grant to test the live-seat rule.
+            stack.enter_context(
+                patch("gobby.mcp_proxy.tools.tasks._session.session_grants", return_value=True)
+            )
             with session_context_for_test(CALLER_SESSION):
                 result = tool(
                     task_id=TASK_UUID,

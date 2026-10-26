@@ -41,6 +41,7 @@ async def _evaluate_close(
     project_path: str | None,
     response_detail: Literal["concise", "diagnostic"] = "concise",
     closing_session_id: str | None = None,
+    superseded_by: str | None = None,
 ) -> CloseEvaluation:
     evaluation = CloseEvaluation(task_id, response_detail=response_detail)
     try:
@@ -150,5 +151,6 @@ async def _evaluate_close(
         required_steps=steps.required,
         missing_steps=steps.missing,
         attribution_complete=attribution.complete,
+        superseded_by=superseded_by,
     )
     return evaluation
