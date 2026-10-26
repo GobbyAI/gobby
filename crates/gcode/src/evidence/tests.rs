@@ -1558,29 +1558,28 @@ fn large_batched_bound_blob_read_completes_past_the_stdin_pipe_limit() -> anyhow
     let temporary = tempfile::tempdir()?;
     let repo = temporary.path();
     initialize_repo(repo)?;
-    std::fs::create_dir(repo.join("batch"))?;
     let names = (0..FILES)
         .map(|index| format!("batch/file-{index:05}.txt"))
         .collect::<Vec<_>>();
-    for name in &names {
-        std::fs::write(repo.join(name), name)?;
-    }
-    let oids = git_input(
-        repo,
-        &["hash-object", "-w", "--stdin-paths"],
-        names.join("\n").as_bytes(),
-    )?;
-    let index_info = oids
-        .lines()
-        .zip(&names)
-        .map(|(oid, name)| format!("100644 {oid}\t{name}\n"))
+    // One fast-import stream writes the blobs and the commit that tracks them as a pack.
+    // Per-file `hash-object -w` wrote 10,000 loose objects and dominated this test's runtime.
+    let blobs = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| format!("blob\nmark :{}\ndata {}\n{name}\n", index + 1, name.len()))
         .collect::<String>();
-    git_input(
-        repo,
-        &["update-index", "--index-info"],
-        index_info.as_bytes(),
-    )?;
-    let commit_oid = commit(repo, "many files")?;
+    let commit_header = "commit refs/heads/main\n\
+        committer Evidence Test <evidence@example.invalid> 0 +0000\n\
+        data 10\n\
+        many files\n";
+    let entries = names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| format!("M 100644 :{} {name}\n", index + 1))
+        .collect::<String>();
+    let stream = format!("{blobs}{commit_header}{entries}");
+    git_input(repo, &["fast-import", "--quiet"], stream.as_bytes())?;
+    let commit_oid = git(repo, &["rev-parse", "HEAD"])?;
     let binding = RepositoryBinding {
         project_id: "project-1".to_string(),
         tree_oid: git(repo, &["rev-parse", "HEAD^{tree}"])?,
@@ -2384,8 +2383,9 @@ fn cited_path_git_calls(
 
 #[test]
 fn bound_blob_reads_resolve_every_path_past_the_argv_budget() -> anyhow::Result<()> {
-    // 60000 cited paths are about 2.4 MB of argv in one ls-tree call, past both the macOS
-    // and Linux argv limits. Each group of paths must resolve on its own call.
+    // 60000 cited paths are about 1.7 MB of argv (27-byte paths plus a separator each), far
+    // past the 64 KiB ls-tree budget (MAX_LS_TREE_PATH_BYTES). Each group of paths must
+    // resolve on its own call.
     const MISSING: usize = 60_000;
     let temporary = tempfile::tempdir()?;
     let repo = temporary.path();
@@ -2443,7 +2443,11 @@ fn bound_blob_cache_holds_at_most_its_cap_of_paths() -> anyhow::Result<()> {
     let facts = Arc::new(FakeFacts::for_source(&binding));
     let library = EvidenceLibrary::new(repo, binding, facts)?;
     library.prefetch_bound_blobs(paths.iter().map(String::as_str));
-    let cached = library.blob_cache.lock().expect("bound blob cache lock").len();
+    let cached = library
+        .blob_cache
+        .lock()
+        .expect("bound blob cache lock")
+        .len();
     assert!(
         cached <= BOUND_BLOB_CACHE_CAP,
         "cached {cached} blobs, cap is {BOUND_BLOB_CACHE_CAP}"
