@@ -565,6 +565,43 @@ def test_guard_reports_whether_the_titled_tab_exists(env: _Env, tabs: int) -> No
     assert _skip_check(env, caller).tab_exists is False
 
 
+def _task_check(env: _Env, caller: str, task: str, tab_title: str) -> AdmittedSeats:
+    return check_runbook_seats(
+        env.stores,
+        caller_session_id=caller,
+        workspace=env.workspace_id,
+        requested="lead,dev",
+        catalogue=CATALOGUE,
+        tab_title=tab_title,
+        task=task,
+    )
+
+
+@pytest.mark.parametrize("form", ["#seq", "seq", "uuid"])
+def test_a_task_tab_is_the_runbook_and_task_sequence(env: _Env, form: str) -> None:
+    """A task-bound runbook tab reads '<Runbook> - #<seq>' whatever form the task takes."""
+    task = _team_task(env, "Tab team")
+    reference = {"#seq": f"#{task.seq_num}", "seq": str(task.seq_num), "uuid": task.id}[form]
+
+    admitted = _task_check(env, _pipeline_child(env), reference, "Dev Team")
+
+    assert admitted.tab_title == f"Dev Team - #{task.seq_num}"
+    assert admitted.tab_exists is False
+
+
+def test_a_task_tab_that_exists_is_reported_under_its_sequence_title(env: _Env) -> None:
+    task = _team_task(env, "Tab team")
+    _support_tab(env, f"Dev Team - #{task.seq_num}")
+
+    admitted = _task_check(env, _pipeline_child(env), str(task.seq_num), "Dev Team")
+
+    assert admitted.tab_exists is True
+
+
+def test_a_run_without_a_task_keeps_its_bare_runbook_tab(env: _Env) -> None:
+    assert _skip_check(env, _pipeline_child(env), tab_title="Support").tab_title == "Support"
+
+
 def test_guard_refuses_an_ambiguous_titled_tab(env: _Env) -> None:
     caller = _pipeline_child(env)
     _support_tab(env)
@@ -703,6 +740,7 @@ def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
         "seats": ({"name": "lead", "title": "Lead", "agent": "lead-agent"},),
         "launch": ("lead",),
         "live": {},
+        "tab_title": None,
         "tab_exists": False,
     }
     assert refused == {
@@ -720,8 +758,9 @@ def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: st
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
+    team = _team_task(env, "Report target team")
     inputs.update(
-        task="#1",
+        task=f"#{team.seq_num}",
         workspace=env.workspace_id,
         seats="developer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,

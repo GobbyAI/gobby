@@ -114,6 +114,7 @@ async def test_runbook_seat_titles_are_definition_names_through_claim(
                         "launch": [seat],
                         "live": {},
                         "tab_exists": False,
+                        "tab_title": EXPECTED_TAB[runbook],
                     }
                 },
                 "admit": {

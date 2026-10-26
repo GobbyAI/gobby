@@ -328,9 +328,17 @@ def render(run: Session, step_id: str, context: dict[str, Any]) -> dict[str, Any
     return RENDERER.render_mcp_arguments(step.mcp.arguments, step_context, drop_none=True)
 
 
+def dev_team_tab(world: TeamWorld, run: Session, task: str) -> str:
+    """The guard's tab title for ``task``: the runbook name and the task's sequence."""
+    tasks = LocalTaskManager(world.case.db)
+    found = tasks.get_task(tasks.resolve_task_reference(task, run.project_id), run.project_id)
+    return f"Dev Team - #{found.seq_num}"
+
+
 async def admitted(world: TeamWorld, run: Session, inputs: dict[str, Any]) -> dict[str, Any]:
     """Run ``run``'s rendered admit step through admit_team; the context then holds its output."""
     context = devteam_context(inputs)
+    context["steps"]["guard"]["output"]["tab_title"] = dev_team_tab(world, run, inputs["task"])
     arguments = render(run, "admit", context)
     assert arguments is not None
     with session_context_for_test(run.id):
@@ -655,7 +663,7 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     assert list(initial) == ["guard", "admit", *seats]
     assert identity(initial["code-reviewer"]) == SOL
     assert initial["dev-manager"]["placement"] == {
-        "tab": {"workspace": WORKSPACE, "title": f"Dev Team - {task_id}"}
+        "tab": {"workspace": WORKSPACE, "title": f"Dev Team - #{team.task.seq_num}"}
     }
     # The Orchestrator's relaunch for REJECTION_2 starts only an Opus reviewer in that tab.
     fresh_inputs = {
@@ -674,7 +682,7 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     assert reviewer["placement"] == {
         "split": {
             "workspace": WORKSPACE,
-            "tab_title": f"Dev Team - {task_id}",
+            "tab_title": f"Dev Team - #{team.task.seq_num}",
             "axis": "right",
             "title": "Code Reviewer",
         }

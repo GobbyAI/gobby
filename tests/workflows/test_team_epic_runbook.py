@@ -193,7 +193,15 @@ def _context(inputs: dict[str, Any]) -> dict[str, Any]:
         "inputs": values,
         # A fresh dry run has no live seats; the seat prompts read this map unconditionally.
         "steps": {
-            "guard": {"output": {"workspace_id": WORKSPACE, "live": {}, "tab_exists": False}}
+            # The guard resolves the tab title from the task; this fixture's task is #25128.
+            "guard": {
+                "output": {
+                    "workspace_id": WORKSPACE,
+                    "live": {},
+                    "tab_exists": False,
+                    "tab_title": "Dev Team - #25128",
+                }
+            }
         },
         "_string_inputs": frozenset(
             name for name, spec in DEVTEAM.inputs.items() if spec.get("type") == "string"
@@ -287,6 +295,16 @@ def _placement_context(launch: list[str], tab_exists: bool) -> dict[str, Any]:
         }
     }
     return context
+
+
+@pytest.mark.parametrize("task", ["#25128", "25128", "00000000-0000-4000-8000-000000025128"])
+def test_seat_tabs_take_the_guards_sequence_title_for_any_task_form(task: str) -> None:
+    """Placements read the guard's resolved tab title, so every task form opens 'Dev Team - #25128'."""
+    context = _placement_context(launch=["dev-manager"], tab_exists=False)
+    context["inputs"]["task"] = task
+    context["steps"]["guard"]["output"]["tab_title"] = "Dev Team - #25128"
+    placement = _seat_arguments("dev-manager", context)["placement"]
+    assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
 
 
 @pytest.mark.parametrize("tab_exists", [False, True])

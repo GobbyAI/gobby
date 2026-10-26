@@ -35,7 +35,7 @@ prompts:
 
     ## Full report queue scaffold
     Use this policy-derived scaffold when available; otherwise read every queue from injected policy, and mark missing policy as a source gap:
-    {% for queue in project_policy.get('lanes', []) %}
+    {% for queue in project_policy.get('roots', []) %}
     - {{ queue.name }} ({{ queue.epic }}): current claims with seat and claim time; next five; all open candidates; evidence gaps.
     {% endfor %}
 

@@ -73,17 +73,17 @@ def test_bundled_roles_and_runbooks_inherit_provider_choices() -> None:
                 assert spec.get("default") is None, (path.name, name)
 
 
-@pytest.mark.parametrize("lane_count", [3, 9])
-def test_reporter_renders_every_lane_from_policy(lane_count: int) -> None:
-    lanes = [
-        {"name": f"Lane {number}", "epic": f"#{10000 + number}"}
-        for number in range(1, lane_count + 1)
+@pytest.mark.parametrize("root_count", [3, 9])
+def test_reporter_renders_every_root_from_policy(root_count: int) -> None:
+    roots = [
+        {"name": f"Root {number}", "epic": f"#{10000 + number}"}
+        for number in range(1, root_count + 1)
     ]
     rendered = load_definition("reporter").prompt_for(
-        "agent", variables={"project_policy": {"lanes": lanes}}
+        "agent", variables={"project_policy": {"roots": roots}}
     )
-    blocks = re.findall(r"^- (Lane \d+) \((#\d+)\):", rendered, re.MULTILINE)
-    assert blocks == [(lane["name"], lane["epic"]) for lane in lanes]
+    blocks = re.findall(r"^- (Root \d+) \((#\d+)\):", rendered, re.MULTILINE)
+    assert blocks == [(root["name"], root["epic"]) for root in roots]
     assert "{{" not in rendered
 
 

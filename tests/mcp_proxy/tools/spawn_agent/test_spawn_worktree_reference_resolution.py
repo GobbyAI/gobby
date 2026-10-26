@@ -242,6 +242,7 @@ async def test_devteam_observer_preserves_candidate_checkout(
                         "live": {},
                         "launch": [seat],
                         "tab_exists": False,
+                        "tab_title": "Dev Team - #24797",
                     }
                 },
                 "admit": {
