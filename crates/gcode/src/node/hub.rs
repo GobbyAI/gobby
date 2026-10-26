@@ -2,13 +2,19 @@
 //! principal and never opens a path on the hub's own disk.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
+use crate::cli_error::CliError;
 use crate::commands::search::content_page::{ContentQuery, content_candidates};
 use crate::commands::status::current::collect;
 use crate::config::{Context, ProjectIndexScope, parent_code_index_exists};
 use crate::db;
+use crate::index::checkout_fence;
+use crate::index::indexer::primary::{self, RunScope};
+use crate::index_lock::{self, IndexLockPolicy, IndexLockResult};
 use crate::node::{
-    ContentCandidates, NodeScope, RouteError, SearchContentRequest, StatusReport, StatusRequest,
+    ContentCandidates, IndexApplyRequest, IndexApplyResponse, IndexPlanRequest, IndexPlanResponse,
+    NodeScope, RouteError, SearchContentRequest, StatusReport, StatusRequest,
 };
 
 /// The verified principal a hub read runs as.
@@ -91,6 +97,93 @@ pub fn search_content(
     };
     content_candidates(&mut conn, &ctx, &request.query, query)
         .map_err(|error| route_error("read_failed", error))
+}
+
+/// Plans a Primary index run on a read-only connection, without the project lock.
+pub fn plan_index(
+    scope: &HubScope,
+    request: IndexPlanRequest,
+) -> Result<IndexPlanResponse, RouteError> {
+    let ctx = scope.context(&request.scope)?;
+    let mut conn = connect(&ctx)?;
+    let plan = primary::plan_primary(
+        &mut conn,
+        &ctx,
+        RunScope::from_path_filter(request.path_filter.as_deref()),
+        request.full,
+        &request.files,
+    )
+    .map_err(|error| route_error("read_failed", error))?;
+    Ok(IndexPlanResponse {
+        parse: plan.parse,
+        parent_indexed: None,
+    })
+}
+
+/// Upper bound on waiting for the project lock before an apply reports `index_busy`.
+const APPLY_LOCK_WAIT: Duration = Duration::from_secs(60);
+/// Poll interval while an apply waits for the project lock.
+const APPLY_LOCK_POLL: Duration = Duration::from_millis(250);
+
+/// Applies one request's parsed facts, and on the final batch the post-pass, under the
+/// project lock. The checkout fence runs before the lock wait so a foreign root fails fast.
+pub fn apply_index(
+    scope: &HubScope,
+    request: IndexApplyRequest,
+) -> Result<IndexApplyResponse, RouteError> {
+    let ctx = scope.context(&request.scope)?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)
+        .map_err(|error| route_error("database_unavailable", error))?;
+    let machine_id =
+        db::id_param(&ctx.machine_id).map_err(|error| route_error("write_failed", error))?;
+    let project_id =
+        db::id_param(&ctx.project_id).map_err(|error| route_error("write_failed", error))?;
+    let root_path = ctx.project_root.to_string_lossy().to_string();
+    checkout_fence::require_registered_checkout(&mut conn, &machine_id, &project_id, &root_path)
+        .map_err(fence_error)?;
+    let run = RunScope::from_path_filter(request.path_filter.as_deref());
+    let locked = index_lock::with_project_lock(
+        &ctx,
+        IndexLockPolicy::BriefTry {
+            total_wait: APPLY_LOCK_WAIT,
+            poll: APPLY_LOCK_POLL,
+        },
+        || {
+            primary::apply_primary(
+                &mut conn,
+                &ctx,
+                run,
+                request.full,
+                &request.files,
+                request.final_batch.as_ref(),
+            )
+        },
+    )
+    .map_err(|error| route_error("write_failed", error))?;
+    match locked {
+        IndexLockResult::Acquired(applied) => Ok(IndexApplyResponse {
+            reparse: applied.reparse,
+            outcome: applied.outcome,
+            partial: applied.partial,
+        }),
+        IndexLockResult::Busy(holder) => Err(RouteError {
+            code: "index_busy".to_string(),
+            error: "index busy".to_string(),
+            message: holder.unwrap_or_else(|| "project index is locked by another run".to_string()),
+        }),
+    }
+}
+
+/// Keeps a checkout refusal's code and message; any other failure is a write failure.
+fn fence_error(error: anyhow::Error) -> RouteError {
+    match error.downcast::<CliError>() {
+        Ok(cli) => RouteError {
+            code: cli.code.to_string(),
+            error: cli.code.replace('_', " "),
+            message: cli.message,
+        },
+        Err(error) => route_error("write_failed", error),
+    }
 }
 
 fn connect(ctx: &Context) -> Result<postgres::Client, RouteError> {

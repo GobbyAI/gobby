@@ -22,7 +22,8 @@ use super::file::{
 };
 use super::lifecycle::{attach_projection_sync, refresh_communities, refresh_project_stats};
 use super::local_imports::{resolve_local_import_calls, resolve_local_import_inheritance};
-use super::pipeline::{explicit_route_with_discovery_options, index_discovered_files};
+use super::pipeline::explicit_route_with_discovery_options;
+use super::primary;
 use super::selector_blob::{self, HeadBlobs};
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{
@@ -135,7 +136,8 @@ pub(super) fn index_overlay_files(
             require_cpp_semantics: request.require_cpp_semantics,
             sync_projections: request.sync_projections,
         };
-        let parent_outcome = index_discovered_files(conn, &parent_request, &parent_ctx, options)?;
+        let parent_outcome =
+            primary::index_with_connection(conn, &parent_request, &parent_ctx, options)?;
         if request.sync_projections {
             parent_degraded.extend(sync_parent_projections(&parent_ctx, &parent_outcome));
         }

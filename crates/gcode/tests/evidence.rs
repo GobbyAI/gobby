@@ -318,7 +318,10 @@ fn assert_error(output: &std::process::Output, code: &str) -> Value {
         .trim();
     assert_eq!(stderr.lines().count(), 1, "typed error is one JSON line");
     let payload: Value = serde_json::from_str(stderr).expect("error output is JSON");
-    assert_eq!(payload["error"], code);
+    assert_eq!(
+        payload["error"], code,
+        "unexpected evidence error: {payload}"
+    );
     assert!(payload["message"].is_string());
     assert!(payload["recovery"].is_string());
     payload

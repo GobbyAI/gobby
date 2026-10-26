@@ -4,16 +4,26 @@
 //! JSON body; the hub answers reads from the database and never from the node's disk.
 
 pub mod hub;
+// No production caller until the remote node driver lands; the tests drive the node half.
+#[cfg(test)]
+pub(crate) mod split;
 
+#[cfg(test)]
+mod index_tests;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 use crate::bm25_health::Bm25Health;
-use crate::models::{ContentSearchHit, IndexedProject};
+use crate::index::indexer::{IndexOutcome, UnsupportedFileType};
+use crate::models::{
+    CallRelation, ContentChunk, ContentSearchHit, ImportRelation, IndexedProject,
+    InheritanceRelation, Symbol,
+};
 
 /// Operation name the grant names for the whole node family.
 pub const NODE_OPERATION: &str = "node_code_index";
@@ -103,4 +113,138 @@ pub struct RouteError {
     pub code: String,
     pub error: String,
     pub message: String,
+}
+
+/// One file's identity as the node reports it: its content hash and, for a clean tracked
+/// file, the Git blob id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileHash {
+    pub path: String,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_blob: Option<String>,
+}
+
+/// One file's outcome for the hub's database half: the facts the node parsed, or a marker
+/// that the file is handled without facts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedFileFacts {
+    pub path: String,
+    pub facts: FileFacts,
+}
+
+/// What the node produced for one file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileFacts {
+    /// A parsed source file: symbols, graph rows, and content chunks.
+    Parsed {
+        language: String,
+        content_hash: String,
+        byte_size: usize,
+        /// Git blob id the node recorded for a clean tracked file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_blob: Option<String>,
+        facts: ParsedFacts,
+    },
+    /// A content-only file: content chunks and no graph rows.
+    ContentOnly {
+        language: String,
+        content_hash: String,
+        byte_size: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_blob: Option<String>,
+        chunks: Vec<ContentChunk>,
+    },
+    /// Handled without facts: counted as skipped, state row kept.
+    Skipped,
+    /// Handled without facts: counted as skipped, state row removed.
+    Removed,
+    /// Handled without facts: the path is gone, state row removed, not counted.
+    Absent,
+    /// Present but not hashed, and not parsed by this run: state row kept, not counted. The
+    /// orphan sweep treats the path as present.
+    Unhashed,
+}
+
+/// Everything the database half writes for a parsed file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedFacts {
+    pub symbols: Vec<Symbol>,
+    pub imports: Vec<ImportRelation>,
+    pub calls: Vec<CallRelation>,
+    pub inheritance: Vec<InheritanceRelation>,
+    pub chunks: Vec<ContentChunk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexPlanRequest {
+    pub scope: NodeScope,
+    pub full: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_filter: Option<String>,
+    pub files: Vec<FileHash>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexPlanResponse {
+    /// Paths the node must parse: stale, and not adoptable from existing facts.
+    pub parse: Vec<String>,
+    /// Used by the overlay split (1.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_indexed: Option<bool>,
+}
+
+/// Everything the hub needs to finish a run once every file's facts are written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalBatch {
+    pub present: Vec<FileHash>,
+    pub indexed_paths: Vec<String>,
+    pub eligible_files: usize,
+    pub scanned_files: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unsupported_file_types: Vec<UnsupportedFileType>,
+    /// Per-path results from earlier requests. Merge each response's `partial` by extending
+    /// this map: later entries replace earlier entries for the same path, including on retry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prior: Option<IndexApplyProgress>,
+}
+
+/// A run's latest result for every path it has handled; no parsed facts are carried back.
+pub type IndexApplyProgress = BTreeMap<String, FileApplyOutcome>;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileApplyOutcome {
+    /// A hashless present marker (Unhashed or Skipped) must survive the orphan sweep.
+    pub retain_state: bool,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub symbols_indexed: usize,
+    pub imports_indexed: usize,
+    pub calls_indexed: usize,
+    pub unresolved_targets_indexed: usize,
+    pub chunks_indexed: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexApplyRequest {
+    pub scope: NodeScope,
+    pub full: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_filter: Option<String>,
+    pub files: Vec<ParsedFileFacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_batch: Option<FinalBatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndexApplyResponse {
+    /// Paths whose facts the node must parse again. A non-empty list skips the post-pass.
+    pub reparse: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<IndexOutcome>,
+    /// Latest per-path results when unfinished. Extend `FinalBatch.prior` with these entries;
+    /// replacement by path makes repeated requests and reparses count each file once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<IndexApplyProgress>,
 }

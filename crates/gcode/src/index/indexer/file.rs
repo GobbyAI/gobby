@@ -7,7 +7,8 @@ use postgres::Client;
 use crate::db::GraphFileFacts;
 use crate::index::semantic::{self, SemanticCallResolver};
 use crate::index::{chunker, hasher, languages, parser, walker};
-use crate::models::{CallTargetKind, IndexedFile, ParseResult};
+use crate::models::{CallTargetKind, ContentChunk, IndexedFile};
+use crate::node::ParsedFacts;
 use crate::vector::code_symbols::vector_text_for_symbol;
 
 use super::IndexTimings;
@@ -65,6 +66,20 @@ pub(super) fn index_file(
         target.machine_id,
     )?;
     timings.phase("file.facts");
+    let chunks = chunker::chunk_file_content(
+        &parse_result.source,
+        &rel,
+        target.project_id,
+        &h,
+        Some(language),
+    );
+    let parsed = ParsedFacts {
+        symbols: parse_result.symbols,
+        imports: parse_result.imports,
+        calls: parse_result.calls,
+        inheritance: parse_result.inheritance,
+        chunks,
+    };
     let counts = write_parsed_file_facts(
         &mut sink,
         target.project_id,
@@ -72,7 +87,7 @@ pub(super) fn index_file(
         language,
         &h,
         size,
-        &parse_result,
+        &parsed,
     )?;
     let clean_blob = target.head_blobs.clean_blob(&rel, &parse_result.source);
     selector_blob::record_selector_blob(
@@ -169,6 +184,13 @@ pub(super) fn index_content_only(
         target.mode,
         target.machine_id,
     )?;
+    let chunks = chunker::chunk_file_content(
+        &source,
+        &rel,
+        target.project_id,
+        &content_hash,
+        Some(lang.as_str()),
+    );
     let counts = write_content_only_file_facts(
         &mut sink,
         target.project_id,
@@ -176,7 +198,7 @@ pub(super) fn index_content_only(
         &lang,
         &content_hash,
         source.len(),
-        &source,
+        &chunks,
     )?;
     let clean_blob = target.head_blobs.clean_blob(&rel, &source);
     selector_blob::record_selector_blob(
@@ -200,7 +222,7 @@ pub(super) fn write_parsed_file_facts(
     language: &str,
     content_hash: &str,
     byte_size: usize,
-    parse_result: &ParseResult,
+    parsed: &ParsedFacts,
 ) -> anyhow::Result<FileIndexCounts> {
     let mut timings = IndexTimings::new("facts.file");
     let before = sink.read_version_facts(project_id, rel, content_hash)?;
@@ -210,13 +232,13 @@ pub(super) fn write_parsed_file_facts(
         file_path: rel.to_string(),
         language: language.to_string(),
         content_hash: content_hash.to_string(),
-        symbol_count: parse_result.symbols.len(),
+        symbol_count: parsed.symbols.len(),
         byte_size,
         indexed_at: epoch_secs_str(),
     })?;
     timings.phase("facts.symbols");
-    let symbols_indexed = sink.upsert_symbols(&parse_result.symbols)?;
-    let current_symbol_ids = parse_result
+    let symbols_indexed = sink.upsert_symbols(&parsed.symbols)?;
+    let current_symbol_ids = parsed
         .symbols
         .iter()
         .map(|symbol| symbol.id.clone())
@@ -226,35 +248,26 @@ pub(super) fn write_parsed_file_facts(
     timings.phase("facts.prune_other");
     sink.delete_file_non_symbol_facts(project_id, rel, content_hash)?;
     timings.phase("facts.imports");
-    let imports_indexed =
-        sink.upsert_imports(project_id, rel, content_hash, &parse_result.imports)?;
+    let imports_indexed = sink.upsert_imports(project_id, rel, content_hash, &parsed.imports)?;
     timings.phase("facts.calls");
-    let calls_indexed = sink.upsert_calls(project_id, rel, content_hash, &parse_result.calls)?;
+    let calls_indexed = sink.upsert_calls(project_id, rel, content_hash, &parsed.calls)?;
     timings.phase("facts.inheritance");
     let _inheritance_indexed =
-        sink.upsert_inheritance(project_id, rel, content_hash, &parse_result.inheritance)?;
-    let unresolved_targets_indexed = parse_result
+        sink.upsert_inheritance(project_id, rel, content_hash, &parsed.inheritance)?;
+    let unresolved_targets_indexed = parsed
         .calls
         .iter()
         .filter(|call| call.callee_target_kind == CallTargetKind::Unresolved)
         .count();
-    timings.phase("facts.chunk");
-    let chunks = chunker::chunk_file_content(
-        &parse_result.source,
-        rel,
-        project_id,
-        content_hash,
-        Some(language),
-    );
     timings.phase("facts.write_chunks");
-    let chunks_indexed = if chunks.is_empty() {
+    let chunks_indexed = if parsed.chunks.is_empty() {
         0
     } else {
-        sink.upsert_content_chunks(&chunks)?
+        sink.upsert_content_chunks(&parsed.chunks)?
     };
 
     timings.phase("facts.projection_reset");
-    reset_changed_projections(sink, project_id, rel, content_hash, &before, parse_result)?;
+    reset_changed_projections(sink, project_id, rel, content_hash, &before, parsed)?;
 
     Ok(FileIndexCounts {
         file_path: rel.to_string(),
@@ -276,18 +289,18 @@ fn reset_changed_projections(
     rel: &str,
     content_hash: &str,
     before: &GraphFileFacts,
-    parse_result: &ParseResult,
+    parsed: &ParsedFacts,
 ) -> anyhow::Result<()> {
     let (vectors, graph) = if before.definitions.is_empty()
         && before.imports.is_empty()
         && before.calls.is_empty()
         && before.inheritance.is_empty()
     {
-        let vectors = !parse_result.symbols.is_empty();
+        let vectors = !parsed.symbols.is_empty();
         let graph = vectors
-            || !parse_result.imports.is_empty()
-            || !parse_result.calls.is_empty()
-            || !parse_result.inheritance.is_empty();
+            || !parsed.imports.is_empty()
+            || !parsed.calls.is_empty()
+            || !parsed.inheritance.is_empty();
         (vectors, graph)
     } else {
         let after = sink.read_version_facts(project_id, rel, content_hash)?;
@@ -346,7 +359,7 @@ pub(super) fn write_content_only_file_facts(
     language: &str,
     content_hash: &str,
     byte_size: usize,
-    source: &[u8],
+    chunks: &[ContentChunk],
 ) -> anyhow::Result<FileIndexCounts> {
     let before = sink.read_version_facts(project_id, rel, content_hash)?;
     sink.upsert_file(&IndexedFile {
@@ -364,11 +377,10 @@ pub(super) fn write_content_only_file_facts(
     if !before.imports.is_empty() || !before.calls.is_empty() || !before.inheritance.is_empty() {
         sink.dirty_version_sync(project_id, rel, content_hash, false, true)?;
     }
-    let chunks = chunker::chunk_file_content(source, rel, project_id, content_hash, Some(language));
     let chunks_indexed = if chunks.is_empty() {
         0
     } else {
-        sink.upsert_content_chunks(&chunks)?
+        sink.upsert_content_chunks(chunks)?
     };
 
     Ok(FileIndexCounts {
