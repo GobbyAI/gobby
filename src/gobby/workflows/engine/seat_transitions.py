@@ -78,10 +78,46 @@ def _same_task(db: HubDatabase, ref: Any, event: CandidateEvent) -> bool:
         return False
 
 
-def _linked_candidate_matches(db: HubDatabase, session_id: str, event: CandidateEvent) -> bool:
-    if event.task.claimed_by_session_id != session_id:
+def _coordinates_holder(db: HubDatabase, session_id: str, event: CandidateEvent) -> bool:
+    """The root Orchestrator, or the task's bound Dev Manager when this seat is in its team."""
+    from gobby.mcp_proxy.tools.tasks._claim_release import _can_release
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+
+    sessions = SessionManager(db)
+    caller = sessions.get(event.message.from_session)
+    holder = sessions.get(session_id)
+    if caller is None or holder is None or caller.id == holder.id:
         return False
-    return _commit_linked_to_claimant(db, event)
+    return _can_release(
+        RegistryContext(task_manager=LocalTaskManager(db)), caller, holder, event.task.id
+    )
+
+
+def _submit_return_rejection(
+    db: HubDatabase, session_id: str, state: dict[str, Any], event: CandidateEvent
+) -> str | None:
+    """Why reading ``event`` leaves a submitted developer in submit; None returns it."""
+    proof = event.fields.get("EVENT") == "PROOF_REQUEST"
+    if event.message.to_session != session_id:
+        return "message is not addressed to this seat"
+    if event.message.id in (state.get("_seat_consumed_messages") or []):
+        return "message already consumed"
+    if not _returns_to_implement(event.fields):
+        return "only EVENT=PROOF_REQUEST or CANDIDATE_VERDICT VERDICT=BOUNCE returns to implement"
+    if not _same_task(db, state.get("assigned_task_id"), event):
+        return "TASK is not this seat's assigned task"
+    # A proof request asks for evidence, so the claimant's coordinators may send it too.
+    if not is_task_reviewer(db, event) and not (
+        proof and _coordinates_holder(db, session_id, event)
+    ):
+        if proof:
+            return "sender is not the task's reviewer, bound Dev Manager or Orchestrator"
+        return "sender is not the task's reviewer"
+    if event.task.claimed_by_session_id != session_id:
+        return "this seat does not claim the task"
+    if not _commit_linked_to_claimant(db, event):
+        return "SHA is not a commit linked to the task"
+    return None
 
 
 def _commit_linked_to_claimant(db: HubDatabase, event: CandidateEvent) -> bool:
@@ -199,7 +235,7 @@ def _holds_seat(
 def candidate_binding_error(
     db: HubDatabase, session_id: str, message: InterSessionMessage
 ) -> str | None:
-    """Explain incoming reviewer intake without changing protected seat state."""
+    """Explain refused reviewer intake or submit return without changing protected seat state."""
     if message.to_session != session_id or message.from_session == session_id:
         return None
     reason = None
@@ -208,10 +244,19 @@ def candidate_binding_error(
     except CandidateMessageError as exc:
         event = None
         reason = str(exc)
-    if reason is None and (event is None or event.fields.get("EVENT") != "CANDIDATE"):
-        return None
     instance = AgentStepInstanceManager(db).get_for_session(session_id)
     if instance is None or not instance.enabled:
+        return None
+    if (
+        event is not None
+        and instance.current_step == "submit"
+        and _returns_to_implement(event.fields)
+        and _holds_seat(db, session_id, instance.agent_name, "developer", "implementation")
+    ):
+        state = {**SessionVariableManager(db).get_variables(session_id), **instance.variables}
+        why = _submit_return_rejection(db, session_id, state, event)
+        return f"{event.fields['EVENT']} did not return submit to implement: {why}" if why else None
+    if reason is None and (event is None or event.fields.get("EVENT") != "CANDIDATE"):
         return None
     if not _holds_seat(db, session_id, instance.agent_name, "code-reviewer", "review"):
         return None
@@ -373,13 +418,7 @@ def advance_seat(
             and event is not None
             and _holds_seat(db, session_id, role, "developer", "implementation")
         ):
-            if (
-                message.to_session == session_id
-                and _same_task(db, state.get("assigned_task_id"), event)
-                and _returns_to_implement(event.fields)
-                and is_task_reviewer(db, event)
-                and _linked_candidate_matches(db, session_id, event)
-            ):
+            if _submit_return_rejection(db, session_id, state, event) is None:
                 # The flag returns the claim to implement with shell access; link_commit clears it.
                 changes = {"bounced": True, "implementation_complete": False}
         if changes:

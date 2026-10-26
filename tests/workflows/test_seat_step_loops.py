@@ -818,6 +818,78 @@ async def test_developer_submit_return_refused_for_unowned_task(
     assert run.step == "submit"
 
 
+async def test_developer_returns_on_proof_request_echoing_the_commit(
+    linked_developer: tuple[SeatRun, Task, str, str],
+) -> None:
+    """A reviewer line naming the candidate as both SHA and COMMIT is one unit (#25154)."""
+    run, task, sha, _ = linked_developer
+    await run.incoming(
+        f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} COMMIT={sha} NOTE=evidence", PEER_ID
+    )
+    assert run.step == "implement"
+    assert await run.admits_native("Bash", {"command": "git status"})
+
+
+async def test_developer_returns_on_a_coordinator_proof_request_only(
+    linked_developer: tuple[SeatRun, Task, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The claimant's coordinator may ask for proof but never bounce (#25154)."""
+    patch_local_machine_id(monkeypatch, AUTHORITY_MACHINE_ID)
+    run, task, sha, _ = linked_developer
+    await run.incoming(
+        f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE", COORDINATOR_ID
+    )
+    assert run.step == "submit"
+    await run.incoming(f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} NOTE=evidence", OWNER_ID)
+    assert run.step == "submit"
+    await run.incoming(
+        f"EVENT=PROOF_REQUEST TASK={task.id} SHA={sha} NOTE=evidence", COORDINATOR_ID
+    )
+    assert run.step == "implement"
+    assert run.vars["implementation_complete"] is False
+
+
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("matching", None),
+        ("sender", "sender is not the task's reviewer, bound Dev Manager or Orchestrator"),
+        ("bounce-sender", "sender is not the task's reviewer"),
+        ("task", "TASK is not this seat's assigned task"),
+        ("sha", "SHA is not a commit linked to the task"),
+    ],
+)
+async def test_developer_submit_read_explains_the_failed_binding(
+    linked_developer: tuple[SeatRun, Task, str, str], case: str, reason: str | None
+) -> None:
+    run, task, sha, unlinked_sha = linked_developer
+    event, sender, task_id, line_sha = "PROOF_REQUEST", PEER_ID, task.id, sha
+    if case == "sender":
+        sender = OWNER_ID
+    elif case == "bounce-sender":
+        event, sender = "CANDIDATE_VERDICT", COORDINATOR_ID
+    elif case == "task":
+        task_id = run.task(owner=SESSION_ID).id
+    elif case == "sha":
+        line_sha = unlinked_sha
+    tail = "VERDICT=BOUNCE" if event == "CANDIDATE_VERDICT" else "NOTE=evidence"
+    message = InterSessionMessageManager(run.db).create_message(
+        sender, SESSION_ID, f"EVENT={event} TASK={task_id} SHA={line_sha} {tail}"
+    )
+    registry = InternalToolRegistry(name="gobby-agents", description="Submit return")
+    add_messaging_tools(registry, InterSessionMessageManager(run.db), run.sessions, run.db)
+    with session_context_for_test(SESSION_ID):
+        result = await registry.call("get_inter_session_message", {"message_id": message.id})
+    assert result["success"] is True
+    if reason is None:
+        assert "candidate_binding_error" not in result
+    else:
+        expected = f"{event} did not return submit to implement: {reason}"
+        assert result.get("candidate_binding_error") == expected
+    await run.call("gobby-agents", "get_inter_session_message", {"message_id": message.id}, result)
+    assert run.step == ("implement" if reason is None else "submit")
+
+
 def _running_loop() -> asyncio.AbstractEventLoop | None:
     try:
         return asyncio.get_running_loop()
@@ -828,7 +900,7 @@ def _running_loop() -> asyncio.AbstractEventLoop | None:
 async def test_developer_proof_request_matches_linked_candidate_off_the_loop(
     linked_developer: tuple[SeatRun, Task, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # advance_seat reaches _linked_candidate_matches only through the rule-engine offload, so
+    # advance_seat reaches _submit_return_rejection only through the rule-engine offload, so
     # the commit identity checks run on a worker, never on the loop that delivered the message.
     run, task, sha, _ = linked_developer
     caller = asyncio.get_running_loop()

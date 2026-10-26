@@ -201,6 +201,10 @@ def envelope_fields(text: str) -> dict[str, str] | None:
     if re.fullmatch(r"[0-9a-fA-F]{40}", fields[sha_key]) is None:
         raise _rejected(event, sha_key, "must be 40 hex characters")
     fields[sha_key] = fields[sha_key].lower()
+    if sha_key == "SHA" and "COMMIT" in fields:
+        # Senders echo the commit under both names; one unit names one commit.
+        if fields.pop("COMMIT").lower() != fields["SHA"]:
+            raise _rejected(event, "COMMIT", "conflicts with SHA")
     return fields
 
 

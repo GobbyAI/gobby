@@ -362,7 +362,7 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
         "TaskTransitionsMixin.close_task_with_commit",
     ),
     # _run_step_handlers offloads advance_seat, which reaches the commit-link git check
-    # through _linked_candidate_matches and _candidate_rejection
+    # through _submit_return_rejection and _candidate_rejection
     # (test_developer_proof_request_matches_linked_candidate_off_the_loop).
     ("src/gobby/workflows/engine/seat_transitions.py", "_commit_linked_to_claimant"),
     # Plan validation runs on MCP/coverage workers and the compile offload;
