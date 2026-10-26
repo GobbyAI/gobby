@@ -27,6 +27,7 @@ pytestmark = pytest.mark.unit
 RULES_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules"
 PROJECT = "11111111-1111-4111-8111-111111111111"
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
+TEMPLATE = "~/.gobby/agents_workspaces/<project_id>/<definition>/<session>/"
 
 
 @pytest.fixture
@@ -415,3 +416,136 @@ def test_predecessor_eligibility(
     developer = register("developer", 50, "active")
     register("developer", 10, "expired")
     assert readable(folder("developer", 10), developer) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            f'git commit -m "docs: describe the agent workspace layout" -m "Anchor: {TEMPLATE}"',
+            id="template-in-second-message",
+        ),
+        pytest.param(
+            f'git commit -m "{TEMPLATE} layout notes"',
+            id="message-starts-with-template",
+        ),
+        pytest.param(
+            "git commit -F - <<'EOF'\n"
+            "docs: describe the agent workspace layout\n"
+            "\n"
+            f"Anchor: {TEMPLATE}\n"
+            "EOF",
+            id="heredoc-body-line",
+        ),
+    ],
+)
+async def test_placeholder_template_in_commit_message_is_not_a_read(
+    command: str,
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    developer = _seat(anchor, "developer", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="developer",
+        folder=anchor / "developer" / "session-50",
+        persistent=False,
+    )
+    # The template is documentation text inside a message, not a path the seat reads.
+    response = await _decide(engine, _shell(command, project), dict(developer), caller)
+    assert response.decision == "allow", (command, response.reason)
+
+
+@pytest.mark.asyncio
+async def test_concrete_reads_of_other_session_folders_stay_refused(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    developer = _seat(anchor, "developer", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="developer",
+        folder=anchor / "developer" / "session-50",
+        persistent=False,
+    )
+    # Concrete paths carrying real ids: a sibling session, and a folder of another project.
+    sibling = anchor / "developer" / "session-51" / "notes.md"
+    other_project = root / "22222222-2222-4222-8222-222222222222"
+    foreign = other_project / "developer" / "session-9" / "notes.md"
+    for refused in (sibling, foreign):
+        for data in (
+            _read(refused, project),
+            _shell(f"ls {refused.parent}", project),
+            _shell(f"cat {refused}", project),
+        ):
+            response = await _decide(engine, data, dict(developer), caller)
+            assert response.decision == "block", (data, response.reason)
+            assert "agent workspace folder is outside" in (response.reason or ""), data
+    # A placeholder inside a commit message does not excuse a concrete read in the same command.
+    data = _shell(f'git commit -m "Anchor: {TEMPLATE}" && cat {sibling}', project)
+    response = await _decide(engine, data, dict(developer), caller)
+    assert response.decision == "block", (data, response.reason)
+    assert "agent workspace folder is outside" in (response.reason or ""), data
+
+
+@pytest.mark.asyncio
+async def test_own_and_predecessor_folders_stay_readable(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    assistant = _seat(anchor, "assistant", 40, persistent=True)
+    successor = _register(
+        temp_db,
+        project_id,
+        seq=40,
+        status="active",
+        agent_type="assistant",
+        folder=anchor / "assistant" / "session-40",
+        persistent=True,
+    )
+    predecessor = anchor / "assistant" / "session-30"
+    _register(
+        temp_db,
+        project_id,
+        seq=30,
+        status="expired",
+        agent_type="assistant",
+        folder=predecessor,
+        persistent=True,
+    )
+    for allowed in (anchor / "assistant" / "session-40" / "notes.md", predecessor / "lessons.md"):
+        for data in (
+            _read(allowed, project),
+            _shell(f"ls {allowed.parent}", project),
+            _shell(f"cat {allowed}", project),
+        ):
+            response = await _decide(engine, data, dict(assistant), successor)
+            assert response.decision == "allow", (data, response.reason)
