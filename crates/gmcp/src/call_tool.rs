@@ -290,3 +290,7 @@ where
 fn joined(result: Result<Value, tokio::task::JoinError>) -> Value {
     result.unwrap_or_else(|error| json!({"success":false,"error":error.to_string()}))
 }
+
+#[cfg(test)]
+#[path = "call_tool/tests.rs"]
+mod tests;
