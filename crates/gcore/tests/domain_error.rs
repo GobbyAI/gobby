@@ -1,4 +1,4 @@
-use gobby_core::domain_error::{cli, mcp, DomainError, DomainErrorClass};
+use gobby_core::domain_error::{DomainError, DomainErrorClass, cli, mcp};
 use serde_json::json;
 
 /// Driver, SQL and connection-string text that must never reach an operator
@@ -61,10 +61,7 @@ fn error_carries_class_safe_message_and_optional_detail() {
 
 #[test]
 fn cli_exit_code_is_nonzero_and_distinct_per_class() {
-    let codes: Vec<i32> = CLASSES
-        .iter()
-        .map(|class| cli::exit_code(*class))
-        .collect();
+    let codes: Vec<i32> = CLASSES.iter().map(|class| cli::exit_code(*class)).collect();
 
     assert!(
         codes.iter().all(|code| *code != 0),

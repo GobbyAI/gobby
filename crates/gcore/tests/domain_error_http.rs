@@ -1,6 +1,6 @@
 #![cfg(feature = "route-family")]
 
-use gobby_core::domain_error::{http, DomainError, DomainErrorClass};
+use gobby_core::domain_error::{DomainError, DomainErrorClass, http};
 use serde_json::json;
 
 /// Driver, SQL and connection-string text that must never reach an HTTP body
@@ -63,9 +63,10 @@ fn http_default_envelope_is_detail_with_safe_message_for_every_class() {
 fn family_declared_envelope_replaces_body_but_keeps_class_status() {
     let err = DomainError::new(DomainErrorClass::Missing, "tool not found");
 
-    let (status, body) = http::parts_with(&err, |e| {
-        json!({"error": e.message(), "code": e.class().as_str()})
-    });
+    let (status, body) = http::parts_with(
+        &err,
+        |e| json!({"error": e.message(), "code": e.class().as_str()}),
+    );
 
     assert_eq!(status, http::status(DomainErrorClass::Missing));
     assert_eq!(body, json!({"error": "tool not found", "code": "missing"}));
@@ -82,9 +83,10 @@ fn internal_error_hides_driver_text_in_default_and_declared_envelopes() {
     let (status, default_body) = http::parts(&err);
     assert_eq!(status, http::status(DomainErrorClass::Internal));
     assert_eq!(default_body, json!({"detail": err.message()}));
-    let (_, declared_body) = http::parts_with(&err, |e| {
-        json!({"error": e.message(), "code": e.class().as_str()})
-    });
+    let (_, declared_body) = http::parts_with(
+        &err,
+        |e| json!({"error": e.message(), "code": e.class().as_str()}),
+    );
 
     for (label, body) in [("default", default_body), ("declared", declared_body)] {
         let text = body.to_string();
