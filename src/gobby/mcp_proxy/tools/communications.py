@@ -338,10 +338,30 @@ def create_communications_registry(
             return roots
         return await asyncio.to_thread(lookup)
 
+    async def _caller_workspace_roots() -> list[Path]:
+        """The calling session's own bound agent workspace folders."""
+        from gobby.agents.agent_workspaces import agent_workspace_write_dirs
+        from gobby.app_context import get_app_context
+
+        caller_id = get_current_session_id()
+        if db is None or not caller_id:
+            return []
+
+        def lookup() -> list[Path]:
+            variables = SessionVariableManager(db).get_variables(caller_id)
+            return [Path(folder) for folder in agent_workspace_write_dirs(variables)]
+
+        app_context = get_app_context()
+        if app_context is not None and app_context.db_executor is not None:
+            roots: list[Path] = await app_context.run_db(lookup)
+            return roots
+        return await asyncio.to_thread(lookup)
+
     @registry.tool(
         description=(
             "Send an existing local file to a communication channel. The file must be "
-            "inside the project checkout or one of its active or stale registered worktrees. "
+            "inside the project checkout, one of its active or stale registered worktrees, "
+            "or the calling session's own agent workspace folder. "
             "session_id defaults to the authenticated caller and cannot identify another session."
         )
     )
@@ -367,10 +387,16 @@ def create_communications_registry(
             )
             if configured_root is None:
                 return {"success": False, "error": "Attachment workspace is unavailable"}
-            if not _is_within(resolved_path, configured_root) and not any(
-                _is_within(resolved_path, root)
-                for root in await _registered_worktree_roots(
-                    project_context, requested_path, resolved_path
+            if (
+                not _is_within(resolved_path, configured_root)
+                and not any(
+                    _is_within(resolved_path, root)
+                    for root in await _registered_worktree_roots(
+                        project_context, requested_path, resolved_path
+                    )
+                )
+                and not any(
+                    _is_within(resolved_path, root) for root in await _caller_workspace_roots()
                 )
             ):
                 return {

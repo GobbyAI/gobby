@@ -12,12 +12,12 @@ Format one tab heading followed by one line per pane: `label | seat | provider /
 
 ## Full report
 Start with the report mode, timestamp, and evidence age. Use compact markdown blocks readable on the configured channel:
-- Policy-defined lanes: one block for every lane, including idle or unstaffed lanes. Name the epic ref and title; current task(s) ref and title, developer/reviewer seat, and time claimed; the next five queued task refs and titles in Archivist order (or all if fewer); and candidates waiting on landing/activation/close. State missing queue or claim-time evidence explicitly. Use this policy-derived scaffold when available; otherwise read every lane from injected policy, and mark missing policy as a source gap:
+- Policy-defined roots: one block for every root, including idle or unstaffed roots. Name the epic ref and title; current task(s) ref and title, developer/reviewer seat, and time claimed; the next five queued task refs and titles in Archivist order (or all if fewer); and candidates waiting on landing/activation/close. State missing queue or claim-time evidence explicitly. Use this policy-derived scaffold when available; otherwise read every root from injected policy, and mark missing policy as a source gap:
 - Close backlog: candidates sent and still open, versus the cap in the live project operating policy. A candidate still awaiting activation or close counts; exclude planning and tasks parked on an operator decision. Deduplicate task refs.
 - Hold state: restart/cutover and quiet hours (the window defined by the injected project policy). Omit load numbers unless the cited evidence shows a breach.
 - Blocked or escalated: task ref and title, reason, owner, and duration.
 - Operator decisions: one line per outstanding open task decision, task ref and title, opened time and age, and its existing decision link if available. Report only; never ask again or create buttons.
-- Stalled or idle: seat, lane, claimed task ref and title if any, and duration from the last activity timestamp. Mark missing timestamps unknown.
+- Stalled or idle: seat, root, claimed task ref and title if any, and duration from the last activity timestamp. Mark missing timestamps unknown.
 - Worktrees: active worktrees versus developers, including mismatches from the snapshot.
 - Workspace seat roster: every tab and pane, including empty panes and unclaimed seats, as specified above.
 - Consolidator: last review time and source age.

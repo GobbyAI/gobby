@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -39,7 +40,7 @@ from gobby.storage.model_metadata import ModelMetadataStore
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
-    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
     from gobby.storage.managed_credential_types import ManagedCredential, SecretStore
     from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.storage.terminals import AttachLocator
@@ -517,12 +518,33 @@ def issue_grant_postgres(
         ) from None
 
 
+def _grant_principal_revoked(credentials: ManagedCredentialManager, grant: GrantBundle) -> bool:
+    generation = getattr(grant.capabilities.postgres, "credential_generation", None)
+    if not isinstance(generation, int):
+        return False
+    principal = grant.principal
+    if principal.kind == "interactive":
+        return bool(
+            credentials.interactive_generation_revoked(
+                deployment_token=grant.deployment.token,
+                project_id=UUID(principal.project_id),
+                generation=generation,
+            )
+        )
+    if principal.kind in ("agent_run", "tool_chat", "maintenance") and principal.execution_id:
+        return credentials.managed_generation_revoked(
+            execution_id=UUID(principal.execution_id),
+            generation=generation,
+        )
+    return False
+
+
 def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     # Deferred imports stay here: they close a runner <-> runtime_grants cycle.
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
     from gobby.runtime_grants.launch import rewrite_managed_grant_file
     from gobby.runtime_grants.revocation import GrantRevocationStore
-    from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
+    from gobby.runtime_grants.schema import PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
 
@@ -574,19 +596,7 @@ def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     if callable(bind_launch_grant):
         bind_launch_grant(_rewrite_launch_grant)
 
-    def _principal_revoked(grant: GrantBundle) -> bool:
-        generation = getattr(grant.capabilities.postgres, "credential_generation", None)
-        if not isinstance(generation, int) or grant.principal.kind != "interactive":
-            return False
-        return bool(
-            credentials.interactive_generation_revoked(
-                deployment_token=grant.deployment.token,
-                project_id=UUID(grant.principal.project_id),
-                generation=generation,
-            )
-        )
-
-    revocations.set_principal_revoked(_principal_revoked)
+    revocations.set_principal_revoked(functools.partial(_grant_principal_revoked, credentials))
 
     def _project_admitted(project_id: str) -> bool:
         try:

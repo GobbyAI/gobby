@@ -140,9 +140,10 @@ Launch the runbook with `task` set to the epic and `reviewer_agent` set to the p
 
 ## Launch planning
 
-The Orchestrator launches `team-planning` with `lane`, `workspace`,
-`project_path` and `report_to=<Triage ref>`. It opens the Plan Writer and Plan
-Adversary in a `Lane <lane>` tab, and `lane_pane` adds seats to an existing one.
+The Orchestrator launches `team-planning` with `workspace`, `project_path`,
+`seats` and `report_to=<Triage ref>`. The Plan Writer opens the `Team Planning`
+tab, the Plan Adversary and Plan Enhancer split beside it, and `seat_pane` adds
+seats to an existing pane.
 The Writer's enhancer edits, unresolved disagreements and stamped plan reach
 the Orchestrator through Triage's digest.
 

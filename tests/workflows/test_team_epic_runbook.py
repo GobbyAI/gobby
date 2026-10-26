@@ -82,7 +82,7 @@ DEV_MANAGER_EPIC = (
     r"epic[- ]tip",  # review at the end and epic-tip repair
     r"found-work leaf",
     r"hold",  # Decisions 22-23
-    r"merge 0\.5\.0",  # landing order
+    r"merge the integration branch",  # landing order; project_policy names the branch
     r"bottom-up",  # nested close order
     r"no-work leaves first",
     r"cascade",
@@ -111,9 +111,9 @@ FORBIDDEN_EPIC = re.compile(r"detach|back(?:ed)? out|revert the leaf", re.IGNORE
 def test_epic_procedures() -> None:
     dev_manager = _guidance("dev-manager")
     assert _missing(dev_manager, DEV_MANAGER_EPIC) == []
-    # The landing order (Decision 24): merge 0.5.0, land, then each leaf's closing record and close.
+    # Landing order (Decision 24): merge the integration branch, land, then close each leaf.
     landing = re.compile(
-        r"merge 0\.5\.0.*?land_commit.*?record_closing_step.*?close_task", re.DOTALL
+        r"merge the integration branch.*?land_commit.*?record_closing_step.*?close_task", re.DOTALL
     )
     assert landing.search(dev_manager[dev_manager.find("epic mode") :]) is not None
     # Epic mode drops the redesign's reviewer-becomes-fixer step (Decision 21).
@@ -192,7 +192,17 @@ def _context(inputs: dict[str, Any]) -> dict[str, Any]:
     return {
         "inputs": values,
         # A fresh dry run has no live seats; the seat prompts read this map unconditionally.
-        "steps": {"guard": {"output": {"workspace_id": WORKSPACE, "live": {}}}},
+        "steps": {
+            # The guard resolves the tab title from the task; this fixture's task is #25128.
+            "guard": {
+                "output": {
+                    "workspace_id": WORKSPACE,
+                    "live": {},
+                    "tab_exists": False,
+                    "tab_title": "Dev Team - #25128",
+                }
+            }
+        },
         "_string_inputs": frozenset(
             name for name, spec in DEVTEAM.inputs.items() if spec.get("type") == "string"
         ),
@@ -263,3 +273,69 @@ async def test_runbook_binds_epic_or_leaf(world: TeamWorld) -> None:
         "developer",
         "test-writer",
     ]
+
+
+def _seat_arguments(seat: str, context: dict[str, Any]) -> dict[str, Any]:
+    step = next(step for step in DEVTEAM.steps if step.id == seat)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    return RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+
+
+def _placement_context(launch: list[str], tab_exists: bool) -> dict[str, Any]:
+    """A replacement run: team_id names the team, and the guard reports the team tab."""
+    context = _context({"task": "#25128", "team_id": "team-1"})
+    context["invocation_id"] = "placement-test"
+    context["steps"]["guard"]["output"].update(launch=launch, tab_exists=tab_exists)
+    context["steps"]["admit"] = {
+        "output": {
+            "branch": "epic/25128/main",
+            "project_path": "/pilot/checkout",
+            "task_id": None,
+            "team": {"team_id": "team-1"},
+        }
+    }
+    return context
+
+
+@pytest.mark.parametrize("task", ["#25128", "25128", "00000000-0000-4000-8000-000000025128"])
+def test_seat_tabs_take_the_guards_sequence_title_for_any_task_form(task: str) -> None:
+    """Placements read the guard's resolved tab title, so every task form opens 'Dev Team - #25128'."""
+    context = _placement_context(launch=["dev-manager"], tab_exists=False)
+    context["inputs"]["task"] = task
+    context["steps"]["guard"]["output"]["tab_title"] = "Dev Team - #25128"
+    placement = _seat_arguments("dev-manager", context)["placement"]
+    assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
+
+
+@pytest.mark.parametrize("tab_exists", [False, True])
+def test_manager_opens_the_team_tab_when_none_exists(tab_exists: bool) -> None:
+    """A replacement named by team_id still opens the team tab when that tab is missing."""
+    context = _placement_context(launch=["dev-manager"], tab_exists=tab_exists)
+    placement = _seat_arguments("dev-manager", context)["placement"]
+    if tab_exists:
+        assert placement == {
+            "split": {
+                "workspace": WORKSPACE,
+                "tab_title": "Dev Team - #25128",
+                "axis": "right",
+                "title": "Dev Manager",
+            }
+        }
+    else:
+        assert placement == {"tab": {"workspace": WORKSPACE, "title": "Dev Team - #25128"}}
+
+
+@pytest.mark.parametrize(
+    ("launch", "tab_exists", "splits"),
+    [
+        (["dev-manager", "test-writer"], False, True),  # the manager opens the tab first
+        (["test-writer"], False, False),  # nothing launched in this run opens it
+        (["test-writer"], True, True),  # the team tab exists
+    ],
+)
+def test_seats_open_the_team_tab_only_when_nothing_opens_it(
+    launch: list[str], tab_exists: bool, splits: bool
+) -> None:
+    context = _placement_context(launch=launch, tab_exists=tab_exists)
+    placement = _seat_arguments("test-writer", context)["placement"]
+    assert ("split" in placement) is splits

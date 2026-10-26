@@ -460,6 +460,7 @@ def bind_session_workspace(
     current = variables.get_variables(session_id)
     bound = current.get(WORKSPACE_DIR_VARIABLE)
     if isinstance(bound, str) and bound:
+        Path(bound).mkdir(parents=True, exist_ok=True)
         return Path(bound)
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
     if location is None or location["project_id"] is None or location["seq_num"] is None:
@@ -476,6 +477,7 @@ def bind_session_workspace(
             folder = Path(inherited)
     if folder is None:
         folder = session_workspace_dir(location["project_id"], definition, location["seq_num"])
+    folder.mkdir(parents=True, exist_ok=True)
     variables.merge_variables(
         session_id,
         {WORKSPACE_DIR_VARIABLE: str(folder), WORKSPACE_PERSISTENT_VARIABLE: persistent},

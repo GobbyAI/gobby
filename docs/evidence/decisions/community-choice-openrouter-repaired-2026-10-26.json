@@ -1,0 +1,974 @@
+{
+  "script_sha256": "a82c237763dacdb043643b66f38cd9bbf084b4191aa22ad0f6d9ec09f5c673d2",
+  "endpoint": "https://openrouter.ai/api/alpha/decisions",
+  "request_model": "typesafe/jev-1.14-20261014",
+  "secret_name": "openrouter_api_key",
+  "privacy": {
+    "zdr": true,
+    "data_collection": "deny"
+  },
+  "source_compact_sha256": {
+    "before": "9d5f7a7691322671ac5db561bc00db4db898d08e1551558ef9464e0a480e360a",
+    "after": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8"
+  },
+  "builder_revision": "62c35997198ce3f30c4d5c18cb84aaab1f920624",
+  "builder_script_sha256": "847d809b5af2f1d52afa7c461a12a8c104bd8596db4883a7dcdd6407451a6b0e",
+  "fixture_sha256": "ab68e6adf92f2a7513e9d2e3a6ea25249696d3a74dba5686388e7bab96740191",
+  "after_equals_restored_name_ablation_arm": true,
+  "planned_requests": 9,
+  "completed_requests": 9,
+  "warmups": 0,
+  "per_call_deadline_seconds": 30.0,
+  "retries": 0,
+  "schedule": [
+    [
+      1,
+      "score"
+    ],
+    [
+      1,
+      "before"
+    ],
+    [
+      1,
+      "after"
+    ],
+    [
+      2,
+      "score"
+    ],
+    [
+      2,
+      "after"
+    ],
+    [
+      2,
+      "before"
+    ],
+    [
+      3,
+      "score"
+    ],
+    [
+      3,
+      "before"
+    ],
+    [
+      3,
+      "after"
+    ]
+  ],
+  "scope": "One frozen community; cross-backend agreement cannot establish label quality.",
+  "rows": [
+    {
+      "attempt": 1,
+      "phase": "score",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "description": "A red square is centered on a white background."
+        },
+        "questions": {
+          "clarity": {
+            "type": "score",
+            "instructions": "Rate how specifically the description identifies the shape.",
+            "criteria": [
+              "vague",
+              "clear",
+              "clear and specific"
+            ]
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "9c585ac38ec844f4effd7aeecf2e8e86f9f1314e885411590547b7e428faef03",
+      "request_bytes": 329,
+      "started_at": "2026-10-26T12:24:27.779925+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "clarity": {
+            "type": "score",
+            "score": 1.96,
+            "legend": {
+              "0": "vague",
+              "1": "clear",
+              "2": "clear and specific"
+            },
+            "probabilities": {
+              "0": 0,
+              "1": 0.04,
+              "2": 0.96
+            },
+            "confidence": 0.94
+          }
+        },
+        "usage": {
+          "input_tokens": 318,
+          "output_tokens": 18,
+          "cost": 1.3356e-05
+        },
+        "id": "gen-dec-1793017467-HP2REXPstwro71v2OV9T",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "score_comparison": {
+        "returned_score": 1.96,
+        "probabilities": {
+          "0": 0,
+          "1": 0.04,
+          "2": 0.96
+        },
+        "expected_weighted_index": 1.96,
+        "absolute_delta": 0.0,
+        "abs_tol": 0.015000000001,
+        "rel_tol": 1e-09,
+        "matches": true
+      },
+      "strict_answer_valid": true,
+      "latency_seconds": 0.3066209580283612
+    },
+    {
+      "attempt": 1,
+      "phase": "before",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "communities": {
+            "c43": {
+              "representatives": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts"
+              ],
+              "members": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts",
+                "web/src/components/__tests__/ProjectSelector.test.tsx",
+                "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+                "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+                "web/src/components/app/useAppSessionActions.ts",
+                "web/src/components/chat/ChatInputQueuedFiles.tsx",
+                "web/src/components/chat/useChatInputAttachments.ts",
+                "web/src/hooks/__tests__/contextUsageState.test.ts",
+                "web/src/hooks/__tests__/useChat.core.test.ts",
+                "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+                "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+                "web/src/hooks/useChat.ts",
+                "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+                "web/src/hooks/useChat/actionControls.ts",
+                "web/src/hooks/useChat/actionConversations.ts",
+                "web/src/hooks/useChat/actionMessage.ts",
+                "web/src/hooks/useChat/actionPayloads.ts",
+                "web/src/hooks/useChat/actionPlanApproval.ts",
+                "web/src/hooks/useChat/actions.ts",
+                "web/src/hooks/useChat/callbacksState.ts",
+                "web/src/hooks/useChat/contextUsage.ts",
+                "web/src/hooks/useChat/contextUsageState.ts",
+                "web/src/hooks/useChat/core.ts",
+                "web/src/hooks/useChat/handlers.ts",
+                "web/src/hooks/useChat/lifecycle.ts",
+                "web/src/hooks/useChat/logger.ts",
+                "web/src/hooks/useChat/providerAgentState.ts",
+                "web/src/hooks/useChat/sessionAttachmentState.ts",
+                "web/src/hooks/useChat/sessionIdentityState.ts",
+                "web/src/hooks/useChat/sessionViewing.ts",
+                "web/src/hooks/useChat/transport.ts",
+                "web/src/hooks/useChat/transportConversationEvents.ts",
+                "web/src/hooks/useChat/transportEventTypes.ts",
+                "web/src/hooks/useChat/transportLifecycle.ts",
+                "web/src/hooks/useChat/transportProxyEvents.ts",
+                "web/src/hooks/useChat/transportRouter.ts"
+              ],
+              "candidates": [
+                "web/src/hooks/useChat",
+                "chat",
+                "useChat",
+                "src"
+              ],
+              "generated": {
+                "name": "Chat Session Management",
+                "rationale": ""
+              }
+            }
+          }
+        },
+        "questions": {
+          "c43": {
+            "type": "choice",
+            "instructions": "Choose the name that best describes community c43.",
+            "criteria": {
+              "generated": "Chat Session Management",
+              "deterministic_0": "web/src/hooks/useChat",
+              "deterministic_1": "chat",
+              "deterministic_2": "useChat",
+              "deterministic_3": "src"
+            }
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "e1354a785774f9b7da2d6c86cd85b8114b86a0855e1c327f32f04e6d3e2b8990",
+      "request_bytes": 2598,
+      "started_at": "2026-10-26T12:24:28.087142+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "c43": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.77,
+              "deterministic_0": 0.13,
+              "deterministic_1": 0.02,
+              "deterministic_2": 0.08,
+              "deterministic_3": 0
+            },
+            "confidence": 0.71
+          }
+        },
+        "usage": {
+          "input_tokens": 1111,
+          "output_tokens": 74,
+          "cost": 4.6662e-05
+        },
+        "id": "gen-dec-1793017468-QtKy2bizAZHtOUf0mFnl",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "strict_answer_valid": true,
+      "latency_seconds": 0.17168541706632823
+    },
+    {
+      "attempt": 1,
+      "phase": "after",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "communities": {
+            "c43": {
+              "representatives": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts"
+              ],
+              "members": [
+                "web/src/components/__tests__/ProjectSelector.test.tsx",
+                "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+                "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+                "web/src/components/app/useAppSessionActions.ts",
+                "web/src/components/chat/ChatInputQueuedFiles.tsx",
+                "web/src/components/chat/useChatInputAttachments.ts",
+                "web/src/hooks/__tests__/contextUsageState.test.ts",
+                "web/src/hooks/__tests__/useChat.core.test.ts",
+                "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+                "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+                "web/src/hooks/useChat.ts",
+                "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+                "web/src/hooks/useChat/actionControls.ts",
+                "web/src/hooks/useChat/actionConversations.ts",
+                "web/src/hooks/useChat/actionMessage.ts",
+                "web/src/hooks/useChat/actionPayloads.ts",
+                "web/src/hooks/useChat/actionPlanApproval.ts",
+                "web/src/hooks/useChat/actions.ts",
+                "web/src/hooks/useChat/callbacksState.ts",
+                "web/src/hooks/useChat/contextUsage.ts",
+                "web/src/hooks/useChat/contextUsageState.ts",
+                "web/src/hooks/useChat/core.ts",
+                "web/src/hooks/useChat/handlers.ts",
+                "web/src/hooks/useChat/lifecycle.ts",
+                "web/src/hooks/useChat/logger.ts",
+                "web/src/hooks/useChat/providerAgentState.ts",
+                "web/src/hooks/useChat/sessionAttachmentState.ts",
+                "web/src/hooks/useChat/sessionIdentityState.ts",
+                "web/src/hooks/useChat/sessionViewing.ts",
+                "web/src/hooks/useChat/transport.ts",
+                "web/src/hooks/useChat/transportConversationEvents.ts",
+                "web/src/hooks/useChat/transportEventTypes.ts",
+                "web/src/hooks/useChat/transportLifecycle.ts",
+                "web/src/hooks/useChat/transportProxyEvents.ts",
+                "web/src/hooks/useChat/transportRouter.ts"
+              ],
+              "member_count": 53,
+              "omitted_member_count": 13,
+              "generated": {
+                "name": "Chat Session Management",
+                "rationale": ""
+              }
+            }
+          }
+        },
+        "questions": {
+          "c43": {
+            "type": "choice",
+            "instructions": "Choose the name that best describes community c43.",
+            "criteria": {
+              "generated": "Chat Session Management",
+              "deterministic_0": "web/src/hooks/useChat",
+              "deterministic_1": "chat",
+              "deterministic_2": "useChat",
+              "deterministic_3": "src"
+            }
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "af9dea1dd013eb2891e9fdf10f1b6db307873f438cf54a20596602840f965465",
+      "request_bytes": 2376,
+      "started_at": "2026-10-26T12:24:28.259274+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "c43": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.87,
+              "deterministic_0": 0.05,
+              "deterministic_1": 0.03,
+              "deterministic_2": 0.05,
+              "deterministic_3": 0
+            },
+            "confidence": 0.84
+          }
+        },
+        "usage": {
+          "input_tokens": 1033,
+          "output_tokens": 74,
+          "cost": 4.3386e-05
+        },
+        "id": "gen-dec-1793017468-8nbsf9Or9kANW4bcsnXR",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "strict_answer_valid": true,
+      "latency_seconds": 0.19333829206880182
+    },
+    {
+      "attempt": 2,
+      "phase": "score",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "description": "A red square is centered on a white background."
+        },
+        "questions": {
+          "clarity": {
+            "type": "score",
+            "instructions": "Rate how specifically the description identifies the shape.",
+            "criteria": [
+              "vague",
+              "clear",
+              "clear and specific"
+            ]
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "9c585ac38ec844f4effd7aeecf2e8e86f9f1314e885411590547b7e428faef03",
+      "request_bytes": 329,
+      "started_at": "2026-10-26T12:24:28.453112+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "clarity": {
+            "type": "score",
+            "score": 1.97,
+            "legend": {
+              "0": "vague",
+              "1": "clear",
+              "2": "clear and specific"
+            },
+            "probabilities": {
+              "0": 0,
+              "1": 0.03,
+              "2": 0.97
+            },
+            "confidence": 0.95
+          }
+        },
+        "usage": {
+          "input_tokens": 318,
+          "output_tokens": 18,
+          "cost": 1.3356e-05
+        },
+        "id": "gen-dec-1793017468-mSGqHwTSP8BrMKqAZzJy",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "score_comparison": {
+        "returned_score": 1.97,
+        "probabilities": {
+          "0": 0,
+          "1": 0.03,
+          "2": 0.97
+        },
+        "expected_weighted_index": 1.97,
+        "absolute_delta": 0.0,
+        "abs_tol": 0.015000000001,
+        "rel_tol": 1e-09,
+        "matches": true
+      },
+      "strict_answer_valid": true,
+      "latency_seconds": 0.15744583401829004
+    },
+    {
+      "attempt": 2,
+      "phase": "after",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "communities": {
+            "c43": {
+              "representatives": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts"
+              ],
+              "members": [
+                "web/src/components/__tests__/ProjectSelector.test.tsx",
+                "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+                "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+                "web/src/components/app/useAppSessionActions.ts",
+                "web/src/components/chat/ChatInputQueuedFiles.tsx",
+                "web/src/components/chat/useChatInputAttachments.ts",
+                "web/src/hooks/__tests__/contextUsageState.test.ts",
+                "web/src/hooks/__tests__/useChat.core.test.ts",
+                "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+                "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+                "web/src/hooks/useChat.ts",
+                "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+                "web/src/hooks/useChat/actionControls.ts",
+                "web/src/hooks/useChat/actionConversations.ts",
+                "web/src/hooks/useChat/actionMessage.ts",
+                "web/src/hooks/useChat/actionPayloads.ts",
+                "web/src/hooks/useChat/actionPlanApproval.ts",
+                "web/src/hooks/useChat/actions.ts",
+                "web/src/hooks/useChat/callbacksState.ts",
+                "web/src/hooks/useChat/contextUsage.ts",
+                "web/src/hooks/useChat/contextUsageState.ts",
+                "web/src/hooks/useChat/core.ts",
+                "web/src/hooks/useChat/handlers.ts",
+                "web/src/hooks/useChat/lifecycle.ts",
+                "web/src/hooks/useChat/logger.ts",
+                "web/src/hooks/useChat/providerAgentState.ts",
+                "web/src/hooks/useChat/sessionAttachmentState.ts",
+                "web/src/hooks/useChat/sessionIdentityState.ts",
+                "web/src/hooks/useChat/sessionViewing.ts",
+                "web/src/hooks/useChat/transport.ts",
+                "web/src/hooks/useChat/transportConversationEvents.ts",
+                "web/src/hooks/useChat/transportEventTypes.ts",
+                "web/src/hooks/useChat/transportLifecycle.ts",
+                "web/src/hooks/useChat/transportProxyEvents.ts",
+                "web/src/hooks/useChat/transportRouter.ts"
+              ],
+              "member_count": 53,
+              "omitted_member_count": 13,
+              "generated": {
+                "name": "Chat Session Management",
+                "rationale": ""
+              }
+            }
+          }
+        },
+        "questions": {
+          "c43": {
+            "type": "choice",
+            "instructions": "Choose the name that best describes community c43.",
+            "criteria": {
+              "generated": "Chat Session Management",
+              "deterministic_0": "web/src/hooks/useChat",
+              "deterministic_1": "chat",
+              "deterministic_2": "useChat",
+              "deterministic_3": "src"
+            }
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "af9dea1dd013eb2891e9fdf10f1b6db307873f438cf54a20596602840f965465",
+      "request_bytes": 2376,
+      "started_at": "2026-10-26T12:24:28.610969+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "c43": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.84,
+              "deterministic_0": 0.06,
+              "deterministic_1": 0.04,
+              "deterministic_2": 0.06,
+              "deterministic_3": 0
+            },
+            "confidence": 0.8
+          }
+        },
+        "usage": {
+          "input_tokens": 1033,
+          "output_tokens": 74,
+          "cost": 4.3386e-05
+        },
+        "id": "gen-dec-1793017468-oNKonzm818L9HiCBIfp4",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "strict_answer_valid": true,
+      "latency_seconds": 0.19023045897483826
+    },
+    {
+      "attempt": 2,
+      "phase": "before",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "communities": {
+            "c43": {
+              "representatives": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts"
+              ],
+              "members": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts",
+                "web/src/components/__tests__/ProjectSelector.test.tsx",
+                "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+                "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+                "web/src/components/app/useAppSessionActions.ts",
+                "web/src/components/chat/ChatInputQueuedFiles.tsx",
+                "web/src/components/chat/useChatInputAttachments.ts",
+                "web/src/hooks/__tests__/contextUsageState.test.ts",
+                "web/src/hooks/__tests__/useChat.core.test.ts",
+                "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+                "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+                "web/src/hooks/useChat.ts",
+                "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+                "web/src/hooks/useChat/actionControls.ts",
+                "web/src/hooks/useChat/actionConversations.ts",
+                "web/src/hooks/useChat/actionMessage.ts",
+                "web/src/hooks/useChat/actionPayloads.ts",
+                "web/src/hooks/useChat/actionPlanApproval.ts",
+                "web/src/hooks/useChat/actions.ts",
+                "web/src/hooks/useChat/callbacksState.ts",
+                "web/src/hooks/useChat/contextUsage.ts",
+                "web/src/hooks/useChat/contextUsageState.ts",
+                "web/src/hooks/useChat/core.ts",
+                "web/src/hooks/useChat/handlers.ts",
+                "web/src/hooks/useChat/lifecycle.ts",
+                "web/src/hooks/useChat/logger.ts",
+                "web/src/hooks/useChat/providerAgentState.ts",
+                "web/src/hooks/useChat/sessionAttachmentState.ts",
+                "web/src/hooks/useChat/sessionIdentityState.ts",
+                "web/src/hooks/useChat/sessionViewing.ts",
+                "web/src/hooks/useChat/transport.ts",
+                "web/src/hooks/useChat/transportConversationEvents.ts",
+                "web/src/hooks/useChat/transportEventTypes.ts",
+                "web/src/hooks/useChat/transportLifecycle.ts",
+                "web/src/hooks/useChat/transportProxyEvents.ts",
+                "web/src/hooks/useChat/transportRouter.ts"
+              ],
+              "candidates": [
+                "web/src/hooks/useChat",
+                "chat",
+                "useChat",
+                "src"
+              ],
+              "generated": {
+                "name": "Chat Session Management",
+                "rationale": ""
+              }
+            }
+          }
+        },
+        "questions": {
+          "c43": {
+            "type": "choice",
+            "instructions": "Choose the name that best describes community c43.",
+            "criteria": {
+              "generated": "Chat Session Management",
+              "deterministic_0": "web/src/hooks/useChat",
+              "deterministic_1": "chat",
+              "deterministic_2": "useChat",
+              "deterministic_3": "src"
+            }
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "e1354a785774f9b7da2d6c86cd85b8114b86a0855e1c327f32f04e6d3e2b8990",
+      "request_bytes": 2598,
+      "started_at": "2026-10-26T12:24:28.801802+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "c43": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.85,
+              "deterministic_0": 0.07,
+              "deterministic_1": 0.02,
+              "deterministic_2": 0.06,
+              "deterministic_3": 0
+            },
+            "confidence": 0.81
+          }
+        },
+        "usage": {
+          "input_tokens": 1111,
+          "output_tokens": 74,
+          "cost": 4.6662e-05
+        },
+        "id": "gen-dec-1793017468-Jsr021LMFDgq755yE2Vi",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "strict_answer_valid": true,
+      "latency_seconds": 0.24635791697073728
+    },
+    {
+      "attempt": 3,
+      "phase": "score",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "description": "A red square is centered on a white background."
+        },
+        "questions": {
+          "clarity": {
+            "type": "score",
+            "instructions": "Rate how specifically the description identifies the shape.",
+            "criteria": [
+              "vague",
+              "clear",
+              "clear and specific"
+            ]
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "9c585ac38ec844f4effd7aeecf2e8e86f9f1314e885411590547b7e428faef03",
+      "request_bytes": 329,
+      "started_at": "2026-10-26T12:24:29.049038+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "clarity": {
+            "type": "score",
+            "score": 1.96,
+            "legend": {
+              "0": "vague",
+              "1": "clear",
+              "2": "clear and specific"
+            },
+            "probabilities": {
+              "0": 0,
+              "1": 0.04,
+              "2": 0.96
+            },
+            "confidence": 0.94
+          }
+        },
+        "usage": {
+          "input_tokens": 318,
+          "output_tokens": 18,
+          "cost": 1.3356e-05
+        },
+        "id": "gen-dec-1793017469-phoiTUNwLyguwMlf9mrD",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "score_comparison": {
+        "returned_score": 1.96,
+        "probabilities": {
+          "0": 0,
+          "1": 0.04,
+          "2": 0.96
+        },
+        "expected_weighted_index": 1.96,
+        "absolute_delta": 0.0,
+        "abs_tol": 0.015000000001,
+        "rel_tol": 1e-09,
+        "matches": true
+      },
+      "strict_answer_valid": true,
+      "latency_seconds": 0.23078166600316763
+    },
+    {
+      "attempt": 3,
+      "phase": "before",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "communities": {
+            "c43": {
+              "representatives": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts"
+              ],
+              "members": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts",
+                "web/src/components/__tests__/ProjectSelector.test.tsx",
+                "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+                "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+                "web/src/components/app/useAppSessionActions.ts",
+                "web/src/components/chat/ChatInputQueuedFiles.tsx",
+                "web/src/components/chat/useChatInputAttachments.ts",
+                "web/src/hooks/__tests__/contextUsageState.test.ts",
+                "web/src/hooks/__tests__/useChat.core.test.ts",
+                "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+                "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+                "web/src/hooks/useChat.ts",
+                "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+                "web/src/hooks/useChat/actionControls.ts",
+                "web/src/hooks/useChat/actionConversations.ts",
+                "web/src/hooks/useChat/actionMessage.ts",
+                "web/src/hooks/useChat/actionPayloads.ts",
+                "web/src/hooks/useChat/actionPlanApproval.ts",
+                "web/src/hooks/useChat/actions.ts",
+                "web/src/hooks/useChat/callbacksState.ts",
+                "web/src/hooks/useChat/contextUsage.ts",
+                "web/src/hooks/useChat/contextUsageState.ts",
+                "web/src/hooks/useChat/core.ts",
+                "web/src/hooks/useChat/handlers.ts",
+                "web/src/hooks/useChat/lifecycle.ts",
+                "web/src/hooks/useChat/logger.ts",
+                "web/src/hooks/useChat/providerAgentState.ts",
+                "web/src/hooks/useChat/sessionAttachmentState.ts",
+                "web/src/hooks/useChat/sessionIdentityState.ts",
+                "web/src/hooks/useChat/sessionViewing.ts",
+                "web/src/hooks/useChat/transport.ts",
+                "web/src/hooks/useChat/transportConversationEvents.ts",
+                "web/src/hooks/useChat/transportEventTypes.ts",
+                "web/src/hooks/useChat/transportLifecycle.ts",
+                "web/src/hooks/useChat/transportProxyEvents.ts",
+                "web/src/hooks/useChat/transportRouter.ts"
+              ],
+              "candidates": [
+                "web/src/hooks/useChat",
+                "chat",
+                "useChat",
+                "src"
+              ],
+              "generated": {
+                "name": "Chat Session Management",
+                "rationale": ""
+              }
+            }
+          }
+        },
+        "questions": {
+          "c43": {
+            "type": "choice",
+            "instructions": "Choose the name that best describes community c43.",
+            "criteria": {
+              "generated": "Chat Session Management",
+              "deterministic_0": "web/src/hooks/useChat",
+              "deterministic_1": "chat",
+              "deterministic_2": "useChat",
+              "deterministic_3": "src"
+            }
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "e1354a785774f9b7da2d6c86cd85b8114b86a0855e1c327f32f04e6d3e2b8990",
+      "request_bytes": 2598,
+      "started_at": "2026-10-26T12:24:29.280367+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "c43": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.76,
+              "deterministic_0": 0.11,
+              "deterministic_1": 0.03,
+              "deterministic_2": 0.1,
+              "deterministic_3": 0
+            },
+            "confidence": 0.7
+          }
+        },
+        "usage": {
+          "input_tokens": 1111,
+          "output_tokens": 74,
+          "cost": 4.6662e-05
+        },
+        "id": "gen-dec-1793017469-eCKHfRRmlwy4NV7N0BkB",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "strict_answer_valid": true,
+      "latency_seconds": 0.16727337497286499
+    },
+    {
+      "attempt": 3,
+      "phase": "after",
+      "request": {
+        "model": "typesafe/jev-1.14-20261014",
+        "state": {
+          "communities": {
+            "c43": {
+              "representatives": [
+                "web/src/types/chat.ts",
+                "web/src/hooks/useChat/sessionRecords.ts",
+                "web/src/hooks/useChat/conversationPersistence.ts",
+                "web/src/hooks/useChat/actionTypes.ts",
+                "web/src/hooks/useChat/pendingProxyMessages.ts"
+              ],
+              "members": [
+                "web/src/components/__tests__/ProjectSelector.test.tsx",
+                "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+                "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+                "web/src/components/app/useAppSessionActions.ts",
+                "web/src/components/chat/ChatInputQueuedFiles.tsx",
+                "web/src/components/chat/useChatInputAttachments.ts",
+                "web/src/hooks/__tests__/contextUsageState.test.ts",
+                "web/src/hooks/__tests__/useChat.core.test.ts",
+                "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+                "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+                "web/src/hooks/useChat.ts",
+                "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+                "web/src/hooks/useChat/actionControls.ts",
+                "web/src/hooks/useChat/actionConversations.ts",
+                "web/src/hooks/useChat/actionMessage.ts",
+                "web/src/hooks/useChat/actionPayloads.ts",
+                "web/src/hooks/useChat/actionPlanApproval.ts",
+                "web/src/hooks/useChat/actions.ts",
+                "web/src/hooks/useChat/callbacksState.ts",
+                "web/src/hooks/useChat/contextUsage.ts",
+                "web/src/hooks/useChat/contextUsageState.ts",
+                "web/src/hooks/useChat/core.ts",
+                "web/src/hooks/useChat/handlers.ts",
+                "web/src/hooks/useChat/lifecycle.ts",
+                "web/src/hooks/useChat/logger.ts",
+                "web/src/hooks/useChat/providerAgentState.ts",
+                "web/src/hooks/useChat/sessionAttachmentState.ts",
+                "web/src/hooks/useChat/sessionIdentityState.ts",
+                "web/src/hooks/useChat/sessionViewing.ts",
+                "web/src/hooks/useChat/transport.ts",
+                "web/src/hooks/useChat/transportConversationEvents.ts",
+                "web/src/hooks/useChat/transportEventTypes.ts",
+                "web/src/hooks/useChat/transportLifecycle.ts",
+                "web/src/hooks/useChat/transportProxyEvents.ts",
+                "web/src/hooks/useChat/transportRouter.ts"
+              ],
+              "member_count": 53,
+              "omitted_member_count": 13,
+              "generated": {
+                "name": "Chat Session Management",
+                "rationale": ""
+              }
+            }
+          }
+        },
+        "questions": {
+          "c43": {
+            "type": "choice",
+            "instructions": "Choose the name that best describes community c43.",
+            "criteria": {
+              "generated": "Chat Session Management",
+              "deterministic_0": "web/src/hooks/useChat",
+              "deterministic_1": "chat",
+              "deterministic_2": "useChat",
+              "deterministic_3": "src"
+            }
+          }
+        },
+        "provider": {
+          "zdr": true,
+          "data_collection": "deny"
+        }
+      },
+      "request_sha256": "af9dea1dd013eb2891e9fdf10f1b6db307873f438cf54a20596602840f965465",
+      "request_bytes": 2376,
+      "started_at": "2026-10-26T12:24:29.448148+00:00",
+      "status": 200,
+      "response": {
+        "model": "typesafe/jev-1.14-20261014",
+        "answers": {
+          "c43": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.83,
+              "deterministic_0": 0.07,
+              "deterministic_1": 0.03,
+              "deterministic_2": 0.07,
+              "deterministic_3": 0
+            },
+            "confidence": 0.79
+          }
+        },
+        "usage": {
+          "input_tokens": 1033,
+          "output_tokens": 74,
+          "cost": 4.3386e-05
+        },
+        "id": "gen-dec-1793017469-dTKknsk9Z66cA6qyPzpt",
+        "provider": "TypeSafe"
+      },
+      "response_model_matches_pin": true,
+      "strict_answer_valid": true,
+      "latency_seconds": 0.17949649994261563
+    }
+  ],
+  "all_passed": true
+}

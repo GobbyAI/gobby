@@ -14,7 +14,7 @@ from gobby.workflows.templates import TemplateEngine
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
 SEATS = {"team-planning": ("plan-writer", "plan-adversary", "plan-enhancer")}
-SHARED_INPUTS = {"lane", "workspace", "lane_pane", "project_path", "seats", "report_to"}
+SHARED_INPUTS = {"workspace", "seat_pane", "project_path", "seats", "report_to"}
 STEP_REFERENCE = re.compile(r"steps\['([^']+)'\]")
 
 
@@ -28,11 +28,10 @@ def test_team_runbook_guards_only_approved_seats(pipeline: str) -> None:
     assert definition.resume_on_restart
     assert [step.id for step in definition.steps] == ["guard", *SEATS[pipeline]]
     assert definition.inputs["seats"]["default"] == SEATS[pipeline][0]
-    assert definition.inputs["lane"]["required"] is True
     assert definition.inputs["workspace"]["required"]
     assert definition.inputs["project_path"]["required"]
     assert definition.inputs["report_to"]["required"]
-    assert definition.inputs["lane_pane"]["default"] is None
+    assert definition.inputs["seat_pane"]["default"] is None
     seat_inputs = {
         f"{seat.replace('-', '_')}_{name}"
         for seat in SEATS[pipeline]
@@ -72,7 +71,7 @@ def test_team_pipelines_carry_no_retired_seats(pipeline: str) -> None:
         assert not any(name.startswith(f"{retired}_") for name in definition.inputs), retired
 
 
-@pytest.mark.parametrize("lane_pane", [None, "pilot:existing-pane"])
+@pytest.mark.parametrize("seat_pane", [None, "pilot:existing-pane"])
 @pytest.mark.parametrize(
     ("pipeline", "seats"),
     [
@@ -83,18 +82,17 @@ def test_team_pipelines_carry_no_retired_seats(pipeline: str) -> None:
     ],
 )
 def test_team_runbook_renders_each_subset_in_one_tab(
-    pipeline: str, seats: tuple[str, ...], lane_pane: str | None
+    pipeline: str, seats: tuple[str, ...], seat_pane: str | None
 ) -> None:
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((PIPELINES / f"{pipeline}.yaml").read_text())
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
-        lane="7",
         seats=",".join(reversed(seats)),
         workspace="pilot-workspace",
         project_path="/pilot/shared-checkout",
-        lane_pane=lane_pane,
+        seat_pane=seat_pane,
         report_to="gobby#14972",
     )
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
@@ -106,7 +104,7 @@ def test_team_runbook_renders_each_subset_in_one_tab(
     assert guarded["requested"] == inputs["seats"]
     assert guarded["report_to"] == "gobby#14972"
     catalogue = {entry["name"]: entry for entry in guarded["catalogue"]}
-    anchor = lane_pane
+    anchor = seat_pane
     launched = []
     for step in definition.steps[1:]:
         if not renderer.should_run_step(step, context):
@@ -130,7 +128,9 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         assert 'owner_session="gobby#14972"' in args["prompt"]
         assert "wait_for_coordination" in args["prompt"]
         if anchor is None:
-            assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": "Lane 7"}}
+            assert args["placement"] == {
+                "tab": {"workspace": "pilot-workspace", "title": "Team Planning"}
+            }
             anchor = f"pilot:{step.id}"
         else:
             assert args["placement"] == {
@@ -151,7 +151,6 @@ def test_team_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     prefix = seat.replace("-", "_")
     inputs.update(
-        lane="7",
         seats=seat,
         workspace="pilot-workspace",
         project_path="/pilot/shared-checkout",

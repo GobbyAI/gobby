@@ -6,7 +6,7 @@ use tokio::net::UnixStream;
 use tokio::process::Child;
 use tokio::time::timeout;
 
-use super::process::process_is_host;
+use super::process::{process_is_host, process_start_fingerprint};
 use super::{
     Adoption, HostFailure, HostInfo, HostOptions, Inner, READY_DEADLINE, control_failure, pre_io,
     spawn,
@@ -146,6 +146,7 @@ pub(super) async fn handshake(
     if spawned_pid.is_some_and(|pid| pid != ping.host_pid) {
         return Err(HostFailure::PidMismatch);
     }
+    let start_fingerprint = process_start_fingerprint(ping.host_pid)?;
     Ok((
         Some(client),
         HostInfo {
@@ -153,6 +154,7 @@ pub(super) async fn handshake(
             epoch: ping.host_epoch,
             version: hello.version,
             adopted,
+            start_fingerprint,
         },
     ))
 }

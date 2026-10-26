@@ -282,7 +282,7 @@ fn load_chunks_for_read(
         filters,
         content_prefilter::content_literal(options),
     )?;
-    let stale = freshness::read_only_stale_paths(conn, ctx, None)?;
+    let stale = freshness::stale_served_paths(conn, ctx, None)?;
     if stale.is_empty() {
         return Ok(loaded);
     }

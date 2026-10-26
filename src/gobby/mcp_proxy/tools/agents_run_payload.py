@@ -27,7 +27,6 @@ def compact_running_agents(
     columns = [
         "session",
         "role",
-        "lane",
         "seat",
         "worktree",
         "status",
@@ -67,7 +66,6 @@ def compact_running_agents(
         row = [
             f"#{session.seq_num}" if session and session.seq_num else run.child_session_id,
             run.agent_name,
-            payload["lane"],
             seat["title"] if seat else None,
             worktree.worktree_path if worktree else owned_worktrees or None,
             run.child_status or run.status,
@@ -113,7 +111,6 @@ def _list_run_payload(run: Any) -> dict[str, Any]:
         "tool_calls_count": getattr(run, "tool_calls_count", 0),
         "turns_used": getattr(run, "turns_used", 0),
         "seat": _seat(metadata.get("placement")),
-        "lane": metadata.get("lane"),
     }
 
 
