@@ -56,8 +56,8 @@ def test_shadow_record_permissions_cap_and_failure(
     # A blocked directory: the write fails, the caller never sees an exception, and the
     # failure logs exactly one WARNING across two consecutive attempts.
     blocked_home = tmp_path / "blocked"
-    blocked_home.mkdir()
-    (blocked_home / "decisions").write_text("not a directory")
+    (blocked_home / ".gobby").mkdir(parents=True)
+    (blocked_home / ".gobby" / "decisions").write_text("not a directory")
     monkeypatch.setenv("HOME", str(blocked_home))
     monkeypatch.setenv("GOBBY_HOME", str(blocked_home / ".gobby"))
     caplog.set_level(logging.WARNING)
