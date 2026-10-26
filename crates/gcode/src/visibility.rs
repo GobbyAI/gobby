@@ -15,7 +15,8 @@ mod selectors;
 pub(crate) mod pin_fixture;
 
 pub(crate) use selectors::{
-    file_selectors_sql, scope_project_id, selector_condition, visible_selectors_sql,
+    file_selectors_sql, inherits_parent, read_selectors_sql, scope_project_id, selector_condition,
+    visible_selectors_sql,
 };
 
 pub use catalog::{tombstone_count, visible_kinds, visible_tree};
@@ -346,16 +347,19 @@ pub fn visible_symbols_for_files(
     }
     let machine = db::id_param(&ctx.machine_id)?;
     let project = db::id_param(scope_project_id(ctx))?;
-    let sql = symbols_for_files_sql(matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. }));
+    let sql = symbols_for_files_sql(
+        matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. }),
+        inherits_parent(ctx),
+    );
     conn.query(&sql, &[&machine, &project, &file_paths])?
         .iter()
         .map(Symbol::from_row)
         .collect()
 }
 
-fn symbols_for_files_sql(include_pins: bool) -> String {
+fn symbols_for_files_sql(include_pins: bool, inherit_parent: bool) -> String {
     let columns = db::symbol_select_columns("cs");
-    let selectors = file_selectors_sql("$1", "$2", include_pins);
+    let selectors = read_selectors_sql("$1", "$2", include_pins, inherit_parent);
     let visible = selector_condition(&selectors, "cs", "file_content_hash");
     format!(
         "SELECT {columns} FROM code_symbols cs

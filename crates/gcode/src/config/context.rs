@@ -367,7 +367,7 @@ impl Context {
         super::managed_scope::can_write(conn, project_id)
     }
 
-    fn is_managed_principal(&self) -> bool {
+    pub(crate) fn is_managed_principal(&self) -> bool {
         self.grant_ai
             .as_ref()
             .is_some_and(|runtime| runtime.bundle.principal.kind.is_managed())
