@@ -10,7 +10,9 @@ use postgres::Client;
 
 use crate::config::Context;
 use crate::index::api;
-use crate::node::{FileFacts, FileHash, FinalBatch, ParsedFileFacts};
+use crate::node::{
+    FileApplyOutcome, FileFacts, FileHash, FinalBatch, IndexApplyProgress, ParsedFileFacts,
+};
 
 use super::file::{write_content_only_file_facts, write_parsed_file_facts};
 use super::lifecycle::{
@@ -79,8 +81,8 @@ pub(crate) struct ApplyOutput {
     /// Stale files whose existing facts were adopted, not parsed.
     pub(crate) adopted: Vec<String>,
     pub(crate) outcome: Option<IndexOutcome>,
-    /// This request's own outcome when the run is not finished.
-    pub(crate) partial: Option<IndexOutcome>,
+    /// Latest per-path results when the run is not finished.
+    pub(crate) partial: Option<IndexApplyProgress>,
 }
 
 /// Plans a run from the node's hashes. Writes nothing and takes no lock.
@@ -158,8 +160,10 @@ pub(crate) fn apply_primary(
     } else {
         api::file_state::selector_states(conn, machine_id, project_id)?
     };
+    let mut progress = batch.prior.clone().unwrap_or_default();
     if scope.reconciles_project() {
         // A present file that could not be hashed is still present, so its state stays.
+        let current: HashSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
         let present: HashSet<String> = batch
             .present
             .iter()
@@ -167,8 +171,16 @@ pub(crate) fn apply_primary(
             .chain(
                 files
                     .iter()
-                    .filter(|file| matches!(file.facts, FileFacts::Unhashed))
+                    .filter(|file| matches!(file.facts, FileFacts::Unhashed | FileFacts::Skipped))
                     .map(|file| file.path.clone()),
+            )
+            .chain(
+                progress
+                    .iter()
+                    .filter(|(path, result)| {
+                        result.retain_state && !current.contains(path.as_str())
+                    })
+                    .map(|(path, _)| path.clone()),
             )
             .collect();
         for orphan in get_orphan_files(conn, machine_id, project_id, &present)? {
@@ -183,10 +195,7 @@ pub(crate) fn apply_primary(
         }
     }
 
-    let mut outcome = IndexOutcome::new(project_id);
-    for file in files {
-        apply_file(conn, ctx, file, &mut outcome)?;
-    }
+    apply_files(conn, ctx, files, &mut progress)?;
 
     // A listed path this request did not send was written by an earlier request. Its facts must
     // still be there, or the node parses it again.
@@ -200,10 +209,9 @@ pub(crate) fn apply_primary(
         }
     }
     // Every path an earlier request or this one sent is settled, indexed or not.
-    let handled: HashSet<&str> = files
-        .iter()
-        .map(|file| file.path.as_str())
-        .chain(batch.prior_paths.iter().map(String::as_str))
+    let handled: HashSet<&str> = progress
+        .keys()
+        .map(String::as_str)
         .chain(listed.iter().copied())
         .collect();
     // Decide every remaining path before any adoption write. A pass that reparses then leaves
@@ -237,10 +245,23 @@ pub(crate) fn apply_primary(
             reparse,
             adopted: Vec::new(),
             outcome: None,
-            partial: Some(outcome),
+            partial: Some(progress),
         });
     }
 
+    let mut outcome = IndexOutcome::new(project_id);
+    for (path, result) in progress {
+        outcome.indexed_files += result.indexed_files;
+        outcome.skipped_files += result.skipped_files;
+        outcome.symbols_indexed += result.symbols_indexed;
+        outcome.imports_indexed += result.imports_indexed;
+        outcome.calls_indexed += result.calls_indexed;
+        outcome.unresolved_targets_indexed += result.unresolved_targets_indexed;
+        outcome.chunks_indexed += result.chunks_indexed;
+        if result.indexed_files > 0 {
+            outcome.indexed_file_paths.push(path);
+        }
+    }
     let mut adopted = Vec::new();
     for file in adopt {
         if !api::file_state::adopt_file_state(
@@ -264,9 +285,6 @@ pub(crate) fn apply_primary(
     for file in keep {
         record_blob(conn, machine_id, project_id, file, &stored)?;
         outcome.skipped_files += 1;
-    }
-    if let Some(prior) = batch.prior.as_ref() {
-        outcome.absorb(prior);
     }
 
     let post_started = Instant::now();
@@ -414,7 +432,6 @@ fn final_batch(
         scanned_files: scan.scanned,
         unsupported_file_types: scan.unsupported.clone(),
         prior: None,
-        prior_paths: Vec::new(),
     }
 }
 
@@ -431,16 +448,40 @@ fn apply_facts_only(
     ctx: &Context,
     files: &[ParsedFileFacts],
 ) -> anyhow::Result<ApplyOutput> {
-    let mut outcome = IndexOutcome::new(ctx.project_id.as_str());
-    for file in files {
-        apply_file(conn, ctx, file, &mut outcome)?;
-    }
+    let mut progress = IndexApplyProgress::new();
+    apply_files(conn, ctx, files, &mut progress)?;
     Ok(ApplyOutput {
         reparse: Vec::new(),
         adopted: Vec::new(),
         outcome: None,
-        partial: Some(outcome),
+        partial: Some(progress),
     })
+}
+
+fn apply_files(
+    conn: &mut Client,
+    ctx: &Context,
+    files: &[ParsedFileFacts],
+    progress: &mut IndexApplyProgress,
+) -> anyhow::Result<()> {
+    for file in files {
+        let mut outcome = IndexOutcome::new(ctx.project_id.as_str());
+        apply_file(conn, ctx, file, &mut outcome)?;
+        progress.insert(
+            file.path.clone(),
+            FileApplyOutcome {
+                retain_state: matches!(file.facts, FileFacts::Unhashed | FileFacts::Skipped),
+                indexed_files: outcome.indexed_files,
+                skipped_files: outcome.skipped_files,
+                symbols_indexed: outcome.symbols_indexed,
+                imports_indexed: outcome.imports_indexed,
+                calls_indexed: outcome.calls_indexed,
+                unresolved_targets_indexed: outcome.unresolved_targets_indexed,
+                chunks_indexed: outcome.chunks_indexed,
+            },
+        );
+    }
+    Ok(())
 }
 
 /// Writes one file's outcome in its own transaction. Facts and their state row commit together.

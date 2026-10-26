@@ -185,7 +185,6 @@ fn batched_final_batch_completes_with_facts_from_earlier_requests() -> anyhow::R
     let util = parse_facts(&h.ctx(&project), &project.request(true), &both[1..])?;
     let batch = FinalBatch {
         prior: Some(partial),
-        prior_paths: both[..1].to_vec(),
         ..final_batch(&files, &both)
     };
     let done = h.apply(&project, true, util, Some(batch))?;
@@ -230,16 +229,31 @@ fn batched_unhashed_preserves_state_without_reviving_absent_files() -> anyhow::R
         None,
     )?;
     let batch = FinalBatch {
-        prior: first.partial,
-        prior_paths: paths.to_vec(),
+        prior: serde_json::from_value(serde_json::to_value(first.partial)?)?,
         ..final_batch(&[], &[])
     };
-    let done = h.apply(&project, false, Vec::new(), Some(batch))?;
+    let done = h.apply(&project, false, Vec::new(), Some(batch.clone()))?;
     assert!(done.reparse.is_empty(), "{:?}", done.reparse);
     assert!(done.outcome.is_some(), "the final batch completes the run");
     let states = h.rows(&project)?.states;
     assert_eq!(states.len(), 1, "only the unhashed file stays: {states:?}");
     assert!(states[0].starts_with("src/lib.rs|"), "{states:?}");
+
+    // A later explicit removal overrides the earlier present marker.
+    let removed = h.apply(
+        &project,
+        false,
+        vec![ParsedFileFacts {
+            path: paths[0].clone(),
+            facts: FileFacts::Removed,
+        }],
+        Some(batch),
+    )?;
+    assert!(
+        h.rows(&project)?.states.is_empty(),
+        "removed state stays gone"
+    );
+    assert_eq!(removed.outcome.expect("removal completes").skipped_files, 1);
     Ok(())
 }
 
@@ -262,17 +276,17 @@ fn prior_path_reparse_counts_each_file_once() -> anyhow::Result<()> {
     // A different writer removes one prior request's facts before finalization.
     h.forget_state(&project, &paths[0])?;
     h.forget_facts(&project, &paths[0])?;
-    let batch = FinalBatch {
+    let mut batch = FinalBatch {
         prior: Some(prior),
-        prior_paths: paths.to_vec(),
         ..final_batch(&files, &paths)
     };
     let stale = h.apply(&project, true, Vec::new(), Some(batch.clone()))?;
     assert_eq!(stale.reparse, vec![paths[0].clone()]);
     assert!(stale.outcome.is_none(), "reparse postpones finalization");
 
-    // No facts were sent on the reparse pass, so the node retains the earlier counts.
+    // The reparse response retains the earlier results for the node to merge into its prior.
     // Resending just the missing path must replace its contribution, not add it twice.
+    batch.prior = stale.partial;
     let facts = parse_facts(&h.ctx(&project), &project.request(true), &stale.reparse)?;
     let done = h.apply(&project, true, facts, Some(batch))?;
     assert!(done.reparse.is_empty(), "{:?}", done.reparse);
@@ -713,7 +727,6 @@ fn final_batch(files: &[FileHash], indexed_paths: &[String]) -> FinalBatch {
         scanned_files: files.len(),
         unsupported_file_types: Vec::new(),
         prior: None,
-        prior_paths: Vec::new(),
     }
 }
 

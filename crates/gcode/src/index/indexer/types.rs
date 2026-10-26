@@ -162,23 +162,6 @@ impl IndexOutcome {
         self.unsupported_file_types = unsupported;
     }
 
-    /// Adds the counts and paths an earlier request of the same run wrote. Those came first, so
-    /// their paths lead.
-    pub(super) fn absorb(&mut self, prior: &IndexOutcome) {
-        self.indexed_files += prior.indexed_files;
-        self.skipped_files += prior.skipped_files;
-        self.symbols_indexed += prior.symbols_indexed;
-        self.imports_indexed += prior.imports_indexed;
-        self.calls_indexed += prior.calls_indexed;
-        self.unresolved_targets_indexed += prior.unresolved_targets_indexed;
-        self.chunks_indexed += prior.chunks_indexed;
-        self.tombstones_indexed += prior.tombstones_indexed;
-        let mut paths = prior.indexed_file_paths.clone();
-        paths.append(&mut self.indexed_file_paths);
-        self.indexed_file_paths = paths;
-        self.degraded.extend(prior.degraded.iter().cloned());
-    }
-
     pub(crate) fn record_promotion_owners(&mut self, owners: impl IntoIterator<Item = String>) {
         self.vector_file_paths.clone_from(&self.indexed_file_paths);
         if self.graph_file_paths.is_empty() {

@@ -13,6 +13,7 @@ mod index_tests;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -203,13 +204,26 @@ pub struct FinalBatch {
     pub scanned_files: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unsupported_file_types: Vec<UnsupportedFileType>,
-    /// Counts and indexed paths the run's earlier requests wrote. The node sends back each
-    /// response's `partial`, so the final batch completes the run without resending facts.
+    /// Per-path results from earlier requests. Merge each response's `partial` by extending
+    /// this map: later entries replace earlier entries for the same path, including on retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prior: Option<IndexOutcome>,
-    /// Every path an earlier request of this run sent, indexed or not.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub prior_paths: Vec<String>,
+    pub prior: Option<IndexApplyProgress>,
+}
+
+/// A run's latest result for every path it has handled; no parsed facts are carried back.
+pub type IndexApplyProgress = BTreeMap<String, FileApplyOutcome>;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileApplyOutcome {
+    /// A hashless present marker (Unhashed or Skipped) must survive the orphan sweep.
+    pub retain_state: bool,
+    pub indexed_files: usize,
+    pub skipped_files: usize,
+    pub symbols_indexed: usize,
+    pub imports_indexed: usize,
+    pub calls_indexed: usize,
+    pub unresolved_targets_indexed: usize,
+    pub chunks_indexed: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,8 +243,8 @@ pub struct IndexApplyResponse {
     pub reparse: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<IndexOutcome>,
-    /// This request's own outcome when the run is not finished, for the node to carry into the
-    /// final batch's `prior`.
+    /// Latest per-path results when unfinished. Extend `FinalBatch.prior` with these entries;
+    /// replacement by path makes repeated requests and reparses count each file once.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partial: Option<IndexOutcome>,
+    pub partial: Option<IndexApplyProgress>,
 }

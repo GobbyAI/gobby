@@ -1694,7 +1694,6 @@ fn whole_apply_keeps_state_for_a_present_file_reported_unhashed() {
         scanned_files: 0,
         unsupported_file_types: Vec::new(),
         prior: None,
-        prior_paths: Vec::new(),
     };
     let files = [crate::node::ParsedFileFacts {
         path: kept.to_string(),
