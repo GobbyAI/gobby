@@ -20,9 +20,10 @@ class CommitUnlinkRefused(ValueError):
 async def integration_refusal(db: HubDatabase, task: Task, sha: str) -> str | None:
     """Return why unlinking ``sha`` is refused, or None when ``sha`` is not landed.
 
-    With no registered main checkout or no integration branch, nothing can be landed, so the
-    unlink proceeds. A Git failure or an unanswered ancestry check refuses, because the
-    commit's status is then unproven.
+    With no registered main checkout, nothing can be landed, so the unlink proceeds. A main
+    checkout on a detached HEAD names no integration branch, so the commit's status is
+    unproven and the unlink refuses. A Git failure or an unanswered ancestry check refuses
+    for the same reason.
     """
     from gobby.tasks.land_commit import LandingGitError, main_checkout_target
 
@@ -33,7 +34,7 @@ async def integration_refusal(db: HubDatabase, task: Task, sha: str) -> str | No
     except ValueError:
         return None
     if target is None:
-        return None
+        return "Cannot determine the integration branch: the main checkout is on a detached HEAD."
     repo, branch = target
     result = await daemon_git.run(
         ("merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"), cwd=repo

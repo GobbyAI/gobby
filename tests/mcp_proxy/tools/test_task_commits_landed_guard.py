@@ -182,3 +182,32 @@ async def test_failed_audit_write_keeps_every_link_and_writes_no_event(
 
     assert manager.get_task(task.id).commits == [landed, unlanded]
     assert TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id) == []
+
+
+@pytest.mark.asyncio
+async def test_detached_main_checkout_refuses_the_unlink_of_a_landed_commit(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    integration_repo: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, landed, unlanded = integration_repo
+    _git(repo, "checkout", "--detach")
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.require_root", lambda db, project_id, machine_id: str(repo)
+    )
+    monkeypatch.setattr("gobby.tasks.land_commit.require_machine_id", lambda: "machine-1")
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"], "Superseded candidate", category="research", validation_criteria="x"
+    )
+    manager.link_commit(task.id, landed)
+    manager.link_commit(task.id, unlanded)
+
+    with pytest.raises(commit_unlink.CommitUnlinkRefused, match="detached HEAD"):
+        await commit_unlink.unlink_commit_audited(
+            manager, manager.get_task(task.id), landed, reason="Superseded", actor="session-1"
+        )
+
+    assert manager.get_task(task.id).commits == [landed, unlanded]
+    assert TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id) == []
