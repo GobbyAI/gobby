@@ -13848,7 +13848,14 @@ async fn tab_and_split_shells_use_the_daemons_focused_checkout() {
         wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
         send_chord(&input_tx, KeyCode::Char('-'), KeyModifiers::NONE).await;
         wait_until(|| workspace_ops(&mock, "pane.split").len() == 1).await;
-        settle_live_event().await;
+        release_split.notify_one();
+        // The new shell's geometry is sent only once its pane is in the model.
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_resize")
+                .iter()
+                .any(|request| request["terminal_id"] == json!("mock-terminal-5"))
+        })
+        .await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -13862,7 +13869,6 @@ async fn tab_and_split_shells_use_the_daemons_focused_checkout() {
         ),
         driver
     );
-    release_split.notify_one();
     result.expect("checkout cwd live loop");
     assert_eq!(workspace.focused_checkout_path().as_deref(), Some("/repo"));
     assert!(websocket_requests(&mock, "terminal_create").is_empty());

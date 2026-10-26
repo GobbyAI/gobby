@@ -897,10 +897,31 @@ async fn serve_websocket(
                     if let Some(kind) = value.get("type").and_then(Value::as_str) {
                         state.activity.push(format!("WS {kind}"));
                     }
+                    // Received ops are recorded on arrival, held or not.
+                    if value.get("type").and_then(Value::as_str) == Some("workspace_op") {
+                        state.workspace_requests.push(value.clone());
+                    }
+                }
+                let kind = value.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
+                // A held workspace op has not run yet. Its effects and events happen at
+                // release, as a slow op publishes at commit; running it at receipt would
+                // stamp its seq ahead of events the daemon sent in the meantime.
+                let deferred = (kind == "workspace_op")
+                    .then(|| take_ws_hold(&state, &kind, &value))
+                    .flatten();
+                if let Some(release) = deferred {
+                    let state = Arc::clone(&state);
+                    let released = released_tx.clone();
+                    tokio::spawn(async move {
+                        release.notified().await;
+                        let reply = websocket_reply(&state, &value);
+                        let before = websocket_events_before_reply(&state, &value, reply.as_ref());
+                        let _ = released.send((kind, before, reply));
+                    });
+                    continue;
                 }
                 let reply = websocket_reply(&state, &value);
                 let before = websocket_events_before_reply(&state, &value, reply.as_ref());
-                let kind = value.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
                 let hold = reply.as_ref().and_then(|_| take_ws_hold(&state, &kind, &value));
                 if let Some(release) = hold {
                     let released = released_tx.clone();
@@ -1231,7 +1252,6 @@ fn websocket_reply(state: &Arc<Mutex<MockState>>, request: &Value) -> Option<Val
         }
         "workspace_op" => {
             let mut state = state.lock().expect("mock state");
-            state.workspace_requests.push(request.clone());
             if request.get("op").and_then(Value::as_str) == Some("workspace.list") {
                 return Some(json!({
                     "type": "workspace_op",
