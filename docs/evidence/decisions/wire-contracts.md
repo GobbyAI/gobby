@@ -53,6 +53,9 @@ Representatives remain whole and precede sorted, disjoint remaining members.
 that cannot fit returns typed `oversize` before inference; paths are never cut.
 Generation schema accepts a 120-character rationale and rejects 121 characters.
 
+The [frozen-community before/after comparison](community-choice-comparison-2026-10-26.md)
+records request sizes, measured usage and latency, and the observed answer flip.
+
 ## 1. TypeSafe `systemone` (Kev reference wire)
 
 - URL: `{api_base}/v1/systemone`. The default wire, `wire_api: systemone`.
