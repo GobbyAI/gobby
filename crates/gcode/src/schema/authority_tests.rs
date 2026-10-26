@@ -126,3 +126,115 @@ fn fully_authorized_missing_column_still_reports_migration_debt() {
         "a fully authorized role must not get a credential refresh condition: {message}"
     );
 }
+
+/// Runs a restoring statement on drop, so a panicking test leaves the shared schema
+/// as it found it.
+struct RestoreOnDrop {
+    database_url: String,
+    sql: String,
+}
+
+impl Drop for RestoreOnDrop {
+    fn drop(&mut self) {
+        match gobby_core::postgres::connect_readwrite(&self.database_url) {
+            Ok(mut owner) => {
+                if let Err(err) = owner.batch_execute(&self.sql) {
+                    eprintln!("RestoreOnDrop: `{}` failed: {err}", self.sql);
+                }
+            }
+            Err(err) => eprintln!("RestoreOnDrop: connect failed for `{}`: {err}", self.sql),
+        }
+    }
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn nologin_open_connection_with_missing_column_reports_refresh_not_migration_debt() {
+    let database_url = crate::test_env::postgres_test_database_url("schema authority tests");
+    let mut owner = gobby_core::postgres::connect_readwrite(&database_url).expect("connect owner");
+
+    // A login role with CONNECT, schema USAGE, and SELECT on every inspected table.
+    // Its connection stays open after the owner revokes login, so the open session
+    // is the only place the revoked authority can be observed.
+    let role = format!("gcode_authority_{}", uuid::Uuid::new_v4().simple());
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let schema = current_schema_name(&mut owner).expect("resolve current schema");
+    let database: String = owner
+        .query_one("SELECT current_database()", &[])
+        .expect("resolve current database")
+        .get(0);
+    let table_grants: String = TABLE_CONTRACTS
+        .iter()
+        .map(|contract| {
+            format!(
+                "GRANT SELECT ON {schema}.{table} TO {role};\n",
+                schema = quote_ident(&schema),
+                table = quote_ident(contract.name),
+                role = quote_ident(&role),
+            )
+        })
+        .collect();
+    owner
+        .batch_execute(&format!(
+            "CREATE ROLE {role} LOGIN PASSWORD '{password}';
+             GRANT CONNECT ON DATABASE {database} TO {role};
+             GRANT USAGE ON SCHEMA {schema} TO {role};
+             {table_grants}",
+            role = quote_ident(&role),
+            database = quote_ident(&database),
+            schema = quote_ident(&schema),
+        ))
+        .expect("create fully granted login role");
+    let _cleanup = LoginRoleCleanup {
+        database_url: database_url.clone(),
+        role: role.clone(),
+    };
+
+    let mut config: postgres::Config = database_url.parse().expect("validated test DSN");
+    config.user(&role).password(&password);
+    let mut restricted = config
+        .connect(NoTls)
+        .expect("connect as fully granted login role");
+    validate_runtime_schema(&mut restricted)
+        .expect("a fully granted login role passes validation before its login is revoked");
+
+    // Rename rather than drop: the restore puts back the exact column definition.
+    let table = format!(
+        "{}.{}",
+        quote_ident(&schema),
+        quote_ident("code_indexed_projects")
+    );
+    let _restore = RestoreOnDrop {
+        database_url: database_url.clone(),
+        sql: format!(
+            "ALTER TABLE {table} RENAME COLUMN {probe} TO {column}",
+            probe = quote_ident("created_at_authority_probe"),
+            column = quote_ident("created_at"),
+        ),
+    };
+    owner
+        .batch_execute(&format!(
+            "ALTER TABLE {table} RENAME COLUMN {column} TO {probe};
+             ALTER ROLE {role} NOLOGIN;",
+            column = quote_ident("created_at"),
+            probe = quote_ident("created_at_authority_probe"),
+            role = quote_ident(&role),
+        ))
+        .expect("hide created_at and revoke login on the open role");
+
+    let err = validate_runtime_schema(&mut restricted)
+        .expect_err("a NOLOGIN role on an open connection must not pass schema validation");
+    let message = format!("{err:#}");
+    assert!(
+        !message.contains("missing required code-index columns"),
+        "a revoked login was reported as migration debt: {message}"
+    );
+    assert!(
+        matches!(err.downcast_ref::<GrantError>(), Some(GrantError::Expired)),
+        "expected a credential refresh condition (GrantError::Expired), got: {message}"
+    );
+}
