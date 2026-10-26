@@ -1,13 +1,17 @@
-"""unlink_commit refuses commits the integration branch already holds."""
+"""unlink_commit refuses commits the integration branch already holds and audits every removal."""
 
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.mcp_proxy.tools import task_commits
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
+from gobby.tasks import commit_unlink
 from gobby.tasks.land_commit import LandingGitError
 
 
@@ -44,12 +48,12 @@ async def test_landed_commit_is_refused_and_unlanded_candidate_is_allowed(
         "gobby.tasks.land_commit.main_checkout_target",
         AsyncMock(return_value=(repo, "main")),
     )
-    task = SimpleNamespace(project_id="project-1")
+    task = cast(Task, SimpleNamespace(project_id="project-1"))
 
-    refusal = await task_commits._integration_refusal(MagicMock(), task, landed)
+    refusal = await commit_unlink.integration_refusal(MagicMock(), task, landed)
     assert refusal is not None
     assert "landed commits cannot be unlinked" in refusal
-    assert await task_commits._integration_refusal(MagicMock(), task, unlanded) is None
+    assert await commit_unlink.integration_refusal(MagicMock(), task, unlanded) is None
 
 
 @pytest.mark.asyncio
@@ -60,9 +64,9 @@ async def test_missing_integration_checkout_leaves_nothing_landed(
         "gobby.tasks.land_commit.main_checkout_target",
         AsyncMock(side_effect=ValueError("no registered checkout")),
     )
-    task = SimpleNamespace(project_id="project-1")
+    task = cast(Task, SimpleNamespace(project_id="project-1"))
 
-    assert await task_commits._integration_refusal(MagicMock(), task, "abc1234") is None
+    assert await commit_unlink.integration_refusal(MagicMock(), task, "abc1234") is None
 
 
 @pytest.mark.asyncio
@@ -73,8 +77,67 @@ async def test_failed_integration_lookup_refuses_unlink(
         "gobby.tasks.land_commit.main_checkout_target",
         AsyncMock(side_effect=LandingGitError("git timed out")),
     )
-    task = SimpleNamespace(project_id="project-1")
+    task = cast(Task, SimpleNamespace(project_id="project-1"))
 
-    refusal = await task_commits._integration_refusal(MagicMock(), task, "abc1234")
+    refusal = await commit_unlink.integration_refusal(MagicMock(), task, "abc1234")
     assert refusal is not None
     assert "Cannot determine the integration branch" in refusal
+
+
+@pytest.mark.asyncio
+async def test_unlink_removes_an_unlanded_candidate_and_audits_the_reason(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    integration_repo: tuple[Path, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, landed, unlanded = integration_repo
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(return_value=(repo, "main")),
+    )
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"], "Superseded candidate", category="research", validation_criteria="x"
+    )
+    manager.link_commit(task.id, landed)
+    manager.link_commit(task.id, unlanded)
+
+    with pytest.raises(commit_unlink.CommitUnlinkRefused, match="landed commits cannot"):
+        await commit_unlink.unlink_commit_audited(
+            manager, manager.get_task(task.id), landed, reason="Superseded", actor="session-1"
+        )
+    updated = await commit_unlink.unlink_commit_audited(
+        manager,
+        manager.get_task(task.id),
+        unlanded,
+        reason="Superseded by #24970",
+        actor="session-1",
+    )
+
+    assert updated.commits == [landed]
+    events = TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id)
+    assert [(event.to_state, event.by_actor, event.reason) for event in events] == [
+        ("commit:unlinked", "session-1", f"Unlinked {unlanded}: Superseded by #24970")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unlink_refuses_a_blank_reason_before_any_mutation(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target", AsyncMock(return_value=None)
+    )
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"], "Superseded candidate", category="research", validation_criteria="x"
+    )
+    manager.link_commit(task.id, "abc1234")
+
+    with pytest.raises(ValueError, match="A reason is required"):
+        await commit_unlink.unlink_commit_audited(
+            manager, manager.get_task(task.id), "abc1234", reason="  ", actor="session-1"
+        )
+    assert manager.get_task(task.id).commits == ["abc1234"]
+    assert TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id) == []

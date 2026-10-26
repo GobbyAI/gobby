@@ -66,9 +66,7 @@ def no_integration_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     async def unknown_integration(*_args: Any) -> None:
         return None
 
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.task_commits._integration_refusal", unknown_integration
-    )
+    monkeypatch.setattr("gobby.tasks.commit_unlink.integration_refusal", unknown_integration)
 
 
 class TestRequireClaimAuthority:
@@ -421,6 +419,7 @@ def _build_commit_tool(tool_name: str) -> Callable[[MagicMock, ExitStack], Build
                 new=AsyncMock(return_value=NetCommitPaths()),
             )
         )
+        stack.enter_context(patch("gobby.tasks.commit_unlink.TaskLifecycleEventManager"))
         registry = create_commit_registry(task_manager=manager)
         tool = registry.get_tool(tool_name)
         assert tool is not None
@@ -525,7 +524,8 @@ TOOL_SPECS = [
     ToolSpec(
         name="unlink_commit",
         build=_build_commit_tool("unlink_commit"),
-        kwargs={"task_id": TASK_UUID, "commit_sha": "abc123"},
+        kwargs={"task_id": TASK_UUID, "commit_sha": "abc123", "reason": "Superseded"},
+        unclaimed_context=CALLER_SESSION,
     ),
     ToolSpec(
         name="set_affected_files",

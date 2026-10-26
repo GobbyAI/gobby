@@ -29,7 +29,6 @@ async def evaluate_close_invariants(
     required_steps: Sequence[str],
     missing_steps: Sequence[str],
     attribution_complete: bool = True,
-    superseded_by: str | None = None,
 ) -> CloseChecklist:
     """Evaluate every gate without changing task, Git, or review state."""
     gates = await _data_invariants(
@@ -40,7 +39,6 @@ async def evaluate_close_invariants(
         integration_repo_path=integration_repo_path,
         integration_ref=integration_ref,
         attribution_complete=attribution_complete,
-        superseded_by=superseded_by,
     )
     details = {"required_steps": list(required_steps), "missing_steps": list(missing_steps)}
     gates.append(
@@ -68,7 +66,6 @@ async def _data_invariants(
     integration_repo_path: str | None,
     integration_ref: str | None,
     attribution_complete: bool,
-    superseded_by: str | None = None,
 ) -> list[CloseGateResult]:
     gates = [
         CloseGateResult(
@@ -145,36 +142,27 @@ async def _data_invariants(
                 # Git could not answer, so the commit is neither proven landed nor unlanded.
                 unresolved.append(sha)
     landed = tip is not None and not unresolved and not unlanded
-    # A no-work close may waive unlanded candidates it supersedes, never landed work.
-    superseding = reason.casefold() == "superseded"
-    superseder = (superseded_by or "").strip() or None
-    waivable = (
-        reason.casefold() in NO_WORK_CLOSE_REASONS
-        and tip is not None
-        and bool(unlanded)
-        and not unresolved
-        and not landed_shas
-    )
-    waived = waivable and (superseder is not None or not superseding)
-    if landed:
-        message = "Linked work is on the integration branch."
-    elif waived:
+    if reason.casefold() in NO_WORK_CLOSE_REASONS:
+        # A no-work close carries no linked work: landed work closes as done, and unlanded
+        # candidates leave through the audited unlink before the close.
+        passed = False
         message = (
-            f"Unlanded candidates are superseded by {superseder}."
-            if superseding
-            else "Unlanded candidates are waived by the no-work disposition."
+            f"Landed commits cannot close as {reason}; close with reason done."
+            if landed_shas
+            else "Unlink linked commits with unlink_commit before a no-work close."
         )
-    elif waivable:
-        message = "Name the superseding task or commit with superseded_by."
-    elif reason.casefold() in NO_WORK_CLOSE_REASONS and landed_shas and unlanded:
-        message = "Landed commits cannot be superseded; close with reason done."
     else:
-        message = "Linked work must resolve and be an ancestor of the integration tip."
+        passed = landed
+        message = (
+            "Linked work is on the integration branch."
+            if landed
+            else "Linked work must resolve and be an ancestor of the integration tip."
+        )
     gates.append(
         CloseGateResult(
             4,
             "integration_ancestry",
-            "passed" if landed or waived else "failed",
+            "passed" if passed else "failed",
             message,
             {
                 "integration_ref": integration_ref,
@@ -183,8 +171,6 @@ async def _data_invariants(
                 "unresolved_commits": unresolved,
                 "unlanded_commits": unlanded,
                 "landed_commits": landed_shas,
-                "waived_candidates": unlanded if waived else [],
-                "superseded_by": superseder if waived and superseding else None,
             },
         )
     )

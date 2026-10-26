@@ -300,7 +300,16 @@ def test_superseded_task_closes_with_an_unlanded_candidate(
     candidate = _commit(project, "Candidate close module", mcp_client, task_id)
     subprocess.run(["git", "checkout", integration_branch], cwd=project, check=True)
 
-    result = _close(mcp_client, task_id, candidate, reason="superseded", superseded_by="#24970")
+    _link(mcp_client, task_id, candidate)
+    unlinked = _unwrap(
+        mcp_client.call_tool(
+            "gobby-tasks",
+            "unlink_commit",
+            {"task_id": task_id, "commit_sha": candidate, "reason": "Superseded by #24970"},
+        )
+    )
+    assert "error" not in unlinked, unlinked
+    result = _close(mcp_client, task_id, reason="superseded", superseded_by="#24970")
     assert result["closed"] is True, result
     stored = _unwrap(
         mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id, "brief": False})
@@ -325,7 +334,7 @@ def test_superseded_close_refuses_a_task_with_a_landed_commit(
     task_id, _, candidate, _ = _landed_and_candidate(
         daemon_instance, mcp_client, cli_events, postgres_db, suffix="superseded-mixed"
     )
-    refused = _close(mcp_client, task_id, candidate, reason="superseded")
+    refused = _close(mcp_client, task_id, candidate, reason="superseded", superseded_by="#24970")
     assert refused["error"] == "integration_ancestry", refused
     assert refused["closed"] is False
 
@@ -341,13 +350,17 @@ def test_landed_commit_cannot_be_unlinked_from_a_claimed_task(
     )
     control = _unwrap(
         mcp_client.call_tool(
-            "gobby-tasks", "unlink_commit", {"task_id": task_id, "commit_sha": candidate}
+            "gobby-tasks",
+            "unlink_commit",
+            {"task_id": task_id, "commit_sha": candidate, "reason": "Superseded by #24970"},
         )
     )
     assert "error" not in control, control
     refused = _unwrap(
         mcp_client.call_tool(
-            "gobby-tasks", "unlink_commit", {"task_id": task_id, "commit_sha": landed}
+            "gobby-tasks",
+            "unlink_commit",
+            {"task_id": task_id, "commit_sha": landed, "reason": "Superseded by #24970"},
         )
     )
     assert refused.get("error"), refused

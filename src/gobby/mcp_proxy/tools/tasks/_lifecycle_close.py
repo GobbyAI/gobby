@@ -53,6 +53,11 @@ async def _evaluate_close(
         return evaluation.refuse("task_not_found", f"Task {task_id} not found.")
     evaluation.task, evaluation.task_id = task, resolved_id
     evaluation.is_epic = task.task_type == "epic"
+    if reason.casefold() == "superseded" and not (superseded_by or "").strip():
+        return evaluation.refuse(
+            "superseded_by_required",
+            "A superseded close names the superseding task or commit in superseded_by.",
+        )
     session_ref = closing_session_id or get_current_session_id() or get_claimed_session_id(task)
     if not session_ref:
         return evaluation.refuse("no_session_context", "close_task requires an active session.")
@@ -151,6 +156,5 @@ async def _evaluate_close(
         required_steps=steps.required,
         missing_steps=steps.missing,
         attribution_complete=attribution.complete,
-        superseded_by=superseded_by,
     )
     return evaluation

@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
+from gobby.tasks.commit_unlink import unlink_commit_audited
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -33,7 +34,7 @@ from gobby.tasks.diff_paging import (
     DiffPage,
     DiffPagingError,
 )
-from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git, normalize_commit_sha
+from gobby.utils.daemon_git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
 
@@ -71,35 +72,6 @@ def session_machine_id(session_manager: Any | None, project_id: str | None) -> s
             session.machine_id, resource_kind="project_checkout", resource_id=project_id
         )
     return require_local_machine_id(None, resource_kind="project_checkout", resource_id=project_id)
-
-
-async def _integration_refusal(db: Any, task: Any, sha: str) -> str | None:
-    """Return why unlinking ``sha`` is refused, or None when ``sha`` is not landed.
-
-    A commit on the integration branch is delivered work and stays linked. With no
-    registered main checkout or no integration branch, nothing can be landed, so the
-    unlink proceeds. A Git failure or an unanswered ancestry check refuses, because the
-    commit's status is then unproven.
-    """
-    from gobby.tasks.land_commit import LandingGitError, main_checkout_target
-
-    try:
-        target = await main_checkout_target(db, task.project_id)
-    except LandingGitError as exc:
-        return f"Cannot determine the integration branch: {exc}"
-    except ValueError:
-        return None
-    if target is None:
-        return None
-    repo, branch = target
-    result = await daemon_git.run(
-        ("merge-base", "--is-ancestor", sha, f"refs/heads/{branch}"), cwd=repo
-    )
-    if isinstance(result, GitOk):
-        return f"{sha} is on the integration branch; landed commits cannot be unlinked."
-    if isinstance(result, GitFailed) and result.returncode == 1:
-        return None
-    return f"Cannot determine whether {sha} is on the integration branch."
 
 
 def create_commit_registry(
@@ -240,9 +212,10 @@ def create_commit_registry(
     async def unlink_commit(
         task_id: str,
         commit_sha: str,
+        reason: str,
         project_path: str | None = None,
     ) -> dict[str, Any]:
-        """Unlink a git commit from a task."""
+        """Unlink a git commit from a task and record the reason on its lifecycle."""
         # Resolve task reference
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
@@ -254,6 +227,9 @@ def create_commit_registry(
             return task_and_repo_path
         current_task, repo_path = task_and_repo_path
 
+        actor = get_current_session_id()
+        if not actor:
+            return {"error": "Unlinking a commit requires session context."}
         denied = require_claim_authority(task_manager, current_task, "unlink_commit")
         if denied:
             return denied
@@ -261,21 +237,21 @@ def create_commit_registry(
         normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
         if normalized is None:
             return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
-        refusal = await _integration_refusal(task_manager.db, current_task, normalized)
-        if refusal is not None:
-            return {"error": refusal}
         try:
-            task = task_manager.unlink_commit(resolved_task_id, normalized)
-            return {
-                "task_id": task.id,
-                "commits": task.commits or [],
-            }
+            task = await unlink_commit_audited(
+                task_manager, current_task, normalized, reason=reason, actor=actor
+            )
         except ValueError as e:
             return {"error": str(e)}
+        return {
+            "task_id": task.id,
+            "commits": task.commits or [],
+        }
 
     registry.register(
         name="unlink_commit",
-        description="Unlink a git commit from a task.",
+        description="Unlink a git commit from a task. Landed commits stay linked. The reason "
+        "is recorded on the task's lifecycle with the caller as actor.",
         input_schema={
             "type": "object",
             "properties": {
@@ -287,6 +263,10 @@ def create_commit_registry(
                     "type": "string",
                     "description": "Git commit SHA to unlink",
                 },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the commit no longer belongs to this task",
+                },
                 "project_path": {
                     "type": "string",
                     "description": (
@@ -295,7 +275,7 @@ def create_commit_registry(
                     ),
                 },
             },
-            "required": ["task_id", "commit_sha"],
+            "required": ["task_id", "commit_sha", "reason"],
         },
         func=unlink_commit,
     )

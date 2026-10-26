@@ -259,6 +259,30 @@ async def test_finalization_storage_and_cleanup_stay_off_the_event_loop(
         manager.close_task_with_commit.assert_not_called()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("superseded_by", [None, "", "   "])
+async def test_superseded_close_names_its_superseder(
+    monkeypatch: pytest.MonkeyPatch, superseded_by: str | None
+) -> None:
+    task = _task()
+    manager = MagicMock()
+    manager.get_task.return_value = task
+    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
+    monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", lambda _manager, task_id: task_id)
+
+    evaluation = await lifecycle._evaluate_close(
+        ctx,
+        task_id=task.id,
+        reason="superseded",
+        commit_sha=None,
+        project_path=None,
+        superseded_by=superseded_by,
+    )
+
+    assert evaluation.error == "superseded_by_required"
+    assert evaluation.ready is False
+
+
 def test_closed_task_cleanup_removes_only_its_edit_entry() -> None:
     variables = {
         "claimed_tasks": {"task-1": "#1", "task-2": "#2"},

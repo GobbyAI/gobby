@@ -1,7 +1,7 @@
 """Tests for task commit linking CLI commands."""
 
 from collections.abc import Iterator
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -134,8 +134,20 @@ class TestCommitLink:
 class TestCommitUnlink:
     """Tests for 'gobby tasks commit unlink' command."""
 
-    def test_unlink_commit_success(self, runner, mock_task_manager, normalize_sha) -> None:
-        """Test unlinking a commit from a task."""
+    @pytest.fixture(autouse=True)
+    def audit(self) -> Iterator[MagicMock]:
+        """Skip the integration lookup and capture the lifecycle audit manager."""
+        with (
+            patch(
+                "gobby.tasks.commit_unlink.integration_refusal",
+                AsyncMock(return_value=None),
+            ),
+            patch("gobby.tasks.commit_unlink.TaskLifecycleEventManager") as manager,
+        ):
+            yield manager
+
+    def test_unlink_commit_success(self, runner, mock_task_manager, normalize_sha, audit) -> None:
+        """Test unlinking a commit from a task records the reason and operator actor."""
         mock_task = MagicMock()
         mock_task.id = "gt-abc123"
         mock_task.commits = ["abc123"]
@@ -145,12 +157,31 @@ class TestCommitUnlink:
         mock_task_manager.unlink_commit.return_value = updated_task
 
         with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
-            result = runner.invoke(tasks, ["commit", "unlink", "gt-abc123", "abc123"])
+            result = runner.invoke(
+                tasks,
+                ["commit", "unlink", "gt-abc123", "abc123", "--reason", "Superseded by #24970"],
+            )
 
             assert result.exit_code == 0
             normalize_sha.assert_called_with("abc123", cwd=ANY)
             mock_task_manager.unlink_commit.assert_called_with("gt-abc123", "abc123")
+            audit.return_value.record_lifecycle_event.assert_called_once_with(
+                "gt-abc123",
+                "commit:linked",
+                "commit:unlinked",
+                "Unlinked abc123: Superseded by #24970",
+                by_actor="operator",
+            )
             assert "Unlinked commit abc123 from task gt-abc123" in result.output
+
+    def test_unlink_commit_requires_a_reason(self, runner, mock_task_manager) -> None:
+        """Test a missing --reason stops the unlink before any mutation."""
+        with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
+            result = runner.invoke(tasks, ["commit", "unlink", "gt-abc123", "abc123"])
+
+            assert result.exit_code == 2
+            assert "--reason" in result.output
+            mock_task_manager.unlink_commit.assert_not_called()
 
     def test_unlink_commit_not_linked_from_subdirectory_fails(
         self, runner, mock_task_manager, normalize_sha, tmp_path, monkeypatch
@@ -176,7 +207,10 @@ class TestCommitUnlink:
                 return_value={"project_path": project_root},
             ) as mock_context,
         ):
-            result = runner.invoke(tasks, ["commit", "unlink", "gt-abc123", "abc123"])
+            result = runner.invoke(
+                tasks,
+                ["commit", "unlink", "gt-abc123", "abc123", "--reason", "Superseded"],
+            )
 
             assert result.exit_code == 1
             mock_context.assert_called_with(cwd=subdir)
@@ -190,7 +224,10 @@ class TestCommitUnlink:
         mock_task_manager.unlink_commit.side_effect = ValueError("Task not found")
 
         with patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager):
-            result = runner.invoke(tasks, ["commit", "unlink", "gt-nonexistent", "abc123"])
+            result = runner.invoke(
+                tasks,
+                ["commit", "unlink", "gt-nonexistent", "abc123", "--reason", "Superseded"],
+            )
 
             assert result.exit_code != 0
 
@@ -387,7 +424,7 @@ class TestTaskDiff:
         assert result.exit_code == 0
         assert "no commits" in result.output.lower()
 
-    def test_diff_stats_only(self, runner, mock_task_manager) -> None:
+    def test_diff_stats_only(self, runner: CliRunner, mock_task_manager: MagicMock) -> None:
         mock_task = MagicMock(id="gt-abc123", commits=["abc123"])
         mock_task_manager.get_task.return_value = mock_task
 

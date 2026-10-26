@@ -65,8 +65,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "type": "string",
                     "minLength": 1,
                     "description": (
-                        "Superseding task ref or commit SHA. Required for reason=superseded "
-                        "when linked commits are unlanded; recorded in the closing record."
+                        "Superseding task ref or commit SHA. Required for reason=superseded; "
+                        "recorded in the closing record."
                     ),
                 },
                 "commit_sha": {"type": "string", "minLength": 1},

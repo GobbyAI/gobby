@@ -6,7 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -56,7 +56,13 @@ def test_close_has_exactly_five_gates() -> None:
         (False, "landed", "done", True, ("uncommitted_task_edits",)),
         (False, "unlanded", "done", False, ("integration_ancestry",)),
         (False, "invalid", "done", False, ("integration_ancestry",)),
-        (False, "unlanded", "moot", False, ()),
+        (False, "none", "superseded", False, ()),
+        (False, "unlanded", "moot", False, ("integration_ancestry",)),
+        (False, "unlanded", "superseded", False, ("integration_ancestry",)),
+        (False, "unlanded", "wont_do", False, ("integration_ancestry",)),
+        (False, "landed", "moot", False, ("integration_ancestry",)),
+        (False, "landed", "superseded", False, ("integration_ancestry",)),
+        (False, "landed", "wont_do", False, ("integration_ancestry",)),
     ],
 )
 @pytest.mark.asyncio
@@ -109,25 +115,32 @@ async def test_all_linked_commits_must_be_landed(repository: tuple[Path, str, st
 
 
 @pytest.mark.parametrize(
-    "commits,superseded_by,failed",
+    "commits,message",
     [
-        (("unlanded",), "#24970", ()),
-        (("unlanded",), None, ("integration_ancestry",)),
-        (("unlanded", "landed"), "#24970", ("integration_ancestry",)),
-        (("invalid",), "#24970", ("integration_ancestry",)),
+        (
+            ("unlanded",),
+            "Unlink linked commits with unlink_commit before a no-work close.",
+        ),
+        (
+            ("landed",),
+            "Landed commits cannot close as superseded; close with reason done.",
+        ),
+        (
+            ("unlanded", "landed"),
+            "Landed commits cannot close as superseded; close with reason done.",
+        ),
     ],
 )
 @pytest.mark.asyncio
-async def test_superseded_close_waives_only_unlanded_candidates(
+async def test_no_work_close_refuses_every_linked_commit(
     repository: tuple[Path, str, str],
     commits: tuple[str, ...],
-    superseded_by: str | None,
-    failed: tuple[str, ...],
+    message: str,
 ) -> None:
     from gobby.tasks.close_invariants import evaluate_close_invariants
 
     repo, landed, unlanded = repository
-    shas = {"landed": landed, "unlanded": unlanded, "invalid": "0" * 40}
+    shas = {"landed": landed, "unlanded": unlanded}
     result = await evaluate_close_invariants(
         open_children=[],
         commit_shas=[shas[name] for name in commits],
@@ -137,9 +150,10 @@ async def test_superseded_close_waives_only_unlanded_candidates(
         integration_ref="refs/heads/integration",
         required_steps=(),
         missing_steps=(),
-        superseded_by=superseded_by,
     )
-    assert tuple(gate.name for gate in result.all_failures) == failed
+    (gate,) = result.all_failures
+    assert gate.name == "integration_ancestry"
+    assert gate.message == message
 
 
 @pytest.mark.asyncio
@@ -432,6 +446,109 @@ def _set_close_policy(db: HubDatabase, project_id: str, policy: dict[str, Any]) 
     marker = Path(require_root(db, project_id, require_machine_id())) / ".gobby" / "project.json"
     data = json.loads(marker.read_text(encoding="utf-8"))
     marker.write_text(json.dumps({**data, "task_close_policy": policy}), encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_unlinked_superseded_task_closes_with_no_work_records(
+    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
+    from gobby.tasks.close_invariants import evaluate_close_invariants
+    from gobby.tasks.commit_unlink import unlink_commit_audited
+    from gobby.tasks.step_records import (
+        StepSubmission,
+        TaskStep,
+        record_task_step,
+        task_step_requirements,
+    )
+    from tests.tasks.test_step_records import _Seats
+
+    monkeypatch.setattr(
+        "gobby.tasks.land_commit.main_checkout_target",
+        AsyncMock(side_effect=ValueError("no registered checkout")),
+    )
+    project_id = sample_project["id"]
+    manager = LocalTaskManager(temp_db)
+    _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
+    seats = _Seats(temp_db, project_id)
+    developer = seats.add("superseded-developer", ["implementation"])
+    reviewer = seats.add("superseded-reviewer", ["review"])
+    closer = seats.add("superseded-closer", ["closing"])
+    task = manager.create_task(
+        project_id, "Superseded candidate", category="research", validation_criteria="Moot."
+    )
+    candidate = "a" * 40
+    manager.link_commit(task.id, candidate)
+    record_task_step(
+        temp_db,
+        task_id=task.id,
+        session_id=developer,
+        step="implementation",
+        submission=StepSubmission(
+            status="pending",
+            epoch=1,
+            round_number=1,
+            feedback="The implementation is pending.",
+            commit_sha=candidate,
+        ),
+    )
+    assert "implementation" in task_step_requirements(temp_db, manager.get_task(task.id)).missing
+
+    await unlink_commit_audited(
+        manager,
+        manager.get_task(task.id),
+        candidate,
+        reason="Superseded by #24970",
+        actor=developer,
+    )
+    unlinked = manager.get_task(task.id)
+    assert not unlinked.commits
+    approvals: tuple[tuple[TaskStep, str], ...] = (
+        ("implementation", developer),
+        ("review", reviewer),
+        ("closing", closer),
+    )
+    for step, session_id in approvals:
+        record_task_step(
+            temp_db,
+            task_id=task.id,
+            session_id=session_id,
+            step=step,
+            submission=StepSubmission(
+                status="approved",
+                epoch=1,
+                round_number=1,
+                feedback=f"The {step} step closes as superseded.",
+                disposition="superseded",
+            ),
+        )
+    requirements = task_step_requirements(temp_db, unlinked)
+    checklist = await evaluate_close_invariants(
+        open_children=[],
+        commit_shas=[],
+        reason="superseded",
+        attributed_checkouts={},
+        integration_repo_path=None,
+        integration_ref=None,
+        required_steps=requirements.required,
+        missing_steps=requirements.missing,
+    )
+    assert checklist.ready, requirements.missing
+
+    closed = manager.close_task(
+        task.id,
+        reason="superseded",
+        closed_ancestors=[],
+        closing_note="closed as superseded; superseded by #24970",
+    )
+    assert closed.closed_at is not None
+    events = TaskLifecycleEventManager(temp_db).list_lifecycle_events(task.id)
+    unlinks = [event for event in events if event.to_state == "commit:unlinked"]
+    assert [(event.by_actor, event.reason) for event in unlinks] == [
+        (developer, f"Unlinked {candidate}: Superseded by #24970")
+    ]
+    closing = [event for event in events if event.to_state == "closed"]
+    assert [event.reason for event in closing] == ["closed as superseded; superseded by #24970"]
 
 
 def test_last_child_close_leaves_a_parent_without_records_open(
