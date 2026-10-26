@@ -1,4 +1,4 @@
-use gobby_core::domain_error::{mcp, DomainError, DomainErrorClass};
+use gobby_core::domain_error::{DomainError, DomainErrorClass, mcp};
 use serde_json::json;
 
 /// Driver, SQL and connection-string text that must never reach an operator
