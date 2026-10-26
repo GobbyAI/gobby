@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from scripts.parity_waivers import Waiver
+from scripts.parity_waivers import DIFF, NATIVE_EXTENSION, PASSED, WAIVED, Waiver, WaiverError
 
 CORPUS_DIR = Path(__file__).resolve().parent / "http"
 MANIFEST_NAME = "manifest.json"
@@ -282,10 +282,36 @@ class ReplayResult:
     decision: str | None = None
 
 
+def _normalized_response(case: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
+    document = {"response": copy.deepcopy(dict(response))}
+    normalized: dict[str, Any] = _normalized(document, case["mask"])["response"]
+    return normalized
+
+
 def classify_replay(
     case: Mapping[str, Any],
     actual: Mapping[str, Any],
     waivers: Mapping[str, Waiver],
 ) -> ReplayResult:
-    """Behaviour-free stub: classification lands with the developer's implementation."""
-    return ReplayResult(outcome="")
+    """Classify one replayed case against Python, or against its native contract when waived.
+
+    An unwaived case passes only when the actual response matches the recorded Python response.
+    A waived case cites its waiver and asserts the native response it must match. A native-extension
+    waiver never reports Python success.
+    """
+    waiver_id = case.get("waiver")
+    if waiver_id is None:
+        expected = normalize_case(case)["response"]
+        if _normalized_response(case, actual) == expected:
+            return ReplayResult(outcome=PASSED)
+        return ReplayResult(outcome=DIFF)
+    if waiver_id not in waivers:
+        raise WaiverError(f"Case cites unknown waiver {waiver_id!r}")
+    native = case.get("native_response")
+    if native is None:
+        raise CorpusError(f"Waived case {waiver_id!r} must assert its native_response")
+    waiver = waivers[waiver_id]
+    if _normalized_response(case, actual) != _normalized_response(case, native):
+        return ReplayResult(outcome=DIFF)
+    outcome = NATIVE_EXTENSION if waiver.native_extension else WAIVED
+    return ReplayResult(outcome=outcome, waiver=waiver_id, decision=waiver.decision)

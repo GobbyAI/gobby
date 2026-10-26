@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 /// The log's file name under `<home>/logs/`.
@@ -112,16 +112,21 @@ pub struct WaivedCount {
 }
 
 impl Report {
-    /// True when the window holds records and none is a `diff`, `native_error` or
-    /// `mismatch`.
+    /// True when the window holds at least one `match` or `verified` record and none is a
+    /// `diff`, `native_error`, `mismatch` or unwaived `skipped`. A waived record neither passes
+    /// nor fails: it records a deliberate divergence, which is not parity evidence.
     pub fn passes(&self) -> bool {
-        self.total > 0
-            && self.families.values().flatten().all(|(outcome, _)| {
-                !matches!(
-                    outcome,
-                    Outcome::Diff | Outcome::NativeError | Outcome::Mismatch
-                )
-            })
+        let mut passed = false;
+        for outcome in self.families.values().flat_map(BTreeMap::keys) {
+            match outcome {
+                Outcome::Match | Outcome::Verified => passed = true,
+                Outcome::Waived => {}
+                Outcome::Diff | Outcome::NativeError | Outcome::Mismatch | Outcome::Skipped => {
+                    return false;
+                }
+            }
+        }
+        passed
     }
 }
 
@@ -144,6 +149,31 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
         report.first_ts = Some(report.first_ts.map_or(record.ts, |ts| ts.min(record.ts)));
         report.last_ts = Some(report.last_ts.map_or(record.ts, |ts| ts.max(record.ts)));
         report.total += 1;
+        if record.outcome == Outcome::Waived {
+            let waiver = record.waiver.as_ref().with_context(|| {
+                format!(
+                    "{}:{}: waived record names no waiver",
+                    path.display(),
+                    index + 1
+                )
+            })?;
+            let counted = report
+                .waived
+                .entry(waiver.id.clone())
+                .or_insert_with(|| WaivedCount {
+                    decision: waiver.decision.clone(),
+                    count: 0,
+                });
+            if counted.decision != waiver.decision {
+                bail!(
+                    "{}:{}: waiver {} cites two decisions",
+                    path.display(),
+                    index + 1,
+                    waiver.id
+                );
+            }
+            counted.count += 1;
+        }
         *report
             .families
             .entry(record.family)

@@ -17,6 +17,7 @@ from scripts.generate_parity_ledger import (
     ParityStatus,
     cli_verbs,
     collect_surfaces,
+    committed_ledger,
     http_surfaces,
     load_statuses,
     render_ledger,
@@ -41,8 +42,8 @@ def surfaces() -> set[str]:
 
 
 def test_committed_ledger_matches_current_public_inventory(surfaces: set[str]) -> None:
-    """Any inventory, mapping or generator drift must update the committed document."""
-    assert render_ledger(surfaces, load_statuses()) == LEDGER_PATH.read_bytes()
+    """Any inventory, mapping, waiver or generator drift must update the committed document."""
+    assert committed_ledger(surfaces) == LEDGER_PATH.read_bytes()
 
 
 def test_inventory_contains_all_four_protocols_and_terminal_flip(surfaces: set[str]) -> None:
