@@ -13,10 +13,13 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+from scripts.parity_waivers import Waiver
 
 CORPUS_DIR = Path(__file__).resolve().parent / "http"
 MANIFEST_NAME = "manifest.json"
@@ -268,3 +271,21 @@ def replay_case(
     response = send_case(client, case, operator=operator, grant=grant)
     expected: dict[str, Any] = normalize_case(case)["response"]
     return expected, normalize_response(case, response)
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    """How one replayed case classifies, with the waiver citation when one applies."""
+
+    outcome: str
+    waiver: str | None = None
+    decision: str | None = None
+
+
+def classify_replay(
+    case: Mapping[str, Any],
+    actual: Mapping[str, Any],
+    waivers: Mapping[str, Waiver],
+) -> ReplayResult:
+    """Behaviour-free stub: classification lands with the developer's implementation."""
+    return ReplayResult(outcome="")

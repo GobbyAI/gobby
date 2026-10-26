@@ -15,6 +15,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import click
@@ -30,6 +31,9 @@ from gobby.mcp_proxy.stdio_tools import register_proxy_tools
 from gobby.servers.app_factory import _register_mcp_http_route
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.server import WebSocketServer
+
+if TYPE_CHECKING:
+    from scripts.parity_waivers import Waiver
 
 ROOT = Path(__file__).resolve().parents[1]
 LEDGER_PATH = ROOT / "docs/contracts/parity-ledger.md"
@@ -183,7 +187,11 @@ def load_statuses(path: Path = MAPPING_PATH) -> dict[str, ParityStatus]:
     return statuses
 
 
-def render_ledger(surfaces: set[str], statuses: Mapping[str, ParityStatus]) -> bytes:
+def render_ledger(
+    surfaces: set[str],
+    statuses: Mapping[str, ParityStatus],
+    waivers: Mapping[str, Waiver] | None = None,
+) -> bytes:
     """Render stable rows and keep recorded drops after Python surface removal."""
     stale = set(statuses) - surfaces
     invalid = {

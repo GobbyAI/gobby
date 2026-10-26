@@ -24,6 +24,15 @@ pub enum Outcome {
     Verified,
     Mismatch,
     Skipped,
+    Waived,
+}
+
+/// The parity waiver a changed behaviour reports under: its exact manifest id and
+/// the decision citation that approved it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaiverRef {
+    pub id: String,
+    pub decision: String,
 }
 
 /// One log line. Carries no request or response body values.
@@ -37,6 +46,8 @@ pub struct Record {
     pub native_status: Option<u16>,
     pub proxied_status: Option<u16>,
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiver: Option<WaiverRef>,
 }
 
 /// Appends records to `<home>/logs/front-door-compare.jsonl`.
@@ -89,6 +100,15 @@ pub struct Report {
     pub last_ts: Option<i64>,
     pub total: u64,
     pub families: BTreeMap<String, BTreeMap<Outcome, u64>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub waived: BTreeMap<String, WaivedCount>,
+}
+
+/// How many waived records cite one waiver id, and the decision it cites.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WaivedCount {
+    pub decision: String,
+    pub count: u64,
 }
 
 impl Report {

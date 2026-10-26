@@ -421,6 +421,7 @@ fn record(
         native_status: native_status.map(|status| status.as_u16()),
         proxied_status: proxied_status.map(|status| status.as_u16()),
         detail,
+        waiver: None,
     });
 }
 
