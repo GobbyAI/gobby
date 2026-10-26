@@ -281,7 +281,12 @@ array of 2 to 10 non-empty levels, lowest first. The strict response profile req
 are exactly `"0"` through `"n-1"`; the legend matches the requested levels. Probabilities
 and confidence must be finite in [0,1], with the probabilities summing to 1 within 0.001.
 The finite score lies in [0,n-1] and equals the probability-weighted index within
-`(n-1) * 0.001`. A missing or inconsistent field raises `DecisionsUnavailable("parse")`.
+`(n-1) * 0.001` for higher-precision answers. When the score and every probability
+lie on the hundredth grid, the tolerance is `0.005 * (floor(n²/4) + 1)`, plus
+`1e-12` for binary representation. This compatibility profile accounts for the
+observed rounding in the [2026-10-26 OpenRouter capture](community-choice-comparison-2026-10-26.md#openrouter-score-rounding).
+It is an observed wire assumption, not a vendor precision guarantee. A missing
+or inconsistent field raises `DecisionsUnavailable("parse")`.
 The returned answer omits the validated legend. Consumers compare `score / (n-1)` with
 their position threshold; a Score position is not Choice confidence.
 
