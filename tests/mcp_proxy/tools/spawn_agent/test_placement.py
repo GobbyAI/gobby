@@ -1231,7 +1231,7 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
     assert h.runs.start(manager.id) is not None
     assert h.runs.has_active_run_for_task(task.id)
     # A pane exists for the surviving manager, as it does on a real team re-run.
-    _held_seat(h, "placed/seat", state="exited")
+    _held_seat(h, f"Dev Team - #{task.seq_num}", state="exited")
     definition = make_agent_definition(name="developer", prompts={"agent": "Develop the task"})
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
@@ -1249,7 +1249,15 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
             "inputs": inputs,
             "steps": {
                 "admit": {"output": output},
-                "guard": {"output": {"workspace_id": h.workspace.id}},
+                "guard": {
+                    "output": {
+                        "workspace_id": h.workspace.id,
+                        "live": {},
+                        "launch": ["developer"],
+                        "tab_exists": True,
+                        "tab_title": f"Dev Team - #{task.seq_num}",
+                    }
+                },
             },
             "invocation_id": step_invocation_id(execution.id, "developer"),
         },
@@ -1414,6 +1422,27 @@ class _TmuxCommandRecorder:
         monkeypatch.setattr(spawn_utils, "popen", guarded_popen)
         monkeypatch.setattr(spawn_utils, "create_subprocess_exec", guarded_subprocess_exec)
         monkeypatch.setattr(spawn_utils, "create_session_exec", guarded_session_exec)
+
+
+@pytest.mark.parametrize(
+    ("defined", "expected"),
+    [(True, "Developer"), (False, "Task #25128 - seat slug")],
+)
+async def test_split_pane_takes_the_definition_name_for_a_defined_seat(
+    placed: _Harness, defined: bool, expected: str
+) -> None:
+    h = placed
+    beside = _held_seat(h, "beside", state="exited")
+    overrides: dict[str, Any] = {"agent_lookup_name": "developer"}
+    if defined:
+        overrides["agent_body"] = make_agent_definition(
+            name="developer", prompts={"agent": "Work the seat"}
+        )
+    result = await _spawn(h, _split(beside.id, title="Task #25128 - seat slug"), **overrides)
+
+    assert result["success"] is True, result
+    labels = {pane.label for pane in h.workspaces.list_panes(h.workspace.id)}
+    assert expected in labels
 
 
 @pytest.mark.parametrize("kind", ["unplaced", "tab", "split"])

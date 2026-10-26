@@ -56,26 +56,35 @@ def test_recompute_automatic_title_returns_to_the_applied_definition_title(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
 ) -> None:
+    """A defined seat keeps its definition title through claim and close.
+
+    Contract: docs/contracts/seat-titles.md, rule 1. Task text never reaches the title.
+    """
     from gobby.workflows.state_manager import SessionVariableManager
 
     session = _session(session_manager, sample_project["id"], "definition-after-close")
     SessionVariableManager(session_manager.db).merge_variables(
-        session.id, {DEFINITION_TITLE_VARIABLE: "Lane Manager"}
+        session.id, {DEFINITION_TITLE_VARIABLE: "Dev Manager"}
     )
+    seated = recompute_automatic_title(session_manager, session.id)
+    assert seated.title == "Dev Manager" and seated.title_source == "definition"
+
     task_manager = LocalTaskManager(session_manager.db)
     task = task_manager.create_task(
         sample_project["id"],
         "Short-lived work",
         claimed_by_session_id=session.id,
-        validation_criteria="The task title shows only while the claim is open.",
+        validation_criteria="The seat title stays the definition name while the claim is open.",
     )
     claimed = update_title_for_claim(session_manager, session.id, task)
-    assert claimed is not None and claimed.title_source == "task"
+    assert claimed is not None
+    assert claimed.title == "Dev Manager"
+    assert claimed.title_source == "definition"
 
     task_manager.close_task(task.id, force=True, closed_in_session_id=session.id)
     recomputed = recompute_automatic_title(session_manager, session.id)
 
-    assert recomputed.title == "Lane Manager"
+    assert recomputed.title == "Dev Manager"
     assert recomputed.title_source == "definition"
 
     SessionVariableManager(session_manager.db).merge_variables(
@@ -84,6 +93,24 @@ def test_recompute_automatic_title_returns_to_the_applied_definition_title(
     unnamed = recompute_automatic_title(session_manager, session.id)
     assert unnamed.title == f"{sample_project['name']}#{session.seq_num}: Codex"
     assert unnamed.title_source == "provisional"
+
+
+def test_claim_titles_a_session_without_a_definition_with_its_task(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    """Control for rule 1: only sessions with no agent definition take the claimed-task title."""
+    session = _session(session_manager, sample_project["id"], "undefined-claim")
+    task = LocalTaskManager(session_manager.db).create_task(
+        sample_project["id"],
+        "Operator work",
+        claimed_by_session_id=session.id,
+        validation_criteria="Undefined sessions keep claimed-task titling.",
+    )
+    claimed = update_title_for_claim(session_manager, session.id, task)
+    assert claimed is not None
+    assert claimed.title_source == "task"
+    assert "Operator work" in claimed.title
 
 
 def test_reasoning_effort_prefers_effective_then_requested() -> None:

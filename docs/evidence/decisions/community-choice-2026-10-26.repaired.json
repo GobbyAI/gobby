@@ -1,0 +1,72 @@
+{
+  "model": "clef",
+  "state": {
+    "communities": {
+      "c43": {
+        "representatives": [
+          "web/src/types/chat.ts",
+          "web/src/hooks/useChat/sessionRecords.ts",
+          "web/src/hooks/useChat/conversationPersistence.ts",
+          "web/src/hooks/useChat/actionTypes.ts",
+          "web/src/hooks/useChat/pendingProxyMessages.ts"
+        ],
+        "members": [
+          "web/src/components/__tests__/ProjectSelector.test.tsx",
+          "web/src/components/activity/__tests__/useFileChanges.sessionScope.test.tsx",
+          "web/src/components/app/__tests__/useAppSessionActions.test.ts",
+          "web/src/components/app/useAppSessionActions.ts",
+          "web/src/components/chat/ChatInputQueuedFiles.tsx",
+          "web/src/components/chat/useChatInputAttachments.ts",
+          "web/src/hooks/__tests__/contextUsageState.test.ts",
+          "web/src/hooks/__tests__/useChat.core.test.ts",
+          "web/src/hooks/__tests__/useChat.toolChainComposition.test.ts",
+          "web/src/hooks/__tests__/useContinuationRestore.test.ts",
+          "web/src/hooks/useChat.ts",
+          "web/src/hooks/useChat/__tests__/core.contextUsage.test.ts",
+          "web/src/hooks/useChat/actionControls.ts",
+          "web/src/hooks/useChat/actionConversations.ts",
+          "web/src/hooks/useChat/actionMessage.ts",
+          "web/src/hooks/useChat/actionPayloads.ts",
+          "web/src/hooks/useChat/actionPlanApproval.ts",
+          "web/src/hooks/useChat/actions.ts",
+          "web/src/hooks/useChat/callbacksState.ts",
+          "web/src/hooks/useChat/contextUsage.ts",
+          "web/src/hooks/useChat/contextUsageState.ts",
+          "web/src/hooks/useChat/core.ts",
+          "web/src/hooks/useChat/handlers.ts",
+          "web/src/hooks/useChat/lifecycle.ts",
+          "web/src/hooks/useChat/logger.ts",
+          "web/src/hooks/useChat/providerAgentState.ts",
+          "web/src/hooks/useChat/sessionAttachmentState.ts",
+          "web/src/hooks/useChat/sessionIdentityState.ts",
+          "web/src/hooks/useChat/sessionViewing.ts",
+          "web/src/hooks/useChat/transport.ts",
+          "web/src/hooks/useChat/transportConversationEvents.ts",
+          "web/src/hooks/useChat/transportEventTypes.ts",
+          "web/src/hooks/useChat/transportLifecycle.ts",
+          "web/src/hooks/useChat/transportProxyEvents.ts",
+          "web/src/hooks/useChat/transportRouter.ts"
+        ],
+        "member_count": 53,
+        "omitted_member_count": 13,
+        "generated": {
+          "name": "Chat Session Management",
+          "rationale": ""
+        }
+      }
+    }
+  },
+  "questions": {
+    "c43": {
+      "type": "choice",
+      "instructions": "Choose the name that best describes community c43.",
+      "criteria": {
+        "generated": "Chat Session Management",
+        "deterministic_0": "web/src/hooks/useChat",
+        "deterministic_1": "chat",
+        "deterministic_2": "useChat",
+        "deterministic_3": "src"
+      }
+    }
+  }
+}

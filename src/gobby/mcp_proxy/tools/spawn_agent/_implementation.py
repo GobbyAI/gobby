@@ -36,6 +36,7 @@ from gobby.providers.version_gate import (
     ensure_agy_support,
     peek_agy_support,
 )
+from gobby.sessions.title_lifecycle import definition_display_name
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.machine_id import get_machine_id, require_machine_id
@@ -68,7 +69,6 @@ from ._resume import (
     ResumeSeatGone,
     resolve_seat_resume,
     resume_isolation,
-    resumed_seat_lane,
     resumed_seat_plan,
     resumed_seat_task_id,
 )
@@ -139,7 +139,6 @@ async def spawn_agent_impl(
     write_paths_reason: str | None = None,
     reserved_run_id: str | None = None,
     placement: dict[str, Any] | None = None,
-    lane: str | None = None,
     agent_pane_reserver: AgentPaneReserver | None = None,
     project_context_authoritative: bool = False,
     project_path_explicit: bool = True,
@@ -159,7 +158,6 @@ async def spawn_agent_impl(
                 provider,
                 runner.run_storage,
                 agent_body,
-                lane,
                 live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
@@ -409,6 +407,7 @@ async def spawn_agent_impl(
         project_context_authoritative=project_context_authoritative,
         session_manager=session_manager,
         agent_name=requested_agent_name,
+        seat_title=definition_display_name(agent_body.name) if agent_body is not None else None,
         resume_session_id=resume_session_id,
         replaces_tab=replaces_tab,
     )
@@ -656,8 +655,6 @@ async def spawn_agent_impl(
         resume_metadata[GRANT_KEY] = write_grant
     if allow_closed_task:
         resume_metadata["allow_closed_task"] = True
-    if seat_lane := (lane or "").strip() or resumed_seat_lane(resume_target, runner.run_storage):
-        resume_metadata["lane"] = seat_lane
     if resume_target is not None:
         resume_metadata.update(
             {
@@ -688,6 +685,10 @@ async def spawn_agent_impl(
         task_id=resolved_task_id,
         task_ref=task_id,
         cleanup=cleanup_unattached_spawn,
+        session_manager=session_manager,
+        caller_ref=parent_session_id,
+        agent_name=requested_agent_name,
+        resume_session_id=resume_session_id,
     )
     if lease_response is not None:
         return lease_response if placed is None else task_active_refusal(lease_response)

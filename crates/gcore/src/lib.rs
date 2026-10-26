@@ -11,6 +11,7 @@ pub mod bootstrap;
 pub mod cli_contract;
 pub mod daemon_url;
 pub mod database_concurrency;
+pub mod domain_error;
 pub mod project;
 
 // Always available - lightweight foundation modules.

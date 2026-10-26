@@ -4,31 +4,23 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-import yaml
 
 from gobby.config.persistence import MemoryConfig
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
-from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.memory.manager import MemoryManager
 from gobby.storage.definitions import AgentDefinitionManager
-from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.definitions import RuleDefinitionBody, split_rule_definition_data
-from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
@@ -372,78 +364,3 @@ async def test_create_task_in_other_project_skips_caller_overlay(world: CrossPro
     assert created.claimed_by_session_id is None
     assert not result.get("targets_not_found")
     assert "cannot claim a task in a different project" in result["warning"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("target_has_lane", [False, True])
-async def test_lane_rule_uses_target_project_lanes(
-    world: CrossProjectWorld, target_has_lane: bool
-) -> None:
-    caller = world.sessions.get(world.caller_id)
-    assert caller is not None
-    world.tasks.create_task(caller.project_id, "Caller lane", task_type="epic", labels=["lane"])
-    if target_has_lane:
-        world.tasks.create_task(
-            world.task.project_id, "Target lane", task_type="epic", labels=["lane"]
-        )
-    rule_file = Path(__file__).parents[4] / (
-        "src/gobby/install/shared/workflows/rules/task-enforcement/refuse-task-outside-lane.yaml"
-    )
-    document = yaml.safe_load(rule_file.read_text())
-    for name, rule_data in document["rules"].items():
-        body, metadata = split_rule_definition_data(rule_data)
-        RuleDefinitionManager(world.db).create(
-            name=name,
-            definition_json=RuleDefinitionBody.model_validate(body).model_dump_json(),
-            priority=metadata["priority"],
-            enabled=metadata["enabled"],
-            tags=document["tags"],
-        )
-    arguments = {
-        "title": "Outer project destination",
-        "category": "docs",
-        "validation_criteria": "Create work in the target project.",
-    }
-    event = HookEvent(
-        event_type=HookEventType.BEFORE_TOOL,
-        session_id=world.caller_id,
-        source=SessionSource.CODEX,
-        timestamp=datetime.now(UTC),
-        project_id=caller.project_id,
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "server_name": "gobby-tasks",
-                "tool_name": "create_task",
-                "project_id": world.task.project_id,
-                "arguments": arguments,
-            },
-        },
-    )
-    response = await RuleEngine(world.db, task_manager=world.tasks).evaluate(
-        event, session_id=world.caller_id, variables={}
-    )
-    if target_has_lane:
-        assert response.decision == "block"
-        assert "Target lane" in (response.reason or "")
-        assert "Caller lane" not in (response.reason or "")
-        return
-    assert response.decision != "block", response.reason
-    internal = InternalRegistryManager()
-    internal.add_registry(create_task_registry(world.tasks))
-    manager = MagicMock()
-    manager.session_manager = world.sessions
-    manager.project_id = caller.project_id
-    service = ToolProxyService(manager, internal_manager=internal)
-    with session_context_for_test(world.caller_id):
-        result = await service.call_tool(
-            "gobby-tasks",
-            "create_task",
-            arguments,
-            session_id=world.caller_id,
-            project_id=world.task.project_id,
-        )
-    assert "id" in result, result
-    created = world.tasks.get_task(result["id"])
-    assert created.project_id == world.task.project_id
-    assert created.created_in_session_id == world.caller_id

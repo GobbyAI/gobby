@@ -105,7 +105,8 @@ def register_agent_lifecycle_tools(
             "Include current continuation state and fresh epoch friction observations, including "
             "resolved friction. Never copy earlier reflections; record only actual recurrence. "
             "For necessary live detail after pruning, create or update permitted Markdown working "
-            "notes and include their project-relative path in references. Never move cumulative "
+            "notes in your agent workspace folder and include their path in references. "
+            "Never move cumulative "
             "history into notes. Use readable sentences; leave unneeded optional fields empty."
         ),
     )

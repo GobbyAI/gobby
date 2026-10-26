@@ -3,31 +3,28 @@ type: pipeline
 version: "1.0"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
-  lane tab in the shared checkout. Each seat runs its own agent definition.
+  'Team Planning' tab in the shared checkout. Each seat runs its own agent definition, and
+  each seat pane takes its definition name (docs/contracts/seat-titles.md).
   Approved seats: plan-writer, plan-adversary, plan-enhancer.
 
-  Placement: the plan writer opens the lane tab, or splits the lane_pane when one is
+  Placement: the plan writer opens the Team Planning tab, or splits the seat_pane when one is
   supplied; the plan adversary splits right of the plan writer, and the plan enhancer splits
   right of the plan writer or, without one, the plan adversary. A seat requested without the
-  plan writer splits from lane_pane when one is supplied and otherwise opens its own tab.
+  plan writer splits from seat_pane when one is supplied and otherwise opens its own tab.
   Relaunch missing seats with a fresh run that names them in `seats`; a failed runbook
-  execution is never resumed. Supply lane_pane to add seats to an existing tab across runs.
+  execution is never resumed. Supply seat_pane to add seats to an existing tab across runs.
 tags: [runbook]
 resume_on_restart: true
 
 inputs:
-  lane:
-    type: string
-    required: true
-    description: "Lane for the tab and seat titles"
   workspace:
     type: string
     required: true
     description: "Existing target workspace UUID or ref"
-  lane_pane:
+  seat_pane:
     type: string
     default: null
-    description: "Existing lane pane to split; omit to open one lane tab"
+    description: "Existing pane to split; omit to open the Team Planning tab"
   project_path:
     type: string
     required: true
@@ -89,13 +86,13 @@ steps:
         require_report_to: true
         catalogue:
           - name: plan-writer
-            title: "${{ 'Lane ' + inputs.lane + ' plan writer' }}"
+            title: Plan Writer
             agent: plan-writer
           - name: plan-adversary
-            title: "${{ 'Lane ' + inputs.lane + ' plan adversary' }}"
+            title: Plan Adversary
             agent: plan-adversary
           - name: plan-enhancer
-            title: "${{ 'Lane ' + inputs.lane + ' plan enhancer' }}"
+            title: Plan Enhancer
             agent: plan-enhancer
 
   - id: plan-writer
@@ -105,7 +102,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-writer
-        title: "${{ 'Lane ' + inputs.lane + ' plan writer' }}"
         provider: "${{ inputs.plan_writer_provider }}"
         model: "${{ inputs.plan_writer_model }}"
         reasoning_effort: "${{ inputs.plan_writer_reasoning_effort }}"
@@ -115,10 +111,10 @@ steps:
         reserved_run_id: "${{ invocation_id }}"
         prompt: "You are the plan writer seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
-          ${{ {'split': {'pane': inputs.lane_pane,
-          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan writer'}}
-          if inputs.lane_pane
-          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+          ${{ {'split': {'pane': inputs.seat_pane,
+          'axis': 'right', 'title': 'Plan Writer'}}
+          if inputs.seat_pane
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
 
   - id: plan-adversary
     condition: "${{ 'plan-adversary' in inputs.seats.split(',') }}"
@@ -127,7 +123,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-adversary
-        title: "${{ 'Lane ' + inputs.lane + ' plan adversary' }}"
         provider: "${{ inputs.plan_adversary_provider }}"
         model: "${{ inputs.plan_adversary_model }}"
         reasoning_effort: "${{ inputs.plan_adversary_reasoning_effort }}"
@@ -137,10 +132,10 @@ steps:
         reserved_run_id: "${{ invocation_id }}"
         prompt: "You are the plan adversary seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
-          ${{ {'split': {'pane': inputs.lane_pane or (steps['plan-writer'].output.pane_ref),
-          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan adversary'}}
-          if inputs.lane_pane or 'plan-writer' in inputs.seats.split(',')
-          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+          ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref),
+          'axis': 'right', 'title': 'Plan Adversary'}}
+          if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
 
   - id: plan-enhancer
     condition: "${{ 'plan-enhancer' in inputs.seats.split(',') }}"
@@ -149,7 +144,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-enhancer
-        title: "${{ 'Lane ' + inputs.lane + ' plan enhancer' }}"
         provider: "${{ inputs.plan_enhancer_provider }}"
         model: "${{ inputs.plan_enhancer_model }}"
         reasoning_effort: "${{ inputs.plan_enhancer_reasoning_effort }}"
@@ -159,9 +153,9 @@ steps:
         reserved_run_id: "${{ invocation_id }}"
         prompt: "You are the plan enhancer seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
-          ${{ {'split': {'pane': inputs.lane_pane or (steps['plan-writer'].output.pane_ref
+          ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref
           if 'plan-writer' in inputs.seats.split(',') else steps['plan-adversary'].output.pane_ref),
-          'axis': 'right', 'title': 'Lane ' + inputs.lane + ' plan enhancer'}}
-          if inputs.lane_pane or 'plan-writer' in inputs.seats.split(',')
+          'axis': 'right', 'title': 'Plan Enhancer'}}
+          if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
           or 'plan-adversary' in inputs.seats.split(',')
-          else {'tab': {'workspace': inputs.workspace, 'title': 'Lane ' + inputs.lane}} }}
+          else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
