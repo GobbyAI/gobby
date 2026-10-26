@@ -16,6 +16,43 @@ The parser and the fixtures under `tests/ai/fixtures/` use the field names below
 - Fixtures prove conformance to the documented shapes only. They make no claim that any
   server is compatible at runtime. The Activation Gate's live capture establishes that.
 
+## Gobby request and community evidence bounds
+
+`ai.decisions.max_request_bytes` is an optional positive limit on the full compact
+UTF-8 JSON body, including image assets. It defaults to `null` (no byte limit).
+When set, it must be at least `4 * max_input_tokens + 3`; the token-context
+constraints still apply independently. Both `request_fits` and dispatch check
+the body before any HTTP client, model-card fetch or decision POST. Oversize
+returns `DecisionsUnavailable("oversize")` without opening cooldown. Retries send
+the same validated bytes. A backend HTTP 413 returns `http_status` without retry
+and opens the configured failure cooldown.
+
+The Ollama endpoint configuration uses the observed 64 KiB cap from
+[Run 9](systemone-live.md#run-9-ollama-raw-over-limit-probe-2026-10-25):
+
+```yaml
+ai:
+  decisions:
+    api_base: http://127.0.0.1:11434
+    wire_api: systemone
+    model: clef:27b
+    identity_contract: response_version
+    max_input_tokens: 8192
+    max_request_bytes: 65536
+```
+
+This is configuration guidance, not a live activation or an additional capture.
+The byte limit does not establish model context capacity.
+
+Community Choice state carries the generated rationale; candidate names occur
+once in the question criteria, preserving `generated`, `deterministic_<i>` and
+`c<ID>` answer mapping. Choice, Noul carry and Score sufficiency evidence share
+a 40-file total and an 8,000 JSON-escaped-character limit per community.
+Representatives remain whole and precede sorted, disjoint remaining members.
+`member_count` and `omitted_member_count` disclose the selection. Required evidence
+that cannot fit returns typed `oversize` before inference; paths are never cut.
+Generation schema accepts a 120-character rationale and rejects 121 characters.
+
 ## 1. TypeSafe `systemone` (Kev reference wire)
 
 - URL: `{api_base}/v1/systemone`. The default wire, `wire_api: systemone`.
