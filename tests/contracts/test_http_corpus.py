@@ -305,6 +305,63 @@ def test_case_replays_equal(boundary: BoundaryHarness) -> None:
 
 
 @pytest.mark.e2e
+@pytest.mark.parametrize("drift", [False, True])
+def test_manifest_loop_reports_waivers_and_rejects_native_drift(
+    boundary: BoundaryHarness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    drift: bool,
+) -> None:
+    health = copy.deepcopy(next(case for case in PYTHON_CASES if case["name"] == "health_ok"))
+    with _client(boundary) as client:
+        native = http_corpus.normalize_response(
+            health, http_corpus.send_case(client, health, **_credentials(boundary))
+        )
+    health.update(name="health_waived", waiver="health.api.live-contract", native_response=native)
+    health["response"]["status"] = 599  # Matching Python cannot accidentally satisfy this case.
+    if drift:
+        health["native_response"]["status"] = 598
+    _write_corpus(
+        tmp_path,
+        version=2,
+        families={"health": {"origin": "python", "parity": "native"}},
+        cases=[health],
+    )
+    waiver_path = tmp_path / "parity-waivers.json"
+    waiver_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "waivers": [
+                    {
+                        "id": "health.api.live-contract",
+                        "surface": "HTTP GET /api/health",
+                        "behaviour": "Health answers the native contract.",
+                        "decision": "#24963",
+                        "replacement": "Native health response.",
+                    }
+                ],
+            }
+        )
+    )
+    waivers = http_corpus.load_replay_waivers(waiver_path)
+    monkeypatch.setattr(
+        "tests.contracts.test_http_corpus.PYTHON_CASES", http_corpus.load_cases(tmp_path)
+    )
+    monkeypatch.setattr(http_corpus, "load_replay_waivers", lambda: waivers)
+    if drift:
+        with pytest.raises(AssertionError, match="health_waived"):
+            test_case_replays_equal(boundary)
+    else:
+        test_case_replays_equal(boundary)
+        report = capsys.readouterr().out
+        assert "Waived" in report
+        assert "health.api.live-contract" in report
+        assert "#24963" in report
+
+
+@pytest.mark.e2e
 def test_waived_replay_classifies_against_native_contract(
     boundary: BoundaryHarness, tmp_path: Path
 ) -> None:
