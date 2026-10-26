@@ -599,6 +599,10 @@ async def test_no_composer_reader_is_unverified_not_submitted(
 
     assert result.ok is False
     assert result.error_code == "submit_unverified"
+    assert result.reason == (
+        "the prompt was written and Enter sent, but grok has no composer reader "
+        "to verify the text arrived"
+    )
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter"]
     assert pane.probes == 0

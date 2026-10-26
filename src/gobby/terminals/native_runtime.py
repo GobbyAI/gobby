@@ -571,10 +571,15 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
         submit: bool,
         operation_seq: int | None = None,
     ) -> WriteOutcome:
+        # One bracketed paste, not a typed stream: a long typed kickoff loses its head
+        # in Claude Code (#23445). The host wraps the paste only if the child enabled mode 2004.
+        encoded = text.encode("utf-8")
+        if len(encoded) > MAX_INPUT_PAYLOAD_BYTES:
+            raise InputPayloadTooLargeError("paste exceeds 1 MiB UTF-8")
         return await self._write(
             terminal,
-            kind="text",
-            data=text.encode("utf-8"),
+            kind="paste",
+            data=encoded,
             submit=submit,
             operation_seq=operation_seq,
         )
@@ -608,11 +613,11 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
             host_id = self._host_id(terminal)
         except HostUnavailableError as exc:
             raise TerminalWriteError(stage="none") from exc
-        if kind == "text" and submit and operation_seq is None:
+        if kind in ("text", "paste") and submit and operation_seq is None:
             try:
                 await self._client.write(
                     host_terminal_id=host_id,
-                    kind="text",
+                    kind=kind,
                     data=data,
                     submit=False,
                 )
