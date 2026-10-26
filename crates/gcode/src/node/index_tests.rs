@@ -16,7 +16,7 @@ use crate::index_lock::project_lock_key;
 use crate::node::hub::{HubScope, apply_index, plan_index};
 use crate::node::split::{index_files_in_two_halves, parse_facts};
 use crate::node::{
-    FileHash, FinalBatch, IndexApplyRequest, IndexApplyResponse, IndexPlanRequest,
+    FileFacts, FileHash, FinalBatch, IndexApplyRequest, IndexApplyResponse, IndexPlanRequest,
     IndexPlanResponse, NodeScope, ParsedFileFacts, RouteError,
 };
 
@@ -192,6 +192,90 @@ fn batched_final_batch_completes_with_facts_from_earlier_requests() -> anyhow::R
     assert!(done.reparse.is_empty(), "{:?}", done.reparse);
     let outcome = done.outcome.expect("the final batch completes the run");
 
+    let expected = index_files(local.request(true), &h.ctx(&local), IndexOptions::default())?;
+    assert_eq!(outcome_counts(&outcome), outcome_counts(&expected));
+    assert_eq!(h.rows(&project)?, h.rows(&local)?);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn batched_unhashed_preserves_state_without_reviving_absent_files() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let project = h.register("batched-unhashed")?;
+    index_files(
+        project.request(true),
+        &h.ctx(&project),
+        IndexOptions::default(),
+    )?;
+
+    let paths = FIXTURE_PATHS.map(str::to_string);
+    let first = h.apply(
+        &project,
+        false,
+        vec![
+            ParsedFileFacts {
+                path: paths[0].clone(),
+                facts: FileFacts::Unhashed,
+            },
+            ParsedFileFacts {
+                path: paths[1].clone(),
+                facts: FileFacts::Absent,
+            },
+        ],
+        None,
+    )?;
+    let batch = FinalBatch {
+        prior: first.partial,
+        prior_paths: paths.to_vec(),
+        ..final_batch(&[], &[])
+    };
+    let done = h.apply(&project, false, Vec::new(), Some(batch))?;
+    assert!(done.reparse.is_empty(), "{:?}", done.reparse);
+    assert!(done.outcome.is_some(), "the final batch completes the run");
+    let states = h.rows(&project)?.states;
+    assert_eq!(states.len(), 1, "only the unhashed file stays: {states:?}");
+    assert!(states[0].starts_with("src/lib.rs|"), "{states:?}");
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn prior_path_reparse_counts_each_file_once() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let project = h.register("prior-reparse")?;
+    let local = h.register("prior-reparse-local")?;
+    let files = project.hashes();
+    let paths = FIXTURE_PATHS.map(str::to_string);
+    let facts = parse_facts(&h.ctx(&project), &project.request(true), &paths)?;
+    let first = h.apply(&project, true, facts, None)?;
+    let prior = first.partial.expect("the first request reports its counts");
+
+    // A different writer removes one prior request's facts before finalization.
+    h.forget_facts(&project, &paths[0])?;
+    let batch = FinalBatch {
+        prior: Some(prior),
+        prior_paths: paths.to_vec(),
+        ..final_batch(&files, &paths)
+    };
+    let stale = h.apply(&project, true, Vec::new(), Some(batch.clone()))?;
+    assert_eq!(stale.reparse, vec![paths[0].clone()]);
+    assert!(stale.outcome.is_none(), "reparse postpones finalization");
+
+    // No facts were sent on the reparse pass, so the node retains the earlier counts.
+    // Resending just the missing path must replace its contribution, not add it twice.
+    let facts = parse_facts(&h.ctx(&project), &project.request(true), &stale.reparse)?;
+    let done = h.apply(&project, true, facts, Some(batch))?;
+    assert!(done.reparse.is_empty(), "{:?}", done.reparse);
+    let outcome = done.outcome.expect("retry completes the run");
     let expected = index_files(local.request(true), &h.ctx(&local), IndexOptions::default())?;
     assert_eq!(outcome_counts(&outcome), outcome_counts(&expected));
     assert_eq!(h.rows(&project)?, h.rows(&local)?);
