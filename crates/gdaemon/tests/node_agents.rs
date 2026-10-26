@@ -1471,6 +1471,10 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         prewarm_pre_commit_store: filled["prewarm_pre_commit_store"]
             .as_bool()
             .context("prewarm_pre_commit_store is not a bool")?,
+        // Null on every case but the workspace one: `as_str`/`as_u64` read null as absent.
+        definition: filled["definition"].as_str().map(str::to_owned),
+        session_seq: filled["session_seq"].as_u64(),
+        epic_seq: filled["epic_seq"].as_u64(),
     })
 }
 

@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from gobby.agents.agent_workspaces import epic_workspace_dir, session_workspace_dir
 from gobby.agents.cargo_target import (
     ensure_agent_cargo_target_dir,
     sandbox_checkout_cargo_target_dir,
@@ -314,6 +315,18 @@ def _pin_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> No
         monkeypatch.setenv(name, value)
 
 
+def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
+    """The seat's own and epic folders the spawn grants, from the case's sequence inputs."""
+    session_seq = inputs["session_seq"]
+    if session_seq is None:
+        return []
+    project_id = str(inputs["project_id"])
+    paths = [str(session_workspace_dir(project_id, inputs["definition"], int(session_seq)))]
+    if inputs["epic_seq"] is not None:
+        paths.append(str(epic_workspace_dir(project_id, int(inputs["epic_seq"]))))
+    return paths
+
+
 def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     """Replay the spawn-time chain the oracle runs for one srt launch."""
     provider = str(inputs["provider"])
@@ -332,6 +345,13 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     ):
         config = config.model_copy(
             update={"extra_write_paths": [*config.extra_write_paths, nextest_store]}
+        )
+    workspace_paths = [
+        path for path in _workspace_write_paths(inputs) if path not in config.extra_write_paths
+    ]
+    if workspace_paths:
+        config = config.model_copy(
+            update={"extra_write_paths": [*config.extra_write_paths, *workspace_paths]}
         )
 
     env["CARGO_TARGET_DIR"] = ensure_agent_cargo_target_dir(workspace, str(inputs["project_id"]))

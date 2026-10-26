@@ -35,6 +35,12 @@ pub struct PolicyInputs {
     pub websocket_port: u16,
     pub run_id: String,
     pub prewarm_pre_commit_store: bool,
+    /// The seat's definition, its session sequence number, and its epic sequence number
+    /// when it shares an epic folder. They name the workspace folders the spawn grants
+    /// (#25148); an absent value grants nothing for that folder.
+    pub definition: Option<String>,
+    pub session_seq: Option<u64>,
+    pub epic_seq: Option<u64>,
 }
 
 /// The resolved policy for one `srt` run.
@@ -61,6 +67,7 @@ pub fn resolve_srt_policy(inputs: &PolicyInputs) -> Result<SrtPolicy> {
     let project = caches::project_write_paths(&inputs.source_root)?;
     let mut config = inputs.sandbox.clone();
     caches::grant_declared_nextest(&mut config, &inputs.source_root, &project);
+    caches::grant_workspace_folders(&mut config, inputs);
     env.insert(
         "CARGO_TARGET_DIR".to_string(),
         caches::agent_cargo_target_dir(inputs),

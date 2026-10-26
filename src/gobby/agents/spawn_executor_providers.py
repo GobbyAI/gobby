@@ -14,6 +14,7 @@ from glob import has_magic
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.agent_workspaces import spawn_workspace_write_paths
 from gobby.agents.constants import (
     CLAUDE_MANAGED_AGENT_ENV,
     GOBBY_AGENT_RUN_ID,
@@ -222,6 +223,26 @@ async def _prepare_provider_sandbox(
                             "extra_write_paths": [*sandbox_config.extra_write_paths, nextest_store]
                         }
                     )
+        if (
+            sandbox_config is not None
+            and sandbox_config.enabled
+            and request.session_manager is not None
+        ):
+            # The seat's folders are declared grants: the ensure step below creates them
+            # before the sandbox starts, since SRT cannot enforce a denyWrite under an absent root.
+            workspace_paths = await asyncio.to_thread(
+                spawn_workspace_write_paths,
+                request.session_manager._storage.db,
+                spawn_context.session_id,
+                request.agent_name,
+            )
+            granted = [
+                path for path in workspace_paths if path not in sandbox_config.extra_write_paths
+            ]
+            if granted:
+                sandbox_config = sandbox_config.model_copy(
+                    update={"extra_write_paths": [*sandbox_config.extra_write_paths, *granted]}
+                )
         if sandbox_config is not None and sandbox_config.enabled:
             await asyncio.to_thread(
                 _ensure_sandbox_write_directories,
