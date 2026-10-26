@@ -5,6 +5,7 @@
 mod caches;
 mod paths;
 mod prewarm;
+pub mod runtime;
 mod settings;
 mod tables;
 
@@ -35,6 +36,10 @@ pub struct PolicyInputs {
     pub websocket_port: u16,
     pub run_id: String,
     pub prewarm_pre_commit_store: bool,
+    /// `sys.platform` spelling of the host: `darwin` or `linux`.
+    pub platform: String,
+    /// Agent name of a spawned run; `task-close-reviewer` gets a private Claude home.
+    pub agent_name: Option<String>,
 }
 
 /// The resolved policy for one `srt` run.

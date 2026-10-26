@@ -8,22 +8,30 @@ mod workspace_fixtures;
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::parse_hub_database_bootstrap;
 use gobby_daemon::node_commands::{
-    ExitReason, ReportExit, SpawnMode, SpawnWorkspace, WorkspaceMode,
+    ExitReason, ReportExit, SandboxBackend, SpawnMode, SpawnWorkspace, WorkspaceMode,
 };
 use gobby_daemon::nodes::agents::{
     NodeAgents,
     repair::{self, RepairEnv},
-    sandbox::{PolicyInputs, checkout_component, gcode_runtime_digest, resolve_srt_policy},
+    sandbox::{
+        PolicyInputs, checkout_component, gcode_runtime_digest, resolve_srt_policy,
+        runtime::{
+            SRT_VERSION, SrtInstallation, prepare_launch, prepare_launch_with, verify_srt_content,
+        },
+    },
     state::{AgentState, ExitRecord, RunPhase, RunRecord, WorkspaceRecord},
     workspace,
 };
 use gobby_daemon::state::NodeServices;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::net::UnixStream,
     path::{Path, PathBuf},
+    process::Command,
     sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
@@ -1471,6 +1479,8 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         prewarm_pre_commit_store: filled["prewarm_pre_commit_store"]
             .as_bool()
             .context("prewarm_pre_commit_store is not a bool")?,
+        platform: srt_host_platform().to_string(),
+        agent_name: None,
     })
 }
 
@@ -1810,6 +1820,518 @@ fn pre_commit_store_prewarm() -> Result<()> {
         let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
         let store = PathBuf::from(&policy.env["XDG_CACHE_HOME"]).join("pre-commit");
         assert!(!store.exists(), "{name}: nothing is copied");
+    }
+    Ok(())
+}
+
+// SRT launch chokepoint (plan 2.5, task #24374). Each test drives `prepare_launch_with`
+// or `prepare_launch` on a materialized tree. `chokepoint_fixture` supplies the inputs.
+
+/// Corpus case whose sandbox is enabled srt. Every chokepoint test starts from it.
+const SRT_CHOKEPOINT_CASE: &str = "claude-srt-empty";
+
+/// One field of the Python `SRT_RELEASE` pin, read from the source that declares it.
+fn python_srt_release_field(field: &str) -> String {
+    let source = include_str!("../../../src/gobby/utils/dependency_requirements.py");
+    let block = source
+        .split("SRT_RELEASE = SrtRelease(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n)\n").next())
+        .expect("SRT_RELEASE declaration");
+    let marker = format!("{field}=\"");
+    let start = block.find(&marker).expect("field in SRT_RELEASE") + marker.len();
+    let value = &block[start..];
+    value[..value.find('"').expect("closing quote")].to_string()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn file_mode(path: &Path) -> Result<u32> {
+    Ok(fs::metadata(path)?.permissions().mode() & 0o777)
+}
+
+/// A fresh tree with the corpus case's sandbox and the provider bound to its fake binary.
+/// The platform is `darwin`; `edit` applies the test's own overrides.
+fn chokepoint_fixture(
+    case_dir: &Path,
+    provider: &str,
+    edit: impl FnOnce(&mut PolicyInputs),
+) -> Result<(SrtTree, PolicyInputs)> {
+    let corpus = srt_corpus()?;
+    let case = srt_case_inputs(&corpus, SRT_CHOKEPOINT_CASE)?;
+    let tree = SrtTree::new(case_dir)?;
+    tree.materialize(&case)?;
+    let mut inputs = srt_policy_inputs(&tree, &case)?;
+    inputs.provider = provider.to_string();
+    inputs.provider_executable = Some(tree.path("bin").join(provider));
+    inputs.platform = "darwin".to_string();
+    edit(&mut inputs);
+    Ok((tree, inputs))
+}
+
+fn chokepoint_prompt(tree: &SrtTree) -> Result<PathBuf> {
+    let prompt = tree.path("tmp").join("prompt.md");
+    fs::write(&prompt, "prompt\n")?;
+    Ok(prompt)
+}
+
+/// A `node` stand-in. `body` runs after the shebang, so each test picks the outcome of
+/// `--preflight`, `--recover` and `--monitor`.
+fn fake_node(tree: &SrtTree, body: &str) -> Result<PathBuf> {
+    let node = tree.path("bin").join("node");
+    fs::write(&node, format!("#!/bin/sh\n{body}"))?;
+    fs::set_permissions(&node, fs::Permissions::from_mode(0o755))?;
+    Ok(node)
+}
+
+/// The installation a verified `gobby install` hands the chokepoint, running `node`.
+fn srt_installation(tree: &SrtTree, node: PathBuf) -> SrtInstallation {
+    let root = tree
+        .path("gobby_home")
+        .join("tools/srt")
+        .join(python_srt_release_field("version"));
+    SrtInstallation {
+        runner: root.join("runner.mjs"),
+        root,
+        node,
+    }
+}
+
+/// Stops the monitor a test started, even when an assertion fails first. The fake node
+/// records its listener's pid in `pidfile`, so cleanup never lists processes.
+struct StopMonitor(PathBuf);
+
+impl Drop for StopMonitor {
+    fn drop(&mut self) {
+        if let Ok(pid) = fs::read_to_string(&self.0) {
+            let _ = Command::new("kill").arg(pid.trim()).status();
+        }
+    }
+}
+
+#[test]
+fn srt_version_matches_python_pin() {
+    assert_eq!(
+        SRT_VERSION,
+        python_srt_release_field("version"),
+        "the Rust SRT pin drifted from SRT_RELEASE"
+    );
+}
+
+#[test]
+fn chokepoint_wraps_once() -> Result<()> {
+    let root = tempfile::tempdir()?;
+
+    // A disabled or provider-native sandbox is refused before any file is written.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("refused"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let installation = srt_installation(&tree, node);
+    let mut disabled = inputs.clone();
+    disabled.sandbox.enabled = false;
+    let refused = prepare_launch_with(&disabled, &prompt, &installation)
+        .expect_err("a disabled sandbox must not launch");
+    assert_eq!(
+        refused.to_string(),
+        "spawn_agent requires managed SRT (enabled=False, backend=srt)"
+    );
+    let mut native = inputs.clone();
+    native.sandbox.backend = SandboxBackend::ProviderNative;
+    let refused = prepare_launch_with(&native, &prompt, &installation)
+        .expect_err("a provider-native sandbox must not launch");
+    assert_eq!(
+        refused.to_string(),
+        "spawn_agent requires managed SRT (enabled=True, backend=provider-native)"
+    );
+    assert!(
+        !tree.path("run_root").exists(),
+        "a refused launch wrote its run root"
+    );
+
+    // A verified install wraps the provider argv once, with both policy files private.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("wrapped"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let installation = srt_installation(&tree, node.clone());
+    let launch = prepare_launch_with(&inputs, &prompt, &installation)?;
+    let settings = tree.path("run_root").join("assets/settings.json");
+    let violations = tree.path("run_root").join("logs/violations.jsonl");
+    assert_eq!(file_mode(&settings)?, 0o600, "settings.json is not private");
+    assert_eq!(
+        file_mode(&violations)?,
+        0o600,
+        "violations.jsonl is not private"
+    );
+    assert_eq!(
+        launch.wrap(&["claude".to_string(), "--print".to_string()]),
+        [
+            node.display().to_string(),
+            installation.runner.display().to_string(),
+            "--settings".to_string(),
+            settings.display().to_string(),
+            "--violations".to_string(),
+            violations.display().to_string(),
+            "--".to_string(),
+            tree.path("bin").join("claude").display().to_string(),
+            "--print".to_string(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn chokepoint_refuses_unverified_install() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let version = python_srt_release_field("version");
+
+    // No install under gobby_home: the launch is refused before anything runs.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("missing"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let missing = prepare_launch(&inputs, &prompt).expect_err("no install must refuse the launch");
+    assert!(
+        missing.to_string().contains(&format!(
+            "managed SRT {version} is missing or invalid; rerun `gobby install`"
+        )),
+        "{missing}"
+    );
+
+    // Content that drifts from the install manifest refuses the content check.
+    let content = root.path().join("content");
+    fs::create_dir_all(content.join("node_modules/pkg"))?;
+    fs::write(content.join("runner.mjs"), "runner\n")?;
+    fs::write(content.join("package-lock.json"), "{}\n")?;
+    fs::write(
+        content.join("node_modules/pkg/index.js"),
+        "module.exports = 1;\n",
+    )?;
+    let manifest: BTreeMap<String, String> = [
+        ("runner.mjs", sha256_hex(b"runner\n")),
+        ("package-lock.json", sha256_hex(b"{}\n")),
+        (
+            "node_modules/pkg/index.js",
+            sha256_hex(b"module.exports = 1;\n"),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, sha)| (name.to_string(), sha))
+    .collect();
+    verify_srt_content(&content, &manifest)?;
+    fs::write(
+        content.join("node_modules/pkg/index.js"),
+        "module.exports = 2;\n",
+    )?;
+    let drift = verify_srt_content(&content, &manifest).expect_err("drifted content must refuse");
+    assert!(
+        drift
+            .to_string()
+            .contains("managed SRT content manifest mismatch"),
+        "{drift}"
+    );
+
+    // A managed node that fails `--preflight` refuses the launch with its stderr.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("preflight"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "echo broken >&2\nexit 3\n")?;
+    let failed = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))
+        .expect_err("a failed preflight must refuse the launch");
+    assert!(
+        failed
+            .to_string()
+            .contains("managed SRT preflight failed: broken"),
+        "{failed}"
+    );
+
+    // `allow_network` is never accepted on srt.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("network"), "claude", |inputs| {
+        inputs.sandbox.allow_network = true;
+    })?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let network = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))
+        .expect_err("allow_network on srt must refuse the launch");
+    assert!(
+        network
+            .to_string()
+            .contains("SRT does not accept unrestricted network access"),
+        "{network}"
+    );
+    Ok(())
+}
+
+#[test]
+fn chokepoint_grok_home() -> Result<()> {
+    let root = tempfile::tempdir()?;
+
+    // Grok gets a private GROK_HOME inside the run, writable and with protected denies.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("grok"), "grok", |_| {})?;
+    fs::create_dir_all(tree.path("home").join(".grok"))?;
+    fs::write(tree.path("home").join(".grok/config.toml"), "")?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+    let grok_home = PathBuf::from(
+        launch
+            .env
+            .get("GROK_HOME")
+            .context("GROK_HOME is not set")?,
+    );
+    assert!(
+        grok_home.starts_with(tree.path("run_root")),
+        "GROK_HOME {} is outside the run",
+        grok_home.display()
+    );
+    assert!(grok_home.is_dir(), "the private GROK_HOME was not created");
+    assert!(
+        launch
+            .write_paths
+            .iter()
+            .any(|path| path.starts_with(&grok_home)),
+        "GROK_HOME is not writable"
+    );
+    assert!(
+        launch
+            .deny_paths
+            .iter()
+            .any(|path| path.starts_with(&grok_home)),
+        "GROK_HOME has no protected deny paths"
+    );
+
+    // Linux SRT cannot persist Grok's auth refresh, so grok is refused there.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("grok-linux"), "grok", |inputs| {
+        inputs.platform = "linux".to_string();
+    })?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let refused = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))
+        .expect_err("grok on Linux SRT must refuse the launch");
+    assert!(
+        refused
+            .to_string()
+            .contains("Linux SRT cannot safely persist Grok auth refresh"),
+        "{refused}"
+    );
+    Ok(())
+}
+
+#[test]
+fn chokepoint_claude_reviewer_home() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let reviewer = |inputs: &mut PolicyInputs| {
+        inputs.agent_name = Some("task-close-reviewer".to_string());
+    };
+
+    // The reviewer gets a private config home with seeded state and a transcript link.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("reviewer"), "claude", reviewer)?;
+    let claude = tree.path("home").join(".claude");
+    fs::create_dir_all(claude.join("projects"))?;
+    fs::write(claude.join("settings.json"), "{}\n")?;
+    fs::write(claude.join("settings.local.json"), "{}\n")?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+    let cache = PathBuf::from(
+        launch
+            .env
+            .get("XDG_CACHE_HOME")
+            .context("XDG_CACHE_HOME is not set")?,
+    );
+    let config_dir = cache.join("claude");
+    assert_eq!(
+        launch.env.get("CLAUDE_CONFIG_DIR").map(PathBuf::from),
+        Some(config_dir.clone()),
+        "CLAUDE_CONFIG_DIR is not the private reviewer home"
+    );
+    for variable in ["XDG_STATE_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
+        assert!(launch.env.contains_key(variable), "{variable} is not set");
+    }
+    assert_eq!(
+        file_mode(&config_dir)?,
+        0o700,
+        "the reviewer home is not private"
+    );
+    assert!(
+        config_dir.join(".claude.json").is_file(),
+        "the seeded .claude.json is missing"
+    );
+    for name in ["settings.json", "settings.local.json"] {
+        assert_eq!(
+            file_mode(&config_dir.join(name))?,
+            0o600,
+            "{name} copy is not private"
+        );
+    }
+    let entry = fs::read_dir(config_dir.join("projects"))?
+        .next()
+        .context("the reviewer home links no transcript directory")??
+        .path();
+    assert!(
+        fs::symlink_metadata(&entry)?.file_type().is_symlink(),
+        "the transcript entry is not a link"
+    );
+    assert!(
+        fs::read_link(&entry)?.starts_with(claude.join("projects")),
+        "the transcript link escapes ~/.claude/projects"
+    );
+
+    // A symlinked host settings file is refused.
+    let (tree, inputs) =
+        chokepoint_fixture(&root.path().join("reviewer-link"), "claude", reviewer)?;
+    let claude = tree.path("home").join(".claude");
+    fs::create_dir_all(claude.join("projects"))?;
+    let outside = root.path().join("outside-settings.json");
+    fs::write(&outside, "{}\n")?;
+    std::os::unix::fs::symlink(&outside, claude.join("settings.json"))?;
+    fs::write(claude.join("settings.local.json"), "{}\n")?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    assert!(
+        prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node)).is_err(),
+        "a symlinked settings source must refuse the launch"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn chokepoint_droid_ps_shim() -> Result<()> {
+    let root = tempfile::tempdir()?;
+
+    // Droid gets a signed copy of /bin/ps first on PATH and in the read paths.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("droid"), "droid", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+    let ps = fs::read("/bin/ps")?;
+    let shim_dir = tree
+        .path("gobby_home")
+        .join("runtime/droid-ps-shim")
+        .join(sha256_hex(&ps));
+    let shim = shim_dir.join("ps");
+    assert_eq!(fs::read(&shim)?, ps, "the shim is not a copy of /bin/ps");
+    assert_eq!(file_mode(&shim)?, 0o755, "the shim is not executable");
+    assert!(
+        launch.read_paths.contains(&shim_dir),
+        "the shim directory is not readable"
+    );
+    let path = launch.env.get("PATH").context("PATH is not set")?;
+    assert!(
+        path.starts_with(&format!("{}:", shim_dir.display())),
+        "the shim is not first on PATH: {path}"
+    );
+
+    // A shim that cannot be staged only warns: the launch goes on without it.
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("droid-no-shim"), "droid", |_| {})?;
+    fs::write(tree.path("gobby_home").join("runtime"), "not a directory")?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let node = fake_node(&tree, "exit 0\n")?;
+    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+    let path = launch.env.get("PATH").context("PATH is not set")?;
+    assert!(
+        !path.contains("droid-ps-shim"),
+        "a shim that failed to stage stayed on PATH: {path}"
+    );
+    assert!(
+        !launch
+            .read_paths
+            .iter()
+            .any(|path| path.to_string_lossy().contains("droid-ps-shim")),
+        "a shim that failed to stage stayed readable"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn chokepoint_shared_srt_monitor() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("monitor"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let log = tree.path("tmp").join("node-calls.log");
+    let pidfile = tree.path("tmp").join("monitor.pid");
+
+    // The fake `--monitor` listens on its socket, then answers `ready` on the given fd.
+    let node = fake_node(
+        &tree,
+        &format!(
+            r#"echo "$*" >> '{log}'
+case "$1" in
+  --preflight|--recover) exit 0 ;;
+  --monitor)
+    sleep 600 | /usr/bin/nc -lkU "$2" >/dev/null 2>&1 &
+    echo $! > '{pidfile}'
+    while [ ! -S "$2" ]; do sleep 0.05; done
+    eval "printf 'ready\\n' >&$3"
+    wait
+    ;;
+esac
+exit 0
+"#,
+            log = log.display(),
+            pidfile = pidfile.display()
+        ),
+    )?;
+    let socket = tree.path("srt_socket").join(format!(
+        "v-{}",
+        &python_srt_release_field("runner_sha256")[..12]
+    ));
+    let _stop = StopMonitor(pidfile);
+    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+
+    let run_key = tree
+        .path("run_root")
+        .file_name()
+        .context("the run root has no name")?
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        launch
+            .env
+            .get("GOBBY_SRT_MONITOR_SOCKET")
+            .map(PathBuf::from),
+        Some(socket.clone()),
+        "the run does not name the version-addressed monitor socket"
+    );
+    assert_eq!(
+        launch.env.get("GOBBY_SRT_RUN_KEY"),
+        Some(&run_key),
+        "the run does not name its violation key"
+    );
+    let calls = fs::read_to_string(&log)?;
+    let recover = calls
+        .lines()
+        .position(|line| line.starts_with("--recover "))
+        .context("no backlog recovery ran")?;
+    let monitor = calls
+        .lines()
+        .position(|line| line.starts_with(&format!("--monitor {} ", socket.display())))
+        .context("the monitor did not start on the version-addressed socket")?;
+    assert!(
+        recover < monitor,
+        "the backlog must be recovered before the monitor starts"
+    );
+    UnixStream::connect(&socket).context("no live monitor answers on the socket")?;
+    Ok(())
+}
+
+#[test]
+fn chokepoint_codex_shell_snapshot_off() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    for provider in SRT_PROVIDERS {
+        let (tree, inputs) = chokepoint_fixture(&root.path().join(provider), provider, |_| {})?;
+        let prompt = chokepoint_prompt(&tree)?;
+        let node = fake_node(&tree, "exit 0\n")?;
+        let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+        let expected: Vec<String> = if provider == "codex" {
+            vec![
+                "-c".to_string(),
+                "features.shell_snapshot=false".to_string(),
+            ]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(launch.provider_args, expected, "{provider}: provider_args");
     }
     Ok(())
 }
