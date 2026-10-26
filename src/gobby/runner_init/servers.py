@@ -39,7 +39,7 @@ from gobby.storage.model_metadata import ModelMetadataStore
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
-    from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
+    from gobby.runtime_grants.schema import GrantBundle, GrantPrincipal, PostgresDirect
     from gobby.storage.managed_credential_types import ManagedCredential, SecretStore
     from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.storage.terminals import AttachLocator
@@ -517,12 +517,16 @@ def issue_grant_postgres(
         ) from None
 
 
+def _grant_principal_revoked(credentials: ManagedCredentialManager, grant: GrantBundle) -> bool:
+    return False
+
+
 def _bind_runtime_grants(server: HTTPServer, runner: GobbyRunner) -> None:
     # Deferred imports stay here: they close a runner <-> runtime_grants cycle.
     from gobby.runtime_grants.handshake import HandshakeRejection, HandshakeService
     from gobby.runtime_grants.launch import rewrite_managed_grant_file
     from gobby.runtime_grants.revocation import GrantRevocationStore
-    from gobby.runtime_grants.schema import GrantBundle, PostgresDirect
+    from gobby.runtime_grants.schema import PostgresDirect
     from gobby.runtime_grants.service import DeploymentGrantContext, GrantService
     from gobby.servers.grant_auth import LiveLeaseGrantService
 
