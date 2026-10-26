@@ -788,7 +788,9 @@ class TestWorktreeHandlers:
         mock_dependencies["worktree_manager"].get_by_branch.return_value = None
         calls: list[tuple[str, str]] = []
 
-        async def write_marker(repo_path: str, worktree_path: str) -> None:
+        async def write_marker(
+            repo_path: str, worktree_path: str, *, base_commit: str | None = None
+        ) -> None:
             calls.append(("marker", worktree_path))
 
         async def pin(project_root: Path) -> None:
