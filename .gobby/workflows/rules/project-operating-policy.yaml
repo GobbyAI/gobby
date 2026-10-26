@@ -47,8 +47,8 @@ rules:
             "workspace_layout": {
               "admin": "The operator's tab holds the Assistant and Orchestrator panes only. Never place another seat in it.",
               "support": "One tab titled Support holds the support runbook's seats.",
-              "devteam": "Each DevTeam has one tab titled with its team branch, holding its four seats.",
-              "planning": "Each planning run's writer opens a tab titled for it; the other planning seats split that tab."
+              "devteam": "Each DevTeam has one tab titled 'Dev Team - #<task>', holding its seats. Each pane is titled with its seat's agent definition name only.",
+              "planning": "Each planning run's writer opens a tab titled 'Team Planning - #<task>'; the other planning seats split that tab."
             },
             "launch_defaults": {
               "devteam": {
@@ -62,8 +62,8 @@ rules:
                 "fresh_reviewer_model": "claude-opus-5-5",
                 "fresh_reviewer_reasoning_effort": "xhigh",
                 "manager_provider": "claude",
-                "manager_model": "claude-sonnet-5-5",
-                "manager_reasoning_effort": "medium"
+                "manager_model": "claude-haiku-5-5",
+                "manager_reasoning_effort": "xhigh"
               },
               "support": {
                 "release_manager_provider": "codex",
