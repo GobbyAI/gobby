@@ -42,8 +42,9 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "session ref; require_report_to rejects omission. "
             "launch names the seats to start; skip_live_seats leaves out each seat whose "
             "agent already runs on this machine with a live session in this project and "
-            "maps it to that session under live. tab_title sets tab_exists for that tab of "
-            "the workspace. team_id limits live seats to that admitted team's runs and maps "
+            "maps it to that session under live. tab_title names the runbook tab; with task it "
+            "becomes '<tab_title> - #<seq>', and tab_exists reports that tab of the workspace. "
+            "team_id limits live seats to that admitted team's runs and maps "
             "every catalogue seat with such a run under live, requested or not. "
             "On success it returns the checked seats."
         ),
@@ -58,6 +59,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
         skip_live_seats: bool = False,
         team_id: str | None = None,
         tab_title: str | None = None,
+        task: str | None = None,
     ) -> dict[str, Any]:
         caller_ref = ctx.get_current_session_id()
         if ctx.db is None or not caller_ref:
@@ -78,6 +80,7 @@ def register_runbook_seat_tools(registry: InternalToolRegistry, ctx: AgentsRegis
                 skip_live_seats=skip_live_seats,
                 team_id=team_id,
                 tab_title=tab_title,
+                task=task,
             )
         except RunbookSeatRefusal as exc:
             return {"success": False, "error": str(exc), "error_code": "runbook_seat_refused"}

@@ -1,0 +1,3407 @@
+{
+  "phase": "after",
+  "revision": "62c35997198ce3f30c4d5c18cb84aaab1f920624",
+  "script_sha256": "847d809b5af2f1d52afa7c461a12a8c104bd8596db4883a7dcdd6407451a6b0e",
+  "fixture_sha256": "ab68e6adf92f2a7513e9d2e3a6ea25249696d3a74dba5686388e7bab96740191",
+  "community_id": 43,
+  "member_signature": "1bb6768c2c238cdb",
+  "provenance": "persisted-label replay; rationale empty; original rationale unavailable",
+  "api_base": "http://127.0.0.1:1234",
+  "model": "clef",
+  "timeout_seconds": 15,
+  "dry_run": false,
+  "measured_target": 20,
+  "accepted_measured": 20,
+  "warmup_complete": true,
+  "complete": true,
+  "overlap_or_unknown_count": 0,
+  "observed_overlap_count": 0,
+  "stop": null,
+  "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+  "p50_seconds": 1.8974236875073984,
+  "p95_seconds_nearest_rank": 2.161637541023083,
+  "note": "Nomic snapshots cannot exclude mid-call overlap. Unknown/missing status is excluded. Cache count is null when absent, not zero. Statistics exclude warmup and flagged rows. No generated nonce: identical frozen input may use cache.",
+  "rows": [
+    {
+      "attempt": 0,
+      "warmup": true,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 3.6755142499459907,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:04.245331+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1792977055622,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:09.324391+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017029304,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 1,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.1249764999374747,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:10.428400+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017029304,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:13.464121+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017033455,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 2,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.161637541023083,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:14.766316+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017033455,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:18.022269+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017038001,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 3,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.1273560830159113,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:19.169711+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017038001,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:22.266321+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017042245,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 4,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.152138708042912,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:23.754738+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017042245,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:26.771525+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017046762,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 5,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 1.8047164590097964,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:27.782414+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017046762,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:30.043348+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793016937293,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017050025,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 6,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 1.8283306669909507,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:30.580003+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017050025,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:33.338953+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017053336,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 7,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.043113916995935,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:34.405419+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017053336,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:37.075335+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017057068,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 8,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.0119954589754343,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:38.125892+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017057068,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:40.932782+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017060928,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 9,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 0.9687525000190362,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:41.456752+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017060928,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:42.895326+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017062889,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 10,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 1.9665167080238461,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:43.455102+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017062889,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:46.106939+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017066102,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 11,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 0.9756141660036519,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:46.702026+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017066102,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:48.171781+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017068170,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 12,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.0014409580035135,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:49.383804+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017068170,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:51.987487+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017071980,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 13,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.050154541968368,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:52.768323+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017071980,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:55.701100+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017075696,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 14,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 1.7548574591055512,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:56.517003+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017075696,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:17:58.971750+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017078969,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 15,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 1.769695125054568,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:17:59.647719+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017078969,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:18:02.208393+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017082205,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 16,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 0.9586937919957563,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:18:02.870022+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017082205,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:18:04.310257+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017084308,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 17,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 0.9653346249833703,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:18:04.797987+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017084308,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:18:06.419659+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017086410,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 18,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 2.279887374956161,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:18:06.984089+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017086410,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:18:09.858971+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017089855,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 19,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 0.9688340410357341,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:18:10.372025+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017089855,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:18:11.826749+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017091824,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    },
+    {
+      "attempt": 20,
+      "warmup": false,
+      "exchanges": [
+        {
+          "status": 200,
+          "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+          "request_utf8_bytes": 2305,
+          "usage": {
+            "input_tokens": 657,
+            "output_tokens": 0
+          },
+          "input_tokens": 657,
+          "cached_tokens": null
+        }
+      ],
+      "latency_seconds": 0.9754508329788223,
+      "error": null,
+      "excluded": false,
+      "before": {
+        "at": "2026-10-26T12:18:12.356096+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017091824,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      },
+      "request_sha256": "f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8",
+      "request_utf8_bytes": 2305,
+      "question_count": 1,
+      "application_estimated_tokens": 594,
+      "result": {
+        "answers": {
+          "c43": {
+            "choice": "generated",
+            "probabilities": {
+              "deterministic_0": 0.0442300606482379,
+              "deterministic_1": 0.03425183689596644,
+              "deterministic_2": 0.09689812488610017,
+              "deterministic_3": 0.0026028193289846496,
+              "generated": 0.8220171582407108
+            },
+            "confidence": 0.7775214478008885
+          }
+        },
+        "backend_identity": null,
+        "response_model": "clef"
+      },
+      "after": {
+        "at": "2026-10-26T12:18:13.930471+00:00",
+        "nomic_idle": true,
+        "models": [
+          {
+            "type": "embedding",
+            "modelKey": "text-embedding-nomic-embed-text-v1.5@f16",
+            "format": "gguf",
+            "displayName": "Nomic Embed Text v1.5",
+            "publisher": "nomic-ai",
+            "path": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "sizeBytes": 274290560,
+            "indexedModelIdentifier": "nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.f16.gguf",
+            "deviceIdentifier": null,
+            "architecture": "nomic-bert",
+            "quantization": {
+              "name": "F16",
+              "bits": 16
+            },
+            "identifier": "text-embedding-nomic-embed-text-v1.5@f16",
+            "ttlMs": null,
+            "lastUsedTime": 1793017051354,
+            "maxContextLength": 2048,
+            "contextLength": 2048,
+            "status": "idle",
+            "queued": 0,
+            "parallel": null,
+            "engineConfigFileEnabled": false
+          },
+          {
+            "type": "decision",
+            "modelKey": "clef",
+            "format": "gguf",
+            "displayName": "Clef",
+            "publisher": "ggml-org",
+            "path": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "sizeBytes": 29663361696,
+            "indexedModelIdentifier": "ggml-org/Clef-GGUF/Clef-Q8_0.gguf",
+            "deviceIdentifier": null,
+            "paramsString": "27B",
+            "architecture": "clef",
+            "quantization": {
+              "name": "Q8_0",
+              "bits": 8
+            },
+            "identifier": "clef",
+            "ttlMs": null,
+            "lastUsedTime": 1793017093926,
+            "decisionType": "clef",
+            "maxContextLength": 262144,
+            "hasVisionAdapter": true,
+            "contextLength": 262144,
+            "status": "idle",
+            "queued": 0,
+            "parallel": 4,
+            "engineConfigFileEnabled": false
+          }
+        ],
+        "error": null
+      }
+    }
+  ]
+}

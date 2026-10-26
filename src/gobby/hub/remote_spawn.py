@@ -33,7 +33,6 @@ from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _roll_back_run
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
     resolve_spawn_generation_endpoint,
 )
-from gobby.mcp_proxy.tools.spawn_agent._resume import resumed_seat_lane
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import (
     configured_max_active_agents,
 )
@@ -79,7 +78,6 @@ class RemoteSpawnRequest:
     extra_write_paths: list[str] | None = None
     write_paths_reason: str | None = None
     reserved_run_id: str | None = None
-    lane: str | None = None
     execution_mode: Literal["one_shot", "interactive"] | None = None
     idle_ttl_seconds: int | None = None
 
@@ -99,9 +97,7 @@ def _refusal(error_code: str, message: str, **extra: Any) -> dict[str, Any]:
     return {"success": False, "error_code": error_code, "error": message, "stage": "none", **extra}
 
 
-def _resume_metadata(
-    request: RemoteSpawnRequest, resume_target: Session | None, run_storage: Any
-) -> dict[str, Any]:
+def _resume_metadata(request: RemoteSpawnRequest, resume_target: Session | None) -> dict[str, Any]:
     """The run's durable launch metadata, as the local path records it."""
     metadata: dict[str, Any] = {}
     if request.execution_mode is not None:
@@ -110,9 +106,6 @@ def _resume_metadata(
         metadata["idle_ttl_seconds"] = request.idle_ttl_seconds
     if request.allow_closed_task:
         metadata["allow_closed_task"] = True
-    lane = (request.lane or "").strip() or resumed_seat_lane(resume_target, run_storage)
-    if lane:
-        metadata["lane"] = lane
     if resume_target is not None:
         metadata.update(
             {
@@ -246,7 +239,7 @@ async def spawn_remote_agent(
 
     run_id = request.reserved_run_id or str(uuid.uuid4())
     branch = request.branch_name or f"agent/{run_id}"
-    metadata = _resume_metadata(request, resume_target, runner.run_storage)
+    metadata = _resume_metadata(request, resume_target)
     terminals = TerminalManager(db)
     terminal_id = str(uuid.uuid4())
     if lease is not None:

@@ -2,6 +2,7 @@
 use gobby_core::postgres_pool::Pool;
 use uuid::Uuid;
 
+use super::process::process_start_fingerprint;
 use super::{EpochSnapshot, HostFailure, authority_failure};
 
 #[cfg(test)]
@@ -58,7 +59,8 @@ pub(super) async fn observe_process_exit(
         let info = &observed.info;
         observed.exited = observed.exited
             || (owned_exited && owned_pid == Some(info.pid))
-            || process_exited(info.pid)?;
+            || process_exited(info.pid)?
+            || pid_reused(info)?;
         if observed.exited {
             let machine = Uuid::parse_str(&inner.options.machine_id).map_err(authority_failure)?;
             // Keep the observation until commit succeeds, so storage errors retry.
@@ -74,6 +76,15 @@ pub(super) async fn observe_process_exit(
         *child = None;
     }
     Ok(())
+}
+
+/// A live PID whose start fingerprint differs from the recorded one was reused. An
+/// unreadable fingerprint proves nothing, so only a readable mismatch records an exit.
+fn pid_reused(info: &super::HostInfo) -> Result<bool, HostFailure> {
+    let Some(recorded) = info.start_fingerprint else {
+        return Ok(false);
+    };
+    Ok(process_start_fingerprint(info.pid)?.is_some_and(|live| live != recorded))
 }
 
 /// EPERM is an existing process; only ESRCH proves absence.

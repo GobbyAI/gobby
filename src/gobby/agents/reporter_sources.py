@@ -33,16 +33,16 @@ def digest_projection(content: str, section: str) -> dict[str, object]:
     for index in range(1, len(parts), 2):
         sections[parts[index]] = parts[index + 1]
     if section == "queues":
-        lanes = []
-        for line in sections.get("Lane queues — current", "").splitlines():
+        queues = []
+        for line in sections.get("Epic queues — current", "").splitlines():
             if not line.startswith("|"):
                 continue
             cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", line)[1:-1]]
             if len(cells) != 6 or not re.match(r"^[1-8](?:[A-Z]|\b)", cells[0]):
                 continue
-            lanes.append(
+            queues.append(
                 {
-                    "lane": cells[0],
+                    "queue": cells[0],
                     "epic": cells[1],
                     "worktree": cells[2],
                     "queue_refs": task_refs(cells[4]),
@@ -50,8 +50,8 @@ def digest_projection(content: str, section: str) -> dict[str, object]:
                 }
             )
         return {
-            "lanes": lanes,
-            "queue_rule": "Resolve refs in order; skip closed and claimed; combine sublanes",
+            "queues": queues,
+            "queue_rule": "Resolve refs in order; skip closed and claimed; combine sub-queues",
         }
     if section == "decisions":
         return {
