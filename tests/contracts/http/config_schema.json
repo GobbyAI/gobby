@@ -440,6 +440,19 @@
           "default": 8192,
           "description": "Application request input budget; below the backend's whole-request maximum."
         },
+        "ai.decisions.max_request_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "namespace": "ai.decisions",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": null,
+          "description": "Maximum compact UTF-8 request body bytes, including assets; unset is unbounded."
+        },
         "ai.decisions.model": {
           "type": [
             "string",

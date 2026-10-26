@@ -682,10 +682,12 @@ async def test_gate_admits_at_threshold_and_rejects_below(
     state = next(body["state"] for body in decision_wire.bodies if "c5" in body["questions"])
     wide_state = state["communities"]["c5"]
     others = sorted(set(wide.members) - set(wide.representatives))
-    assert wide_state["members"] == (wide.representatives + others)[:40]
+    assert wide_state["members"] == others[: 40 - len(wide.representatives)]
     assert wide_state["representatives"] == wide.representatives
-    assert wide_state["candidates"] == wide.label_candidates
-    assert wide_state["generated"] == {"name": _named(5), "rationale": "Area 5."}
+    assert "candidates" not in wide_state
+    assert wide_state["generated"] == {"rationale": "Area 5."}
+    assert wide_state["member_count"] == 50
+    assert wide_state["omitted_member_count"] == 10
 
     # A transport failure is not a decision: it stamps the attempt only.
     failing = _area(code_storage, 4)
