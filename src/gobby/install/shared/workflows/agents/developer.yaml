@@ -680,7 +680,8 @@ step_workflow:
         approved SHA and closes the task; never close a team task yourself.
         After its close notice, read the task with
         get_task(task_id=assigned_task_id). A closed task returns you to claim.
-        Remove a superseded candidate SHA here with unlink_commit.
+        Remove a superseded candidate SHA here with unlink_commit, passing the reason;
+        landed SHAs stay linked.
         A reply wait ends at the owner's next message. If that message is an
         interim status and the dependency is still unresolved, re-arm the wait
         before you stop; a stop without an active wait is re-prompted.

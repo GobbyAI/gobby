@@ -94,6 +94,7 @@ def _close(
     *,
     preview: bool = False,
     reason: str = "done",
+    superseded_by: str | None = None,
 ) -> dict[str, Any]:
     arguments: dict[str, Any] = {
         "task_id": task_id,
@@ -103,6 +104,8 @@ def _close(
     }
     if commit_sha is not None:
         arguments["commit_sha"] = commit_sha
+    if superseded_by is not None:
+        arguments["superseded_by"] = superseded_by
     return _unwrap(client.call_tool("gobby-tasks", "close_task", arguments))
 
 
@@ -234,3 +237,135 @@ def test_edit_after_ready_preview_blocks_close(
     assert refused["closed"] is False
     updated = _commit(project, "Commit later edit", mcp_client, task_id)
     assert _close(mcp_client, task_id, updated)["closed"] is True
+
+
+def _current_branch(project: Path) -> str:
+    return subprocess.run(
+        ["git", "symbolic-ref", "--short", "HEAD"],
+        cwd=project,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _link(client: MCPTestClient, task_id: str, commit_sha: str) -> None:
+    linked = _unwrap(
+        client.call_tool(
+            "gobby-tasks", "link_commit", {"task_id": task_id, "commit_sha": commit_sha}
+        )
+    )
+    assert "error" not in linked, linked
+
+
+def _landed_and_candidate(
+    daemon: DaemonInstance,
+    client: MCPTestClient,
+    events: CLIEventSimulator,
+    postgres_db: Any,
+    *,
+    suffix: str,
+) -> tuple[str, str, str, str]:
+    """Link one commit on the integration branch and one unlanded task-branch commit."""
+    task_id, session_id = _register_claimed_task(daemon, client, events, suffix=suffix)
+    project = daemon.project_dir
+    integration_branch = _current_branch(project)
+    _write_source(project)
+    _record_edit(postgres_db, session_id, project)
+    landed = _commit(project, "Land close module", client, task_id)
+    _link(client, task_id, landed)
+    subprocess.run(["git", "checkout", "-b", "task-branch"], cwd=project, check=True)
+    _write_source(project, "VALUE = 2\n")
+    _record_edit(postgres_db, session_id, project)
+    candidate = _commit(project, "Candidate close module", client, task_id)
+    _link(client, task_id, candidate)
+    subprocess.run(["git", "checkout", integration_branch], cwd=project, check=True)
+    return task_id, landed, candidate, integration_branch
+
+
+def test_superseded_task_closes_with_an_unlanded_candidate(
+    daemon_instance: DaemonInstance,
+    mcp_client: MCPTestClient,
+    cli_events: CLIEventSimulator,
+    postgres_db: Any,
+) -> None:
+    task_id, session_id = _register_claimed_task(
+        daemon_instance, mcp_client, cli_events, suffix="superseded"
+    )
+    project = daemon_instance.project_dir
+    integration_branch = _current_branch(project)
+    subprocess.run(["git", "checkout", "-b", "task-branch"], cwd=project, check=True)
+    _write_source(project)
+    _record_edit(postgres_db, session_id, project)
+    candidate = _commit(project, "Candidate close module", mcp_client, task_id)
+    subprocess.run(["git", "checkout", integration_branch], cwd=project, check=True)
+
+    _link(mcp_client, task_id, candidate)
+    unlinked = _unwrap(
+        mcp_client.call_tool(
+            "gobby-tasks",
+            "unlink_commit",
+            {"task_id": task_id, "commit_sha": candidate, "reason": "Superseded by #24970"},
+        )
+    )
+    assert "error" not in unlinked, unlinked
+    result = _close(mcp_client, task_id, reason="superseded", superseded_by="#24970")
+    assert result["closed"] is True, result
+    stored = _unwrap(
+        mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id, "brief": False})
+    )
+    assert stored["state"]["is_closed"] is True
+    assert stored["closed_reason"] == "superseded"
+    closing_records = postgres_db.fetchall(
+        "SELECT reason FROM task_lifecycle_events WHERE task_id = %s AND to_state = 'closed'",
+        (task_id,),
+    )
+    assert [record["reason"] for record in closing_records] == [
+        "closed as superseded; superseded by #24970"
+    ]
+
+
+def test_superseded_close_refuses_a_task_with_a_landed_commit(
+    daemon_instance: DaemonInstance,
+    mcp_client: MCPTestClient,
+    cli_events: CLIEventSimulator,
+    postgres_db: Any,
+) -> None:
+    task_id, _, candidate, _ = _landed_and_candidate(
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="superseded-mixed"
+    )
+    refused = _close(mcp_client, task_id, candidate, reason="superseded", superseded_by="#24970")
+    assert refused["error"] == "integration_ancestry", refused
+    assert refused["closed"] is False
+
+
+def test_landed_commit_cannot_be_unlinked_from_a_claimed_task(
+    daemon_instance: DaemonInstance,
+    mcp_client: MCPTestClient,
+    cli_events: CLIEventSimulator,
+    postgres_db: Any,
+) -> None:
+    task_id, landed, candidate, _ = _landed_and_candidate(
+        daemon_instance, mcp_client, cli_events, postgres_db, suffix="landed-unlink"
+    )
+    control = _unwrap(
+        mcp_client.call_tool(
+            "gobby-tasks",
+            "unlink_commit",
+            {"task_id": task_id, "commit_sha": candidate, "reason": "Superseded by #24970"},
+        )
+    )
+    assert "error" not in control, control
+    refused = _unwrap(
+        mcp_client.call_tool(
+            "gobby-tasks",
+            "unlink_commit",
+            {"task_id": task_id, "commit_sha": landed, "reason": "Superseded by #24970"},
+        )
+    )
+    assert refused.get("error"), refused
+    stored = _unwrap(
+        mcp_client.call_tool("gobby-tasks", "get_task", {"task_id": task_id, "brief": False})
+    )
+    # link_commit stores Git's canonical short SHA, so match the stored entry as a prefix.
+    assert any(landed.startswith(sha) for sha in stored.get("commits") or [])

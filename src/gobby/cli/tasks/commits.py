@@ -2,14 +2,18 @@
 CLI commands for commit linking.
 """
 
+import asyncio
 from pathlib import Path
 
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
+from gobby.tasks.commit_unlink import unlink_commit_audited
 from gobby.tasks.commits import auto_link_commits, collect_task_diff_text
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.project_context import get_project_context
+
+OPERATOR_ACTOR = "operator"
 
 
 @click.group("commit")
@@ -59,11 +63,13 @@ def link_commit(task_id: str, commit_sha: str) -> None:
 @commit_cmd.command("unlink")
 @click.argument("task_id", metavar="TASK")
 @click.argument("commit_sha")
-def unlink_commit(task_id: str, commit_sha: str) -> None:
+@click.option("--reason", required=True, help="Why the commit no longer belongs to the task.")
+def unlink_commit(task_id: str, commit_sha: str, reason: str) -> None:
     """Unlink a commit from a task.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
     COMMIT_SHA: Git commit SHA to remove
+    Landed commits stay linked. The reason is recorded on the task's lifecycle.
     """
     manager = get_task_manager()
     task = resolve_task_id(manager, task_id)
@@ -75,7 +81,9 @@ def unlink_commit(task_id: str, commit_sha: str) -> None:
         normalized = normalize_commit_sha(commit_sha, cwd=cwd)
         if normalized is None:
             raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
-        updated_task = manager.unlink_commit(task.id, normalized)
+        updated_task = asyncio.run(
+            unlink_commit_audited(manager, task, normalized, reason=reason, actor=OPERATOR_ACTOR)
+        )
         remaining_commits = list(updated_task.commits or [])
         click.echo(f"Unlinked commit {commit_sha} from task {task.id}")
         if remaining_commits:

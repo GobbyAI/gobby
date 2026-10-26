@@ -182,6 +182,7 @@ def close_task(
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    closing_note: str | None = None,
 ) -> None:
     """Close a task.
 
@@ -217,6 +218,7 @@ def close_task(
         closed_commit_sha=closed_commit_sha,
         closed_ancestors=collected,
         expected_updated_at=expected_updated_at,
+        closing_note=closing_note,
     )
 
 

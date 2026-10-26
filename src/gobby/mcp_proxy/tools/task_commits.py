@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.commit_ownership import assert_task_commit_paths_available_async
+from gobby.tasks.commit_unlink import unlink_commit_audited
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -211,9 +212,10 @@ def create_commit_registry(
     async def unlink_commit(
         task_id: str,
         commit_sha: str,
+        reason: str,
         project_path: str | None = None,
     ) -> dict[str, Any]:
-        """Unlink a git commit from a task."""
+        """Unlink a git commit from a task and record the reason on its lifecycle."""
         # Resolve task reference
         try:
             resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
@@ -225,6 +227,9 @@ def create_commit_registry(
             return task_and_repo_path
         current_task, repo_path = task_and_repo_path
 
+        actor = get_current_session_id()
+        if not actor:
+            return {"error": "Unlinking a commit requires session context."}
         denied = require_claim_authority(task_manager, current_task, "unlink_commit")
         if denied:
             return denied
@@ -233,17 +238,20 @@ def create_commit_registry(
         if normalized is None:
             return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
         try:
-            task = task_manager.unlink_commit(resolved_task_id, normalized)
-            return {
-                "task_id": task.id,
-                "commits": task.commits or [],
-            }
+            task = await unlink_commit_audited(
+                task_manager, current_task, normalized, reason=reason, actor=actor
+            )
         except ValueError as e:
             return {"error": str(e)}
+        return {
+            "task_id": task.id,
+            "commits": task.commits or [],
+        }
 
     registry.register(
         name="unlink_commit",
-        description="Unlink a git commit from a task.",
+        description="Unlink a git commit from a task. Landed commits stay linked. The reason "
+        "is recorded on the task's lifecycle with the caller as actor.",
         input_schema={
             "type": "object",
             "properties": {
@@ -255,6 +263,10 @@ def create_commit_registry(
                     "type": "string",
                     "description": "Git commit SHA to unlink",
                 },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the commit no longer belongs to this task",
+                },
                 "project_path": {
                     "type": "string",
                     "description": (
@@ -263,7 +275,7 @@ def create_commit_registry(
                     ),
                 },
             },
-            "required": ["task_id", "commit_sha"],
+            "required": ["task_id", "commit_sha", "reason"],
         },
         func=unlink_commit,
     )

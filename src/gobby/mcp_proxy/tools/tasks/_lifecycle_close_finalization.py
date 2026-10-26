@@ -25,6 +25,7 @@ async def commit_close(
     reason: str,
     changes_summary: str,
     commit_sha: str | None,
+    superseded_by: str | None = None,
 ) -> dict[str, Any]:
     from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 
@@ -38,6 +39,7 @@ async def commit_close(
         project_path=evaluation.repo_path,
         response_detail=evaluation.response_detail,
         closing_session_id=evaluation.resolved_session_id,
+        superseded_by=superseded_by,
     )
     if fresh.already_closed or not fresh.ready:
         return fresh.response(preview=False)
@@ -50,6 +52,8 @@ async def commit_close(
         return evaluation.refuse(
             "close_state_changed", "Linked commits changed; retry close_task."
         ).response(preview=False)
+    # The closing record names the superseder in the same transaction as the close.
+    closing_note = f"closed as {reason}; superseded by {superseded_by}" if superseded_by else None
     ancestors: list[str] = []
     try:
         if commit_sha is not None and fresh.candidate_commit_sha is not None:
@@ -62,6 +66,7 @@ async def commit_close(
                 cwd=fresh.repo_path,
                 expected_updated_at=task.updated_at,
                 closed_ancestors=ancestors,
+                closing_note=closing_note,
             )
         else:
             await asyncio.to_thread(
@@ -72,6 +77,7 @@ async def commit_close(
                 closed_commit_sha=fresh.candidate_commit_sha,
                 expected_updated_at=task.updated_at,
                 closed_ancestors=ancestors,
+                closing_note=closing_note,
             )
     except (TaskStaleStateError, TaskHasOpenChildrenError) as exc:
         return fresh.refuse("close_state_changed", str(exc)).response(preview=False)

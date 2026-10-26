@@ -195,9 +195,11 @@ notes. After closing, call `gobby-memory:review_task_memories` with the task and
 summary.
 
 The close reasons are `done`, `moot`, `superseded`, and `wont_do`.
-The no-work reasons `moot`, `superseded`, and `wont_do` allow a commitless close but do not waive
-child closure, attributed-file cleanliness, or ancestry checks for existing
-commit links. An epic does not receive a separate commit exemption.
+The no-work reasons `moot`, `superseded`, and `wont_do` allow only a commitless close.
+A no-work close with a linked commit fails the ancestry check, so unlink each candidate
+first with a reason. A `superseded` close names its superseder in `superseded_by`.
+No-work reasons do not waive child closure or attributed-file cleanliness. An epic does
+not receive a separate commit exemption.
 
 Human operators may disposition an unneeded leaf directly with
 `gobby tasks close '#14390' --reason moot`. The CLI accepts only
@@ -331,7 +333,7 @@ Related MCP tools:
 | Tool | Purpose |
 | :--- | :--- |
 | `link_commit` | Link a commit while keeping the task open. |
-| `unlink_commit` | Remove a linked commit. |
+| `unlink_commit` | Remove a linked commit. Requires `reason`, refuses landed commits, and records the removal on the task's lifecycle. |
 | `auto_link_commits` | Detect commits that mention task refs. |
 | `get_task_diff` | Read a byte page of the linked diff plus independently paginated commit and file manifests. |
 | `update_observed_files` | Annotate affected files from linked commits. |

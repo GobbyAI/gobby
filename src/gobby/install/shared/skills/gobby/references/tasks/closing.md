@@ -30,18 +30,26 @@ Both leaves and epics use these invariants, in order:
 | `children_closed` | Every child is closed. |
 | `linked_commits` | At least one linked or prospective commit, or an explicit no-work reason. |
 | `uncommitted_task_edits` | Every task-attributed path is clean in its recorded checkout; attribution must be complete. |
-| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. |
+| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. A no-work close has no linked commits: unlink each candidate first (see below). |
 
 The response exposes `gates`, `can_close`, `closed`, and resolved commit identities.
 Task, caller, machine, and repository authorization are checked before the gates.
 The final close re-evaluates current state before writing. A concurrent change
 can require another preview or retry.
 
-Close reasons are `done`, `moot`, `superseded`, and `wont_do`.
-The no-work reasons `moot`, `superseded`, and `wont_do` permit a commitless close.
-Explain the disposition in `changes_summary`;
-they do not waive child closure, attributed-file cleanliness, or ancestry checks
-for commits already linked to the task.
+Close reasons are `done`, `moot`, `superseded`, and `wont_do`. Delivered work closes
+with `done`. The no-work reasons `moot`, `superseded`, and `wont_do` permit only a
+close with no linked commit, and explain the disposition in `changes_summary`.
+A no-work close with any linked commit fails `integration_ancestry`, landed or not.
+Unlink each unlanded candidate first with
+`unlink_commit(task_id, commit_sha, reason)`. The reason and the caller are recorded
+as a task lifecycle event. `unlink_commit` refuses a commit already on the integration
+branch, so landed work closes with `done`. A `superseded` close must name the
+superseding task or commit in `superseded_by`, or it is refused with
+`superseded_by_required`; the closing record stores it.
+No-work closes do not waive child closure or attributed-file cleanliness.
+When step records are enforced, the unlinked task's implementation and closing
+records need the no-work disposition and no commit SHA, recorded after the unlink.
 
 Developers and independent reviewers remain responsible for acceptance criteria,
 test quality, and validation results. The close tool does not score transcripts,

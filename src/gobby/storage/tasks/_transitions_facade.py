@@ -179,6 +179,7 @@ class TaskTransitionsMixin:
         closed_commit_sha: str | None = None,
         closed_ancestors: list[str] | None = None,
         expected_updated_at: datetime | None = None,
+        closing_note: str | None = None,
     ) -> Task:
         """Close a task."""
         _close_task(
@@ -190,6 +191,7 @@ class TaskTransitionsMixin:
             closed_commit_sha=closed_commit_sha,
             closed_ancestors=closed_ancestors,
             expected_updated_at=expected_updated_at,
+            closing_note=closing_note,
         )
         self._notify_listeners()
         return self.get_task(task_id)
@@ -205,6 +207,7 @@ class TaskTransitionsMixin:
         cwd: str | Path | None = None,
         expected_updated_at: datetime | None = None,
         closed_ancestors: list[str] | None = None,
+        closing_note: str | None = None,
     ) -> Task:
         """Link a commit and close the task in one transaction.
 
@@ -234,6 +237,7 @@ class TaskTransitionsMixin:
                 closed_in_session_id=closed_in_session_id,
                 closed_commit_sha=commit_sha,
                 closed_ancestors=closed_ancestors,
+                closing_note=closing_note,
             )
         self._notify_listeners()
         return self.get_task(task_id)
