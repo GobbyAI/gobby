@@ -1,0 +1,468 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-10-26T22:41:36.248617+00:00",
+  "plan": {
+    "live": false,
+    "wire": "openrouter",
+    "model": "typesafe/jev-1.14-20261014",
+    "max_http_calls": 12,
+    "per_call_deadline_seconds": 30,
+    "sum_call_deadlines_seconds": 360,
+    "retries": 0,
+    "secret_name": "openrouter_api_key",
+    "spend_cap_usd": 0.05,
+    "input_price_per_million_usd": 0.042,
+    "estimated_cost_usd": "0.01\u20130.02; adaptive sizing, reserve checked before each send",
+    "maximum_reserved_per_hosted_post_usd": 0.011010048,
+    "request_byte_cap": 400000,
+    "response_byte_cap": 1048576,
+    "local_context_tokens": null,
+    "local_boundary_probes": false
+  },
+  "completed": true,
+  "activation_gate_met": false,
+  "checklist": {
+    "usage_scope": {
+      "status": "unverified",
+      "detail": "Observed token growth is not a complete usage contract",
+      "evidence": []
+    },
+    "default_mode_limits": {
+      "status": "unverified",
+      "detail": "OpenRouter automatically selects long-context above about 32000 text bytes; default-mode enforcement is not isolated",
+      "evidence": []
+    },
+    "header_honored": {
+      "status": "unverified",
+      "detail": "Acceptance cannot distinguish ignored header from auto-long-context",
+      "evidence": []
+    },
+    "alias_resolution": {
+      "status": "met",
+      "detail": "~typesafe/jev-latest resolved to typesafe/jev-1.14-20261014",
+      "evidence": [
+        "alias",
+        "catalog"
+      ]
+    },
+    "noul_parsed": {
+      "status": "met",
+      "detail": "Production Noul parser accepted the calibration responses",
+      "evidence": [
+        "calibrate_question_4096",
+        "calibrate_question_8192"
+      ]
+    },
+    "question_under_probe": {
+      "status": "met",
+      "detail": "Observed usage within 5% below boundary",
+      "evidence": [
+        "question_under"
+      ]
+    },
+    "question_over_probe": {
+      "status": "met",
+      "detail": "Observed rejection/guard boundary",
+      "evidence": [
+        "question_over"
+      ]
+    },
+    "request_under_probe": {
+      "status": "met",
+      "detail": "Observed usage within 5% below boundary",
+      "evidence": [
+        "request_under"
+      ]
+    },
+    "request_over_probe": {
+      "status": "met",
+      "detail": "Observed rejection/guard boundary",
+      "evidence": [
+        "request_over"
+      ]
+    },
+    "header_request_accepted": {
+      "status": "met",
+      "detail": "Observed response to explicit header request",
+      "evidence": [
+        "header"
+      ]
+    },
+    "box_attempt": {
+      "status": "met",
+      "detail": "Synthetic64x64 PNG sent through production Box wire builder",
+      "evidence": [
+        "box"
+      ]
+    },
+    "box_parsed": {
+      "status": "unmet",
+      "detail": "Production Box parser result",
+      "evidence": [
+        "box"
+      ]
+    },
+    "privacy_flags_sent": {
+      "status": "met",
+      "detail": "Every inference request carries zdr=true and data_collection=deny; this does not audit provider retention",
+      "evidence": [
+        "alias",
+        "calibrate_state_4096",
+        "calibrate_state_8192",
+        "calibrate_question_4096",
+        "calibrate_question_8192",
+        "question_under",
+        "question_over",
+        "request_under",
+        "request_over",
+        "header",
+        "box"
+      ]
+    }
+  },
+  "measured_chars_per_token": {
+    "state": 2.4294187425860025,
+    "question": 2.4294187425860025
+  },
+  "documentation": {
+    "openrouter": "https://openrouter.ai/docs/guides/community/jev",
+    "typesafe": "https://docs.typesafe.ai/models",
+    "price": "https://openrouter.ai/typesafe/jev-1.14"
+  },
+  "parser_source_sha256": "9a6a8147e81575baa16610242628b037cf6faf0029c080214104dbfda4ee6f8f",
+  "catalog": {
+    "id": "typesafe/jev-1.14",
+    "canonical_slug": "typesafe/jev-1.14-20261014",
+    "context_length": 262144,
+    "input_price_per_token": "4.2E-8"
+  },
+  "calibration_overhead_tokens": {
+    "state": 283.0000000000002,
+    "question": 284.0000000000002
+  },
+  "probes": [
+    {
+      "name": "catalog",
+      "method": "GET",
+      "endpoint": "https://openrouter.ai/api/v1/models?output_modalities=decisions",
+      "request_bytes": 0,
+      "request_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "long_context_requested": false,
+      "status": 200,
+      "response_bytes": 27821
+    },
+    {
+      "name": "alias",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 269,
+      "request_sha256": "948468064216ba645cc1aae728ebb676364fa6c51e53573dcec1f62c690bd0e5",
+      "long_context_requested": false,
+      "request_model": "~typesafe/jev-latest",
+      "question_count": 1,
+      "state_chars": 64,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 219,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 308,
+        "cost": 1.2936e-05
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.99
+        }
+      }
+    },
+    {
+      "name": "calibrate_state_4096",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 4426,
+      "request_sha256": "b3cdfe93367686ae40f4f6a1e33ddb814080a730746a1b7dd960cf49fa8a38db",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 4096,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 220,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 1969,
+        "cost": 8.2698e-05
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.99
+        }
+      }
+    },
+    {
+      "name": "calibrate_state_8192",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 8642,
+      "request_sha256": "b5464634e84d857ce465028b8a7a32476121b733940d64af6fa51ca5ad8430e5",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 8192,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 219,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 3655,
+        "cost": 0.00015351
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.99
+        }
+      }
+    },
+    {
+      "name": "calibrate_question_4096",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 4428,
+      "request_sha256": "7f778bb5facd13eefd68b64b719b9e54fe81577c13d160be9c03d35f4bbfa36c",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 0,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 218,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 1970,
+        "cost": 8.274e-05
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.5
+        }
+      }
+    },
+    {
+      "name": "calibrate_question_8192",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 8644,
+      "request_sha256": "c65fe65b18f3625899bf6c0b81cbfc7bce7976516b371f1715c23aa3b5d9ca42",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 0,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 220,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 3656,
+        "cost": 0.000153552
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.53
+        }
+      }
+    },
+    {
+      "name": "question_under",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 79811,
+      "request_sha256": "e9428a41c78cbc98691d4e7f61afadb351c5268e31111afed04a31767d42f43e",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 77327,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 221,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 32122,
+        "cost": 0.001349124
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.99
+        }
+      },
+      "target_tokens_estimated": 32112.64
+    },
+    {
+      "name": "question_over",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 83088,
+      "request_sha256": "2d6893a10aff2a550cb5b4cc5518dc1ce1089ba94f79a3516b27bc7d8d9cafa6",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 80511,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 221,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 33433,
+        "cost": 0.001404186
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.99
+        }
+      },
+      "target_tokens_estimated": 33423.36
+    },
+    {
+      "name": "request_under",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 158257,
+      "request_sha256": "e5bb2b6d96c2242e3c847afb7204f436bd3c819832ebffa06a96c041c061d242",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 4,
+      "state_chars": 0,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 319,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 63445,
+        "cost": 0.00266469
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.39
+        },
+        "q1": {
+          "probability": 0.38
+        },
+        "q2": {
+          "probability": 0.43
+        },
+        "q3": {
+          "probability": 0.38
+        }
+      },
+      "target_tokens_estimated": 64225.28
+    },
+    {
+      "name": "request_over",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 164813,
+      "request_sha256": "8b59ce59f4730c68e778cf60d5c8f8cd7150ed33c8b14b855188c8983849bf7b",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 4,
+      "state_chars": 0,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 319,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 66061,
+        "cost": 0.002774562
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.57
+        },
+        "q1": {
+          "probability": 0.55
+        },
+        "q2": {
+          "probability": 0.5
+        },
+        "q3": {
+          "probability": 0.43
+        }
+      },
+      "target_tokens_estimated": 66846.72
+    },
+    {
+      "name": "header",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 83088,
+      "request_sha256": "2d6893a10aff2a550cb5b4cc5518dc1ce1089ba94f79a3516b27bc7d8d9cafa6",
+      "long_context_requested": true,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 80511,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 200,
+      "response_bytes": 221,
+      "response_model": "typesafe/jev-1.14-20261014",
+      "usage": {
+        "input_tokens": 33433,
+        "cost": 0.001404186
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.99
+        }
+      }
+    },
+    {
+      "name": "box",
+      "method": "POST",
+      "endpoint": "https://openrouter.ai/api/alpha/decisions",
+      "request_bytes": 462,
+      "request_sha256": "54f877be99ebc250f3d459cda57fa7e9be66256340b0310899476b3d68c5640f",
+      "long_context_requested": false,
+      "request_model": "typesafe/jev-1.14-20261014",
+      "question_count": 1,
+      "state_chars": 13,
+      "privacy_flags_sent": {
+        "zdr": true,
+        "data_collection": "deny"
+      },
+      "status": 400,
+      "response_bytes": 136,
+      "error_code": "unclassified"
+    }
+  ],
+  "cost_usd": 0.021092232,
+  "cost_basis": "Reported successful usage.cost; full context reservation retained for unknown/error costs",
+  "script_sha256": "7d4b7f6c6cf9393b5a7d733af8b0d09f4753a918f5a61f5c9f6c96be96f452c0"
+}

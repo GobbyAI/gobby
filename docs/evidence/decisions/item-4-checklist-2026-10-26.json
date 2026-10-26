@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "task": "#22604",
+  "reviewed_on": "2026-10-26",
+  "purpose": "Normalized Activation Gate item-4 evidence; raw captures remain byte-identical",
+  "activation_gate_met": false,
+  "enforcement_authorized": false,
+  "sources": {
+    "openrouter_gap": {
+      "path": "openrouter-item4-2026-10-26.json",
+      "sha256": "389e04ca271c5d76b01ac20fff2a50b23bfd42e637d42b7b427320860e2c5312",
+      "operator_exit_status": 0
+    },
+    "lmstudio_gap": {
+      "path": "lmstudio-item4-2026-10-26.json",
+      "sha256": "0974a89cb441a55e4ba7d605c2813a247eecd423c015958e4b5acc99810f8a67",
+      "operator_exit_status": 0
+    },
+    "lmstudio_models": {
+      "path": "lmstudio-models-2026-10-26.json",
+      "sha256": "1917d1e4b620d3d17533acfcda459ee9ae4251426f6a98fe2f000855389bbc0e"
+    },
+    "openrouter_choice_score": {
+      "path": "community-choice-openrouter-repaired-2026-10-26.json",
+      "sha256": "ae06061ff0c5a5c101ba3e54b7dea6777b8fa21411ce7d379cf66986f17a33b4",
+      "landed_commit": "c2f3f06f670e1dc33f996644da754fc26bb2b6fc"
+    }
+  },
+  "operator_report_message": "2671ce29-fd05-406a-b1f4-03e20082cb09",
+  "probe_source_sha256": "7d4b7f6c6cf9393b5a7d733af8b0d09f4753a918f5a61f5c9f6c96be96f452c0",
+  "probe_instructions_sha256": "47b90e8336047ebf07d850d005db26252eb486dbd1ce3d222503bcb29ceb6841",
+  "raw_field_corrections": [
+    "plan.live=false is the offline-plan default serialized into both live captures; the operator ran --run-live once per wire and reported exit 0.",
+    "question_over_probe and request_over_probe say met with rejection/guard wording, but both responses were HTTP 200. These are observations above synthetic sizing targets, not proven limit rejection or truncation.",
+    "OpenRouter cost_usd includes the full reservation for the Box HTTP 400 with unknown cost; it is not the measured invoice total.",
+    "LM Studio default_mode_limits and header_honored reuse OpenRouter boilerplate. No local header or boundary probe ran; local semantics remain unverified.",
+    "box_parsed=unmet means no parsed Box result was obtained after HTTP 400; it does not mean the production parser rejected a successful response."
+  ],
+  "wires": {
+    "openrouter-decisions": {
+      "capture_model": "typesafe/jev-1.14-20261014",
+      "identity_contract": "response_version",
+      "item_4_met": false,
+      "http_calls": 12,
+      "retries": 0,
+      "per_call_deadline_seconds": 30,
+      "cost": {
+        "successful_usage_cost_usd": "0.010082184",
+        "unknown_box_cost_reservation_usd": "0.011010048",
+        "budget_accounting_total_usd": "0.021092232",
+        "approved_cap_usd": "0.05",
+        "actual_box_charge_usd": null
+      },
+      "items": [
+        {"id": "capture_version_identity", "status": "met", "detail": "All ten successful inference responses report the pinned capture model; Box returned HTTP 400 without a response model.", "evidence": ["openrouter_gap", "openrouter_choice_score"]},
+        {"id": "live_config_pin_matches_capture", "status": "unverified", "detail": "These checkout captures did not inspect live model or consumer settings.", "evidence": []},
+        {"id": "alias_resolves_to_version", "status": "met", "detail": "~typesafe/jev-latest resolved to typesafe/jev-1.14-20261014.", "evidence": ["openrouter_gap:alias"]},
+        {"id": "choice_round_trip", "status": "met", "detail": "Reused six strictly parsed Choice responses at this version; no new Choice calls.", "evidence": ["openrouter_choice_score"]},
+        {"id": "noul_round_trip", "status": "met", "detail": "Production Noul parser accepted alias, calibration and sizing responses.", "evidence": ["openrouter_gap"]},
+        {"id": "score_round_trip", "status": "met", "detail": "Reused three strictly parsed Score responses, 1.96/1.97/1.96, at this version.", "evidence": ["openrouter_choice_score"]},
+        {"id": "box_attempt", "status": "met", "detail": "One synthetic 64x64 PNG attempt returned HTTP 400; retained error code is unclassified.", "evidence": ["openrouter_gap:box"]},
+        {"id": "box_round_trip", "status": "unmet", "detail": "No Box result was obtained. The cause of the HTTP 400 is not established by the retained diagnostic.", "evidence": ["openrouter_gap:box"]},
+        {"id": "path_heavy_chars_per_token", "status": "met", "detail": "4096 added characters increased usage by 1686 tokens for state and question: 2.4294187425860025 chars/token. This synthetic calibration is not universal.", "evidence": ["openrouter_gap:calibrate_state_4096", "openrouter_gap:calibrate_state_8192", "openrouter_gap:calibrate_question_4096", "openrouter_gap:calibrate_question_8192"]},
+        {"id": "documented_limit_and_scope_match_config", "status": "unverified", "detail": "Catalog advertises 262144 tokens; automatic long-context routing prevents this run from isolating the configured default limits. No live config match was checked.", "evidence": ["openrouter_gap:catalog", "documentation"]},
+        {"id": "usage_counts_complete_limit_scope", "status": "unverified", "detail": "Observed growth and the documented usage field do not establish complete token accounting, serialization or truncation semantics for every request shape.", "evidence": ["openrouter_gap", "documentation"]},
+        {"id": "under_and_over_enforcement", "status": "unverified", "detail": "All four sizing probes returned 200: usage 32122/33433 around target 32768, and 63445/66061 around target 65536. No backend rejection or DecisionService truncated result was recorded. These targets are not proof of 32000/64000 default enforcement or the 262144 ceiling.", "evidence": ["openrouter_gap:question_under", "openrouter_gap:question_over", "openrouter_gap:request_under", "openrouter_gap:request_over"]},
+        {"id": "explicit_long_context_header_honored", "status": "unverified", "detail": "Same request body returned 200 and usage 33433 both without and with the header; auto-routing confounds causality.", "evidence": ["openrouter_gap:question_over", "openrouter_gap:header"]},
+        {"id": "canonical_slug", "status": "met", "detail": "The catalog canonical_slug matches typesafe/jev-1.14-20261014.", "evidence": ["openrouter_gap:catalog"]},
+        {"id": "privacy_flags_sent", "status": "met", "detail": "All eleven inference requests record zdr=true and data_collection=deny; this is not a provider-retention audit.", "evidence": ["openrouter_gap"]},
+        {"id": "dated_documentation_references", "status": "met", "detail": "Limits, API fields and HTTP errors were reviewed on 2026-10-26; completeness of their usage contract remains unverified.", "evidence": ["documentation"]}
+      ]
+    },
+    "systemone": {
+      "capture_model": "clef-flash",
+      "identity_contract": "model_card",
+      "item_4_met": false,
+      "http_calls": 3,
+      "retries": 0,
+      "per_call_deadline_seconds": 15,
+      "cost": {"api_charge_usd": "0", "local_compute_measured": false},
+      "items": [
+        {"id": "loaded_model_metadata", "status": "met", "detail": "Separate authorized models read reports clef-flash Q8_0, loaded, max and loaded context 262144. This is runtime metadata, not a source contract.", "evidence": ["lmstudio_models"]},
+        {"id": "source_commit_and_version_identity", "status": "unmet", "detail": "No source commit, version pin or full model-card contract was captured. The serving endpoint echoes clef-flash.", "evidence": ["lmstudio_gap:catalog", "lmstudio_models"]},
+        {"id": "live_config_pin_matches_capture", "status": "unverified", "detail": "No live Gobby model or consumer settings were read.", "evidence": []},
+        {"id": "choice_round_trip", "status": "unverified", "detail": "This gap run contains no Choice call. Earlier local Choice evidence is retained historically, without assuming the same loaded model identity.", "evidence": ["lmstudio_gap"]},
+        {"id": "noul_round_trip", "status": "met", "detail": "Two parsed Noul responses returned probabilities 0.9758969379261029 and 0.9744102746319381.", "evidence": ["lmstudio_gap:calibrate_state_4096", "lmstudio_gap:calibrate_state_8192"]},
+        {"id": "score_round_trip", "status": "unverified", "detail": "No Score call at the selected clef-flash identity is established by this gap run.", "evidence": ["lmstudio_gap"]},
+        {"id": "box_attempt", "status": "unverified", "detail": "No Box attempt at the selected clef-flash identity is established by this gap run.", "evidence": ["lmstudio_gap"]},
+        {"id": "path_heavy_chars_per_token", "status": "met", "detail": "4096 added state characters increased usage from 1838 to 3524: 2.4294187425860025 chars/token. Question and image accounting are not measured.", "evidence": ["lmstudio_gap"]},
+        {"id": "documented_limit_and_scope_match_config", "status": "unverified", "detail": "Loaded context alone does not establish the encoded input scope or its relation to Gobby's configured budget.", "evidence": ["lmstudio_models"]},
+        {"id": "usage_counts_complete_limit_scope", "status": "unverified", "detail": "No source-backed usage or truncation contract was supplied.", "evidence": ["lmstudio_gap"]},
+        {"id": "under_and_over_enforcement", "status": "unverified", "detail": "262144 exceeds the harness's 16384-token local boundary-probe ceiling; no full-context prefill was sent.", "evidence": ["lmstudio_gap"]},
+        {"id": "explicit_long_context_header_honored", "status": "unverified", "detail": "No local header probe ran. OpenRouter-specific boilerplate in the raw capture does not apply.", "evidence": ["lmstudio_gap"]}
+      ]
+    }
+  },
+  "documentation": [
+    {"url": "https://openrouter.ai/docs/guides/community/jev", "retrieved_on": "2026-10-26"},
+    {"url": "https://docs.typesafe.ai/models", "retrieved_on": "2026-10-26"},
+    {"url": "https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request", "retrieved_on": "2026-10-26"}
+  ],
+  "remaining_acceptance": [
+    "Resolve item-4 identity, limit and complete-usage contract gaps before enforcement.",
+    "Resolve the Box failure and obtain #24248's required real consumer round-trip evidence.",
+    "Complete the selected full D/G/J and carry study with Josh's blinded ratings, then the ship decision and V2 evidence."
+  ]
+}
