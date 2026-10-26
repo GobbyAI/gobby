@@ -58,6 +58,9 @@ class TranscriptValidationRun:
     #: categories; ``categories`` above is their union. Empty only for runs
     #: built without classification.
     validation_segments: tuple[TranscriptValidationSegment, ...] = ()
+    #: Creation position, the ``order`` the run was first recorded at. A later receipt
+    #: may rewrite ``order`` (a background completion moves it), so identity uses this.
+    run_id: int = field(default=0, compare=False)
     core_command: str | None = field(init=False)
     wrapped: bool = field(init=False)
     wrapper_reason: str | None = field(init=False)
@@ -86,13 +89,15 @@ class TranscriptPathDelta:
     """One transcript path's share of an evidence delta.
 
     When ``resumed``, ``evidence`` holds only the runs appended after the caller's
-    checkpoint. Otherwise it holds the path's whole window and replaces what the
-    caller had for that path.
+    checkpoint, and ``patches`` the earlier runs a later record rewrote, each whole and
+    keyed by ``run_id``. Otherwise ``evidence`` holds the path's whole window and
+    replaces what the caller had for that path.
     """
 
     path: str
     evidence: TranscriptEvidence
     resumed: bool
+    patches: tuple[TranscriptValidationRun, ...] = ()
 
 
 @dataclass(frozen=True)

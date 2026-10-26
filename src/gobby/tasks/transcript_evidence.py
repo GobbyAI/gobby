@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -27,12 +27,12 @@ from gobby.tasks.transcript_background import (
     pending_background_run,
     recover_background_receipt,
 )
+from gobby.tasks.transcript_evidence_delta import lean_runs, path_delta
 from gobby.tasks.transcript_evidence_merge import merge_path_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceDelta,
     TranscriptEvidenceUnavailable,
-    TranscriptPathDelta,
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
@@ -138,15 +138,22 @@ async def derive_transcript_evidence(
     *,
     archive_dir: str | None = None,
     stream: TranscriptEvidenceStream | None = None,
+    project_path: str | None = None,
 ) -> TranscriptEvidence:
     """Parse provider transcripts for validation failures and their later resolutions.
 
     With ``stream``, only runs appended since the stream's checkpoint cross the pool,
-    and the stream keeps the window's accumulated evidence for the next call.
+    and the stream keeps the window's accumulated evidence for the next call. A single
+    transcript's streamed answer is reduced for the gate, judged in ``project_path``.
     """
     if stream is not None:
         return await _derive_streamed_evidence(
-            stream, session, _coerce_datetime(window_start), detection_config, archive_dir
+            stream,
+            session,
+            _coerce_datetime(window_start),
+            detection_config,
+            archive_dir,
+            project_path,
         )
     local_machine_id = require_local_session_ownership(session)
     payload = await run_in_transcript_evidence_pool(
@@ -192,6 +199,7 @@ async def _derive_streamed_evidence(
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
     archive_dir: str | None,
+    project_path: str | None,
 ) -> TranscriptEvidence:
     """Extend ``stream`` from the worker's delta; derive cold when the delta has no base."""
     evidence = stream.apply(
@@ -201,7 +209,8 @@ async def _derive_streamed_evidence(
             detection_config,
             base=stream.checkpoint,
             archive_dir=archive_dir,
-        )
+        ),
+        project_path,
     )
     if evidence is None:
         stream.reset()
@@ -212,7 +221,8 @@ async def _derive_streamed_evidence(
                 detection_config,
                 base=None,
                 archive_dir=archive_dir,
-            )
+            ),
+            project_path,
         )
     if evidence is None:
         raise RuntimeError("a cold transcript evidence delta must apply")
@@ -325,7 +335,13 @@ def _derive_transcript_path_evidence(
     resume: EvidenceSnapshot | None,
 ) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
     evidence, snapshot, _ = _derive_transcript_path_delta(
-        session, path, window_start, detection_config, attempted_paths, resume=resume
+        session,
+        path,
+        window_start,
+        detection_config,
+        attempted_paths,
+        resume=resume,
+        snapshot_runs=tuple,
     )
     return evidence, snapshot
 
@@ -338,8 +354,13 @@ def _derive_transcript_path_delta(
     attempted_paths: list[str],
     *,
     resume: EvidenceSnapshot | None,
-) -> tuple[TranscriptEvidence, EvidenceSnapshot | None, int | None]:
-    """Like ``_derive_transcript_path_evidence``, plus the order resumed from (None if cold)."""
+    snapshot_runs: Callable[[list[TranscriptValidationRun]], Sequence[TranscriptValidationRun]],
+) -> tuple[TranscriptEvidence, EvidenceSnapshot | None, tuple[TranscriptValidationRun, ...] | None]:
+    """Derive one path's window, resuming from ``resume`` when it still describes the file.
+
+    The snapshot keeps ``snapshot_runs`` of the runs. The third value is the runs ``resume``
+    held (None if cold), which the caller splits a delta against.
+    """
     fingerprint = _derivation_fingerprint(
         session,
         window_start,
@@ -416,8 +437,8 @@ def _derive_transcript_path_delta(
             parser_state=parser.snapshot_state(),
             pending=dict(state.pending),
             order=state.order,
-            runs=tuple(state.runs),
-            degraded=tuple(state.degraded),
+            runs=tuple(snapshot_runs(state.runs)),
+            degraded=tuple(dict.fromkeys(state.degraded)),
             parsed_from_offset=resume.watermark if resume is not None else 0,
             latest_record_at=state.latest_record_at,
         )
@@ -442,7 +463,7 @@ def _derive_transcript_path_delta(
             latest_record_at=state.latest_record_at,
         ),
         snapshot,
-        resume.order if resume is not None else None,
+        resume.runs if resume is not None else None,
     )
 
 
@@ -455,7 +476,7 @@ def _derive_transcript_delta_sync(
     base: tuple[object, ...] | None,
 ) -> TranscriptEvidenceDelta:
     fingerprint = _derivation_fingerprint(session, window_start, detection_config)
-    snapshot_key = f"{session.id}:{fingerprint}"
+    snapshot_key = f"{session.id}:{fingerprint}:delta"
     stored = load_durable_snapshot(snapshot_key)
     # Resume only when the caller's checkpoint describes the stored snapshot exactly.
     resume = stored if stored is not None and stored.checkpoint() == base else None
@@ -482,6 +503,7 @@ def _derive_transcript_delta_sync(
                 if resume is not None
                 else None
             ),
+            snapshot_runs=lean_runs,
         )
         for index, path in enumerate(paths)
     )
@@ -501,26 +523,9 @@ def _derive_transcript_delta_sync(
         base=base if resume is not None else None,
         checkpoint=updated.checkpoint() if updated is not None else None,
         paths=tuple(
-            TranscriptPathDelta(
-                path=path,
-                evidence=_appended_evidence(evidence, resumed_from),
-                resumed=resumed_from is not None,
-            )
-            for path, (evidence, _, resumed_from) in zip(paths, results, strict=True)
+            path_delta(path, evidence, previous)
+            for path, (evidence, _, previous) in zip(paths, results, strict=True)
         ),
-    )
-
-
-def _appended_evidence(
-    evidence: TranscriptEvidence, resumed_from: int | None
-) -> TranscriptEvidence:
-    """Keep the runs appended after ``resumed_from``; a cold parse keeps every run."""
-    if resumed_from is None:
-        return evidence
-    return replace(
-        evidence,
-        validation_runs=tuple(run for run in evidence.validation_runs if run.order > resumed_from),
-        command_runs=tuple(run for run in evidence.command_runs if run.order > resumed_from),
     )
 
 
@@ -667,6 +672,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             started_at=completed_at,
             completed_at=completed_at,
             order=order,
+            run_id=order,
             exit_code=exit_code,
             unknown_reason=unknown_reason,
             output=output,
@@ -751,6 +757,7 @@ def _record_validation_run(
             started_at=pending.timestamp,
             completed_at=completed_at,
             order=order,
+            run_id=order,
             exit_code=exit_code,
             unknown_reason=unknown_reason,
             output=output,

@@ -31,7 +31,7 @@ def derivation_fingerprint(
     """Invalidate durable snapshots whenever their derivation inputs change."""
     payload = json.dumps(
         {
-            "derivation_version": 47,
+            "derivation_version": 48,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,

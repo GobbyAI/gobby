@@ -596,6 +596,7 @@ class FoundWorkStopAnalyzer:
                 window_start if window_start is not None else session.created_at,
                 config,
                 stream=self._evidence_stream(session_id),
+                project_path=project_path,
             )
         except TranscriptEvidenceUnavailable:
             logger.debug("Found-work validation evidence unavailable for session %s", session_id)
