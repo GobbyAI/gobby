@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from gobby.storage.tasks._lifecycle import (
 )
 from gobby.storage.tasks._lifecycle import (
     link_commit as _link_commit,
+)
+from gobby.storage.tasks._lifecycle import (
+    move_commit_to_tip as _move_commit_to_tip,
 )
 from gobby.storage.tasks._lifecycle import (
     reopen_task as _reopen_task,
@@ -213,14 +217,15 @@ class TaskTransitionsMixin:
 
         The link stores Git's canonical short SHA, like every other commit writer (#23251).
         """
-        from gobby.utils.git import normalize_commit_sha
+        from gobby.utils.git import descends_from_all, normalize_commit_sha
 
         short_sha = normalize_commit_sha(commit_sha, cwd=cwd)
         if short_sha is None:
             raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
         with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)) as conn:
             row = conn.execute(
-                "SELECT closed_at, updated_at FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
+                "SELECT closed_at, updated_at, commits FROM tasks WHERE id = %s FOR UPDATE",
+                (task_id,),
             ).fetchone()
             if row is None:
                 raise ValueError(f"Task {task_id} not found")
@@ -228,7 +233,17 @@ class TaskTransitionsMixin:
                 return self.get_task(task_id)
             if expected_updated_at is not None and row["updated_at"] != expected_updated_at:
                 raise TaskStaleStateError(task_id)
-            _link_commit(self.db, task_id, short_sha)
+            linked: list[str] = json.loads(row["commits"]) if row["commits"] else []
+            others = [
+                sha
+                for sha in linked
+                if not (sha.startswith(short_sha) or short_sha.startswith(sha))
+            ]
+            if not _link_commit(self.db, task_id, short_sha) and linked[-1] in others:
+                # The named commit becomes the tip only when it descends from every
+                # other link, so an older commit never bypasses newer work (#25160).
+                if descends_from_all(short_sha, others, cwd=cwd):
+                    _move_commit_to_tip(self.db, task_id, short_sha)
             _close_task(
                 self.db,
                 task_id=task_id,

@@ -215,7 +215,8 @@ class TestCloseTaskTool:
         self, close_case: CloseCase, reason: str, expected: bool
     ) -> None:
         close_case.task.commits = []
-        result = await close_case.close(reason=reason)
+        superseder = {"superseded_by": "#42"} if reason == "superseded" else {}
+        result = await close_case.close(reason=reason, **superseder)
         assert result["success"] is expected
         assert result["closed"] is expected
         assert result.get("error") == (None if expected else "linked_commits")
