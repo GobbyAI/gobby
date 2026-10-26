@@ -13834,6 +13834,11 @@ async fn tab_and_split_shells_use_the_daemons_focused_checkout() {
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
+    // Hold the split reply so its pane.added event stays undelivered until the
+    // test releases it. Closing input must not depend on that event winning a race.
+    let release_split = mock.hold_ws("workspace_op", |op| {
+        op.get("op") == Some(&json!("pane.split"))
+    });
     let driver = async {
         wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
         settle_live_event().await;
@@ -13857,6 +13862,7 @@ async fn tab_and_split_shells_use_the_daemons_focused_checkout() {
         ),
         driver
     );
+    release_split.notify_one();
     result.expect("checkout cwd live loop");
     assert_eq!(workspace.focused_checkout_path().as_deref(), Some("/repo"));
     assert!(websocket_requests(&mock, "terminal_create").is_empty());
@@ -13874,7 +13880,7 @@ async fn tab_and_split_shells_use_the_daemons_focused_checkout() {
         let pane = model
             .panes()
             .find(|pane| pane.terminal_id.as_deref() == Some(terminal_id))
-            .expect("new shell pane");
+            .unwrap_or_else(|| panic!("new shell pane for {terminal_id}"));
         assert!(pane.owns_terminal, "{terminal_id} belongs to the workspace");
     }
     mock.shutdown().await;
