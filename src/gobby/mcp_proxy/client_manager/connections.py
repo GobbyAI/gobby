@@ -47,13 +47,19 @@ async def _acquire_connection_lock(manager: Any, server_id: str) -> asyncio.Lock
     lock = cast(asyncio.Lock, manager._lazy_connector.get_connection_lock(server_id))
     config = manager._configs.get(server_id)
     timeout = config.connect_timeout if config is not None else manager.connection_timeout
-    try:
-        await asyncio.wait_for(lock.acquire(), timeout=timeout)
-    except TimeoutError as exc:
+    # No lock budget: a waiter queues behind the holder and reuses its outcome instead of
+    # failing and counting against the breaker. The holder's connect bound limits the hold.
+    started = time.monotonic()
+    await lock.acquire()
+    waited = time.monotonic() - started
+    if waited > timeout:
         label = config.name if config is not None else server_id
-        error = MCPError(f"Timed out waiting for connection lock for '{label}' after {timeout}s")
-        manager._lazy_connector.mark_failed(server_id, str(error))
-        raise error from exc
+        logging.getLogger("gobby.mcp.manager").warning(
+            "Waited %.1fs for connection lock for '%s' (connect_timeout %ss)",
+            waited,
+            label,
+            timeout,
+        )
     return lock
 
 
@@ -321,14 +327,16 @@ async def _ensure_connected_once(manager: Any, server_id: str) -> ClientSession:
         if connection.is_connected and connection.session:
             return cast(ClientSession, connection.session)
 
-    _require_connection_attempt(manager, server_id)
-
     lock = await _acquire_connection_lock(manager, server_id)
     try:
         if server_id in manager._connections:
             connection = manager._connections[server_id]
             if connection.is_connected and connection.session:
                 return cast(ClientSession, connection.session)
+
+        # Checked under the lock so callers queued behind a half-open probe reuse its
+        # outcome rather than being refused while it is in flight.
+        _require_connection_attempt(manager, server_id)
 
         config = manager._configs[server_id]
         if config.template_id:

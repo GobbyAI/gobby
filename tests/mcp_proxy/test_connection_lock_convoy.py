@@ -259,6 +259,8 @@ async def test_connect_unwinds_within_its_cleanup_bound_when_the_owner_task_igno
             connect.cancel()
         done, _ = await asyncio.wait({connect}, timeout=bound)
         assert connect in done, f"connect() was still blocked after {bound}s"
+        expected = ConnectionState.FAILED if trigger == "budget" else ConnectionState.DISCONNECTED
+        assert connection.state is expected
     finally:
         connection.child_exited.set()
         await asyncio.gather(connect, owner, return_exceptions=True)
@@ -266,8 +268,51 @@ async def test_connect_unwinds_within_its_cleanup_bound_when_the_owner_task_igno
     if trigger == "budget":
         with pytest.raises(MCPError, match="Connection timeout"):
             connect.result()
-        assert connection.state is ConnectionState.FAILED
     else:
         assert connect.cancelled()
-        assert connection.state is ConnectionState.DISCONNECTED
     assert connection._owner_task is None
+
+
+class FirstStartStuckTransport(StuckExitTransport):
+    """The first start hangs and absorbs cancellation; any later start fails at once."""
+
+    def __init__(self, config: MCPServerConfig) -> None:
+        super().__init__(config)
+        self.starts = 0
+
+    async def _open_transport(self, stack: AsyncExitStack) -> Transport:
+        self.starts += 1
+        if self.starts > 1:
+            raise MCPError("second start failed")
+        return await super()._open_transport(stack)
+
+
+async def test_abandoned_owner_unwind_does_not_clobber_a_later_start() -> None:
+    config = MCPServerConfig(
+        name="lightspeed",
+        project_id="test-project",
+        transport="stdio",
+        command="unused",
+        connect_timeout=CONNECT_TIMEOUT,
+    )
+    connection = FirstStartStuckTransport(config)
+    bound = CONNECT_TIMEOUT + 2 * connection._OWNER_TASK_SHUTDOWN_TIMEOUT + 1.0
+
+    first = asyncio.create_task(connection.connect())
+    first_owner = await wait_for_async_condition(
+        lambda: connection._owner_task, description="the first owner task to start"
+    )
+    assert first_owner is not None
+    try:
+        done, _ = await asyncio.wait({first}, timeout=bound)
+        assert first in done, f"connect() was still blocked after {bound}s"
+        with pytest.raises(MCPError, match="Connection timeout"):
+            first.result()
+        # The abandoned owner is still unwinding when the next start fails outright.
+        with pytest.raises(MCPError, match="second start failed"):
+            await connection.connect()
+    finally:
+        connection.child_exited.set()
+        await asyncio.gather(first, first_owner, return_exceptions=True)
+
+    assert connection.state is ConnectionState.FAILED
