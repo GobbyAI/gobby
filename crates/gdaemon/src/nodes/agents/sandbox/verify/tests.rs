@@ -27,6 +27,32 @@ fn hung_node_probe_is_killed_at_the_deadline() -> Result<()> {
 }
 
 #[test]
+fn inherited_stdout_cannot_outlive_the_node_probe_deadline() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let pidfile = dir.path().join("descendant.pid");
+    let node = node_script(
+        dir.path(),
+        &format!(
+            "(sleep 30) &\necho $! > '{}'\necho v22.12.0\nexit 0",
+            pidfile.display()
+        ),
+    )?;
+    let started = Instant::now();
+    let result = check_node_version(&node, Duration::from_millis(200));
+    let elapsed = started.elapsed();
+    let pid: i32 = fs::read_to_string(pidfile)?.trim().parse()?;
+    // SAFETY: this is the isolated sleeper created by our fake node, never a user process.
+    unsafe { libc::kill(pid, libc::SIGKILL) };
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "stdout outlived the deadline: {elapsed:?}"
+    );
+    let error = result.err().context("inherited stdout must time out")?;
+    assert!(error.to_string().contains("timed out"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn nonzero_node_probe_is_refused_even_when_a_version_prints() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let node = node_script(dir.path(), "echo v22.12.0\nexit 1")?;

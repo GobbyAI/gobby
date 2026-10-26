@@ -2438,12 +2438,44 @@ esac
 
 #[cfg(target_os = "macos")]
 #[test]
+fn chokepoint_monitor_restart_helper() -> Result<()> {
+    let Some(case_dir) = std::env::var_os("GOBBY_TEST_MONITOR_RESTART_CASE") else {
+        return Ok(());
+    };
+    let phase = std::env::var("GOBBY_TEST_MONITOR_RESTART_PHASE")?;
+    let (tree, inputs) = chokepoint_fixture(Path::new(&case_dir), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let launch = prepare_launch_with(
+        &inputs,
+        &prompt,
+        &srt_installation(&tree, tree.path("bin").join("node")),
+    )?;
+    let socket = tree.path("monitor_socket").join(format!(
+        "v-{}",
+        &python_srt_release_field("runner_sha256")[..12]
+    ));
+    assert_eq!(
+        launch
+            .env
+            .get("GOBBY_SRT_MONITOR_SOCKET")
+            .map(PathBuf::from),
+        Some(socket)
+    );
+    fs::write(
+        tree.path("tmp").join(format!("{phase}.pid")),
+        std::process::id().to_string(),
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn chokepoint_second_node_reuses_monitor_that_outlived_the_first() -> Result<()> {
     let root = tempfile::tempdir()?;
-    let (tree, inputs) = chokepoint_fixture(&root.path().join("reuse"), "claude", |_| {})?;
-    let prompt = chokepoint_prompt(&tree)?;
+    let case_dir = root.path().join("reuse");
+    let (tree, _) = chokepoint_fixture(&case_dir, "claude", |_| {})?;
     let log = tree.path("tmp").join("node-calls.log");
-    let node = fake_node(
+    fake_node(
         &tree,
         &format!(
             r#"shift
@@ -2466,26 +2498,41 @@ esac
         "v-{}",
         &python_srt_release_field("runner_sha256")[..12]
     ));
-    let first = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node.clone()))?;
-    assert_eq!(
-        first.env.get("GOBBY_SRT_MONITOR_SOCKET").map(PathBuf::from),
-        Some(socket.clone())
-    );
-    // The first node's launch is dropped; the detached monitor keeps running.
-    drop(first);
-    let pid: i32 = fs::read_to_string(monitor_pidfile(&tree))?.trim().parse()?;
-    assert!(
-        process_alive(pid),
-        "the monitor did not outlive the first node"
-    );
-    let second = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
-    assert_eq!(
-        second
-            .env
-            .get("GOBBY_SRT_MONITOR_SOCKET")
-            .map(PathBuf::from),
-        Some(socket.clone())
-    );
+    for phase in ["first", "second"] {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "chokepoint_monitor_restart_helper",
+                "--nocapture",
+            ])
+            .env("GOBBY_TEST_MONITOR_RESTART_CASE", &case_dir)
+            .env("GOBBY_TEST_MONITOR_RESTART_PHASE", phase)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{phase} launcher failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let launcher: i32 = fs::read_to_string(tree.path("tmp").join(format!("{phase}.pid")))?
+            .trim()
+            .parse()?;
+        assert!(
+            !process_alive(launcher),
+            "the {phase} launcher did not exit"
+        );
+        let monitor: i32 = fs::read_to_string(monitor_pidfile(&tree))?.trim().parse()?;
+        assert!(
+            process_alive(monitor),
+            "the monitor did not outlive the {phase} launcher"
+        );
+        // SAFETY: getsid only inspects the live monitor created by this fixture.
+        assert_eq!(
+            unsafe { libc::getsid(monitor) },
+            monitor,
+            "the monitor was not detached"
+        );
+    }
     let starts = fs::read_to_string(&log)?
         .lines()
         .filter(|line| line.starts_with(&format!("--monitor {} ", socket.display())))

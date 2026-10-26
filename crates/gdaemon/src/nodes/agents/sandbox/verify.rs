@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
-    io::Read,
+    io::{self, Read},
     os::unix::{fs::PermissionsExt, io::AsRawFd},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -21,6 +21,7 @@ use std::{
 
 /// Upper bound on the `node --version` probe. The probe runs under the shared install lock.
 const NODE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const NODE_VERSION_OUTPUT_LIMIT: usize = 4096;
 
 /// `SRT_RELEASE` in `src/gobby/utils/dependency_requirements.py`, the integrity pin.
 pub(super) struct SrtRelease {
@@ -345,26 +346,56 @@ fn check_node_version(node: &Path, timeout: Duration) -> Result<(), SandboxError
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| unverified())?;
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
+    let result = (|| {
+        let mut pipe = child.stdout.take().ok_or_else(unverified)?;
+        // SAFETY: pipe owns a live descriptor. F_GETFL has no third argument and F_SETFL
+        // preserves its existing flags while making reads nonblocking.
+        let flags = unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_GETFL) };
+        if flags < 0
+            || unsafe { libc::fcntl(pipe.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+        {
+            return Err(unverified());
+        }
+        let deadline = Instant::now() + timeout;
+        let mut stdout = Vec::new();
+        let mut status = None;
+        let mut eof = false;
+        loop {
+            if status.is_none() {
+                status = child.try_wait().map_err(|_| unverified())?;
+            }
+            if status.is_some_and(|status| !status.success()) {
+                return Err(unverified());
+            }
+            let mut bytes = [0; 256];
+            if !eof {
+                match pipe.read(&mut bytes) {
+                    Ok(0) => eof = true,
+                    Ok(count) => {
+                        stdout.extend_from_slice(&bytes[..count]);
+                        if stdout.len() > NODE_VERSION_OUTPUT_LIMIT {
+                            return Err(unverified());
+                        }
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(_) => return Err(unverified()),
+                }
+            }
+            if status.is_some() && eof {
+                return Ok(stdout);
+            }
+            if Instant::now() >= deadline {
                 return Err(lockout("Node.js version check timed out"));
             }
-            Err(_) => return Err(unverified()),
+            thread::sleep(Duration::from_millis(10));
         }
-    };
-    let mut stdout = Vec::new();
-    if let Some(mut pipe) = child.stdout.take() {
-        let _ = pipe.read_to_end(&mut stdout);
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    if !status.success() {
-        return Err(unverified());
-    }
+    let stdout = result?;
     let text = String::from_utf8_lossy(&stdout);
     match parse_version(text.trim()) {
         Some(version) if version >= NODE_MIN_VERSION => Ok(()),
