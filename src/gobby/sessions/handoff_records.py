@@ -125,7 +125,7 @@ def build_handoff_payload(
             "Keep readable current state, next actions, active constraints/blockers, "
             "relevant validation, and brief friction observations from this epoch. "
             "If necessary live working detail still cannot fit, create or update a Markdown "
-            "session-notes file and add its project-relative path to references. "
+            "session-notes file in your agent workspace and add its path to references. "
             "Do not move cumulative history into that file. Shorten the inline handoff and retry."
         )
     return HandoffPayload(

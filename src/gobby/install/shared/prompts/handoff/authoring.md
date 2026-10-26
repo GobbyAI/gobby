@@ -44,8 +44,9 @@ detail, not by making the remaining text harder to read.
 Supply nonblank current_state and at least one nonblank next_steps entry. Leave
 optional fields empty when unneeded. Prune history and superseded detail first.
 If necessary live working detail still cannot fit, create or update a session-scoped
-Markdown working-context file and add its project-relative path to references before
-submitting. Keep immediate orientation and next actions inline. Refresh current state
+Markdown working-context file in your agent workspace folder, not the checkout, and add
+its path to references before submitting (`set_handoff` appends that folder).
+Keep immediate orientation and next actions inline. Refresh current state
 in the file; never append epoch histories or move discarded history and reflections
 into it. Prepare the file while writes are permitted, before hard context-pressure
 gates block writes. Surface preservation conflicts before compaction; never bypass
