@@ -25,9 +25,10 @@ use gobby_core::bootstrap::RouteBackend;
 use gobby_core::route_family::{ProxiedCheck, RouteFamily};
 use gobby_daemon::front_door::FrontDoorState;
 use gobby_daemon::front_door::auth::AuthState;
-use gobby_daemon::front_door::compare::{CompareLog, Outcome, Record, log_path, report};
+use gobby_daemon::front_door::compare::{CompareLog, Outcome, Record, WaiverRef, log_path, report};
 use gobby_daemon::front_door::health::BackendState;
 use gobby_daemon::front_door::routes::RouteTable;
+use gobby_daemon::front_door::waivers::WaiverManifest;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -255,6 +256,17 @@ fn record(ts: i64, family: &str, outcome: Outcome) -> Record {
         native_status: Some(200),
         proxied_status: Some(200),
         detail: None,
+        waiver: None,
+    }
+}
+
+fn waived(ts: i64, family: &str, id: &str, decision: &str) -> Record {
+    Record {
+        waiver: Some(WaiverRef {
+            id: id.to_owned(),
+            decision: decision.to_owned(),
+        }),
+        ..record(ts, family, Outcome::Waived)
     }
 }
 
@@ -485,7 +497,7 @@ fn report_fails_on_mismatch_and_empty_window() {
     log.append(&record(300, "runtime", Outcome::Skipped));
     let path = log_path(home.path());
 
-    let window = report(&path, Some(150)).expect("report");
+    let window = report(&path, Some(150), &manifest()).expect("report");
     assert_eq!(
         serde_json::to_value(&window).expect("report json"),
         json!({
@@ -499,11 +511,11 @@ fn report_fails_on_mismatch_and_empty_window() {
             },
         })
     );
-    assert!(window.passes());
-    let everything = report(&path, None).expect("report");
+    assert!(!window.passes(), "an unwaived skipped case fails readiness");
+    let everything = report(&path, None, &manifest()).expect("report");
     assert_eq!(everything.total, 5);
     assert!(!everything.passes(), "a mismatch fails the report");
-    let empty = report(&path, Some(1_000)).expect("report");
+    let empty = report(&path, Some(1_000), &manifest()).expect("report");
     assert_eq!(empty.total, 0);
     assert!(!empty.passes(), "an empty window proves nothing");
 
@@ -519,16 +531,234 @@ fn report_fails_on_mismatch_and_empty_window() {
         (output.status.code(), stdout)
     };
     let printed = serde_json::to_value(&window).expect("report json");
-    assert_eq!(exit(&["--since", "150"]), (Some(0), Some(printed)));
+    assert_eq!(exit(&["--since", "150"]), (Some(1), Some(printed)));
     assert_eq!(exit(&[]).0, Some(1), "the full window holds a mismatch");
     assert_eq!(exit(&["--since", "1000"]).0, Some(1), "the window is empty");
 
     let malformed = home.path().join("malformed.jsonl");
     std::fs::write(&malformed, "not json\n").expect("write malformed log");
     assert!(
-        report(&malformed, None).is_err(),
+        report(&malformed, None, &manifest()).is_err(),
         "a malformed line is an error"
     );
+}
+
+const WAIVER_ID: &str = "cron.patch-job.schedule-validation";
+const WAIVER_DECISION: &str = ".gobby/plans/gdaemon-cron-family.md#3.2";
+const NATIVE_ID: &str = "runtime.native-only.native-extension";
+const NATIVE_SURFACE: &str = "HTTP GET /api/native-only";
+
+fn manifest() -> WaiverManifest {
+    let text = json!({
+        "schema_version": 1,
+        "waivers": [
+            {
+                "id": WAIVER_ID,
+                "surface": "HTTP GET /api/x",
+                "behaviour": "Rejects an invalid schedule.",
+                "decision": WAIVER_DECISION,
+                "replacement": "Native 422.",
+            },
+            {
+                "id": NATIVE_ID,
+                "surface": NATIVE_SURFACE,
+                "behaviour": "Native-only runtime read.",
+                "decision": "#24963",
+                "replacement": "Native runtime read.",
+            },
+        ],
+    });
+    WaiverManifest::parse(&text.to_string()).expect("test manifest")
+}
+
+fn waived_at(ts: i64, method: &str, path: &str, id: &str, decision: &str) -> Record {
+    Record {
+        method: method.to_owned(),
+        path: path.to_owned(),
+        ..waived(ts, "cron", id, decision)
+    }
+}
+
+#[test]
+fn embedded_manifest_parses() {
+    let committed = include_str!("../../../docs/contracts/parity-waivers.json");
+    let embedded = WaiverManifest::embedded().expect("the committed parity waiver manifest parses");
+    assert_eq!(
+        embedded,
+        WaiverManifest::parse(committed).expect("the committed file parses")
+    );
+}
+
+#[test]
+fn waived_record_must_cite_a_manifest_entry() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+    log.append(&waived(
+        200,
+        "cron",
+        "cron.invented.behaviour",
+        WAIVER_DECISION,
+    ));
+
+    let error = report(&log_path(home.path()), None, &manifest()).expect_err("unknown waiver");
+    assert!(error.to_string().contains("not in the manifest"), "{error}");
+}
+
+#[test]
+fn waived_record_must_cite_the_manifest_decision() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+    log.append(&waived(200, "cron", WAIVER_ID, "#999"));
+
+    let error = report(&log_path(home.path()), None, &manifest()).expect_err("decision mismatch");
+    assert!(error.to_string().contains("cites #999"), "{error}");
+}
+
+#[test]
+fn waived_record_must_match_the_manifest_surface() {
+    for (method, path) in [("PATCH", "/api/x"), ("GET", "/api/y")] {
+        let home = tempfile::tempdir().expect("home");
+        let log = CompareLog::open(home.path()).expect("compare log");
+        log.append(&record(100, "cron", Outcome::Match));
+        log.append(&waived_at(200, method, path, WAIVER_ID, WAIVER_DECISION));
+
+        let error =
+            report(&log_path(home.path()), None, &manifest()).expect_err("surface mismatch");
+        assert!(
+            error.to_string().contains("is not waiver"),
+            "{method} {path}: {error}"
+        );
+    }
+}
+
+#[test]
+fn native_extension_record_passes_with_its_manifest_entry() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "runtime", Outcome::Match));
+    log.append(&Record {
+        outcome: Outcome::NativeExtension,
+        method: "GET".to_owned(),
+        path: "/api/native-only".to_owned(),
+        ..waived(200, "runtime", NATIVE_ID, "#24963")
+    });
+
+    let readiness = report(&log_path(home.path()), None, &manifest()).expect("report");
+    assert!(
+        readiness.passes(),
+        "an approved native-only surface is not a skip"
+    );
+    assert_eq!(
+        readiness.waived.get(NATIVE_ID).map(|waived| waived.count),
+        Some(1)
+    );
+}
+
+#[test]
+fn waiver_kind_must_match_its_outcome() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&Record {
+        method: "GET".to_owned(),
+        path: "/api/native-only".to_owned(),
+        ..waived(200, "runtime", NATIVE_ID, "#24963")
+    });
+    let error = report(&log_path(home.path()), None, &manifest()).expect_err("native id as Waived");
+    assert!(
+        error.to_string().contains("cannot back a Waived record"),
+        "{error}"
+    );
+
+    let other = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(other.path()).expect("compare log");
+    log.append(&Record {
+        outcome: Outcome::NativeExtension,
+        ..waived_at(200, "GET", "/api/x", WAIVER_ID, WAIVER_DECISION)
+    });
+    let error =
+        report(&log_path(other.path()), None, &manifest()).expect_err("Waived id as native");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot back a NativeExtension record"),
+        "{error}"
+    );
+}
+
+#[test]
+fn all_skipped_report_fails_readiness() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Skipped));
+    log.append(&record(200, "cron", Outcome::Skipped));
+
+    let skipped = report(&log_path(home.path()), None, &manifest()).expect("report");
+    assert_eq!(skipped.total, 2);
+    assert!(
+        !skipped.passes(),
+        "a skipped-only comparison is not parity evidence"
+    );
+}
+
+#[test]
+fn report_without_a_passed_case_fails_readiness() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&waived(100, "cron", WAIVER_ID, WAIVER_DECISION));
+
+    let waived_only = report(&log_path(home.path()), None, &manifest()).expect("report");
+    assert_eq!(waived_only.total, 1);
+    assert!(
+        !waived_only.passes(),
+        "a waived case is a changed behaviour, not a pass"
+    );
+}
+
+#[test]
+fn unwaived_skipped_fails_alongside_a_passed_case() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+    log.append(&record(200, "cron", Outcome::Skipped));
+
+    let mixed = report(&log_path(home.path()), None, &manifest()).expect("report");
+    assert!(
+        !mixed.passes(),
+        "an unwaived skipped case cannot establish readiness"
+    );
+}
+
+#[test]
+fn waived_behaviour_passes_and_reports_its_id_and_decision() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+    log.append(&waived(200, "cron", WAIVER_ID, WAIVER_DECISION));
+    log.append(&waived(300, "cron", WAIVER_ID, WAIVER_DECISION));
+
+    let readiness = report(&log_path(home.path()), None, &manifest()).expect("report");
+    assert!(
+        readiness.passes(),
+        "one ordinary pass with waived changes is readiness"
+    );
+    let value = serde_json::to_value(&readiness).expect("report json");
+    assert_eq!(value["families"]["cron"], json!({"match": 1, "waived": 2}));
+    assert_eq!(
+        value["waived"],
+        json!({WAIVER_ID: {"decision": WAIVER_DECISION, "count": 2}})
+    );
+}
+
+#[test]
+fn verified_case_alone_is_an_ordinary_pass() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "runtime", Outcome::Verified));
+
+    let verified = report(&log_path(home.path()), None, &manifest()).expect("report");
+    assert!(verified.passes());
 }
 
 #[tokio::test]
