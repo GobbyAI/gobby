@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import logging
 import time
+import uuid
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from gobby.hooks.codex_seat import codex_seat_available
+from gobby.hooks.event_handlers._session_start.terminal_runtime import (
+    discover_and_bind_external_terminal,
+)
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.integration
@@ -111,3 +119,35 @@ def test_sessions_on_another_machine_never_own_its_seats(
     available = codex_seat_available(session_manager.db, OTHER_MACHINE_ID)
 
     assert available(SEAT_PID, started) is True
+
+
+def test_a_new_human_codex_thread_binds_the_gterm_pane_it_names(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    pane = str(uuid.uuid4())
+    terminals.create_pending(
+        terminal_id=pane,
+        project_id=project_id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=pane,
+    )
+    terminal_context = {
+        "cwd": "/repo",
+        "gobby_terminal_id": pane,
+        "parent_pid": SEAT_PID,
+        "parent_create_time": time.time() - 5,
+    }
+    session_id = _register(session_manager, project_id, terminal_context)
+    handler = SimpleNamespace(terminal_manager=terminals, logger=logging.getLogger(__name__))
+
+    pending = discover_and_bind_external_terminal(
+        handler, session_id=session_id, project_id=project_id, terminal_context=terminal_context
+    )
+
+    assert pending is None
+    bound = terminals.get_live_for_session(session_id)
+    assert bound is not None
+    assert bound.id == pane

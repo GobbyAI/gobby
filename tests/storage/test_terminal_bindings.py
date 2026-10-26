@@ -16,6 +16,7 @@ import pytest
 
 from gobby.sessions.liveness_monitor import SessionLivenessMonitor
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.attention import AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
@@ -139,6 +140,34 @@ def test_bind_session_guards(
 
     # GOBBY_TERMINAL_ID arrives from the pane environment, which a user can overwrite.
     assert terminals.bind_session("not-a-terminal-id", interactive.id, project_id) is None
+
+
+def test_agent_run_pane_stays_its_run_row_when_a_codex_thread_names_it(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    # #23438: a close reviewer's pane must stay the reviewer's run row, not a
+    # top-level Codex thread's terminal, when that thread's context names the pane.
+    project_id = sample_project["id"]
+    terminals = TerminalManager(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    parent = _session(session_manager, project_id, _live_cli())
+    run = runs.create(parent_session_id=parent.id, provider="claude", prompt="close review")
+    reviewer_pane = _native_row(terminals, project_id, agent_run_id=run.id)
+    runs.update_runtime(run.id, terminal_id=reviewer_pane.id)
+    thread = _session(
+        session_manager, project_id, {"gobby_terminal_id": reviewer_pane.id, **_live_cli()}
+    )
+
+    roster = AttentionStateManager(temp_db).load_roster_rows(live_session_statuses=["active"])
+
+    run_row = next(row for row in roster if row.kind == "run" and row.source_id == run.id)
+    thread_row = next(
+        row for row in roster if row.kind == "session" and row.session_id == thread.id
+    )
+    assert run_row.terminal_id == reviewer_pane.id
+    assert thread_row.terminal_id is None
 
 
 def test_resolve_live_for_session_context_id_guard_matrix(
