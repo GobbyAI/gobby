@@ -47,6 +47,7 @@ class Script:
     forward: dict[str, float] | None
     reverse: dict[str, float] | None = None
     latency_ms: float = 100.0
+    reverse_latency_ms: float | None = None
 
 
 class ScriptedNoul:
@@ -76,7 +77,11 @@ class ScriptedNoul:
         request = str(state["request"])
         order = tuple(propositions)
         script = self.scripts[request]
-        self.clock.now += script.latency_ms / 1000
+        reversed_call = script.forward is not None and order != tuple(script.forward)
+        latency_ms = script.latency_ms
+        if reversed_call and script.reverse_latency_ms is not None:
+            latency_ms = script.reverse_latency_ms
+        self.clock.now += latency_ms / 1000
         self.calls.append((request, order))
         if script.forward is None:
             raise DecisionsUnavailable("timeout", "scripted classifier unavailable")
@@ -130,6 +135,7 @@ class Dataset:
         candidates: Sequence[str] = ("a", "b"),
         k: int = 2,
         latency_ms: float = 100.0,
+        reverse_latency_ms: float | None = None,
     ) -> str:
         request, record_id, content_hash = self._allocate(split)
         self.records.append(
@@ -147,7 +153,7 @@ class Dataset:
                 "audit": False,
             }
         )
-        self.scripts[request] = Script(forward, reverse, latency_ms)
+        self.scripts[request] = Script(forward, reverse, latency_ms, reverse_latency_ms)
         return request
 
     def found(

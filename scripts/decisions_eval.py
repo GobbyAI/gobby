@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import math
+import sys
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -26,7 +27,6 @@ from urllib.parse import urlparse
 from gobby.ai.decisions import DecisionResult, DecisionService, DecisionsUnavailable, NoulAnswer
 from gobby.config._loading import load_yaml
 from gobby.config.ai import DecisionsConfig
-from scripts.decisions_live_capture import resolve_operator_secret
 
 TOOL = "tool_rerank"
 FOUND = "found_work"
@@ -128,9 +128,12 @@ def accuracy_at(pairs: Sequence[Pair], threshold: float) -> float | None:
     return _mean(float((probability >= threshold) == label) for probability, label in pairs)
 
 
-def selective_metrics(pairs: Sequence[Pair], threshold: float) -> tuple[float | None, float | None]:
+def selective_metrics(
+    pairs: Sequence[Pair], threshold: float, decision: float = 0.5
+) -> tuple[float | None, float | None]:
+    """Accuracy at ``decision`` over predictions whose confidence reaches ``threshold``."""
     covered = [(p, y) for p, y in pairs if max(p, 1 - p) >= threshold]
-    return accuracy_at(covered, 0.5), _rate(len(covered), len(pairs))
+    return accuracy_at(covered, decision), _rate(len(covered), len(pairs))
 
 
 def order_flip_rate(decisions: Sequence[tuple[Sequence[str], Sequence[str]]]) -> float | None:
@@ -171,7 +174,7 @@ class _Row:
     record: Mapping[str, Any]
     forward: _Reply
     reverse: _Reply
-    latency_ms: float
+    latencies_ms: tuple[float, ...]
     tokens: int
 
 
@@ -200,9 +203,11 @@ async def _replay(
         tokens = service.estimate_request_tokens(state, propositions)
         started = clock()
         forward = await _reply(service, consumer, state, propositions)
-        latency_ms = (clock() - started) * 1000.0
+        forward_ms = (clock() - started) * 1000.0
+        started = clock()
         reverse = await _reply(service, consumer, state, reversed_propositions)
-        rows.append(_Row(record, forward, reverse, latency_ms, tokens))
+        reverse_ms = (clock() - started) * 1000.0
+        rows.append(_Row(record, forward, reverse, (forward_ms, reverse_ms), tokens))
     return rows
 
 
@@ -223,10 +228,11 @@ def _deployed(row: _Row, minimum: float, *, reverse: bool = False) -> list[str]:
     return sorted(kept, key=lambda c: -probabilities[c])
 
 
-def _p95(values: Sequence[float]) -> float | None:
+def _percentile(values: Sequence[float], quantile: float) -> float | None:
+    """Nearest-rank percentile: the smallest value at or above the ``quantile`` share."""
     if not values:
         return None
-    return sorted(values)[math.ceil(0.95 * len(values)) - 1]
+    return sorted(values)[max(math.ceil(quantile * len(values)) - 1, 0)]
 
 
 def _common(
@@ -234,11 +240,15 @@ def _common(
     pairs: Sequence[Pair],
     flips: Sequence[tuple[Sequence[str], Sequence[str]]],
 ) -> dict[str, float | None]:
+    latencies = [ms for row in rows for ms in row.latencies_ms]
+    unavailable = sum(1 for row in rows if row.forward.probabilities is None)
     return {
         "ece": expected_calibration_error(pairs),
         "brier": brier_score(pairs),
         "order_flip_rate": order_flip_rate(flips),
-        "p95_latency_ms": _p95([row.latency_ms for row in rows]),
+        "p50_latency_ms": _percentile(latencies, 0.5),
+        "p95_latency_ms": _percentile(latencies, 0.95),
+        "unavailable_rate": _rate(unavailable, len(rows)),
     }
 
 
@@ -271,10 +281,10 @@ def _tool_metrics(rows: Sequence[_Row], minimum: float) -> dict[str, float | Non
         "recall_at_k_delta": _mean(d - i for d, i in zip(deployed, incumbent, strict=True)),
         "paired_recall_at_k_delta": _mean(paired),
         "reject_all_accuracy": _mean(float(not _deployed(row, minimum)) for row in empty),
-        "accuracy": accuracy_at(pairs, 0.5),
+        "accuracy": accuracy_at(pairs, minimum),
     }
     for threshold in GRID:
-        accuracy, coverage = selective_metrics(pairs, threshold)
+        accuracy, coverage = selective_metrics(pairs, threshold, minimum)
         metrics[f"selective_accuracy@{threshold:.2f}"] = accuracy
         metrics[f"selective_coverage@{threshold:.2f}"] = coverage
     flips = [(_deployed(row, minimum), _deployed(row, minimum, reverse=True)) for row in rows]
@@ -324,6 +334,7 @@ def _found_metrics(rows: Sequence[_Row], below: float, above: float) -> dict[str
             (["alert" if forward_alert else "clear"], ["alert" if reverse_alert else "clear"])
         )
     metrics: dict[str, float | None] = {
+        "accuracy": accuracy_at(pairs, above),
         "false_clear_rate": _rate(sum(1 for _, alert, _ in shirk if not alert), len(shirk)),
         "incumbent_false_clear_rate": _rate(
             sum(1 for row, _, _ in shirk if row.record["incumbent"]["verdict"] is False), len(shirk)
@@ -331,6 +342,10 @@ def _found_metrics(rows: Sequence[_Row], below: float, above: float) -> dict[str
         "false_alert_rate": _rate(sum(1 for _, alert, _ in clean if alert), len(clean)),
         "escalation_rate": _rate(sum(1 for _, _, escalated in final if escalated), len(final)),
     }
+    for threshold in GRID:
+        accuracy, coverage = selective_metrics(pairs, threshold, above)
+        metrics[f"selective_accuracy@{threshold:.2f}"] = accuracy
+        metrics[f"selective_coverage@{threshold:.2f}"] = coverage
     metrics.update(_common(rows, pairs, flips))
     return metrics
 
@@ -521,34 +536,110 @@ def _fmt(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.4f}"
 
 
-def _table_rows(consumer: str) -> list[tuple[str, Callable[[BackendReport], str]]]:
-    def holdout(key: str) -> Callable[[BackendReport], str]:
-        return lambda report: _fmt(report.metrics.get(HOLDOUT, {}).get(key))
-
-    rows: list[tuple[str, Callable[[BackendReport], str]]] = [
-        ("Verdict", lambda report: report.verdict),
-        (f"ECE ({HOLDOUT}, limit {ECE_MAX:.2f})", holdout("ece")),
-        (f"Order-flip rate ({HOLDOUT}, limit {FLIP_MAX:.0%})", holdout("order_flip_rate")),
-        (f"p95 latency ms ({HOLDOUT}, limit {P95_MAX_MS:.0f})", holdout("p95_latency_ms")),
-        (f"Brier ({HOLDOUT})", holdout("brier")),
+def _measure_rows(consumer: str) -> list[tuple[str, str]]:
+    """(label, metric key) pairs shared by the per-backend tables and the side-by-side table."""
+    rows = [
+        ("Accuracy", "accuracy"),
+        ("Brier", "brier"),
+        ("ECE", "ece"),
+        ("Order-flip rate", "order_flip_rate"),
+        ("p50 latency ms", "p50_latency_ms"),
+        ("p95 latency ms", "p95_latency_ms"),
+        ("Unavailability rate", "unavailable_rate"),
     ]
     if consumer == TOOL:
-        rows.append((f"Recall@k ({HOLDOUT})", holdout("recall_at_k")))
-        rows.append((f"Incumbent Recall@k ({HOLDOUT})", holdout("incumbent_recall_at_k")))
+        return rows + [
+            ("Reject-all accuracy", "reject_all_accuracy"),
+            ("Recall@k", "recall_at_k"),
+            ("Incumbent Recall@k", "incumbent_recall_at_k"),
+            ("Paired Recall@k delta", "paired_recall_at_k_delta"),
+        ]
+    return rows + [
+        ("False-clear rate", "false_clear_rate"),
+        ("Incumbent false-clear rate", "incumbent_false_clear_rate"),
+        ("False-alert rate", "false_alert_rate"),
+        ("Escalation rate", "escalation_rate"),
+    ]
+
+
+def _backend_tables(consumer: str, backend: BackendReport) -> list[str]:
+    dev = backend.metrics.get(DEV, {})
+    holdout = backend.metrics.get(HOLDOUT, {})
+    lines = [f"| Measure | {DEV} | {HOLDOUT} |", "| --- | --- | --- |"]
+    lines += [
+        f"| {label} | {_fmt(dev.get(key))} | {_fmt(holdout.get(key))} |"
+        for label, key in _measure_rows(consumer)
+    ]
+    lines += [
+        "",
+        f"| Confidence threshold | {DEV} selective accuracy | {DEV} coverage "
+        f"| {HOLDOUT} selective accuracy | {HOLDOUT} coverage |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for threshold in GRID:
+        key = f"{threshold:.2f}"
+        cells = [
+            _fmt(split.get(f"selective_{measure}@{key}"))
+            for split in (dev, holdout)
+            for measure in ("accuracy", "coverage")
+        ]
+        lines.append(f"| {key} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _support_lines(consumer: str, backend: BackendReport) -> list[str]:
+    positive, negative = _class_names(consumer)
+    lines = []
+    for split in (DEV, HOLDOUT):
+        pos, neg = backend.counts[split]
+        lines.append(f"- Support, {split}: {positive} {pos}, {negative} {neg}")
+    return lines
+
+
+def _gate_table(consumer: str, backend: BackendReport) -> list[str]:
+    holdout = backend.metrics.get(HOLDOUT, {})
+    rows = [
+        ("ECE", f"<= {ECE_MAX:.2f}", _fmt(holdout.get("ece"))),
+        ("Order-flip rate", f"<= {FLIP_MAX:.0%}", _fmt(holdout.get("order_flip_rate"))),
+        ("p95 latency ms", f"<= {P95_MAX_MS:.0f}", _fmt(holdout.get("p95_latency_ms"))),
+        ("Records per gold class", f">= {MIN_SUPPORT} in each split", "see Support lines"),
+    ]
+    if consumer == TOOL:
+        deployed = _fmt(holdout.get("recall_at_k"))
+        incumbent = _fmt(holdout.get("incumbent_recall_at_k"))
+        rows.append(("Recall@k", ">= incumbent Recall@k", f"{deployed} vs {incumbent}"))
     else:
-        rows.append((f"False-clear rate ({HOLDOUT})", holdout("false_clear_rate")))
+        clear = _fmt(holdout.get("false_clear_rate"))
+        incumbent = _fmt(holdout.get("incumbent_false_clear_rate"))
         rows.append(
-            (f"Incumbent false-clear rate ({HOLDOUT})", holdout("incumbent_false_clear_rate"))
+            ("False-clear rate", "<= incumbent false-clear rate", f"{clear} vs {incumbent}")
         )
-        rows.append((f"Escalation rate ({HOLDOUT}, limit 50%)", holdout("escalation_rate")))
+        rows.append(
+            ("Escalation rate", f"<= {ESCALATION_MAX:.0%}", _fmt(holdout.get("escalation_rate")))
+        )
+    lines = ["| Gate constant | Limit | Measured (holdout) |", "| --- | --- | --- |"]
+    lines += [f"| {name} | {limit} | {measured} |" for name, limit, measured in rows]
+    return lines
+
+
+def _side_by_side(report: EvaluationReport) -> list[str]:
+    labels = [backend.label for backend in report.backends]
+    lines = [
+        f"## Side by side ({HOLDOUT})",
+        "",
+        "| Measure | " + " | ".join(labels) + " |",
+        "| --- |" + " --- |" * len(labels),
+        "| Verdict | " + " | ".join(backend.verdict for backend in report.backends) + " |",
+    ]
+    for label, key in _measure_rows(report.consumer):
+        cells = [_fmt(backend.metrics.get(HOLDOUT, {}).get(key)) for backend in report.backends]
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
     for price in PRICES:
-        rows.append(
-            (
-                f"Cost per call at ${price} per M input tokens",
-                lambda report, price=price: f"${report.cost_per_call_usd[price]:.6f}",
-            )
+        cells = [f"${backend.cost_per_call_usd[price]:.6f}" for backend in report.backends]
+        lines.append(
+            f"| Cost per call at ${price} per M input tokens | " + " | ".join(cells) + " |"
         )
-    return rows
+    return lines
 
 
 def render(report: EvaluationReport, dataset_name: str, dataset_sha256: str) -> str:
@@ -578,18 +669,13 @@ def render(report: EvaluationReport, dataset_name: str, dataset_sha256: str) -> 
             f"- Verdict: **{backend.verdict}**",
         ]
         lines += [f"- Reason: {reason}" for reason in backend.reasons]
+        lines += _support_lines(report.consumer, backend)
+        lines += ["", "### Gate", ""]
+        lines += _gate_table(report.consumer, backend)
+        lines += ["", "### Measures", ""]
+        lines += _backend_tables(report.consumer, backend)
         lines.append("")
-    labels = [backend.label for backend in report.backends]
-    lines += [
-        "## Side by side",
-        "",
-        "| Measure | " + " | ".join(labels) + " |",
-        "| --- |" + " --- |" * len(labels),
-    ]
-    for name, cell in _table_rows(report.consumer):
-        lines.append(
-            f"| {name} | " + " | ".join(cell(backend) for backend in report.backends) + " |"
-        )
+    lines += _side_by_side(report)
     return "\n".join(lines) + "\n"
 
 
@@ -641,7 +727,11 @@ def main(
         json.loads(line) for line in dataset_bytes.decode("utf-8").splitlines() if line.strip()
     ]
     make_service = service_factory or _default_service
-    secret = resolve_secret or resolve_operator_secret
+    secret = resolve_secret
+    if secret is None:
+        from scripts.decisions_live_capture import resolve_operator_secret
+
+        secret = resolve_operator_secret
     if args.decisions:
         backends = [_file_backend(path, secret, make_service) for path in args.decisions]
     else:
@@ -654,4 +744,6 @@ def main(
 
 
 if __name__ == "__main__":
+    # Direct script execution exposes scripts/, whereas module execution exposes the repo root.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     raise SystemExit(main())

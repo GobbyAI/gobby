@@ -7,6 +7,8 @@ dataset comment gives the arithmetic.
 from __future__ import annotations
 
 import hashlib
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -494,3 +496,152 @@ def test_compares_backends_side_by_side(tmp_path: Path) -> None:
     daemon_text = daemon_out.read_text()
     assert MODEL_JEV in daemon_text
     assert MODEL_CLEF not in daemon_text
+
+
+def test_cli_runs_as_standalone_script() -> None:
+    # Direct execution puts scripts/ on sys.path, not the repo root, so the entry point must
+    # import without the package prefix and still reach argument parsing.
+    script = Path(__file__).resolve().parents[2] / "scripts" / "decisions_eval.py"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--consumer" in result.stdout
+
+
+def test_metrics_include_required_measures_at_selected_threshold() -> None:
+    # Empty rows score 0.6 on candidate a. The dev split selects min_probability 0.65, the
+    # lowest grid value that rejects every empty row while keeping gold. Accuracy at 0.65 is
+    # 1.0; at the 0.5 default the 25 empty rows scoring 0.6 would count as wrong (0.75).
+    clock = FakeClock()
+    ds = Dataset(clock)
+    build_tool(ds, DEV, empty_a=0.6)
+    build_tool(ds, HOLDOUT, empty_a=0.6)
+    report = ev.evaluate(TOOL, ds.records, [ds.backend("clef")], clock=clock)
+    (backend,) = report.backends
+    assert backend.thresholds["min_probability"] == pytest.approx(0.65)
+    holdout = backend.metrics[HOLDOUT]
+    assert holdout["accuracy"] == pytest.approx(1.0)
+    assert holdout["p50_latency_ms"] == pytest.approx(100.0)
+    assert holdout["unavailable_rate"] == pytest.approx(0.0)
+    for key in (
+        "brier",
+        "ece",
+        "order_flip_rate",
+        "p95_latency_ms",
+        "selective_accuracy@0.50",
+        "selective_coverage@0.50",
+        "reject_all_accuracy",
+        "recall_at_k",
+        "incumbent_recall_at_k",
+        "paired_recall_at_k_delta",
+    ):
+        assert key in holdout, key
+
+
+def test_found_metrics_include_accuracy_and_selective_measures() -> None:
+    clock = FakeClock()
+    ds = Dataset(clock)
+    build_found(ds, DEV)
+    build_found(ds, HOLDOUT)
+    report = ev.evaluate(FOUND, ds.records, [ds.backend("clef")], clock=clock)
+    holdout = report.backends[0].metrics[HOLDOUT]
+    # Gold-shirk rows score 0.95 and gold-clean rows 0.05, so the confirm threshold is exact.
+    assert holdout["accuracy"] == pytest.approx(1.0)
+    for key in (
+        "selective_accuracy@0.50",
+        "selective_coverage@0.50",
+        "false_alert_rate",
+        "unavailable_rate",
+        "p50_latency_ms",
+    ):
+        assert key in holdout, key
+
+
+def _populate(consumer: str, ds: Dataset) -> None:
+    for split in (DEV, HOLDOUT):
+        if consumer == TOOL:
+            build_tool(ds, split)
+        else:
+            build_found(ds, split)
+
+
+SHARED_MEASURES = (
+    "Accuracy",
+    "Brier",
+    "ECE",
+    "Order-flip rate",
+    "p50 latency ms",
+    "p95 latency ms",
+    "Unavailability rate",
+)
+CONSUMER_MEASURES = {
+    TOOL: ("Reject-all accuracy", "Paired Recall@k delta", "Recall@k", "Incumbent Recall@k"),
+    FOUND: (
+        "False-clear rate",
+        "Incumbent false-clear rate",
+        "False-alert rate",
+        "Escalation rate",
+    ),
+}
+
+
+@pytest.mark.parametrize("consumer", [TOOL, FOUND])
+def test_report_renders_measures_and_support_for_each_backend(consumer: str) -> None:
+    clock = FakeClock()
+    ds = Dataset(clock)
+    _populate(consumer, ds)
+    backends = [
+        ds.backend("clef"),
+        ds.backend(
+            "jev",
+            model=MODEL_JEV,
+            wire_api="openrouter-decisions",
+            identity=IDENTITY_JEV,
+            response_model=RESPONSE_JEV,
+        ),
+    ]
+    report = ev.evaluate(consumer, ds.records, backends, clock=clock)
+    text = ev.render(report, "shadow.jsonl", "0" * 64)
+    lines = text.splitlines()
+
+    for label in ("clef", "jev"):
+        assert f"## {label}" in text
+    assert "| Measure | clef | jev |" in text
+    assert f"| Measure | {DEV} | {HOLDOUT} |" in text
+    assert "| Confidence threshold |" in text
+    assert text.count("| Gate constant | Limit | Measured (holdout) |") == len(backends)
+    for measure in SHARED_MEASURES + CONSUMER_MEASURES[consumer]:
+        assert any(line.startswith(f"| {measure} |") for line in lines), measure
+    positive, negative = (
+        ("gold-relevant", "gold-empty") if consumer == TOOL else ("gold-shirk", "gold-clean")
+    )
+    assert f"{positive} 25" in text
+    assert f"{negative} 25" in text
+
+
+def test_reverse_call_latency_counts_toward_p95() -> None:
+    # Forward calls take 100 ms. Reverse calls on 25 extra holdout records take 1.5 s. Those
+    # 25 slow calls are 25 of the holdout's 150 calls, so p95 must read 1.5 s and fail the 1 s
+    # gate. Timing only forward calls would report 100 ms and pass.
+    clock = FakeClock()
+    ds = Dataset(clock)
+    build_tool(ds, DEV)
+    build_tool(ds, HOLDOUT)
+    for _ in range(25):
+        ds.tool(
+            HOLDOUT,
+            gold=["a"],
+            incumbent=["a", "b"],
+            forward={"a": 0.95, "b": 0.05},
+            reverse_latency_ms=1500.0,
+        )
+    report = ev.evaluate(TOOL, ds.records, [ds.backend("clef")], clock=clock)
+    (backend,) = report.backends
+    assert backend.metrics[HOLDOUT]["p95_latency_ms"] == pytest.approx(1500.0)
+    assert backend.verdict == "FAIL"
+    assert any("p95 latency" in reason for reason in backend.reasons)
