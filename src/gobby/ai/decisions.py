@@ -667,6 +667,20 @@ def _parse_box(raw: Any, question: BoxQuestion) -> BoxAnswer:
     return BoxAnswer(top, bottom, left, right, _unit(raw.get("confidence")))
 
 
+def _score_abs_tolerance(score: float, probabilities: dict[str, float]) -> float:
+    """Allow observed hundredth-grid wire rounding; retain the high-precision profile."""
+    level_count = len(probabilities)
+    if all(
+        math.isclose(value, round(value, 2), rel_tol=0.0, abs_tol=1e-12)
+        for value in (score, *probabilities.values())
+    ):
+        # Normalized rounding errors sum to zero. With weights 0..n-1, their
+        # worst weighted sum is .005 * floor(n²/4), plus .005 for score rounding.
+        # The final epsilon covers binary representation at the exact bound.
+        return 0.005 * (level_count * level_count // 4 + 1) + 1e-12
+    return (level_count - 1) * _SUM_TOLERANCE
+
+
 def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
     if not isinstance(raw, dict) or raw.get("type") != "score":
         raise _parse_error("answer is not a score")
@@ -689,7 +703,7 @@ def _parse_score(raw: Any, question: ScoreQuestion) -> ScoreAnswer:
     ):
         raise _parse_error("score is not a finite index within the requested levels")
     expected = sum(int(key) * value for key, value in probabilities.items())
-    if not math.isclose(score, expected, abs_tol=maximum * _SUM_TOLERANCE):
+    if not math.isclose(score, expected, abs_tol=_score_abs_tolerance(score, probabilities)):
         raise _parse_error("score differs from the probability-weighted index")
     return ScoreAnswer(float(score), probabilities, _unit(raw.get("confidence")))
 

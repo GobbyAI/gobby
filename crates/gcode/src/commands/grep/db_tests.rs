@@ -142,19 +142,50 @@ fn overlay_grep_hides_parent_rows_shadowed_by_overlay_state() {
 
     let parent_root = tempfile::tempdir().expect("create parent root");
     let overlay_root = tempfile::tempdir().expect("create overlay root");
-    // The overlay deleted src/tombstoned.rs, so only the parent has it on disk.
-    for (root, file_path) in [
-        (parent_root.path(), "src/parent_only.rs"),
-        (parent_root.path(), "src/shadowed.rs"),
-        (parent_root.path(), "src/tombstoned.rs"),
-        (overlay_root.path(), "src/overlay_only.rs"),
-        (overlay_root.path(), "src/shadowed.rs"),
+    // Each row's chunk text is its file's bytes and its hash is their hash, the
+    // state a fresh index serves. The overlay deleted src/tombstoned.rs, so only
+    // the parent has it on disk. A worktree holds every file, so the overlay also
+    // has the parent's bytes for the pinned src/parent_only.rs.
+    for (root, file_path, marker) in [
+        (
+            parent_root.path(),
+            "src/parent_only.rs",
+            "grepmarker parent_only",
+        ),
+        (
+            parent_root.path(),
+            "src/shadowed.rs",
+            "grepmarker parent_shadowed",
+        ),
+        (
+            parent_root.path(),
+            "src/tombstoned.rs",
+            "grepmarker parent_tombstoned",
+        ),
+        (
+            overlay_root.path(),
+            "src/parent_only.rs",
+            "grepmarker parent_only",
+        ),
+        (
+            overlay_root.path(),
+            "src/overlay_only.rs",
+            "grepmarker overlay_only",
+        ),
+        (
+            overlay_root.path(),
+            "src/shadowed.rs",
+            "grepmarker overlay_shadowed",
+        ),
     ] {
         let absolute = root.join(file_path);
         std::fs::create_dir_all(absolute.parent().expect("file has parent"))
             .expect("create src dir");
-        std::fs::write(&absolute, "fn marker() {}\n").expect("write fixture file");
+        std::fs::write(&absolute, format!("{marker}\n")).expect("write fixture file");
     }
+    let disk_hash = |root: &std::path::Path, file_path: &str| {
+        crate::index::hasher::file_content_hash(&root.join(file_path)).expect("hash fixture file")
+    };
 
     let parent_id = unique_project_id("grep-overlay-parent");
     let overlay_id = unique_project_id("grep-overlay-child");
@@ -185,23 +216,12 @@ fn overlay_grep_hides_parent_rows_shadowed_by_overlay_state() {
     let parent_root_path = parent_root.path().to_string_lossy().to_string();
     let overlay_root_path = overlay_root.path().to_string_lossy().to_string();
 
-    for (file_path, content, hash) in [
-        (
-            "src/parent_only.rs",
-            "grepmarker parent_only",
-            "hash-parent-only",
-        ),
-        (
-            "src/shadowed.rs",
-            "grepmarker parent_shadowed",
-            "hash-parent-shadowed",
-        ),
-        (
-            "src/tombstoned.rs",
-            "grepmarker parent_tombstoned",
-            "hash-parent-tombstoned",
-        ),
+    for (file_path, content) in [
+        ("src/parent_only.rs", "grepmarker parent_only"),
+        ("src/shadowed.rs", "grepmarker parent_shadowed"),
+        ("src/tombstoned.rs", "grepmarker parent_tombstoned"),
     ] {
+        let hash: &str = &disk_hash(parent_root.path(), file_path);
         insert_file_version(&mut conn, &parent_uuid, file_path, hash);
         insert_machine_state(
             &mut conn,
@@ -213,18 +233,11 @@ fn overlay_grep_hides_parent_rows_shadowed_by_overlay_state() {
         );
         insert_chunk_version(&mut conn, &parent_uuid, file_path, content, hash);
     }
-    for (file_path, content, hash) in [
-        (
-            "src/overlay_only.rs",
-            "grepmarker overlay_only",
-            "hash-overlay-only",
-        ),
-        (
-            "src/shadowed.rs",
-            "grepmarker overlay_shadowed",
-            "hash-overlay-shadowed",
-        ),
+    for (file_path, content) in [
+        ("src/overlay_only.rs", "grepmarker overlay_only"),
+        ("src/shadowed.rs", "grepmarker overlay_shadowed"),
     ] {
+        let hash: &str = &disk_hash(overlay_root.path(), file_path);
         insert_file_version(&mut conn, &overlay_uuid, file_path, hash);
         insert_machine_state(
             &mut conn,
@@ -695,22 +708,32 @@ fn grep_loads_chunks_of_files_containing_a_literal_with_context() {
 
     let root = tempfile::tempdir().expect("create temp project root");
     std::fs::create_dir_all(root.path().join("src")).expect("create src dir");
-    // (file, content hash, (chunk index, line start, content) per chunk)
+    // (file, (chunk index, line start, content) per chunk). Each file is written
+    // from its chunks and indexed under the hash of those bytes, as a fresh index
+    // would serve it.
     type ChunkFixture = (u32, u32, &'static str);
-    let fixtures: [(&str, &str, &[ChunkFixture]); 3] = [
-        ("src/hit.rs", "hash-hit", &[(0, 1, "prefilterneedle here")]),
-        ("src/miss.rs", "hash-miss", &[(0, 1, "nothing relevant")]),
+    let fixtures: [(&str, &[ChunkFixture]); 3] = [
+        ("src/hit.rs", &[(0, 1, "prefilterneedle here")]),
+        ("src/miss.rs", &[(0, 1, "nothing relevant")]),
         (
             "src/context.rs",
-            "hash-context",
             &[
                 (0, 1, "before context line"),
                 (1, 2, "prefilterneedle in second chunk"),
             ],
         ),
     ];
-    for (file_path, _, _) in &fixtures {
-        std::fs::write(root.path().join(file_path), "fixture\n").expect("write fixture file");
+    let mut hashed: Vec<(&str, String, &[ChunkFixture])> = Vec::new();
+    for (file_path, chunks) in fixtures {
+        let absolute = root.path().join(file_path);
+        let body: String = chunks
+            .iter()
+            .map(|(_, _, content)| format!("{content}\n"))
+            .collect();
+        std::fs::write(&absolute, body).expect("write fixture file");
+        let content_hash =
+            crate::index::hasher::file_content_hash(&absolute).expect("hash fixture file");
+        hashed.push((file_path, content_hash, chunks));
     }
 
     let project_id = unique_project_id("grep-literal-prefilter");
@@ -731,7 +754,7 @@ fn grep_loads_chunks_of_files_containing_a_literal_with_context() {
     )
     .expect("local machine uuid");
     let root_path = root.path().to_string_lossy().to_string();
-    for (file_path, content_hash, chunks) in &fixtures {
+    for (file_path, content_hash, chunks) in &hashed {
         insert_file_version(&mut conn, &project_uuid, file_path, content_hash);
         insert_machine_state(
             &mut conn,

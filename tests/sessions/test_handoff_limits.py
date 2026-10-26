@@ -29,7 +29,7 @@ def test_optional_sections_share_the_same_total_budget() -> None:
         "Remove cumulative history, copied reflections, and superseded detail",
         "relevant validation, and brief friction observations from this epoch",
         "create or update a Markdown session-notes file",
-        "project-relative path to references",
+        "agent workspace",
         "Do not move cumulative history into that file",
     ):
         assert instruction in str(error.value)

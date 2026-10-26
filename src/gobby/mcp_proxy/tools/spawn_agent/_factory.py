@@ -340,7 +340,6 @@ def create_spawn_agent_registry(
         reserved_run_id: str | None = None,
         placement: dict[str, Any] | None = None,
         machine: str | None = None,
-        lane: str | None = None,
         title: str | None = None,
         seat_context: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
@@ -396,10 +395,8 @@ def create_spawn_agent_registry(
             machine: Machine that runs the agent. Defaults to the caller's machine; another
                 machine routes the run to its node. Refused with ``machine_not_owned`` unless
                 the caller owns that machine.
-            lane: Optional lane label recorded on the agent run and returned as
-                ``lane`` by list_running_agents and list_agent_runs.
-            seat_context: Prompt-only launch assignments: lane, lane_epic, worktree
-                and first_job. Cannot set workflow controls or runtime identity.
+            seat_context: Prompt-only launch assignments: worktree and first_job.
+                Cannot set workflow controls or runtime identity.
             title: Automatic session and pane title when no task is claimed. Returns
                 after task close or clear; existing manual titles take precedence.
 
@@ -407,10 +404,8 @@ def create_spawn_agent_registry(
             Dict with success status, run_id, child_session_id, isolation metadata
         """
         if seat_context is not None:
-            if set(seat_context) - {"lane", "lane_epic", "worktree", "first_job"}:
+            if set(seat_context) - {"worktree", "first_job"}:
                 return {"success": False, "error": "Unknown seat_context assignment key"}
-            if lane and seat_context.get("lane") not in (None, lane):
-                return {"success": False, "error": "seat_context lane differs from launch lane"}
 
         # Resolve parent_session_id to UUID (accepts #N, N, UUID, or prefix)
         resolved_parent_session_id = parent_session_id
@@ -542,7 +537,15 @@ def create_spawn_agent_registry(
                 initial_variables.update(agent_body.workflows.variables)
         if seat_context is not None:
             initial_variables["seat_context"] = seat_context
-        if title is not None and title.strip():
+        if agent_body:
+            from gobby.sessions.title_lifecycle import (
+                DEFINITION_TITLE_VARIABLE,
+                definition_display_name,
+            )
+
+            # A defined seat's title is its definition name; a caller title never overrides it.
+            initial_variables[DEFINITION_TITLE_VARIABLE] = definition_display_name(agent_body.name)
+        elif title is not None and title.strip():
             from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
 
             initial_variables[DEFINITION_TITLE_VARIABLE] = title.strip()
@@ -744,7 +747,6 @@ def create_spawn_agent_registry(
                     extra_write_paths=extra_write_paths,
                     write_paths_reason=write_paths_reason,
                     reserved_run_id=reserved_run_id,
-                    lane=(lane or "").strip() or None,
                     execution_mode=execution_mode,
                 ),
             )
@@ -795,7 +797,6 @@ def create_spawn_agent_registry(
             write_paths_reason=write_paths_reason,
             reserved_run_id=reserved_run_id,
             placement=placement,
-            lane=(lane or "").strip() or None,
             agent_pane_reserver=(
                 agent_pane_reserver_resolver()
                 if (placement is not None or resume_session_id)

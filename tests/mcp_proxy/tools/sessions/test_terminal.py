@@ -905,7 +905,7 @@ class TestSetHandoffFeedback:
         assert "Do not overuse" in prompt
         assert "including resolved friction" in prompt
         assert "Never copy earlier reflections" in prompt
-        assert "project-relative path to references" in prompt
+        assert "agent workspace folder" in prompt
         assert "5,000 encoded characters" in prompt
         assert "call set_handoff last" in prompt
 

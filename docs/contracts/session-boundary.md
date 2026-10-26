@@ -59,9 +59,9 @@ handoffs to leave headroom. Use readable sentences; remove low-value detail inst
 of inventing shorthand. Leave optional fields empty when unneeded.
 
 After pruning, necessary live detail may go in a session-scoped Markdown
-working-context file. Create or update it while writes are permitted and include
-its project-relative path in `references`; keep immediate orientation and next actions
-inline. Refresh current state in the file; never append epoch histories or move
+working-context file in your agent workspace folder, not the checkout. Create or update it
+while writes are permitted and include its path in `references`; keep immediate
+orientation and next actions inline. Refresh current state in the file; never append epoch histories or move
 discarded history and reflections into it. Prepare it before hard context-pressure
 gates block writes; surface preservation conflicts before compaction rather than
 bypassing permissions or truncating content. Existing task/session records and

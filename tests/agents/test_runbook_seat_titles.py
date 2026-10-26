@@ -1,4 +1,10 @@
-"""Runbook titles reach persisted sessions before a terminal launches."""
+"""Runbook seat and tab titles, from launch through claim, close and resume.
+
+Pane and session titles are the agent definition display name: the agent name
+title-cased (dev-manager -> Dev Manager), the convention apply_agent_definition pins.
+A task-bound runbook opens '<Runbook> - #<task>'; a runbook without a task opens its
+runbook name. Static operator tabs keep fixed names. Contract: docs/contracts/seat-titles.md.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -21,46 +27,67 @@ from gobby.workflows.templates import TemplateEngine
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
 BRANCH = "task-24797-runbooks"
+TASK_REF = "#22604"
+EXPECTED_TAB = {
+    "devteam": f"Dev Team - {TASK_REF}",
+    "support": "Support",
+    "team-planning": "Team Planning",
+}
+
+
+def _placement_titles(placement: dict[str, Any]) -> tuple[str | None, str]:
+    """Return (pane title, tab title). A tab placement leaves the pane to the session title."""
+    if "split" in placement:
+        return placement["split"]["title"], placement["split"]["tab_title"]
+    return None, placement["tab"]["title"]
 
 
 @pytest.mark.parametrize(
-    ("runbook", "seat", "title"),
+    ("runbook", "seat", "pane_title"),
     [
-        ("devteam", "dev-manager", f"{BRANCH} dev manager"),
-        ("devteam", "test-writer", f"{BRANCH} test writer"),
-        ("devteam", "developer", f"{BRANCH} developer"),
-        ("devteam", "code-reviewer", f"{BRANCH} code reviewer"),
-        ("support", "release-manager", "Support release manager"),
-        ("support", "triage", "Support triage"),
-        ("support", "archivist", "Support archivist"),
-        ("support", "recovery-steward", "Support recovery steward"),
-        ("support", "consolidator", "Support consolidator"),
-        ("team-planning", "plan-writer", "Lane 3 plan writer"),
-        ("team-planning", "plan-adversary", "Lane 3 plan adversary"),
+        ("devteam", "dev-manager", "Dev Manager"),
+        ("devteam", "test-writer", "Test Writer"),
+        ("devteam", "developer", "Developer"),
+        ("devteam", "code-reviewer", "Code Reviewer"),
+        ("support", "release-manager", "Release Manager"),
+        ("support", "triage", "Triage"),
+        ("support", "archivist", "Archivist"),
+        ("support", "recovery-steward", "Recovery Steward"),
+        ("support", "consolidator", "Consolidator"),
+        ("team-planning", "plan-writer", "Plan Writer"),
+        ("team-planning", "plan-adversary", "Plan Adversary"),
+        ("team-planning", "plan-enhancer", "Plan Enhancer"),
     ],
 )
 @pytest.mark.asyncio
-@pytest.mark.parametrize("lane_pane", [None, "test-pane"])
-async def test_runbook_title_survives_task_claim_and_close(
+@pytest.mark.parametrize("team_id", [None, "00000000-0000-4000-8000-0000000000aa"])
+async def test_runbook_seat_titles_are_definition_names_through_claim(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     runbook: str,
     seat: str,
-    title: str,
-    lane_pane: str | None,
+    pane_title: str,
+    team_id: str | None,
 ) -> None:
+    """Seat panes and sessions carry the definition name; the tab carries the runbook.
+
+    Contract: docs/contracts/seat-titles.md, rules 1 and 2. Task text, slugs and
+    caller-supplied titles never reach a seat's pane or session title.
+    """
+    tab_title = EXPECTED_TAB[runbook]
     definition = PipelineDefinition.model_validate(
         yaml.safe_load((PIPELINES / f"{runbook}.yaml").read_text())
     )
+    assert [name for name in definition.inputs if "lane" in name] == []
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
-        lane="3",
+        task=TASK_REF,
+        team_id=team_id,
         seats=seat,
         workspace="test-workspace",
         project_path=str(PIPELINES),
         report_to="gobby#1",
-        lane_pane=lane_pane,
     )
     step = next(step for step in definition.steps if step.id == seat)
     assert step.mcp is not None and step.mcp.arguments is not None
@@ -74,16 +101,20 @@ async def test_runbook_title_survives_task_claim_and_close(
             ),
             "invocation_id": str(uuid4()),
             "steps": {
-                **{step.id: {"output": {"pane_ref": "test-pane"}} for step in definition.steps},
+                **{
+                    step.id: {"output": {"pane_ref": "test-pane", "child_session_id": str(uuid4())}}
+                    for step in definition.steps
+                },
                 "guard": {
                     "output": {
                         "worktree": str(uuid4()),
                         "project_path": str(PIPELINES),
-                        "lane_pane": "test-pane",
                         "report_to": "gobby#1",
                         "workspace_id": "test-workspace",
                         "launch": [seat],
+                        "live": {},
                         "tab_exists": False,
+                        "tab_title": EXPECTED_TAB[runbook],
                     }
                 },
                 "admit": {
@@ -144,23 +175,31 @@ async def test_runbook_title_survives_task_claim_and_close(
     registry = _factory.create_spawn_agent_registry(
         Mock(), session_manager=session_manager, db=session_manager.db
     )
+    placement = arguments.get("placement")
+    assert isinstance(placement, dict)
+    pane, tab = _placement_titles(placement)
+    assert tab == tab_title
+    assert pane in (None, pane_title)
+
     result = await registry.call("spawn_agent", arguments)
     assert result["success"]
     prepared = result["prepared"]
     variables = result["variables"]
 
     child = session_manager.get(prepared.session_id)
-    assert child is not None and child.title == title and child.title_source == "definition"
-    title_listener.assert_called_with(child.id, title)
+    assert child is not None
+    assert child.title == pane_title and child.title_source == "definition"
+    title_listener.assert_called_with(child.id, pane_title)
     tasks = LocalTaskManager(session_manager.db)
     task = tasks.create_task(
         parent.project_id,
         "Temporary seat work",
         claimed_by_session_id=child.id,
-        validation_criteria="The role title returns when the work closes.",
+        validation_criteria="The seat title stays the definition name while the claim is open.",
     )
     claimed = update_title_for_claim(session_manager, child.id, task)
-    assert claimed.title != title and "Temporary seat work" in claimed.title
+    assert claimed is not None
+    assert claimed.title == pane_title and claimed.title_source == "definition"
 
     LocalAgentRunManager(session_manager.db).complete(prepared.agent_run_id)
     session_manager.update_status(child.id, "expired")
@@ -202,5 +241,5 @@ async def test_runbook_title_survives_task_claim_and_close(
     tasks.close_task(task.id, force=True, closed_in_session_id=child.id)
     restored = recompute_automatic_title(session_manager, child.id)
 
-    assert restored.title == title and restored.title_source == "definition"
-    title_listener.assert_called_with(child.id, title)
+    assert restored.title == pane_title and restored.title_source == "definition"
+    title_listener.assert_called_with(child.id, pane_title)

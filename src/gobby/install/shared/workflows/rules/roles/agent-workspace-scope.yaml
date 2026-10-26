@@ -21,7 +21,7 @@ rules:
           writable there.
 
   agent-workspace-read-scope:
-    description: "Agent workspace reads stay within the seat's folders, the project README and eligible predecessor folders"
+    description: "Agent workspace reads stay within the seat's folders, the project README and eligible predecessor folders; interpreter-inline code (python -c, node -e, perl -e) is not path-parsed"
     event: before_tool
     enabled: true
     priority: 15

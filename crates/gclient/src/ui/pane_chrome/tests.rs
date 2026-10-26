@@ -249,14 +249,15 @@ fn seat_identity_title_precedes_the_run_definition_in_the_pane_header() {
             Chrome::dark(),
             Chrome::new(crate::theme::Theme::new(crate::theme::ThemeKind::Light)),
         ] {
+            // A defined seat's header is its definition name alone: no ref, counter or slug.
             assert_eq!(
                 pane_corners(&ws, &chrome, ws.pane(pane), true).title,
-                format!("○ #14069: {expected} · Focused"),
+                format!("○ {expected} · Focused"),
                 "title={title:?}, source={source:?}"
             );
             assert_eq!(
                 pane_corners(&ws, &chrome, ws.pane(pane), false).title,
-                format!("○ #14069: {expected}"),
+                format!("○ {expected}"),
                 "title={title:?}, source={source:?}"
             );
         }

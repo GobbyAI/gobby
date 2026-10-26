@@ -63,7 +63,6 @@ def resolve_resume_target(
     provider: str | None,
     run_storage: Any,
     agent_type: str,
-    lane: str | None = None,
     *,
     live_host_epoch: str | None = None,
 ) -> Session:
@@ -113,14 +112,6 @@ def resolve_resume_target(
             f"Resume target {ref} is a {stored_type!r} session; resume it with "
             f"agent={stored_type!r}, not {agent_type!r}"
         )
-    # A resume keeps the seat in the lane it was recorded in, for every caller.
-    recorded_lane = resumed_seat_lane(session, run_storage)
-    requested_lane = (lane or "").strip()
-    if requested_lane and recorded_lane and requested_lane != recorded_lane:
-        raise ValueError(
-            f"Resume target {ref} is in lane {recorded_lane!r}; it cannot resume into "
-            f"{requested_lane!r}"
-        )
     return session
 
 
@@ -132,7 +123,6 @@ async def resolve_seat_resume(
     provider: str | None,
     run_storage: Any,
     agent_body: AgentDefinitionBody | None,
-    lane: str | None,
     *,
     live_host_epoch: str | None = None,
 ) -> Session:
@@ -153,7 +143,6 @@ async def resolve_seat_resume(
         concrete_provider(provider),
         run_storage,
         agent_body.name if agent_body is not None else "default",
-        lane,
         live_host_epoch=live_host_epoch,
     )
 
@@ -192,7 +181,7 @@ def resumed_seat_plan(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The ``placement`` input for a resumed seat, and the empty tab it replaces.
 
-    A resumed seat returns to its lane tab; only a never-placed seat launches unplaced.
+    A resumed seat returns to its recorded tab; only a never-placed seat launches unplaced.
     The previous run's own pane comes first, even dead: the successor splits in beside
     it and inherits its slot when the sweep collapses it. Otherwise the newest placement
     recorded along the resume chain names the split target, a pane left in its tab, or
@@ -247,15 +236,6 @@ def resume_isolation(session: Session, run_storage: Any) -> tuple[str | None, st
     if run is None:
         return None, None
     return run.worktree_id, run.clone_id
-
-
-def resumed_seat_lane(session: Session | None, run_storage: Any) -> str | None:
-    """The lane the seat's last run recorded, so a resume keeps the seat in its lane."""
-    if session is None or session.agent_run_id is None:
-        return None
-    run = run_storage.get(session.agent_run_id)
-    lane = (run.resume_metadata_json or {}).get("lane") if run is not None else None
-    return lane if isinstance(lane, str) and lane else None
 
 
 def resumed_seat_task_id(task_manager: Any, resume_target: Session, run_storage: Any) -> str | None:
