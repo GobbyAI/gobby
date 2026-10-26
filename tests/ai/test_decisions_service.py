@@ -1802,3 +1802,130 @@ async def test_retry_resends_identical_bodies_within_limits(
     assert set(json.loads(posts[0])["questions"]) == set(questions)
     assert service.estimate_request_tokens(state, questions) <= config.max_input_tokens
     assert all(len(body) <= DEFAULT_BYTE_FLOOR for body in posts)
+
+
+# --- Score: two-decimal wire rounding profile (#22604) ---
+
+# OpenRouter capture row 7 (2026-10-26): every number on the hundredth grid, score 1.95 against a
+# weighted index of 1.96.
+CAPTURED_SCORE_LEVELS = ("vague", "clear", "clear and specific")
+CAPTURED_SCORE_RESPONSE: dict[str, Any] = {
+    "model": "typesafe/jev-1.14-20261014",
+    "answers": {
+        "clarity": {
+            "type": "score",
+            "score": 1.95,
+            "legend": {"0": "vague", "1": "clear", "2": "clear and specific"},
+            "probabilities": {"0": 0, "1": 0.04, "2": 0.96},
+            "confidence": 0.94,
+        }
+    },
+    "usage": {"input_tokens": 318, "output_tokens": 18, "cost": 1.3356e-05},
+    "id": "gen-dec-1792980245-QbgfDJYxlpVCF9BOd5SR",
+    "provider": "TypeSafe",
+}
+
+
+def _score_reply(score: float, probabilities: list[float]) -> dict[str, Any]:
+    return {
+        "model": "jev-latest",
+        "answers": {
+            "rating": {
+                "type": "score",
+                "score": score,
+                "legend": {str(index): f"level {index}" for index in range(len(probabilities))},
+                "probabilities": {str(index): p for index, p in enumerate(probabilities)},
+                "confidence": 0.9,
+            }
+        },
+        "usage": dict(USAGE),
+    }
+
+
+async def _scored(wire: FakeWire, score: float, probabilities: list[float]) -> float:
+    """Answer one Score question over ``len(probabilities)`` levels; return the parsed score."""
+    wire.handler = _raw_reply(_score_reply(score, probabilities))
+    question = ScoreQuestion(
+        instructions="Rate it.", levels=tuple(f"level {i}" for i in range(len(probabilities)))
+    )
+    result = await DecisionService(_config()).score("sufficiency", STATE, {"rating": question})
+    return result.answers["rating"].score
+
+
+@pytest.mark.asyncio
+async def test_score_accepts_two_decimal_wire_rounding(wire: FakeWire) -> None:
+    wire.handler = _raw_reply(CAPTURED_SCORE_RESPONSE)
+    service = DecisionService(
+        _wire_config("openrouter-decisions", model="typesafe/jev-1.14-20261014")
+    )
+    question = ScoreQuestion(
+        instructions="Rate how specifically the description identifies the shape.",
+        levels=CAPTURED_SCORE_LEVELS,
+    )
+
+    result = await service.score(
+        "sufficiency",
+        {"description": "A red square is centered on a white background."},
+        {"clarity": question},
+    )
+
+    answer = result.answers["clarity"]
+    assert answer.score == 1.95
+    assert answer.probabilities == {"0": 0.0, "1": 0.04, "2": 0.96}
+    assert answer.confidence == 0.94
+    assert result.response_model == "typesafe/jev-1.14-20261014"
+
+
+# Bound for n levels: 0.005 * (floor(n * n / 4) + 1). On-grid deltas inside it pass; the next
+# cent fails. Scores straddle the weighted index in both directions.
+QUANTIZED_SCORE_CASES = [
+    pytest.param([0.5, 0.5], [0.51, 0.49], [0.52, 0.48], id="n2-bound-0.01"),
+    pytest.param([0.2, 0.3, 0.5], [1.31, 1.29], [1.32, 1.28], id="n3-bound-0.015"),
+    pytest.param([0.1, 0.2, 0.3, 0.4], [2.02, 1.98], [2.03, 1.97], id="n4-bound-0.025"),
+    pytest.param(
+        [0.02, 0.03, 0.05, 0.1, 0.2, 0.2, 0.2, 0.1, 0.05, 0.05],
+        [5.11, 4.85],
+        [5.12, 4.84],
+        id="n10-bound-0.13",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("probabilities", "accepted", "rejected"), QUANTIZED_SCORE_CASES)
+async def test_score_quantized_error_bound_scales_with_level_count(
+    wire: FakeWire, probabilities: list[float], accepted: list[float], rejected: list[float]
+) -> None:
+    for score in accepted:
+        assert await _scored(wire, score, probabilities) == score
+    for score in rejected:
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await _scored(wire, score, probabilities)
+        assert caught.value.reason == "parse", score
+
+
+@pytest.mark.asyncio
+async def test_score_quantized_bound_tolerates_float_representation(wire: FakeWire) -> None:
+    # Exactly on the bound in cents, yet the binary difference lands just past it.
+    n2, n10 = [0.5, 0.5], [0.02, 0.03, 0.05, 0.1, 0.2, 0.2, 0.2, 0.1, 0.05, 0.05]
+    for score, probabilities, bound in ((0.51, n2, 0.01), (4.85, n10, 0.13)):
+        weighted = sum(index * p for index, p in enumerate(probabilities))
+        assert abs(score - weighted) > bound
+        assert await _scored(wire, score, probabilities) == score
+    # A grid probability carried with float noise is still on the grid.
+    assert await _scored(wire, 1.31, [0.2, 0.1 + 0.2, 0.5]) == 1.31
+
+
+@pytest.mark.asyncio
+async def test_score_keeps_high_precision_consistency_tolerance(wire: FakeWire) -> None:
+    on_grid = [0.2, 0.3, 0.5]  # weighted index 1.3; the old n=3 tolerance is 0.002
+    off_grid = [0.2, 0.295, 0.505]  # weighted index 1.305
+
+    # A higher-precision score keeps the tight tolerance.
+    assert await _scored(wire, 1.3015, on_grid) == 1.3015
+    # Any probability off the hundredth grid keeps it too, even with an on-grid score.
+    assert await _scored(wire, 1.306, off_grid) == 1.306
+    for score, probabilities in ((1.305, on_grid), (1.31, off_grid)):
+        with pytest.raises(DecisionsUnavailable) as caught:
+            await _scored(wire, score, probabilities)
+        assert caught.value.reason == "parse", (score, probabilities)

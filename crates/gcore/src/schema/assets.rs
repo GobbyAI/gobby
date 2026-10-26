@@ -418,6 +418,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "068d6d65ddbe2f807613bb822690af2eef323feaf543669ccdd2ff97df7917ac",
         sql: include_str!("../../assets/schema/migrations/480_code_overlay_pin_gaps.sql"),
     },
+    EmbeddedMigration {
+        version: 481,
+        filename: "481_managed_principal_revoked.sql",
+        checksum: "87f8150f6bd9efe3dfbcb02c2f66479ec7c4c70cc347f9009de902a7657dfddd",
+        sql: include_str!("../../assets/schema/migrations/481_managed_principal_revoked.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

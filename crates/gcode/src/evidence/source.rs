@@ -5,6 +5,14 @@ use crate::codewiki_facts::FileFact;
 use std::io::Read as _;
 use std::path::{Component, Path};
 
+/// Most bound blobs one `EvidenceLibrary` keeps cached; the library lives for one process.
+/// The caller's `limit` has no upper bound, so this cap is the only bound on retained blobs.
+/// 1024 covers a default-limit request (`DEFAULT_RESULT_LIMIT`, 1,000 items) without a flush.
+/// The cap counts entries, not bytes: an entry can hold up to `MAX_BOUND_BLOB_BYTES` (10 MiB).
+/// A full cache is flushed, and each call builds its results before the flush, so a flush
+/// never changes what a call returns.
+pub(super) const BOUND_BLOB_CACHE_CAP: usize = 1024;
+
 impl EvidenceLibrary {
     pub(super) fn entry(&self, path: &str) -> Result<&FileFact> {
         validate_repo_path(path)?;
@@ -28,7 +36,8 @@ impl EvidenceLibrary {
     }
 
     /// Blobs at the binding commit, one result per path in order. Paths not yet cached
-    /// are read in one batch; every later request for a path reuses its result.
+    /// are read in one batch; later requests reuse the result until the cache flushes
+    /// at `BOUND_BLOB_CACHE_CAP`.
     fn bound_blobs(&self, paths: &[&str]) -> Vec<Result<Vec<u8>>> {
         if paths.is_empty() {
             return Vec::new();
@@ -44,8 +53,10 @@ impl EvidenceLibrary {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
+        let mut fetched: std::collections::BTreeMap<String, Result<Vec<u8>>> =
+            std::collections::BTreeMap::new();
         if !missing.is_empty() {
-            let fetched: Vec<Result<Vec<u8>>> = match verified {
+            let blobs: Vec<Result<Vec<u8>>> = match verified {
                 Ok(()) => super::provenance::read_bound_blobs(
                     &self.repository_root,
                     &self.binding,
@@ -62,9 +73,24 @@ impl EvidenceLibrary {
                     })
                     .collect(),
             };
-            cache.extend(missing.into_iter().map(str::to_owned).zip(fetched));
+            fetched.extend(missing.into_iter().map(str::to_owned).zip(blobs));
         }
-        paths.iter().map(|path| cache[*path].clone()).collect()
+        // Build results before the flush below; they come from the fetch or the cache.
+        let results: Vec<Result<Vec<u8>>> = paths
+            .iter()
+            .map(|path| {
+                fetched
+                    .get(*path)
+                    .or_else(|| cache.get(*path))
+                    .cloned()
+                    .expect("every path is fetched or cached")
+            })
+            .collect();
+        if cache.len() + fetched.len() > BOUND_BLOB_CACHE_CAP {
+            cache.clear();
+        }
+        cache.extend(fetched.into_iter().take(BOUND_BLOB_CACHE_CAP));
+        results
     }
 
     /// Reads the bound blobs for `paths` in one batch, so the per-path reads that

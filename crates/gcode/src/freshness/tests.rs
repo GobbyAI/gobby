@@ -1,5 +1,5 @@
 use super::*;
-use crate::commands::grep::{GrepOptions, grep_repo};
+use crate::commands::grep::{GrepOptions, GrepResult, grep_repo};
 use crate::models::CODE_INDEX_UUID_NAMESPACE;
 use crate::output::Format;
 use postgres::Client;
@@ -1322,4 +1322,122 @@ fn path_filtered_primary_index_keeps_unindexed_changes_visible() {
     );
 
     invalidate_test_project(&ctx);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn grep_during_busy_refresh_does_not_return_silent_empty_for_changed_match() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).expect("create src");
+    let lib = root.join("src/lib.rs");
+    std::fs::write(&lib, b"pub fn old_name() {}\n").expect("write initial source");
+    let ctx = postgres_context_with_root(&test_project_id("gcode-grep-busy-changed"), root);
+    invalidate_test_project(&ctx);
+    full_index(&ctx);
+
+    // The checkout moved to content the index has never served.
+    std::fs::write(&lib, b"pub fn runtime_config_contract() {}\n").expect("write moved source");
+    let holder = hold_project_lock(&ctx);
+    let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("busy freshness status");
+    assert!(
+        matches!(status, FreshnessStatus::SkippedBusy(_)),
+        "a held project lock must skip the refresh, got {status:?}"
+    );
+    let outcome = grep_literal(&ctx, "runtime_config_contract");
+    drop(holder);
+    invalidate_test_project(&ctx);
+
+    assert_true_match_or_staleness_diagnostic(outcome, "src/lib.rs", 1);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn grep_during_busy_refresh_does_not_return_silent_empty_for_unindexed_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("src")).expect("create src");
+    std::fs::write(root.join("src/lib.rs"), b"pub fn old_name() {}\n").expect("write lib");
+    let ctx = postgres_context_with_root(&test_project_id("gcode-grep-busy-unindexed"), root);
+    invalidate_test_project(&ctx);
+    full_index(&ctx);
+
+    // A file added after the last index has no rows at all.
+    std::fs::write(root.join("src/new.rs"), b"pub fn added_contract() {}\n")
+        .expect("write new source");
+    let holder = hold_project_lock(&ctx);
+    let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("busy freshness status");
+    assert!(
+        matches!(status, FreshnessStatus::SkippedBusy(_)),
+        "a held project lock must skip the refresh, got {status:?}"
+    );
+    let outcome = grep_literal(&ctx, "added_contract");
+    drop(holder);
+    invalidate_test_project(&ctx);
+
+    assert_true_match_or_staleness_diagnostic(outcome, "src/new.rs", 1);
+}
+
+/// Runs the whole-checkout literal grep that `gcode grep -F <literal>` runs.
+fn grep_literal(ctx: &Context, literal: &str) -> anyhow::Result<GrepResult> {
+    let mut conn = db::connect_readonly(&ctx.database_url).expect("connect readonly");
+    let options = GrepOptions {
+        pattern: literal,
+        paths: &[],
+        globs: &[],
+        fixed_strings: true,
+        ignore_case: false,
+        word: false,
+        context: None,
+        before_context: None,
+        after_context: None,
+        max_count: None,
+        offset: 0,
+        token_budget: None,
+        files_with_matches: false,
+        format: Format::Json,
+    };
+    grep_repo(ctx, &mut conn, &options)
+}
+
+/// A grep whose refresh was skipped must return the match that is on disk, or say
+/// the index is stale. An empty success with no diagnostic is the bug.
+fn assert_true_match_or_staleness_diagnostic(
+    outcome: anyhow::Result<GrepResult>,
+    path: &str,
+    line: usize,
+) {
+    let diagnosed = match &outcome {
+        Ok(result) => {
+            if result
+                .matches
+                .iter()
+                .any(|found| found.path == path && found.line == line)
+            {
+                return;
+            }
+            result
+                .coverage_gap
+                .as_deref()
+                .is_some_and(mentions_staleness)
+        }
+        Err(error) => mentions_staleness(&format!("{error:#}")),
+    };
+    assert!(
+        diagnosed,
+        "grep during a skipped refresh must return {path}:{line} or report staleness, got {outcome:?}"
+    );
+}
+
+fn mentions_staleness(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("stale") || text.contains("out of date")
 }
