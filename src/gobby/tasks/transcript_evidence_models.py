@@ -81,6 +81,33 @@ class TranscriptEvidence:
     latest_record_at: datetime | None = field(default=None, compare=False)
 
 
+@dataclass(frozen=True)
+class TranscriptPathDelta:
+    """One transcript path's share of an evidence delta.
+
+    When ``resumed``, ``evidence`` holds only the runs appended after the caller's
+    checkpoint. Otherwise it holds the path's whole window and replaces what the
+    caller had for that path.
+    """
+
+    path: str
+    evidence: TranscriptEvidence
+    resumed: bool
+
+
+@dataclass(frozen=True)
+class TranscriptEvidenceDelta:
+    """Evidence appended since ``base``, the checkpoint the worker resumed from.
+
+    ``base`` is None when the worker parsed cold. ``checkpoint`` identifies the
+    stored snapshot after this derivation, or None when none was stored.
+    """
+
+    base: tuple[object, ...] | None
+    checkpoint: tuple[object, ...] | None
+    paths: tuple[TranscriptPathDelta, ...]
+
+
 class TranscriptEvidenceUnavailable(RuntimeError):
     """Raised when no readable transcript exists for a required session."""
 

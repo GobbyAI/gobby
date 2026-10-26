@@ -26,12 +26,17 @@ from gobby.tasks import (
     transcript_evidence_snapshots,
 )
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
-from gobby.tasks.transcript_evidence_models import TranscriptEvidence
+from gobby.tasks.transcript_evidence_models import (
+    TranscriptEvidence,
+    TranscriptEvidenceDelta,
+    TranscriptPathDelta,
+)
 from gobby.tasks.transcript_evidence_snapshots import (
     clear_evidence_snapshots,
     derivation_fingerprint,
 )
 from gobby.tasks.transcript_evidence_sources import select_window_raw_lines
+from gobby.tasks.transcript_evidence_stream import TranscriptEvidenceStream
 from gobby.tasks.transcript_evidence_transfer import ChunkedPayload, decode_cooperatively
 from gobby.workflows.found_work_gate import (
     _reported_failure_paths,
@@ -721,6 +726,107 @@ async def test_supplemental_transcripts_resume_from_the_session_snapshot(
     parse_counts.clear()
     assert await _derive(session, BASE_TIME, tmp_path) == resumed
     assert parse_counts == [len(primary_records), len(subagent_records) + len(appended)]
+
+
+@pytest.mark.asyncio
+async def test_stream_extends_to_the_full_derivation_across_supplemental_appends(
+    tmp_path: Path, pool_calls: list[PoolCall]
+) -> None:
+    transcript = tmp_path / "transcript-evidence-claude-1.jsonl"
+    subagent = transcript.with_suffix("") / "subagents" / "agent-worker.jsonl"
+    subagent.parent.mkdir(parents=True)
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="uv run ruff check src/",
+            call_id="primary-run",
+            start=BASE_TIME,
+            result={"exit_code": 0, "stdout": ""},
+        ),
+    )
+    _write_jsonl(
+        subagent,
+        _claude_tool_pair(
+            command="uv run pytest tests/tasks/test_a.py",
+            call_id="subagent-run",
+            start=BASE_TIME + timedelta(seconds=10),
+            result={"exit_code": 0, "stdout": "passed"},
+        ),
+    )
+    session = _session("claude", transcript)
+    stream = TranscriptEvidenceStream()
+
+    first = await _derive(session, BASE_TIME, tmp_path, stream=stream)
+    assert first == await _derive(session, BASE_TIME, tmp_path)
+
+    _append_jsonl(
+        subagent,
+        _claude_tool_pair(
+            command="uv run pytest tests/tasks/test_b.py",
+            call_id="subagent-run-2",
+            start=BASE_TIME + timedelta(seconds=20),
+            result={"exit_code": 1, "stdout": "1 failed"},
+        ),
+    )
+    _append_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="uv run ruff check src/",
+            call_id="primary-run-2",
+            start=BASE_TIME + timedelta(seconds=30),
+            result={"exit_code": 0, "stdout": ""},
+        ),
+    )
+    pool_calls.clear()
+    extended = await _derive(session, BASE_TIME, tmp_path, stream=stream)
+
+    # One appended run per transcript crossed the pool, not the whole window.
+    assert [payload.record_count for _, payload in pool_calls] == [2]
+    assert extended == await _derive(session, BASE_TIME, tmp_path)
+
+    # A default derivation advances the stored snapshot behind the stream's back;
+    # the stream's checkpoint no longer matches, so the next call derives cold.
+    _append_jsonl(
+        subagent,
+        _claude_tool_pair(
+            command="uv run pytest tests/tasks/test_c.py",
+            call_id="subagent-run-3",
+            start=BASE_TIME + timedelta(seconds=40),
+            result={"exit_code": 0, "stdout": "passed"},
+        ),
+    )
+    await _derive(session, BASE_TIME, tmp_path)
+    _append_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="uv run ruff check src/",
+            call_id="primary-run-3",
+            start=BASE_TIME + timedelta(seconds=50),
+            result={"exit_code": 0, "stdout": ""},
+        ),
+    )
+    fallback = await _derive(session, BASE_TIME, tmp_path, stream=stream)
+    assert fallback == await _derive(session, BASE_TIME, tmp_path)
+
+
+def test_stream_refuses_a_resumed_delta_built_on_a_superseded_checkpoint() -> None:
+    primary = "transcript-evidence-claude-1.jsonl"
+    stream = TranscriptEvidenceStream()
+    cold = TranscriptEvidenceDelta(
+        base=None,
+        checkpoint=("v1",),
+        paths=(TranscriptPathDelta(path=primary, evidence=TranscriptEvidence(), resumed=False),),
+    )
+    assert stream.apply(cold) is not None
+
+    # Two stops resumed from the same checkpoint. The first lands and moves the stream
+    # on; the second must not append its runs onto that state a second time.
+    resumed = TranscriptPathDelta(path=primary, evidence=TranscriptEvidence(), resumed=True)
+    first = TranscriptEvidenceDelta(base=("v1",), checkpoint=("v2",), paths=(resumed,))
+    second = TranscriptEvidenceDelta(base=("v1",), checkpoint=("v3",), paths=(resumed,))
+    assert stream.apply(first) is not None
+    assert stream.apply(second) is None
+    assert stream.checkpoint == ("v2",)
 
 
 async def test_incremental_derivation_matches_a_full_window_parse(

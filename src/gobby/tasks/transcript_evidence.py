@@ -27,10 +27,12 @@ from gobby.tasks.transcript_background import (
     pending_background_run,
     recover_background_receipt,
 )
-from gobby.tasks.transcript_evidence_merge import archive_before_live, merge_transcript_evidence
+from gobby.tasks.transcript_evidence_merge import merge_path_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
+    TranscriptEvidenceDelta,
     TranscriptEvidenceUnavailable,
+    TranscriptPathDelta,
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
@@ -52,6 +54,7 @@ from gobby.tasks.transcript_evidence_sources import (
     _resolve_transcript_paths,
     select_window_raw_lines,
 )
+from gobby.tasks.transcript_evidence_stream import TranscriptEvidenceStream
 from gobby.tasks.transcript_evidence_transfer import (
     ChunkedPayload,
     decode_cooperatively,
@@ -134,8 +137,17 @@ async def derive_transcript_evidence(
     detection_config: ValidationDetectionConfig,
     *,
     archive_dir: str | None = None,
+    stream: TranscriptEvidenceStream | None = None,
 ) -> TranscriptEvidence:
-    """Parse provider transcripts for validation failures and their later resolutions."""
+    """Parse provider transcripts for validation failures and their later resolutions.
+
+    With ``stream``, only runs appended since the stream's checkpoint cross the pool,
+    and the stream keeps the window's accumulated evidence for the next call.
+    """
+    if stream is not None:
+        return await _derive_streamed_evidence(
+            stream, session, _coerce_datetime(window_start), detection_config, archive_dir
+        )
     local_machine_id = require_local_session_ownership(session)
     payload = await run_in_transcript_evidence_pool(
         _derive_chunked_transcript_evidence,
@@ -146,6 +158,81 @@ async def derive_transcript_evidence(
         local_machine_id,
     )
     return cast(TranscriptEvidence, await decode_cooperatively(payload))
+
+
+async def derive_transcript_evidence_delta(
+    session: Session,
+    window_start: datetime | str | None,
+    detection_config: ValidationDetectionConfig,
+    *,
+    base: tuple[object, ...] | None,
+    archive_dir: str | None = None,
+) -> TranscriptEvidenceDelta:
+    """Evidence appended since ``base``, the checkpoint from the caller's previous delta.
+
+    A ``base`` the stored snapshot does not match, including ``None``, re-derives the
+    whole window; those paths come back with ``resumed=False``.
+    """
+    local_machine_id = require_local_session_ownership(session)
+    payload = await run_in_transcript_evidence_pool(
+        _derive_transcript_delta_chunked,
+        session,
+        _coerce_datetime(window_start),
+        detection_config,
+        archive_dir,
+        local_machine_id,
+        base,
+    )
+    return cast(TranscriptEvidenceDelta, await decode_cooperatively(payload))
+
+
+async def _derive_streamed_evidence(
+    stream: TranscriptEvidenceStream,
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    archive_dir: str | None,
+) -> TranscriptEvidence:
+    """Extend ``stream`` from the worker's delta; derive cold when the delta has no base."""
+    evidence = stream.apply(
+        await derive_transcript_evidence_delta(
+            session,
+            window_start,
+            detection_config,
+            base=stream.checkpoint,
+            archive_dir=archive_dir,
+        )
+    )
+    if evidence is None:
+        stream.reset()
+        evidence = stream.apply(
+            await derive_transcript_evidence_delta(
+                session,
+                window_start,
+                detection_config,
+                base=None,
+                archive_dir=archive_dir,
+            )
+        )
+    if evidence is None:
+        raise RuntimeError("a cold transcript evidence delta must apply")
+    return evidence
+
+
+def _derive_transcript_delta_chunked(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    archive_dir: str | None,
+    local_machine_id: str,
+    base: tuple[object, ...] | None,
+) -> ChunkedPayload:
+    """Pool entry: the delta crosses the boundary in chunks, as the full window does."""
+    return encode(
+        _derive_transcript_delta_sync(
+            session, window_start, detection_config, archive_dir, local_machine_id, base
+        )
+    )
 
 
 def _derive_chunked_transcript_evidence(
@@ -222,12 +309,9 @@ def _derive_transcript_evidence_sync(
         )
         if resume is None or updated.checkpoint() != resume.checkpoint():
             store_durable_snapshot(snapshot_key, updated)
-    return merge_transcript_evidence(
+    return merge_path_evidence(
         results[0][0],
-        *(
-            archive_before_live(evidence, results[0][0]) if path.endswith(".gz") else evidence
-            for path, (evidence, _) in zip(paths[1:], results[1:], strict=True)
-        ),
+        [(path, evidence) for path, (evidence, _) in zip(paths[1:], results[1:], strict=True)],
     ), updated
 
 
@@ -240,6 +324,22 @@ def _derive_transcript_path_evidence(
     *,
     resume: EvidenceSnapshot | None,
 ) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
+    evidence, snapshot, _ = _derive_transcript_path_delta(
+        session, path, window_start, detection_config, attempted_paths, resume=resume
+    )
+    return evidence, snapshot
+
+
+def _derive_transcript_path_delta(
+    session: Session,
+    path: str,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    attempted_paths: list[str],
+    *,
+    resume: EvidenceSnapshot | None,
+) -> tuple[TranscriptEvidence, EvidenceSnapshot | None, int | None]:
+    """Like ``_derive_transcript_path_evidence``, plus the order resumed from (None if cold)."""
     fingerprint = _derivation_fingerprint(
         session,
         window_start,
@@ -342,6 +442,85 @@ def _derive_transcript_path_evidence(
             latest_record_at=state.latest_record_at,
         ),
         snapshot,
+        resume.order if resume is not None else None,
+    )
+
+
+def _derive_transcript_delta_sync(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    archive_dir: str | None,
+    local_machine_id: str,
+    base: tuple[object, ...] | None,
+) -> TranscriptEvidenceDelta:
+    fingerprint = _derivation_fingerprint(session, window_start, detection_config)
+    snapshot_key = f"{session.id}:{fingerprint}"
+    stored = load_durable_snapshot(snapshot_key)
+    # Resume only when the caller's checkpoint describes the stored snapshot exactly.
+    resume = stored if stored is not None and stored.checkpoint() == base else None
+    paths, attempted_paths = _resolve_transcript_paths(
+        session, archive_dir, local_machine_id, window_start
+    )
+    if not paths:
+        raise TranscriptEvidenceUnavailable(
+            f"No transcript was found for {session.source} session {session.ref}.",
+            source=session.source,
+            attempted_paths=attempted_paths,
+        )
+    results = tuple(
+        _derive_transcript_path_delta(
+            session,
+            path,
+            window_start,
+            detection_config,
+            attempted_paths,
+            resume=(
+                resume
+                if index == 0
+                else resume.supplemental.get(path)
+                if resume is not None
+                else None
+            ),
+        )
+        for index, path in enumerate(paths)
+    )
+    updated = results[0][1]
+    if updated is not None:
+        updated = replace(
+            updated,
+            supplemental={
+                path: snapshot
+                for path, (_, snapshot, _) in zip(paths[1:], results[1:], strict=True)
+                if snapshot is not None
+            },
+        )
+        if resume is None or updated.checkpoint() != resume.checkpoint():
+            store_durable_snapshot(snapshot_key, updated)
+    return TranscriptEvidenceDelta(
+        base=base if resume is not None else None,
+        checkpoint=updated.checkpoint() if updated is not None else None,
+        paths=tuple(
+            TranscriptPathDelta(
+                path=path,
+                evidence=_appended_evidence(evidence, resumed_from),
+                resumed=resumed_from is not None,
+            )
+            for path, (evidence, _, resumed_from) in zip(paths, results, strict=True)
+        ),
+    )
+
+
+def _appended_evidence(
+    evidence: TranscriptEvidence, resumed_from: int | None
+) -> TranscriptEvidence:
+    """Keep the runs appended after ``resumed_from``; a cold parse keeps every run."""
+    if resumed_from is None:
+        return evidence
+    return replace(
+        evidence,
+        validation_runs=tuple(run for run in evidence.validation_runs if run.order > resumed_from),
+        command_runs=tuple(run for run in evidence.command_runs if run.order > resumed_from),
     )
 
 
@@ -614,4 +793,5 @@ def _coerce_datetime(value: datetime | str | None) -> datetime | None:
 
 __all__ = [
     "derive_transcript_evidence",
+    "derive_transcript_evidence_delta",
 ]

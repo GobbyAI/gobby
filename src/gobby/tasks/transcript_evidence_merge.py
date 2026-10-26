@@ -1,9 +1,24 @@
 """Combine session evidence while preserving each session's transcript order."""
 
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime
 
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence, TranscriptValidationRun
+
+
+def merge_path_evidence(
+    primary: TranscriptEvidence,
+    supplemental: Sequence[tuple[str, TranscriptEvidence]],
+) -> TranscriptEvidence:
+    """Merge a session's primary transcript with its supplemental transcripts by path."""
+    return merge_transcript_evidence(
+        primary,
+        *(
+            archive_before_live(evidence, primary) if path.endswith(".gz") else evidence
+            for path, evidence in supplemental
+        ),
+    )
 
 
 def archive_before_live(

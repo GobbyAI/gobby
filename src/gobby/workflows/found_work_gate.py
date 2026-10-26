@@ -31,6 +31,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
 )
+from gobby.tasks.transcript_evidence_stream import TranscriptEvidenceStream
 from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
 from gobby.workflows.validation_cover import (
     cargo_package_selection_failed,
@@ -47,6 +48,8 @@ logger = logging.getLogger(__name__)
 _PROCESS_BOOT_AT = datetime.now(UTC)
 FOUND_WORK_GATE_ARMED_AT_VARIABLE = "_found_work_gate_armed_at"
 _FOUND_WORK_TASK_ACTIONS = frozenset({"claimed", "closed"})
+# Sessions whose evidence streams stay resident; an evicted session re-derives cold once.
+_EVIDENCE_STREAM_LIMIT = 16
 
 
 def found_work_gate_armed_at(value: object) -> datetime | None:
@@ -328,6 +331,16 @@ class FoundWorkStopAnalyzer:
         self._session_manager = session_manager
         self._session_task_manager = session_task_manager
         self._db = db
+        self._evidence_streams: dict[str, TranscriptEvidenceStream] = {}
+
+    def _evidence_stream(self, session_id: str) -> TranscriptEvidenceStream:
+        """Return the session's evidence stream, most recently used last, bounded in count."""
+        streams = self._evidence_streams
+        stream = streams.pop(session_id, None)
+        streams[session_id] = stream if stream is not None else TranscriptEvidenceStream()
+        while len(streams) > _EVIDENCE_STREAM_LIMIT:
+            streams.pop(next(iter(streams)))
+        return streams[session_id]
 
     async def analyze(
         self,
@@ -582,6 +595,7 @@ class FoundWorkStopAnalyzer:
                 session,
                 window_start if window_start is not None else session.created_at,
                 config,
+                stream=self._evidence_stream(session_id),
             )
         except TranscriptEvidenceUnavailable:
             logger.debug("Found-work validation evidence unavailable for session %s", session_id)
