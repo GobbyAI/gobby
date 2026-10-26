@@ -236,7 +236,7 @@ async def test_devteam_observer_preserves_candidate_checkout(
             ),
             "invocation_id": "observer-test",
             "steps": {
-                "guard": {"output": {"workspace_id": "test-workspace"}},
+                "guard": {"output": {"workspace_id": "test-workspace", "live": {}}},
                 "admit": {
                     "output": {
                         "branch": "lane-candidate",
