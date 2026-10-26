@@ -311,6 +311,10 @@ fn required_relation_regclass_name(schema: &str, relation: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "schema/authority_tests.rs"]
+mod authority_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
