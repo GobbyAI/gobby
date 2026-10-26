@@ -49,6 +49,12 @@ _SESSION_ID = "node-srt-session"
 _DAEMON_PORT = 60887
 _WEBSOCKET_PORT = 60888
 _PROVIDERS = ("claude", "codex", "grok", "droid", "agy")
+# The seat whose agent workspace folders the spawn grants (#25148): its own
+# ``<definition>/session-<seq>/`` and its team's ``epics/epic-<seq>/`` folder.
+_WORKSPACE_CASE = "claude-agent-workspace"
+_WORKSPACE_DEFINITION = "developer"
+_WORKSPACE_SESSION_SEQ = 7
+_WORKSPACE_EPIC_SEQ = 3
 # Variables the oracle reads from the process environment. Each case pins them
 # explicitly, and any that the case does not set is removed.
 _HOST_ENVIRONMENT = (
@@ -108,6 +114,9 @@ def _case(
     home_tree: tuple[str, ...] = (),
     project_json: dict[str, Any] | None = None,
     platform: str | None = None,
+    definition: str | None = None,
+    session_seq: int | None = None,
+    epic_seq: int | None = None,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -118,6 +127,9 @@ def _case(
             "source_root": source_root,
             "project_id": _PROJECT_ID,
             "session_id": _SESSION_ID,
+            "definition": definition,
+            "session_seq": session_seq,
+            "epic_seq": epic_seq,
             "workspace": "{workspace}",
             "run_id": _RUN_ID,
             "daemon_port": _DAEMON_PORT,
@@ -182,6 +194,15 @@ def _case_templates() -> list[dict[str, Any]]:
             "claude",
             sandbox=_sandbox(extra_write_paths=["{home}/🙂/extra"]),
             home_tree=("🙂/extra",),
+        )
+    )
+    cases.append(
+        _case(
+            _WORKSPACE_CASE,
+            "claude",
+            definition=_WORKSPACE_DEFINITION,
+            session_seq=_WORKSPACE_SESSION_SEQ,
+            epic_seq=_WORKSPACE_EPIC_SEQ,
         )
     )
     return cases
@@ -515,3 +536,21 @@ def test_corpus_matches_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
             mismatches.append(f"{refusal['name']}: refusal message {message!r}")
 
     assert not mismatches, "\n".join(mismatches)
+
+
+def test_agent_workspace_case_grants_only_the_seats_folders(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The oracle grants the seat's own folder and its epic folder, and nothing wider."""
+    template = next(case for case in _case_templates() if case["name"] == _WORKSPACE_CASE)
+    settings, _env, layout = _evaluate(template, tmp_path / "workspace-case", monkeypatch)
+    writes: list[str] = json.loads(settings)["filesystem"]["allowWrite"]
+    root = Path(layout["gobby_home"]) / "agents_workspaces"
+    anchor = root / _PROJECT_ID
+    own = anchor / _WORKSPACE_DEFINITION / f"session-{_WORKSPACE_SESSION_SEQ}"
+    epic = anchor / "epics" / f"epic-{_WORKSPACE_EPIC_SEQ}"
+    granted = {entry for entry in writes if entry == str(root) or entry.startswith(f"{root}/")}
+    assert granted == {str(own), str(epic)}
+    # The Rust replay reads the same recorded case, so the corpus must carry it.
+    recorded = {case["name"] for case in _load_corpus()["cases"]}
+    assert _WORKSPACE_CASE in recorded, sorted(recorded)
