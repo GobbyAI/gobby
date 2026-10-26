@@ -22,5 +22,7 @@ rules:
           allows: ["*"] for any agent, the named agents, or none when empty.
           The agent the call starts must be allowed: an omitted agent
           means "default", and so does every agent in the target's
-          fallback_agent chain.
+          fallback_agent chain. Name the agent in agent: a team manager resuming
+          a seat passes agent=<the seat's type>, such as agent=test-writer, with
+          resume_session_id.
           Send the work to your parent with gobby-agents:send_message instead.
