@@ -334,28 +334,33 @@ def _skip_heredoc_bodies(command: str, pos: int, pending: list[tuple[str, bool]]
     return pos
 
 
-def _strip_quoted_heredoc_bodies(command: str) -> str:
-    """Drop each quoted-delimiter heredoc body: literal data, never a shell word or operator.
+def _split_heredoc_bodies(command: str) -> tuple[str, list[str]]:
+    """Split each quoted-delimiter heredoc body out of the command text.
 
+    The shell reads a quoted-delimiter body as literal text, so it is returned apart from the
+    command. The caller judges a body as shell code when a shell reads it, and as text otherwise.
     A body starts after the unquoted newline that ends its header line and runs to the
     delimiter line, matched exactly as the shell matches it.
     """
     kept: list[str] = []
+    bodies: list[str] = []
     pending: list[tuple[str, bool]] = []
     pos = 0
     while pos < len(command):
         unit = _SHELL_UNIT.match(command, pos)
         if unit is None:  # unreachable: the final alternative matches any character
-            return command
+            return command, []
         text = unit.group(0)
         pos = unit.end()
         if unit.group("tag") is not None:
             pending.append((unit.group("tag"), unit.group("dash") == "-"))
         elif text == "\n" and pending:
+            start = pos
             pos = _skip_heredoc_bodies(command, pos, pending)
+            bodies.append(command[start:pos])
             pending = []
         kept.append(text)
-    return "".join(kept)
+    return "".join(kept), bodies
 
 
 def _shell_tokens(command: str) -> list[str]:
@@ -367,6 +372,8 @@ def _shell_tokens(command: str) -> list[str]:
 
 
 _SHELL_WRAPPERS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+# Commands that run their input as shell code, so a quoted heredoc body they read is shell code.
+_BODY_CONSUMERS = _SHELL_WRAPPERS | {"eval", "source", "."}
 _SHELL_COMMAND_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 
 
@@ -389,20 +396,29 @@ def _wrapped_commands(tokens: list[str]) -> list[str]:
     return commands
 
 
+def _path_words(tokens: list[str]) -> list[str]:
+    """Words that look like paths. A quoted token holding several words is judged word by word."""
+    expanded = (part for token in tokens for part in os.path.expandvars(token).split())
+    return [part for part in expanded if "/" in part or part.startswith("~")]
+
+
 def _shell_path_words(command: Any) -> list[str]:
     """Shell words that look like paths: operators split outside quotes, env vars expanded.
 
-    A command string that a shell wrapper or `eval` runs is parsed the same way.
+    A quoted-delimiter heredoc body is shell code when a shell reads it, and text otherwise. A
+    command string that a shell wrapper or `eval` runs is parsed the same way.
     """
     if not isinstance(command, str):
         return []
-    command = _strip_quoted_heredoc_bodies(command)
+    text, bodies = _split_heredoc_bodies(command)
     try:
-        tokens = _shell_tokens(command)
+        tokens = _shell_tokens(text)
     except ValueError:
-        tokens = _SHELL_OPERATORS.sub(" ", command).split()
-    expanded = (os.path.expandvars(token) for token in tokens)
-    words = [token for token in expanded if "/" in token or token.startswith("~")]
+        tokens = _SHELL_OPERATORS.sub(" ", text).split()
+    shell_reads = any(os.path.basename(os.path.expandvars(t)) in _BODY_CONSUMERS for t in tokens)
+    words = _path_words(tokens)
+    for body in bodies:
+        words.extend(_shell_path_words(body) if shell_reads else _path_words(body.split()))
     for wrapped in _wrapped_commands(tokens):
         words.extend(_shell_path_words(wrapped))
     return words

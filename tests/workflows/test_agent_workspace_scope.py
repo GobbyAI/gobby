@@ -591,3 +591,50 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
     data = _shell(f'bash -c "cat {own}"', project)
     response = await _decide(engine, data, dict(developer), caller)
     assert response.decision == "allow", (data, response.reason)
+
+
+@pytest.mark.asyncio
+async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_paths(
+    engine: RuleEngine,
+    root: Path,
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    project = tmp_path / "checkout"
+    project.mkdir()
+    project_id: str = sample_project["id"]
+    anchor = root / project_id
+    developer = _seat(anchor, "developer", 50)
+    caller = _register(
+        temp_db,
+        project_id,
+        seq=50,
+        status="active",
+        agent_type="developer",
+        folder=anchor / "developer" / "session-50",
+        persistent=False,
+    )
+    # A shell that reads a quoted heredoc body runs it, so the body is judged as shell code.
+    # Text no shell reads, and quoted text, is judged word by word and still refuses a concrete path.
+    sibling = anchor / "developer" / "session-51" / "notes.md"
+    for command in (
+        f"bash <<'EOF'\ncat {sibling}\nEOF",
+        f"sh -s <<'EOF'\ncat {sibling}\nEOF",
+        f"cat <<'EOF' | bash\ncat {sibling}\nEOF",
+        f"git commit -F - <<'EOF'\nAnchor: {sibling}\nEOF",
+        f'git commit -m "see {sibling}"',
+    ):
+        data = _shell(command, project)
+        response = await _decide(engine, data, dict(developer), caller)
+        assert response.decision == "block", (command, response.reason)
+        assert "agent workspace folder is outside" in (response.reason or ""), command
+    # The caller's own folder stays readable in the same positions.
+    own = anchor / "developer" / "session-50" / "notes.md"
+    for command in (
+        f"bash <<'EOF'\ncat {own}\nEOF",
+        f"git commit -F - <<'EOF'\nAnchor: {own}\nEOF",
+    ):
+        data = _shell(command, project)
+        response = await _decide(engine, data, dict(developer), caller)
+        assert response.decision == "allow", (command, response.reason)
