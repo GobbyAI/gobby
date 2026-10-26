@@ -221,32 +221,38 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
         if self._disconnect_event is None or self._session_ready is None:
             raise RuntimeError("Connection events not initialized")
 
+        # Identifies this attempt: an abandoned owner must not write into a later attempt.
+        session_ready = self._session_ready
+        disconnect_event = self._disconnect_event
         connected = False
         try:
             async with AsyncExitStack() as stack:
                 transport = await self._open_transport(stack)
                 # Client negotiates the protocol era (server/discover with an
                 # initialize fallback) before publishing the session.
-                self._client_context = Client(
+                client_context = Client(
                     transport,
                     mode=_client_mode_for_config(self.config),
                     client_info=gobby_client_info(),
                 )
-                async with self._client_context as client:
-                    self._session = client.session
+                if self._session_ready is session_ready:
+                    self._client_context = client_context
+                async with client_context as client:
+                    # A handshake that completes after its attempt was abandoned releases
+                    # its client without publishing over a later attempt.
+                    if self._session_ready is session_ready:
+                        self._session = client.session
+                        self._state = ConnectionState.CONNECTED
+                        self._consecutive_failures = 0
+                        logger.debug(
+                            "Connected to %s MCP server: %s",
+                            self._TRANSPORT_LABEL,
+                            self.config.name,
+                        )
+                        connected = True
+                        session_ready.set()
 
-                    self._state = ConnectionState.CONNECTED
-                    self._consecutive_failures = 0
-                    logger.debug(
-                        "Connected to %s MCP server: %s",
-                        self._TRANSPORT_LABEL,
-                        self.config.name,
-                    )
-
-                    connected = True
-                    self._session_ready.set()
-
-                    await self._disconnect_event.wait()
+                    await disconnect_event.wait()
 
                     logger.debug("Disconnect requested for %s", self.config.name)
 
@@ -275,55 +281,62 @@ class OwnerTaskTransportConnection(BaseTransportConnection):
                 extra={"server": self.config.name, "error_type": type(e).__name__},
             )
 
-            if isinstance(e, MCPError):
-                self._connection_error = e
-            else:
-                self._connection_error = MCPError(
-                    f"{self._TRANSPORT_LABEL} connection failed: {error_msg}"
-                )
+            # An abandoned owner must not publish its failure into a later attempt.
+            if self._session_ready is session_ready:
+                if isinstance(e, MCPError):
+                    self._connection_error = e
+                else:
+                    self._connection_error = MCPError(
+                        f"{self._TRANSPORT_LABEL} connection failed: {error_msg}"
+                    )
 
-            self._session_ready.set()  # Unblock waiter with error
+            session_ready.set()  # Unblock waiter with error
 
         finally:
-            self._session = None
-            self._client_context = None
-            self._state = ConnectionState.DISCONNECTED
+            # Only the current owner resets shared state; an abandoned owner that
+            # unwinds late must not clobber a later attempt.
+            if self._session_ready is session_ready:
+                self._session = None
+                self._client_context = None
+                self._state = ConnectionState.DISCONNECTED
             # A cancelled or otherwise aborted handshake must still release
             # a waiting connect() call.
-            if self._session_ready is not None:
-                self._session_ready.set()
+            session_ready.set()
 
     async def _cleanup_owner_task(self) -> None:
-        """Wait for the owner task to unwind, cancelling it if it stalls."""
-        if self._owner_task is not None:
-            if not self._owner_task.done():
+        """Wait a bounded time for the owner task to unwind, then abandon it."""
+        owner = self._owner_task
+        try:
+            if owner is not None and not owner.done():
                 done, _pending = await asyncio.wait(
-                    {self._owner_task},
+                    {owner},
                     timeout=self._OWNER_TASK_SHUTDOWN_TIMEOUT,
                 )
-                if done:
-                    try:
-                        await self._owner_task
-                    except asyncio.CancelledError:
-                        logger.debug("Owner task cancelled for %s", self.config.name)
-                    except Exception as e:
-                        logger.warning("Owner task cleanup failed for %s: %s", self.config.name, e)
-                else:
-                    self._owner_task.cancel()
-                    try:
-                        await asyncio.wait_for(
-                            self._owner_task,
-                            timeout=self._OWNER_TASK_SHUTDOWN_TIMEOUT,
-                        )
-                    except asyncio.CancelledError:
-                        logger.debug("Owner task cancelled for %s", self.config.name)
-                    except TimeoutError:
-                        logger.warning("Owner task cleanup timed out for %s", self.config.name)
-                    except Exception as e:
-                        logger.warning("Owner task cleanup failed for %s: %s", self.config.name, e)
+                if not done:
+                    owner.cancel()
+                    # asyncio.wait, not wait_for: cancelling a task that awaits another task
+                    # never wakes the waiter while the owner absorbs the cancellation.
+                    done, _pending = await asyncio.wait(
+                        {owner},
+                        timeout=self._OWNER_TASK_SHUTDOWN_TIMEOUT,
+                    )
+                # An abandoned owner's late unwind is guarded by _run_connection.
+                if not done:
+                    logger.warning(
+                        "Owner task cleanup timed out for %s; abandoning it", self.config.name
+                    )
+                elif owner.cancelled():
+                    logger.debug("Owner task cancelled for %s", self.config.name)
+                elif owner.exception() is not None:
+                    logger.warning(
+                        "Owner task cleanup failed for %s: %s",
+                        self.config.name,
+                        owner.exception(),
+                    )
+        finally:
             self._owner_task = None
-        self._disconnect_event = None
-        self._session_ready = None
+            self._disconnect_event = None
+            self._session_ready = None
 
     async def disconnect(self) -> None:
         """Signal the owner task to unwind the Client and wait for it."""

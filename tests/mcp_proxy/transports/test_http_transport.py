@@ -504,19 +504,18 @@ class TestHTTPCleanupOwnerTask:
         conn._owner_task = task
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
+        conn._OWNER_TASK_SHUTDOWN_TIMEOUT = 0.01
 
-        async def mock_wait(tasks: Any, timeout: float | None = None) -> tuple[set[Any], set[Any]]:
-            return set(), set(tasks)
-
-        with patch.object(asyncio, "wait", side_effect=mock_wait):
-            await conn._cleanup_owner_task()
+        await conn._cleanup_owner_task()
 
         assert conn._owner_task is None
         assert task.cancelled()
 
     @pytest.mark.asyncio
-    async def test_task_cancel_timeout_warning(self, conn: HTTPTransportConnection) -> None:
-        """If the task doesn't cancel within timeout, cleanup logs warning and finishes."""
+    async def test_task_cancel_timeout_warning(
+        self, conn: HTTPTransportConnection, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """If the task ignores cancellation, cleanup logs a warning and abandons it."""
         # Create a task that is running but will hang after cancel
         release = asyncio.Event()
 
@@ -530,27 +529,15 @@ class TestHTTPCleanupOwnerTask:
         conn._owner_task = task
         conn._disconnect_event = asyncio.Event()
         conn._session_ready = asyncio.Event()
+        conn._OWNER_TASK_SHUTDOWN_TIMEOUT = 0.01
 
-        async def mock_wait(tasks: Any, timeout: float | None = None) -> tuple[set[Any], set[Any]]:
-            return set(), set(tasks)
-
-        call_count = 0
-
-        async def mock_wait_for(fut: Any, timeout: float | None = None) -> None:
-            nonlocal call_count
-            call_count += 1
-            raise TimeoutError()
-
-        with (
-            patch.object(asyncio, "wait", side_effect=mock_wait),
-            patch.object(asyncio, "wait_for", side_effect=mock_wait_for),
-        ):
-            await conn._cleanup_owner_task()
+        await conn._cleanup_owner_task()
 
         assert conn._owner_task is None
         assert conn._disconnect_event is None
         assert conn._session_ready is None
-        assert call_count >= 1
+        assert not task.done()
+        assert "abandoning it" in caplog.text
 
         # Clean up the dangling task
         release.set()
