@@ -19,8 +19,44 @@ pub(super) async fn process_is_host(pid: u32) -> Result<bool, HostFailure> {
 }
 
 /// Start fingerprint of the live process `pid`; a reused PID reports a different one.
-pub(super) fn process_start_fingerprint(_pid: u32) -> Result<Option<u64>, HostFailure> {
-    Ok(None)
+/// `None` when no such process exists.
+pub(super) fn process_start_fingerprint(pid: u32) -> Result<Option<u64>, HostFailure> {
+    // Pid 0 and pids past i32::MAX never name a live process.
+    match i32::try_from(pid) {
+        Ok(pid) if pid > 0 => start_fingerprint(pid),
+        _ => Ok(None),
+    }
+}
+
+/// Process start time in microseconds, which exec leaves unchanged.
+#[cfg(target_os = "macos")]
+fn start_fingerprint(pid: i32) -> Result<Option<u64>, HostFailure> {
+    Ok(bsdinfo(pid)?.map(|info| {
+        info.pbi_start_tvsec
+            .saturating_mul(1_000_000)
+            .saturating_add(info.pbi_start_tvusec)
+    }))
+}
+
+/// The BSD process record for `pid`; `None` when no such process exists.
+#[cfg(target_os = "macos")]
+fn bsdinfo(pid: i32) -> Result<Option<libc::proc_bsdinfo>, HostFailure> {
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: proc_bsdinfo is a plain C struct, so all-zero bytes are a valid value.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    // SAFETY: `info` is writable, lives through the call, and `size` is its exact size.
+    let read =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    if read <= 0 {
+        // `absent_or_failure` is Ok only for an absent process.
+        return absent_or_failure(std::io::Error::last_os_error()).map(|_| None);
+    }
+    if read != size {
+        return Err(HostFailure::PreAdoptionIo(format!(
+            "process info read {read} of {size} bytes"
+        )));
+    }
+    Ok(Some(info))
 }
 
 /// Reads the exec-time command name, which survives promotion replacing or
@@ -30,20 +66,9 @@ async fn identity(pid: i32) -> Result<bool, HostFailure> {
     /// `SZOMB` in `<sys/proc.h>`.
     const SZOMB: u32 = 5;
 
-    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
-    // SAFETY: proc_bsdinfo is a plain C struct, so all-zero bytes are a valid value.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    // SAFETY: `info` is writable, lives through the call, and `size` is its exact size.
-    let read =
-        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
-    if read <= 0 {
-        return absent_or_failure(std::io::Error::last_os_error());
-    }
-    if read != size {
-        return Err(HostFailure::PreAdoptionIo(format!(
-            "process info read {read} of {size} bytes"
-        )));
-    }
+    let Some(info) = bsdinfo(pid)? else {
+        return Ok(false);
+    };
     if info.pbi_status == SZOMB {
         return Ok(false);
     }
@@ -71,6 +96,25 @@ async fn identity(pid: i32) -> Result<bool, HostFailure> {
         return Err(HostFailure::PidMismatch);
     };
     Ok(state != 'Z' && comm == HOST_NAME)
+}
+
+/// Process start time in clock ticks since boot, from `/proc/<pid>/stat` field 22.
+#[cfg(not(target_os = "macos"))]
+fn start_fingerprint(pid: i32) -> Result<Option<u64>, HostFailure> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        // `absent_or_failure` is Ok only for an absent process.
+        Err(error) => return absent_or_failure(error).map(|_| None),
+    };
+    // `pid (comm) state ...`; comm may itself contain parentheses. Fields after
+    // `)` start at field 3, so starttime (field 22) is the 20th token.
+    let close = stat.rfind(')').ok_or(HostFailure::PidMismatch)?;
+    let start = stat
+        .get(close + 1..)
+        .and_then(|rest| rest.split_whitespace().nth(19))
+        .and_then(|field| field.parse::<u64>().ok())
+        .ok_or(HostFailure::PidMismatch)?;
+    Ok(Some(start))
 }
 
 /// Only ESRCH proves a pid is gone, plus a vanished /proc entry off macOS;
