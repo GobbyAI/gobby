@@ -162,7 +162,9 @@ def test_seat_carries_the_common_seat_shape(name: str) -> None:
         **({"team_manager": True} if name == "dev-manager" else {}),
     }
     assert body.step_workflow is None
-    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+    # The Orchestrator ends dead seats itself; every other coordination seat cannot.
+    expected_blocked = [] if name == "orchestrator" else ["gobby-agents:kill_agent"]
+    assert (body.blocked_mcp_tools or []) == expected_blocked
     assert set(body.send_message_targets) == SEND_MESSAGE_TARGETS[name]
     assert body.spawnable_agents == SPAWNABLE_AGENTS.get(name, [])
     for section in _baseline_sections():

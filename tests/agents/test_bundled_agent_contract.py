@@ -262,7 +262,8 @@ def test_bundled_agents_use_end_agent_run_for_self_termination() -> None:
             if stale_instruction in source:
                 offenders.append(f"{path.name}:stale end_agent_run instruction {stale_instruction}")
         agent_blocked_tools = set(_mcp_tool_refs(data.get("blocked_mcp_tools")))
-        if path.name == "default.yaml":
+        # The default agent and the Orchestrator (which ends dead seats) may kill_agent.
+        if path.name in {"default.yaml", "orchestrator.yaml"}:
             if "gobby-agents:kill_agent" in agent_blocked_tools:
                 offenders.append(f"{path.name}:agent:blocks kill_agent")
         elif "gobby-agents:kill_agent" not in agent_blocked_tools:
