@@ -153,7 +153,6 @@ async def spawn_remote_route(
                 concrete_provider(request.requested_provider),
                 runner.run_storage,
                 agent_type,
-                request.lane,
             )
         except ValueError as exc:
             return spawn_refusal("resume_refused", str(exc))

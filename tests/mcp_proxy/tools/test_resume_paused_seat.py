@@ -39,9 +39,9 @@ def _sessions(target: Session, pane_rows: list[tuple[int]]) -> MagicMock:
     return sessions
 
 
-def _run_storage(run_status: str | None, lane: str | None = None) -> MagicMock:
+def _run_storage(run_status: str | None) -> MagicMock:
     storage = MagicMock()
-    run = SimpleNamespace(status=run_status, resume_metadata_json={"lane": lane} if lane else {})
+    run = SimpleNamespace(status=run_status)
     storage.get.return_value = None if run_status is None else run
     return storage
 
@@ -110,51 +110,4 @@ def test_non_paused_live_seat_stays_refused_without_a_pane(stored_agent_type: Ma
             None,
             _run_storage(None),
             "developer",
-        )
-
-
-def test_resumed_seat_inherits_the_lane_its_last_run_recorded() -> None:
-    storage = MagicMock()
-    storage.get.return_value = SimpleNamespace(resume_metadata_json={"lane": "7"})
-
-    assert resume.resumed_seat_lane(_seat(status="paused", run_id="run-1"), storage) == "7"
-
-
-def test_resumed_seat_without_a_run_has_no_lane() -> None:
-    assert resume.resumed_seat_lane(_seat(status="paused", run_id=None), MagicMock()) is None
-
-
-@pytest.mark.parametrize("requested", [None, "7"], ids=["omitted-lane", "matching-lane"])
-def test_resume_keeps_the_lane_the_seat_was_recorded_in(
-    stored_agent_type: MagicMock, requested: str | None
-) -> None:
-    target = _seat(status="paused", run_id="run-1")
-
-    resolved = resume.resolve_resume_target(
-        _sessions(target, pane_rows=[]),
-        "gobby#123",
-        "project",
-        None,
-        _run_storage("cancelled", lane="7"),
-        "developer",
-        lane=requested,
-    )
-
-    assert resolved.id == target.id
-
-
-def test_resume_refuses_an_explicit_lane_that_differs_from_the_recorded_one(
-    stored_agent_type: MagicMock,
-) -> None:
-    target = _seat(status="paused", run_id="run-1")
-
-    with pytest.raises(ValueError, match=r"cannot resume into '8'"):
-        resume.resolve_resume_target(
-            _sessions(target, pane_rows=[]),
-            "gobby#123",
-            "project",
-            None,
-            _run_storage("cancelled", lane="7"),
-            "developer",
-            lane="8",
         )

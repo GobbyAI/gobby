@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from psycopg.errors import UniqueViolation
@@ -161,6 +161,12 @@ class AgentPlacement:
             rows=rows,
             tab_title=tab_title,
         )
+
+    def for_seat(self, seat_title: str | None) -> AgentPlacement:
+        """Name a defined seat's split pane by its definition; a tab keeps its runbook title."""
+        if self.kind == "split" and seat_title is not None:
+            return replace(self, title=seat_title)
+        return self
 
 
 @dataclass(frozen=True)

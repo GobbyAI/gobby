@@ -54,6 +54,7 @@ class AdmittedSeats:
     seats: tuple[CatalogueSeat, ...]
     launch: tuple[str, ...]
     live: Mapping[str, str]
+    tab_title: str | None
     tab_exists: bool
 
 
@@ -81,6 +82,7 @@ def check_runbook_seats(
     skip_live_seats: bool = False,
     team_id: str | None = None,
     tab_title: str | None = None,
+    task: str | None = None,
 ) -> AdmittedSeats:
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
@@ -97,8 +99,8 @@ def check_runbook_seats(
     project. ``live`` maps each such seat to that session. With ``team_id``, ``live`` covers
     every catalogue seat whose agent runs for that team, whether requested or not, so a fresh
     reviewer's request still reports its team's live Dev Manager; only runs admitted to that team
-    count. ``tab_exists`` says whether the workspace has the tab titled ``tab_title``; two such
-    tabs refuse.
+    count. ``tab_title`` names the runbook tab; with ``task`` it becomes ``<tab_title> - #<seq>``.
+    ``tab_exists`` says whether the workspace has that tab; two such tabs refuse.
     """
     if (require_report_to and report_to is None) or (
         report_to is not None and not report_to.strip()
@@ -120,6 +122,7 @@ def check_runbook_seats(
             skip_live_seats=skip_live_seats,
             team_id=team_id,
             tab_title=tab_title,
+            task=task,
         )
     except RunbookSeatRefusal:
         raise
@@ -173,6 +176,7 @@ def _admit(
     skip_live_seats: bool,
     team_id: str | None,
     tab_title: str | None,
+    task: str | None,
 ) -> AdmittedSeats:
     session = stores.sessions.get(caller_session_id)
     if (
@@ -206,13 +210,14 @@ def _admit(
         live = _live_seats(stores, session, seats, team_id=None)
     else:
         live = {}
+    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, task)
     return AdmittedSeats(
         workspace_id=workspace_id,
         seats=seats,
         launch=tuple(seat.name for seat in seats if not (skip_live_seats and seat.name in live)),
         live=live,
-        tab_exists=tab_title is not None
-        and _tab_exists(stores.workspaces, workspace_id, tab_title),
+        tab_title=tab,
+        tab_exists=tab is not None and _tab_exists(stores.workspaces, workspace_id, tab),
     )
 
 
@@ -244,6 +249,21 @@ def _live_seats(
                 live[seat.name] = child.id
                 break
     return live
+
+
+def _runbook_tab_title(
+    tasks: LocalTaskManager, project_id: str, runbook_tab: str | None, task: str | None
+) -> str | None:
+    """The tab a task-bound run opens: '<runbook> - #<seq>', or the bare runbook name."""
+    if runbook_tab is None or task is None:
+        return runbook_tab
+    try:
+        resolved = tasks.get_task(tasks.resolve_task_reference(task, project_id), project_id)
+    except (TaskNotFoundError, ValueError) as exc:
+        raise RunbookSeatRefusal(f"task {task} is not in this project: {exc}") from exc
+    if resolved.seq_num is None:
+        raise RunbookSeatRefusal(f"task {task} has no sequence number")
+    return f"{runbook_tab} - #{resolved.seq_num}"
 
 
 def _tab_exists(workspaces: WorkspaceManager, workspace_id: str, title: str) -> bool:

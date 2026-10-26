@@ -209,7 +209,7 @@ async def _prepare_provider_sandbox(
             else:
                 main_root = Path(main_path).resolve()
                 main_config = await asyncio.to_thread(get_project_sandbox_config, main_root)
-                # Sandboxed seats may validate the main manifest from a lane.
+                # Sandboxed seats may validate the main manifest from their worktree.
                 # Admit only the main checkout's explicitly declared nextest store.
                 nextest_store = str(main_root / ".nextest")
                 if (

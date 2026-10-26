@@ -804,7 +804,6 @@ class TestListAgentRuns:
             "tool_calls_count": 4,
             "turns_used": 2,
             "seat": None,
-            "lane": None,
         }
 
     @pytest.mark.asyncio
@@ -1187,7 +1186,6 @@ class TestListRunningAgents:
             "tool_calls_count": 7,
             "turns_used": 3,
             "seat": None,
-            "lane": None,
         }
 
     @pytest.mark.asyncio
