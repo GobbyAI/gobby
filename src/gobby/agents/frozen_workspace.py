@@ -54,7 +54,7 @@ def frozen_workspace_refusal(
 
     A create (no claimed id) is refused only when it is for the caller: its
     ``task_id`` names a task the calling session has claimed. Creates for other
-    seats stay open, so worktree-bound coordinators still create sub-lane trees
+    seats stay open, so worktree-bound coordinators still create sub-trees
     that a later resume binds. A claim for the caller itself is refused unless
     it names the run's own bound workspace. Callers outside a live agent run are
     never refused.

@@ -112,18 +112,8 @@ mod serial_db {
 
         // The managed grant's DSN role must hold exactly one live principal binding
         // for the project; the hub's RLS helpers raise on zero or duplicate rows.
-        conn.execute(
-            "INSERT INTO gobby_agent_auth.principal_bindings
-             (role_name, owner_kind, managed_execution_id, project_id,
-              issuing_machine_id, expires_at, credential_generation)
-             VALUES (session_user, 'agent_run', $1, $2, $3, now() + interval '1 hour', 1)",
-            &[
-                &row_uuid(PROJECT_ID, "managed-principal-binding"),
-                &uuid_param(PROJECT_ID),
-                &machine_id,
-            ],
-        )
-        .expect("bind managed principal to the fixture project");
+        test_env::seed_test_principal_binding(&mut conn, PROJECT_ID)
+            .expect("bind managed principal to the fixture project");
 
         let home = isolated_gobby_home(project.path());
         let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));

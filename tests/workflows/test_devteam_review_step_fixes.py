@@ -241,4 +241,4 @@ def test_developer_sandbox_guidance() -> None:
     text = _guidance("developer")
     assert "$TMPDIR" in text
     assert re.search(r"never[^.]*literal /tmp|not /tmp|never /tmp", text) is not None
-    assert re.search(r"PID[- ]only", text) is not None
+    assert re.search(r"non-argument columns", text) is not None

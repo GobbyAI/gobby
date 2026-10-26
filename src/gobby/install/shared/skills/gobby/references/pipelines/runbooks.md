@@ -21,7 +21,7 @@ typing pane the Orchestrator and opens the Assistant beside it in the same tab;
 | --- | --- | --- |
 | `support` | release-manager, triage, archivist, recovery-steward, consolidator | `workspace`, `project_path`, `report_to` |
 | `devteam` | test-writer, developer, code-reviewer, dev-manager | `task`, `workspace`, `report_to` |
-| `team-planning` | plan-writer, plan-adversary, plan-enhancer | `lane`, `workspace`, `project_path`, `report_to` |
+| `team-planning` | plan-writer, plan-adversary, plan-enhancer | `workspace`, `project_path`, `report_to` |
 | `planning` | writer, enhancer, adversary | `workspace` |
 
 ## Support
@@ -52,8 +52,8 @@ line reaches the Orchestrator through Triage. Relaunch with `team_id=<TEAM>`,
 
 ## Planning
 
-The Orchestrator launches `team-planning` with `report_to=<Triage ref>`; `lane`
-titles the tab and `lane_pane` adds seats to an existing one. The operator
+The Orchestrator launches `team-planning` with `report_to=<Triage ref>`; it opens
+the `Team Planning` tab, and `seat_pane` adds seats to an existing pane. The operator
 launches `planning` directly:
 `gobby pipelines run planning -i workspace=<name> -i seats=<names>`.
 

@@ -90,7 +90,8 @@ def test_capture_retains_bounded_redacted_score_parse_diagnostics(
         if request.method == "POST" and "clarity" in json.loads(request.content)["questions"]:
             payload = response.json()
             answer = payload["answers"]["clarity"]
-            answer.update(score=1.95, probabilities={"0": 0.0, "1": 0.04, "2": 0.96})
+            # One cent past the two-decimal bound for three levels (0.015).
+            answer.update(score=1.94, probabilities={"0": 0.0, "1": 0.04, "2": 0.96})
             answer["debug"] = f"{SECRET_VALUE} {image} " + "x" * 5000
             return httpx.Response(200, json=payload)
         return response
@@ -105,10 +106,11 @@ def test_capture_retains_bounded_redacted_score_parse_diagnostics(
     assert detail is not None, "failed validation must retain the numeric answer"
     assert len(detail["answers"]) <= 4096
     comparison = detail["score_comparison"]["clarity"]
-    assert comparison["score"] == 1.95
+    assert comparison["score"] == 1.94
     assert comparison["probabilities"] == {"0": 0.0, "1": 0.04, "2": 0.96}
     assert comparison["expected"] == pytest.approx(1.96)
-    assert comparison["abs_tolerance"] == 0.002
+    # The diagnostic reports the parser's own tolerance for this answer.
+    assert comparison["abs_tolerance"] == pytest.approx(0.015)
     assert comparison["rel_tolerance"] == 1e-9
     assert SECRET_VALUE not in section
     assert image not in section

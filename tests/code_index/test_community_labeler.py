@@ -685,7 +685,7 @@ async def test_gate_admits_at_threshold_and_rejects_below(
     assert wide_state["members"] == others[: 40 - len(wide.representatives)]
     assert wide_state["representatives"] == wide.representatives
     assert "candidates" not in wide_state
-    assert wide_state["generated"] == {"rationale": "Area 5."}
+    assert wide_state["generated"] == {"name": _named(5), "rationale": "Area 5."}
     assert wide_state["member_count"] == 50
     assert wide_state["omitted_member_count"] == 10
 
@@ -1287,9 +1287,11 @@ async def test_choice_state_deduplicates_without_changing_answer_identity(
     assert entry["members"] == sorted(rest)
     assert entry["member_count"] == 8
     assert entry["omitted_member_count"] == 0
-    # The criteria already carry the candidates and the generated name.
+    # The criteria already carry the candidates. The state keeps the generated
+    # name as the exact text of the generated option.
     assert "candidates" not in entry
-    assert entry["generated"] == {"rationale": "Area 500."}
+    assert entry["generated"] == {"name": _named(500), "rationale": "Area 500."}
+    assert entry["generated"]["name"] == choices["c500"]["criteria"]["generated"]
     _assert_decided(
         code_storage,
         admitted,

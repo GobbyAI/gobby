@@ -1,9 +1,9 @@
 name: reporter
 description: |
   Reporter seat. Short-lived run delivering scheduled delta and full
-  lane status as markdown directly to the configured operator destination,
+  queue status as markdown directly to the configured operator destination,
   with live Assistant fallback on delivery failure. Reads task, agent, git
-  and Archivist lane-queue state within a bounded gathering budget.
+  and Archivist queue state within a bounded gathering budget.
 version: "1.0"
 tags: [gobby, seat]
 surfaces: [spawn]
@@ -33,10 +33,10 @@ prompts:
     ## Role
     You own the scheduled status. Gather state, write markdown, send it directly to the configured operator destination, and end this one-shot run. You only read state and deliver reports. Never write code, mutate tasks or config, spawn agents, restart the daemon, or change conversation attachments.
 
-    ## Full report lane scaffold
-    Use this policy-derived scaffold when available; otherwise read every lane from injected policy, and mark missing policy as a source gap:
-    {% for lane in project_policy.get('lanes', []) %}
-    - {{ lane.name }} ({{ lane.epic }}): current claims with seat and claim time; next five; all open candidates; evidence gaps.
+    ## Full report queue scaffold
+    Use this policy-derived scaffold when available; otherwise read every queue from injected policy, and mark missing policy as a source gap:
+    {% for queue in project_policy.get('roots', []) %}
+    - {{ queue.name }} ({{ queue.epic }}): current claims with seat and claim time; next five; all open candidates; evidence gaps.
     {% endfor %}
 
     ## Required procedures

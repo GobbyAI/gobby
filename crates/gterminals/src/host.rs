@@ -20,7 +20,7 @@ use tokio::time::timeout;
 use crate::control::{ControlClient, ControlError};
 pub(crate) use connect::open_control;
 use connect::{adopt_or_spawn, connect, handshake, read_pid, verify_pid};
-use process::process_is_host;
+use process::{process_is_host, process_start_fingerprint};
 
 pub const READY_DEADLINE: Duration = Duration::from_millis(2500);
 
@@ -289,6 +289,8 @@ pub struct HostInfo {
     pub epoch: String,
     pub version: String,
     pub adopted: bool,
+    /// Start fingerprint of `pid` when observed; a reused PID reports a different one.
+    pub start_fingerprint: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -659,6 +661,8 @@ async fn health(
     verify_pid(options, ping.host_pid)
         .await
         .map_err(post_adoption_failure)?;
+    let start_fingerprint =
+        process_start_fingerprint(ping.host_pid).map_err(post_adoption_failure)?;
     Ok((
         None,
         HostInfo {
@@ -666,6 +670,7 @@ async fn health(
             epoch: ping.host_epoch,
             version: ping.version,
             adopted,
+            start_fingerprint,
         },
     ))
 }

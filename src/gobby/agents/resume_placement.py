@@ -51,7 +51,7 @@ def split_target(workspaces: WorkspaceManager, snapshot: Mapping[str, Any]) -> s
     """The pane a recorded split re-places beside: its own target, else any pane left in its tab.
 
     The pane a seat split beside is often another seat that has since ended and been
-    swept, while the lane tab it sat in survives.
+    swept, while the tab it sat in survives.
     """
     workspace_id = snapshot.get("workspace_id")
     if not isinstance(workspace_id, str):
