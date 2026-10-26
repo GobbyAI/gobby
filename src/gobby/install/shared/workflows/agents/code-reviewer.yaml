@@ -75,6 +75,7 @@ step_workflow:
     fixing: false
     candidate_task: null
     candidate_sha: null
+    candidate_disposition: null
 
   steps:
     - name: load_skills
@@ -132,7 +133,7 @@ step_workflow:
       description: "Wait for a routed CANDIDATE"
       status_message: |
         Read a routed CANDIDATE with gobby-agents:get_inter_session_message.
-        Its stored incoming task/SHA starts review. End each idle turn on a
+        Its stored incoming task and SHA, or task and DISPOSITION, starts review. End each idle turn on a
         registered gobby-agents:wait_for_coordination reply wait on your Dev
         Manager; re-arm after an interim owner reply. If no wait applies,
         send EVENT=SEAT_READY NOTE=idle to your Dev Manager and end the turn.
@@ -189,9 +190,22 @@ step_workflow:
         action="reviewing") to record the assignment. Registered same-project
         worktrees provide read-only gcode access independently of that link.
         Then call gobby-tasks:get_task on the candidate.
-        Review against the current project integration head with
-        gcode and git diff, citing code claims through gcode evidence. A
-        LAND needs your approved review step record for the exact SHA: call
+        A DISPOSITION candidate has no SHA and claims the task has no work to
+        land. Confirm get_task shows no linked commit, then read the task's test
+        and implementation records. If the work is moot, superseded or wont_do
+        as the candidate says, call gobby-tasks:record_review_step(task_id=candidate_task,
+        status="approved", disposition=<moot|superseded|wont_do>, epoch=<review_epoch>,
+        round_number=<review_fail_count + 1>, feedback=<your evidence>) with no
+        commit_sha, the counts read as below. Record it, then send your Dev Manager
+        one prose note naming the task and disposition; the approved record is
+        what lets it close the task. If the work is not moot, record the same call
+        with status="rejected", the same disposition and your evidence as feedback,
+        then send a matching durable BOUNCE verdict to finish review:
+        EVENT=CANDIDATE_VERDICT TASK=#NNNNN DISPOSITION=<same> VERDICT=BOUNCE NOTE=<findings>.
+        The developer keeps implementing and sends a commit CANDIDATE once it links real work.
+        For a commit candidate, review against the current project integration
+        head with gcode and git diff, citing code claims through gcode evidence.
+        A LAND needs your approved review step record for the exact SHA: call
         gobby-tasks:record_review_step(task_id=candidate_task, status="approved",
         commit_sha=<full SHA>, epoch=<review_epoch>,
         round_number=<review_fail_count + 1>, feedback=<your evidence>), reading
@@ -202,10 +216,10 @@ step_workflow:
         A background test run is not a durable wait: wait for it in this turn
         with Monitor, and end the turn only after its result is recorded.
         Read the Orchestrator's or the task's Dev Manager's stored incoming
-        EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or send that
-        exact event to your Dev Manager for your own recorded reviewing
-        assignment. The claimant, author, unrelated reviewers and other Dev
-        Managers cannot withdraw this unit.
+        EVENT=CANDIDATE_WITHDRAWN with this exact task and full SHA, or with this
+        exact task and DISPOSITION for a no-work unit, or send that exact event to
+        your Dev Manager for your own recorded reviewing assignment. The claimant,
+        author, unrelated reviewers and other Dev Managers cannot withdraw this unit.
       allowed_tools:
         - Bash
         - Read

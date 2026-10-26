@@ -6,7 +6,7 @@ description: |
   every finding back to the maker. The task's Dev Manager lands each LAND.
 version: "1.0"
 tags: [gobby, seat]
-surfaces: [spawn]
+surfaces: [spawn, persona]
 provider: inherit
 execution_mode: interactive
 checkout_mode: inherit
@@ -55,6 +55,8 @@ prompts:
 
     ## Required procedures
     Before work and after compaction, load `gobby:references/agents/procedures/docs-reviewer.md` completely through `gobby-skills:get_skill_file(name="gobby", path="references/agents/procedures/docs-reviewer.md")`. Fetch its schema first when unleased; follow every page.next_cursor using only cursor until null. This reference carries the detailed procedures for this role.
+
+  persona: *seat
 
 workflows:
   rule_selectors:

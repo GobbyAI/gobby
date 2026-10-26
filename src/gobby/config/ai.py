@@ -408,6 +408,11 @@ class DecisionsConfig(BaseModel):
         ge=256,
         description="Application request input budget; below the backend's whole-request maximum.",
     )
+    max_request_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        description="Maximum compact UTF-8 request body bytes, including assets; unset is unbounded.",
+    )
     backend_max_state_tokens: int | None = Field(
         default=None,
         gt=0,
@@ -497,6 +502,11 @@ class DecisionsConfig(BaseModel):
                 "max_input_tokens must be below backend_max_state_tokens "
                 f"({self.resolved_backend_max_state_tokens})"
             )
+        if (
+            self.max_request_bytes is not None
+            and 4 * self.max_input_tokens + 3 > self.max_request_bytes
+        ):
+            raise ValueError("max_request_bytes must be at least 4 * max_input_tokens + 3")
         if self.identity_contract == "model_card" and self.wire_api != "systemone":
             raise ValueError("identity_contract model_card requires wire_api systemone")
         return self

@@ -1567,3 +1567,238 @@ async def test_box_rejects_malformed_answers_as_parse(wire: FakeWire) -> None:
         with pytest.raises(DecisionsUnavailable) as caught:
             await DecisionService(service_config).box("evaluate", STATE, BOX_QUESTIONS)
         assert caught.value.reason == "parse", name
+
+
+# --- Request byte ceiling and guard-matrix gaps (#22604 round 2) ---
+
+DEFAULT_BYTE_FLOOR = 4 * 8192 + 3  # the smallest max_request_bytes the default token budget allows
+IDENTITY_MODES = ["model_card", "response_version"]
+# Non-ASCII text and escaped control characters: UTF-8 bytes, characters and escapes all differ.
+UTF8_STATE: dict[str, Any] = {"finding": "naïve café — 模块 重复导入 \t\x07\x01 end"}
+WIDE_STATE: dict[str, Any] = {
+    "members": [f"src/gobby/code_index/module_{index:03d}.py" for index in range(60)]
+}
+SEVERITY = ChoiceQuestion(
+    instructions="Rate the finding’s severity — 严重性.",
+    criteria={"high": "Breaks users", "low": "Cosmetic"},
+)
+
+
+def _large_logo() -> dict[str, BoxQuestion]:
+    """A Box request whose asset bytes dwarf its textual token estimate."""
+    image = _image(_png(320, 300, padding=60000))
+    assert len(base64.b64decode(image.data_base64)) < MAX_IMAGE_BYTES
+    return {"logo": BoxQuestion(instructions="Where is the 标志 logo?", image=image)}
+
+
+def _require_max_request_bytes() -> None:
+    assert "max_request_bytes" in DecisionsConfig.model_fields
+
+
+@pytest.mark.asyncio
+async def test_full_utf8_body_byte_limit_before_dispatch(wire: FakeWire) -> None:
+    _require_max_request_bytes()
+    questions = _large_logo()
+    wire.handler = _shape_responder("systemone")
+
+    unbounded = DecisionService(_config())
+    await unbounded.box("test", UTF8_STATE, questions)
+    sent = wire.requests[0].content
+    size = len(sent)
+    # The asset makes the body large while the text estimate still fits the token budget.
+    assert unbounded.estimate_request_tokens(UTF8_STATE, questions) <= 8192
+    assert size - 1 >= DEFAULT_BYTE_FLOOR
+    assert len(sent.decode()) < size
+    assert len(json.dumps(json.loads(sent))) != size
+
+    at_cap = DecisionService(_config(max_request_bytes=size))
+    assert at_cap.request_fits(UTF8_STATE, questions)
+    await at_cap.box("test", UTF8_STATE, questions)
+    assert len(wire.requests) == 2
+    assert len(wire.requests[1].content) == size
+
+    over_cap = DecisionService(_config(max_request_bytes=size - 1))
+    assert not over_cap.request_fits(UTF8_STATE, questions)
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await over_cap.box("test", UTF8_STATE, questions)
+    assert caught.value.reason == "oversize"
+    assert len(wire.requests) == 2
+
+    assert get_decision_service(_config(max_request_bytes=size)) is not get_decision_service(
+        _config()
+    )
+
+
+@pytest.mark.asyncio
+async def test_http_413_is_unavailable_without_retry_and_opens_cooldown(wire: FakeWire) -> None:
+    _require_max_request_bytes()
+    wire.handler = _status(413)
+    service = DecisionService(_config())
+
+    with pytest.raises(DecisionsUnavailable) as refused:
+        await service.choose("test", STATE, QUESTIONS)
+    assert (refused.value.reason, refused.value.detail) == ("http_status", "HTTP 413")
+    assert len(wire.requests) == 1
+    with pytest.raises(DecisionsUnavailable) as blocked:
+        await service.choose("test", STATE, QUESTIONS)
+    assert blocked.value.reason == "cooldown"
+    assert len(wire.requests) == 1
+
+    # A local preflight oversize builds no client and leaves the service available.
+    preflight = DecisionService(_config(max_request_bytes=DEFAULT_BYTE_FLOOR))
+    wire.requests.clear()
+    wire.client_kwargs.clear()
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as oversize:
+        await preflight.box("test", STATE, _large_logo())
+    assert oversize.value.reason == "oversize"
+    assert wire.client_kwargs == []
+    wire.handler = _responder("systemone")
+    result = await preflight.choose("test", STATE, QUESTIONS)
+    assert result.answers["triage"].choice == "keep"
+    assert len(wire.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_contract", IDENTITY_MODES)
+async def test_systemone_identity_modes_share_the_estimate_boundary(
+    wire: FakeWire, identity_contract: str
+) -> None:
+    estimate = DecisionService(
+        _config(identity_contract=identity_contract)
+    ).estimate_request_tokens(WIDE_STATE, QUESTIONS)
+    assert estimate > 256
+
+    over = DecisionService(
+        _config(identity_contract=identity_contract, max_input_tokens=estimate - 1)
+    )
+    assert not over.request_fits(WIDE_STATE, QUESTIONS)
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await over.choose("test", WIDE_STATE, QUESTIONS)
+    assert caught.value.reason == "oversize"
+    assert (wire.requests, wire.client_kwargs) == ([], [])
+
+    at = DecisionService(_config(identity_contract=identity_contract, max_input_tokens=estimate))
+    assert at.request_fits(WIDE_STATE, QUESTIONS)
+    wire.handler = _card_handler(lambda: _card("/models/kev-a"))
+    result = await at.choose("test", WIDE_STATE, QUESTIONS)
+    assert result.backend_identity is not None
+    assert [request.url.path for request in wire.requests].count("/v1/systemone") == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_question_choice_fits_each_branch_but_not_the_aggregate(
+    wire: FakeWire,
+) -> None:
+    question = ChoiceQuestion("Choose " + "x" * 1200, TRIAGE.criteria)
+    questions = {"a": question, "b": question}
+    probe = DecisionService(_config())
+    branch = probe.estimate_request_tokens(STATE, {"a": question})
+    total = probe.estimate_request_tokens(STATE, questions)
+    assert 256 <= branch < total - 1
+
+    service = DecisionService(_config(max_input_tokens=total - 1))
+    assert all(service.request_fits(STATE, {key: question}) for key in questions)
+    assert not service.request_fits(STATE, questions)
+    wire.handler = _must_not_dial
+    with pytest.raises(DecisionsUnavailable) as caught:
+        await service.choose("test", STATE, questions)
+    assert caught.value.reason == "oversize"
+    assert wire.requests == []
+
+    wire.handler = _responder("systemone")
+    result = await service.choose("test", STATE, {"a": question})
+    assert set(result.answers) == {"a"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_contract", IDENTITY_MODES)
+@pytest.mark.parametrize("limit", ["tokens", "bytes"])
+async def test_oversize_constructs_no_client_card_or_post(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch, identity_contract: str, limit: str
+) -> None:
+    poisoned = {"on": True}
+    real_client, real_post, real_card = (
+        httpx.AsyncClient,
+        decisions._post,
+        decisions._fetch_card_identity,
+    )
+
+    def guard(name: str) -> None:
+        if poisoned["on"]:
+            raise AssertionError(f"an oversize request reached {name}")
+
+    def client(**kwargs: Any) -> httpx.AsyncClient:
+        guard("the client constructor")
+        return real_client(**kwargs)
+
+    def post(*args: Any, **kwargs: Any) -> Any:
+        guard("the decision POST")
+        return real_post(*args, **kwargs)
+
+    def card(*args: Any, **kwargs: Any) -> Any:
+        guard("the model-card GET")
+        return real_card(*args, **kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", client)
+    monkeypatch.setattr(decisions, "_post", post)
+    monkeypatch.setattr(decisions, "_fetch_card_identity", card)
+    if limit == "bytes":
+        _require_max_request_bytes()
+        service = DecisionService(
+            _config(identity_contract=identity_contract, max_request_bytes=DEFAULT_BYTE_FLOOR)
+        )
+    else:
+        service = DecisionService(
+            _config(identity_contract=identity_contract, max_input_tokens=256)
+        )
+
+    for _ in range(2):
+        with pytest.raises(DecisionsUnavailable) as caught:
+            if limit == "bytes":
+                await service.box("test", STATE, _large_logo())
+            else:
+                await service.choose("test", {"text": "x" * 1200}, QUESTIONS)
+        assert caught.value.reason == "oversize"
+    assert wire.requests == []
+
+    # Preflight opened no cooldown: the next fitting request dials once.
+    poisoned["on"] = False
+    wire.handler = _card_handler(lambda: _card("/models/kev-a"))
+    result = await service.choose("test", STATE, QUESTIONS)
+    assert result.answers["triage"].choice == "keep"
+    assert [request.url.path for request in wire.requests].count("/v1/systemone") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("identity_contract", IDENTITY_MODES)
+@pytest.mark.parametrize("status", [429, 504])
+async def test_retry_resends_identical_bodies_within_limits(
+    wire: FakeWire, identity_contract: str, status: int
+) -> None:
+    _require_max_request_bytes()
+    questions = {"triage": TRIAGE, "severity": SEVERITY}
+    state = {**UTF8_STATE, **WIDE_STATE}
+    config = _config(identity_contract=identity_contract, max_request_bytes=DEFAULT_BYTE_FLOOR)
+    failures = [status]
+    answer = _card_handler(lambda: _card("/models/kev-a"))
+
+    def handler(request: httpx.Request) -> Any:
+        if request.url.path == "/v1/systemone" and failures:
+            return httpx.Response(failures.pop())
+        return answer(request)
+
+    wire.handler = handler
+    service = DecisionService(config)
+
+    result = await service.choose("test", state, questions)
+
+    assert set(result.answers) == set(questions)
+    posts = [request.content for request in wire.requests if request.url.path == "/v1/systemone"]
+    assert len(posts) == 2
+    assert posts[0] == posts[1]
+    assert set(json.loads(posts[0])["questions"]) == set(questions)
+    assert service.estimate_request_tokens(state, questions) <= config.max_input_tokens
+    assert all(len(body) <= DEFAULT_BYTE_FLOOR for body in posts)
