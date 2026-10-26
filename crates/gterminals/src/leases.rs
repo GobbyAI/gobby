@@ -76,6 +76,12 @@ pub enum Viewer {
     Web,
     Gclient,
 }
+/// The client connection and bound caller that issue a registry operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Requester {
+    pub connection: Uuid,
+    pub caller: Uuid,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Attachment {
     pub terminal_id: Uuid,
@@ -427,11 +433,12 @@ impl Registry {
     pub async fn attach(
         &self,
         terminal: Uuid,
-        connection: Uuid,
+        requester: Requester,
         viewer: Viewer,
         backend: Backend,
         delivery: Delivery,
     ) -> Result<Attachment, Error> {
+        let connection = requester.connection;
         let mut state = self.state.lock().await;
         state.healthy(self, Some(connection))?;
         if state.admission_closed {
@@ -475,6 +482,7 @@ impl Registry {
     pub async fn take_control(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         takeover: bool,
     ) -> Result<Control, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
@@ -531,7 +539,11 @@ impl Registry {
             input,
         })
     }
-    pub async fn release_control(&self, attachment: Attachment) -> Result<Control, Error> {
+    pub async fn release_control(
+        &self,
+        attachment: Attachment,
+        _requester: Requester,
+    ) -> Result<Control, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
         let mut state = self.state.lock().await;
         state.healthy(self, None)?;
@@ -578,6 +590,7 @@ impl Registry {
     pub async fn finalize(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         reason: &str,
     ) -> Result<Option<Finalized>, Error> {
         let _terminal = self.lock(attachment.terminal_id).await;
@@ -728,6 +741,7 @@ impl Registry {
     pub async fn resize(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         rows: i64,
         cols: i64,
     ) -> Result<Sizing, Error> {
@@ -747,6 +761,7 @@ impl Registry {
     pub async fn set_viewport(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         rows: i64,
         cols: i64,
     ) -> Result<(u16, u16), Error> {
@@ -760,6 +775,7 @@ impl Registry {
     pub async fn set_scroll(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         rows: i64,
         max: i64,
     ) -> Result<ScrollApplied, Error> {
@@ -780,6 +796,7 @@ impl Registry {
     pub async fn admit_write(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         expected_generation: u64,
         seq: u64,
         kind: &str,
@@ -841,6 +858,7 @@ impl Registry {
     pub async fn complete_write(
         &self,
         attachment: Attachment,
+        _requester: Requester,
         seq: u64,
         outcome: &str,
         reason: Option<&str>,

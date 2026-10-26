@@ -366,17 +366,25 @@ fn uncertain(detail: &str) -> Delivery {
     }
 }
 
+fn requester() -> leases::Requester {
+    leases::Requester {
+        connection: Uuid::new_v4(),
+        caller: Uuid::new_v4(),
+    }
+}
+
 async fn controller(leases: &Registry, terminal: Uuid) -> anyhow::Result<LeaseClaim> {
+    let req = requester();
     let attachment = leases
         .attach(
             terminal,
-            Uuid::new_v4(),
+            req,
             Viewer::Web,
             Backend::Native,
             leases::Delivery::Proxy,
         )
         .await?;
-    let control = leases.take_control(attachment, true).await?;
+    let control = leases.take_control(attachment, req, true).await?;
     anyhow::ensure!(control.granted, "control granted");
     Ok(LeaseClaim {
         attachment_id: attachment.id,
