@@ -11,10 +11,16 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
+    io::Read,
     os::unix::{fs::PermissionsExt, io::AsRawFd},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
+
+/// Upper bound on the `node --version` probe. The probe runs under the shared install lock.
+const NODE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// `SRT_RELEASE` in `src/gobby/utils/dependency_requirements.py`, the integrity pin.
 pub(super) struct SrtRelease {
@@ -324,22 +330,49 @@ fn verify_node_health() -> Result<PathBuf, SandboxError> {
             "Node.js executable must have an absolute PATH spelling",
         ));
     }
-    let output = Command::new(&node)
-        .arg("--version")
-        .output()
-        .map_err(|_| lockout("Node.js version could not be verified"))?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let found = parse_version(text.trim());
-    match found {
-        Some(version) if version >= NODE_MIN_VERSION => {}
-        _ => {
-            return Err(lockout(format!(
-                "Node.js {} or newer is required; install it and retry",
-                format_version(NODE_MIN_VERSION)
-            )));
-        }
-    }
+    check_node_version(&node, NODE_PROBE_TIMEOUT)?;
     Ok(node)
+}
+
+/// Runs `node --version` with a deadline. A timed-out probe is killed and reaped; a
+/// nonzero exit is refused whatever it printed.
+fn check_node_version(node: &Path, timeout: Duration) -> Result<(), SandboxError> {
+    let unverified = || lockout("Node.js version could not be verified");
+    let mut child = Command::new(node)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| unverified())?;
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(lockout("Node.js version check timed out"));
+            }
+            Err(_) => return Err(unverified()),
+        }
+    };
+    let mut stdout = Vec::new();
+    if let Some(mut pipe) = child.stdout.take() {
+        let _ = pipe.read_to_end(&mut stdout);
+    }
+    if !status.success() {
+        return Err(unverified());
+    }
+    let text = String::from_utf8_lossy(&stdout);
+    match parse_version(text.trim()) {
+        Some(version) if version >= NODE_MIN_VERSION => Ok(()),
+        _ => Err(lockout(format!(
+            "Node.js {} or newer is required; install it and retry",
+            format_version(NODE_MIN_VERSION)
+        ))),
+    }
 }
 
 /// `v22.12.0` or `22.12.0` to a comparable triple.
@@ -384,3 +417,7 @@ fn file_name(path: &Path) -> String {
 fn lockout(message: impl Into<String>) -> SandboxError {
     SandboxError::new(message)
 }
+
+#[cfg(test)]
+#[path = "verify/tests.rs"]
+mod tests;

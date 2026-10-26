@@ -2334,6 +2334,167 @@ esac
     Ok(())
 }
 
+fn run_key_of(run_root: &Path) -> Result<String> {
+    Ok(run_root
+        .file_name()
+        .context("the run root has no name")?
+        .to_string_lossy()
+        .into_owned())
+}
+
+fn process_alive(pid: i32) -> bool {
+    // SAFETY: signal 0 only probes whether the pid names a live process.
+    unsafe { libc::kill(pid, 0) == 0 }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn chokepoint_backlog_owned_by_live_monitor_is_a_lockout() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("live-owner"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let log = tree.path("tmp").join("node-calls.log");
+    // Recovery reports a live owner with exit 2. The launch must refuse and start no monitor.
+    let node = fake_node(
+        &tree,
+        &format!(
+            r#"shift
+echo "$*" >> '{log}'
+case "$1" in
+  --recover) exit 2 ;;
+  *) exit 0 ;;
+esac
+"#,
+            log = log.display(),
+        ),
+    )?;
+    let _stop = StopMonitor(monitor_pidfile(&tree));
+    fs::create_dir_all(tree.path("monitor_socket"))?;
+    fs::write(
+        tree.path("monitor_socket").join(format!(
+            "{}.srt-backlog.jsonl",
+            run_key_of(&tree.path("run_root"))?
+        )),
+        "",
+    )?;
+    let error = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))
+        .err()
+        .context("a backlog owned by a live monitor must refuse the launch")?;
+    assert!(
+        error.to_string().contains("owned by a live SRT monitor"),
+        "{error}"
+    );
+    let calls = fs::read_to_string(&log)?;
+    assert!(
+        calls.lines().any(|line| line.starts_with("--recover ")),
+        "recovery did not run"
+    );
+    assert!(
+        !calls.lines().any(|line| line.starts_with("--monitor ")),
+        "a monitor started over a live owner"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn chokepoint_never_ready_monitor_is_refused_and_reaped() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("never-ready"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    // The monitor never writes `ready` and ignores SIGTERM, so only the SIGKILL fallback
+    // reaps it after a failed start.
+    let node = fake_node(
+        &tree,
+        &format!(
+            r#"shift
+case "$1" in
+  --monitor)
+    echo $$ > '{pidfile}'
+    trap '' TERM
+    while :; do sleep 1; done ;;
+  *) exit 0 ;;
+esac
+"#,
+            pidfile = monitor_pidfile(&tree).display(),
+        ),
+    )?;
+    let error = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))
+        .err()
+        .context("a monitor that never answers ready must refuse the launch")?;
+    assert!(
+        error
+            .to_string()
+            .contains("Shared SRT monitor startup failed"),
+        "{error}"
+    );
+    let pid: i32 = fs::read_to_string(monitor_pidfile(&tree))?.trim().parse()?;
+    assert!(
+        !process_alive(pid),
+        "the never-ready monitor survived the failed start"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn chokepoint_second_node_reuses_monitor_that_outlived_the_first() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let (tree, inputs) = chokepoint_fixture(&root.path().join("reuse"), "claude", |_| {})?;
+    let prompt = chokepoint_prompt(&tree)?;
+    let log = tree.path("tmp").join("node-calls.log");
+    let node = fake_node(
+        &tree,
+        &format!(
+            r#"shift
+echo "$*" >> '{log}'
+case "$1" in
+  --monitor)
+    echo $$ > '{pidfile}'
+    exec /usr/bin/python3 -c '{server}' "$2" "$3" '{identity}' ;;
+  *) exit 0 ;;
+esac
+"#,
+            log = log.display(),
+            pidfile = monitor_pidfile(&tree).display(),
+            server = MONITOR_SERVER,
+            identity = python_srt_release_field("runner_sha256"),
+        ),
+    )?;
+    let _stop = StopMonitor(monitor_pidfile(&tree));
+    let socket = tree.path("monitor_socket").join(format!(
+        "v-{}",
+        &python_srt_release_field("runner_sha256")[..12]
+    ));
+    let first = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node.clone()))?;
+    assert_eq!(
+        first.env.get("GOBBY_SRT_MONITOR_SOCKET").map(PathBuf::from),
+        Some(socket.clone())
+    );
+    // The first node's launch is dropped; the detached monitor keeps running.
+    drop(first);
+    let pid: i32 = fs::read_to_string(monitor_pidfile(&tree))?.trim().parse()?;
+    assert!(
+        process_alive(pid),
+        "the monitor did not outlive the first node"
+    );
+    let second = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
+    assert_eq!(
+        second
+            .env
+            .get("GOBBY_SRT_MONITOR_SOCKET")
+            .map(PathBuf::from),
+        Some(socket.clone())
+    );
+    let starts = fs::read_to_string(&log)?
+        .lines()
+        .filter(|line| line.starts_with(&format!("--monitor {} ", socket.display())))
+        .count();
+    assert_eq!(starts, 1, "the second node started a second monitor");
+    UnixStream::connect(&socket).context("the reused monitor does not answer")?;
+    Ok(())
+}
+
 #[test]
 fn chokepoint_codex_shell_snapshot_off() -> Result<()> {
     let root = tempfile::tempdir()?;

@@ -325,7 +325,11 @@ fn await_ready(parent: &mut UnixStream) -> Result<()> {
 fn terminate(child: &mut Child) {
     // SAFETY: the pid names a child this process spawned and has not yet reaped.
     unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM) };
-    let _ = wait_bounded(child, TERMINATE_TIMEOUT);
+    if !matches!(wait_bounded(child, TERMINATE_TIMEOUT), Ok(Some(_))) {
+        // A monitor that ignores SIGTERM must not outlive a failed start.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn log_tail(path: &Path) -> String {
