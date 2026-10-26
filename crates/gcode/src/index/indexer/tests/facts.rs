@@ -681,7 +681,7 @@ fn library_writes_all_code_facts() {
         "rust",
         "hash-1",
         source.len(),
-        &parse_result,
+        &parse_result.parsed_facts(rel, project_id, "hash-1", "rust"),
     )
     .expect("write parsed file facts");
 
@@ -1704,7 +1704,7 @@ mod serial_db {
             language,
             hash,
             parse.source.len(),
-            &parse,
+            &parse.parsed_facts(rel, project_id, hash, language),
         )
         .expect("write facts");
         tx.commit().expect("commit");
@@ -2700,7 +2700,13 @@ mod serial_db {
             language,
             hash,
             source.len(),
-            source,
+            &crate::index::chunker::chunk_file_content(
+                source,
+                rel,
+                project_id,
+                hash,
+                Some(language),
+            ),
         )
         .expect("write content-only facts");
         tx.commit().expect("commit");

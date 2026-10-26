@@ -4,6 +4,8 @@
 //! JSON body; the hub answers reads from the database and never from the node's disk.
 
 pub mod hub;
+// No production caller until the remote node driver lands; the tests drive the node half.
+#[cfg(test)]
 pub(crate) mod split;
 
 #[cfg(test)]
@@ -17,7 +19,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::bm25_health::Bm25Health;
 use crate::index::indexer::{IndexOutcome, UnsupportedFileType};
-use crate::models::{ContentSearchHit, IndexedProject};
+use crate::models::{
+    CallRelation, ContentChunk, ContentSearchHit, ImportRelation, IndexedProject,
+    InheritanceRelation, Symbol,
+};
 
 /// Operation name the grant names for the whole node family.
 pub const NODE_OPERATION: &str = "node_code_index";
@@ -119,11 +124,56 @@ pub struct FileHash {
     pub git_blob: Option<String>,
 }
 
-/// Facts the node parsed for one file, for the hub's database half to write.
-/// Stub shape: the implementation replaces this with the `Parsed` and `ContentOnly` payloads.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// One file's outcome for the hub's database half: the facts the node parsed, or a marker
+/// that the file is handled without facts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedFileFacts {
     pub path: String,
+    pub facts: FileFacts,
+}
+
+/// What the node produced for one file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FileFacts {
+    /// A parsed source file: symbols, graph rows, and content chunks.
+    Parsed {
+        language: String,
+        content_hash: String,
+        byte_size: usize,
+        /// Git blob id the node recorded for a clean tracked file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_blob: Option<String>,
+        facts: ParsedFacts,
+    },
+    /// A content-only file: content chunks and no graph rows.
+    ContentOnly {
+        language: String,
+        content_hash: String,
+        byte_size: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_blob: Option<String>,
+        chunks: Vec<ContentChunk>,
+    },
+    /// Handled without facts: counted as skipped, state row kept.
+    Skipped,
+    /// Handled without facts: counted as skipped, state row removed.
+    Removed,
+    /// Handled without facts: the path is gone, state row removed, not counted.
+    Absent,
+    /// Present but not hashed, and not parsed by this run: state row kept, not counted. The
+    /// orphan sweep treats the path as present.
+    Unhashed,
+}
+
+/// Everything the database half writes for a parsed file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParsedFacts {
+    pub symbols: Vec<Symbol>,
+    pub imports: Vec<ImportRelation>,
+    pub calls: Vec<CallRelation>,
+    pub inheritance: Vec<InheritanceRelation>,
+    pub chunks: Vec<ContentChunk>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,7 +205,7 @@ pub struct FinalBatch {
     pub unsupported_file_types: Vec<UnsupportedFileType>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexApplyRequest {
     pub scope: NodeScope,
     pub full: bool,

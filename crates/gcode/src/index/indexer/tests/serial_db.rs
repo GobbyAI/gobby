@@ -1443,10 +1443,35 @@ pub(super) fn write_postgres_parsed_file_facts_with_root(
         "rust",
         file_hash,
         source.len(),
-        &parse_result,
+        &parse_result.parsed_facts(rel, project_id, file_hash, "rust"),
     )
     .expect("write parsed file facts to PostgreSQL");
     tx.commit().expect("commit parsed write transaction");
+}
+
+impl crate::models::ParseResult {
+    /// Facts of a parsed file as the node half sends them, for the writers under test.
+    pub(super) fn parsed_facts(
+        &self,
+        rel: &str,
+        project_id: &str,
+        content_hash: &str,
+        language: &str,
+    ) -> crate::node::ParsedFacts {
+        crate::node::ParsedFacts {
+            symbols: self.symbols.clone(),
+            imports: self.imports.clone(),
+            calls: self.calls.clone(),
+            inheritance: self.inheritance.clone(),
+            chunks: crate::index::chunker::chunk_file_content(
+                &self.source,
+                rel,
+                project_id,
+                content_hash,
+                Some(language),
+            ),
+        }
+    }
 }
 
 pub(super) fn test_symbol(
@@ -1609,4 +1634,82 @@ fn full_reindex_with_changed_symbol_ids_marks_projections_pending() {
     assert!(row.get::<_, bool>(1), "vector attempt must be NULL");
     assert!(!row.get::<_, bool>(2), "graph must be pending");
     assert!(row.get::<_, bool>(3), "graph attempt must be NULL");
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn whole_apply_keeps_state_for_a_present_file_reported_unhashed() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let project_root = tempfile::tempdir().expect("create project root");
+    let project_id = unique_test_uuid("gcode-unhashed-marker");
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    let kept = "src/kept.rs";
+    let kept_path = project_root.path().join(kept);
+    std::fs::create_dir_all(kept_path.parent().expect("file parent"))
+        .expect("create source directory");
+    std::fs::write(&kept_path, b"pub fn kept() {}\n").expect("write kept file");
+
+    cleanup_summary_preservation_project(&mut conn, &project_id).expect("pre-clean rows");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    seed_primary_checkout(&mut conn, &project_id, project_root.path())
+        .expect("seed primary checkout");
+    let ctx = machine_context(&database_url, &project_id, project_root.path(), &machine_id);
+    let state_rows = |conn: &mut postgres::Client| -> i64 {
+        conn.query_one(
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_file_states
+             WHERE project_id = $1 AND file_path = $2",
+            &[&test_uuid_param(&project_id), &kept],
+        )
+        .expect("count kept file state")
+        .get(0)
+    };
+    index_files(
+        IndexRequest {
+            project_root: project_root.path().to_path_buf(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("first whole index");
+    assert_eq!(state_rows(&mut conn), 1, "the first run records the file");
+
+    // The node reports the present file as unhashed and parses nothing for it. The whole
+    // apply must keep its state rather than treat the file as deleted.
+    let batch = crate::node::FinalBatch {
+        present: Vec::new(),
+        indexed_paths: Vec::new(),
+        eligible_files: 0,
+        scanned_files: 0,
+        unsupported_file_types: Vec::new(),
+    };
+    let files = [crate::node::ParsedFileFacts {
+        path: kept.to_string(),
+        facts: crate::node::FileFacts::Unhashed,
+    }];
+    crate::index::indexer::primary::apply_primary(
+        &mut conn,
+        &ctx,
+        crate::index::indexer::primary::RunScope::Whole,
+        false,
+        &files,
+        Some(&batch),
+    )
+    .expect("whole apply with an unhashed marker");
+    assert_eq!(
+        state_rows(&mut conn),
+        1,
+        "an unhashed present file keeps its state"
+    );
 }

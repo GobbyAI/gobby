@@ -89,6 +89,31 @@ pub fn upsert_file_state(
     Ok(())
 }
 
+/// Whether the project already holds facts for `file_path` at `content_hash` that a machine
+/// may adopt. Read-only: the primary plan asks this before the hub writes anything. The
+/// apply path checks it again under the lock, then `adopt_file_state` writes the state row.
+pub fn facts_adoptable(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
+    let row = conn.query_one(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM code_indexed_files
+            WHERE project_id = $1
+              AND file_path = $2
+              AND content_hash = $3
+              AND graph_synced
+              AND vectors_synced
+         )",
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    Ok(row.get(0))
+}
+
 pub fn adopt_file_state(
     conn: &mut impl GenericClient,
     machine_id: &str,

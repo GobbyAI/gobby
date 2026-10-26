@@ -10,6 +10,8 @@ mod lifecycle;
 mod local_imports;
 mod overlay;
 mod pipeline;
+pub(crate) mod primary;
+pub(crate) mod scan;
 mod selector_blob;
 mod sink;
 mod timing;
