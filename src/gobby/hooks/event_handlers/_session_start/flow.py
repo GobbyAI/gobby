@@ -651,6 +651,17 @@ def handle_pre_created_session(
         )
 
     handler._setup_code_index(session_id, session_obj.project_id)
+    if handler._session_manager is not None:
+        # Resume and compact reach here, so a seat that predates its binding gets one now.
+        try:
+            from gobby.agents.agent_workspaces import bind_epic_workspace, bind_session_workspace
+
+            bind_session_workspace(handler._session_manager.db, session_id)
+            bind_epic_workspace(handler._session_manager.db, session_id)
+        except Exception as e:
+            handler.logger.warning(
+                "Failed to bind agent workspace for session %s: %s", session_id, e
+            )
     rehydrate_found_work_gate_arm(handler, session_id)
 
     if handler._session_manager is not None:

@@ -7,6 +7,7 @@ import logging
 import threading
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -497,3 +498,32 @@ def test_stale_sessionstart_behind_relaunch_keeps_current_seat(
     assert session_id in message
     assert f"keeps agent {target}" in message
     assert "stale activation of x" in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["compact", "resume"])
+async def test_pre_created_start_binds_and_creates_the_workspace_folder(
+    temp_db: HubDatabase,
+    session_id: str,
+    seats: dict[str, AgentDefinitionBody],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+) -> None:
+    home = (tmp_path / "gobby-home").resolve()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    assert (await apply_agent_definition_impl("x", temp_db, session_id))["success"]
+    manager = SessionVariableManager(temp_db)
+    assert not manager.get_variables(session_id).get("_agent_workspace_dir")
+
+    compact(temp_db, session_id, source)
+    folder = Path(manager.get_variables(session_id)["_agent_workspace_dir"])
+    assert folder.is_dir()
+    assert folder.is_relative_to(home)
+    assert folder.parent.name == "x"
+
+    # A bound folder that went missing on disk is recreated, and the binding is kept.
+    folder.rmdir()
+    compact(temp_db, session_id, source)
+    assert Path(manager.get_variables(session_id)["_agent_workspace_dir"]) == folder
+    assert folder.is_dir()
