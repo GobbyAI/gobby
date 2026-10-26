@@ -1,6 +1,6 @@
 # Community Choice before/after comparison — 2026-10-26 UTC
 
-The deduplicated request used fewer bytes and input tokens and had lower observed
+The original deduplicated request used fewer bytes and input tokens and had lower observed
 latency. Its answer changed from `generated` to `deterministic_2`, with lower
 confidence. Agreement is **0 of 1 distinct community**; this capture does not
 establish which answer is better or demonstrate decision-quality equivalence.
@@ -8,6 +8,8 @@ establish which answer is better or demonstrate decision-quality equivalence.
 The later [OpenRouter ablation](#openrouter-ablation) reproduced the flip and
 isolated restoring `generated.name` as sufficient to recover the generated
 choice for this frozen community. The implementation now retains that field.
+The [repaired-builder verification](#repaired-builder-verification) restored
+the generated answer on both LM Studio and OpenRouter.
 
 ## Scope and provenance
 
@@ -232,8 +234,9 @@ both counts. The restored name costs 33 bytes and 10 measured input tokens
 relative to AFTER. The existing state and request bounds still apply to it.
 This is one persisted-label replay with an empty rationale, not independent
 quality examples or a blinded quality result. It does not establish
-interactions among changes or improvement over BEFORE. The actual repaired
-builder still needs its operator-run comparison on both backends.
+interactions among changes or improvement over BEFORE. The subsequent
+[repaired-builder comparison](#repaired-builder-verification) checks the
+actual implementation on both backends.
 
 The [original ablation summary](community-choice-openrouter-ablation-2026-10-26.json)
 preserves all 21 rows, intervention definitions, schedule and request hashes.
@@ -267,5 +270,111 @@ remain in place. The capture diagnostic uses the same tolerance helper.
 Tests preserve the captured 1.95 response, both sides of the bounds, floating
 representation at the bounds, higher-precision guards, and rejection of
 1.94 against the same 1.96 weighted index.
+
+## Repaired-builder verification
+
+The Assistant ran the repaired implementation from landed revision
+`62c35997198ce3f30c4d5c18cb84aaab1f920624`, containing candidate
+`a434c30309bc3535793614daec9664cf22f052ab`. Both captures use the same frozen
+c43 fixture and persisted `Chat Session Management` label with an empty
+rationale. No fresh label was generated and no product label was written.
+The earlier broken-AFTER and ablation artifacts remain unchanged above.
+
+The [repaired source payload](community-choice-2026-10-26.repaired.json) was
+built through the archived revision's real `CommunityLabeler._gate` and
+`DecisionService.choose` request path. Its compact SHA256 is
+`f570ee3e87de28694dcadf52da88b4f6a4fd0b8a0120db07b8f21140c8c57ad8`
+(2,305 bytes). With the OpenRouter model and privacy envelope it becomes
+`af9dea1dd013eb2891e9fdf10f1b6db307873f438cf54a20596602840f965465`
+(2,376 bytes), byte-identical after compact serialization to the earlier
+`restore_generated_name` ablation arm. A separate offline build of candidate
+`a434c30309bc3535793614daec9664cf22f052ab` produced the same source hash.
+
+### LM Studio
+
+The unchanged measurement script (`847d809b…` above) ran `--phase after` at
+the landed revision, using model alias `clef` and the same 15-second timeout.
+It completed one warmup and 20 measured calls, with no errors, exclusions or
+observed Nomic overlap. Every measured answer was identical, selected
+`generated`, and reported response model `clef` with backend identity `null`.
+
+| Measurement | Original BEFORE | Broken AFTER | Repaired AFTER |
+| --- | ---: | ---: | ---: |
+| Request bytes | 2,527 | 2,272 | 2,305 |
+| Application token estimate | 651 | 585 | 594 |
+| Returned input tokens | 703 | 651 | 657 |
+| Selected answer | generated | deterministic_2 | generated |
+| Generated probability | 0.878966720118825 | 0.1481495739780211 | 0.8220171582407108 |
+| Selected-answer confidence | 0.8487084001485312 | 0.5189132749083801 | 0.7775214478008885 |
+| Latency p50, seconds | 2.256206 | 1.879900 | 1.897424 |
+| Latency p95, seconds, nearest rank | 2.555964 | 2.153159 | 2.161638 |
+
+Repaired output-token usage was 0; cached-token counts were absent and
+recorded as `null`. The [repaired LM Studio summary](community-choice-lmstudio-repaired-2026-10-26.json)
+retains every row, exchange, latency and before/after Nomic snapshot. The
+original capture directory is
+`/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-22604-choice-after-bjnjpp4n`.
+These phases ran at different times. Identical repeated input and absent
+cache counts prevent a cache-free latency claim; Nomic snapshots cannot
+exclude activity between samples.
+
+### OpenRouter
+
+The repaired capture script SHA256 is
+`a82c237763dacdb043643b66f38cd9bbf084b4191aa22ad0f6d9ec09f5c673d2`,
+at `/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-lag7b7s1/gobby_22604_openrouter_repaired.py`.
+Before any request it invokes the original measurement script in dry-run
+mode against the archived landed revision, verifies the fixture and script
+hashes, and checks that the imported Score parser matches that revision.
+It verifies repaired AFTER against the ablation arm's exact serialized bytes.
+BEFORE remains the original captured payload.
+
+The run used the same dated model, named secret and privacy settings as the
+replication above. It sent six Choice calls in paired order B/A, A/B, B/A,
+with one Score call before each pair: nine requests, no warmups, no retries,
+30 seconds per call. All nine returned HTTP 200, matched the model pin and
+passed strict parsing. Total reported cost was $0.000310212; observed
+latencies were 0.157446–0.306621 seconds.
+
+| Choice phase | Selection, all three calls | Generated probability, attempts 1 / 2 / 3 | Confidence, attempts 1 / 2 / 3 | Input tokens |
+| --- | --- | --- | --- | ---: |
+| Original BEFORE | generated | 0.77 / 0.85 / 0.76 | 0.71 / 0.81 / 0.70 | 1,111 |
+| Repaired AFTER | generated | 0.87 / 0.84 / 0.83 | 0.84 / 0.80 / 0.79 | 1,033 |
+
+Score returned 1.96, 1.97 and 1.96; each equaled its probability-weighted
+index exactly. Diagnostics reported `abs_tol: 0.015000000001`, including
+the representation epsilon. These calls validate the current parser path
+but do not exercise a nonzero rounding discrepancy. The original captured
+1.95-versus-1.96 response remains covered by the offline regression test.
+The [repaired OpenRouter summary](community-choice-openrouter-repaired-2026-10-26.json)
+preserves all nine requests and responses, their hashes, usage and parser
+comparisons. Original capture directory:
+`/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-lag7b7s1/openrouter-repaired-20261026`.
+
+### Artifact verification and limits
+
+| Artifact | Committed-file SHA256 |
+| --- | --- |
+| Repaired source payload | `b43432dbcf23138b17116e6f3fd1d34a9d08f64fa7e39d27d9539087f4a3f03b` |
+| Repaired LM Studio summary | `0de21d23f49fcdfcc535d3d602678cc81c6813e9a3701bd45a6f857ca6de8e75` |
+| Repaired OpenRouter summary | `ae06061ff0c5a5c101ba3e54b7dea6777b8fa21411ce7d379cf66986f17a33b4` |
+
+The two LM Studio files have one trailing newline added to their source
+bytes. Their original hashes were respectively
+`ae3346580bcc8da97cd96970a1842898ae66d634614bf938cd8f3747047d9f22`
+and `518b8c680fed10194a82552f282e921345e4725b2935201fb392433401893dce`.
+The OpenRouter file matches the source bytes. Offline verification compares
+these files with the local capture artifacts, checks every request hash and
+all 21 LM Studio rows and nine OpenRouter rows, and recomputes the reported
+statistics. These hashes and comparisons record local provenance; they are
+not independent authentication of the operator execution.
+
+The repaired builder restores the generated answer on both backends for
+**one distinct frozen community**. This supports fixing the observed payload
+regression; it does not prove general label quality, equivalence to BEFORE
+across communities, or a quality gain from the higher OpenRouter confidence.
+The blinded study and daemon-side V2/live checks remain separate acceptance
+work. These checkout-based captures do not establish live daemon label-write
+behavior, even though the landed repair was activated before the runs.
 
 _Last verified: 2026-10-26_
