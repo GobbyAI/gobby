@@ -784,8 +784,8 @@ async def test_stream_extends_to_the_full_derivation_across_supplemental_appends
     assert [payload.record_count for _, payload in pool_calls] == [2]
     assert extended == await _derive(session, BASE_TIME, tmp_path)
 
-    # A default derivation advances the stored snapshot behind the stream's back;
-    # the stream's checkpoint no longer matches, so the next call derives cold.
+    # A default (full-mode) derivation keeps its snapshot under its own key, so it leaves
+    # the stream's checkpoint alone: the next stop resumes and transfers only the appends.
     _append_jsonl(
         subagent,
         _claude_tool_pair(
@@ -805,8 +805,10 @@ async def test_stream_extends_to_the_full_derivation_across_supplemental_appends
             result={"exit_code": 0, "stdout": ""},
         ),
     )
-    fallback = await _derive(session, BASE_TIME, tmp_path, stream=stream)
-    assert fallback == await _derive(session, BASE_TIME, tmp_path)
+    pool_calls.clear()
+    resumed = await _derive(session, BASE_TIME, tmp_path, stream=stream)
+    assert [payload.record_count for _, payload in pool_calls] == [2]
+    assert resumed == await _derive(session, BASE_TIME, tmp_path)
 
 
 def test_stream_refuses_a_resumed_delta_built_on_a_superseded_checkpoint() -> None:

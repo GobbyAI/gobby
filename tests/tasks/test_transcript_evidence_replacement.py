@@ -234,7 +234,9 @@ async def test_stop_work_after_resolved_history_does_not_grow_with_history(
         loaded.clear()
         written.clear()
         cover_calls.clear()
-        await _derive(session, BASE_TIME, root, stream=stream)
+        streamed = await _derive(session, BASE_TIME, root, stream=stream)
+        # The gate's own pass over the reduced runs is part of the stop's cost.
+        assert not unresolved_validation_failures(streamed.validation_runs, owner_handoff=False)
         return sum(loaded), sum(written), len(cover_calls)
 
     small = await second_stop(6, "3")
