@@ -20,7 +20,7 @@ use gobby_daemon::front_door::FrontDoorState;
 use gobby_daemon::front_door::compare::{Outcome, WaiverRef};
 use gobby_daemon::front_door::health::{HealthFamily, SERVED_BY_HEADER};
 use gobby_daemon::front_door::routes::{FAMILIES, RouteFamily, unimplemented_families};
-use gobby_daemon::front_door::waivers::WaiverManifest;
+use gobby_daemon::front_door::waivers::{WaiverManifest, is_native_extension, surface_matches};
 use gobby_daemon::serve::{PublicListener, serve};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -215,7 +215,7 @@ async fn stub_backend(case: &Value) -> (SocketAddr, SeenLog) {
     let addr = listener.local_addr().expect("stub addr");
     let seen: SeenLog = Arc::default();
     let log = Arc::clone(&seen);
-    let recorded = case["response"].clone();
+    let recorded = case.get("response").cloned();
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let log = Arc::clone(&log);
@@ -223,7 +223,17 @@ async fn stub_backend(case: &Value) -> (SocketAddr, SeenLog) {
             tokio::spawn(async move {
                 let service = service_fn(move |request: Request<Incoming>| {
                     let log = Arc::clone(&log);
-                    let response = recorded_response(&recorded);
+                    // Native-only cases have no Python response to synthesize.
+                    // Unexpected forwarding is recorded and fails the runner.
+                    let response = recorded.as_ref().map_or_else(
+                        || {
+                            Response::builder()
+                                .status(500)
+                                .body(Full::new(Bytes::new()))
+                                .expect("unexpected backend response")
+                        },
+                        recorded_response,
+                    );
                     async move {
                         let (parts, body) = request.into_parts();
                         let body = body.collect().await.expect("request body").to_bytes();
@@ -411,9 +421,51 @@ struct ReplayResult {
 async fn replay_in_declared_backend_state(
     manifest: &Value,
     case: &Value,
-    _waivers: &WaiverManifest,
+    waivers: &WaiverManifest,
 ) -> ReplayResult {
     let name = case["name"].as_str().expect("case name");
+    let (expected, outcome, waiver) = if let Some(id) = case.get("waiver") {
+        let id = id.as_str().expect("waiver id must be text");
+        let entry = waivers
+            .get(id)
+            .unwrap_or_else(|| panic!("{name}: unknown waiver {id}"));
+        assert!(
+            surface_matches(
+                &entry.surface,
+                case["request"]["method"].as_str().expect("request method"),
+                case["request"]["path"].as_str().expect("request path"),
+            ),
+            "{name}: request does not match waiver surface {}",
+            entry.surface
+        );
+        let native_extension = is_native_extension(id);
+        assert!(
+            !native_extension || case.get("response").is_none(),
+            "{name}: native-extension cannot cite a Python response"
+        );
+        let native = case
+            .get("native_response")
+            .filter(|response| response.is_object())
+            .unwrap_or_else(|| panic!("{name}: waived case requires native_response"));
+        (
+            normalized_response(json!({"response": native}), &case["mask"]),
+            if native_extension {
+                Outcome::NativeExtension
+            } else {
+                Outcome::Waived
+            },
+            Some(WaiverRef {
+                id: id.to_owned(),
+                decision: entry.decision.clone(),
+            }),
+        )
+    } else {
+        assert!(
+            case.get("response").is_some(),
+            "{name}: no Python response and no waiver"
+        );
+        (expected_response(case), Outcome::Match, None)
+    };
     let (backend_addr, backend) = if case["backend"] == "up" {
         let (addr, seen) = stub_backend(case).await;
         (addr, CaseBackend::Up(seen))
@@ -432,21 +484,39 @@ async fn replay_in_declared_backend_state(
 
     let (actual, headers) = replay(front_door, case).await;
 
-    assert_eq!(actual, expected_response(case), "{name}");
+    let contract = if waiver.is_some() {
+        "native contract"
+    } else {
+        "Python response"
+    };
+    assert_eq!(actual, expected, "{name}: {contract}");
     match backend {
-        CaseBackend::Up(seen) if family == NATIVE_CHALLENGE_FAMILY => {
+        CaseBackend::Up(seen)
+            if family == NATIVE_CHALLENGE_FAMILY || outcome == Outcome::NativeExtension =>
+        {
             assert!(
                 seen.lock().expect("seen log").is_empty(),
-                "{name}: native challenge reached Python"
+                "{name}: native-only request reached Python"
             );
         }
         CaseBackend::Up(seen) => assert_request_unchanged(case, &seen),
         CaseBackend::Down(held) => drop(held),
     }
+    if let Some(citation) = &waiver {
+        let label = if outcome == Outcome::NativeExtension {
+            "native-extension"
+        } else {
+            "Waived"
+        };
+        println!(
+            "{name}: {label} waiver={} decision={}",
+            citation.id, citation.decision
+        );
+    }
     ReplayResult {
         headers,
-        outcome: Outcome::Match,
-        waiver: None,
+        outcome,
+        waiver,
     }
 }
 
@@ -529,25 +599,38 @@ async fn native_health_replays_equal_up_and_down() {
     }
 }
 
-fn waived_health_case(native_extension: bool) -> (Value, WaiverManifest) {
-    let mut case = read_json(&Path::new(CORPUS_DIR).join("health_backend_down.json"));
-    case["name"] = json!("waived_health");
+fn waived_case(native_extension: bool) -> (Value, WaiverManifest) {
+    // The handshake is gdaemon-authored and has no Python counterpart; health
+    // exercises an intentional difference from a recorded Python response.
+    let (file, id, surface) = if native_extension {
+        (
+            "runtime_handshake_challenge.json",
+            "runtime.handshake.native-extension",
+            "HTTP POST /api/runtime/handshake/challenge",
+        )
+    } else {
+        (
+            "health_backend_down.json",
+            "health.api.backend-down",
+            "HTTP GET /api/health",
+        )
+    };
+    let mut case = read_json(&Path::new(CORPUS_DIR).join(file));
+    case["name"] = json!("waived_http");
     case["native_response"] = case["response"].clone();
-    let id = if native_extension {
+    if native_extension {
         case.as_object_mut()
             .expect("case object")
             .remove("response");
-        "health.api.native-extension"
     } else {
         case["response"]["status"] = json!(599);
-        "health.api.backend-down"
-    };
+    }
     case["waiver"] = json!(id);
     let waivers = WaiverManifest::parse(
         &json!({"schema_version": 1, "waivers": [{
-            "id": id, "surface": "HTTP GET /api/health",
-            "behaviour": "Health answers its native contract.", "decision": "#24963",
-            "replacement": "Native unavailable health response."
+            "id": id, "surface": surface,
+            "behaviour": "The case answers its native contract.", "decision": "#24963",
+            "replacement": "The asserted native_response."
         }]})
         .to_string(),
     )
@@ -557,7 +640,7 @@ fn waived_health_case(native_extension: bool) -> (Value, WaiverManifest) {
 
 #[tokio::test]
 async fn waived_case_replays_native_contract_with_citation() {
-    let (case, waivers) = waived_health_case(false);
+    let (case, waivers) = waived_case(false);
     let result = replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
     assert_eq!(result.outcome, Outcome::Waived);
     assert_eq!(
@@ -571,14 +654,14 @@ async fn waived_case_replays_native_contract_with_citation() {
 
 #[tokio::test]
 async fn native_extension_replays_without_python_response() {
-    let (case, waivers) = waived_health_case(true);
+    let (case, waivers) = waived_case(true);
     assert!(case.get("response").is_none());
     let result = replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
     assert_eq!(result.outcome, Outcome::NativeExtension);
     assert_eq!(
         result.waiver,
         Some(WaiverRef {
-            id: "health.api.native-extension".into(),
+            id: "runtime.handshake.native-extension".into(),
             decision: "#24963".into(),
         })
     );
@@ -587,7 +670,7 @@ async fn native_extension_replays_without_python_response() {
 #[tokio::test]
 #[should_panic(expected = "native contract")]
 async fn waived_replay_rejects_native_contract_drift() {
-    let (mut case, waivers) = waived_health_case(false);
+    let (mut case, waivers) = waived_case(false);
     case["native_response"]["status"] = json!(598);
     replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
 }
@@ -595,7 +678,7 @@ async fn waived_replay_rejects_native_contract_drift() {
 #[tokio::test]
 #[should_panic(expected = "unknown waiver")]
 async fn replay_rejects_unknown_waiver() {
-    let (mut case, waivers) = waived_health_case(false);
+    let (mut case, waivers) = waived_case(false);
     case["waiver"] = json!("health.api.missing");
     replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
 }
@@ -603,7 +686,7 @@ async fn replay_rejects_unknown_waiver() {
 #[tokio::test]
 #[should_panic(expected = "waiver surface")]
 async fn replay_rejects_wrong_waiver_surface() {
-    let (mut case, waivers) = waived_health_case(false);
+    let (mut case, waivers) = waived_case(false);
     case["request"]["method"] = json!("POST");
     replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
 }
@@ -611,7 +694,7 @@ async fn replay_rejects_wrong_waiver_surface() {
 #[tokio::test]
 #[should_panic(expected = "cannot cite a Python response")]
 async fn native_extension_rejects_python_response() {
-    let (mut case, waivers) = waived_health_case(true);
+    let (mut case, waivers) = waived_case(true);
     case["response"] = case["native_response"].clone();
     replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
 }
@@ -619,10 +702,34 @@ async fn native_extension_rejects_python_response() {
 #[tokio::test]
 #[should_panic(expected = "native_response")]
 async fn waived_replay_requires_native_contract() {
-    let (mut case, waivers) = waived_health_case(false);
+    let (mut case, waivers) = waived_case(false);
     case.as_object_mut()
         .expect("case object")
         .remove("native_response");
+    replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
+}
+
+#[tokio::test]
+#[should_panic(expected = "native contract")]
+async fn native_extension_rejects_native_contract_drift() {
+    let (mut case, waivers) = waived_case(true);
+    case["native_response"]["status"] = json!(598);
+    replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
+}
+
+#[tokio::test]
+#[should_panic(expected = "no Python response and no waiver")]
+async fn native_extension_requires_a_manifest_waiver() {
+    let (mut case, waivers) = waived_case(true);
+    case.as_object_mut().expect("case object").remove("waiver");
+    replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
+}
+
+#[tokio::test]
+#[should_panic(expected = "waiver surface")]
+async fn replay_rejects_wrong_waiver_path() {
+    let (mut case, waivers) = waived_case(false);
+    case["request"]["path"] = json!("/api/other");
     replay_in_declared_backend_state(&load_manifest(), &case, &waivers).await;
 }
 

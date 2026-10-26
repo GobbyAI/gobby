@@ -291,7 +291,10 @@ def test_case_replays_equal(boundary: BoundaryHarness) -> None:
             result, actual = http_corpus.replay_case(
                 client, case, waivers=waivers, **_credentials(boundary)
             )
-            assert result.outcome == PASSED, case["name"]
+            assert result.outcome in (PASSED, WAIVED), case["name"]
+            if result.outcome == WAIVED:
+                assert result.waiver and result.decision, case["name"]
+                print(f"{case['name']}: {WAIVED} waiver={result.waiver} decision={result.decision}")
             if case["name"] == "hooks_execute_replay":
                 # Codex Interrupt freshly serializes to {}, unlike the stored
                 # Claude Notification response. A fresh ID proves that the
