@@ -49,10 +49,58 @@ pub(crate) fn file_selectors_sql(machine: &str, project: &str, include_pins: boo
 }
 
 pub(crate) fn visible_selectors_sql(ctx: &Context, machine: &str, project: &str) -> String {
-    file_selectors_sql(
+    read_selectors_sql(
         machine,
         project,
         matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. }),
+        inherits_parent(ctx),
+    )
+}
+
+/// Whether reads through this context may serve the parent's rows: a managed
+/// principal reading an overlay. The SQL predicate narrows it to an overlay the
+/// principal cannot write.
+pub(crate) fn inherits_parent(ctx: &Context) -> bool {
+    matches!(ctx.index_scope, ProjectIndexScope::Overlay { .. }) && ctx.is_managed_principal()
+}
+
+/// Read-side selectors. `inherit_parent` adds the parent's row for every path the
+/// overlay neither shadows nor pins. Pins and overlay rows shadow it, so no path
+/// is served twice; the stale check then names only paths that differ on disk.
+pub(crate) fn read_selectors_sql(
+    machine: &str,
+    project: &str,
+    include_pins: bool,
+    inherit_parent: bool,
+) -> String {
+    let selectors = file_selectors_sql(machine, project, include_pins);
+    if !inherit_parent {
+        return selectors;
+    }
+    format!(
+        "{selectors}
+         UNION ALL
+         SELECT fs.project_id, fs.file_path, fs.content_hash, fs.git_blob_id,
+                f.language, f.symbol_count
+         FROM code_indexed_file_states fs
+         JOIN code_indexed_files f
+           ON f.project_id = fs.project_id AND f.file_path = fs.file_path
+          AND f.content_hash = fs.content_hash
+         WHERE fs.machine_id = {machine}
+           AND fs.project_id = gobby_agent_auth.current_project_id()
+           AND f.language != '{TOMBSTONE_LANGUAGE}'
+           AND COALESCE(gobby_agent_auth.current_code_overlay_project_id(),
+                        gobby_agent_auth.current_project_id()) IS DISTINCT FROM {project}
+           AND NOT EXISTS (
+               SELECT 1 FROM code_indexed_file_states shadow
+               WHERE shadow.machine_id = {machine} AND shadow.project_id = {project}
+                 AND shadow.file_path = fs.file_path
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM code_overlay_pins p
+               WHERE p.machine_id = {machine} AND p.overlay_project_id = {project}
+                 AND p.file_path = fs.file_path
+           )"
     )
 }
 
