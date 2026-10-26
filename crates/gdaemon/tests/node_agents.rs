@@ -1480,7 +1480,6 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
             .as_bool()
             .context("prewarm_pre_commit_store is not a bool")?,
         platform: srt_host_platform().to_string(),
-        agent_name: None,
     })
 }
 
@@ -1861,12 +1860,29 @@ fn chokepoint_fixture(
 ) -> Result<(SrtTree, PolicyInputs)> {
     let corpus = srt_corpus()?;
     let case = srt_case_inputs(&corpus, SRT_CHOKEPOINT_CASE)?;
-    let tree = SrtTree::new(case_dir)?;
+    let mut tree = SrtTree::new(case_dir)?;
     tree.materialize(&case)?;
     let mut inputs = srt_policy_inputs(&tree, &case)?;
     inputs.provider = provider.to_string();
     inputs.provider_executable = Some(tree.path("bin").join(provider));
     inputs.platform = "darwin".to_string();
+    // The monitor socket goes in a short directory beside the case root. The shared /tmp
+    // root is denied to seats, and macOS caps a unix socket path at 103 bytes.
+    let monitor_socket = case_dir
+        .parent()
+        .context("the case directory has no parent")?
+        .join("m");
+    let socket_name = format!("v-{}", &python_srt_release_field("runner_sha256")[..12]);
+    anyhow::ensure!(
+        monitor_socket.join(&socket_name).as_os_str().len() < 104,
+        "the monitor socket path {} is too long for a unix socket",
+        monitor_socket.display()
+    );
+    let monitor_socket = monitor_socket.display().to_string();
+    tree.layout.insert("monitor_socket", monitor_socket.clone());
+    inputs
+        .env
+        .insert("GOBBY_SRT_SOCKET_DIR".to_string(), monitor_socket);
     edit(&mut inputs);
     Ok((tree, inputs))
 }
@@ -1884,6 +1900,49 @@ fn fake_node(tree: &SrtTree, body: &str) -> Result<PathBuf> {
     fs::write(&node, format!("#!/bin/sh\n{body}"))?;
     fs::set_permissions(&node, fs::Permissions::from_mode(0o755))?;
     Ok(node)
+}
+
+/// The probe server a fake `--monitor` execs. It binds the socket, reports `ready` on the
+/// readiness fd, and answers each probe with the pinned runner digest.
+const MONITOR_SERVER: &str = r#"import json, os, socket, sys
+server = socket.socket(socket.AF_UNIX)
+server.bind(sys.argv[1])
+server.listen(8)
+os.write(int(sys.argv[2]), b"ready\n")
+while True:
+    conn, _ = server.accept()
+    conn.makefile("rb").readline()
+    conn.sendall((json.dumps({"ready": True, "identity": sys.argv[3]}) + "\n").encode())
+    conn.close()
+"#;
+
+/// The fake monitor's pid file, beside its socket directory so one guard covers every
+/// fixture that shares that directory.
+fn monitor_pidfile(tree: &SrtTree) -> PathBuf {
+    tree.path("monitor_socket").with_extension("pid")
+}
+
+/// A `node` stand-in for darwin launches, which start the shared monitor before preflight.
+/// `--monitor` records its pid and execs the probe server; every other mode runs `body`.
+fn monitor_node(tree: &SrtTree, body: &str) -> Result<PathBuf> {
+    fake_node(
+        tree,
+        &format!(
+            r#"shift
+case "$1" in
+  --monitor)
+    echo $$ > '{pidfile}'
+    exec /usr/bin/python3 -c '{server}' "$2" "$3" '{identity}' ;;
+  *)
+{body}    ;;
+esac
+"#,
+            pidfile = monitor_pidfile(tree).display(),
+            server = MONITOR_SERVER,
+            identity = python_srt_release_field("runner_sha256"),
+            body = body,
+        ),
+    )
 }
 
 /// The installation a verified `gobby install` hands the chokepoint, running `node`.
@@ -1953,7 +2012,8 @@ fn chokepoint_wraps_once() -> Result<()> {
     // A verified install wraps the provider argv once, with both policy files private.
     let (tree, inputs) = chokepoint_fixture(&root.path().join("wrapped"), "claude", |_| {})?;
     let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "exit 0\n")?;
+    let node = monitor_node(&tree, "exit 0\n")?;
+    let _monitor = StopMonitor(monitor_pidfile(&tree));
     let installation = srt_installation(&tree, node.clone());
     let launch = prepare_launch_with(&inputs, &prompt, &installation)?;
     let settings = tree.path("run_root").join("assets/settings.json");
@@ -2033,7 +2093,8 @@ fn chokepoint_refuses_unverified_install() -> Result<()> {
     // A managed node that fails `--preflight` refuses the launch with its stderr.
     let (tree, inputs) = chokepoint_fixture(&root.path().join("preflight"), "claude", |_| {})?;
     let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "echo broken >&2\nexit 3\n")?;
+    let node = monitor_node(&tree, "echo broken >&2\nexit 3\n")?;
+    let _monitor = StopMonitor(monitor_pidfile(&tree));
     let failed = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))
         .expect_err("a failed preflight must refuse the launch");
     assert!(
@@ -2069,7 +2130,8 @@ fn chokepoint_grok_home() -> Result<()> {
     fs::create_dir_all(tree.path("home").join(".grok"))?;
     fs::write(tree.path("home").join(".grok/config.toml"), "")?;
     let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "exit 0\n")?;
+    let node = monitor_node(&tree, "exit 0\n")?;
+    let _monitor = StopMonitor(monitor_pidfile(&tree));
     let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
     let grok_home = PathBuf::from(
         launch
@@ -2083,12 +2145,20 @@ fn chokepoint_grok_home() -> Result<()> {
         grok_home.display()
     );
     assert!(grok_home.is_dir(), "the private GROK_HOME was not created");
+    // The managed home sits under the run cache, which is the writable grant covering it.
+    // The Grok runtime grants cover only the source home (grok_sandbox_home.py,
+    // runtime_write_paths; tests/agents/test_grok_sandbox_home.py pins that).
+    let cache = tree.path("run_root").join("cache");
     assert!(
-        launch
+        grok_home.starts_with(&cache) && launch.write_paths.contains(&cache),
+        "GROK_HOME is not writable through the run cache"
+    );
+    assert!(
+        !launch
             .write_paths
             .iter()
-            .any(|path| path.starts_with(&grok_home)),
-        "GROK_HOME is not writable"
+            .any(|path| path != &cache && cache.starts_with(path)),
+        "a grant broader than the run cache covers GROK_HOME"
     );
     assert!(
         launch
@@ -2115,84 +2185,6 @@ fn chokepoint_grok_home() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn chokepoint_claude_reviewer_home() -> Result<()> {
-    let root = tempfile::tempdir()?;
-    let reviewer = |inputs: &mut PolicyInputs| {
-        inputs.agent_name = Some("task-close-reviewer".to_string());
-    };
-
-    // The reviewer gets a private config home with seeded state and a transcript link.
-    let (tree, inputs) = chokepoint_fixture(&root.path().join("reviewer"), "claude", reviewer)?;
-    let claude = tree.path("home").join(".claude");
-    fs::create_dir_all(claude.join("projects"))?;
-    fs::write(claude.join("settings.json"), "{}\n")?;
-    fs::write(claude.join("settings.local.json"), "{}\n")?;
-    let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "exit 0\n")?;
-    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
-    let cache = PathBuf::from(
-        launch
-            .env
-            .get("XDG_CACHE_HOME")
-            .context("XDG_CACHE_HOME is not set")?,
-    );
-    let config_dir = cache.join("claude");
-    assert_eq!(
-        launch.env.get("CLAUDE_CONFIG_DIR").map(PathBuf::from),
-        Some(config_dir.clone()),
-        "CLAUDE_CONFIG_DIR is not the private reviewer home"
-    );
-    for variable in ["XDG_STATE_HOME", "CLAUDE_SECURESTORAGE_CONFIG_DIR"] {
-        assert!(launch.env.contains_key(variable), "{variable} is not set");
-    }
-    assert_eq!(
-        file_mode(&config_dir)?,
-        0o700,
-        "the reviewer home is not private"
-    );
-    assert!(
-        config_dir.join(".claude.json").is_file(),
-        "the seeded .claude.json is missing"
-    );
-    for name in ["settings.json", "settings.local.json"] {
-        assert_eq!(
-            file_mode(&config_dir.join(name))?,
-            0o600,
-            "{name} copy is not private"
-        );
-    }
-    let entry = fs::read_dir(config_dir.join("projects"))?
-        .next()
-        .context("the reviewer home links no transcript directory")??
-        .path();
-    assert!(
-        fs::symlink_metadata(&entry)?.file_type().is_symlink(),
-        "the transcript entry is not a link"
-    );
-    assert!(
-        fs::read_link(&entry)?.starts_with(claude.join("projects")),
-        "the transcript link escapes ~/.claude/projects"
-    );
-
-    // A symlinked host settings file is refused.
-    let (tree, inputs) =
-        chokepoint_fixture(&root.path().join("reviewer-link"), "claude", reviewer)?;
-    let claude = tree.path("home").join(".claude");
-    fs::create_dir_all(claude.join("projects"))?;
-    let outside = root.path().join("outside-settings.json");
-    fs::write(&outside, "{}\n")?;
-    std::os::unix::fs::symlink(&outside, claude.join("settings.json"))?;
-    fs::write(claude.join("settings.local.json"), "{}\n")?;
-    let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "exit 0\n")?;
-    assert!(
-        prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node)).is_err(),
-        "a symlinked settings source must refuse the launch"
-    );
-    Ok(())
-}
-
 #[cfg(target_os = "macos")]
 #[test]
 fn chokepoint_droid_ps_shim() -> Result<()> {
@@ -2201,7 +2193,8 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
     // Droid gets a signed copy of /bin/ps first on PATH and in the read paths.
     let (tree, inputs) = chokepoint_fixture(&root.path().join("droid"), "droid", |_| {})?;
     let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "exit 0\n")?;
+    let node = monitor_node(&tree, "exit 0\n")?;
+    let _monitor = StopMonitor(monitor_pidfile(&tree));
     let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
     let ps = fs::read("/bin/ps")?;
     let shim_dir = tree
@@ -2209,7 +2202,28 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
         .join("runtime/droid-ps-shim")
         .join(sha256_hex(&ps));
     let shim = shim_dir.join("ps");
-    assert_eq!(fs::read(&shim)?, ps, "the shim is not a copy of /bin/ps");
+    // Ad hoc signing rewrites the copy's bytes, so the copy is checked by its signature and
+    // by running it as `ps` to report this process's parent.
+    assert!(
+        Command::new("/usr/bin/codesign")
+            .arg("--verify")
+            .arg(&shim)
+            .status()?
+            .success(),
+        "the shim is not validly signed"
+    );
+    let pid = std::process::id().to_string();
+    let output = Command::new(&shim)
+        .args(["-o", "ppid=", "-p", pid.as_str()])
+        .output()?;
+    anyhow::ensure!(output.status.success(), "the shim did not run as ps");
+    // SAFETY: getppid cannot fail and takes no pointers.
+    let parent = unsafe { libc::getppid() };
+    assert_eq!(
+        String::from_utf8(output.stdout)?.trim(),
+        parent.to_string(),
+        "the shim did not report this process's parent"
+    );
     assert_eq!(file_mode(&shim)?, 0o755, "the shim is not executable");
     assert!(
         launch.read_paths.contains(&shim_dir),
@@ -2225,7 +2239,8 @@ fn chokepoint_droid_ps_shim() -> Result<()> {
     let (tree, inputs) = chokepoint_fixture(&root.path().join("droid-no-shim"), "droid", |_| {})?;
     fs::write(tree.path("gobby_home").join("runtime"), "not a directory")?;
     let prompt = chokepoint_prompt(&tree)?;
-    let node = fake_node(&tree, "exit 0\n")?;
+    let node = monitor_node(&tree, "exit 0\n")?;
+    let _monitor = StopMonitor(monitor_pidfile(&tree));
     let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
     let path = launch.env.get("PATH").context("PATH is not set")?;
     assert!(
@@ -2249,42 +2264,46 @@ fn chokepoint_shared_srt_monitor() -> Result<()> {
     let (tree, inputs) = chokepoint_fixture(&root.path().join("monitor"), "claude", |_| {})?;
     let prompt = chokepoint_prompt(&tree)?;
     let log = tree.path("tmp").join("node-calls.log");
-    let pidfile = tree.path("tmp").join("monitor.pid");
 
-    // The fake `--monitor` listens on its socket, then answers `ready` on the given fd.
+    // The fake drops the runner argument and logs the rest. `--monitor` execs the probe
+    // server; every other mode exits 0.
     let node = fake_node(
         &tree,
         &format!(
-            r#"echo "$*" >> '{log}'
+            r#"shift
+echo "$*" >> '{log}'
 case "$1" in
-  --preflight|--recover) exit 0 ;;
   --monitor)
-    sleep 600 | /usr/bin/nc -lkU "$2" >/dev/null 2>&1 &
-    echo $! > '{pidfile}'
-    while [ ! -S "$2" ]; do sleep 0.05; done
-    eval "printf 'ready\\n' >&$3"
-    wait
-    ;;
+    echo $$ > '{pidfile}'
+    exec /usr/bin/python3 -c '{server}' "$2" "$3" '{identity}' ;;
+  *) exit 0 ;;
 esac
-exit 0
 "#,
             log = log.display(),
-            pidfile = pidfile.display()
+            pidfile = monitor_pidfile(&tree).display(),
+            server = MONITOR_SERVER,
+            identity = python_srt_release_field("runner_sha256"),
         ),
     )?;
-    let socket = tree.path("srt_socket").join(format!(
+    let socket = tree.path("monitor_socket").join(format!(
         "v-{}",
         &python_srt_release_field("runner_sha256")[..12]
     ));
-    let _stop = StopMonitor(pidfile);
-    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
-
+    let _stop = StopMonitor(monitor_pidfile(&tree));
     let run_key = tree
         .path("run_root")
         .file_name()
         .context("the run root has no name")?
         .to_string_lossy()
         .into_owned();
+    // A leftover backlog makes the launch recover before the monitor starts.
+    fs::create_dir_all(tree.path("monitor_socket"))?;
+    fs::write(
+        tree.path("monitor_socket")
+            .join(format!("{run_key}.srt-backlog.jsonl")),
+        "",
+    )?;
+    let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
     assert_eq!(
         launch
             .env
@@ -2318,10 +2337,12 @@ exit 0
 #[test]
 fn chokepoint_codex_shell_snapshot_off() -> Result<()> {
     let root = tempfile::tempdir()?;
+    // Each provider's fixture shares the root's monitor socket, so one pid file covers the loop.
+    let _monitor = StopMonitor(root.path().join("m").with_extension("pid"));
     for provider in SRT_PROVIDERS {
         let (tree, inputs) = chokepoint_fixture(&root.path().join(provider), provider, |_| {})?;
         let prompt = chokepoint_prompt(&tree)?;
-        let node = fake_node(&tree, "exit 0\n")?;
+        let node = monitor_node(&tree, "exit 0\n")?;
         let launch = prepare_launch_with(&inputs, &prompt, &srt_installation(&tree, node))?;
         let expected: Vec<String> = if provider == "codex" {
             vec![

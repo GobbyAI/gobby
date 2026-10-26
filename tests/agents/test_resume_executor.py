@@ -219,23 +219,6 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
 
 
 @pytest.mark.asyncio
-async def test_resume_refuses_task_close_reviewer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired reviewer runs remain inert after a daemon restart."""
-    prepare = _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
-
-    result = await resume_executor.resume_agent_run(
-        _original_run(agent_name="task-close-reviewer"),
-        resume_metadata=_resume_metadata(),
-        runner=_runner(),
-        session_manager=MagicMock(),
-    )
-
-    assert result.success is False
-    assert result.error == "retired_close_review_run"
-    prepare.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_srt_codex_resume_keeps_tui_and_composer_prompt(
     monkeypatch: pytest.MonkeyPatch,
     mock_codex_prompt_delivery: MagicMock,

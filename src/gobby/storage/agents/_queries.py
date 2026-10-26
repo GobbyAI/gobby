@@ -154,8 +154,6 @@ class _AgentRunQueryMixin:
 
         Task-owned parked runs are relaunched by the dispatcher; these have no
         dispatch owner and are retried by the lifecycle monitor instead.
-
-        Historical close-review runs are inert and must never resume.
         """
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
@@ -175,7 +173,6 @@ class _AgentRunQueryMixin:
             f"""
             WHERE ar.task_id IS NULL
               AND ar.machine_id = %s
-              AND ar.agent_name IS DISTINCT FROM %s
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
               AND {unconsumed_sql}
@@ -189,7 +186,7 @@ class _AgentRunQueryMixin:
                       AND s.status != 'deleted'
               )
             """,
-            (machine_id, "task-close-reviewer", max_age_hours),
+            (machine_id, max_age_hours),
             order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )

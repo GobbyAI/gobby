@@ -3,19 +3,27 @@
 //! Each submodule owns one step; `resolve_srt_policy` runs them in oracle order.
 
 mod caches;
+mod grok_home;
+mod monitor;
 mod paths;
 mod prewarm;
+mod ps_shim;
 pub mod runtime;
 mod settings;
 mod tables;
+mod verify;
 
 use crate::node_commands::{Sandbox, SandboxBackend};
 use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
+    io,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
+    process::{Child, ExitStatus},
+    thread,
+    time::{Duration, Instant},
 };
 
 /// Every input the policy reads. Filesystem probes resolve against `home` and
@@ -38,8 +46,6 @@ pub struct PolicyInputs {
     pub prewarm_pre_commit_store: bool,
     /// `sys.platform` spelling of the host: `darwin` or `linux`.
     pub platform: String,
-    /// Agent name of a spawned run; `task-close-reviewer` gets a private Claude home.
-    pub agent_name: Option<String>,
 }
 
 /// The resolved policy for one `srt` run.
@@ -62,6 +68,35 @@ pub fn resolve_srt_policy(inputs: &PolicyInputs) -> Result<SrtPolicy> {
     if !inputs.sandbox.enabled || !matches!(inputs.sandbox.backend, SandboxBackend::Srt) {
         bail!("resolve_srt_policy requires an enabled srt sandbox");
     }
+    let compiled = compile_policy(inputs, &[], &[])?;
+    let settings =
+        settings::canonical_json(&settings::render(&compiled.resolved, &inputs.home)).into_bytes();
+    let additions = compiled
+        .env
+        .into_iter()
+        .filter(|(key, value)| inputs.env.get(key) != Some(value))
+        .collect();
+    Ok(SrtPolicy {
+        settings,
+        env: additions,
+        sandbox: compiled.sandbox,
+    })
+}
+
+/// One run's compiled policy, before its settings are rendered.
+pub(super) struct CompiledPolicy {
+    resolved: paths::ResolvedPaths,
+    sandbox: Sandbox,
+    env: BTreeMap<String, String>,
+}
+
+/// The compile step both launch paths share. `home_writes` and `home_denies` are a
+/// private provider home's grants, added before the sandbox paths are computed.
+pub(super) fn compile_policy(
+    inputs: &PolicyInputs,
+    home_writes: &[String],
+    home_denies: &[String],
+) -> Result<CompiledPolicy> {
     let mut env = inputs.env.clone();
     let project = caches::project_write_paths(&inputs.source_root)?;
     let mut config = inputs.sandbox.clone();
@@ -91,22 +126,27 @@ pub fn resolve_srt_policy(inputs: &PolicyInputs) -> Result<SrtPolicy> {
             paths::text(&layout.cargo_home()),
             paths::text(&layout.cargo_target),
         ]);
-    effective.extra_write_paths =
-        paths::dedupe(effective.extra_write_paths.into_iter().chain(run_grants));
+    effective.extra_write_paths = paths::dedupe(
+        effective
+            .extra_write_paths
+            .into_iter()
+            .chain(run_grants)
+            .chain(home_writes.iter().cloned()),
+    );
+    effective.extra_deny_write_paths = paths::dedupe(
+        effective
+            .extra_deny_write_paths
+            .into_iter()
+            .chain(home_denies.iter().cloned()),
+    );
 
     let mut policy_env = env;
     policy_env.extend(layout.environment(&inputs.provider));
     let resolved = paths::compute(&effective, inputs, &policy_env)?;
-    let settings =
-        settings::canonical_json(&settings::render(&resolved, &inputs.home)).into_bytes();
-    let additions = policy_env
-        .into_iter()
-        .filter(|(key, value)| inputs.env.get(key) != Some(value))
-        .collect();
-    Ok(SrtPolicy {
-        settings,
-        env: additions,
+    Ok(CompiledPolicy {
+        resolved,
         sandbox: effective,
+        env: policy_env,
     })
 }
 
@@ -137,4 +177,21 @@ fn hash16(bytes: &[u8]) -> String {
         .take(8)
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// Waits for `child` up to `timeout`. On expiry the child is killed and reaped, and
+/// `None` comes back.
+fn wait_bounded(child: &mut Child, timeout: Duration) -> io::Result<Option<ExitStatus>> {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }

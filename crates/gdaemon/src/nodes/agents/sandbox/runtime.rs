@@ -1,23 +1,43 @@
 //! The single SRT launch chokepoint (plan 2.5, ROADMAP decision 6).
 //!
-//! Behavior-free stubs. The signatures and the `SandboxLaunch` fields are pinned by
-//! `crates/gdaemon/tests/node_agents.rs` for task #24374; every body is `todo!()`
-//! until the port lands.
+//! Every managed SRT launch goes through `prepare_launch_with`: the refusals run
+//! first, then the run directories, the private provider home, the compiled policy,
+//! the shared monitor, the policy files, and the preflight. `SandboxLaunch::wrap` is
+//! the only place a provider argv gets wrapped.
 
-use super::PolicyInputs;
-use crate::node_commands::Sandbox;
+pub use super::verify::{verify_srt_content, verify_srt_installation};
+use super::{PolicyInputs, caches, compile_policy, grok_home, monitor, paths, ps_shim, settings};
+use crate::node_commands::{Sandbox, SandboxBackend};
 use std::{
     collections::BTreeMap,
+    fs::{self, DirBuilder},
+    io::{Read, Write},
+    os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
-/// Managed SRT release the Rust side pins. Must equal `SRT_RELEASE.version` in Python.
-pub const SRT_VERSION: &str = "";
+/// Managed SRT release the Rust side pins. Equals `SRT_RELEASE.version` in Python.
+pub const SRT_VERSION: &str = super::verify::SRT_RELEASE.version;
+
+const SRT_SETTINGS_RELATIVE_PATH: &str = "assets/settings.json";
+const SRT_VIOLATIONS_RELATIVE_PATH: &str = "logs/violations.jsonl";
+const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// A refusal carrying the lockout text the Python oracle reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxError {
     message: String,
+}
+
+impl SandboxError {
+    pub(super) fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for SandboxError {
@@ -43,6 +63,8 @@ pub struct SandboxLaunch {
     pub runner: PathBuf,
     pub settings: PathBuf,
     pub violations: PathBuf,
+    /// The resolved provider executable that replaces the argv's first element.
+    pub provider_executable: PathBuf,
     /// Provider arguments the sandbox adds: codex only, `[]` for every other provider.
     pub provider_args: Vec<String>,
     /// The complete run environment.
@@ -53,43 +75,331 @@ pub struct SandboxLaunch {
 }
 
 impl SandboxLaunch {
-    /// Wraps `argv` as `[node, runner, --settings, ..., --, <provider>, ...]`.
-    pub fn wrap(&self, _argv: &[String]) -> Vec<String> {
-        todo!()
+    /// Wraps `argv` as `[node, runner, --settings, ..., --, <provider>, ...]`. An
+    /// empty argv yields only the wrapper prefix.
+    pub fn wrap(&self, argv: &[String]) -> Vec<String> {
+        let mut command = vec![
+            self.node.display().to_string(),
+            self.runner.display().to_string(),
+            "--settings".to_string(),
+            self.settings.display().to_string(),
+            "--violations".to_string(),
+            self.violations.display().to_string(),
+            "--".to_string(),
+        ];
+        if let Some((_, rest)) = argv.split_first() {
+            command.push(self.provider_executable.display().to_string());
+            command.extend(rest.iter().cloned());
+        }
+        command
     }
 }
 
 /// Refuses any sandbox that is not `enabled` with backend `srt`.
-pub fn require_managed_srt(_sandbox: &Sandbox) -> Result<(), SandboxError> {
-    todo!()
+pub fn require_managed_srt(sandbox: &Sandbox) -> Result<(), SandboxError> {
+    if sandbox.enabled && sandbox.backend == SandboxBackend::Srt {
+        return Ok(());
+    }
+    let backend = match sandbox.backend {
+        SandboxBackend::Srt => "srt",
+        SandboxBackend::ProviderNative => "provider-native",
+    };
+    let enabled = if sandbox.enabled { "True" } else { "False" };
+    Err(SandboxError::new(format!(
+        "spawn_agent requires managed SRT (enabled={enabled}, backend={backend})"
+    )))
 }
 
-/// Verifies the managed install under `gobby_home`.
-pub fn verify_srt_installation(_gobby_home: &Path) -> Result<SrtInstallation, SandboxError> {
-    todo!()
-}
-
-/// Checks every file the install manifest names, and refuses drift from it.
-pub fn verify_srt_content(
-    _root: &Path,
-    _manifest: &BTreeMap<String, String>,
-) -> Result<(), SandboxError> {
-    todo!()
-}
-
-/// Verifies the install, then prepares the launch.
+/// Verifies the managed install under `inputs.gobby_home`, then prepares the launch.
 pub fn prepare_launch(
-    _inputs: &PolicyInputs,
-    _prompt_file: &Path,
+    inputs: &PolicyInputs,
+    prompt_file: &Path,
 ) -> Result<SandboxLaunch, SandboxError> {
-    todo!()
+    require_managed_srt(&inputs.sandbox)?;
+    let installation = verify_srt_installation(&inputs.gobby_home)?;
+    prepare_launch_with(inputs, prompt_file, &installation)
 }
 
 /// Prepares the launch against an already verified installation.
 pub fn prepare_launch_with(
-    _inputs: &PolicyInputs,
-    _prompt_file: &Path,
-    _installation: &SrtInstallation,
+    inputs: &PolicyInputs,
+    prompt_file: &Path,
+    installation: &SrtInstallation,
 ) -> Result<SandboxLaunch, SandboxError> {
-    todo!()
+    require_managed_srt(&inputs.sandbox)?;
+    if inputs.provider == "grok" && inputs.platform == "linux" {
+        return Err(SandboxError::new(
+            "Linux SRT cannot safely persist Grok auth refresh: atomic temporary-file \
+             grants and replacement of the auth bind mount are unsupported",
+        ));
+    }
+    if inputs.sandbox.allow_network {
+        return Err(SandboxError::new(
+            "SRT does not accept unrestricted network access; configure explicit \
+             allowed_domains or enable a scoped Git/package capability",
+        ));
+    }
+    let provider_executable = inputs.provider_executable.as_deref().ok_or_else(|| {
+        SandboxError::new(format!("{} executable not found in PATH", inputs.provider))
+    })?;
+    let provider_executable = fs::canonicalize(provider_executable).map_err(|error| {
+        SandboxError::new(format!(
+            "Failed to resolve {} executable {}: {error}",
+            inputs.provider,
+            provider_executable.display()
+        ))
+    })?;
+
+    let layout = caches::run_layout(inputs, &inputs.env).map_err(lift)?;
+    let assets = layout.root.join("assets");
+    create_run_directories(&layout, &assets)?;
+
+    let mut run_env = BTreeMap::new();
+    let mut home_writes = Vec::new();
+    let mut home_denies = Vec::new();
+    if inputs.provider == "grok" {
+        let home = grok_home::prepare(inputs, &layout.cache, &assets).map_err(lift)?;
+        run_env.insert("GROK_HOME".to_string(), paths::text(&home.home));
+        run_env.insert(
+            "GROK_AUTH_PATH".to_string(),
+            paths::text(&home.home.join("auth.json")),
+        );
+        home_writes = home.runtime_write_paths;
+        home_denies = home.protected_write_paths;
+    }
+    if prompt_file.is_file() {
+        let copied = assets.join("prompt.md");
+        fs::copy(prompt_file, &copied)
+            .and_then(|_| fs::set_permissions(&copied, fs::Permissions::from_mode(0o600)))
+            .map_err(|error| SandboxError::new(format!("prompt copy failed: {error}")))?;
+        run_env.insert("GOBBY_PROMPT_FILE".to_string(), paths::text(&copied));
+    }
+
+    let mut run_inputs = inputs.clone();
+    run_inputs.env.extend(run_env);
+    let compiled = compile_policy(&run_inputs, &home_writes, &home_denies).map_err(lift)?;
+    let gobby = inputs.gobby_home.as_path();
+    let home = inputs.home.as_path();
+    let managed_root = paths::resolve_nonstrict(&paths::managed_execution_root(gobby));
+    let own_root = paths::resolve_nonstrict(&layout.root);
+    for allowed in compiled
+        .resolved
+        .read_paths
+        .iter()
+        .chain(&compiled.resolved.write_paths)
+    {
+        let allowed_root = paths::resolve_nonstrict(Path::new(&paths::subtree_prefix(allowed)));
+        let is_glob = allowed.contains(['*', '?', '[', '{']);
+        if managed_root.starts_with(&allowed_root)
+            || (allowed_root.starts_with(&managed_root)
+                && (is_glob || !allowed_root.starts_with(&own_root)))
+        {
+            return Err(SandboxError::new(
+                "Sandbox grants cannot expose another managed execution",
+            ));
+        }
+    }
+
+    let mut resolved = compiled.resolved;
+    resolved.read_paths.push(paths::text(&assets));
+    resolved.read_paths.push(paths::text(&installation.root));
+    let shim_dir = ps_shim::droid_shim_dir(gobby, &inputs.platform);
+    if let Some(dir) = &shim_dir {
+        resolved.read_paths.push(paths::text(dir));
+    }
+    paths::assert_sensitive_path_contract(
+        &[
+            resolved.read_paths.as_slice(),
+            resolved.write_paths.as_slice(),
+        ],
+        gobby,
+        home,
+        &run_inputs.env,
+    )
+    .map_err(lift)?;
+
+    let mut env = compiled.env;
+    if let Some(dir) = &shim_dir {
+        let existing = env.get("PATH").cloned().unwrap_or_default();
+        let joined = if existing.is_empty() {
+            paths::text(dir)
+        } else {
+            format!("{}:{existing}", paths::text(dir))
+        };
+        env.insert("PATH".to_string(), joined);
+    }
+    let run_key = layout
+        .root
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    if inputs.platform == "darwin" {
+        let socket = monitor::ensure(
+            gobby,
+            &installation.node,
+            &installation.runner,
+            &env,
+            &run_key,
+        )
+        .map_err(|error| {
+            SandboxError::new(format!("Shared SRT violation monitor unavailable: {error}"))
+        })?;
+        env.insert("GOBBY_SRT_MONITOR_SOCKET".to_string(), paths::text(&socket));
+        env.insert("GOBBY_SRT_RUN_KEY".to_string(), run_key);
+    }
+
+    let settings_bytes = settings::canonical_json(&settings::render(&resolved, home)).into_bytes();
+    let settings_path = layout.root.join(SRT_SETTINGS_RELATIVE_PATH);
+    let violations_path = layout.root.join(SRT_VIOLATIONS_RELATIVE_PATH);
+    write_private_file(&settings_path, &settings_bytes)?;
+    write_private_file(&violations_path, b"")?;
+
+    let mux_tmpdir = if inputs.platform == "linux" {
+        layout.tmp.clone()
+    } else {
+        monitor::mux_tmpdir(gobby, &env).map_err(lift)?
+    };
+    env.insert("GOBBY_SRT_TMPDIR".to_string(), paths::text(&mux_tmpdir));
+
+    let launch = SandboxLaunch {
+        node: installation.node.clone(),
+        runner: installation.runner.clone(),
+        settings: settings_path,
+        violations: violations_path,
+        provider_executable,
+        // A snapshot can restore a stale PATH after this run's shell startup.
+        provider_args: if inputs.provider == "codex" {
+            vec![
+                "-c".to_string(),
+                "features.shell_snapshot=false".to_string(),
+            ]
+        } else {
+            Vec::new()
+        },
+        env,
+        read_paths: resolved.read_paths.iter().map(PathBuf::from).collect(),
+        write_paths: resolved.write_paths.iter().map(PathBuf::from).collect(),
+        deny_paths: resolved
+            .deny_read_paths
+            .iter()
+            .chain(&resolved.deny_write_paths)
+            .map(PathBuf::from)
+            .collect(),
+    };
+    preflight(&launch, &inputs.workspace)?;
+    Ok(launch)
+}
+
+/// Creates the run's directories, each private to the daemon user.
+fn create_run_directories(layout: &caches::RunLayout, assets: &Path) -> Result<(), SandboxError> {
+    let cargo_home = layout.cargo_home();
+    let dirs = [
+        layout.root.as_path(),
+        assets,
+        layout.tmp.as_path(),
+        layout.hooks.as_path(),
+        layout.logs.as_path(),
+        layout.cache.as_path(),
+        cargo_home.as_path(),
+        layout.cargo_target.as_path(),
+    ];
+    for dir in dirs {
+        DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(|error| SandboxError::new(format!("create {}: {error}", dir.display())))?;
+    }
+    Ok(())
+}
+
+/// `_preflight_srt`: the runner's `--preflight` must exit 0 within the bound.
+fn preflight(launch: &SandboxLaunch, workspace: &Path) -> Result<(), SandboxError> {
+    if !launch.node.is_absolute() {
+        return Err(SandboxError::new(
+            "Node.js executable must have an absolute PATH spelling",
+        ));
+    }
+    let mut command = launch.wrap(&[]);
+    command.pop();
+    command.push("--preflight".to_string());
+    let mut child = Command::new(&command[0])
+        .args(&command[1..])
+        .current_dir(workspace)
+        .envs(&launch.env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| SandboxError::new("managed SRT preflight could not start"))?;
+    let mut stderr = child.stderr.take();
+    let reader = thread::spawn(move || {
+        let mut text = String::new();
+        if let Some(stream) = stderr.as_mut() {
+            let _ = stream.read_to_string(&mut text);
+        }
+        text
+    });
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < PREFLIGHT_TIMEOUT => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SandboxError::new(format!(
+                    "managed SRT preflight timed out after {:.1}s (bound {}s)",
+                    started.elapsed().as_secs_f64(),
+                    PREFLIGHT_TIMEOUT.as_secs_f64()
+                )));
+            }
+            Err(_) => {
+                return Err(SandboxError::new("managed SRT preflight execution failed"));
+            }
+        }
+    };
+    let detail = reader.join().unwrap_or_default();
+    if status.success() {
+        return Ok(());
+    }
+    let detail = detail.trim();
+    Err(SandboxError::new(format!(
+        "managed SRT preflight failed: {}",
+        if detail.is_empty() {
+            "unknown error"
+        } else {
+            detail
+        }
+    )))
+}
+
+/// `_write_private_file`: an exclusive 0600 temporary file, fsynced, then renamed.
+fn write_private_file(path: &Path, content: &[u8]) -> Result<(), SandboxError> {
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let temp = path.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let written = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp)?;
+        file.write_all(content)?;
+        file.sync_all()?;
+        fs::rename(&temp, path)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+    })();
+    let _ = fs::remove_file(&temp);
+    written.map_err(|error| SandboxError::new(format!("write {}: {error}", path.display())))
+}
+
+fn lift(error: anyhow::Error) -> SandboxError {
+    SandboxError::new(format!("{error:#}"))
 }

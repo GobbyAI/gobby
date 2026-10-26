@@ -318,6 +318,7 @@ fn check_cache_path(shared: &Path, path: &Path) -> Result<()> {
 /// `SandboxRunPaths`: one run's root, its writable siblings, and its cache layout.
 #[derive(Debug, Clone)]
 pub(super) struct RunLayout {
+    pub root: PathBuf,
     pub tmp: PathBuf,
     pub hooks: PathBuf,
     pub logs: PathBuf,
@@ -397,6 +398,7 @@ pub(super) fn run_layout(
     check_cache_path(&shared_cache, &shared_cache.join("cargo-home"))?;
     check_cache_path(&shared_cache, &cargo_target)?;
     Ok(RunLayout {
+        root: root.clone(),
         tmp: root.join("tmp"),
         hooks: root.join("hooks"),
         logs: root.join("logs"),
