@@ -68,7 +68,6 @@ from ._resume import (
     ResumeSeatGone,
     resolve_seat_resume,
     resume_isolation,
-    resumed_seat_lane,
     resumed_seat_plan,
     resumed_seat_task_id,
 )
@@ -139,7 +138,6 @@ async def spawn_agent_impl(
     write_paths_reason: str | None = None,
     reserved_run_id: str | None = None,
     placement: dict[str, Any] | None = None,
-    lane: str | None = None,
     agent_pane_reserver: AgentPaneReserver | None = None,
     project_context_authoritative: bool = False,
     project_path_explicit: bool = True,
@@ -159,7 +157,6 @@ async def spawn_agent_impl(
                 provider,
                 runner.run_storage,
                 agent_body,
-                lane,
                 live_host_epoch=live_host_epoch,
             )
         except ValueError as exc:
@@ -656,8 +653,6 @@ async def spawn_agent_impl(
         resume_metadata[GRANT_KEY] = write_grant
     if allow_closed_task:
         resume_metadata["allow_closed_task"] = True
-    if seat_lane := (lane or "").strip() or resumed_seat_lane(resume_target, runner.run_storage):
-        resume_metadata["lane"] = seat_lane
     if resume_target is not None:
         resume_metadata.update(
             {

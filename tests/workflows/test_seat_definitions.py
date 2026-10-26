@@ -62,6 +62,8 @@ SEAT_CATALOGUE = {
     "design-reviewer",
     "recovery-steward",
     "consolidator",
+    "docs-reviewer",
+    "research-reviewer",
 }
 # Root panes: the operator opens them, so they never take the spawn surface.
 PERSONA_ONLY_SEATS = {"assistant", "orchestrator"}
@@ -95,6 +97,8 @@ READ_ONLY_SEATS = {
     "design-reviewer",
     "recovery-steward",
     "consolidator",
+    "docs-reviewer",
+    "research-reviewer",
 }
 WRITE_SCOPE_RULES = {"assistant": "assistant-write-scope", "archivist": "archivist-write-scope"}
 STEP_SEATS = {
@@ -104,6 +108,8 @@ STEP_SEATS = {
     "metrics-monitor",
     "researcher",
     "consolidator",
+    "docs-reviewer",
+    "research-reviewer",
 }
 
 SYNC_METADATA_KEYS = {"tags", "priority", "type"}
@@ -126,6 +132,8 @@ SEND_MESSAGE_TARGETS = {
     "security-reviewer": ["parent", "session"],
     "debugger": ["parent", "session"],
     "design-reviewer": ["parent", "session"],
+    "docs-reviewer": ["parent", "session"],
+    "research-reviewer": ["parent", "session"],
     "recovery-steward": ["parent", "session"],
     "consolidator": ["parent", "session"],
 }
@@ -143,11 +151,15 @@ WAITING_STEPS = {
     "metrics-monitor": {"tick", "report"},
     "researcher": {"serve"},
     "consolidator": {"load_skills", "consolidate"},
+    "docs-reviewer": {"load_skills", "await", "review", "verdict"},
+    "research-reviewer": {"load_skills", "await", "review", "verdict"},
 }
 # #23750: the steps a relaunched seat bootstraps its role file from.
 ROLE_BOOTSTRAP_STEPS = {
     "developer": {"load_skills", "claim"},
     "code-reviewer": {"load_skills", "await"},
+    "docs-reviewer": {"load_skills", "await"},
+    "research-reviewer": {"load_skills", "await"},
 }
 REPORT_TOOLS = {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"}
 

@@ -90,8 +90,6 @@ def test_reporter_renders_every_lane_from_policy(lane_count: int) -> None:
 @pytest.mark.parametrize("name", ["security-reviewer", "researcher"])
 def test_launch_assignment_is_rendered_in_the_seat_definition(name: str) -> None:
     assignment = {
-        "lane": "verification",
-        "lane_epic": "#42",
         "worktree": "/tmp/assigned-checkout",
         "first_job": "#43 Verify configuration",
     }
@@ -239,8 +237,6 @@ def test_every_bundled_agent_fits_the_per_turn_policy_budget(name: str) -> None:
     variables = {
         "project_policy": policy,
         "seat_context": {
-            "lane": "1",
-            "lane_epic": "project#42",
             "worktree": "/tmp/assigned-checkout",
             "first_job": "project#43 Verify configuration",
         },

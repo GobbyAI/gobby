@@ -35,14 +35,14 @@ def test_spawn_preamble_renders_launch_assignment(monkeypatch: pytest.MonkeyPatc
     request, _, _ = _sandbox_request()
     request.agent_name = "assigned-seat"
     request.session_manager = MagicMock()
-    request.initial_variables = {"seat_context": {"lane": "custom"}}
+    request.initial_variables = {"seat_context": {"worktree": "custom"}}
     body = make_agent_definition(
-        name="assigned-seat", prompts={"agent": "Assigned lane {{ seat_context.lane }}."}
+        name="assigned-seat", prompts={"agent": "Assigned worktree {{ seat_context.worktree }}."}
     )
     resolver = MagicMock(return_value=body)
     monkeypatch.setattr("gobby.workflows.agent_resolver.resolve_agent", resolver)
 
-    assert _agent_prompt_prefix(request) == "Assigned lane custom."
+    assert _agent_prompt_prefix(request) == "Assigned worktree custom."
     resolver.assert_called_once_with(
         "assigned-seat", request.session_manager._storage.db, project_id="project"
     )

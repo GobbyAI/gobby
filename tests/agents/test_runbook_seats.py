@@ -226,7 +226,7 @@ def test_inferred_sibling_uses_completed_guard_workspace(env: _Env, same_workspa
     execution_id = session.external_id.removeprefix("pipeline-")
     env.db.execute(
         "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
-        (json.dumps({"lane": "3", "seats": "developer"}), execution_id),
+        (json.dumps({"seats": "developer"}), execution_id),
     )
     workspace = (
         env.workspace_id
@@ -265,7 +265,7 @@ def test_inferred_sibling_without_successful_guard_refuses(
     execution_id = session.external_id.removeprefix("pipeline-")
     env.db.execute(
         "UPDATE pipeline_executions SET inputs_json = %s WHERE id = %s",
-        (json.dumps({"lane": "3", "seats": "developer"}), execution_id),
+        (json.dumps({"seats": "developer"}), execution_id),
     )
     if isinstance(output, dict):
         output = {**output, "workspace": env.workspace_id}
@@ -557,7 +557,7 @@ def _support_tab(env: _Env, title: str = "Support") -> None:
 @pytest.mark.parametrize("tabs", [0, 1])
 def test_guard_reports_whether_the_titled_tab_exists(env: _Env, tabs: int) -> None:
     caller = _pipeline_child(env)
-    _support_tab(env, "Lane 3")
+    _support_tab(env, "Other tab")
     for _ in range(tabs):
         _support_tab(env)
 
@@ -721,6 +721,7 @@ def test_devteam_guard_validates_rendered_report_target(env: _Env, report_to: st
     assert guard is not None and guard.arguments is not None
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
+        task="#1",
         workspace=env.workspace_id,
         seats="developer",
         report_to=env.parent_session_id if report_to == "operator" else report_to,

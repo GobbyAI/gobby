@@ -43,12 +43,12 @@ def balanced_layout(
     """Keep pane order and IDs, filling columns of evenly sized rows.
 
     Reserve a cell for every divider. Columns keep each pane at the width and
-    height interactive agents need, and a narrow viewport uses one column. A lane
+    height interactive agents need, and a narrow viewport uses one column. A tab
     too crowded for that floor tiles the whole viewport instead, as gclient's
     Arrange > Tiled does: ceil(sqrt N) even rows, each filled left to right.
     """
     if not isinstance(columns, int) or isinstance(columns, bool) or columns < MIN_PANE_COLUMNS:
-        raise InvalidWorkspaceOpError(f"A lane tab needs at least {MIN_PANE_COLUMNS} columns")
+        raise InvalidWorkspaceOpError(f"A tab needs at least {MIN_PANE_COLUMNS} columns")
     if not isinstance(rows, int) or isinstance(rows, bool) or rows < MIN_PANE_ROWS:
         raise InvalidWorkspaceOpError(f"Supply the tab viewport rows (at least {MIN_PANE_ROWS})")
     panes: list[LayoutNode] = [_leaf(pane_id) for pane_id in layout_pane_ids(layout)]

@@ -46,7 +46,7 @@ rules:
           operation. Do not include another session's staged paths.
           {% endif %}
 
-          For a clean lane worktree syncing to an already-landed integration
+          For a clean worktree syncing to an already-landed integration
           commit, run `git merge --ff-only <landed-integration-commit>` alone
           in its own tool call. Run preflight and status checks in separate
           calls. The exemption requires an empty index and proof that every
@@ -105,7 +105,7 @@ rules:
           operation is still blocked here, because the findings have to reach you
           before the commit does.
 
-          For a clean lane worktree syncing to an already-landed integration
+          For a clean worktree syncing to an already-landed integration
           commit, run `git merge --ff-only <landed-integration-commit>` alone
           in its own tool call. Run preflight and status checks in separate
           calls. The exemption requires an empty index and proof that every

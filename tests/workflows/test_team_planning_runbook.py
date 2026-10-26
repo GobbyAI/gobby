@@ -25,7 +25,6 @@ def _definition() -> PipelineDefinition:
 def _context(definition: PipelineDefinition, seats: str) -> dict[str, Any]:
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
-        lane="7",
         seats=seats,
         workspace="pilot-workspace",
         project_path="/pilot/shared-checkout",
@@ -63,14 +62,16 @@ def test_team_planning_launches_enhancer_seat() -> None:
         context["steps"][step.id] = {"output": {"pane_ref": f"pilot:{step.id}"}}
         launched.append(step.id)
 
-    # The writer opens the lane tab; the adversary and enhancer split into that same tab.
+    # The writer opens the Team Planning tab; the adversary and enhancer split into that same tab.
     assert launched == list(SEAT_NAMES)
-    assert placements["plan-writer"] == {"tab": {"workspace": "pilot-workspace", "title": "Lane 7"}}
+    assert placements["plan-writer"] == {
+        "tab": {"workspace": "pilot-workspace", "title": "Team Planning"}
+    }
     assert placements["plan-adversary"] == {
-        "split": {"pane": "pilot:plan-writer", "axis": "right", "title": "Lane 7 plan adversary"}
+        "split": {"pane": "pilot:plan-writer", "axis": "right", "title": "Plan Adversary"}
     }
     assert placements["plan-enhancer"] == {
-        "split": {"pane": "pilot:plan-writer", "axis": "right", "title": "Lane 7 plan enhancer"}
+        "split": {"pane": "pilot:plan-writer", "axis": "right", "title": "Plan Enhancer"}
     }
 
 
@@ -86,4 +87,4 @@ def test_team_planning_relaunches_enhancer_only() -> None:
     assert step.mcp is not None and step.mcp.arguments is not None
     args = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
     assert args["agent"] == "plan-enhancer"
-    assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": "Lane 7"}}
+    assert args["placement"] == {"tab": {"workspace": "pilot-workspace", "title": "Team Planning"}}

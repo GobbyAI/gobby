@@ -32,7 +32,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
     ("assignment", "error"),
     [
         ({"_agent_type": "privileged"}, "Unknown seat_context assignment key"),
-        ({"lane": "other"}, "seat_context lane differs from launch lane"),
+        ({"lane": "other"}, "Unknown seat_context assignment key"),
     ],
 )
 async def test_invalid_assignment_refuses_before_allocations(
@@ -44,9 +44,7 @@ async def test_invalid_assignment_refuses_before_allocations(
     db = MagicMock()
     registry = _factory.create_spawn_agent_registry(runner, db=db)
     with patch.object(_factory, "spawn_agent_impl", AsyncMock()) as launch:
-        result = await registry.call(
-            "spawn_agent", {"prompt": "work", "lane": "selected", "seat_context": assignment}
-        )
+        result = await registry.call("spawn_agent", {"prompt": "work", "seat_context": assignment})
     assert result == {"success": False, "error": error}
     launch.assert_not_awaited()
     assert db.mock_calls == []
@@ -60,9 +58,9 @@ async def test_launch_assignment_overrides_definition_variables() -> None:
     body = make_agent_definition(
         name="default",
         prompts={"agent": "Work."},
-        workflows=make_agent_workflows(variables={"seat_context": {"lane": "default"}}),
+        workflows=make_agent_workflows(variables={"seat_context": {"worktree": "default"}}),
     )
-    assignment = {"lane": "selected", "lane_epic": "project#42", "worktree": "workspace"}
+    assignment = {"worktree": "workspace", "first_job": "project#42"}
     launch = AsyncMock(return_value={"success": True, "run_id": "assignment-launch"})
     registry = _factory.create_spawn_agent_registry(MagicMock())
     with (
@@ -77,13 +75,11 @@ async def test_launch_assignment_overrides_definition_variables() -> None:
             return_value=None,
         ),
     ):
-        result = await registry.call(
-            "spawn_agent", {"prompt": "work", "lane": "selected", "seat_context": assignment}
-        )
+        result = await registry.call("spawn_agent", {"prompt": "work", "seat_context": assignment})
     assert result["success"] is True
     assert launch.await_args is not None
     assert launch.await_args.kwargs["initial_variables"]["seat_context"] == assignment
-    assert body.workflows.variables["seat_context"] == {"lane": "default"}
+    assert body.workflows.variables["seat_context"] == {"worktree": "default"}
 
 
 @pytest.mark.asyncio
@@ -930,21 +926,6 @@ class TestSpawnAgentParamOverrides:
 
             assert result["success"] is True, result
             return mock_execute.call_args[0][0]
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("lane", "recorded"),
-        [("3", "3"), ("  3  ", "3"), ("   ", None), (None, None)],
-    )
-    async def test_lane_is_recorded_in_resume_metadata(
-        self, mock_runner: MagicMock, lane: str | None, recorded: str | None
-    ) -> None:
-        body = make_agent_definition(
-            name="default", provider="claude", prompts={"agent": "Run the assigned task."}
-        )
-        params: dict[str, object] = {} if lane is None else {"lane": lane}
-        request = await self._spawn_request_for(mock_runner, body, params)
-        assert request.resume_metadata_json.get("lane") == recorded
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

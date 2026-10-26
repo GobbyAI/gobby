@@ -242,6 +242,8 @@ def devteam_context(inputs: dict[str, Any]) -> dict[str, Any]:
         "workspace_id": WORKSPACE,
         "launch": requested.split(","),
         "live": {},
+        # A replacement names a team whose tab an earlier launch opened; a new team has none.
+        "tab_exists": values["team_id"] is not None,
     }
     return {
         "inputs": values,
@@ -589,8 +591,9 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     seats = ["dev-manager", "test-writer", "developer", "code-reviewer"]
     assert list(initial) == ["guard", "admit", *seats]
     assert identity(initial["code-reviewer"]) == SOL
-    branch = team.binding.branch
-    assert initial["dev-manager"]["placement"] == {"tab": {"workspace": WORKSPACE, "title": branch}}
+    assert initial["dev-manager"]["placement"] == {
+        "tab": {"workspace": WORKSPACE, "title": f"Dev Team - {task_id}"}
+    }
     # The Orchestrator's relaunch for REJECTION_2 starts only an Opus reviewer in that tab.
     fresh_inputs = {
         "task": task_id,
@@ -608,9 +611,9 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     assert reviewer["placement"] == {
         "split": {
             "workspace": WORKSPACE,
-            "tab_title": branch,
+            "tab_title": f"Dev Team - {task_id}",
             "axis": "right",
-            "title": f"{branch} fresh code reviewer",
+            "title": "Code Reviewer",
         }
     }
     spawned = await spawn_seat(world, fresh_run, reviewer)

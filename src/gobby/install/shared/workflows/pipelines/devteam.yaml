@@ -3,7 +3,8 @@ type: pipeline
 version: "1.0"
 description: |
   One-task development team. Admits the task's team (its task-titled branch and worktree),
-  then launches the requested seats into that tree, sharing one tab titled with the branch.
+  then launches the requested seats into that tree, sharing one tab titled 'Dev Team - #<task>'.
+  Seat panes take their agent definition names (docs/contracts/seat-titles.md).
   Run with task, workspace and report_to; pass the project policy's launch defaults.
   A replacement execution names the team with team_id. After the second review rejection,
   fresh_reviewer=true with team_id and exclude_reviewers launches only the fresh code
@@ -103,18 +104,19 @@ steps:
         require_report_to: true
         skip_live_seats: "${{ inputs.team_id is not none and not inputs.fresh_reviewer }}"
         team_id: "${{ inputs.team_id }}"
+        tab_title: "${{ 'Dev Team - ' + inputs.task }}"
         catalogue:
           - name: dev-manager
-            title: Dev manager
+            title: Dev Manager
             agent: dev-manager
           - name: test-writer
-            title: Test writer
+            title: Test Writer
             agent: test-writer
           - name: developer
             title: Developer
             agent: developer
           - name: code-reviewer
-            title: Code reviewer
+            title: Code Reviewer
             agent: code-reviewer
 
   - id: admit
@@ -135,7 +137,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: dev-manager
-        title: "${{ steps.admit.output.branch + ' dev manager' }}"
         provider: "${{ inputs.manager_provider }}"
         model: "${{ inputs.manager_model }}"
         reasoning_effort: "${{ inputs.manager_reasoning_effort }}"
@@ -145,13 +146,13 @@ steps:
         task_id: "${{ steps.admit.output.task_id }}"
         reserved_run_id: "${{ invocation_id }}"
         prompt: "You are the dev manager seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
-        # The team's first manager opens the branch tab; a replacement's splits it.
+        # The manager opens the team tab when none exists; otherwise it splits that tab.
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.admit.output.branch, 'axis': 'right',
-          'title': steps.admit.output.branch + ' dev manager'}} if inputs.team_id else
+          'tab_title': 'Dev Team - ' + inputs.task, 'axis': 'right',
+          'title': 'Dev Manager'}} if steps.guard.output.tab_exists else
           {'tab': {'workspace': steps.guard.output.workspace_id,
-          'title': steps.admit.output.branch}} }}
+          'title': 'Dev Team - ' + inputs.task}} }}
 
   - id: test-writer
     condition: "${{ not inputs.fresh_reviewer and 'test-writer' in steps.guard.output.launch }}"
@@ -160,7 +161,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: test-writer
-        title: "${{ steps.admit.output.branch + ' test writer' }}"
         provider: "${{ inputs.test_writer_provider }}"
         model: "${{ inputs.test_writer_model }}"
         reasoning_effort: "${{ inputs.test_writer_reasoning_effort }}"
@@ -169,10 +169,14 @@ steps:
         project_path: "${{ steps.admit.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
         prompt: "You are the test writer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        # A seat opens the team tab only when no earlier launch in this run opens it.
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.admit.output.branch, 'axis': 'right',
-          'title': steps.admit.output.branch + ' test writer'}} }}
+          'tab_title': 'Dev Team - ' + inputs.task, 'axis': 'right',
+          'title': 'Test Writer'}} if steps.guard.output.tab_exists
+          or 'dev-manager' in steps.guard.output.launch else
+          {'tab': {'workspace': steps.guard.output.workspace_id,
+          'title': 'Dev Team - ' + inputs.task}} }}
 
   - id: developer
     condition: "${{ not inputs.fresh_reviewer and 'developer' in steps.guard.output.launch }}"
@@ -181,7 +185,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: developer
-        title: "${{ steps.admit.output.branch + ' developer' }}"
         provider: "${{ inputs.developer_provider }}"
         model: "${{ inputs.developer_model }}"
         reasoning_effort: "${{ inputs.developer_reasoning_effort }}"
@@ -192,8 +195,12 @@ steps:
         prompt: "You are the developer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.admit.output.branch, 'axis': 'right',
-          'title': steps.admit.output.branch + ' developer'}} }}
+          'tab_title': 'Dev Team - ' + inputs.task, 'axis': 'right',
+          'title': 'Developer'}} if steps.guard.output.tab_exists
+          or 'dev-manager' in steps.guard.output.launch
+          or 'test-writer' in steps.guard.output.launch else
+          {'tab': {'workspace': steps.guard.output.workspace_id,
+          'title': 'Dev Team - ' + inputs.task}} }}
 
   - id: code-reviewer
     condition: "${{ 'code-reviewer' in steps.guard.output.launch }}"
@@ -202,9 +209,6 @@ steps:
       tool: spawn_agent
       arguments:
         agent: "${{ inputs.reviewer_agent }}"
-        title: >-
-          ${{ steps.admit.output.branch
-          + (' fresh code reviewer' if inputs.fresh_reviewer else ' code reviewer') }}
         provider: >-
           ${{ inputs.fresh_reviewer_provider if inputs.fresh_reviewer
           else inputs.reviewer_provider }}
@@ -219,6 +223,10 @@ steps:
         prompt: "You are the ${{ 'fresh ' if inputs.fresh_reviewer else '' }}code reviewer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
-          'tab_title': steps.admit.output.branch, 'axis': 'right',
-          'title': steps.admit.output.branch
-          + (' fresh code reviewer' if inputs.fresh_reviewer else ' code reviewer')}} }}
+          'tab_title': 'Dev Team - ' + inputs.task, 'axis': 'right',
+          'title': 'Code Reviewer'}} if steps.guard.output.tab_exists
+          or 'dev-manager' in steps.guard.output.launch
+          or 'test-writer' in steps.guard.output.launch
+          or 'developer' in steps.guard.output.launch else
+          {'tab': {'workspace': steps.guard.output.workspace_id,
+          'title': 'Dev Team - ' + inputs.task}} }}
