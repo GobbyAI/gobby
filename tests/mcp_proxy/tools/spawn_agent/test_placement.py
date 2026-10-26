@@ -1249,7 +1249,7 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
             "inputs": inputs,
             "steps": {
                 "admit": {"output": output},
-                "guard": {"output": {"workspace_id": h.workspace.id}},
+                "guard": {"output": {"workspace_id": h.workspace.id, "live": {}}},
             },
             "invocation_id": step_invocation_id(execution.id, "developer"),
         },

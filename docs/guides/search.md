@@ -52,10 +52,10 @@ call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
 
 | Surface | Tool or command | Index | Best for |
 |---------|-----------------|-------|----------|
-| Memories | `gobby-memory.search_memories`, `gobby memory recall` | Memory content, tags, project scope | Persistent project facts and preferences |
-| Tasks | `gobby-tasks.search_tasks`, `gobby tasks search` | Title, description (BM25); filters: type, priority, category | Finding work by intent or topic |
-| Installed skills | `gobby-skills.search_skills` | Skill names, descriptions, metadata | Finding local workflow guidance |
-| Skill hubs | `gobby-skills.search_hub`, `gobby skills search` | Configured external skill hubs | Finding installable skills |
+| Memories | `search_memories` on `gobby-memory`, `gobby memory recall` | Memory content, tags, project scope | Persistent project facts and preferences |
+| Tasks | `search_tasks` on `gobby-tasks`, `gobby tasks search` | Title, description (BM25); filters: type, priority, category | Finding work by intent or topic |
+| Installed skills | `search_skills` on `gobby-skills` | Skill names, descriptions, metadata | Finding local workflow guidance |
+| Skill hubs | `search_hub` on `gobby-skills`, `gobby skills search` | Configured external skill hubs | Finding installable skills |
 | MCP tools | `search_tools`, `recommend_tools` | Registered MCP tools | Tool discovery during agent work |
 | Code symbols | `gcode search`, `gcode search-symbol`, `gcode search-text` | Indexed AST symbols | Fuzzy concepts, known names, and symbol metadata |
 | Code content | `gcode grep`, `gcode search-content` | Indexed repository text chunks | Exact identifiers/literals and ranked docs/config/source text |
@@ -207,15 +207,15 @@ gobby tasks search QUERY [OPTIONS]
 | `--min-score` | Minimum relevance score |
 | `--json` | Output JSON |
 
-Use `gobby tasks reindex` or `gobby-tasks-ops.reindex_tasks` after bulk task
+Use `gobby tasks reindex` or `reindex_tasks` on `gobby-tasks-ops` after bulk task
 changes if results seem stale.
 
 ## Skill Search
 
 There are two skill search paths:
 
-- `gobby-skills.search_skills` searches installed skills.
-- `gobby-skills.search_hub` and `gobby skills search` search configured hubs for
+- `search_skills` on `gobby-skills` searches installed skills.
+- `search_hub` on `gobby-skills` and `gobby skills search` search configured hubs for
   installable skills.
 
 Installed skill search:

@@ -361,14 +361,19 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
         "src/gobby/storage/tasks/_transitions_facade.py",
         "TaskTransitionsMixin.close_task_with_commit",
     ),
-    # _run_step_handlers offloads advance_seat and its linked candidate checks.
-    ("src/gobby/workflows/engine/seat_transitions.py", "_linked_candidate_matches"),
+    # _run_step_handlers offloads advance_seat, which reaches the commit-link git check
+    # through _linked_candidate_matches and _candidate_rejection
+    # (test_developer_proof_request_matches_linked_candidate_off_the_loop).
+    ("src/gobby/workflows/engine/seat_transitions.py", "_commit_linked_to_claimant"),
     # Plan validation runs on MCP/coverage workers and the compile offload;
     # offline validation remains synchronous (test_expansion_service_compile).
     ("src/gobby/tasks/expansion/_validate.py", "_task_has_landed_commit"),
     # FoundWorkGateAnalyzer offloads the complete cover calculation through
     # _uncovered_failure_commands (test_found_work_gate's off-loop regression).
     ("src/gobby/workflows/validation_cover.py", "_tracked_at_head"),
+    # commit_workspace runs ensure_workspace, the only caller of _init_git_dir, through
+    # asyncio.to_thread before it commits, so the git init never runs on the loop.
+    ("src/gobby/agents/agent_workspaces.py", "_init_git_dir"),
 }
 
 _ALLOWED_SYNC_FACADE_CALLERS = {

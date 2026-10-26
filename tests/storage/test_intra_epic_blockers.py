@@ -160,8 +160,9 @@ async def test_finished_blocker_unblocks_inside_team(world: TeamWorld) -> None:
 
     epic.link(first, TEST_SHA, IMPL_SHA)
     epic.record(first, "implementation", "approved", sha=IMPL_SHA)
-    assert epic.views(first, dependent) == UNBLOCKED
-    # Ruling 4: every parallel blocker finishes before the dependent unblocks.
+    # Ruling 4: every parallel blocker finishes before the dependent unblocks, so the
+    # dependent stays blocked by second while first is no longer an active blocker.
+    assert epic.views(first, dependent) == Views("blocked", False, True)
     assert epic.views(second, dependent) == BLOCKED
 
     epic.link(second, IMPL_SHA)
@@ -183,8 +184,9 @@ async def test_predicate_parity_outside_teams(world: TeamWorld) -> None:
     assert teamless.views(blocker, blocked) == Views("blocked", True, True)
 
     teamed = Epic(world, "Team bound")
-    await _admit(world, teamed)
     inside = teamed.leaf("Inside")
+    # Admission picks epic mode only when the epic already holds an open leaf.
+    await _admit(world, teamed)
     teamed.link(inside, IMPL_SHA)
     teamed.record(inside, "implementation", "approved", sha=IMPL_SHA)
     # Across epics the team's epic does not hold both tasks, so blocking is unchanged.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from collections import Counter
@@ -218,7 +219,7 @@ class CommunityLabeler:
             and c.labeled_signature != c.member_signature
         ]
         questions: dict[str, str] = {}
-        states: dict[str, dict[str, Any]] = {}
+        states: dict[str, dict[str, Any] | DecisionsUnavailable] = {}
         for community in stale:
             label = sanitize_community_label(community.label, members=community.members)
             if label is not None:
@@ -348,7 +349,7 @@ class CommunityLabeler:
         if config is None or config.community_label.mode == "off":
             return {}
         questions: dict[str, ChoiceQuestion] = {}
-        states: dict[str, dict[str, Any]] = {}
+        states: dict[str, dict[str, Any] | DecisionsUnavailable] = {}
         for community in communities:
             result = generated[community.community_id]
             if not isinstance(result, GeneratedLabel) or result.name in {
@@ -367,10 +368,7 @@ class CommunityLabeler:
                     },
                 },
             )
-            states[key] = {
-                **_community_state(community),
-                "generated": {"name": result.name, "rationale": result.rationale},
-            }
+            states[key] = _community_state(community, generated=result)
         service = get_decision_service(config)
         return await _decide(service, "community_label", states, questions, service.choose)
 
@@ -489,19 +487,43 @@ class CommunityLabeler:
         return (outcome if written else CommunityLabelOutcome.WRITE_SUPERSEDED), fields
 
 
-def _community_state(community: StoredCommunity) -> dict[str, Any]:
-    others = sorted(set(community.members) - set(community.representatives))
-    return {
-        "representatives": community.representatives,
-        "members": (community.representatives + others)[:_MAX_PROMPT_MEMBERS],
-        "candidates": community.label_candidates,
+def _community_state(
+    community: StoredCommunity, *, generated: GeneratedLabel | None = None
+) -> dict[str, Any] | DecisionsUnavailable:
+    """Keep required evidence intact, then admit whole member paths in stable order."""
+    representatives = list(dict.fromkeys(community.representatives))
+    members: list[str] = []
+    state: dict[str, Any] = {
+        "representatives": representatives,
+        "members": members,
+        "member_count": community.member_count,
+        "omitted_member_count": community.member_count - len(representatives),
     }
+    if generated is None:
+        state["candidates"] = community.label_candidates
+    else:
+        # Choice criteria already contain each candidate and the generated name.
+        state["generated"] = {"rationale": generated.rationale}
+    if (
+        len(representatives) > _MAX_PROMPT_MEMBERS
+        or len(json.dumps(state)) > _MAX_PROMPT_DATA_CHARS
+    ):
+        return DecisionsUnavailable("oversize", "required community evidence exceeds limits")
+    others = sorted(set(community.members) - set(representatives))
+    for path in others[: _MAX_PROMPT_MEMBERS - len(representatives)]:
+        members.append(path)
+        state["omitted_member_count"] -= 1
+        if len(json.dumps(state)) > _MAX_PROMPT_DATA_CHARS:
+            members.pop()
+            state["omitted_member_count"] += 1
+            break
+    return state
 
 
 async def _decide[Q: (ChoiceQuestion, str, ScoreQuestion), A](
     service: DecisionService,
     consumer: str,
-    states: Mapping[str, dict[str, Any]],
+    states: Mapping[str, dict[str, Any] | DecisionsUnavailable],
     questions: Mapping[str, Q],
     call: Callable[[str, Mapping[str, Any], Mapping[str, Q]], Awaitable[DecisionResult[A]]],
 ) -> dict[str, DecisionResult[A] | DecisionsUnavailable]:
@@ -517,6 +539,10 @@ async def _decide[Q: (ChoiceQuestion, str, ScoreQuestion), A](
 
     pending: dict[str, Q] = {}
     for key, question in questions.items():
+        entry = states[key]
+        if isinstance(entry, DecisionsUnavailable):
+            results[key] = entry
+            continue
         trial = {**pending, key: question}
         state = {"communities": {k: states[k] for k in trial}}
         if len(trial) > 64 or not service.request_fits(state, trial):

@@ -25,7 +25,11 @@ from gobby.tasks.state_semantics import (
 from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.session_context import get_current_session_id, get_request_principal
-from gobby.workflows.condition_helpers_sessions import _spawn_caller, spawn_target_allowed
+from gobby.workflows.condition_helpers_sessions import (
+    _spawn_caller,
+    own_seat_resume,
+    spawn_target_allowed,
+)
 
 from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
 from ._network_override import enforce_network_override
@@ -300,6 +304,23 @@ class TaskSpawnLease:
             self._mutex.release()
 
 
+async def own_seat_manager_session(
+    session_manager: Any | None,
+    caller_ref: str | None,
+    agent_name: str | None,
+    resume_session_id: str | None,
+) -> str | None:
+    """Return the caller's session id when a team manager resumes a seat of its own team."""
+    if session_manager is None or not caller_ref or not resume_session_id:
+        return None
+    if not await asyncio.to_thread(
+        own_seat_resume, session_manager, caller_ref, agent_name, resume_session_id
+    ):
+        return None
+    caller, _ = await asyncio.to_thread(_spawn_caller, session_manager, caller_ref)
+    return caller.id
+
+
 async def admit_task_spawn(
     lease: TaskSpawnLease,
     *,
@@ -307,10 +328,14 @@ async def admit_task_spawn(
     task_id: str | None,
     task_ref: str | None,
     cleanup: Callable[[], Awaitable[None]],
+    session_manager: Any | None = None,
+    caller_ref: str | None = None,
+    agent_name: str | None = None,
+    resume_session_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Check task idempotency around lease acquisition and roll back cancellation."""
 
-    async def active_response() -> dict[str, Any] | None:
+    async def active_response(exclude_child_session_id: str | None) -> dict[str, Any] | None:
         if not task_id or not run_storage:
             return None
         return await asyncio.to_thread(
@@ -318,11 +343,15 @@ async def admit_task_spawn(
             run_storage=run_storage,
             task_id=task_id,
             task_ref=task_ref,
+            exclude_child_session_id=exclude_child_session_id,
         )
 
     cleanup_started = False
     try:
-        response = await active_response()
+        exclude_child_session_id = await own_seat_manager_session(
+            session_manager, caller_ref, agent_name, resume_session_id
+        )
+        response = await active_response(exclude_child_session_id)
         if response is not None:
             cleanup_started = True
             await run_to_completion(cleanup())
@@ -332,7 +361,7 @@ async def admit_task_spawn(
             cleanup_started = True
             await run_to_completion(cleanup())
             return response
-        response = await active_response()
+        response = await active_response(exclude_child_session_id)
         if response is not None:
             cleanup_started = True
             await run_to_completion(cleanup())
@@ -347,8 +376,14 @@ async def admit_task_spawn(
 def active_task_spawn_blocker(
     run_storage: Any,
     task_id: str,
+    *,
+    exclude_child_session_id: str | None = None,
 ) -> Any | None:
-    """Return an active run that should block spawning another agent for a task."""
+    """Return the first active run that should block another agent for a task.
+
+    ``exclude_child_session_id`` names the caller's own run when a team manager resumes
+    its own seat; that run never blocks the resume, and other runs still do.
+    """
     if not run_storage.has_active_run_for_task(task_id):
         return None
 
@@ -365,6 +400,11 @@ def active_task_spawn_blocker(
         active_runs = [active_run] if active_run is not None else []
 
     for active_run in active_runs:
+        if (
+            exclude_child_session_id is not None
+            and getattr(active_run, "child_session_id", None) == exclude_child_session_id
+        ):
+            continue
         return active_run
     return None
 
@@ -468,10 +508,12 @@ def active_task_response_if_blocked(
     run_storage: Any,
     task_id: str,
     task_ref: str | None,
+    exclude_child_session_id: str | None = None,
 ) -> dict[str, Any] | None:
     active_run = active_task_spawn_blocker(
         run_storage,
         task_id,
+        exclude_child_session_id=exclude_child_session_id,
     )
     if active_run is None:
         return None

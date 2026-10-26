@@ -535,6 +535,20 @@
     {
       "activation": "live",
       "default": null,
+      "description": "Maximum compact UTF-8 request body bytes, including assets; unset is unbounded.",
+      "key": "ai.decisions.max_request_bytes",
+      "machineExport": false,
+      "namespace": "ai.decisions",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
       "description": "Decision model; required with api_base.",
       "key": "ai.decisions.model",
       "machineExport": false,

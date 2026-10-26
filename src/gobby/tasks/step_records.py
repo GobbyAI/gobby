@@ -38,6 +38,7 @@ from gobby.workflows.task_claim_state import task_edited_file_set
 
 TaskStep = Literal["test", "implementation", "review", "closing"]
 StepStatus = Literal["pending", "in_progress", "approved", "rejected"]
+NoWorkDisposition = Literal["moot", "superseded", "wont_do"]
 STEP_RECORD_AUTHOR_TYPE = "task_step"
 TASK_STEPS: tuple[TaskStep, ...] = ("test", "implementation", "review", "closing")
 _TERMINAL = frozenset({"approved", "rejected"})
@@ -61,7 +62,7 @@ class StepSubmission(BaseModel):
     round_number: int = Field(gt=0, strict=True)
     feedback: str = Field(min_length=1)
     commit_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{40}$")
-    disposition: Literal["moot", "superseded", "wont_do"] | None = None
+    disposition: NoWorkDisposition | None = None
 
     @model_validator(mode="after")
     def validate_evidence(self) -> Self:
