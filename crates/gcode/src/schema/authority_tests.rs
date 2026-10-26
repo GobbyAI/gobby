@@ -18,13 +18,19 @@ impl Drop for LoginRoleCleanup {
         let mut owner = match gobby_core::postgres::connect_readwrite(&self.database_url) {
             Ok(owner) => owner,
             Err(err) => {
-                eprintln!("LoginRoleCleanup: connect failed for role {}: {err}", self.role);
+                eprintln!(
+                    "LoginRoleCleanup: connect failed for role {}: {err}",
+                    self.role
+                );
                 return;
             }
         };
         let role = quote_ident(&self.role);
         if let Err(err) = owner.batch_execute(&format!("DROP OWNED BY {role}; DROP ROLE {role};")) {
-            eprintln!("LoginRoleCleanup: dropping role {} failed: {err}", self.role);
+            eprintln!(
+                "LoginRoleCleanup: dropping role {} failed: {err}",
+                self.role
+            );
         }
     }
 }

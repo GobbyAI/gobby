@@ -52,7 +52,11 @@ mod serial_db {
             gobby_core::grant::managed_direct_grant(project_id, machine.trim(), &connections);
         let path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
             .expect("write managed grant");
+        // The grant fixture's execution id is fixed; an inherited managed-session
+        // run id would fail the identity check before the scope under test runs.
         command
+            .env_remove("GOBBY_AGENT_RUN_ID")
+            .env_remove("GOBBY_MANAGED_EXECUTION_ID")
             .env("GOBBY_HOME", home)
             .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path);
     }
@@ -105,6 +109,21 @@ mod serial_db {
             &[&machine_id, &uuid_param(PROJECT_ID), &FILE_PATH],
         )
         .expect("delete local indexed file state");
+
+        // The managed grant's DSN role must hold exactly one live principal binding
+        // for the project; the hub's RLS helpers raise on zero or duplicate rows.
+        conn.execute(
+            "INSERT INTO gobby_agent_auth.principal_bindings
+             (role_name, owner_kind, managed_execution_id, project_id,
+              issuing_machine_id, expires_at, credential_generation)
+             VALUES (session_user, 'agent_run', $1, $2, $3, now() + interval '1 hour', 1)",
+            &[
+                &row_uuid(PROJECT_ID, "managed-principal-binding"),
+                &uuid_param(PROJECT_ID),
+                &machine_id,
+            ],
+        )
+        .expect("bind managed principal to the fixture project");
 
         let home = isolated_gobby_home(project.path());
         let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
@@ -217,6 +236,10 @@ mod serial_db {
 
     fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = uuid_param(project_id);
+        conn.execute(
+            "DELETE FROM gobby_agent_auth.principal_bindings WHERE project_id = $1",
+            &[&project_id],
+        )?;
         conn.execute(
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             &[&project_id],

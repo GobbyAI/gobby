@@ -1,4 +1,5 @@
 use anyhow::{Context as _, bail};
+use gobby_core::grant::GrantError;
 use gobby_core::search::BM25_SCORE_REGPROCEDURE;
 use postgres::Client;
 
@@ -220,6 +221,7 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
 
     let missing_columns = missing_table_columns(client, &schema, TABLE_CONTRACTS)?;
     if !missing_columns.is_empty() {
+        ensure_inspected_tables_readable(client, &schema)?;
         bail!(
             "PostgreSQL hub is missing required code-index columns: {}. {MIGRATION_HINT}",
             missing_columns.join(", ")
@@ -234,6 +236,28 @@ pub fn validate_runtime_schema(client: &mut Client) -> anyhow::Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// `information_schema.columns` lists only columns the session role can see, so an
+/// unreadable table looks like missing columns. Absent columns count as migration
+/// debt only after every inspected table is readable by the current role.
+fn ensure_inspected_tables_readable(client: &mut Client, schema: &str) -> anyhow::Result<()> {
+    for contract in TABLE_CONTRACTS {
+        let qualified = format!("{schema}.{}", contract.name);
+        let row = client
+            .query_one(
+                "SELECT has_table_privilege(current_user, $1::text, 'SELECT')",
+                &[&qualified],
+            )
+            .with_context(|| format!("failed to check SELECT privilege on `{qualified}`"))?;
+        let readable: bool = row
+            .try_get(0)
+            .context("failed to decode PostgreSQL privilege check")?;
+        if !readable {
+            return Err(GrantError::Expired.into());
+        }
+    }
     Ok(())
 }
 
