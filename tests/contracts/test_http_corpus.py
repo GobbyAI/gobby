@@ -281,6 +281,58 @@ def test_recorder_is_deterministic(boundary: BoundaryHarness, tmp_path: Path) ->
             assert value not in text, left.name
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("native_extension", [False, True])
+def test_recording_preserves_waiver_contract(tmp_path: Path, native_extension: bool) -> None:
+    case = _synthetic_case("waiver_recording", "health", version=2)
+    waiver_id = "health.api.native-extension" if native_extension else "health.api.validation"
+    native = {"status": 422, "headers": {}, "body": None}
+    case.update(waiver=waiver_id, native_response=native)
+    if native_extension:
+        del case["response"]
+    original = copy.deepcopy(case)
+    with httpx.Client(
+        base_url="http://corpus.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json={"captured": True})),
+    ) as client:
+        paths = http_corpus.record_cases(client, [case], tmp_path, operator={}, grant={})
+    recorded = json.loads(paths[0].read_text())
+    assert recorded["waiver"] == waiver_id
+    assert recorded["native_response"] == native
+    if native_extension:
+        assert "response" not in recorded
+    else:
+        assert recorded["response"]["status"] == 201
+        assert recorded["response"]["body"] == {"captured": True}
+    result = http_corpus.classify_replay(
+        recorded, native, {waiver_id: _waiver("HTTP GET /", waiver_id)}
+    )
+    assert result == http_corpus.ReplayResult(
+        outcome=NATIVE_EXTENSION if native_extension else WAIVED,
+        waiver=waiver_id,
+        decision="#24963",
+    )
+    assert case == original
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("origin", ["python", "gdaemon"])
+def test_python_loader_excludes_native_extension_cases(tmp_path: Path, origin: str) -> None:
+    case = _synthetic_case("native_only", "native_only", version=2)
+    case.update(waiver="runtime.native-only.native-extension", native_response=case.pop("response"))
+    _write_corpus(
+        tmp_path,
+        version=2,
+        families={"native_only": {"origin": origin, "parity": "native"}},
+        cases=[case],
+    )
+    if origin == "python":
+        with pytest.raises(http_corpus.CorpusError, match="native-extension.*gdaemon"):
+            http_corpus.load_cases(tmp_path)
+    else:
+        assert http_corpus.load_cases(tmp_path) == []
+
+
 @pytest.mark.e2e
 def test_case_replays_equal(boundary: BoundaryHarness) -> None:
     # Stateful cases must share a daemon: hooks_execute_replay depends on the

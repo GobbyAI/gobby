@@ -68,6 +68,8 @@ _CASE_KEY_ORDER = (
     "credential",
     "request",
     "response",
+    "waiver",
+    "native_response",
     "mask",
 )
 
@@ -109,6 +111,11 @@ def load_cases(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, Any]]:
         if not isinstance(backend, str) or backend not in BACKEND_VALUES:
             raise CorpusError(f"{file_name}: backend {backend!r} is neither 'up' nor 'down'")
         if family["origin"] == "python" and case["backend"] == "up":
+            waiver_id = case.get("waiver")
+            if isinstance(waiver_id, str) and waiver_id.endswith(".native-extension"):
+                raise CorpusError(
+                    f"{file_name}: native-extension cases require a gdaemon-origin family"
+                )
             cases.append(case)
     return cases
 
@@ -242,10 +249,14 @@ def normalize_case(case: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def recorded_case(case: Mapping[str, Any], response: httpx.Response) -> dict[str, Any]:
-    """Return ``case`` with its ``response`` replaced by the normalized capture."""
+    """Capture Python responses while retaining waiver and native contract provenance."""
     recorded = copy.deepcopy(dict(case))
-    recorded["response"] = normalize_response(case, response)
-    return {key: recorded[key] for key in _CASE_KEY_ORDER}
+    waiver_id = recorded.get("waiver")
+    if isinstance(waiver_id, str) and waiver_id.endswith(".native-extension"):
+        recorded.pop("response", None)
+    else:
+        recorded["response"] = normalize_response(case, response)
+    return {key: recorded[key] for key in _CASE_KEY_ORDER if key in recorded}
 
 
 def case_bytes(case: Mapping[str, Any]) -> bytes:
