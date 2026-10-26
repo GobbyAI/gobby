@@ -114,9 +114,8 @@ All commands accept these global options unless noted:
 | `--allow-stale` | Allow stale index data by skipping read-time freshness checks |
 
 For a sibling worktree, `--project <worktree-path>` reads its branch from any checkout
-of that project; the overlay indexes changed files and serves the rest from the parent.
-Writes stay scoped to the caller's checkout. Another project or machine returns
-`code_overlay_mismatch`. A sibling overlay serves changed files and parent rows only while it is fresh against the parent; a stale overlay cannot refresh from another checkout and may return no results for affected paths, with a stale-index WARN.
+of that project. The read serves the overlay-owned files plus pinned inherited versions of the other files, which are read by content hash. Writes stay scoped to the caller's checkout. Another project or machine returns
+`code_overlay_mismatch`. Staleness is judged against the selected worktree's files, not the parent's index time, so a stale overlay cannot refresh from another checkout and may return stale or missing results for affected paths, with a stale-index WARN.
 
 ### Index Lifecycle
 

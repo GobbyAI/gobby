@@ -15,10 +15,10 @@ Direct `gcode` navigation does not require loading this reference. Reference
 loads still use the normal skill-file schema gate and complete pagination.
 Loading an overview or menu never loads another topic.
 For a sibling worktree, use `gcode --project <worktree-path> ...` from any checkout
-of that project; its overlay indexes changed files and serves the rest from the parent.
-Writes stay scoped to the caller's checkout. Another project or machine returns
-`code_overlay_mismatch`.
-A sibling overlay serves changed files and parent rows only while it is fresh against the parent; a stale overlay cannot refresh from another checkout and may return no results for affected paths, with a stale-index WARN.
+of that project. The read serves the overlay-owned files plus pinned inherited versions
+of the other files, which are read by content hash. Writes stay scoped to the caller's
+checkout. Another project or machine returns `code_overlay_mismatch`.
+Staleness is judged against the selected worktree's files, not the parent's index time, so a stale overlay cannot refresh from another checkout and may return stale or missing results for affected paths, with a stale-index WARN.
 
 The first raw repository search, navigation, or source read requests this reference.
 After loading, reconsider the blocked command using the guidance. Use `gcode` for
