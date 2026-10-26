@@ -164,6 +164,7 @@ pub fn apply_index(
         IndexLockResult::Acquired(applied) => Ok(IndexApplyResponse {
             reparse: applied.reparse,
             outcome: applied.outcome,
+            partial: applied.partial,
         }),
         IndexLockResult::Busy(holder) => Err(RouteError {
             code: "index_busy".to_string(),

@@ -79,6 +79,8 @@ pub(crate) struct ApplyOutput {
     /// Stale files whose existing facts were adopted, not parsed.
     pub(crate) adopted: Vec<String>,
     pub(crate) outcome: Option<IndexOutcome>,
+    /// This request's own outcome when the run is not finished.
+    pub(crate) partial: Option<IndexOutcome>,
 }
 
 /// Plans a run from the node's hashes. Writes nothing and takes no lock.
@@ -140,12 +142,10 @@ pub(crate) fn apply_primary(
         .map(|file| file.path.as_str())
         .collect();
     let listed: HashSet<&str> = batch.indexed_paths.iter().map(String::as_str).collect();
-    if sent != listed {
-        anyhow::bail!(
-            "final batch lists {} indexed paths but sent facts for {}",
-            listed.len(),
-            sent.len()
-        );
+    // A listed path need not be sent here: an earlier request of the run may have written it.
+    if !sent.is_subset(&listed) {
+        let unlisted = sent.difference(&listed).count();
+        anyhow::bail!("final batch sent facts for {unlisted} paths it does not list as indexed");
     }
 
     let stale = if full {
@@ -188,9 +188,28 @@ pub(crate) fn apply_primary(
         apply_file(conn, ctx, file, &mut outcome)?;
     }
 
-    let handled: HashSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
+    // A listed path this request did not send was written by an earlier request. Its facts must
+    // still be there, or the node parses it again.
     let mut reparse = Vec::new();
-    let mut adopted = Vec::new();
+    for path in listed.difference(&sent) {
+        let Some(file) = batch.present.iter().find(|file| file.path == *path) else {
+            anyhow::bail!("final batch lists indexed path {path} that is not present");
+        };
+        if !api::file_state::facts_written(conn, project_id, &file.path, &file.content_hash)? {
+            reparse.push(file.path.clone());
+        }
+    }
+    // Every path an earlier request or this one sent is settled, indexed or not.
+    let handled: HashSet<&str> = files
+        .iter()
+        .map(|file| file.path.as_str())
+        .chain(batch.prior_paths.iter().map(String::as_str))
+        .chain(listed.iter().copied())
+        .collect();
+    // Decide every remaining path before any adoption write. A pass that reparses then leaves
+    // its adoptable paths alone for the pass that completes the run.
+    let mut adopt = Vec::new();
+    let mut keep = Vec::new();
     for file in &batch.present {
         if handled.contains(file.path.as_str()) {
             continue;
@@ -198,23 +217,15 @@ pub(crate) fn apply_primary(
         match &stale {
             // A full run parses every present file, so an unhandled one must be parsed again.
             None => reparse.push(file.path.clone()),
-            Some(stale) if !stale.contains(&file.path) => {
-                record_blob(conn, machine_id, project_id, file, &stored)?;
-                outcome.skipped_files += 1;
-            }
+            Some(stale) if !stale.contains(&file.path) => keep.push(file),
             Some(_) => {
-                if api::file_state::adopt_file_state(
+                if api::file_state::facts_adoptable(
                     conn,
-                    machine_id,
                     project_id,
                     &file.path,
                     &file.content_hash,
-                    root,
-                    api::IndexWriteMode::Primary,
                 )? {
-                    record_blob(conn, machine_id, project_id, file, &stored)?;
-                    adopted.push(file.path.clone());
-                    outcome.skipped_files += 1;
+                    adopt.push(file);
                 } else {
                     reparse.push(file.path.clone());
                 }
@@ -224,9 +235,38 @@ pub(crate) fn apply_primary(
     if !reparse.is_empty() {
         return Ok(ApplyOutput {
             reparse,
-            adopted,
+            adopted: Vec::new(),
             outcome: None,
+            partial: Some(outcome),
         });
+    }
+
+    let mut adopted = Vec::new();
+    for file in adopt {
+        if !api::file_state::adopt_file_state(
+            conn,
+            machine_id,
+            project_id,
+            &file.path,
+            &file.content_hash,
+            root,
+            api::IndexWriteMode::Primary,
+        )? {
+            anyhow::bail!(
+                "{} lost its adoptable facts under the project lock",
+                file.path
+            );
+        }
+        record_blob(conn, machine_id, project_id, file, &stored)?;
+        adopted.push(file.path.clone());
+        outcome.skipped_files += 1;
+    }
+    for file in keep {
+        record_blob(conn, machine_id, project_id, file, &stored)?;
+        outcome.skipped_files += 1;
+    }
+    if let Some(prior) = batch.prior.as_ref() {
+        outcome.absorb(prior);
     }
 
     let post_started = Instant::now();
@@ -268,6 +308,7 @@ pub(crate) fn apply_primary(
         reparse,
         adopted,
         outcome: Some(outcome),
+        partial: None,
     })
 }
 
@@ -372,6 +413,8 @@ fn final_batch(
         eligible_files: eligible,
         scanned_files: scan.scanned,
         unsupported_file_types: scan.unsupported.clone(),
+        prior: None,
+        prior_paths: Vec::new(),
     }
 }
 
@@ -396,6 +439,7 @@ fn apply_facts_only(
         reparse: Vec::new(),
         adopted: Vec::new(),
         outcome: None,
+        partial: Some(outcome),
     })
 }
 

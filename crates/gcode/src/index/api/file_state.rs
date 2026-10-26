@@ -114,6 +114,29 @@ pub fn facts_adoptable(
     Ok(row.get(0))
 }
 
+/// Whether the project holds facts for `file_path` at `content_hash`, whatever its projection
+/// flags. A run's own fresh writes are not synced yet, so a later request of that run checks
+/// this rather than `facts_adoptable`.
+pub fn facts_written(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<bool> {
+    let project_id = id_param(project_id)?;
+    let row = conn.query_one(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM code_indexed_files
+            WHERE project_id = $1
+              AND file_path = $2
+              AND content_hash = $3
+         )",
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    Ok(row.get(0))
+}
+
 pub fn adopt_file_state(
     conn: &mut impl GenericClient,
     machine_id: &str,

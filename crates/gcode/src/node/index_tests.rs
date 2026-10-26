@@ -160,6 +160,104 @@ fn apply_returns_reparse_and_completes_on_retry() -> anyhow::Result<()> {
     ignore = "requires the PostgreSQL test database"
 )]
 #[serial_test::serial(serial_db)]
+fn batched_final_batch_completes_with_facts_from_earlier_requests() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let project = h.register("batched")?;
+    let local = h.register("batched-local")?;
+    let files = project.hashes();
+    let both = FIXTURE_PATHS.map(str::to_string);
+
+    // The first request carries lib.rs only and no final batch, so it reports its own outcome.
+    let lib = parse_facts(&h.ctx(&project), &project.request(true), &both[..1])?;
+    let first = h.apply(&project, true, lib, None)?;
+    assert!(first.reparse.is_empty(), "{:?}", first.reparse);
+    assert!(
+        first.outcome.is_none(),
+        "a request without a final batch carries no outcome"
+    );
+    let partial = first
+        .partial
+        .clone()
+        .expect("an unfinished request reports its own outcome");
+
+    // The final batch sends util.rs and lists both files. It completes the run from lib.rs's
+    // earlier facts, without resending them.
+    let util = parse_facts(&h.ctx(&project), &project.request(true), &both[1..])?;
+    let batch = FinalBatch {
+        prior: Some(partial),
+        prior_paths: both[..1].to_vec(),
+        ..final_batch(&files, &both)
+    };
+    let done = h.apply(&project, true, util, Some(batch))?;
+    assert!(done.reparse.is_empty(), "{:?}", done.reparse);
+    let outcome = done.outcome.expect("the final batch completes the run");
+
+    let expected = index_files(local.request(true), &h.ctx(&local), IndexOptions::default())?;
+    assert_eq!(outcome_counts(&outcome), outcome_counts(&expected));
+    assert_eq!(h.rows(&project)?, h.rows(&local)?);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
+fn reparse_leaves_adoptable_paths_for_the_completing_pass() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    let project = h.register("adoptable")?;
+    let local = h.register("adoptable-local")?;
+    index_files(
+        project.request(true),
+        &h.ctx(&project),
+        IndexOptions::default(),
+    )?;
+    h.mark_synced(&project)?;
+    // util.rs is adoptable: its facts are synced and its state is gone. lib.rs is stale and
+    // its facts are gone, so the plan must parse it.
+    h.forget_state(&project, "src/util.rs")?;
+    h.forget_state(&project, "src/lib.rs")?;
+    h.forget_facts(&project, "src/lib.rs")?;
+
+    let files = project.hashes();
+    let plan = h.plan(&project, false, &files)?;
+    assert_eq!(plan.parse, vec!["src/lib.rs".to_string()]);
+
+    // The pass reparses lib.rs, so it must leave util.rs for the pass that completes the run.
+    let first = h.apply(&project, false, Vec::new(), Some(final_batch(&files, &[])))?;
+    assert_eq!(first.reparse, vec!["src/lib.rs"]);
+    let states = h.rows(&project)?.states;
+    assert!(
+        !states.iter().any(|row| row.starts_with("src/util.rs|")),
+        "a pass that reparses must not adopt: {states:?}"
+    );
+
+    let facts = parse_facts(&h.ctx(&project), &project.request(false), &first.reparse)?;
+    let retry = h.apply(
+        &project,
+        false,
+        facts,
+        Some(final_batch(&files, &first.reparse)),
+    )?;
+    assert!(retry.reparse.is_empty(), "{:?}", retry.reparse);
+    let outcome = retry.outcome.expect("the retry completes the run");
+    assert_eq!(
+        outcome.skipped_files, 1,
+        "util.rs is adopted on the completing pass"
+    );
+
+    index_files(local.request(true), &h.ctx(&local), IndexOptions::default())?;
+    assert_eq!(h.rows(&project)?, h.rows(&local)?);
+    Ok(())
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires the PostgreSQL test database"
+)]
+#[serial_test::serial(serial_db)]
 fn apply_keeps_the_checkout_fence_and_bounded_lock() -> anyhow::Result<()> {
     let mut h = Harness::new()?;
     let project = h.unregistered("fence");
@@ -529,6 +627,8 @@ fn final_batch(files: &[FileHash], indexed_paths: &[String]) -> FinalBatch {
         eligible_files: files.len(),
         scanned_files: files.len(),
         unsupported_file_types: Vec::new(),
+        prior: None,
+        prior_paths: Vec::new(),
     }
 }
 
