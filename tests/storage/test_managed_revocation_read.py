@@ -189,3 +189,24 @@ def test_managed_principal_answer_comes_from_the_managed_read(kind: str) -> None
     assert _grant_principal_revoked(cast(ManagedCredentialManager, spy), grant) is True
     assert spy.managed_calls == [{"execution_id": execution, "generation": 2}]
     assert spy.interactive_calls == []
+
+
+@pytest.mark.integration
+def test_managed_principal_revoked_privileges_are_pinned(
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    with psycopg.connect(authorization_fixture.database_url, autocommit=True) as admin:
+        row = admin.execute(
+            "SELECT pg_get_userbyid(p.proowner), p.prosecdef, "
+            "EXISTS (SELECT 1 FROM aclexplode(p.proacl) acl "
+            "WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE'), "
+            "has_function_privilege('gobby_daemon_runtime', p.oid, 'EXECUTE') "
+            "FROM pg_proc p WHERE p.oid = to_regprocedure(%s)",
+            (f"{AUTH_SCHEMA}.managed_principal_revoked(uuid,integer)",),
+        ).fetchone()
+    assert row is not None
+    owner, security_definer, public_execute, runtime_execute = row
+    assert owner == "gobby_agent_issuer"
+    assert security_definer is True
+    assert public_execute is False
+    assert runtime_execute is True

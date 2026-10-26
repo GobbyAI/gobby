@@ -314,8 +314,20 @@ class InteractiveCredentialMixin:
         revoked_at = _row_value(row, "revoked_at")
         return revoked_at is not None
 
-    def managed_generation_revoked(self, *, execution_id: UUID, generation: int) -> bool:
-        return False
+    def managed_generation_revoked(
+        self: _InteractiveCredentialHost,
+        *,
+        execution_id: UUID,
+        generation: int,
+    ) -> bool:
+        row = self._database.fetchone(
+            f"SELECT {self.auth_schema}.managed_principal_revoked("
+            "%s::uuid, %s::integer) AS revoked",
+            (execution_id, generation),
+        )
+        if row is None:
+            return True
+        return bool(_row_value(row, "revoked"))
 
     def _prune_interactive_grant_expiry(
         self: _InteractiveCredentialHost,
