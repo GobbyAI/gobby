@@ -517,7 +517,9 @@ PostgreSQL hub. It marks graph/vector sync flags dirty; `gcode index
 --sync-projections` updates FalkorDB graph edges and Qdrant code-symbol vectors
 from Rust. Indexing and projection sync share one per-project lock for the full
 operation, so overlapping daemon refreshes or freshness checks should skip with
-`SkippedBusy` and keep serving the existing index. Deleted-file cleanup removes
+`SkippedBusy` and keep serving the existing index. Grep reads paths the index has
+not caught up with live from disk, so a skipped refresh never hides a changed or
+new file. Deleted-file cleanup removes
 code graph/vector projection rows before PostgreSQL facts are deleted, including
 explicit `--files <deleted-file>` and whole-project orphan cleanup.
 BM25-specific modes (`search-text`, `search-content`) work as soon as the
