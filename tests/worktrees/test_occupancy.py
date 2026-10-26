@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -48,6 +49,48 @@ def _live_session(db: HubDatabase, project_id: str, name: str, cwd: Path | None)
 def _refusal(refs: list[str], worktree: Path | str) -> str:
     noun = "session" if len(refs) == 1 else "sessions"
     return f"Live {noun} {', '.join(sorted(refs))} working in {worktree}; it was not deleted"
+
+
+def _status(db: HubDatabase, session: Session) -> str:
+    current = SessionManager(db).get(session.id)
+    assert current is not None
+    return current.status
+
+
+def _bound_run(db: HubDatabase, seat: Session, runbook: Session) -> AgentRun:
+    """A running run of ``seat`` that its session row names, as spawn binds them."""
+    runs = LocalAgentRunManager(db)
+    run = runs.create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt="Run the seat.",
+        child_session_id=seat.id,
+    )
+    SessionManager(db).update_terminal_pickup_metadata(seat.id, agent_run_id=run.id)
+    started = runs.start(run.id)
+    assert started is not None and started.status == "running"
+    return started
+
+
+def _park(db: HubDatabase, run: AgentRun) -> AgentRun:
+    """A daemon stop parked ``run``: cancelled, its process gone, its session paused."""
+    parked = LocalAgentRunManager(db).cancel(run.id, terminal_reason="daemon_stop")
+    assert parked is not None and (parked.status, parked.pid) == ("cancelled", None)
+    return parked
+
+
+def _relaunch(db: HubDatabase, seat: Session, runbook: Session) -> AgentRun:
+    """A later run of ``seat`` started while the session row still names the parked one."""
+    runs = LocalAgentRunManager(db)
+    run = runs.create(
+        parent_session_id=runbook.id,
+        provider="claude",
+        prompt="Resume the seat.",
+        child_session_id=seat.id,
+    )
+    started = runs.start(run.id)
+    assert started is not None and started.status == "running"
+    return started
 
 
 @pytest.mark.parametrize("cwd", ["wt", "wt/src/deep"])
@@ -109,3 +152,60 @@ def test_names_every_occupant_except_the_requester(
     assert refuse_occupied_worktree(
         temp_db, str(worktree), exclude_session_id=requester.id
     ) == _refusal([other.ref], worktree)
+
+
+def test_a_seat_whose_run_went_terminal_does_not_block(
+    temp_db: HubDatabase, project_id: str, tmp_path: Path
+) -> None:
+    """#25165: a parked seat whose process is gone cannot be stranded by the delete."""
+    worktree = tmp_path / "wt"
+    runbook = _live_session(temp_db, project_id, "runbook", None)
+    seat = _live_session(temp_db, project_id, "seat", worktree)
+    _park(temp_db, _bound_run(temp_db, seat, runbook))
+    assert _status(temp_db, seat) == "paused", "the status a daemon stop leaves behind"
+
+    assert refuse_occupied_worktree(temp_db, str(worktree)) is None
+
+
+def test_a_stale_run_pointer_does_not_keep_an_ended_seat_live(
+    temp_db: HubDatabase, project_id: str, tmp_path: Path
+) -> None:
+    """#25165: the session names an older parked run while its relaunch has since ended."""
+    worktree = tmp_path / "wt"
+    runbook = _live_session(temp_db, project_id, "runbook", None)
+    seat = _live_session(temp_db, project_id, "seat", worktree)
+    parked = _park(temp_db, _bound_run(temp_db, seat, runbook))
+    relaunched = _relaunch(temp_db, seat, runbook)
+    assert LocalAgentRunManager(temp_db).complete(relaunched.id, result="done") is not None
+    current = SessionManager(temp_db).get(seat.id)
+    assert current is not None
+    assert (current.status, current.agent_run_id) == ("paused", parked.id)
+
+    assert refuse_occupied_worktree(temp_db, str(worktree)) is None
+
+
+def test_a_paused_seat_with_an_active_run_still_blocks(
+    temp_db: HubDatabase, project_id: str, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "wt"
+    runbook = _live_session(temp_db, project_id, "runbook", None)
+    seat = _live_session(temp_db, project_id, "seat", worktree)
+    _bound_run(temp_db, seat, runbook)
+    SessionManager(temp_db).update_status(seat.id, "paused")
+
+    assert refuse_occupied_worktree(temp_db, str(worktree)) == _refusal([seat.ref], worktree)
+
+
+def test_a_running_relaunch_keeps_a_seat_with_a_stale_run_pointer_live(
+    temp_db: HubDatabase, project_id: str, tmp_path: Path
+) -> None:
+    worktree = tmp_path / "wt"
+    runbook = _live_session(temp_db, project_id, "runbook", None)
+    seat = _live_session(temp_db, project_id, "seat", worktree)
+    parked = _park(temp_db, _bound_run(temp_db, seat, runbook))
+    _relaunch(temp_db, seat, runbook)
+    current = SessionManager(temp_db).get(seat.id)
+    assert current is not None
+    assert (current.status, current.agent_run_id) == ("paused", parked.id)
+
+    assert refuse_occupied_worktree(temp_db, str(worktree)) == _refusal([seat.ref], worktree)
