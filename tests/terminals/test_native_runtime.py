@@ -459,16 +459,18 @@ async def test_ctrl_c_reaches_gterm_as_key_bar_bytes() -> None:
 
 
 async def test_trailing_newline_is_text_then_a_separate_enter() -> None:
-    """A submit is two host writes: the text, then Enter. Codex drops a newline inside one write."""
+    """A submit is two host writes: the text as one paste, then Enter.
+
+    Short text pastes too, as tmux does (#23445). Codex drops a newline inside one write.
+    """
     runtime, host = _runtime()
     terminal = _native_terminal(host)
 
     delivered = await runtime.write_text(terminal, "resume", submit=True)
 
     assert isinstance(delivered, Delivered)
-    assert [item["kind"] for item in host.writes] == ["text", "key"]
+    assert [item["kind"] for item in host.writes] == ["paste", "key"]
     assert base64.b64decode(host.writes[0]["data"]) == b"resume"
-    assert host.writes[0]["submit"] is False
     assert base64.b64decode(host.writes[1]["data"]) == b"enter"
     assert host.pty == [b"resume", b"\n"]
 
@@ -494,7 +496,7 @@ async def test_submit_enter_waits_out_the_tmux_paste_gap(
 
     assert isinstance(delivered, Delivered)
     assert gaps == [(TMUX_TEXT_ENTER_DELAY_SECONDS, 1)]
-    assert [item["kind"] for item in host.writes] == ["text", "key"]
+    assert [item["kind"] for item in host.writes] == ["paste", "key"]
 
 
 def _long_kickoff() -> str:
@@ -1124,9 +1126,9 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     await task
     kinds = [item["kind"] for item in host.writes]
     assert kinds[0] == "key"
-    assert "text" in kinds
+    assert "paste" in kinds
     assert interleaved == ["trying", "done"]
-    assert kinds[-1] == "text" or host.writes[-1]["kind"] in {"text", "key"}
+    assert kinds[-1] == "paste" or host.writes[-1]["kind"] in {"paste", "key"}
 
 
 async def _prepared_ledger_spawn(
