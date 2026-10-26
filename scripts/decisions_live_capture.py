@@ -24,6 +24,7 @@ from gobby.ai.decisions import (
     DecisionService,
     DecisionsUnavailable,
     ScoreQuestion,
+    _score_abs_tolerance,
 )
 from gobby.config.ai import DecisionsConfig
 from gobby.llm.base import VisionInputError
@@ -219,21 +220,25 @@ def _parse_diagnostics(
                 and math.isfinite(raw_probabilities[str(index)])
             }
         score = answer.get("score")
+        if (
+            isinstance(score, bool)
+            or not isinstance(score, int | float)
+            or not math.isfinite(score)
+        ):
+            score = None
         comparisons[key] = {
-            "score": (
-                score
-                if isinstance(score, int | float)
-                and not isinstance(score, bool)
-                and math.isfinite(score)
-                else None
-            ),
+            "score": score,
             "probabilities": probabilities,
             "expected": (
                 sum(int(index) * value for index, value in probabilities.items())
                 if len(probabilities) == len(levels)
                 else None
             ),
-            "abs_tolerance": (len(levels) - 1) * _SUM_TOLERANCE,
+            "abs_tolerance": (
+                _score_abs_tolerance(score, probabilities)
+                if score is not None and len(probabilities) == len(levels)
+                else (len(levels) - 1) * _SUM_TOLERANCE
+            ),
             "rel_tolerance": 1e-9,
         }
     if comparisons:
