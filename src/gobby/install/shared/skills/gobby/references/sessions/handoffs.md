@@ -52,8 +52,12 @@ References deduplicate in caller order.
 
 Prune cumulative history and superseded details first. If necessary live working
 detail still cannot fit, create or update a session-scoped Markdown working-context
-file and add its project-relative path to `references` before submitting. Keep
-immediate orientation and next actions inline. Refresh the file's current state;
+file in your agent workspace folder (named in your Agent Workspace context) and add
+its path to `references` before submitting. `set_handoff` already appends that folder,
+so the file stays findable from the handoff. Keep immediate orientation and next
+actions inline. Never keep working notes in the checkout, `.gobby/` included: an
+untracked note there is an attributed edit that blocks task close.
+Refresh the file's current state;
 never append epoch histories or move discarded history and reflections into it.
 Prepare notes while writes are permitted, before hard context-pressure gates block
 them. If permissions prevent preserving necessary context, surface the conflict

@@ -99,4 +99,4 @@ rules:
           Never copy earlier reflections; record only actual recurrence. Use readable sentences.
           Remove cumulative history, previous handoffs, raw logs, and completed ledgers.
           For necessary live detail after pruning, create or update a permitted Markdown working-notes
-          file and include its project-relative path in references; never move cumulative history into it.
+          file in your agent workspace folder and include its path in references; never move cumulative history into it.

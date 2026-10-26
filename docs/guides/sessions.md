@@ -351,9 +351,9 @@ disposition, a missing disposition, or a missing ref. Entries render under Notes
 `fixed`, so the deferral is held to the ladder at the next stop.
 
 Prune cumulative history and superseded detail first. If necessary live detail still
-cannot fit, create or update a session-scoped Markdown working-context file and add
-its project-relative path to `references` before submitting. Keep immediate orientation
-and next actions inline. Refresh the file's current state; never append epoch histories
+cannot fit, create or update a session-scoped Markdown working-context file in your agent workspace folder and add
+its path to `references` before submitting (`set_handoff` appends that folder).
+Keep immediate orientation and next actions inline. Refresh the file's current state; never append epoch histories
 or move discarded history and reflections into it. Prepare the file while writes are
 permitted, before hard context-pressure gates block them. Surface preservation conflicts
 before compaction; never bypass permissions or truncate necessary context.

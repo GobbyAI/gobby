@@ -450,7 +450,9 @@ character cap:
 
 If the complete draft cannot fit and writing is prohibited, surface the preservation
 conflict before initiating compaction. Never truncate the draft or repeatedly submit
-oversized content. Provider permissions also apply to working-context files.
+oversized content. Provider permissions also apply to working-context files. Keep those
+in the agent workspace folder, not the checkout; committed plan artifacts stay under
+`.gobby/plans/`.
 
 The planner calls `set_handoff(clear_session=false)` and the resumed session
 consumes it with argumentless `get_handoff`. This staging state is not a second
