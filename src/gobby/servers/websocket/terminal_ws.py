@@ -9,6 +9,7 @@ from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, Literal
 
 import psycopg
+from websockets.exceptions import ConnectionClosed
 
 from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.node_client import NodeCommandError
@@ -350,7 +351,11 @@ class TerminalWsMixin(TerminalWriteMixin):
                     }
 
                     async def publish(stamped: dict[str, Any]) -> None:
-                        await self._send_json(websocket, stamped)
+                        try:
+                            await self._send_json(websocket, stamped)
+                        except ConnectionClosed:
+                            # A departed recipient cannot poison shared publication.
+                            return
 
                     await self._leases().publish_lifecycle(payload, publish)
         await self._send_json(
