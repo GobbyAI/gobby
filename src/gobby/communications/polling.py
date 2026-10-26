@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from gobby.communications.operator_routing import drain_operator_messages
+
 if TYPE_CHECKING:
     from gobby.communications.adapters.base import BaseChannelAdapter
     from gobby.communications.manager import CommunicationsManager
@@ -109,6 +111,10 @@ class PollingManager:
                     stored = await self._manager.handle_inbound_messages(channel_name, messages)
                     if stored:
                         await adapter.acknowledge_messages(stored)
+                else:
+                    channel = self._manager.get_channel_by_name(channel_name)
+                    if channel is not None:
+                        await drain_operator_messages(self._manager, channel)
 
                 consecutive_failures = 0
                 traceback_logged = False

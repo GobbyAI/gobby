@@ -172,7 +172,7 @@ class CommunicationsManager:
             return
         targets = channel.config_json.get("telegram_agent_targets")
         if not isinstance(targets, dict):
-            return
+            targets = {}
         restored_session_ids: set[str] = set()
         with self._attachment_lock:
             for conversation_id, session_id in targets.items():
@@ -185,6 +185,12 @@ class CommunicationsManager:
                 self._conversation_attachments[key] = session_id
                 self._managed_telegram_targets.add(key)
                 restored_session_ids.add(session_id)
+        from gobby.communications.operator_routing import drain_operator_messages
+
+        try:
+            await drain_operator_messages(self, channel)
+        except Exception:
+            logger.exception("Failed to restore operator Telegram target on %s", channel.name)
         for session_id in restored_session_ids:
             try:
                 session = await asyncio.to_thread(self._session_store.get, session_id)
@@ -651,6 +657,7 @@ class CommunicationsManager:
             session is None
             or session.status not in LIVE_SESSION_STATUSES
             or session.source in {"comms", "web-chat", "web_chat"}
+            or session.session_type == "web_chat"
         ):
             raise ValueError("A live non-comms session is required")
         responder = channel.config_json.get("responder")
@@ -687,6 +694,7 @@ class CommunicationsManager:
             session is None
             or session.status not in LIVE_SESSION_STATUSES
             or session.source in {"comms", "web-chat", "web_chat"}
+            or session.session_type == "web_chat"
         ):
             raise ValueError("A live non-comms session is required")
         with self._attachment_lock:
@@ -787,6 +795,13 @@ class CommunicationsManager:
         transition: SessionStatusTransition,
     ) -> None:
         """Route a committed status transition through the attached notifier."""
+        from gobby.communications.operator_routing import drain_operator_messages
+
+        for channel in list(self._channel_by_name.values()):
+            try:
+                await drain_operator_messages(self, channel)
+            except Exception:
+                logger.exception("Failed to reconcile operator Telegram target on %s", channel.name)
         if transition.status not in LIVE_SESSION_STATUSES:
             from gobby.communications.telegram_fallback import fallback_telegram_targets
 
