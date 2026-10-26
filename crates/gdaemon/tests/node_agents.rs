@@ -2020,6 +2020,11 @@ fn chokepoint_wraps_once() -> Result<()> {
     let violations = tree.path("run_root").join("logs/violations.jsonl");
     assert_eq!(file_mode(&settings)?, 0o600, "settings.json is not private");
     assert_eq!(
+        launch.policy_hash,
+        format!("{:x}", Sha256::digest(fs::read(&settings)?)),
+        "the launch hash must describe the exact effective policy written to disk"
+    );
+    assert_eq!(
         file_mode(&violations)?,
         0o600,
         "violations.jsonl is not private"

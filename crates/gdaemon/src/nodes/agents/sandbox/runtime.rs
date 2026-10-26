@@ -8,6 +8,7 @@
 pub use super::verify::{verify_srt_content, verify_srt_installation};
 use super::{PolicyInputs, caches, compile_policy, grok_home, monitor, paths, ps_shim, settings};
 use crate::node_commands::{Sandbox, SandboxBackend};
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, DirBuilder},
@@ -62,6 +63,8 @@ pub struct SandboxLaunch {
     pub node: PathBuf,
     pub runner: PathBuf,
     pub settings: PathBuf,
+    /// SHA-256 of the canonical effective policy bytes written to settings.
+    pub policy_hash: String,
     pub violations: PathBuf,
     /// The resolved provider executable that replaces the argv's first element.
     pub provider_executable: PathBuf,
@@ -263,6 +266,7 @@ pub fn prepare_launch_with(
     env.insert("GOBBY_SRT_TMPDIR".to_string(), paths::text(&mux_tmpdir));
 
     let launch = SandboxLaunch {
+        policy_hash: format!("{:x}", Sha256::digest(&settings_bytes)),
         node: installation.node.clone(),
         runner: installation.runner.clone(),
         settings: settings_path,

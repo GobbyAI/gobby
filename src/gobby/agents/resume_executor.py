@@ -238,6 +238,50 @@ async def resume_agent_run(
     child_session_id = original_run.child_session_id
     if not child_session_id:
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
+    agent_name = _metadata_str(resume_metadata, "agent_slug") or original_run.agent_name
+    if agent_name:
+        from gobby.storage.agent_resume import refuse_parked_daemon_resume
+        from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
+
+        try:
+            definition = await asyncio.to_thread(
+                resolve_agent,
+                agent_name,
+                runner.run_storage.db,
+                cli_source=provider,
+                project_id=project_id,
+            )
+        except (AgentResolutionError, ValueError):
+            definition = None
+        if definition is None:
+            from gobby.agents import terminal_delivery
+
+            error = f"resume_agent_definition_unavailable:{agent_name}"
+
+            async def refuse_and_deliver() -> None:
+                refused = await asyncio.to_thread(
+                    refuse_parked_daemon_resume,
+                    runner.run_storage.db,
+                    original_run_id=original_run.id,
+                    child_session_id=child_session_id,
+                    error=error,
+                )
+                if refused:
+                    await terminal_delivery.deliver_and_cleanup_terminal_run(
+                        db=runner.run_storage.db,
+                        completion_registry=completion_registry,
+                        run_id=original_run.id,
+                        result={
+                            "status": "cancelled",
+                            "error": error,
+                            "terminal_reason": "agent_definition_unavailable",
+                        },
+                        message=error,
+                        run_db=asyncio.to_thread,
+                    )
+
+            await terminal_delivery.shielded_terminal_delivery(original_run.id, refuse_and_deliver)
+            return ResumeAgentResult(False, error=error)
     metadata = dict(resume_metadata)
     cli_mode = "agent"
     if provider == "grok":
@@ -273,7 +317,7 @@ async def resume_agent_run(
             project_id=project_id,
             source=provider,
             workflow_name=_metadata_str(resume_metadata, "workflow"),
-            agent_name=_metadata_str(resume_metadata, "agent_slug") or original_run.agent_name,
+            agent_name=agent_name,
             initial_variables=initial_variables,
             git_branch=_metadata_str(resume_metadata, "branch_name"),
             prompt=prompt,

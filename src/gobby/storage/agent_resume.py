@@ -70,6 +70,40 @@ def _metadata(value: Any) -> dict[str, Any]:
     return normalize_resume_metadata(value) or {}
 
 
+def refuse_parked_daemon_resume(
+    db: HubDatabase, *, original_run_id: str, child_session_id: str, error: str
+) -> bool:
+    """Fence an unavailable definition's parked run against further replay."""
+    with db.transaction() as conn:
+        _lock_resume_fence(conn, original_run_id)
+        row = conn.execute(
+            """
+            SELECT ar.resume_metadata_json
+            FROM agent_runs ar
+            JOIN sessions s ON s.id = ar.child_session_id
+            WHERE ar.id = %s AND ar.child_session_id = %s
+              AND ar.status = 'cancelled' AND ar.terminal_reason = 'daemon_stop'
+              AND s.agent_run_id = ar.id
+            FOR UPDATE OF ar, s
+            """,
+            (original_run_id, child_session_id),
+        ).fetchone()
+        if row is None:
+            return False
+        metadata = _metadata(row["resume_metadata_json"])
+        if metadata.get(_CONSUMED_AT_KEY) or metadata.get("daemon_stop_orphan_reap_started_at"):
+            return False
+        conn.execute(
+            """
+            UPDATE agent_runs
+            SET terminal_reason = 'agent_definition_unavailable', error = %s, updated_at = %s
+            WHERE id = %s
+            """,
+            (error, utc_now(), original_run_id),
+        )
+        return True
+
+
 def finalize_daemon_resume(
     db: HubDatabase,
     *,

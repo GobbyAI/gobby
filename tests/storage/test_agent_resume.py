@@ -11,6 +11,7 @@ from gobby.storage.agent_resume import (
     claim_daemon_stop_orphan_reap,
     finalize_daemon_resume,
     increment_daemon_resume_failure_count,
+    refuse_parked_daemon_resume,
     register_daemon_resume_waiter,
     rollback_prepared_daemon_resume,
 )
@@ -23,6 +24,40 @@ from gobby.utils.machine_id import require_machine_id
 pytestmark = pytest.mark.unit
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.mark.parametrize("ownership", ["parked", "consumed", "successor"])
+def test_refuse_missing_definition_preserves_resume_ownership(
+    temp_db: Any, sample_project: dict[str, Any], ownership: str
+) -> None:
+    _sessions, runs, parent, child, original = _seed_parked_run(temp_db, sample_project)
+    if ownership == "consumed":
+        runs.merge_resume_metadata(original.id, {"daemon_stop_resume_consumed_at": "already"})
+    elif ownership == "successor":
+        _seed_successor(
+            temp_db, runs, parent_id=parent.id, child_id=child.id, original_id=original.id
+        )
+    else:
+        assert [
+            run.id
+            for run in runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID)
+        ] == [original.id]
+    refused = refuse_parked_daemon_resume(
+        temp_db,
+        original_run_id=original.id,
+        child_session_id=child.id,
+        error="resume_agent_definition_unavailable:retired-seat",
+    )
+    assert refused is (ownership == "parked")
+    stored = runs.get(original.id)
+    assert stored is not None
+    assert stored.terminal_reason == ("agent_definition_unavailable" if refused else "daemon_stop")
+    if refused:
+        assert stored.error == "resume_agent_definition_unavailable:retired-seat"
+        assert runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID) == []
+        assert not refuse_parked_daemon_resume(
+            temp_db, original_run_id=original.id, child_session_id=child.id, error="retry"
+        )
 
 
 @pytest.fixture(autouse=True)

@@ -1470,6 +1470,7 @@ class TestExecuteSpawn:
             runner_path="/tmp/runner.js",
             policy_path="/tmp/policy.json",
             violation_path="/tmp/violations.json",
+            policy_hash="f" * 64,
         )
         with (
             patch(
@@ -1487,6 +1488,9 @@ class TestExecuteSpawn:
         assert result.success is True
         command = _spawn_kwargs(request)["command"]
         assert "--sandbox=false" in command
+        mock_session_manager.update_sandbox_policy_hash.assert_called_once_with(
+            "gobby-sess-agy", "f" * 64
+        )
         assert prepare_sandbox.await_args is not None
         assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
 
