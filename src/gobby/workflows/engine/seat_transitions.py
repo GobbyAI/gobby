@@ -16,7 +16,11 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 from gobby.tasks.lifecycle_access import session_grants
-from gobby.tasks.step_records import landing_review_approval, list_task_step_records
+from gobby.tasks.step_records import (
+    approved_task_step,
+    landing_review_approval,
+    list_task_step_records,
+)
 from gobby.utils.git import normalize_commit_sha
 from gobby.workflows.claimed_task_extra_skills import build_claimed_task_extra_skill_state
 from gobby.workflows.engine.seat_messages import (
@@ -36,6 +40,19 @@ def _approved(db: HubDatabase, reviewer_session_id: str, task: Task, sha: str) -
     """Landing reads the same approval, so the land gate and land_commit agree."""
     records = list_task_step_records(db, task.id)
     return landing_review_approval(task, records, sha, reviewer_session_id) is not None
+
+
+def _no_work_approved(
+    db: HubDatabase, reviewer_session_id: str, task: Task, disposition: str
+) -> bool:
+    """The reviewer's approved no-work review of a task that has no linked commit."""
+    current = approved_task_step(task, list_task_step_records(db, task.id), "review")
+    return (
+        current is not None
+        and current.commit_sha is None
+        and current.disposition == disposition
+        and current.session_id == reviewer_session_id
+    )
 
 
 def _requested_task(tasks: LocalTaskManager, bound_id: Any, requested_ref: Any) -> Task | None:
@@ -102,6 +119,7 @@ def _clear_candidate() -> dict[str, Any]:
         "verdict_ready": False,
         "candidate_task": None,
         "candidate_sha": None,
+        "candidate_disposition": None,
         "candidate_owner": None,
         "candidate_received_at": None,
     }
@@ -148,12 +166,16 @@ def _candidate_rejection(
 ) -> str | None:
     if event.message.id in (variables.get("_seat_consumed_messages") or []):
         return "message already consumed"
-    if event.message.from_session != event.task.claimed_by_session_id:
-        # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
-        if not is_relaying_dev_manager(db, event, reviewer_session_id):
-            return "sender does not claim task"
-        if not _commit_linked_to_claimant(db, event):
-            return "COMMIT is not linked to the claimant's task"
+    relayed = event.message.from_session != event.task.claimed_by_session_id
+    # A relay binds only from the bound Dev Manager, for a SHA the claimant linked.
+    if relayed and not is_relaying_dev_manager(db, event, reviewer_session_id):
+        return "sender does not claim task"
+    if event.sha is None:
+        # A no-work unit binds only a task with no linked work, whoever sends it.
+        if event.task.commits:
+            return "DISPOSITION needs a task with no linked commits"
+    elif relayed and not _commit_linked_to_claimant(db, event):
+        return "COMMIT is not linked to the claimant's task"
     same_task = _same_task(db, variables.get("candidate_task"), event)
     if variables.get("candidate_received") and not same_task:
         return "another candidate task is active"
@@ -209,14 +231,25 @@ def _reviewer_message(
     fields = event.fields
     incoming = event.message.to_session == session_id
     same_task = _same_task(db, variables.get("candidate_task"), event)
-    same_unit = same_task and event.sha == variables.get("candidate_sha")
+    # A unit is its task and its commit, or its task and no-work disposition. A no-work unit
+    # holds only while its task has no linked commit; linked work leaves nothing to clear.
+    disposition = fields.get("DISPOSITION")
+    open_unit = disposition is None or not event.task.commits
+    same_unit = (
+        same_task
+        and open_unit
+        and event.sha == variables.get("candidate_sha")
+        and disposition == variables.get("candidate_disposition")
+    )
     kind = fields.get("EVENT")
     stale_session_unit = (
         not variables.get("candidate_received")
         and not variables.get("candidate_task")
         and not variables.get("candidate_sha")
+        and open_unit
         and _same_task(db, session_variables.get("candidate_task"), event)
         and event.sha == session_variables.get("candidate_sha")
+        and disposition == session_variables.get("candidate_disposition")
     )
     if incoming and kind == "CANDIDATE":
         if _candidate_rejection(db, variables, event, session_id) is not None:
@@ -229,6 +262,7 @@ def _reviewer_message(
             "verdict_ready": False,
             "candidate_task": event.task.id,
             "candidate_sha": event.sha,
+            "candidate_disposition": disposition,
             "candidate_owner": event.message.from_session,
             "candidate_received_at": received_at,
         }
@@ -244,9 +278,11 @@ def _reviewer_message(
     if fields.get("VERDICT") == "BOUNCE" and event.message.from_session == session_id:
         return _clear_candidate()
     # The Dev Manager lands an approved LAND, so the reviewer's unit ends at the verdict.
+    # A no-work unit has no commit to land, so only a commit unit takes a LAND verdict.
     if (
         not incoming
         and fields.get("VERDICT") == "LAND"
+        and event.sha is not None
         and _approved(db, session_id, event.task, event.sha)
     ):
         return _clear_candidate()
@@ -288,10 +324,16 @@ def advance_seat(
         _holds_seat(db, session_id, role, "code-reviewer", "review")
     ):
         task_id, sha = state.get("candidate_task"), state.get("candidate_sha")
+        disposition = state.get("candidate_disposition")
         task = _requested_task(tasks, task_id, tool_input.get("task_id"))
-        if task is not None and isinstance(sha, str) and state.get("candidate_received"):
-            if _approved(db, session_id, task, sha):
+        if task is not None and state.get("candidate_received"):
+            if isinstance(sha, str) and _approved(db, session_id, task, sha):
                 return {"verdict_ready": True}
+            if isinstance(disposition, str) and _no_work_approved(
+                db, session_id, task, disposition
+            ):
+                # A no-work unit has no commit to land, so the approved review closes it.
+                return _clear_candidate()
         return {}
     if mcp_tool[0] != "gobby-agents":
         return {}

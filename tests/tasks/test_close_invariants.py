@@ -388,6 +388,7 @@ def test_last_child_close_leaves_a_parent_without_records_open(
     seats = _Seats(temp_db, project_id)
     writers: dict[TaskStep, str] = {
         "implementation": seats.add("policy-developer", ["implementation"]),
+        "review": seats.add("policy-reviewer", ["review"]),
         "closing": seats.add("policy-closer", ["closing"]),
     }
     # A legacy row with no criteria and no hold: only its own missing records keep it open.
@@ -464,7 +465,7 @@ async def test_required_step_records_follow_project_policy(
         (),
         ("implementation", "review", "closing"),
         ("implementation", "review", "closing"),
-        ("implementation", "closing"),
+        ("implementation", "review", "closing"),
         ("implementation", "closing"),
         (),
         ("test", "implementation", "review", "closing"),
@@ -553,9 +554,10 @@ async def test_required_step_records_follow_project_policy(
     research = manager.create_task(
         project_id, "Policy research", category="research", validation_criteria="Moot."
     )
-    with pytest.raises(TaskStepRecordsMissingError, match="implementation, closing"):
+    with pytest.raises(TaskStepRecordsMissingError, match="implementation, review, closing"):
         manager.close_task(research.id, reason="moot")
     record(research, developer, "implementation", linked=False)
+    record(research, reviewer, "review", linked=False)
     record(research, closer, "closing", linked=False)
     assert manager.close_task(research.id, reason="moot").closed_at is not None
 
