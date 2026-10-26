@@ -377,4 +377,73 @@ The blinded study and daemon-side V2/live checks remain separate acceptance
 work. These checkout-based captures do not establish live daemon label-write
 behavior, even though the landed repair was activated before the runs.
 
+## Defaults ship check: already active (2026-10-26)
+
+After the repaired OpenRouter run, the operator-side Assistant ran the
+defaults helper in its read-only mode. It reported configuration revision
+157, `changed_keys: []`, and equal desired, active and target values:
+
+| `ai.decisions` field | Desired / active / target |
+| --- | --- |
+| `max_input_tokens` | `8192` |
+| `max_request_bytes` | `null` |
+| `backend_max_state_tokens` | `null` |
+| `backend_max_question_tokens` | `null` |
+| `long_context` | `false` |
+
+The Dev Manager marked this ship step complete as a no-op. No PATCH ran and
+no rollback receipt was created. Timeout remained at the previously reported
+15 seconds; this preview printed only the five context fields above, so it
+did not independently remeasure timeout, endpoint identity or consumer modes.
+Those settings were outside this step's mutation scope.
+
+The helper imported `DecisionsConfig` and verified its source bytes against
+landed commit `c2f3f06f670e1dc33f996644da754fc26bb2b6fc`. That check passed;
+`src/gobby/config/ai.py` SHA256 was
+`6f5f7f7a0f9aa44340ad6819406c34eda58efa2730bffcbb3447bf26038ec04f`.
+Its 8192-token default is the application request budget. The
+[wire contract](wire-contracts.md#3-openrouter-decisions-openrouter-decisions)
+describes inherited limit settings; this preview does not verify their
+enforcement by the routed backend. The subsequent item-4 captures retain
+that distinction because OpenRouter automatically selects long-context mode
+for sufficiently large text requests.
+
+Operator helper:
+`/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-lag7b7s1/ship_decisions_defaults_v2.py`
+(SHA256 `6bbce941c1c63dd3f17d47893a896506152f6b9cb82857edf43f5444c8a82e75`).
+The read-only command was:
+
+```sh
+PYTHONPATH=/Users/josh/Projects/gobby/src uv run --project /Users/josh/Projects/gobby python /private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-lag7b7s1/ship_decisions_defaults_v2.py
+```
+
+The Assistant's durable report was message
+`680aba36-877f-4944-bb6b-6baf0229afde`; the Dev Manager's completion receipt
+was `c685db81-b917-427f-9dd0-5d5746afa0d4`. This paragraph records their
+reported operator execution; the developer did not make a live config call.
+
+Offline validation used
+`/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/gobby-lag7b7s1/check_ship_decisions_defaults_v2.py`
+(SHA256 `73e77b4fa000024392011eca0a793f0ff532b04cb61bd39fada1c99e83365c47`).
+`uv run python` on that file passed preview, apply/rollback, no-op, refusal
+and CLI-preview checks using `httpx.MockTransport`. The checks cover stale
+revisions, a concurrent 409, unchanged-field verification, exact prior-value
+rollback and default GET-only behavior. Ruff and scoped mypy passed. The
+repository suppression ratchet found zero new or stale entries. The
+test-quality and test-types audit tools refused the outside-project scratch
+path; those audits are not claimed as passing.
+
+The helper and checker source files are no longer available: their temporary
+directory disappeared after the daemon interruption. The recorded hashes and
+durable operator receipts remain the provenance. Neither source was recovered
+or reconstructed under its old hash, and the command above is historical,
+not a currently runnable package. The Dev Manager accepted this disclosure
+with the reported no-op result.
+
+This defaults check does not pass Activation Gate item 4, enable decision
+consumers or establish label quality. The blinded P3.4 study and V2 evidence
+remain separate work. The subsequent
+[item-4 gap checklist](item-4-checklist-2026-10-26.md) records both completed
+operator probes and the identity, usage and limit gaps that remain unverified.
+
 _Last verified: 2026-10-26_

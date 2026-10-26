@@ -1,0 +1,23 @@
+{
+  "retrieved_at": "2026-10-26T20:44:23.292981+00:00",
+  "endpoint": "http://127.0.0.1:1234/api/v0/models",
+  "status": 200,
+  "selection": "Loaded decision model matching Josh's Clef Flash Q8 instruction",
+  "model": {
+    "id": "clef-flash",
+    "object": "model",
+    "type": "decision",
+    "publisher": "ggml-org",
+    "arch": "clef",
+    "compatibility_type": "gguf",
+    "quantization": "Q8_0",
+    "state": "loaded",
+    "max_context_length": 262144,
+    "loaded_context_length": 262144
+  },
+  "limitations": [
+    "The model metadata does not establish systemone usage semantics or truncation behavior.",
+    "The loaded identifier is not a versioned model identity. No source commit is provided."
+  ],
+  "transcript_evidence": ["be2638", "134ab7", "rtk recall d9d3e50d599f"]
+}
