@@ -124,6 +124,15 @@ def test_recovery_steward_patrol_is_rearmed_by_a_ten_minute_wait_on_triage() -> 
     )
 
 
+def test_recovery_steward_launch_prompt_arms_the_same_ten_minute_wait() -> None:
+    steps = [step for step in _support().steps if step.id == "recovery-steward"]
+    assert steps and steps[0].mcp is not None and steps[0].mcp.arguments is not None
+    assert (
+        'wait_for_coordination(owner_session="${{ inputs.report_to }}", reply=true, timeout=600)'
+        in steps[0].mcp.arguments["prompt"]
+    )
+
+
 def test_consolidator_definition_has_no_lane_language() -> None:
     text = (AGENTS / "consolidator.yaml").read_text()
     assert re.search(r"\blanes?\b", text, re.IGNORECASE) is None
