@@ -688,6 +688,50 @@ def test_only_the_session_holding_the_clear_handoff_is_gated(
     assert sv_mgr.get_variables(successor_id)[HANDOFF_PULL_PENDING_VARIABLE] is True
 
 
+def test_superseding_successor_consumes_the_clear_handoff_its_predecessor_staged(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    predecessor = _registered_session(session_manager)
+    attempt_id = "f" * 32
+    stage_clear_attempt(
+        temp_db,
+        predecessor.id,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
+        terminal_context=None,
+        chat_context=None,
+    )
+    stale_id = session_manager.register_session(
+        external_id="clear-stale",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=predecessor.project_id,
+        parent_session_id=predecessor.id,
+    )
+    assert take_clear_handoff_marker(
+        temp_db, predecessor.id, attempt_id=attempt_id, successor_id=stale_id
+    )
+    newcomer_id = session_manager.register_session(
+        external_id="clear-newcomer",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=predecessor.project_id,
+        parent_session_id=predecessor.id,
+    )
+    assert take_clear_handoff_marker(
+        temp_db,
+        predecessor.id,
+        attempt_id=attempt_id,
+        successor_id=newcomer_id,
+        supersede_successor_id=stale_id,
+    )
+
+    consumed = consume_pending_handoff(temp_db, newcomer_id)
+
+    assert consumed is not None and consumed.session_id == predecessor.id
+
+
 @pytest.mark.asyncio
 async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_handoff(
     temp_db: HubDatabase,

@@ -847,8 +847,9 @@ def _consume_candidate(
                 WHERE handoff_id = %s
                   AND attempt_id = %s
                   AND boundary_kind = 'clear'
+                  AND continuation_session_id = %s
                 """,
-                (handoff_id, attempt_id),
+                (handoff_id, attempt_id, continuation_session_id),
             ).fetchone()
             if delivery is None:
                 return None
