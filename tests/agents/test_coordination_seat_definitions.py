@@ -32,18 +32,24 @@ def _seat(name: str, steps: list[dict[str, Any]], **fields: Any) -> dict[str, An
     return body
 
 
-# A read-only coordination seat: the write tools are blocked and spawning is not allowlisted.
+# A read-only coordination seat. Its step allowlist admits the write tools, spawns and kills,
+# so only the seat-level block lists refuse them.
 READ_ONLY_SEAT = _seat(
     "read-only-seat",
     [
         {
             "name": "consolidate",
-            "allowed_tools": ["mcp__gobby__call_tool"],
-            "allowed_mcp_tools": ["gobby-tasks:get_task", "gobby-agents:send_message"],
+            "allowed_tools": ["Edit", "Write", "mcp__gobby__call_tool"],
+            "allowed_mcp_tools": [
+                "gobby-tasks:get_task",
+                "gobby-agents:send_message",
+                "gobby-agents:spawn_agent",
+                "gobby-agents:kill_agent",
+            ],
         }
     ],
     blocked_tools=["Edit", "Write"],
-    blocked_mcp_tools=["gobby-agents:kill_agent"],
+    blocked_mcp_tools=["gobby-agents:spawn_agent", "gobby-agents:kill_agent"],
 )
 
 # An operator-facing seat with no write block: its edits are admitted.
@@ -72,6 +78,10 @@ def test_spawned_caller_reaches_only_the_targets_its_definition_names(
 
 async def test_read_only_seat_refuses_write_tools_spawns_and_kills(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "read-only-seat", definition=READ_ONLY_SEAT)
+    # Activation copies the definition's block lists into these session variables; SeatRun
+    # does not, so the test copies them too or the agent-level blocks are never consulted.
+    run.session_vars["_agent_blocked_tools"] = READ_ONLY_SEAT["blocked_tools"]
+    run.session_vars["_agent_blocked_mcp_tools"] = READ_ONLY_SEAT["blocked_mcp_tools"]
     assert await run.admits("gobby-tasks", "get_task")
     assert await run.admits("gobby-agents", "send_message")
     assert not await run.admits("gobby-agents", "spawn_agent")

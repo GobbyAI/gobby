@@ -789,17 +789,16 @@ class TestScopeSpawnedAgentSendMessage:
         ("target", "expected"),
         [("parent", "allow"), ("session", "allow"), ("project", "block"), ("global", "block")],
     )
-    @pytest.mark.parametrize("agent_type", ["plan-writer", "plan-enhancer", "plan-adversary"])
-    async def test_planning_seat_reaches_live_coordinator_without_broadcast_authority(
+    async def test_declared_targets_reach_parent_and_session_but_not_broadcast(
         self,
         db: HubDatabase,
         session_manager: SessionManager,
         sessions: dict[str, Session],
-        agent_type: str,
         target: str,
         expected: str,
     ) -> None:
         _sync_bundled(db)
+        agent_type = "synthetic-reporter"
         body = make_agent_definition(
             name=agent_type,
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},

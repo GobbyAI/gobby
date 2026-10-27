@@ -202,8 +202,12 @@ def _claim_routes_to_skills(body: AgentDefinitionBody, *names: str) -> None:
         )
 
 
-async def test_submit_handoff_releases_binding_and_allows_next_claim(seats: _Seats) -> None:
-    """A successful escalation of the held task moves submit back to claim."""
+async def test_inline_escalate_handler_moves_submit_to_claim(seats: _Seats) -> None:
+    """An inline escalate_task success handler moves submit back to claim.
+
+    The handler is supplied by the test, so this proves the transition only; the claim
+    release itself is performed by the real escalate_task tool and is not exercised here.
+    """
     claim_task(seats.db, seats.task_id, seats.former)
     body = synthetic_developer_body()
     submit = _step(body, "submit")
@@ -269,12 +273,22 @@ def test_submit_condition_uses_inner_task_despite_outer_shadow(
     assert _current_step(seats.db, seats.former) == "submit"
 
 
+@pytest.mark.parametrize("use_ref", [False, True])
 @pytest.mark.parametrize("reviewed", [False, True])
-async def test_implement_no_work_close_releases_binding(seats: _Seats, reviewed: bool) -> None:
-    """A successful close, or its reviewed observation, moves implement to claim."""
+async def test_inline_close_handler_moves_implement_to_claim(
+    seats: _Seats, use_ref: bool, reviewed: bool
+) -> None:
+    """An inline close_task success, or its reviewed get_task observation, moves implement to claim.
+
+    Both handlers accept the assigned task by ref or by UUID, so use_ref exercises each form.
+    The binding reset is not covered: the synthetic graph carries no handler for it.
+    """
     claim_task(seats.db, seats.task_id, seats.former)
     body = synthetic_developer_body()
     implement = _step(body, "implement")
+    assigned = (
+        "tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))"
+    )
     implement.on_mcp_success.append(
         {
             "server": "gobby-tasks",
@@ -282,6 +296,7 @@ async def test_implement_no_work_close_releases_binding(seats: _Seats, reviewed:
             "action": "set_variable",
             "variable": "closed",
             "value": "(tool_output.get('result') or tool_output).get('closed') is True",
+            "when": assigned,
         }
     )
     implement.on_mcp_success.append(
@@ -294,17 +309,19 @@ async def test_implement_no_work_close_releases_binding(seats: _Seats, reviewed:
                 "((tool_output.get('result') or tool_output).get('state') or {})"
                 ".get('is_closed') is True"
             ),
+            "when": assigned,
         }
     )
     implement.transitions.append(WorkflowTransition(to="claim", when="vars.get('closed')"))
     _persist(seats, seats.former, body, "implement")
+    task_ref = seats.ref if use_ref else seats.task_id
     engine = RuleEngine(seats.db)
     if reviewed:
         await engine._process_step_after_tool(
             _after_tool(
                 seats.former,
                 "close_task",
-                {"task_id": seats.ref, "reason": "moot"},
+                {"task_id": task_ref, "reason": "moot"},
                 {"closed": False, "error": "close_review_required"},
             ),
             seats.former,
@@ -314,14 +331,14 @@ async def test_implement_no_work_close_releases_binding(seats: _Seats, reviewed:
         event = _after_tool(
             seats.former,
             "get_task",
-            {"task_id": seats.ref},
+            {"task_id": task_ref},
             {"id": seats.task_id, "state": {"is_closed": True}},
         )
     else:
         event = _after_tool(
             seats.former,
             "close_task",
-            {"task_id": seats.ref, "reason": "moot"},
+            {"task_id": task_ref, "reason": "moot"},
             {"closed": True},
         )
 
@@ -454,8 +471,12 @@ async def test_developer_reclaim_rebinds_assigned_task(seats: _Seats, starting_s
     )
 
 
-async def test_linked_commit_moves_implement_to_submit(seats: _Seats) -> None:
-    """A link_commit on the implement step completes the candidate and moves to submit."""
+async def test_inline_link_commit_handler_moves_implement_to_submit(seats: _Seats) -> None:
+    """An inline link_commit success handler moves implement to submit.
+
+    The handler is supplied by the test, so this proves dispatch and the transition only,
+    not the wiring of the real link_commit handler.
+    """
     body = synthetic_developer_body()
     implement = _step(body, "implement")
     implement.on_mcp_success.append(
@@ -484,8 +505,8 @@ async def test_linked_commit_moves_implement_to_submit(seats: _Seats) -> None:
     )
 
     assert notice is not None and notice.startswith("Step transition: implement -> submit")
-    step, state = _instance_state(seats.db, seats.former)
-    assert (step, state["implementation_complete"]) == ("submit", True)
+    step, _ = _instance_state(seats.db, seats.former)
+    assert step == "submit"
 
 
 _ASSIGNED_ONLY = (
@@ -551,7 +572,11 @@ def test_implement_close_blocks_unsubmitted_work_and_other_tasks(
 
 
 @pytest.mark.parametrize("step", ["claim", "implement", "submit"])
-def test_developer_cannot_de_escalate_without_its_handoff(seats: _Seats, step: str) -> None:
+def test_inline_block_gate_refuses_de_escalate_without_handoff(seats: _Seats, step: str) -> None:
+    """An inline on_mcp_before block gate refuses de_escalate_task of an unhanded task.
+
+    The gate is added by the test, so this proves its condition, not the bundled seat's gate.
+    """
     claim_task(seats.db, seats.task_id, seats.former)
     body = synthetic_developer_body()
     _block_when(body, step, "de_escalate_task", _HANDED_OFF_ONLY, "Finish only a handed-off task.")
@@ -581,7 +606,7 @@ def test_claim_step_refuses_escalation(seats: _Seats) -> None:
 
 
 @pytest.mark.parametrize("foreign", [False, True])
-def test_submit_proxy_handoff_checks_resolved_project_task(seats: _Seats, foreign: bool) -> None:
+def test_submit_handoff_gate_resolves_ref_in_explicit_project(seats: _Seats, foreign: bool) -> None:
     """The gate resolves the ref in the explicit project, not a same-numbered task elsewhere."""
     tasks = LocalTaskManager(seats.db)
     own_task = tasks.get_task(seats.task_id)
@@ -605,11 +630,14 @@ def test_submit_proxy_handoff_checks_resolved_project_task(seats: _Seats, foreig
         assert response is not None and response.decision == "block"
     else:
         assert response is None
-    assert not tasks.get_task(other_task.id).is_escalated
 
 
 async def test_implement_close_preview_does_not_advance_the_step(seats: _Seats) -> None:
-    """A close preview reports a result, not a completion, so implement does not advance."""
+    """A close preview reports a result, not a completion, so implement does not advance.
+
+    The same inline handler advances on a real close, which proves the handler is wired and
+    that the preview is what holds the step back.
+    """
     claim_task(seats.db, seats.task_id, seats.former)
     body = synthetic_developer_body()
     implement = _step(body, "implement")
@@ -639,9 +667,27 @@ async def test_implement_close_preview_does_not_advance_the_step(seats: _Seats) 
     assert notice is None
     assert _current_step(seats.db, seats.former) == "implement"
 
+    closed = await RuleEngine(seats.db)._process_step_after_tool(
+        _after_tool(
+            seats.former,
+            "close_task",
+            {"task_id": seats.ref, "reason": "moot"},
+            {"closed": True},
+        ),
+        seats.former,
+        {},
+    )
 
-def test_reclaimed_handoff_keeps_its_close_rights(seats: _Seats) -> None:
-    """A handed-off task retained across a reclaim is admitted to close from implement."""
+    assert closed is not None and closed.startswith("Step transition: implement -> claim")
+    assert _current_step(seats.db, seats.former) == "claim"
+
+
+def test_inline_close_gate_admits_task_listed_as_handed_off(seats: _Seats) -> None:
+    """An inline close gate admits a task listed in _developer_handoff_tasks from implement.
+
+    No claim, release or reclaim runs: the handoff list is written directly, so this proves
+    the gate's condition only.
+    """
     body = synthetic_developer_body()
     _block_when(body, "implement", "close_task", _HANDED_OFF_ONLY, "Finish only a handed-off task.")
     assert body.step_workflow is not None

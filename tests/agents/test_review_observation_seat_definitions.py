@@ -207,7 +207,7 @@ async def test_step_allowlist_refuses_an_unlisted_write_and_admits_a_listed_one(
 async def test_load_step_refuses_serve_calls_and_serve_step_admits_its_handoff(
     temp_db: PostgresHubDatabase,
 ) -> None:
-    steps = [
+    steps: list[dict[str, Any]] = [
         {
             "name": "load_skills",
             "allowed_tools": [CALL],
@@ -241,6 +241,14 @@ async def test_load_step_refuses_serve_calls_and_serve_step_admits_its_handoff(
     run = SeatRun(temp_db, "research-seat", definition=definition)
     assert await run.admits("gobby-sessions", "set_title")
     assert not await run.admits("gobby-tasks", "claim_task")
+    # A send without a target is a parent send that every step admits, so the refusal is
+    # checked with a session target.
+    assert not await run.admits(
+        "gobby-agents",
+        "send_message",
+        {"target": "session", "target_id": COORDINATOR_ID, "content": "ping"},
+    )
+    assert not await run.admits("gobby-agents", "wait_for_coordination")
     await run.load(*run.vars["required_skills"])
     assert run.step == "serve"
     assert await run.admits("gobby-agents", "end_agent_run")
@@ -261,7 +269,7 @@ async def test_edit_tools_admitted_only_after_a_claim_hands_the_seat_to_fix(
 
 def _single_transition_seat(start: str, target: str, when: str) -> dict[str, Any]:
     """A two-step reviewer seat carrying exactly one transition."""
-    steps = [
+    steps: list[dict[str, Any]] = [
         {"name": start, "allowed_tools": [CALL], "transitions": [{"to": target, "when": when}]},
         {"name": target, "allowed_tools": [CALL]},
     ]
@@ -381,6 +389,7 @@ async def test_candidate_withdrawal_exits_only_for_its_own_unit(
     await run.intake(task)
     text = content.format(task=task.id, sha=SHA, other="b" * 40)
     message = InterSessionMessageManager(temp_db).create_message(COORDINATOR_ID, SESSION_ID, text)
+    before = run.vars
     # A withdrawal is a stored incoming message the seat reads; a failed read must not clear.
     await run.call(
         "gobby-agents",
@@ -394,6 +403,8 @@ async def test_candidate_withdrawal_exits_only_for_its_own_unit(
         assert run.vars["candidate_sha"] is None
         assert run.vars["candidate_received"] is False
         assert run.vars["verdict_ready"] is False
+    else:
+        assert run.vars == before
 
 
 @pytest.mark.parametrize(
@@ -490,10 +501,11 @@ async def test_monitor_leaves_report_only_on_a_nominal_or_alarm_report(
     # Monitors report to Triage; only a durable report to Triage counts.
     SessionVariableManager(temp_db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
     _set_state(run, "report", tick_done=True, tick_window="previous-window")
+    before = run.vars
     await run.send(content)
     assert run.step == ("tick" if resets else "report")
     if resets:
         assert run.vars["tick_done"] is False
         assert run.vars["tick_window"] != "previous-window"
     else:
-        assert run.vars["tick_window"] == "previous-window"
+        assert run.vars == before

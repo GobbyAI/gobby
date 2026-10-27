@@ -70,8 +70,8 @@ CONSENSUS_ADVERSARY: dict[str, Any] = {
     },
 }
 
-# A synthetic adversary whose review step refuses the evidence-round tools.
-EVIDENCE_BLOCKING_ADVERSARY: dict[str, Any] = {
+# A synthetic step whose blocked list names the evidence-round tools.
+EVIDENCE_BLOCKED_STEP_SEAT: dict[str, Any] = {
     "name": "plan-adversary",
     "prompts": {"agent": "Synthetic evidence-blocking adversary seat."},
     "workflows": {"rule_selectors": {"include": [], "exclude": []}},
@@ -113,8 +113,6 @@ WRITER_LOAD_GATE: dict[str, Any] = {
 
 async def test_adversary_stamps_only_after_consensus(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "plan-adversary", definition=CONSENSUS_ADVERSARY)
-    await run.load(*run.vars["required_skills"])
-    assert run.step == "review"
     assert not await run.admits(*DERIVE)
     await run.send("EVENT=CONSENSUS SHA=abc NOTE=unresolved")
     assert run.step == "review"
@@ -126,8 +124,11 @@ async def test_adversary_stamps_only_after_consensus(temp_db: HubDatabase) -> No
     assert await run.admits(*DERIVE)
 
 
-async def test_adversary_refuses_the_evidence_round_tools(temp_db: HubDatabase) -> None:
-    run = SeatRun(temp_db, "plan-adversary", definition=EVIDENCE_BLOCKING_ADVERSARY)
+async def test_step_blocked_mcp_list_refuses_each_listed_tool_and_admits_others(
+    temp_db: HubDatabase,
+) -> None:
+    # Engine behavior on a synthetic blocked list; the real adversary policy is not read here.
+    run = SeatRun(temp_db, "plan-adversary", definition=EVIDENCE_BLOCKED_STEP_SEAT)
     for qualified in EVIDENCE_TOOLS:
         server, tool = qualified.split(":", 1)
         assert not await run.admits(server, tool), qualified

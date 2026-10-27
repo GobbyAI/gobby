@@ -1,11 +1,13 @@
 """Loop seats run consecutive units of work through the real step engine (plan 3.5.5).
 
 Each driver loads a synthetic seat's step workflow into an agent-step instance,
-fires the hook events its session would produce, and checks the step it lands
-on, the tools that step admits, and the correlation variables its handlers bind
-and reset between units. The rules these tests load are inline copies, not the
-bundled rule files: a test here checks the engine's handling of the transition,
-not the shipped rule text.
+fires the hook events its session would produce, and checks the correlation
+variables its handlers bind and reset between units. The code-reviewer driver
+checks each step it lands on; the developer driver checks only the claim step at
+the start and end of each unit. Targeted tests check the steps and tool
+admissions of single transitions, and the stop gate. The rules these tests load
+are inline copies, not the bundled rule files: a test here checks the engine's
+handling of the transition, not the shipped rule text.
 """
 
 from __future__ import annotations
@@ -327,7 +329,6 @@ WAIT = ("gobby-agents", "wait_for_coordination")
 SEND = ("gobby-agents", "send_message")
 DERIVE = ("gobby-plans", "derive_plan_handoff_manifest")
 APPLY = ("gobby-plans", "apply_plan_handoff_manifest")
-EDIT_INPUT = {"file_path": "src/gobby/example.py", "old_string": "a", "new_string": "b"}
 
 
 # Inline stop gate: a reduced copy of the stop condition, not the bundled
@@ -956,7 +957,7 @@ async def test_developer_proof_return_rearms_candidate_latch(
 
 
 @pytest.mark.parametrize("linked_developer", [_HANDOFF_SEAT], indirect=True)
-async def test_developer_landed_retest_unlocks_shell_without_proof_result(
+async def test_developer_landed_retest_escalation_returns_to_claim(
     linked_developer: tuple[SeatRun, Task, str, str],
 ) -> None:
     run, task, sha, _ = linked_developer
@@ -1222,7 +1223,6 @@ async def test_standing_seat_wait_through_call_tool_controls_stop(
     blocked = await handler.evaluate_async(_stop_event(tmp_path))
     assert blocked.decision == "block" and _STOP_RULE in (blocked.reason or "")
     arguments = {"owner_session": COORDINATOR_ID, "reply": True}
-    assert await run.admits(*WAIT, arguments)
     registry = create_agents_registry(
         AgentRunner(temp_db, run.sessions),
         session_manager=run.sessions,

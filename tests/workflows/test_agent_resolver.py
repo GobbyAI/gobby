@@ -21,6 +21,8 @@ from gobby.workflows.agent_resolver import resolve_agent, resolve_agent_with_row
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
 
 pytest_plugins = ["tests.storage.definitions.conftest"]
 
@@ -31,8 +33,20 @@ pytestmark = pytest.mark.unit
 def test_seat_without_provider_inherits_live_provider_or_resolver_fallback(
     definition_db: PostgresHubDatabase, parent_source: str, expected: str
 ) -> None:
-    """Regression for runbook run d6a9f756 with the spawned seat's provider unset."""
-    arguments: dict[str, Any] = {"agent": "developer", "prompt": "Claim the assigned task."}
+    """Regression for runbook run d6a9f756 with the spawned seat's provider unset.
+
+    The arguments come from a synthetic step template rendered with drop_none, the path
+    runbook spawns use to omit an unset provider.
+    """
+    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        {
+            "agent": "developer",
+            "prompt": "Claim the assigned task.",
+            "provider": "${{ inputs.developer_provider }}",
+        },
+        {"inputs": {"developer_provider": None}},
+        drop_none=True,
+    )
     assert "provider" not in arguments
     sessions = {
         "d6a9f756": SimpleNamespace(source="pipeline"),
