@@ -38,6 +38,17 @@ TEARDOWN_KEY = "teardown"
 # The closing manager receives its close response before any seat ends.
 TEARDOWN_GRACE = timedelta(seconds=30)
 FINDING_LABEL = "team-teardown"
+# The refusal code for a seat whose run cannot be ended; teardown reports it and keeps the tree.
+SEAT_NOT_ENDED = "seat_not_ended"
+
+
+class TeamSeatNotEndedError(RuntimeError):
+    """A team seat's run could not be ended; teardown records a refusal, not a retry."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
 
 TeamRunTerminator = Callable[[AgentRun], Awaitable[bool]]
 TeamTreeDeleter = Callable[[TeamBinding], Awaitable[WorktreeDeletionResult]]
@@ -106,7 +117,19 @@ async def _tear_down(
 ) -> int:
     folder = await asyncio.to_thread(release_epic_workspace, db, team.binding)
     runs = await asyncio.to_thread(_live_runs, db, team)
-    ended = [await terminate(run) for run in runs]
+    ended: list[bool] = []
+    unended: TeamSeatNotEndedError | None = None
+    for run in runs:
+        try:
+            ended.append(await terminate(run))
+        except TeamSeatNotEndedError as exc:
+            if unended is None:
+                unended = exc
+    if unended is not None:
+        refusal = WorktreeDeletionResult(success=False, error_code=unended.code, error=str(unended))
+        outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal)
+        await asyncio.to_thread(_record, db, team.binding, outcome)
+        return sum(ended)
     if not all(ended):
         logger.warning("Team %s keeps live seats; the next pass retries", team.binding.team_id)
         return sum(ended)
@@ -210,8 +233,8 @@ def _refuse(
             binding.project_id,
             f"Team teardown refused: {binding.branch}",
             description=(
-                f"Task {binding.task_id} closed, its team's seats ended, and deleting its tree "
-                f"was refused ({code}): {result.error or result.message}.\n\n"
+                f"Task {binding.task_id} closed and its team's teardown was refused ({code}): "
+                f"{result.error or result.message}.\n\n"
                 f"Tree: {binding.worktree_path}\nBranch: {binding.branch}\n"
                 f"Base: {binding.base_branch}\n\n"
                 "The tree is kept. Resolve the refusal, then delete it with "
