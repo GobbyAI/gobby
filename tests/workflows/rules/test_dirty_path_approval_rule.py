@@ -343,6 +343,66 @@ async def test_literal_command_slots_and_brace_arguments_stay_allowed(
     assert decisions == dict.fromkeys(BRACE_ALLOWED, "allow")
 
 
+# A leading environment assignment is still a literal python heredoc: its body is data.
+ENV_PREFIXED_HEREDOC_ALLOWED = (
+    """PYTHONDONTWRITEBYTECODE=1 uv run python - <<'PY'
+queries = [{"op": "grep", "pattern": "gobby sessions"}]
+print(queries)
+PY""",
+    """PYTHONDONTWRITEBYTECODE=1 uv run python - <<'PY'
+import subprocess
+result = {"gobby": {"sessions": "list"}}
+print(result)
+PY""",
+    """uv run python - <<'PY'
+queries = [{"op": "grep", "pattern": "gobby sessions"}]
+print(queries)
+PY""",
+)
+ENV_PREFIXED_HEREDOC_REFUSED = (
+    """PYTHONDONTWRITEBYTECODE=1 uv run python - <<'PY'
+print(1)
+PY
+gobby sessions {approve,list}-dirty-paths s7""",
+    """PYTHONDONTWRITEBYTECODE=1 uv run python - <<'PY'
+print(1)
+PY
+gobby {tasks,sessions} list""",
+)
+
+
+async def test_env_prefixed_python_heredoc_with_braces_stays_allowed(
+    temp_db: HubDatabase,
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
+    )
+    engine = RuleEngine(temp_db)
+    decisions = {}
+    for command in ENV_PREFIXED_HEREDOC_ALLOWED:
+        response = await engine.evaluate(_bash_event(command), session_id=SESSION_ID, variables={})
+        decisions[command] = response.decision
+    assert decisions == dict.fromkeys(ENV_PREFIXED_HEREDOC_ALLOWED, "allow")
+
+
+async def test_env_prefixed_python_heredoc_keeps_protected_gobby_words_refused(
+    temp_db: HubDatabase,
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
+    )
+    engine = RuleEngine(temp_db)
+    decisions = {}
+    for command in ENV_PREFIXED_HEREDOC_REFUSED:
+        response = await engine.evaluate(_bash_event(command), session_id=SESSION_ID, variables={})
+        decisions[command] = response.decision
+    assert decisions == dict.fromkeys(ENV_PREFIXED_HEREDOC_REFUSED, "block")
+
+
 def test_long_python_and_brace_commands_finish_outside_the_daemon() -> None:
     # A process timeout can stop a regex holding the GIL; pytest's thread-based
     # timeout cannot. Exercise every bundled selector and condition together.
