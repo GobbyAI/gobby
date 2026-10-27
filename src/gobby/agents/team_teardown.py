@@ -21,6 +21,8 @@ from gobby.agents.team_lifecycle import (
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.tasks import LocalTaskManager, TaskAlreadyEscalatedError
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -106,6 +108,7 @@ async def _tear_down(
     if not all(ended):
         logger.warning("Team %s keeps live seats; the next pass retries", team.binding.team_id)
         return sum(ended)
+    await asyncio.to_thread(_expire_seats, db, team)
     if folder is not None:
         schedule_workspace_commit(team.binding.project_id, folder.name)
     result: WorktreeDeletionResult | None = await delete(team.binding)
@@ -132,6 +135,31 @@ def _live_runs(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
         if execution is not None and execution.session_id is not None:
             live.extend(runs.list_by_parent(execution.session_id))
     return live
+
+
+def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
+    """Expire every team seat's session a stop or cancel left live, so nothing resumes it.
+
+    This covers runs already terminal before teardown (a daemon-stop parked seat),
+    which ``_live_runs`` never sees.
+    """
+    executions = LocalPipelineExecutionManager(db, team.binding.project_id)
+    runbooks = [
+        execution.session_id
+        for execution in map(executions.get_execution, team.executions)
+        if execution is not None and execution.session_id is not None
+    ]
+    if not runbooks:
+        return
+    rows = db.fetchall(
+        "SELECT DISTINCT s.id::text AS id FROM agent_runs r "
+        "JOIN sessions s ON s.id = r.child_session_id "
+        "WHERE r.parent_session_id = ANY(%s) AND s.status = ANY(%s)",
+        (runbooks, list(LIVE_SESSION_STATUS_ORDER)),
+    )
+    sessions = SessionManager(db)
+    for row in rows:
+        sessions.update_status(row["id"], "expired")
 
 
 def _ineligible(db: HubDatabase, binding: TeamBinding) -> WorktreeDeletionResult | None:

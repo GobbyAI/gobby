@@ -186,7 +186,7 @@ class _AgentRunQueryMixin:
                     FROM sessions s
                     WHERE s.id = ar.child_session_id
                       AND s.agent_run_id = ar.id
-                      AND s.status != 'deleted'
+                      AND s.status NOT IN ('deleted', 'expired')
               )
             """,
             (machine_id, "task-close-reviewer", max_age_hours),
