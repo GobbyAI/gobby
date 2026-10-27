@@ -1043,7 +1043,11 @@ async def test_developer_submit_unlinks_a_superseded_commit(
         "gobby-tasks",
         "unlink_commit",
         {"task_id": task.id, "commit_sha": sha},
-        {"task_id": task.id, "commits": updated.commits},
+        {
+            "task_id": task.id,
+            "commits": updated.commits,
+            "production_commits_remain": not last_commit,
+        },
     )
     assert run.step == ("implement" if last_commit else "submit")
 
@@ -1392,7 +1396,12 @@ async def linked_developer(
     arguments = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
     with session_context_for_test(SESSION_ID):
         output = cast(dict[str, Any], await registry.call("link_commit", arguments))
-    assert output == {"task_id": task.id, "commits": [short_sha], "production_changes": True}
+    assert output == {
+        "task_id": task.id,
+        "commits": [short_sha],
+        "production_changes": True,
+        "candidate": False,
+    }
     assert LocalTaskManager(temp_db).get_task(task.id).commits == [short_sha]
     assert len(short_sha) < len(sha) == 40
     SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")

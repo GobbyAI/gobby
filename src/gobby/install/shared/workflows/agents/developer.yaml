@@ -645,14 +645,17 @@ step_workflow:
           action: set_variable
           variable: assigned_task_ref
           value: null
-        # Only a commit that carries production changes is a candidate; a test-only
-        # RED commit keeps the developer in implement.
+        # Only a commit that carries production changes, or one the developer declares,
+        # is a candidate; a test-only RED commit keeps the developer in implement.
         - server: gobby-tasks
           tool: link_commit
           when: &own_candidate_commit >-
             tool_input.get('task_id') is not None
             and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-            and (tool_output.get('result') or tool_output).get('production_changes') is True
+            and (
+              (tool_output.get('result') or tool_output).get('production_changes') is True
+              or (tool_output.get('result') or tool_output).get('candidate') is True
+            )
           action: set_variable
           variable: implementation_complete
           value: true
@@ -730,11 +733,13 @@ step_workflow:
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
+        # Unlinking the last production candidate returns to implement; a test-only RED
+        # that stays linked does not hold the step in submit.
         - server: gobby-tasks
           tool: unlink_commit
           when: &own_last_commit_unlinked >-
             tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
-            and task_has_no_commits(vars.get('assigned_task_id'))
+            and (tool_output.get('result') or tool_output).get('production_commits_remain') is False
           action: set_variable
           variable: implementation_complete
           value: false

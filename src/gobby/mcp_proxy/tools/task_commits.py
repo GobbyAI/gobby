@@ -50,6 +50,22 @@ def _is_test_path(path: str) -> bool:
     return path.startswith("tests/") or "/tests/" in path
 
 
+async def _carries_production(commits: list[str], repo_path: str | None) -> bool:
+    """True when any linked commit changes a path outside tests/, each judged alone."""
+    # The tasks package factory composes this registry during initialization.
+    from gobby.mcp_proxy.tools.tasks._task_scope import collect_net_commit_paths_async
+
+    if not commits:
+        return False
+    if repo_path is None:
+        raise ValueError("Repository path is required to classify the remaining commits.")
+    for sha in commits:
+        paths = await collect_net_commit_paths_async([sha], repo_path, candidate=sha)
+        if any(not _is_test_path(path) for path in set(paths.changed) | set(paths.deleted)):
+            return True
+    return False
+
+
 def get_current_project_id() -> str | None:
     """Get the current project ID from context."""
     context = get_project_context()
@@ -141,6 +157,7 @@ def create_commit_registry(
         task_id: str,
         commit_sha: str,
         project_path: str | None = None,
+        candidate: bool = False,
     ) -> dict[str, Any]:
         """Link a git commit to a task."""
         # The tasks package factory composes this registry during initialization.
@@ -183,6 +200,7 @@ def create_commit_registry(
                 "task_id": task.id,
                 "commits": task.commits or [],
                 "production_changes": any(not _is_test_path(path) for path in changed),
+                "candidate": candidate,
             }
         except (ValueError, RuntimeError) as e:
             return {"error": str(e)}
@@ -206,6 +224,13 @@ def create_commit_registry(
                     "description": (
                         "Repository path that contains the commit. Optional; defaults to the "
                         "current task project repository."
+                    ),
+                },
+                "candidate": {
+                    "type": "boolean",
+                    "description": (
+                        "Declare the commit the candidate even when it changes only tests, "
+                        "such as a test-only repair of a bounce."
                     ),
                 },
             },
@@ -244,15 +269,20 @@ def create_commit_registry(
         normalized = await normalize_commit_sha(commit_sha, cwd=repo_path)
         if normalized is None:
             return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
+        # Classify what stays linked before the unlink: the step returns to implement
+        # unless a production commit remains.
+        remaining = [sha for sha in (current_task.commits or []) if sha != normalized]
         try:
+            production = await _carries_production(remaining, repo_path)
             task = await unlink_commit_audited(
                 task_manager, current_task, normalized, reason=reason, actor=actor
             )
-        except ValueError as e:
+        except (ValueError, RuntimeError) as e:
             return {"error": str(e)}
         return {
             "task_id": task.id,
             "commits": task.commits or [],
+            "production_commits_remain": production,
         }
 
     registry.register(
