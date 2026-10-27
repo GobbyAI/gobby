@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -9,7 +10,6 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.session_activation import (
@@ -17,6 +17,7 @@ from gobby.hooks.session_activation import (
     clear_active_rule_names_cache,
 )
 from gobby.skills.formatting import skill_fetch_directive
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -31,11 +32,24 @@ END_RUN_ARGUMENTS = {
 }
 
 
+def _seat_json(name: str) -> str:
+    selectors = [f"name:{rule}" for rule in sorted(END_OF_RUN_GATES)]
+    return json.dumps(
+        {
+            "name": name,
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": selectors, "exclude": []}},
+        }
+    )
+
+
 @pytest.fixture
 def db(hub_db: HubDatabase) -> Iterator[HubDatabase]:
-    """Sync the bundled agents and rules that session activation and the engine read."""
+    """Seed synthetic seats that select the gates, plus the rules the engine reads."""
     clear_active_rule_names_cache()
-    assert sync_bundled_agents(hub_db)["success"] is True
+    agents = AgentDefinitionManager(hub_db)
+    for seat in ("developer", "code-reviewer"):
+        agents.create(name=seat, source="custom", definition_json=_seat_json(seat))
     sync_bundled_rules(hub_db, get_bundled_rules_path())
     yield hub_db
     clear_active_rule_names_cache()

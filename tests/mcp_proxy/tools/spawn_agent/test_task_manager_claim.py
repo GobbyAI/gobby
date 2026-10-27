@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents.isolation import IsolationContext
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
@@ -14,6 +13,7 @@ from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
 from tests.mcp_proxy.tools.spawn_agent.test_execution import (
@@ -29,16 +29,24 @@ def case(temp_db: HubDatabase, sample_project: dict[str, object], tmp_path: Path
     return make_landing_case(temp_db, sample_project, tmp_path)
 
 
-async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
-    definition = (
-        Path(__file__).resolve().parents[4]
-        / "src/gobby/install/shared/workflows/agents"
-        / f"{seat}.yaml"
+def _seat_definition(seat: str) -> AgentDefinitionBody:
+    """A team manager closes without claiming; a developer implements and auto-claims."""
+    if seat == "dev-manager":
+        return make_agent_definition(
+            name=seat,
+            prompts={"agent": "Synthetic team manager."},
+            task_step_writes=["closing"],
+            workflows=make_agent_workflows(variables={"team_manager": True}),
+        )
+    return make_agent_definition(
+        name=seat,
+        prompts={"agent": "Synthetic developer."},
+        task_step_writes=["implementation"],
     )
-    body = AgentDefinitionBody.model_validate(yaml.safe_load(definition.read_text()))
-    # The fake terminal launch omits step-workflow installation and skill bootstrap.
-    # Preserve each seat's capabilities while excluding those unrelated startup gates.
-    body = body.model_copy(update={"step_workflow": None})
+
+
+async def _spawn_task_seat(case: LandingCase, task: Task, mock_runner: MagicMock, seat: str) -> str:
+    body = _seat_definition(seat)
     runs = LocalAgentRunManager(case.db)
     mock_runner.run_storage = runs
     registry = create_spawn_agent_registry(

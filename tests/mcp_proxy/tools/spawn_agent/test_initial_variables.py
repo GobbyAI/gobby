@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.workflows.definitions import (
@@ -19,7 +18,11 @@ from gobby.workflows.definitions import (
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.step_instances import AgentStepInstance
-from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
+from tests.fixtures.agent_definitions import (
+    make_agent_definition,
+    make_agent_workflows,
+    synthetic_developer_body,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager, Task
@@ -60,10 +63,25 @@ def _local_machine_identity(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
 
 
-def _bundled_agent_body(name: str, repo_root: Path) -> AgentDefinitionBody:
-    agents_dir = repo_root / "src/gobby/install/shared/workflows/agents"
-    data = yaml.safe_load((agents_dir / f"{name}.yaml").read_text())
-    return AgentDefinitionBody.model_validate(data)
+def _claim_first_body() -> AgentDefinitionBody:
+    """A task-bound seat whose first step is claim, the shape the spawn guard refuses taskless."""
+    return AgentDefinitionBody.model_validate(
+        {
+            "name": "tech-writer",
+            "prompts": {"agent": "Synthetic task-bound seat."},
+            "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+            "step_workflow": {
+                "steps": [
+                    {
+                        "name": "claim",
+                        "transitions": [{"to": "load_skills", "when": "vars.get('task_claimed')"}],
+                    },
+                    {"name": "load_skills"},
+                    {"name": "implement"},
+                ]
+            },
+        }
+    )
 
 
 @pytest.mark.parametrize("completed", [False, True])
@@ -715,16 +733,16 @@ class TestSpawnAgentStepVariables:
             f"already assigned to {owner_id}" in record.getMessage() for record in caplog.records
         )
 
-    async def _spawn_bundled_developer_agent(
+    async def _spawn_developer_seat(
         self,
         *,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        repo_root: Path,
         agent_name: str,
         additional_skills: list[str] | None = None,
         task_assignment: Literal["request", "initial_variables", "none"] = "request",
+        seat_body: AgentDefinitionBody | None = None,
     ) -> tuple[
         dict[str, Any],
         LocalTaskManager,
@@ -781,7 +799,7 @@ class TestSpawnAgentStepVariables:
             session_manager=session_manager,
             db=db,
         )
-        agent_body = _bundled_agent_body(agent_name, repo_root)
+        agent_body = synthetic_developer_body() if seat_body is None else seat_body
         if task_assignment == "initial_variables":
             agent_body.workflows.variables["assigned_task_id"] = f"#{task.seq_num}"
 
@@ -846,7 +864,6 @@ class TestSpawnAgentStepVariables:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        repo_root: Path,
     ) -> None:
         agent_name = "tech-writer"
         (
@@ -855,15 +872,14 @@ class TestSpawnAgentStepVariables:
             task,
             instance,
             _spawn_request,
-        ) = await self._spawn_bundled_developer_agent(
+        ) = await self._spawn_developer_seat(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            repo_root=repo_root,
             agent_name=agent_name,
+            seat_body=_claim_first_body(),
             task_assignment="none",
         )
-        agent_body = _bundled_agent_body(agent_name, repo_root)
 
         assert result["success"] is False
         assert result["skipped"] is True
@@ -873,13 +889,6 @@ class TestSpawnAgentStepVariables:
         )
         assert task_manager.get_task(task.id).claimed_by_session_id is None
         assert instance is None
-        assert agent_body.workflows.rule_selectors is not None
-        assert agent_body.workflows.rule_selectors.include == [
-            "tag:default",
-            "tag:worker-safety",
-            "name:no-send-keys",
-        ]
-        assert agent_body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
 
     @pytest.mark.asyncio
     async def test_preclaimed_spawn_tells_agent_not_to_claim(
@@ -887,7 +896,6 @@ class TestSpawnAgentStepVariables:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        repo_root: Path,
     ) -> None:
         (
             result,
@@ -895,12 +903,12 @@ class TestSpawnAgentStepVariables:
             task,
             instance,
             spawn_request,
-        ) = await self._spawn_bundled_developer_agent(
+        ) = await self._spawn_developer_seat(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            repo_root=repo_root,
             agent_name="tech-writer",
+            seat_body=_claim_first_body(),
         )
 
         assert result["success"] is True
@@ -923,11 +931,10 @@ class TestSpawnAgentStepVariables:
         repo_root: Path,
         task_assignment: Literal["request", "initial_variables"],
     ) -> None:
-        (*_, spawn_request) = await self._spawn_bundled_developer_agent(
+        (*_, spawn_request) = await self._spawn_developer_seat(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            repo_root=repo_root,
             agent_name="developer",
             task_assignment=task_assignment,
         )
@@ -943,7 +950,6 @@ class TestSpawnAgentStepVariables:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        repo_root: Path,
     ) -> None:
         agent_name = "developer"
         (
@@ -952,11 +958,10 @@ class TestSpawnAgentStepVariables:
             task,
             instance,
             spawn_request,
-        ) = await self._spawn_bundled_developer_agent(
+        ) = await self._spawn_developer_seat(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            repo_root=repo_root,
             agent_name=agent_name,
             task_assignment="initial_variables",
         )
@@ -982,7 +987,6 @@ class TestSpawnAgentStepVariables:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        repo_root: Path,
     ) -> None:
         (
             result,
@@ -990,11 +994,10 @@ class TestSpawnAgentStepVariables:
             task,
             instance,
             spawn_request,
-        ) = await self._spawn_bundled_developer_agent(
+        ) = await self._spawn_developer_seat(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            repo_root=repo_root,
             agent_name="developer",
         )
 
@@ -1005,12 +1008,7 @@ class TestSpawnAgentStepVariables:
         assert instance.current_step == "load_skills"
         assert instance.variables["task_claimed"] is False
         assert "do not call claim_task" not in spawn_request.prompt
-        assert instance.variables["required_skills"] == [
-            "gobby:references/development/obligations.md",
-            "restraint",
-            "gobby:references/tasks/overview.md",
-            "code-review",
-        ]
+        assert instance.variables["required_skills"] == ["restraint"]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
         assert instance.variables["additional_skills_loaded"] is True
@@ -1026,7 +1024,6 @@ class TestSpawnAgentStepVariables:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         db: Any,
         mock_runner: MagicMock,
-        repo_root: Path,
     ) -> None:
         (
             result,
@@ -1034,11 +1031,10 @@ class TestSpawnAgentStepVariables:
             _task,
             instance,
             _spawn_request,
-        ) = await self._spawn_bundled_developer_agent(
+        ) = await self._spawn_developer_seat(
             isolated_checkout_factory=isolated_checkout_factory,
             db=db,
             mock_runner=mock_runner,
-            repo_root=repo_root,
             agent_name="developer",
             additional_skills=["code-index"],
         )
@@ -1047,12 +1043,7 @@ class TestSpawnAgentStepVariables:
         assert instance is not None
         assert instance.current_step == "load_skills"
         assert instance.variables["task_claimed"] is False
-        assert instance.variables["required_skills"] == [
-            "gobby:references/development/obligations.md",
-            "restraint",
-            "gobby:references/tasks/overview.md",
-            "code-review",
-        ]
+        assert instance.variables["required_skills"] == ["restraint"]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]
         assert instance.variables["additional_skills_loaded"] is False

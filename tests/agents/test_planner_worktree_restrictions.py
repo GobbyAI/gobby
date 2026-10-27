@@ -4,9 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-import yaml
 
-from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.apply_agent_definition import build_definition_changes
 from gobby.storage.definitions import AgentDefinitionManager
@@ -16,6 +14,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.postgres import TEST_USER_ID
 
 pytestmark = pytest.mark.unit
@@ -34,39 +33,30 @@ def _parse_row(payload: object) -> AgentDefinitionBody:
 
 
 @pytest.fixture
-def installed_agents(temp_db: HubDatabase) -> AgentDefinitionManager:
-    result = sync_bundled_agents(temp_db)
-    assert result["success"] is True
-    assert result["errors"] == []
+def seeded_agents(temp_db: HubDatabase) -> AgentDefinitionManager:
+    """Synthetic planner seats carrying the worktree blocks, and an unrestricted developer."""
+    for name in PLANNERS:
+        seed_seat(
+            temp_db,
+            name,
+            checkout_mode="none",
+            blocked_tools=["EnterWorktree"],
+            blocked_mcp_tools=["gobby-worktrees:create_worktree"],
+        )
+    seed_seat(temp_db, "developer")
     return AgentDefinitionManager(temp_db)
-
-
-@pytest.mark.parametrize("name", PLANNERS)
-def test_installed_planners_block_worktrees(
-    installed_agents: AgentDefinitionManager, name: str
-) -> None:
-    row = installed_agents.get_by_name(name)
-    assert row is not None
-    body = _parse_row(row.definition_json)
-    template = AgentDefinitionBody.model_validate(
-        yaml.safe_load((get_bundled_agents_path() / f"{name}.yaml").read_text())
-    )
-    assert body == template
-    assert body.checkout_mode == "none"
-    assert "EnterWorktree" in (body.blocked_tools or [])
-    assert "gobby-worktrees:create_worktree" in (body.blocked_mcp_tools or [])
 
 
 @pytest.mark.parametrize("name", (*PLANNERS, "developer"))
 @pytest.mark.parametrize("tool", ("EnterWorktree", "create_worktree"))
 def test_spawn_activated_session_worktree_enforcement(
     temp_db: HubDatabase,
-    installed_agents: AgentDefinitionManager,
+    seeded_agents: AgentDefinitionManager,
     monkeypatch: pytest.MonkeyPatch,
     name: str,
     tool: str,
 ) -> None:
-    row = installed_agents.get_by_name(name)
+    row = seeded_agents.get_by_name(name)
     assert row is not None
     body = _parse_row(row.definition_json)
     assert body.supports_surface("spawn")

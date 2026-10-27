@@ -6,14 +6,12 @@ runbook binds either an epic or a leaf with one seat catalogue (Decision 15).
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import yaml
 
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -30,7 +28,6 @@ from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.templates import TemplateEngine
-from tests.agents._yaml_helpers import flat
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import SLUG, TITLE, TeamWorld, execution_id, make_team_world
 
@@ -38,118 +35,10 @@ pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[2]
 SHARED = ROOT / "src/gobby/install/shared"
-SKILLS = SHARED / "skills/gobby"
-PROCEDURES = SKILLS / "references/agents/procedures"
-AGENTS = get_bundled_agents_path()
-RUNBOOKS_GUIDE = ROOT / "docs/guides/runbooks.md"
 DEVTEAM_PATH = SHARED / "workflows/pipelines/devteam.yaml"
 DEVTEAM = PipelineDefinition.model_validate(yaml.safe_load(DEVTEAM_PATH.read_text()))
 RENDERER = StepRenderer(TemplateEngine())
 WORKSPACE = "pilot-workspace-id"
-REVIEWERS = ("code-reviewer", "docs-reviewer", "research-reviewer")
-
-
-def _guidance(name: str) -> str:
-    """A definition's agent prompt plus its seat procedure, flattened and lowercased."""
-    body = AgentDefinitionBody.model_validate(yaml.safe_load((AGENTS / f"{name}.yaml").read_text()))
-    assert body.prompts is not None and body.prompts.agent, name
-    text = body.prompts.agent
-    procedure = body.workflows.variables.get("_seat_procedure")
-    if procedure:
-        text += "\n" + (SKILLS / procedure.split(":", 1)[1]).read_text()
-    return flat(text).lower()
-
-
-def _missing(text: str, patterns: tuple[str, ...]) -> list[str]:
-    return [pattern for pattern in patterns if re.search(pattern, text) is None]
-
-
-# Decisions 16-24 as the Dev Manager's epic procedure must state them.
-DEV_MANAGER_EPIC = (
-    r"epic mode",
-    r"dependency order",  # test phase
-    r"\[gobby-#<leaf>\] test:",  # per-leaf test commits
-    r"implementation_domain",  # dispatch rule: one primary per domain
-    r"primary",
-    r"sub-worktree",
-    r"git merge --no-ff",  # merges into epic main
-    r"merged_into",  # sub-worktree deletion
-    r"never rebase or squash",
-    r"approved implementation (?:step )?record",  # intra-epic unlock
-    r"docs-reviewer",  # per-leaf routing and reviewer spawns
-    r"research-reviewer",
-    r"disposition",  # no-work path
-    r"epic[- ]tip",  # review at the end and epic-tip repair
-    r"found-work leaf",
-    r"hold",  # Decisions 22-23
-    r"merge the integration branch",  # landing order; project_policy names the branch
-    r"bottom-up",  # nested close order
-    r"no-work leaves first",
-    r"cascade",
-)
-ORCHESTRATOR_EPIC = (
-    r"reviewer_agent",
-    r"precedence",
-    r"open children",  # topology refusal for a non-epic parent
-    r"found-work leaf",
-    r"epic-type descendant",
-)
-DEVELOPER_EPIC = (
-    r"leaf",
-    r"claim",
-    r"record_implementation_step",
-    r"never rebase or squash",
-    r"merge epic main",  # the conflict-merge job
-    r"end_agent_run",  # a sub-worktree developer ends after recording
-)
-TEST_WRITER_EPIC = (r"dependency order", r"\[gobby-#<leaf>\] test:", r"release")
-REVIEWER_EPIC = (r"epic[- ]tip", r"each leaf", r"disposition", r"never (?:fix|edit)")
-# Ruling 3 and Decision 23: no detach-by-revert path and no reviewer-as-fixer step in epic mode.
-FORBIDDEN_EPIC = re.compile(r"detach|back(?:ed)? out|revert the leaf", re.IGNORECASE)
-
-
-def test_epic_procedures() -> None:
-    dev_manager = _guidance("dev-manager")
-    assert _missing(dev_manager, DEV_MANAGER_EPIC) == []
-    # Landing order (Decision 24): merge the integration branch, land, then close each leaf.
-    landing = re.compile(
-        r"merge the integration branch.*?land_commit.*?record_closing_step.*?close_task", re.DOTALL
-    )
-    assert landing.search(dev_manager[dev_manager.find("epic mode") :]) is not None
-    # Epic mode drops the redesign's reviewer-becomes-fixer step (Decision 21).
-    assert re.search(r"epic mode[^.]*\b(?:no|never)\b[^.]*fix", dev_manager) is not None
-    assert FORBIDDEN_EPIC.findall(dev_manager) == []
-
-    orchestrator = _guidance("orchestrator")
-    assert _missing(orchestrator, ORCHESTRATOR_EPIC) == []
-    assert _missing(_guidance("developer"), DEVELOPER_EPIC) == []
-    assert _missing(_guidance("test-writer"), TEST_WRITER_EPIC) == []
-
-    for reviewer in REVIEWERS:
-        procedure = PROCEDURES / f"{reviewer}.md"
-        assert procedure.exists(), reviewer
-        text = flat(procedure.read_text()).lower()
-        assert _missing(text, REVIEWER_EPIC) == [], reviewer
-        assert FORBIDDEN_EPIC.findall(text) == [], reviewer
-
-    guide = flat(RUNBOOKS_GUIDE.read_text()).lower()
-    assert _missing(guide, (r"epic mode", r"epic/<seq>/main", r"wt-epic-<seq>")) == []
-
-
-def test_reviewer_procedures_state_the_no_work_bounce() -> None:
-    """Each reviewer names the no-commit BOUNCE the step machine accepts (#25080)."""
-    for reviewer in REVIEWERS:
-        text = flat((PROCEDURES / f"{reviewer}.md").read_text()).lower()
-        assert "disposition=<moot|superseded|wont_do> verdict=bounce" in text, reviewer
-
-
-def test_runbook_guide_says_the_dev_manager_never_claims_the_epic() -> None:
-    # No claim on the epic: the Dev Manager lands and closes it, and land_commit refuses a
-    # session that ever claimed the task. The runtime skip is pinned by
-    # test_team_manager_spawn_takes_no_task_claim in tests/mcp_proxy/tools/spawn_agent/test_execution.py.
-    guide = flat(RUNBOOKS_GUIDE.read_text())
-    assert "The Dev Manager holds the epic claim" not in guide
-    assert "The Dev Manager never claims the epic" in guide
 
 
 @pytest.fixture

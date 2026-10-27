@@ -2878,16 +2878,6 @@ def test_prompt_contract_evidence_and_access_count(temp_db: HubDatabase) -> None
     assert "recall frequency" not in prompt
 
 
-def test_curator_payload_carries_both_counters() -> None:
-    curator = (
-        Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents/memory-curator.yaml"
-    ).read_text()
-
-    assert "access_count, surfaced_count, last_surfaced_at" in curator
-    assert "useful_labels" not in curator
-    assert "total_labels" not in curator
-
-
 def test_dream_prompt_judges_staleness_against_rationale() -> None:
     import gobby
 

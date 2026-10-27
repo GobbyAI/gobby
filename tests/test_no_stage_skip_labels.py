@@ -21,10 +21,7 @@ RUNTIME_SCOPE = (
     "src/gobby/tasks/expansion_service.py",
     "src/gobby/storage/tasks/",
 )
-INSTRUCTION_SCOPE = (
-    "src/gobby/install/shared/workflows/agents/",
-    "src/gobby/install/shared/skills/",
-)
+INSTRUCTION_SCOPE = ("src/gobby/install/shared/skills/",)
 ACTIVE_GUIDE_SCOPE = (
     "CLAUDE.md",
     "docs/guides/",

@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-import yaml
 
 from gobby.agents.team_lifecycle import TeamBinding
 from gobby.mcp_proxy.tools.spawn_agent import _factory
@@ -29,16 +28,18 @@ from gobby.worktrees.deletion import (
 from gobby.worktrees.executor import run_worktree_delete
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import make_landing_case
-from tests.fixtures.team_case import TITLE, TeamWorld, git_in, make_team_world
+from tests.fixtures.team_case import (
+    TITLE,
+    TeamWorld,
+    git_in,
+    make_team_world,
+    synthetic_manager_body,
+)
 
 pytestmark = pytest.mark.unit
 
 # make_team_world stubs the definition loader; these tests need the installed definitions.
 _REAL_AGENT_BODY = _factory._load_agent_body
-DEV_MANAGER_YAML = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/dev-manager.yaml"
-)
 LEAF_TITLE = "Wire the scroll handler"
 LONG_LEAF_TITLE = "Teach the terminal pane to keep its scroll position across reconnects"
 LONG_LEAF_SLUG = "teach-the-terminal-pane-to-keep-its-scro"
@@ -95,9 +96,8 @@ def world(
     definitions = AgentDefinitionManager(temp_db)
     for name, steps in DEFINITIONS.items():
         definitions.create(name, _body(name, steps), project_id=project_id)
-    # The shipped Dev Manager definition, so its team_manager grant and spawn scope are tested.
-    manager_body = yaml.safe_load(DEV_MANAGER_YAML.read_text())
-    definitions.create("dev-manager", manager_body, project_id=project_id)
+    # A synthetic Dev Manager carries the team_manager grant and spawn scope under test.
+    definitions.create("dev-manager", synthetic_manager_body(), project_id=project_id)
     return world
 
 

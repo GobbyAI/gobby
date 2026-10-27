@@ -14,6 +14,7 @@ leaves inert heredoc bodies out of the subject (#21056).
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterator
 from contextlib import suppress
@@ -23,7 +24,6 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -969,8 +969,18 @@ async def test_full_suite_rules_require_scoped_commands_for_default_agent(
     db: HubDatabase, command: str, full_suite: bool
 ) -> None:
     """An interactive default-agent session must scope test commands."""
-    sync_bundled_agents(db)
-    assert AgentDefinitionManager(db).get_by_name("default") is not None
+    selectors = [f"name:{name}" for name in FULL_SUITE_RULE_NAMES]
+    AgentDefinitionManager(db).create(
+        name="default",
+        source="custom",
+        definition_json=json.dumps(
+            {
+                "name": "default",
+                "prompts": {"agent": "Run the assigned task."},
+                "workflows": {"rule_selectors": {"include": selectors, "exclude": []}},
+            }
+        ),
+    )
     db.execute("DELETE FROM rule_definitions WHERE name <> ALL(%s)", (FULL_SUITE_RULE_NAMES,))
 
     result = await RuleEngine(db).evaluate(

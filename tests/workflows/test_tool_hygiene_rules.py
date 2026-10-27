@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -802,13 +800,14 @@ class TestScopeSpawnedAgentSendMessage:
         expected: str,
     ) -> None:
         _sync_bundled(db)
-        path = (
-            Path(__file__).parents[2]
-            / f"src/gobby/install/shared/workflows/agents/{agent_type}.yaml"
+        body = make_agent_definition(
+            name=agent_type,
+            prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+            workflows=make_agent_workflows(rule_selectors=AgentSelector(include=["tag:default"])),
+            send_message_targets=["parent", "session"],
         )
-        definition = yaml.safe_load(path.read_text())
         AgentDefinitionManager(db).create(
-            name=agent_type, definition_json=definition, source="custom"
+            name=agent_type, definition_json=body.model_dump(), source="custom"
         )
 
         decision, _ = await self._decide(db, session_manager, sessions["child"], agent_type, target)

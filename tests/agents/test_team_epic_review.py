@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-import yaml
 
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.agents.team_review import sync_epic_review
@@ -35,16 +34,18 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
-from tests.fixtures.team_case import TITLE, TeamWorld, git_in, make_team_world
+from tests.fixtures.team_case import (
+    TITLE,
+    TeamWorld,
+    git_in,
+    make_team_world,
+    synthetic_manager_body,
+)
 
 pytestmark = pytest.mark.unit
 
 # make_team_world stubs the definition loader; the held-spawn checks need installed definitions.
 _REAL_AGENT_BODY = _factory._load_agent_body
-DEV_MANAGER_YAML = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/dev-manager.yaml"
-)
 
 
 @dataclass
@@ -113,9 +114,7 @@ def world(
     monkeypatch.setattr(_factory, "spawn_agent_impl", launch)
     definitions = AgentDefinitionManager(temp_db)
     project_id = world.case.project_id
-    definitions.create(
-        "dev-manager", yaml.safe_load(DEV_MANAGER_YAML.read_text()), project_id=project_id
-    )
+    definitions.create("dev-manager", synthetic_manager_body(), project_id=project_id)
     definitions.create(
         "developer",
         {

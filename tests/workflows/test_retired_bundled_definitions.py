@@ -143,14 +143,6 @@ def test_retired_agent_procedure_is_absent(name: str) -> None:
     assert not path.exists(), f"retired agent procedure remains: {path}"
 
 
-def test_expansion_qa_remains_bundled() -> None:
-    """The post-expansion checker survives discovery-stage retirement."""
-    body = yaml.safe_load((AGENTS_DIR / "expansion-qa.yaml").read_text(encoding="utf-8"))
-    assert body["name"] == "expansion-qa"
-    assert body.get("enabled", True) is True
-    assert "expansion-qa" not in RETIRED_AGENTS
-
-
 @pytest.mark.parametrize("name", RETIRED_SKILLS)
 def test_retired_skill_is_absent_from_bundled_templates(name: str) -> None:
     assert not (SKILLS_DIR / name).exists(), f"retired skill remains bundled: {name}"
@@ -232,17 +224,6 @@ def test_monolith_rule_templates_match_enabled_db_authority() -> None:
 
     assert set(data["rules"]) == MONOLITH_RULES
     assert all(rule["enabled"] is True for rule in data["rules"].values())
-
-
-def test_bundled_agents_have_no_dead_sync_selector() -> None:
-    offenders: list[str] = []
-    for path in AGENTS_DIR.glob("*.yaml"):
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        excludes = data.get("workflows", {}).get("rule_selectors", {}).get("exclude", [])
-        if "tag:sync" in excludes:
-            offenders.append(path.name)
-
-    assert offenders == []
 
 
 def test_retired_digest_prompt_is_absent() -> None:

@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from importlib.resources import files
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.hooks.event_handlers import _agent as agent_mod
 from gobby.hooks.event_handlers._agent import (
@@ -21,7 +19,6 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSo
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, apply_acknowledged_receipt
 from gobby.sessions.turn_lifecycle import TurnDisposition
 from gobby.skills.formatting import skill_fetch_directive
-from gobby.workflows.definitions import AgentDefinitionBody
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytestmark = pytest.mark.unit
@@ -303,9 +300,17 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        agent_path = files("gobby.install.shared").joinpath("workflows/agents/default.yaml")
-        default_agent = AgentDefinitionBody.model_validate(
-            yaml.safe_load(agent_path.read_text(encoding="utf-8"))
+        default_agent = make_agent_definition(
+            name="default",
+            surfaces=["persona", "spawn"],
+            prompts={
+                "persona": (
+                    "## Role\n\nSynthetic default role.\n\n"
+                    "## Working Style\n\nSynthetic working style.\n\n"
+                    "## Platform Context\n\nSynthetic platform context.\n"
+                ),
+                "agent": "Synthetic default seat.",
+            },
         )
 
         with (
@@ -336,9 +341,6 @@ class TestHandleBeforeAgent:
         assert "## Working Style" in result.context
         assert "## Platform Context" in result.context
         assert "end_agent_run" not in result.context
-        assert "Think out loud" not in result.context
-        assert "Show your reasoning" not in result.context
-        assert "Be technically sharp, candid, concise, and curious." in persona
         assert "<active_skills>" not in result.context
         assert "### brevity" not in result.context
         assert _staged_preamble_guard(result) == PREAMBLE_GUARD

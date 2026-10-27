@@ -30,7 +30,6 @@ import psutil
 import pytest
 
 import tests.e2e.conftest as e2e_fixtures
-from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
 from gobby.storage.definitions._shared import decode_json_object
@@ -55,6 +54,7 @@ from tests.e2e.conftest import (
     daemon_token,
     prepare_daemon_env,
 )
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.isolated_checkout import write_project_marker
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.workflows.placed_runbook_live_support import (
@@ -175,13 +175,13 @@ def rig(
     home = e2e_config[0].parent
     root = tmp_path / "rig"
     root.mkdir()
-    # Precondition 8: the bundled runbook and its seat definitions, in the isolated registry.
+    # Precondition 8: the bundled runbook pipeline, with synthetic seats under its seat names.
     assert not sync_bundled_pipelines(postgres_db)["errors"]
-    assert not sync_bundled_agents(postgres_db)["errors"]
     definitions = AgentDefinitionManager(postgres_db)
     providers: dict[str, str] = {}
     seats: list[tuple[str, str]] = []
     for agent in _catalogue(_installed_runbook(postgres_db)).values():
+        seed_seat(postgres_db, agent)
         row = definitions.get_by_name(agent)
         assert row is not None and row.enabled, f"{agent} is not an enabled definition"
         provider, model = SEAT_RUNTIMES[agent]

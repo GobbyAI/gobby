@@ -14,7 +14,6 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -776,10 +775,87 @@ NOT_LINKED = "CANDIDATE not bound: COMMIT is not linked to the claimant's task"
 NOT_CLAIMANT = "CANDIDATE not bound: sender does not claim task"
 
 
+_SEAT_ADVANCE = {"action": "advance_seat"}
+_ALREADY_CLAIMED = "(tool_output.get('result') or tool_output).get('already_claimed')"
+
+
+def _review_seat_advances() -> list[dict[str, Any]]:
+    return [
+        {"server": "gobby-agents", "tool": "get_inter_session_message", **_SEAT_ADVANCE},
+        {"server": "gobby-agents", "tool": "send_message", **_SEAT_ADVANCE},
+        {"server": "gobby-tasks", "tool": "get_task", **_SEAT_ADVANCE},
+        {"server": "gobby-tasks", "tool": "record_review_step", **_SEAT_ADVANCE},
+    ]
+
+
+def _reviewer_step_workflow() -> dict[str, Any]:
+    """A synthetic candidate-intake graph: await, review, verdict and fix.
+
+    It carries the transitions and seat-advance bindings the intake tests drive, written
+    inline so the tests do not depend on the installed code-reviewer seat.
+    """
+    return {
+        "variables": {
+            "candidate_received": False,
+            "verdict_ready": False,
+            "fixing": False,
+            "candidate_task": None,
+            "candidate_sha": None,
+            "candidate_disposition": None,
+        },
+        "steps": [
+            {
+                "name": "await",
+                "mcp_error_policy": "stay",
+                "idle": True,
+                "on_mcp_success": [
+                    {"server": "gobby-agents", "tool": "send_message", **_SEAT_ADVANCE},
+                    {
+                        "server": "gobby-agents",
+                        "tool": "get_inter_session_message",
+                        **_SEAT_ADVANCE,
+                    },
+                    {
+                        "server": "gobby-tasks",
+                        "tool": "claim_task",
+                        "action": "set_variable",
+                        "variable": "fixing",
+                        "value": True,
+                        "when": _ALREADY_CLAIMED,
+                    },
+                ],
+                "transitions": [
+                    {"to": "fix", "when": "vars.fixing"},
+                    {"to": "verdict", "when": "vars.candidate_received and vars.verdict_ready"},
+                    {"to": "review", "when": "vars.candidate_received"},
+                ],
+            },
+            {
+                "name": "review",
+                "mcp_error_policy": "stay",
+                "on_mcp_success": _review_seat_advances(),
+                "transitions": [
+                    {"to": "await", "when": "not vars.candidate_received"},
+                    {"to": "verdict", "when": "vars.verdict_ready"},
+                ],
+            },
+            {
+                "name": "verdict",
+                "mcp_error_policy": "stay",
+                "on_mcp_success": _review_seat_advances(),
+                "transitions": [
+                    {"to": "review", "when": "vars.candidate_received and not vars.verdict_ready"},
+                    {"to": "await", "when": "not vars.candidate_received"},
+                ],
+            },
+            {"name": "fix", "mcp_error_policy": "stay"},
+        ],
+    }
+
+
 def reviewer_at_await(db: HubDatabase, session_id: str) -> None:
     """Run ``session_id`` as a code-reviewer step instance waiting for a candidate."""
-    agent = yaml.safe_load((get_bundled_agents_path() / "code-reviewer.yaml").read_text())
-    workflow = agent["step_workflow"]
+    workflow = _reviewer_step_workflow()
     SessionVariableManager(db).set_variable(session_id, "_agent_type", "code-reviewer")
     AgentStepInstanceManager(db).save(
         AgentStepInstance(

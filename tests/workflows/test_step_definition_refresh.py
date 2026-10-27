@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
+from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.apply_agent_definition import (
     build_definition_changes,
@@ -129,6 +129,45 @@ def _definition(revision: str, tool: str) -> AgentDefinitionBody:
     )
 
 
+def _reviewer_definition() -> AgentDefinitionBody:
+    """A synthetic reviewer: a candidate waits in await until verdict judges it."""
+    advance = {"server": "gobby-agents", "tool": "send_message", "action": "advance_seat"}
+    return AgentDefinitionBody.model_validate(
+        {
+            "name": "code-reviewer",
+            "prompts": {"agent": "Synthetic reviewer seat."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "step_workflow": {
+                "variables": {
+                    "candidate_received": False,
+                    "verdict_ready": False,
+                    "candidate_task": None,
+                    "candidate_sha": None,
+                    "candidate_owner": None,
+                    "candidate_received_at": None,
+                    "candidate_disposition": None,
+                },
+                "steps": [
+                    {
+                        "name": "await",
+                        "transitions": [
+                            {
+                                "to": "verdict",
+                                "when": "vars.candidate_received and vars.verdict_ready",
+                            }
+                        ],
+                    },
+                    {
+                        "name": "verdict",
+                        "on_mcp_success": [advance],
+                        "transitions": [{"to": "await", "when": "not vars.candidate_received"}],
+                    },
+                ],
+            },
+        }
+    )
+
+
 @pytest.fixture
 def seat_ids(hub_db: HubDatabase) -> tuple[str, str]:
     session_id, project_id = str(uuid4()), str(uuid4())
@@ -163,10 +202,7 @@ async def test_reloaded_reviewer_ends_only_on_terminal_event(
         title="Reviewed unit",
         validation_criteria="The reviewer's own verdict ends its unit.",
     )
-    current = AgentDefinitionBody.model_validate(
-        yaml.safe_load((get_bundled_agents_path() / "code-reviewer.yaml").read_text())
-    )
-    current.workflows.rule_selectors.include = []
+    current = _reviewer_definition()
     original = current.model_copy(deep=True)
     assert original.step_workflow is not None
     verdict = next(step for step in original.step_workflow.steps if step.name == "verdict")

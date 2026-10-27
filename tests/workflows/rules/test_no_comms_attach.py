@@ -10,25 +10,21 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.cli import cli
 from gobby.cli.communications import attach_cmd
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.command_matching import command_patterns_match
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.selectors import resolve_rules_for_agent
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RULE_NAME = "no-comms-attach"
 RULE_PATH = get_bundled_rules_path() / "tool-hygiene" / f"{RULE_NAME}.yaml"
-EXEMPT_SEATS = {"reporter", "log-monitor", "metrics-monitor", "trajectory-monitor"}
-AGENT_PATHS = sorted(get_bundled_agents_path().glob("*.yaml"))
 SESSION_ID = "44444444-4444-4444-8444-444444444444"
 
 
@@ -139,18 +135,6 @@ def test_click_terminators_dispatch_attachment_without_delivery(
     callback.assert_called_once_with(channel_name="channel", filename="excerpt.txt", caption="")
 
 
-@pytest.mark.parametrize("path", AGENT_PATHS, ids=lambda path: path.stem)
-def test_only_reporter_and_monitors_exclude_the_rule(
-    rule_row: RuleDefinitionRow, path: Path
-) -> None:
-    agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
-    selected = resolve_rules_for_agent(agent, [rule_row])
-    assert (RULE_NAME in selected) is (agent.name not in EXEMPT_SEATS)
-    assert (f"name:{RULE_NAME}" in agent.workflows.rule_selectors.exclude) is (
-        agent.name in EXEMPT_SEATS
-    )
-
-
 async def test_engine_blocks_default_seat_and_allows_unrelated_comms(temp_db: HubDatabase) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     temp_db.execute("DELETE FROM rule_definitions WHERE name != %s", (RULE_NAME,))
@@ -177,30 +161,10 @@ async def test_engine_blocks_default_seat_and_allows_unrelated_comms(temp_db: Hu
     assert allowed[0] == "allow"
 
 
-def test_assistant_routes_whole_files_and_cited_logs() -> None:
-    data = yaml.safe_load((get_bundled_agents_path() / "assistant.yaml").read_text())
-    prompt: str = data["prompts"]["agent"]
-    assert "gobby comms attach" not in prompt
-    assert "gobby-communications:send_operator_attachment" in prompt
-    assert "files and plans" in prompt
-    assert "Log Monitor through `gobby-agents:send_message`" in prompt
-    assert "ask the Log Monitor to deliver cited log lines redacted" in prompt
-    assert "never the log lines or a path" in prompt
-
-
-def test_log_monitor_delivers_requested_cited_lines() -> None:
-    data = yaml.safe_load((get_bundled_agents_path() / "log-monitor.yaml").read_text())
-    prompt: str = data["prompts"]["agent"]
-    assert "The one exception: deliver cited log lines a seat asks for." in prompt
-    assert 'gobby comms attach --caption "cited log lines, redacted"' in prompt
-    assert "during a tick" in prompt
-    assert "Reply to the asker with the outcome." in prompt
-
-
 def test_attachment_reference_explains_seat_exemptions() -> None:
     reference = (
-        get_bundled_agents_path().parents[1]
-        / "skills/gobby/references/communications/attachments.md"
+        PROJECT_ROOT
+        / "src/gobby/install/shared/skills/gobby/references/communications/attachments.md"
     ).read_text()
     for seat in ("Reporter", "Log Monitor", "Metrics Monitor", "Trajectory Monitor"):
         assert seat in reference

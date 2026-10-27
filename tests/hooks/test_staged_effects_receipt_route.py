@@ -31,7 +31,6 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
@@ -50,6 +49,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.workflows.session_feedback_survey import GOBBY_PROJECT_NAME
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 from tests.servers.conftest import authenticate_test_server
 
 pytestmark = pytest.mark.unit
@@ -85,9 +85,9 @@ def receipts_db(temp_db: HubDatabase) -> HubDatabase:
 
     result = sync_bundled_rules(temp_db, get_bundled_rules_path())
     assert result["success"], result["errors"]
-    # The session's active-rule set is resolved from its agent definition,
-    # so an unsynced agent registry would silently filter every rule away.
-    sync_bundled_agents(temp_db)
+    # The session's active-rule set is resolved from its agent definition, so a
+    # synthetic seat that selects the gate stands in for the agent registry.
+    seed_seat(temp_db, "default", include=[f"name:{RULE_NAME}"])
 
     # Guard: the whole test is vacuous if the bundled gate is renamed or moved,
     # so pin that the named rule really landed and is live.

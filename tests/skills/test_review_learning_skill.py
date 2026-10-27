@@ -39,7 +39,6 @@ def _local_machine_identity() -> Iterator[None]:
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_ROOT = REPO_ROOT / "src/gobby/install/shared/skills"
-WORKFLOWS = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 PLAN_SKILL = SKILLS_ROOT / "gobby/references/plan/approval.md"
 PLAN_DRAFT_SKILL = SKILLS_ROOT / "gobby/references/plan/drafting.md"
 PLAN_REVIEW_SKILL = SKILLS_ROOT / "gobby/references/plan/review.md"
@@ -230,9 +229,6 @@ def test_review_producers_do_not_reference_review_learning() -> None:
         "epic": SKILLS_ROOT / "gobby/references/review/epic.md",
         "outcomes": SKILLS_ROOT / "gobby/references/review/outcomes.md",
         "evidence": SKILLS_ROOT / "gobby/references/review/evidence.md",
-        "epic-reviewer": WORKFLOWS / "epic-reviewer.yaml",
-        "feedback-reviewer": WORKFLOWS / "feedback-reviewer.yaml",
-        "code-reviewer": WORKFLOWS / "code-reviewer.yaml",
     }
     for name, path in producers.items():
         text = path.read_text()

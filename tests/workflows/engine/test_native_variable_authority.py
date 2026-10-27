@@ -8,9 +8,7 @@ from typing import Literal
 from uuid import uuid4
 
 import pytest
-import yaml
 
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.workflows._variables import set_variable
 from gobby.storage.hub.protocol import HubDatabase
@@ -74,15 +72,17 @@ def _instance(db: HubDatabase, role: str, step: str, session_id: str = CALLER) -
     )
 
 
+_SYNTHETIC_SEAT_STEPS: dict[str, tuple[str, ...]] = {
+    "developer": ("load_skills", "claim", "implement", "submit"),
+    "code-reviewer": ("review", "verdict"),
+    "tech-writer": ("write",),
+}
+
+
 def _blocked_seat_steps() -> list[tuple[str, str]]:
     cases: list[tuple[str, str]] = []
-    for path in sorted(get_bundled_agents_path().glob("*.yaml")):
-        agent = yaml.safe_load(path.read_text())
-        role = agent["name"]
-        if role in {"assistant", "orchestrator", "default"}:
-            continue
-        workflow = agent.get("step_workflow") or {}
-        cases.extend((role, step["name"]) for step in workflow.get("steps", []))
+    for role, steps in _SYNTHETIC_SEAT_STEPS.items():
+        cases.extend((role, step) for step in steps)
         cases.append((role, "no-workflow"))
     return cases
 

@@ -11,7 +11,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
@@ -44,10 +43,32 @@ from tests.terminals.fakes import FakeRuntime
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
-_DEVELOPER = (
-    Path(__file__).resolve().parents[4] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
 _EXITED_EPOCH = "host-epoch-before-drain"
+
+
+def _developer_raw() -> dict[str, Any]:
+    """Synthetic developer seat: the claim step and the variables the handoff binding reads."""
+    return {
+        "name": "developer",
+        "execution_mode": "interactive",
+        "task_step_writes": ["implementation"],
+        "prompts": {"agent": "Synthetic developer seat."},
+        "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+        "step_workflow": {
+            "variables": {
+                "task_claimed": False,
+                "assigned_task_id": None,
+                "assigned_task_ref": None,
+                "skills_routed": False,
+                "required_skills_loaded": False,
+                "additional_skills_loaded": False,
+            },
+            "steps": [
+                {"name": "load_skills"},
+                {"name": "claim", "allowed_mcp_tools": ["gobby-tasks:close_task"]},
+            ],
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -77,7 +98,7 @@ def placed(
 
 def _seed_developer_seat(h: _Harness, session_id: str, task_id: str, ref: str, step: str) -> None:
     """Persist a bound developer instance; the handoff binding is its step variable."""
-    body = AgentDefinitionBody.model_validate(yaml.safe_load(_DEVELOPER.read_text("utf-8")))
+    body = AgentDefinitionBody.model_validate(_developer_raw())
     assert body.step_workflow is not None
     variables = dict(body.step_workflow.variables)
     variables.update(
@@ -101,7 +122,7 @@ def _seed_developer_seat(h: _Harness, session_id: str, task_id: str, ref: str, s
 
 def _define_developer(db: HubDatabase) -> None:
     """Store the developer definition so resume resolves its step workflow, not the default agent."""
-    raw = yaml.safe_load(_DEVELOPER.read_text("utf-8"))
+    raw = _developer_raw()
     AgentDefinitionManager(db).upsert_with_steps(
         "developer", raw, raw["step_workflow"], source="custom"
     )

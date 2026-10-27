@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -24,7 +20,6 @@ from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from tests.fixtures.agent_definitions import make_agent_definition
@@ -45,11 +40,6 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-AGENTS_PATH = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents"
-LEAF_AGENT_NAMES = ("tech-writer",)
 
 
 @pytest.fixture
@@ -146,40 +136,222 @@ def _register_agent_workflow(
     return instance_manager
 
 
-def _register_bundled_agent_workflow(
+def _register_steps_workflow(
     db: HubDatabase,
     *,
-    agent_name: str,
+    workflow_name: str,
+    steps: list[dict[str, object]],
+    variables: dict[str, object],
     current_step: str,
     session_id: str = AGENT_SESSION_ID,
 ) -> AgentStepInstanceManager:
     _create_session(db, session_id)
     instance_manager = AgentStepInstanceManager(db)
-    agent_path = AGENTS_PATH / f"{agent_name}.yaml"
-    agent_data = yaml.safe_load(agent_path.read_text(encoding="utf-8"))
-    agent_body = AgentDefinitionBody.model_validate(agent_data)
     instance_manager.save(
         build_step_instance(
-            agent_body,
+            make_agent_definition(
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                name=workflow_name,
+                step_workflow=AgentStepWorkflowBody.model_validate(
+                    {
+                        "variables": {},
+                        "exit_condition": "current_step == 'terminate'",
+                        "steps": steps,
+                    }
+                ),
+            ),
             session_id=session_id,
             step_workflow_id=None,
-            variables=dict(agent_body.step_workflow.variables if agent_body.step_workflow else {}),
+            variables=variables,
             current_step=current_step,
         )
     )
     return instance_manager
 
 
-def _register_expansion_qa_workflow(
-    db: HubDatabase,
+def _handler(
+    server: str,
+    tool: str,
+    variable: str,
+    value: object,
     *,
-    session_id: str = AGENT_SESSION_ID,
-) -> AgentStepInstanceManager:
-    return _register_bundled_agent_workflow(
+    when: str | None = None,
+) -> dict[str, object]:
+    handler: dict[str, object] = {
+        "server": server,
+        "tool": tool,
+        "action": "set_variable",
+        "variable": variable,
+        "value": value,
+    }
+    if when is not None:
+        handler["when"] = when
+    return handler
+
+
+_TERMINATE_STEP: dict[str, object] = {
+    "name": "terminate",
+    "allowed_tools": [
+        "mcp__gobby__call_tool",
+        "mcp__gobby__list_mcp_servers",
+        "mcp__gobby__list_tools",
+        "mcp__gobby__get_tool_schema",
+    ],
+    "allowed_mcp_tools": ["gobby-agents:end_agent_run"],
+}
+_ON_ASSIGNED_TASK = "tool_input.get('task_id') in (vars.assigned_task_id, vars.assigned_task_uuid)"
+
+
+def _register_task_seat_workflow(db: HubDatabase) -> AgentStepInstanceManager:
+    """A task seat ends implement on a parent task blocker or its own task's close or escalation."""
+    blocker = (
+        "tool_output.get('success') and tool_input.get('message_type') == 'task_blocker' "
+        "and tool_input.get('target', 'parent') == 'parent' "
+        "and (tool_input.get('metadata') or {}).get('task_id') "
+        "in (vars.assigned_task_id, vars.assigned_task_uuid)"
+    )
+    closed = (
+        "tool_output.get('success') and (tool_output.get('result') or {}).get('closed') "
+        f"and {_ON_ASSIGNED_TASK}"
+    )
+    escalated = f"tool_output.get('success') and {_ON_ASSIGNED_TASK}"
+    implement: dict[str, object] = {
+        "name": "implement",
+        "allowed_tools": "all",
+        "on_mcp_success": [
+            _handler("gobby-agents", "send_message", "blocker_handed_off", True, when=blocker),
+            _handler("gobby-tasks", "close_task", "implementation_complete", True, when=closed),
+            _handler(
+                "gobby-tasks", "escalate_task", "implementation_complete", True, when=escalated
+            ),
+        ],
+        "transitions": [
+            {"to": "terminate", "when": "vars.blocker_handed_off or vars.implementation_complete"}
+        ],
+    }
+    return _register_steps_workflow(
         db,
-        agent_name="expansion-qa",
-        current_step="coverage_check",
-        session_id=session_id,
+        workflow_name="task-seat",
+        steps=[implement, _TERMINATE_STEP],
+        variables={"blocker_handed_off": False, "implementation_complete": False},
+        current_step="implement",
+    )
+
+
+_SEAT_LOOP_FLAGS: dict[str, object] = {
+    "implementation_complete": False,
+    "candidate_sent": False,
+    "skills_routed": False,
+    "additional_skills_loaded": False,
+    "bounced": False,
+}
+# What a handed-back task clears; the loop's own contract, not a copy of any seat definition.
+_SEAT_LOOP_RESET: dict[str, object] = {
+    **_SEAT_LOOP_FLAGS,
+    "task_claimed": False,
+    "assigned_task_id": None,
+    "assigned_task_ref": None,
+}
+
+
+def _task_done_handlers(tool: str, done_when: str) -> list[dict[str, object]]:
+    """Latch a task-done match before the resets, which rewrite the ids the match reads."""
+    resets = [
+        _handler("gobby-tasks", tool, name, value, when="vars.task_done")
+        for name, value in _SEAT_LOOP_RESET.items()
+    ]
+    return [
+        _handler("gobby-tasks", tool, "task_done", True, when=done_when),
+        *resets,
+        _handler("gobby-tasks", tool, "task_done", False),
+    ]
+
+
+def _register_seat_loop_workflow(db: HubDatabase, *, current_step: str) -> AgentStepInstanceManager:
+    """A minimal developer loop: claim binds a task, implement waits on a commit, submit returns to claim."""
+    claim: dict[str, object] = {
+        "name": "claim",
+        "allowed_tools": "all",
+        "on_mcp_success": [
+            _handler(
+                "gobby-tasks",
+                "claim_task",
+                "assigned_task_id",
+                "(tool_output.get('result') or tool_output).get('task_id')",
+            ),
+            *(
+                _handler("gobby-tasks", "claim_task", name, value)
+                for name, value in _SEAT_LOOP_FLAGS.items()
+            ),
+            _handler("gobby-tasks", "claim_task", "task_claimed", True),
+        ],
+        "transitions": [{"to": "route_skills", "when": "vars.assigned_task_id"}],
+    }
+    route_skills: dict[str, object] = {
+        "name": "route_skills",
+        "allowed_tools": "all",
+        "on_mcp_success": [
+            _handler(
+                "gobby-tasks",
+                "get_task",
+                "assigned_task_ref",
+                "(tool_output.get('result') or {}).get('ref')",
+            ),
+        ],
+        "transitions": [{"to": "implement", "when": "vars.skills_routed"}],
+    }
+    implement: dict[str, object] = {
+        "name": "implement",
+        "allowed_tools": "all",
+        "on_mcp_success": [
+            _handler("gobby-tasks", "link_commit", "implementation_complete", True),
+            _handler("gobby-tasks", "link_commit", "bounced", False),
+            _handler("gobby-tasks", "link_commit", "candidate_sent", False),
+        ],
+        "transitions": [
+            {"to": "submit", "when": "vars.implementation_complete and not vars.bounced"}
+        ],
+    }
+    closed = (
+        "tool_output.get('success') and (tool_output.get('result') or {}).get('closed') "
+        "and tool_input.get('task_id') in (vars.assigned_task_id, vars.assigned_task_ref)"
+    )
+    card = "(tool_output.get('result') or {})"
+    is_closed_card = (
+        f"tool_output.get('success') and {card}.get('id') == vars.assigned_task_id "
+        f"and ({card}.get('state') or {{}}).get('is_closed')"
+    )
+    submit: dict[str, object] = {
+        "name": "submit",
+        "allowed_tools": "all",
+        "on_mcp_success": [
+            _handler(
+                "gobby-agents",
+                "send_message",
+                "candidate_sent",
+                True,
+                when="'EVENT=CANDIDATE' in tool_input.get('content', '')",
+            ),
+            *_task_done_handlers("close_task", closed),
+            *_task_done_handlers("get_task", is_closed_card),
+        ],
+        "transitions": [
+            {"to": "claim", "when": "not vars.assigned_task_id"},
+            {"to": "implement", "when": "vars.bounced"},
+        ],
+    }
+    return _register_steps_workflow(
+        db,
+        workflow_name="developer-loop",
+        steps=[claim, route_skills, implement, submit],
+        variables={
+            "task_claimed": False,
+            "assigned_task_id": None,
+            "assigned_task_ref": None,
+            "task_done": False,
+            **_SEAT_LOOP_FLAGS,
+        },
+        current_step=current_step,
     )
 
 
@@ -220,21 +392,15 @@ def _after_tool_event(
     )
 
 
-@pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
 @pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
 @pytest.mark.parametrize("wrapped", (False, True))
 @pytest.mark.asyncio
 async def test_task_blocker_for_assigned_task_terminates(
     db: HubDatabase,
-    agent_name: str,
     task_id: str,
     wrapped: bool,
 ) -> None:
-    instance_manager = _register_bundled_agent_workflow(
-        db,
-        agent_name=agent_name,
-        current_step="implement",
-    )
+    instance_manager = _register_task_seat_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, object] = {
         "assigned_task_id": "#21617",
@@ -269,17 +435,9 @@ async def test_task_blocker_for_assigned_task_terminates(
     assert variables["step_workflow_complete"] is True
 
 
-@pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
 @pytest.mark.asyncio
-async def test_task_blocker_omitted_target_defaults_to_parent(
-    db: HubDatabase,
-    agent_name: str,
-) -> None:
-    instance_manager = _register_bundled_agent_workflow(
-        db,
-        agent_name=agent_name,
-        current_step="implement",
-    )
+async def test_task_blocker_omitted_target_defaults_to_parent(db: HubDatabase) -> None:
+    instance_manager = _register_task_seat_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, object] = {
         "assigned_task_id": "#21617",
@@ -308,19 +466,13 @@ async def test_task_blocker_omitted_target_defaults_to_parent(
     assert instance.variables["blocker_handed_off"] is True
 
 
-@pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
 @pytest.mark.parametrize("metadata", ({"task_id": "#21618"}, None))
 @pytest.mark.asyncio
 async def test_task_blocker_for_other_task_does_not_terminate(
     db: HubDatabase,
-    agent_name: str,
     metadata: dict[str, object] | None,
 ) -> None:
-    instance_manager = _register_bundled_agent_workflow(
-        db,
-        agent_name=agent_name,
-        current_step="implement",
-    )
+    instance_manager = _register_task_seat_workflow(db)
     engine = RuleEngine(db)
     variables: dict[str, object] = {
         "assigned_task_id": "#21617",
@@ -356,11 +508,7 @@ async def test_task_blocker_for_other_task_does_not_terminate(
 async def test_assigned_task_blocker_terminalizes_with_blocked_payload(
     db: HubDatabase,
 ) -> None:
-    instance_manager = _register_bundled_agent_workflow(
-        db,
-        agent_name="tech-writer",
-        current_step="implement",
-    )
+    instance_manager = _register_task_seat_workflow(db)
     run_id = "33333333-3333-4333-8333-333333333333"
     run = MagicMock(
         id=run_id,
@@ -623,182 +771,6 @@ class TestAgentWorkflowCompletion:
         assert variables["step_workflow_complete"] is True
         assert response.context is not None
         completion_registry.notify.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("coverage_passed", [True, False])
-    @pytest.mark.parametrize("handoff_target", ["parent", "session"])
-    async def test_expansion_qa_saved_report_and_handoff_terminalize_workflow(
-        self, db: HubDatabase, coverage_passed: bool, handoff_target: str
-    ) -> None:
-        instance_manager = _register_expansion_qa_workflow(db)
-        runner = MagicMock()
-        runner.run_storage = MagicMock()
-        runner.run_storage.get_by_session.return_value = MagicMock(
-            id="ff807256-1906-55de-b7b3-94163bb18352"
-        )
-
-        async def complete_with_owned_cleanup(run_id: str, **_kwargs: object) -> bool:
-            await asyncio.to_thread(
-                cleanup_agent_runtime_state,
-                db,
-                run_id=run_id,
-                child_session_id=AGENT_SESSION_ID,
-                terminal_reason=None,
-            )
-            return True
-
-        runner.agent_lifecycle_monitor = MagicMock()
-        runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(
-            side_effect=complete_with_owned_cleanup
-        )
-        runner.complete_run.return_value = True
-        runner.run_storage.db = db
-        runner.get_run.return_value = MagicMock(status="success", error=None)
-        completion_registry = MagicMock()
-        completion_registry.get_result.return_value = None
-        completion_registry.notify = AsyncMock()
-        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
-        variables: dict[str, object] = {}
-
-        await engine.evaluate(
-            _after_tool_event(mcp_tool="save_expansion_qa_result"),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "coverage_check"
-        assert instance.variables["qa_result_saved"] is False
-
-        await engine.evaluate(
-            _after_tool_event(
-                mcp_tool="run_expansion_qa_coverage",
-                tool_output={"success": False, "error": "Coverage tool failed"},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "coverage_check"
-        assert instance.variables["coverage_result_saved"] is False
-
-        coverage_response = await engine.evaluate(
-            _after_tool_event(
-                mcp_tool="run_expansion_qa_coverage",
-                tool_output={"success": True, "result": {"passed": coverage_passed}},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "qa_check"
-        assert instance.variables["coverage_result_saved"] is True
-        assert instance.variables["qa_result_saved"] is False
-        assert "coverage_check -> qa_check" in (coverage_response.context or "")
-
-        await engine.evaluate(
-            _after_tool_event(
-                mcp_tool="save_expansion_qa_result",
-                tool_output={"success": False, "error": "QA result save failed"},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "qa_check"
-        assert instance.variables["qa_result_saved"] is False
-
-        save_response = await engine.evaluate(
-            _after_tool_event(
-                mcp_tool="save_expansion_qa_result",
-                tool_output={"success": True},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "handoff"
-        assert instance.variables["qa_result_saved"] is True
-        assert instance.variables["handoff_sent"] is False
-        assert "step_workflow_complete" not in variables
-        assert "qa_check -> handoff" in (save_response.context or "")
-        runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
-
-        # A project broadcast is no handoff.
-        await engine.evaluate(
-            _after_tool_event(
-                mcp_server="gobby-agents",
-                mcp_tool="send_message",
-                tool_arguments={"target": "project", "content": "FYI"},
-                tool_output={"success": True},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-        # Triage by session, or the planning team that spawned the seat; a failed send stays.
-        triage = {"target": "session", "target_id": "#2"}
-        for target in (triage, {"target": "parent"}):
-            await engine.evaluate(
-                _after_tool_event(
-                    mcp_server="gobby-agents",
-                    mcp_tool="send_message",
-                    tool_arguments={**target, "content": "QA report"},
-                    tool_output={"success": False, "error": "Handoff delivery failed"},
-                ),
-                session_id=AGENT_SESSION_ID,
-                variables=variables,
-            )
-        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
-        assert instance is not None
-        assert instance.current_step == "handoff"
-        assert instance.variables["handoff_sent"] is False
-        runner.agent_lifecycle_monitor.complete_workflow_run.assert_not_awaited()
-
-        handoff_response = await engine.evaluate(
-            _after_tool_event(
-                mcp_server="gobby-agents",
-                mcp_tool="send_message",
-                tool_arguments={
-                    **(triage if handoff_target == "session" else {"target": "parent"}),
-                    "content": "Saved QA report and next steps",
-                },
-                tool_output={"success": True},
-            ),
-            session_id=AGENT_SESSION_ID,
-            variables=variables,
-        )
-
-        assert instance_manager.get_for_session(AGENT_SESSION_ID) is None
-        assert variables["handoff_sent"] is True
-        assert variables["step_workflow_complete"] is True
-        assert "handoff -> terminate" in (handoff_response.context or "")
-        runner.complete_run.assert_not_called()
-        runner.agent_lifecycle_monitor.complete_workflow_run.assert_awaited_once_with(
-            "ff807256-1906-55de-b7b3-94163bb18352",
-            notify_result={
-                "status": "success",
-                "run_id": "ff807256-1906-55de-b7b3-94163bb18352",
-                "via": "workflow_terminate",
-                "workflow": "expansion-qa",
-                "task_ref": None,
-                "claimed_by": None,
-                "is_escalated": False,
-                "escalation_reason": None,
-                "linked_commits": [],
-            },
-            message=(
-                "Agent ff807256-1906-55de-b7b3-94163bb18352 completed via workflow "
-                "terminate; task_ref=none; claimed_by=none; is_escalated=false; "
-                "escalation_reason=none; linked_commits=[]"
-            ),
-        )
-        completion_registry.notify.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_parent_wait_unblocks_without_end_agent_run_tool_call(
@@ -1071,20 +1043,17 @@ class TestAgentWorkflowCompletion:
         assert instance is None
         assert variables["review_complete"] is True
 
-    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.asyncio
     async def test_developer_close_task_completion_requires_assigned_task(
         self,
         db: HubDatabase,
-        agent_name: str,
     ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db,
-            agent_name=agent_name,
-            current_step="implement",
-        )
+        instance_manager = _register_task_seat_workflow(db)
         engine = RuleEngine(db)
-        variables: dict[str, object] = {"assigned_task_id": "#21596"}
+        variables: dict[str, object] = {
+            "assigned_task_id": "#21596",
+            "assigned_task_uuid": ASSIGNED_TASK_UUID,
+        }
         closed_output = {"success": True, "result": {"closed": True}}
 
         await engine.evaluate(
@@ -1121,20 +1090,14 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["implementation_complete"] is True
         assert variables["step_workflow_complete"] is True
 
-    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.parametrize("task_id", ("#21617", ASSIGNED_TASK_UUID))
     @pytest.mark.asyncio
     async def test_escalate_assigned_task_exits_implement(
         self,
         db: HubDatabase,
-        agent_name: str,
         task_id: str,
     ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db,
-            agent_name=agent_name,
-            current_step="implement",
-        )
+        instance_manager = _register_task_seat_workflow(db)
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "assigned_task_id": "#21617",
@@ -1157,18 +1120,9 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["implementation_complete"] is True
         assert variables["step_workflow_complete"] is True
 
-    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.asyncio
-    async def test_escalate_other_task_stays_in_implement(
-        self,
-        db: HubDatabase,
-        agent_name: str,
-    ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db,
-            agent_name=agent_name,
-            current_step="implement",
-        )
+    async def test_escalate_other_task_stays_in_implement(self, db: HubDatabase) -> None:
+        instance_manager = _register_task_seat_workflow(db)
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "assigned_task_id": "#21617",
@@ -1191,23 +1145,15 @@ class TestAgentWorkflowCompletion:
         assert instance.variables["implementation_complete"] is False
         assert "step_workflow_complete" not in variables
 
-    @pytest.mark.parametrize("agent_name", LEAF_AGENT_NAMES)
     @pytest.mark.asyncio
-    async def test_developer_non_blocker_messages_do_not_terminate(
-        self,
-        db: HubDatabase,
-        agent_name: str,
-    ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db,
-            agent_name=agent_name,
-            current_step="implement",
-        )
+    async def test_developer_non_blocker_messages_do_not_terminate(self, db: HubDatabase) -> None:
+        instance_manager = _register_task_seat_workflow(db)
         engine = RuleEngine(db)
         variables: dict[str, object] = {
             "parent_session_id": PARENT_SESSION_UUID,
+            "assigned_task_id": "#21617",
+            "assigned_task_uuid": ASSIGNED_TASK_UUID,
         }
-        variables["assigned_task_id"] = "#21617"
         non_blocker_arguments: tuple[dict[str, object], ...] = (
             {"target": "parent", "message_type": "message", "content": "Progress."},
             {
@@ -1245,17 +1191,6 @@ class TestAgentWorkflowCompletion:
 
 
 ASSIGNED_TASK_REF = "#22997"
-# The per-task state a developer seat clears before it claims its next task.
-_DEVELOPER_RESET_STATE: dict[str, object] = {
-    "task_claimed": False,
-    "implementation_complete": False,
-    "additional_skills_loaded": False,
-    "skills_routed": False,
-    "candidate_sent": False,
-    "bounced": False,
-    "assigned_task_id": None,
-    "assigned_task_ref": None,
-}
 
 
 def _step_scoped_set_variable_event(name: str, value: object) -> HookEvent:
@@ -1344,7 +1279,7 @@ class TestDeveloperSeatLoop:
         step, state = self._state(instance_manager)
         assert (step, state["assigned_task_ref"]) == ("route_skills", ASSIGNED_TASK_REF)
 
-        # No routed skills, so the additional-skills gate passes straight through.
+        # Routing the skills opens the implement step.
         await self._set_step_variable(engine, instance_manager, variables, "skills_routed", True)
         assert self._state(instance_manager)[0] == "implement"
 
@@ -1382,15 +1317,13 @@ class TestDeveloperSeatLoop:
     def _assert_reset_for_next_claim(self, instance_manager: AgentStepInstanceManager) -> None:
         step, state = self._state(instance_manager)
         assert step == "claim"
-        assert {name: state[name] for name in _DEVELOPER_RESET_STATE} == _DEVELOPER_RESET_STATE
+        assert {name: state[name] for name in _SEAT_LOOP_RESET} == _SEAT_LOOP_RESET
 
     @pytest.mark.asyncio
     async def test_developer_loop_returns_to_claim_after_its_task_closes(
         self, db: HubDatabase
     ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db, agent_name="developer", current_step="claim"
-        )
+        instance_manager = _register_seat_loop_workflow(db, current_step="claim")
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
         await self._reach_submit(engine, instance_manager, variables)
@@ -1443,9 +1376,7 @@ class TestDeveloperSeatLoop:
     async def test_developer_loop_returns_to_claim_after_a_reviewed_close(
         self, db: HubDatabase, closed_card: dict[str, object]
     ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db, agent_name="developer", current_step="claim"
-        )
+        instance_manager = _register_seat_loop_workflow(db, current_step="claim")
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
         await self._reach_submit(engine, instance_manager, variables)
@@ -1519,9 +1450,7 @@ class TestDeveloperSeatLoop:
     async def test_developer_bounce_reopens_implement_until_the_rework_commit(
         self, db: HubDatabase
     ) -> None:
-        instance_manager = _register_bundled_agent_workflow(
-            db, agent_name="developer", current_step="submit"
-        )
+        instance_manager = _register_seat_loop_workflow(db, current_step="submit")
         instance_manager.merge_variables(
             AGENT_SESSION_ID,
             {

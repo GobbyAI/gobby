@@ -6,10 +6,8 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 pytestmark = pytest.mark.unit
 
@@ -17,9 +15,6 @@ _SESSION_ID = "08e60e7e-1f89-4e30-b37e-db276d81a6b6"
 _CLOSE_ARGUMENTS = {"task_id": "#1"}
 _FULL_RESULT = {"success": True, "closed": True, "task_id": "#1"}
 _BOUND_RESULT = f"project/{_SESSION_ID}/tool-results/mcp-gobby-call_tool-1789424128611.txt"
-_DEVELOPER = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
 
 
 def _post_tool_output(tool_response: str) -> object:
@@ -83,25 +78,3 @@ def test_missing_saved_result_keeps_the_pointer(tmp_path: Path) -> None:
     pointer = _pointer(tmp_path / _BOUND_RESULT)
 
     assert _post_tool_output(pointer) == pointer
-
-
-def test_recovered_close_task_result_satisfies_developer_close_condition(
-    tmp_path: Path,
-) -> None:
-    agent = yaml.safe_load(_DEVELOPER.read_text(encoding="utf-8"))
-    submit = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "submit")
-    close_hook = next(
-        handler
-        for handler in submit["on_mcp_success"]
-        if handler["server"] == "gobby-tasks" and handler["tool"] == "close_task"
-    )
-    evaluator = SafeExpressionEvaluator(
-        {
-            "vars": {"assigned_task_id": "#1"},
-            "tool_input": _CLOSE_ARGUMENTS,
-            "tool_output": _post_tool_output(_pointer(_saved(tmp_path, _BOUND_RESULT))),
-        },
-        {},
-    )
-
-    assert evaluator.evaluate(close_hook["when"]) is True

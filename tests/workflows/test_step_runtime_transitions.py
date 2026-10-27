@@ -6,11 +6,9 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -51,7 +49,6 @@ async def test_completion_normalization_runs_off_loop(db: HubDatabase) -> None:
 # ids like SESSION_ID would fail with `invalid input syntax for type uuid`.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-AGENTS_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
 
 
 @pytest.fixture
@@ -128,15 +125,173 @@ def _developer_workflow() -> dict[str, Any]:
     }
 
 
-def _bundled_developer_workflow() -> dict[str, Any]:
-    agent = yaml.safe_load((AGENTS_DIR / "developer.yaml").read_text())
-    assert isinstance(agent, dict)
-    step_workflow = agent["step_workflow"]
+# Handler conditions see the inner MCP arguments, so the task id is a flat key.
+_ASSIGNED_TASK_CALL = "tool_input.get('task_id') in (vars.assigned_task_id, vars.assigned_task_ref)"
+
+
+def _task_state_reset() -> dict[str, Any]:
+    """The per-task state a developer seat clears when it claims a task or hands one back."""
     return {
-        "name": agent["name"],
-        "variables": step_workflow["variables"],
-        "steps": step_workflow["steps"],
-        "exit_condition": step_workflow.get("exit_condition"),
+        "task_claimed": False,
+        "implementation_complete": False,
+        "candidate_sent": False,
+        "skills_routed": False,
+        "additional_skills_loaded": False,
+        "bounced": False,
+        "assigned_task_ref": None,
+        "additional_skills": [],
+    }
+
+
+def _reset_handlers(server: str, tool: str, when: str | None = None) -> list[dict[str, Any]]:
+    handlers: list[dict[str, Any]] = []
+    for name, value in _task_state_reset().items():
+        handler: dict[str, Any] = {
+            "server": server,
+            "tool": tool,
+            "action": "set_variable",
+            "variable": name,
+            "value": value,
+        }
+        if when is not None:
+            handler["when"] = when
+        handlers.append(handler)
+    return handlers
+
+
+def _handoff_workflow() -> dict[str, Any]:
+    """A developer-shaped loop: a claim binds its task, and handing the assigned task back resets."""
+    bind_claim = {
+        "server": "gobby-tasks",
+        "tool": "claim_task",
+        "action": "set_variable",
+        "variable": "assigned_task_id",
+        "value": "(tool_output.get('result') or tool_output).get('task_id')",
+    }
+    bind_ref = {
+        "server": "gobby-tasks",
+        "tool": "get_task",
+        "action": "set_variable",
+        "variable": "assigned_task_ref",
+        "value": "(tool_output.get('result') or tool_output).get('ref')",
+    }
+    link_commit = {
+        "server": "gobby-tasks",
+        "tool": "link_commit",
+        "action": "set_variable",
+        "variable": "implementation_complete",
+        "value": True,
+    }
+    # Latch the match first: the resets rewrite the binding the match reads.
+    latch_handed_back = {
+        "server": "gobby-tasks",
+        "tool": "escalate_task",
+        "action": "set_variable",
+        "variable": "handed_back",
+        "value": True,
+        "when": f"tool_output.get('success') and {_ASSIGNED_TASK_CALL}",
+    }
+    clear_assigned_task = {
+        "server": "gobby-tasks",
+        "tool": "escalate_task",
+        "action": "set_variable",
+        "variable": "assigned_task_id",
+        "value": None,
+        "when": "vars.handed_back",
+    }
+    unlatch_handed_back = {
+        "server": "gobby-tasks",
+        "tool": "escalate_task",
+        "action": "set_variable",
+        "variable": "handed_back",
+        "value": False,
+    }
+    return {
+        "name": "handoff-steps",
+        "version": "1.0",
+        "enabled": True,
+        "variables": {
+            "task_claimed": False,
+            "assigned_task_id": None,
+            "assigned_task_ref": None,
+            "implementation_complete": False,
+            "candidate_sent": False,
+            "skills_routed": False,
+            "additional_skills": [],
+            "additional_skills_loaded": False,
+            "bounced": False,
+            "handed_back": False,
+        },
+        "steps": [
+            {
+                "name": "claim",
+                "on_mcp_success": [
+                    bind_claim,
+                    *_reset_handlers("gobby-tasks", "claim_task"),
+                    {
+                        "server": "gobby-tasks",
+                        "tool": "claim_task",
+                        "action": "set_variable",
+                        "variable": "task_claimed",
+                        "value": True,
+                    },
+                ],
+                "transitions": [{"to": "route_skills", "when": "vars.assigned_task_id"}],
+            },
+            {
+                "name": "route_skills",
+                "on_mcp_success": [bind_ref],
+                "transitions": [{"to": "implement", "when": "vars.skills_routed"}],
+            },
+            {
+                "name": "implement",
+                "on_mcp_success": [link_commit],
+                "transitions": [{"to": "submit", "when": "vars.implementation_complete"}],
+            },
+            {
+                "name": "submit",
+                "on_mcp_success": [
+                    latch_handed_back,
+                    *_reset_handlers("gobby-tasks", "escalate_task", "vars.handed_back"),
+                    clear_assigned_task,
+                    unlatch_handed_back,
+                ],
+                "transitions": [{"to": "claim", "when": "not vars.assigned_task_id"}],
+            },
+        ],
+    }
+
+
+def _required_skills_workflow() -> dict[str, Any]:
+    """A load_skills step that holds until every required skill is in the loaded ledger."""
+    loaded = "all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)"
+    return {
+        "name": "required-skills-steps",
+        "version": "1.0",
+        "enabled": True,
+        "variables": {
+            "task_claimed": False,
+            "required_skills": [],
+            "required_skills_loaded": False,
+        },
+        "steps": [
+            {
+                "name": "load_skills",
+                "allowed_tools": ["mcp__gobby__call_tool"],
+                "allowed_mcp_tools": ["gobby-skills:get_skill"],
+                "on_mcp_success": [
+                    {
+                        "server": "gobby-skills",
+                        "tool": "get_skill",
+                        "action": "set_variable",
+                        "variable": "required_skills_loaded",
+                        "value": loaded,
+                    }
+                ],
+                "transitions": [{"to": "claim", "when": "vars.required_skills_loaded"}],
+            },
+            {"name": "claim", "allowed_tools": "all"},
+        ],
     }
 
 
@@ -277,8 +432,10 @@ def _before_mcp_set_variable(name: str, value: object) -> HookEvent:
 
 
 @pytest.mark.parametrize("task_ref", ["old-task", "#101"])
-async def test_bundled_handoff_resets_before_next_task(db: HubDatabase, task_ref: str) -> None:
-    workflow = _bundled_developer_workflow()
+async def test_handoff_of_assigned_task_resets_before_next_task(
+    db: HubDatabase, task_ref: str
+) -> None:
+    workflow = _handoff_workflow()
     stale = {
         **workflow["variables"],
         "task_claimed": True,
@@ -362,12 +519,12 @@ async def test_bundled_handoff_resets_before_next_task(db: HubDatabase, task_ref
     ("task_ref", "success"),
     [("foreign-task", True), ("old-task", False)],
 )
-async def test_bundled_unsuccessful_handoff_keeps_binding(
+async def test_unsuccessful_or_foreign_handoff_keeps_binding(
     db: HubDatabase,
     task_ref: str,
     success: bool,
 ) -> None:
-    workflow = _bundled_developer_workflow()
+    workflow = _handoff_workflow()
     variables = {
         **workflow["variables"],
         "task_claimed": True,
@@ -393,8 +550,8 @@ async def test_bundled_unsuccessful_handoff_keeps_binding(
     assert instance.variables == variables
 
 
-async def test_bundled_claim_discards_stale_completion(db: HubDatabase) -> None:
-    workflow = _bundled_developer_workflow()
+async def test_claim_discards_stale_completion(db: HubDatabase) -> None:
+    workflow = _handoff_workflow()
     variables = {
         **workflow["variables"],
         "assigned_task_ref": "#101",
@@ -491,43 +648,13 @@ async def test_required_additional_skills_gate_exact_loaded_skill_names(
     assert instance.variables["additional_skills_loaded"] is True
 
 
-@pytest.mark.parametrize(
-    ("current_step", "skill_list", "gate_variable", "skill", "released_step"),
-    [
-        (
-            "load_skills",
-            "required_skills",
-            "required_skills_loaded",
-            "restraint",
-            "claim",
-        ),
-        (
-            "load_additional_skills",
-            "additional_skills",
-            "additional_skills_loaded",
-            "code-index",
-            "implement",
-        ),
-    ],
-)
-async def test_bundled_skill_gate_holds_until_skill_is_loaded(
-    db: HubDatabase,
-    current_step: str,
-    skill_list: str,
-    gate_variable: str,
-    skill: str,
-    released_step: str,
-) -> None:
-    workflow = _bundled_developer_workflow()
+async def test_required_skills_gate_holds_until_skill_is_loaded(db: HubDatabase) -> None:
+    workflow = _required_skills_workflow()
     step_variables = dict(workflow["variables"])
-    step_variables[skill_list] = [skill]
-    step_variables[gate_variable] = False
-    # Additional skill loading follows a claim; an unclaimed seat returns to claim.
-    step_variables["task_claimed"] = current_step == "load_additional_skills"
-
+    step_variables["required_skills"] = ["restraint"]
     instance_manager = _setup_workflow(
         db,
-        current_step=current_step,
+        current_step="load_skills",
         variables=step_variables,
         workflow=workflow,
     )
@@ -544,19 +671,19 @@ async def test_bundled_skill_gate_holds_until_skill_is_loaded(
     )
     instance = instance_manager.get_for_session(SESSION_ID)
     assert instance is not None
-    assert instance.current_step == current_step
-    assert instance.variables[gate_variable] is False
+    assert instance.current_step == "load_skills"
+    assert instance.variables["required_skills_loaded"] is False
 
-    variables["loaded_skills"].append(skill)
+    variables["loaded_skills"].append("restraint")
     await engine.evaluate(
-        _after_mcp_tool("gobby-skills", "get_skill", arguments={"name": skill}),
+        _after_mcp_tool("gobby-skills", "get_skill", arguments={"name": "restraint"}),
         session_id=SESSION_ID,
         variables=variables,
     )
     instance = instance_manager.get_for_session(SESSION_ID)
     assert instance is not None
-    assert instance.current_step == released_step
-    assert instance.variables[gate_variable] is True
+    assert instance.current_step == "claim"
+    assert instance.variables["required_skills_loaded"] is True
 
 
 def test_step_handler_expression_failure_logs_and_fails_closed(

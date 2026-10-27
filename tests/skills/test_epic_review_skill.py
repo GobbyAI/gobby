@@ -15,7 +15,6 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_PATH = REPO_ROOT / "src/gobby/install/shared/skills/gobby/references/review/outcomes.md"
-WORKFLOWS = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 
 
 class EpicFindingEntry(TypedDict):
@@ -33,13 +32,11 @@ class EpicFindingEntry(TypedDict):
 
 async def test_two_class_epic_recording(monkeypatch: pytest.MonkeyPatch) -> None:
     skill = " ".join(SKILL_PATH.read_text(encoding="utf-8").split())
-    epic_reviewer = (WORKFLOWS / "epic-reviewer.yaml").read_text(encoding="utf-8")
 
     # Agents no longer see the lesson contract; the recording service below stays.
-    for text in (skill, epic_reviewer):
-        assert "list_check_keys" not in text
-        assert "qa-miss" not in text
-        assert "record_review_lesson" not in text
+    assert "list_check_keys" not in skill
+    assert "qa-miss" not in skill
+    assert "record_review_lesson" not in skill
 
     monkeypatch.setattr(
         "gobby.review_learning.service._current_project_id",

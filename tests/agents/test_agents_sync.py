@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 import yaml
 
-from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
+from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.definitions import AgentDefinitionManager, get_definitions_revision
 from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
 from gobby.storage.definitions.revisions import advance_persistent_revision
@@ -130,32 +130,6 @@ class TestSyncBundledAgents:
         assert row.source == "installed"
         body = _parse_body(row)
         assert body.name == "test-agent"
-
-    @pytest.mark.unit
-    @pytest.mark.parametrize("name", ["plan-adversary"])
-    def test_adversary_templates_sync_grok_xhigh(
-        self, tmp_path: Path, definition_db: PostgresHubDatabase, name: str
-    ) -> None:
-        """Template sync installs the grok-4.7 xhigh adversary definition."""
-        source = (
-            Path(__file__).resolve().parents[2]
-            / f"src/gobby/install/shared/workflows/agents/{name}.yaml"
-        )
-        agents_dir = tmp_path / "agents"
-        agents_dir.mkdir()
-        (agents_dir / source.name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-
-        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
-            result = sync_bundled_agents(definition_db)
-
-        assert result["success"] is True
-        assert result["errors"] == []
-        row = next(item for item in _mgr(definition_db).list_all() if item.name == name)
-        body = _parse_body(row)
-        assert body.provider == "inherit"
-        assert body.model is None
-        assert body.reasoning_effort is None
-        assert "codex" not in body.model_dump_json().lower()
 
     @pytest.mark.unit
     def test_sync_skips_unchanged(self, tmp_path: Path, definition_db: PostgresHubDatabase) -> None:
@@ -362,20 +336,34 @@ class TestSyncBundledAgents:
 
     @pytest.mark.unit
     def test_resync_leaves_unchanged_step_workflows_untouched(
-        self, definition_db: PostgresHubDatabase
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
     ) -> None:
         """A second sync of unchanged templates writes no step row, revision or notify."""
         db = definition_db
-        sync_bundled_agents(db)
-        rows_before = _step_workflow_row_versions(db)
-        revisions_before = _step_revision_rows(db)
-        assert rows_before, "expected stepped bundled agents"
-
-        with patch(
-            "gobby.storage.definitions._shared.advance_persistent_revision",
-            wraps=advance_persistent_revision,
-        ) as advance:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "stepped-agent.yaml").write_text(
+            "name: stepped-agent\n"
+            "description: Stepped agent\n"
+            "provider: claude\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+            "step_workflow:\n"
+            "  variables:\n    goal: ship\n"
+            "  exit_condition: done\n"
+            "  steps:\n    - name: work\n      prompt: Perform the work.\n"
+        )
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
             sync_bundled_agents(db)
+            rows_before = _step_workflow_row_versions(db)
+            revisions_before = _step_revision_rows(db)
+            assert rows_before, "expected a stepped synthetic agent"
+
+            with patch(
+                "gobby.storage.definitions._shared.advance_persistent_revision",
+                wraps=advance_persistent_revision,
+            ) as advance:
+                sync_bundled_agents(db)
 
         assert _step_workflow_row_versions(db) == rows_before
         assert _step_revision_rows(db) == revisions_before
@@ -959,80 +947,6 @@ class TestSyncBundledAgents:
         assert result["orphaned"] == 1
         assert _mgr(db).get_by_name("test-agent") is None
 
-    @pytest.mark.integration
-    def test_sync_soft_deletes_removed_plan_review_researcher(
-        self, definition_db: PostgresHubDatabase
-    ) -> None:
-        """The deleted bundled researcher slug is retired from installed state."""
-        mgr = _mgr(definition_db)
-        removed = mgr.create(
-            name="plan-review-researcher-taskless",
-            definition_json=json.dumps(
-                {
-                    "name": "plan-review-researcher-taskless",
-                    "provider": "inherit",
-                    "mode": "interactive",
-                }
-            ),
-            source="installed",
-            enabled=True,
-            tags=["gobby"],
-        )
-
-        result = sync_bundled_agents(definition_db)
-
-        assert result["orphaned"] == 1
-        deleted = mgr.get(removed.id, include_deleted=True)
-        assert deleted is not None
-        assert deleted.deleted_at is not None
-        assert mgr.get_by_name("plan-review-researcher-taskless") is None
-
-    @pytest.mark.integration
-    def test_removed_planning_definitions_retire_installed_rows(
-        self, definition_db: PostgresHubDatabase
-    ) -> None:
-        """Sync retires removed planning rows and preserves the current Enhancer seat."""
-        mgr = _mgr(definition_db)
-        retired_names = (
-            "planner",
-            "plan-adversary-old",
-            "plan-adversary-taskless-old",
-            "plan-enhancer-old",
-            "plan-enhancer-taskless-old",
-            "plan-enhancer-taskless",
-            "plan-adversary-taskless",
-        )
-        installed_ids: dict[str, str] = {}
-        for name in (*retired_names, "plan-enhancer"):
-            installed = mgr.create(
-                name=name,
-                definition_json=json.dumps(
-                    {"name": name, "provider": "inherit", "mode": "interactive"}
-                ),
-                source="installed",
-                enabled=True,
-                tags=["gobby"],
-            )
-            installed_ids[name] = installed.id
-
-        result = sync_bundled_agents(definition_db)
-
-        assert result["success"] is True
-        assert result["errors"] == []
-        for name in retired_names:
-            assert mgr.get_by_name(name) is None
-            retired = mgr.get(installed_ids[name], include_deleted=True)
-            assert retired is not None
-            assert retired.deleted_at is not None
-        enabled_names = {row.name for row in mgr.list_all() if row.enabled}
-        assert enabled_names.isdisjoint(retired_names)
-        # The plan-enhancer name now belongs to the bundled planning seat.
-        seat = mgr.get_by_name("plan-enhancer")
-        assert seat is not None
-        seat_prompts = _parse_body(seat).prompts
-        assert seat_prompts is not None
-        assert "You are the Plan Enhancer seat" in (seat_prompts.agent or "")
-
     @pytest.mark.unit
     def test_sync_orphan_cleanup_preserves_non_sync_managed_agents(
         self,
@@ -1087,85 +1001,45 @@ class TestSyncBundledAgents:
         assert custom is not None
         assert custom.deleted_at is None
 
-    @pytest.mark.integration
-    def test_sync_with_real_bundled_agents(self, definition_db: PostgresHubDatabase) -> None:
-        """Test that sync works with the actual bundled agents directory."""
-        db = definition_db
+    @pytest.mark.unit
+    def test_sync_stores_step_workflow_in_child_table_only(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """A stepped definition keeps its steps in agent_step_workflows, not the parent JSON."""
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "stepped-agent.yaml").write_text(
+            "name: stepped-agent\n"
+            "description: Stepped agent\n"
+            "provider: claude\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+            "step_workflow:\n"
+            "  variables:\n    goal: ship\n"
+            "  exit_condition: done\n"
+            "  steps:\n    - name: work\n      prompt: Perform the work.\n"
+        )
 
-        result = sync_bundled_agents(db)
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(definition_db)
 
-        assert result["success"] is True
-        # At least one bundled agent should be synced (some may be skipped
-        # due to name collision with bundled workflows)
-        assert result["synced"] + result["skipped"] + result["updated"] >= 1
         assert result["errors"] == []
-
-        # Verify agents are in rule_definitions
-        mgr = _mgr(db)
-        rows = mgr.list_all()
-        assert len(rows) > 0
-        names = [r.name for r in rows]
-        # Check for agents from the new-format bundled definitions
-        assert "default" in names
-        assert "developer" in names
-        assert set(names).isdisjoint(
-            {
-                "analyst",
-                "architect",
-                "product-manager",
-                "qa-reviewer",
-                "doc-reviewer",
-                "trajectory-monitor",
-                "qa-dev",
-            }
+        stepped = definition_db.fetchall(
+            """
+            SELECT a.name
+            FROM agent_definitions a
+            JOIN agent_step_workflows w ON w.agent_definition_id = a.id
+            WHERE a.deleted_at IS NULL
+            """
         )
-        assert "expansion-qa" in names
-        assert mgr.get_by_name("task-close-reviewer") is None
-        code_reviewer = mgr.get_by_name("code-reviewer")
-        assert code_reviewer is not None
-        assert _parse_body(code_reviewer).reasoning_effort is None
-        for name in ("reporter", "assistant"):
-            status_sender = mgr.get_by_name(name)
-            assert status_sender is not None
-            assert _parse_body(status_sender).operator_messaging is True
-        assert all(
-            n in names
-            for n in (
-                "researcher",
-                "plan-adversary",
-            )
-        )
-        assert "test-architect" not in names
-        assert "requirements-analyst" not in names
-        assert "conductor" not in names
-        assert not {"backend-developer", "frontend-developer", "fullstack-developer"} & set(names)
-        assert "pipeline-worker" not in names
-
-        children = {
-            row["name"]: row["child"]
-            for row in db.fetchall(
-                """
-                SELECT a.name, w.id IS NOT NULL AS child
-                FROM agent_definitions a
-                LEFT JOIN agent_step_workflows w ON w.agent_definition_id = a.id
-                WHERE a.deleted_at IS NULL
-                """
-            )
-        }
-        stepful = [name for name, has_child in children.items() if has_child]
-        stepless = [name for name, has_child in children.items() if not has_child]
-        bundled_stems = {path.stem for path in get_bundled_agents_path().glob("*.yaml")}
-        assert len(stepful) == len(bundled_stems) - len(_STEPLESS_BUNDLED_AGENTS)
-        assert set(stepless) == _STEPLESS_BUNDLED_AGENTS
-        for row in db.fetchall("SELECT name, definition_json FROM agent_definitions"):
+        assert [row["name"] for row in stepped] == ["stepped-agent"]
+        for row in definition_db.fetchall("SELECT name, definition_json FROM agent_definitions"):
             body = row["definition_json"]
             if isinstance(body, str):
                 body = json.loads(body)
             assert isinstance(body, dict)
-            assert "steps" not in body
-            assert "step_variables" not in body
-            assert "exit_condition" not in body
-            assert "step_workflow" not in body
+            for key in ("steps", "step_variables", "exit_condition", "step_workflow"):
+                assert key not in body, f"{row['name']} carries {key} in definition_json"
 
     @pytest.mark.unit
     def test_sync_adopts_enabled_default_unless_pinned(
@@ -1278,64 +1152,6 @@ class TestSyncBundledAgents:
         assert row is not None
         assert row.description == "v2"
         assert _parse_body(row).network == "trusted"
-
-
-# The message-driven coordination seats carry no step workflow (agent-definition-profiles
-# Decision 7).
-_STEPLESS_BUNDLED_AGENTS = frozenset(
-    {
-        "archivist",
-        "assistant",
-        "comms-agent",
-        "debugger",
-        "default",
-        "design-reviewer",
-        "dev-manager",
-        "memory-curator",
-        "orchestrator",
-        "recovery-steward",
-        "release-manager",
-        "reporter",
-        "security-reviewer",
-        "test-writer",
-        "triage",
-        "triage-agent",
-    }
-)
-_LEGACY_STEP_KEYS = ("steps", "step_variables", "exit_condition")
-
-
-@pytest.mark.unit
-def test_bundled_agents_nested_step_workflow() -> None:
-    """Bundled agents load under the nested step_workflow model."""
-    from gobby.workflows.definitions import AgentDefinitionBody
-
-    paths = sorted(get_bundled_agents_path().glob("*.yaml"))
-    assert {path.stem for path in paths} >= _STEPLESS_BUNDLED_AGENTS
-
-    for path in paths:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert isinstance(raw, dict)
-        for key in _LEGACY_STEP_KEYS:
-            assert key not in raw, f"{path.name} still has top-level {key}"
-        body = AgentDefinitionBody.model_validate(raw)
-        if path.stem in _STEPLESS_BUNDLED_AGENTS:
-            assert body.step_workflow is None, path.name
-        else:
-            assert body.step_workflow is not None, path.name
-            assert len(body.step_workflow.steps) >= 1, path.name
-
-
-@pytest.mark.integration
-def test_memory_recall_helper_not_bundled(definition_db: PostgresHubDatabase) -> None:
-    """Memory recall is daemon-owned and no helper agent is bundled."""
-    result = sync_bundled_agents(definition_db)
-
-    assert result["success"] is True
-    assert result["errors"] == []
-
-    row = _mgr(definition_db).get_by_name("memory-recall-helper")
-    assert row is None
 
 
 @pytest.mark.integration
