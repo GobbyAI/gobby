@@ -185,6 +185,49 @@ def test_repair_preview_is_read_only_and_apply_is_audited(
     assert _OLD in events[0]["reason"] and _CANDIDATE in events[0]["reason"]
 
 
+def test_repair_preview_reads_the_approval_at_the_closed_tip_not_the_stored_copy(
+    reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview],
+) -> None:
+    """The repair preview's VALID gate follows the step approval at the closed tip."""
+    manager, review = reviewed_task
+    manager.db.execute(
+        "UPDATE tasks SET review_status = 'pending' WHERE id = %s", (review.task_id,)
+    )
+    manager.db.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, %s, 'task_step', %s)",
+        (
+            str(uuid4()),
+            review.task_id,
+            review.caller_session_id,
+            json.dumps(
+                {
+                    "step": "review",
+                    "status": "approved",
+                    "epoch": 1,
+                    "round_number": 1,
+                    "commit_sha": _OLD,
+                    "sequence": 1,
+                    "agent_definition": "reviewer",
+                    "session_id": review.caller_session_id,
+                }
+            ),
+        ),
+    )
+
+    preview = manager.repair_closed_candidate(
+        review.task_id,
+        review_id=review.id,
+        candidate_commit_sha=_CANDIDATE,
+        expected_closed_commit_sha=_OLD,
+        by_session_id=review.caller_session_id,
+        reason=_REASON,
+    )
+
+    assert preview["applied"] is False
+    assert preview["review_status"] == "valid"
+
+
 def test_audit_failure_rolls_back_the_marker_correction(
     reviewed_task: tuple[LocalTaskManager, HistoricalCloseReview],
     monkeypatch: pytest.MonkeyPatch,

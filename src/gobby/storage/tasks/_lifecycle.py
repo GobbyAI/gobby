@@ -22,6 +22,7 @@ from gobby.storage.tasks._models import (
     TaskHasOpenChildrenError,
 )
 from gobby.storage.tasks._read import get_task
+from gobby.storage.tasks._review_status import review_status_sql
 from gobby.storage.tasks._transitions import close_task as _close_task_transition
 from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transition
 from gobby.utils.datetime import utc_now
@@ -85,9 +86,15 @@ def repair_closed_candidate(
         ).fetchone()
         if actor is None or actor["project_id"] != task["project_id"]:
             raise ValueError("Repair requires a registered caller in the task project.")
+        derived = conn.execute(
+            f"SELECT COALESCE({review_status_sql('t')}, t.review_status) AS review_status "  # nosec B608
+            "FROM tasks t WHERE t.id = %s",
+            (task_id,),
+        ).fetchone()
+        derived_status = derived["review_status"] if derived is not None else None
         if (
             task["closed_at"] is None
-            or task["review_status"] != "valid"
+            or derived_status != "valid"
             or task["claimed_by_session_id"] is not None
             or task["is_escalated"]
             or task["merge_in_progress"]

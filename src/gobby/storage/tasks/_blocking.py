@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._review_status import review_status_sql
 from gobby.storage.tasks._team_blockers import team_resolved_blocker_sql
 
 
@@ -69,11 +70,25 @@ def _fetch_active_blocker_map(db: HubDatabase, task_ids: Sequence[str]) -> dict[
     return blocker_map
 
 
+def _hydrate_review_status(db: HubDatabase, tasks: Sequence[Task]) -> None:
+    """Replace each stored review status with the one its review step records imply."""
+    rows = db.fetchall(
+        f"SELECT t.id, COALESCE({review_status_sql('t')}, t.review_status) AS review_status "  # nosec B608
+        "FROM tasks t WHERE t.id = ANY(%s)",
+        ([task.id for task in tasks],),
+    )
+    derived = {str(row["id"]): row["review_status"] for row in rows}
+    for task in tasks:
+        if task.id in derived:
+            task.review_status = derived[task.id]
+
+
 def hydrate_task_blocking_state(db: HubDatabase, tasks: Sequence[Task]) -> None:
     """Populate dependency-ordering and canonical blocked-state fields on tasks."""
     if not tasks:
         return
 
+    _hydrate_review_status(db, tasks)
     task_ids = [task.id for task in tasks]
     all_blocker_map = _fetch_all_blocker_map(db, task_ids)
     active_blocker_map = _fetch_active_blocker_map(db, task_ids)
