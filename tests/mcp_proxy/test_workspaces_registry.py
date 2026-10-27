@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import yaml
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -51,7 +52,10 @@ from gobby.utils.session_context import (
     session_context_for_test,
     set_request_principal,
 )
+from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.handlers import execute_mcp_step
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
@@ -425,6 +429,83 @@ async def test_devteam_arrange_step_is_not_forbidden_for_an_operator_launch(stac
             lambda: _PipelineProxy(registry),
         )
     assert _row_sizes(tiled["tab"]["layout"]) == [1, 1]
+
+
+TEAM_PLANNING = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
+)
+
+
+@pytest.mark.parametrize(
+    ("seats", "expected_rows"),
+    [
+        (("plan-writer",), [1, 1]),
+        (("plan-adversary",), [1, 1]),
+        (("plan-enhancer",), [1, 1]),
+        (("plan-writer", "plan-adversary"), [2, 1]),
+        (("plan-writer", "plan-adversary", "plan-enhancer"), [2, 2]),
+    ],
+)
+async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
+    stack: _Stack, seats: tuple[str, ...], expected_rows: list[int]
+) -> None:
+    """A seat_pane in a tab with another title: arrange tiles the tab the seats joined."""
+    definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
+    arrange = next(step for step in definition.steps if step.id == "arrange")
+    assert arrange.mcp is not None and arrange.mcp.arguments is not None
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id=f"team-planning-arrange-{'-'.join(seats)}",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    with _principal(None), session_context_for_test(session.id):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="planning", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Build Lane",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        seat_pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        for _ in seats:
+            # Each seat's placement splits the supplied seat_pane, so every seat joins Build Lane.
+            await _ok(registry, "split_pane", pane=seat_pane, axis="horizontal")
+        context = {
+            "inputs": {
+                "workspace": home,
+                "task": "#25186",
+                "seat_pane": seat_pane,
+                "seats": ",".join(seats),
+            },
+            "steps": {
+                "guard": {"output": {"launch": list(seats), "tab_title": "Team Planning - #25186"}},
+                **{seat: {"output": {"tab_ref": tab_ref, "pane_ref": seat_pane}} for seat in seats},
+            },
+        }
+        arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+            arrange.mcp.arguments, context, drop_none=True
+        )
+        step = SimpleNamespace(
+            id="arrange",
+            mcp=SimpleNamespace(
+                server="gobby-workspaces", tool="rebalance_tab", arguments=arguments
+            ),
+        )
+        tiled = await execute_mcp_step(
+            step,
+            {"session_id": session.id, "project_id": stack.project_id},
+            lambda: _PipelineProxy(registry),
+        )
+    assert _pane_count(tiled["tab"]["layout"]) == 1 + len(seats)
+    assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
 
 
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:

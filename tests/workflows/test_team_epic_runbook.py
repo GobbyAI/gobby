@@ -323,18 +323,26 @@ def test_team_planning_tiles_the_policy_tab_its_writer_opens() -> None:
     assert guard.arguments["task"] == "${{ inputs.task }}"
     assert guard.arguments["tab_title"] == "Team Planning"
     title = "Team Planning - #25186"
+    tab_ref = f"pilot-node:{WORKSPACE}:tab-1"
     context = {
-        "inputs": {"workspace": "pilot-workspace", "task": "#25186", "seat_pane": None},
+        "inputs": {
+            "workspace": "pilot-workspace",
+            "task": "#25186",
+            "seat_pane": None,
+            "seats": "plan-writer",
+        },
         "steps": {
             "guard": {
                 "output": {"workspace_id": WORKSPACE, "launch": ["plan-writer"], "tab_title": title}
-            }
+            },
+            "plan-writer": {"output": {"tab_ref": tab_ref}},
         },
         "_string_inputs": frozenset({"workspace", "task"}),
     }
     arrange = steps["arrange"].mcp
     assert arrange is not None and arrange.arguments is not None
-    assert RENDERER.render_mcp_arguments(arrange.arguments, context, drop_none=True)["tab"] == title
+    arranged = RENDERER.render_mcp_arguments(arrange.arguments, context, drop_none=True)
+    assert arranged == {"tab": tab_ref, "rows": 100, "layout": "tiled"}
     writer = steps["plan-writer"].mcp
     assert writer is not None and writer.arguments is not None
     placement = RENDERER.render_mcp_arguments(
