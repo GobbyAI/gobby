@@ -79,6 +79,8 @@ step_workflow:
     implementation_complete: false
     candidate_sent: false
     bounced: false
+    # Declared test-only candidates stay tracked until their own unlink.
+    declared_candidates: []
 
   steps:
     - name: load_skills
@@ -327,6 +329,11 @@ step_workflow:
           action: set_variable
           variable: bounced
           value: false
+        - server: gobby-tasks
+          tool: claim_task
+          action: set_variable
+          variable: declared_candidates
+          value: []
         - server: gobby-tasks
           tool: claim_task
           action: set_variable
@@ -654,7 +661,7 @@ step_workflow:
             and tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
             and (
               (tool_output.get('result') or tool_output).get('production_changes') is True
-              or (tool_output.get('result') or tool_output).get('candidate') is True
+              or (tool_output.get('result') or tool_output).get('declared_candidate') is not None
             )
           action: set_variable
           variable: implementation_complete
@@ -671,6 +678,28 @@ step_workflow:
           action: set_variable
           variable: candidate_sent
           value: false
+        # A declared test-only candidate is tracked until its own unlink.
+        - &record_declared_link
+          server: gobby-tasks
+          tool: link_commit
+          when: >-
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and (tool_output.get('result') or tool_output).get('declared_candidate') is not None
+          action: set_variable
+          variable: declared_candidates
+          value: >-
+            vars.get('declared_candidates', []) + [(tool_output.get('result') or tool_output).get('declared_candidate')]
+        - &prune_declared_unlink
+          server: gobby-tasks
+          tool: unlink_commit
+          when: >-
+            tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
+            and (tool_output.get('result') or tool_output).get('unlinked') is not None
+          action: set_variable
+          variable: declared_candidates
+          value: >-
+            [sha for sha in vars.get('declared_candidates', [])
+             if sha != (tool_output.get('result') or tool_output).get('unlinked')]
       transitions:
         - to: claim
           when: "not vars.task_claimed"
@@ -733,13 +762,16 @@ step_workflow:
         - server: gobby-agents
           tool: get_inter_session_message
           action: advance_seat
-        # Unlinking the last production candidate returns to implement; a test-only RED
-        # that stays linked does not hold the step in submit.
+        - *record_declared_link
+        - *prune_declared_unlink
+        # Unlinking the last production candidate, with no declared candidate left, returns
+        # to implement; a test-only RED that stays linked does not hold the step in submit.
         - server: gobby-tasks
           tool: unlink_commit
           when: &own_last_commit_unlinked >-
             tool_input.get('task_id') in (vars.get('assigned_task_id'), vars.get('assigned_task_ref'))
             and (tool_output.get('result') or tool_output).get('production_commits_remain') is False
+            and not vars.get('declared_candidates')
           action: set_variable
           variable: implementation_complete
           value: false

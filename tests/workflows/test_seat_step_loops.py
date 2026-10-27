@@ -1047,6 +1047,7 @@ async def test_developer_submit_unlinks_a_superseded_commit(
             "task_id": task.id,
             "commits": updated.commits,
             "production_commits_remain": not last_commit,
+            "unlinked": commits[0],
         },
     )
     assert run.step == ("implement" if last_commit else "submit")
@@ -1400,7 +1401,7 @@ async def linked_developer(
         "task_id": task.id,
         "commits": [short_sha],
         "production_changes": True,
-        "candidate": False,
+        "declared_candidate": None,
     }
     assert LocalTaskManager(temp_db).get_task(task.id).commits == [short_sha]
     assert len(short_sha) < len(sha) == 40

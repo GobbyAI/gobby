@@ -200,7 +200,7 @@ def create_commit_registry(
                 "task_id": task.id,
                 "commits": task.commits or [],
                 "production_changes": any(not _is_test_path(path) for path in changed),
-                "candidate": candidate,
+                "declared_candidate": normalized if candidate else None,
             }
         except (ValueError, RuntimeError) as e:
             return {"error": str(e)}
@@ -283,6 +283,7 @@ def create_commit_registry(
             "task_id": task.id,
             "commits": task.commits or [],
             "production_commits_remain": production,
+            "unlinked": normalized,
         }
 
     registry.register(
