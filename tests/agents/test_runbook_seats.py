@@ -611,17 +611,28 @@ def test_guard_refuses_an_ambiguous_titled_tab(env: _Env) -> None:
         _skip_check(env, caller, tab_title="Support")
 
 
-SUPPORT_SEATS = ("release-manager", "triage", "archivist", "recovery-steward", "consolidator")
+SUPPORT_SEATS = (
+    "release-manager",
+    "triage",
+    "archivist",
+    "security-reviewer",
+    "recovery-steward",
+    "consolidator",
+)
 
 
-def _run_support(env: _Env) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run the bundled Support runbook's guard; return its reply and each launched placement."""
+def _run_support(env: _Env, **overrides: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Run the bundled Support runbook's guard; return its reply and each launched placement.
+
+    ``overrides`` replace launch inputs such as ``seats`` or ``report_to``.
+    """
     path = get_bundled_pipelines_path() / "support.yaml"
     definition = PipelineDefinition.model_validate(yaml.safe_load(path.read_text()))
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         workspace=env.workspace_id, report_to=env.parent_session_id, project_path="/support"
     )
+    inputs.update(overrides)
     context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "support-run"}
     renderer = StepRenderer(TemplateEngine())
     guard = definition.steps[0].mcp
@@ -691,6 +702,26 @@ def test_support_reruns_launch_only_the_missing_seats(env: _Env) -> None:
         ["triage"],
         {"triage": _split(env, titles["triage"])},
     )
+
+
+def test_triage_opens_the_support_tab_and_the_other_seats_report_to_it(env: _Env) -> None:
+    """Cold start: the Orchestrator launches Triage alone, then the rest report to Triage."""
+    for agent in SUPPORT_SEATS:
+        _install_agent(env.db, agent, env.project_id)
+    rest = [seat for seat in SUPPORT_SEATS if seat != "triage"]
+
+    first, placed = _run_support(env, seats="triage", report_to=env.parent_session_id)
+    triage_session, _ = _seat_session(env, "triage")
+    _support_tab(env)
+    second, rest_placed = _run_support(env, seats=",".join(rest), report_to=triage_session)
+
+    assert first.get("success") is True, first
+    assert (list(first["launch"]), first["tab_exists"]) == (["triage"], False)
+    assert placed == {"triage": {"tab": {"workspace": env.workspace_id, "title": "Support"}}}
+    assert second.get("success") is True, second
+    assert (list(second["launch"]), second["tab_exists"]) == (rest, True)
+    titles = {entry["name"]: entry["title"] for entry in second["seats"]}
+    assert rest_placed == {seat: _split(env, titles[seat]) for seat in rest}
 
 
 @pytest.mark.parametrize(
