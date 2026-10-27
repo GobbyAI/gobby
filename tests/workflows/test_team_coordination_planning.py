@@ -14,7 +14,7 @@ from gobby.workflows.templates import TemplateEngine
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
 SEATS = {"team-planning": ("plan-writer", "plan-adversary", "plan-enhancer")}
-SHARED_INPUTS = {"workspace", "seat_pane", "project_path", "seats", "report_to"}
+SHARED_INPUTS = {"workspace", "task", "seat_pane", "project_path", "seats", "report_to"}
 STEP_REFERENCE = re.compile(r"steps\['([^']+)'\]")
 
 
@@ -26,7 +26,7 @@ def test_team_runbook_guards_only_approved_seats(pipeline: str) -> None:
     assert definition.name == pipeline
     assert definition.tags == ["runbook"]
     assert definition.resume_on_restart
-    assert [step.id for step in definition.steps] == ["guard", *SEATS[pipeline]]
+    assert [step.id for step in definition.steps] == ["guard", *SEATS[pipeline], "arrange"]
     assert definition.inputs["seats"]["default"] == SEATS[pipeline][0]
     assert definition.inputs["workspace"]["required"]
     assert definition.inputs["project_path"]["required"]
@@ -90,12 +90,18 @@ def test_team_runbook_renders_each_subset_in_one_tab(
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     inputs.update(
         seats=",".join(reversed(seats)),
+        task="#25186",
         workspace="pilot-workspace",
         project_path="/pilot/shared-checkout",
         seat_pane=seat_pane,
         report_to="gobby#14972",
     )
-    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    guard_output = {"tab_title": "Team Planning - #25186", "launch": list(seats)}
+    context: dict[str, Any] = {
+        "inputs": inputs,
+        "steps": {"guard": {"output": guard_output}},
+        "invocation_id": "pilot-run",
+    }
     renderer = StepRenderer(TemplateEngine())
     guard = definition.steps[0].mcp
     assert guard is not None and guard.arguments is not None
@@ -107,6 +113,8 @@ def test_team_runbook_renders_each_subset_in_one_tab(
     anchor = seat_pane
     launched = []
     for step in definition.steps[1:]:
+        if step.id == "arrange":
+            continue  # tiles the tab after the seats; its own test covers it
         if not renderer.should_run_step(step, context):
             continue
         assert step.mcp is not None and step.mcp.arguments is not None
@@ -129,7 +137,7 @@ def test_team_runbook_renders_each_subset_in_one_tab(
         assert "wait_for_coordination" in args["prompt"]
         if anchor is None:
             assert args["placement"] == {
-                "tab": {"workspace": "pilot-workspace", "title": "Team Planning"}
+                "tab": {"workspace": "pilot-workspace", "title": "Team Planning - #25186"}
             }
             anchor = f"pilot:{step.id}"
         else:
@@ -163,7 +171,13 @@ def test_team_runbook_preserves_operator_seat_overrides(pipeline: str, seat: str
             f"{prefix}_reasoning_effort": "high",
         }
     )
-    context: dict[str, Any] = {"inputs": inputs, "steps": {}, "invocation_id": "pilot-run"}
+    inputs["task"] = "#25186"
+    guard_output = {"tab_title": "Team Planning - #25186", "launch": [seat]}
+    context: dict[str, Any] = {
+        "inputs": inputs,
+        "steps": {"guard": {"output": guard_output}},
+        "invocation_id": "pilot-run",
+    }
     renderer = StepRenderer(TemplateEngine())
     step = next(step for step in definition.steps if step.id == seat)
     assert renderer.should_run_step(step, context)

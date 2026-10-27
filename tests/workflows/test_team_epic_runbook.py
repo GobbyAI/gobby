@@ -278,7 +278,7 @@ def _pipeline(name: str) -> PipelineDefinition:
 
 @pytest.mark.parametrize(
     ("name", "tab"),
-    [("support", "Support"), ("team-planning", "Team Planning")],
+    [("support", "Support")],
 )
 @pytest.mark.parametrize("launch", [["seat"], []], ids=["seats-launched", "nothing-launched"])
 def test_shared_tab_runbooks_tile_their_tab_after_the_last_seat(
@@ -311,3 +311,33 @@ def test_shared_tab_runbooks_tile_their_tab_after_the_last_seat(
         "rows": 100,
         "layout": "tiled",
     }, arguments
+
+
+def test_team_planning_tiles_the_policy_tab_its_writer_opens() -> None:
+    """Planning opens 'Team Planning - #<task>', as project_policy names it, and tiles that tab."""
+    pipeline = _pipeline("team-planning")
+    assert "task" in pipeline.inputs
+    steps = {step.id: step for step in pipeline.steps}
+    guard = steps["guard"].mcp
+    assert guard is not None and guard.arguments is not None
+    assert guard.arguments["task"] == "${{ inputs.task }}"
+    assert guard.arguments["tab_title"] == "Team Planning"
+    title = "Team Planning - #25186"
+    context = {
+        "inputs": {"workspace": "pilot-workspace", "task": "#25186", "seat_pane": None},
+        "steps": {
+            "guard": {
+                "output": {"workspace_id": WORKSPACE, "launch": ["plan-writer"], "tab_title": title}
+            }
+        },
+        "_string_inputs": frozenset({"workspace", "task"}),
+    }
+    arrange = steps["arrange"].mcp
+    assert arrange is not None and arrange.arguments is not None
+    assert RENDERER.render_mcp_arguments(arrange.arguments, context, drop_none=True)["tab"] == title
+    writer = steps["plan-writer"].mcp
+    assert writer is not None and writer.arguments is not None
+    placement = RENDERER.render_mcp_arguments(
+        {"placement": writer.arguments["placement"]}, context, drop_none=True
+    )
+    assert placement == {"placement": {"tab": {"workspace": "pilot-workspace", "title": title}}}

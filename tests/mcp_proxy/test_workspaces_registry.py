@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -50,6 +51,7 @@ from gobby.utils.session_context import (
     session_context_for_test,
     set_request_principal,
 )
+from gobby.workflows.pipeline.handlers import execute_mcp_step
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
@@ -359,6 +361,70 @@ async def test_rebalance_tab_names_a_tab_by_title_within_its_workspace(stack: _S
         )
     assert tiled["tab"]["id"] == layout["tabs"][0]["id"]
     assert _row_sizes(tiled["tab"]["layout"]) == [2, 1]
+
+
+class _PipelineProxy:
+    """The pipeline's tool proxy, forwarding each MCP step to the internal registry."""
+
+    def __init__(self, registry: InternalToolRegistry) -> None:
+        self._registry = registry
+
+    async def get_tool_schema(self, server: str, tool: str, **_: Any) -> None:
+        """Pipeline dispatch prefetches schemas; the internal registry needs none."""
+
+    async def call_tool(
+        self, server: str, tool: str, arguments: dict[str, Any], **_: Any
+    ) -> dict[str, Any]:
+        return dict(await self._registry.call(tool, arguments))
+
+
+async def test_devteam_arrange_step_is_not_forbidden_for_an_operator_launch(stack: _Stack) -> None:
+    """A background pipeline run keeps the principal of the request that launched it.
+
+    An operator launch carries no token, so its principal is None. With that principal and
+    the pipeline's session context, the devteam arrange step reaches rebalance_tab through
+    execute_mcp_step and tiles its tab instead of being refused as forbidden.
+    """
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id="devteam-arrange",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    with _principal(None), session_context_for_test(session.id):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="devteam", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25186",
+        )
+        first_ref = f"{home}:{layout['tabs'][0]['ref']}:{layout['panes'][0]['ref']}"
+        await _ok(registry, "split_pane", pane=first_ref, axis="horizontal")
+        arrange = SimpleNamespace(
+            id="arrange",
+            mcp=SimpleNamespace(
+                server="gobby-workspaces",
+                tool="rebalance_tab",
+                arguments={
+                    "workspace": home,
+                    "tab": "Dev Team - #25186",
+                    "rows": 100,
+                    "layout": "tiled",
+                },
+            ),
+        )
+        tiled = await execute_mcp_step(
+            arrange,
+            {"session_id": session.id, "project_id": stack.project_id},
+            lambda: _PipelineProxy(registry),
+        )
+    assert _row_sizes(tiled["tab"]["layout"]) == [1, 1]
 
 
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:
