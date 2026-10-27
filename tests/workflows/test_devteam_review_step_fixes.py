@@ -16,6 +16,7 @@ from gobby.workflows.engine.seat_messages import _CANDIDATE_GRAMMAR
 from tests.workflows.test_seat_step_loops import (
     OWNER_ID,
     REPLACEMENT_SHA,
+    SESSION_ID,
     SHA,
     SeatRun,
 )
@@ -178,3 +179,25 @@ async def test_bare_candidate_is_refused_with_canonical_grammar(
     assert result["candidate_binding_error"] == _CANDIDATE_GRAMMAR
     assert "EVENT=CANDIDATE TASK=" in _CANDIDATE_GRAMMAR
     messages.create_message.assert_not_called()
+
+
+async def test_held_claim_result_binds_the_task_and_advances_from_claim(
+    temp_db: HubDatabase,
+) -> None:
+    # A claim the seat already holds still reports success with the task id; the claim
+    # step binds it and advances without branching on the already_claimed flag.
+    run = SeatRun(temp_db, "developer")
+    assert run.step == "claim"
+    task = run.task(owner=SESSION_ID)
+    ref = f"#{task.seq_num}"
+
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": ref, "already_claimed": True}},
+    )
+
+    assert run.step == "route_skills"
+    assert run.vars["assigned_task_id"] == task.id
+    assert run.vars["assigned_task_ref"] == ref

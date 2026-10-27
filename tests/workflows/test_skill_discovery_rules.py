@@ -407,6 +407,146 @@ class TestDefaultAgentCoreSkillBootstrap:
         assert skill_fetch_directive("brevity") not in (response.context or "")
 
 
+class TestRequireSeatReadingGates:
+    """A seat's procedure and listed references hold non-bootstrap tools until loaded.
+
+    Covers the bundled `require-seat-procedure` and `require-seat-references` rules with
+    synthetic seat identities, so the assertions hold for any seat content.
+    """
+
+    PROCEDURE = "gobby:references/synthetic/seat-procedure.md"
+    REFERENCES = (
+        "gobby:references/synthetic/seat-a.md",
+        "gobby:references/synthetic/seat-b.md",
+        "gobby:references/synthetic/seat-c.md",
+    )
+    BOOTSTRAP_TOOLS = ("mcp__gobby-skills__get_skill", "mcp__gobby-skills__get_skill_file")
+
+    @staticmethod
+    def _tool_event(tool_name: str) -> HookEvent:
+        data: dict[str, Any] = {"tool_name": tool_name, "tool_input": {}}
+        normalize_tool_fields(data)
+        return HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+    @staticmethod
+    def _clear_event() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={"source": "clear"},
+        )
+
+    @staticmethod
+    def _variables(**seat: Any) -> dict[str, Any]:
+        variables: dict[str, Any] = {
+            "loaded_skills": [],
+            "loaded_skill_references": [],
+            "skill_discovery_instructions_shown": True,
+            "_memory_initial_stop_checked": True,
+            "servers_listed": True,
+        }
+        variables.update(seat)
+        return variables
+
+    async def _evaluate(
+        self,
+        db: HubDatabase,
+        variables: dict[str, Any],
+        tool_name: str = "mcp__gobby-tasks__list_tasks",
+    ) -> HookResponse:
+        return await RuleEngine(db).evaluate(
+            self._tool_event(tool_name), session_id=SESSION_ID, variables=variables
+        )
+
+    async def _clear_context(self, db: HubDatabase, variables: dict[str, Any]) -> None:
+        await RuleEngine(db).evaluate(
+            self._clear_event(), session_id=SESSION_ID, variables=variables
+        )
+
+    @staticmethod
+    def _path(identity: str) -> str:
+        return identity.split(":", 1)[1]
+
+    def _assert_blocked_naming(self, response: HookResponse, identity: str) -> None:
+        """The block names the unloaded identity, in full or in the same-turn short form."""
+        assert response.decision == "block"
+        assert self._path(identity) in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_seat_procedure_holds_tools_until_loaded_and_rearms_on_clear(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        variables = self._variables(_seat_procedure=self.PROCEDURE)
+
+        blocked = await self._evaluate(db, variables)
+        self._assert_blocked_naming(blocked, self.PROCEDURE)
+
+        variables["loaded_skill_references"] = [self.PROCEDURE]
+        assert (await self._evaluate(db, variables)).decision == "allow"
+
+        await self._clear_context(db, variables)
+        assert variables["loaded_skill_references"] == []
+        rearmed = await self._evaluate(db, variables)
+        self._assert_blocked_naming(rearmed, self.PROCEDURE)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", BOOTSTRAP_TOOLS)
+    async def test_seat_procedure_admits_bootstrap_skill_tools_while_unloaded(
+        self, db: HubDatabase, tool_name: str
+    ) -> None:
+        _sync_bundled(db)
+        variables = self._variables(_seat_procedure=self.PROCEDURE)
+
+        response = await self._evaluate(db, variables, tool_name)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_seat_references_hold_tools_until_every_listed_reference_loads(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        ref_a, ref_b, _ref_c = self.REFERENCES
+        variables = self._variables(_seat_references=list(self.REFERENCES))
+
+        blocked = await self._evaluate(db, variables)
+        self._assert_blocked_naming(blocked, ref_a)
+
+        variables["loaded_skill_references"] = [ref_a]
+        partial = await self._evaluate(db, variables)
+        self._assert_blocked_naming(partial, ref_b)
+        assert self._path(ref_a) not in (partial.reason or "")
+
+        variables["loaded_skill_references"] = list(self.REFERENCES)
+        assert (await self._evaluate(db, variables)).decision == "allow"
+
+        await self._clear_context(db, variables)
+        assert variables["loaded_skill_references"] == []
+        rearmed = await self._evaluate(db, variables)
+        self._assert_blocked_naming(rearmed, ref_a)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", BOOTSTRAP_TOOLS)
+    async def test_seat_references_admit_bootstrap_skill_tools_while_unloaded(
+        self, db: HubDatabase, tool_name: str
+    ) -> None:
+        _sync_bundled(db)
+        variables = self._variables(_seat_references=list(self.REFERENCES))
+
+        response = await self._evaluate(db, variables, tool_name)
+
+        assert response.decision == "allow"
+
+
 # --- once-per-session skill hub listing ---
 
 

@@ -1042,6 +1042,39 @@ class TestSyncBundledAgents:
                 assert key not in body, f"{row['name']} carries {key} in definition_json"
 
     @pytest.mark.unit
+    def test_sync_stepless_definition_writes_no_child_row(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """A stepless definition syncs its parent row and writes no step workflow row."""
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "plain-agent.yaml").write_text(
+            "name: plain-agent\n"
+            "description: Plain agent\n"
+            "provider: claude\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(definition_db)
+
+        assert result["errors"] == []
+        names = definition_db.fetchall(
+            "SELECT name FROM agent_definitions WHERE deleted_at IS NULL"
+        )
+        assert "plain-agent" in [row["name"] for row in names]
+        stepped = definition_db.fetchall(
+            """
+            SELECT a.name
+            FROM agent_definitions a
+            JOIN agent_step_workflows w ON w.agent_definition_id = a.id
+            WHERE a.name = 'plain-agent'
+            """
+        )
+        assert stepped == []
+
+    @pytest.mark.unit
     def test_sync_adopts_enabled_default_unless_pinned(
         self, tmp_path: Path, definition_db: PostgresHubDatabase
     ) -> None:

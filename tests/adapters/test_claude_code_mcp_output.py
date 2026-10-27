@@ -97,3 +97,32 @@ def test_recovered_close_task_result_satisfies_close_hook_condition(tmp_path: Pa
     )
 
     assert evaluator.evaluate(when) is True
+
+
+@pytest.mark.parametrize(
+    ("tool_output", "satisfied"),
+    [
+        pytest.param({"result": None}, False, id="null-result"),
+        pytest.param({"closed": False}, False, id="unclosed"),
+        pytest.param({"result": {"closed": False}}, False, id="unclosed-nested"),
+        pytest.param({"closed": True}, True, id="closed"),
+    ],
+)
+def test_close_task_condition_tolerates_null_and_unclosed_results(
+    tool_output: dict[str, object], satisfied: bool
+) -> None:
+    # Synthetic copy of a seat's close_task success condition, for a null or open result.
+    when = (
+        "tool_output.get('closed') is True "
+        "or (tool_output.get('result') or {}).get('closed') is True"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "vars": {"assigned_task_id": "#1"},
+            "tool_input": _CLOSE_ARGUMENTS,
+            "tool_output": tool_output,
+        },
+        {},
+    )
+
+    assert evaluator.evaluate(when) is satisfied

@@ -51,6 +51,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.workflow_audit import WorkflowAuditManager
+from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
@@ -1846,6 +1847,35 @@ async def test_reviewer_withdrawal_requires_own_unit_authority(
         assert run.step == step
 
 
+@pytest.mark.parametrize("succeeded", [True, False])
+async def test_reviewer_withdrawal_acknowledgment_delivery_gates_the_unit(
+    reviewer_authorities: tuple[SeatRun, Task, dict[str, str]], succeeded: bool
+) -> None:
+    run, task, _ = reviewer_authorities
+    before, step = run.vars, run.step
+    comments = run.db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,))
+    records = list_task_step_records(run.db, task.id)
+    line = f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={SHA} NOTE=reassigned"
+    message = InterSessionMessageManager(run.db).create_message(SESSION_ID, COORDINATOR_ID, line)
+    await run.call(
+        *SEND,
+        {"target": "session", "target_id": COORDINATOR_ID, "content": line},
+        {"success": succeeded, "message_ids": [message.id]},
+    )
+    # Neither branch writes a task comment or an approval record for the acknowledgment.
+    after_comments = run.db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,))
+    assert after_comments == comments
+    assert list_task_step_records(run.db, task.id) == records
+    if succeeded:
+        assert run.step == "await"
+        assert run.vars["candidate_received"] is False
+        assert run.vars["verdict_ready"] is False
+    else:
+        # A failed delivery holds the unit where it was: no withdrawal, no verdict.
+        assert run.step == step
+        assert run.vars == before
+
+
 @pytest.mark.parametrize("mismatch", ["task", "sha"])
 @pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_dm"])
 async def test_reviewer_withdrawal_refuses_another_unit(
@@ -1892,6 +1922,51 @@ async def test_monitor_windows_complete_from_durable_reports(
         assert run.vars["tick_window"]
 
 
+@pytest.mark.parametrize("target_form", ["uuid", "local_ref"])
+async def test_metrics_monitor_window_needs_both_delivered_recipients(
+    temp_db: HubDatabase, target_form: str
+) -> None:
+    run = SeatRun(temp_db, "metrics-monitor")
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
+    SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    await run.load(*run.vars["required_skills"])
+    window = "Systems nominal | sample window"
+
+    def target(recipient: str) -> str:
+        # The engine reads the stored recipient, so the argument form must not matter.
+        if target_form == "uuid":
+            return recipient
+        session = run.sessions.get(recipient)
+        assert session is not None
+        return f"#{session.seq_num}"
+
+    async def deliver(recipient: str, *, succeeded: bool = True) -> None:
+        message = InterSessionMessageManager(run.db).create_message(SESSION_ID, recipient, window)
+        await run.call(
+            *SEND,
+            {"target": "session", "target_id": target(recipient), "content": window},
+            {"success": succeeded, "message_ids": [message.id]},
+        )
+
+    # A failed triage delivery opens no window.
+    await deliver(COORDINATOR_ID, succeeded=False)
+    assert run.step == "tick"
+    assert run.vars["tick_window"] is None
+    # A delivered triage report opens the window and still waits on the log monitor.
+    await deliver(COORDINATOR_ID)
+    assert run.step == "report"
+    assert run.vars["triage_reported"] is True
+    # A failed log-monitor delivery and a non-recipient target leave the window open.
+    await deliver(PEER_ID, succeeded=False)
+    await deliver(OWNER_ID)
+    assert run.step == "report"
+    assert run.vars["log_monitor_reported"] is False
+    # Only a delivered log-monitor report completes the window.
+    await deliver(PEER_ID)
+    assert run.step == "tick"
+    assert run.vars["tick_done"] is False
+
+
 async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "plan-adversary")
     await run.load(*run.vars["required_skills"])
@@ -1923,6 +1998,27 @@ async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -
     await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=re-review needed")
     assert run.step == "review"
     assert run.vars["consensus"] is False
+
+
+@pytest.mark.parametrize("step", ["review", "stamp"])
+@pytest.mark.parametrize("name,value", [("consensus", True), ("consensus_sha", SHA)])
+async def test_plan_adversary_consensus_variables_are_handler_owned(
+    temp_db: HubDatabase, step: str, name: str, value: object
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    if step == "stamp":
+        await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+        # Only the handler's own write lands: the consensus pair holds the handler-written SHA.
+        assert run.vars["consensus"] is True
+        assert run.vars["consensus_sha"] == SHA
+    before = dict(run.vars)
+    assert not await run.admits_native(
+        "mcp__gobby__set_variable",
+        {"name": name, "value": value, "session_id": SESSION_ID, "scope": "step"},
+    )
+    assert run.vars == before
+    assert run.step == step
 
 
 @pytest.mark.parametrize(
