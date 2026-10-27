@@ -140,6 +140,7 @@ def cleanup_task_tool_bindings(
         HookEventType.STOP: "turn_end",
         HookEventType.AFTER_AGENT: "turn_end",
         HookEventType.STOP_FAILURE: "turn_end",
+        HookEventType.BEFORE_AGENT: "prompt",
         HookEventType.INTERRUPT: "interrupt",
         HookEventType.SESSION_END: "session_end",
     }
@@ -250,8 +251,12 @@ class TaskToolBindings:
         )
 
     def clear_pending(self, boundary: str) -> None:
-        """Retire completed/abandoned calls; only live background work crosses turns."""
-        if boundary not in {"interrupt", "turn_end", "session_end", "clear"}:
+        """Retire completed/abandoned calls; only live background work crosses turns.
+
+        A new prompt proves the previous turn ended, so it retires that turn's foreground
+        bindings. It keeps the turn marker, which belongs to the turn the prompt starts.
+        """
+        if boundary not in {"prompt", "interrupt", "turn_end", "session_end", "clear"}:
             raise ValueError(f"Unsupported tool-binding cleanup boundary: {boundary}")
 
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
@@ -261,12 +266,14 @@ class TaskToolBindings:
                 for key, call in calls.items()
                 if call.get("pending") is True
                 and call.get("background") is True
-                and boundary in {"interrupt", "turn_end"}
+                and boundary in {"prompt", "interrupt", "turn_end"}
             }
-            changed = kept != calls or "task_tool_turn" in variables
+            ends_turn = boundary != "prompt"
+            changed = kept != calls or (ends_turn and "task_tool_turn" in variables)
             if changed:
                 variables["task_tool_bindings"] = kept
-                variables.pop("task_tool_turn", None)
+                if ends_turn:
+                    variables.pop("task_tool_turn", None)
             return None, changed
 
         self.manager._mutate_variables(
