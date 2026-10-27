@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -316,6 +316,8 @@ def test_unlink_commit_schema(task_registry: InternalToolRegistry) -> None:
     assert schema is not None
     assert schema["name"] == "unlink_commit"
     assert "inputSchema" in schema
+    assert "reason" in schema["inputSchema"]["properties"]
+    assert "reason" in schema["inputSchema"]["required"]
 
     properties = schema["inputSchema"]["properties"]
     assert "task_id" in properties
@@ -383,13 +385,21 @@ async def test_unlink_commit_tool(mock_task_manager: MagicMock) -> None:
     mock_task.commits = []
     mock_task.to_dict.return_value = {"id": "t1", "commits": []}
     mock_task_manager.unlink_commit.return_value = mock_task
+    mock_task_manager.get_task.return_value.id = "t1"
 
-    with _commit_tool_boundaries():
+    with (
+        _commit_tool_boundaries(),
+        patch("gobby.mcp_proxy.tools.task_commits.get_current_session_id", return_value="s1"),
+        patch("gobby.mcp_proxy.tools.task_commits.session_machine_id", return_value="machine-1"),
+        patch("gobby.tasks.commit_unlink.integration_refusal", AsyncMock(return_value=None)),
+        patch("gobby.tasks.commit_unlink.TaskLifecycleEventManager"),
+    ):
         result = await registry.call(
             "unlink_commit",
-            {"task_id": "t1", "commit_sha": "abc123"},
+            {"task_id": "t1", "commit_sha": "abc123", "reason": "Superseded by #24970"},
         )
 
+    assert "error" not in result, result
     mock_task_manager.unlink_commit.assert_called_once_with("t1", "abc123")
     assert result["task_id"] == "t1"
 

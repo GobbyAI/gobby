@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.team_lifecycle import TeamBinding
 from gobby.agents.team_teardown import TEARDOWN_KEY, TeamTreeDeleter, reconcile_team_teardowns
 from gobby.runner_maintenance.isolation import team_run_terminator, team_tree_deleter
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
@@ -49,7 +51,13 @@ class Terminations:
             raise asyncio.CancelledError
         self.calls.append(kwargs)
         run: AgentRun = kwargs["run"]
-        LocalAgentRunManager(self.db).cancel(run.id)
+        runs = LocalAgentRunManager(self.db)
+        if is_daemon_stop_parked(run):
+            # Ending a parked seat hands its original to the orphan reaper, as the daemon does.
+            runs.merge_resume_metadata(
+                run.id, {REAP_REQUESTED_AT_KEY: datetime.now(UTC).isoformat()}
+            )
+        runs.cancel(run.id)
         if run.child_session_id is not None:
             SessionManager(self.db).update_status(run.child_session_id, "expired")
         return {"success": True}

@@ -13,8 +13,7 @@ checkout_mode: inherit
 persistent_workspace: true
 timeout: 0
 send_message_targets: [parent, session, agent, project, global]
-blocked_mcp_tools:
-  - "gobby-agents:kill_agent"
+# No blocked tools: the Orchestrator ends dead or orphaned seats directly (kill_agent).
 # The least restricted seat: it may write any step record, after delegating first.
 task_step_writes: [test, implementation, review, closing]
 

@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+
+use crate::front_door::waivers::{WaiverManifest, is_native_extension, surface_matches};
 
 /// The log's file name under `<home>/logs/`.
 pub const LOG_FILE: &str = "front-door-compare.jsonl";
@@ -24,6 +26,16 @@ pub enum Outcome {
     Verified,
     Mismatch,
     Skipped,
+    Waived,
+    NativeExtension,
+}
+
+/// The parity waiver a changed behaviour reports under: its exact manifest id and
+/// the decision citation that approved it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaiverRef {
+    pub id: String,
+    pub decision: String,
 }
 
 /// One log line. Carries no request or response body values.
@@ -37,6 +49,8 @@ pub struct Record {
     pub native_status: Option<u16>,
     pub proxied_status: Option<u16>,
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiver: Option<WaiverRef>,
 }
 
 /// Appends records to `<home>/logs/front-door-compare.jsonl`.
@@ -89,25 +103,39 @@ pub struct Report {
     pub last_ts: Option<i64>,
     pub total: u64,
     pub families: BTreeMap<String, BTreeMap<Outcome, u64>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub waived: BTreeMap<String, WaivedCount>,
+}
+
+/// How many waived records cite one waiver id, and the decision it cites.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WaivedCount {
+    pub decision: String,
+    pub count: u64,
 }
 
 impl Report {
-    /// True when the window holds records and none is a `diff`, `native_error` or
-    /// `mismatch`.
+    /// True when the window holds at least one `match` or `verified` record and none is a
+    /// `diff`, `native_error`, `mismatch` or unwaived `skipped`. A waived record neither passes
+    /// nor fails: it records a deliberate divergence, which is not parity evidence.
     pub fn passes(&self) -> bool {
-        self.total > 0
-            && self.families.values().flatten().all(|(outcome, _)| {
-                !matches!(
-                    outcome,
-                    Outcome::Diff | Outcome::NativeError | Outcome::Mismatch
-                )
-            })
+        let mut passed = false;
+        for outcome in self.families.values().flat_map(BTreeMap::keys) {
+            match outcome {
+                Outcome::Match | Outcome::Verified => passed = true,
+                Outcome::Waived | Outcome::NativeExtension => {}
+                Outcome::Diff | Outcome::NativeError | Outcome::Mismatch | Outcome::Skipped => {
+                    return false;
+                }
+            }
+        }
+        passed
     }
 }
 
 /// Counts the records at `path` whose `ts` is at or after `since`. A malformed line
 /// is an error.
-pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
+pub fn report(path: &Path, since: Option<i64>, manifest: &WaiverManifest) -> Result<Report> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     let mut report = Report {
@@ -124,6 +152,34 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
         report.first_ts = Some(report.first_ts.map_or(record.ts, |ts| ts.min(record.ts)));
         report.last_ts = Some(report.last_ts.map_or(record.ts, |ts| ts.max(record.ts)));
         report.total += 1;
+        if matches!(record.outcome, Outcome::Waived | Outcome::NativeExtension) {
+            let waiver = record.waiver.as_ref().with_context(|| {
+                format!(
+                    "{}:{}: waived record names no waiver",
+                    path.display(),
+                    index + 1
+                )
+            })?;
+            if let Err(reason) = check_waiver(manifest, &record, waiver) {
+                bail!("{}:{}: {reason}", path.display(), index + 1);
+            }
+            let counted = report
+                .waived
+                .entry(waiver.id.clone())
+                .or_insert_with(|| WaivedCount {
+                    decision: waiver.decision.clone(),
+                    count: 0,
+                });
+            counted.count += 1;
+        } else if let Some(waiver) = &record.waiver {
+            bail!(
+                "{}:{}: {:?} record cannot cite waiver {}",
+                path.display(),
+                index + 1,
+                record.outcome,
+                waiver.id
+            );
+        }
         *report
             .families
             .entry(record.family)
@@ -132,4 +188,34 @@ pub fn report(path: &Path, since: Option<i64>) -> Result<Report> {
             .or_default() += 1;
     }
     Ok(report)
+}
+
+/// Why a waived record does not match its committed manifest entry, when it does not.
+fn check_waiver(
+    manifest: &WaiverManifest,
+    record: &Record,
+    waiver: &WaiverRef,
+) -> std::result::Result<(), String> {
+    let entry = manifest
+        .get(&waiver.id)
+        .ok_or_else(|| format!("waiver {} is not in the manifest", waiver.id))?;
+    if is_native_extension(&waiver.id) != (record.outcome == Outcome::NativeExtension) {
+        return Err(format!(
+            "waiver {} cannot back a {:?} record",
+            waiver.id, record.outcome
+        ));
+    }
+    if entry.decision != waiver.decision {
+        return Err(format!(
+            "waiver {} cites {}, but the manifest records {}",
+            waiver.id, waiver.decision, entry.decision
+        ));
+    }
+    if !surface_matches(&entry.surface, &record.method, &record.path) {
+        return Err(format!(
+            "{} {} is not waiver {}'s surface {}",
+            record.method, record.path, waiver.id, entry.surface
+        ));
+    }
+    Ok(())
 }

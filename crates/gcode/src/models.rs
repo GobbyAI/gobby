@@ -302,14 +302,14 @@ impl ContentChunk {
 }
 
 /// Import relationship extracted from AST.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportRelation {
     pub file_path: String,
     pub module_name: String,
 }
 
 /// Call relationship extracted from AST.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CallTargetKind {
     Symbol,
     Unresolved,
@@ -337,7 +337,7 @@ impl CallTargetKind {
 }
 
 /// Call relationship extracted from AST.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallRelation {
     pub caller_symbol_id: String,
     pub callee_symbol_id: Option<String>,
@@ -481,7 +481,7 @@ impl CallRelation {
 }
 
 /// Typed heritage edge extracted from an explicit extends/implements/embeds clause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum HeritageKind {
     Inherits,
     Extends,
@@ -499,7 +499,7 @@ impl HeritageKind {
 }
 
 /// Inheritance relationship extracted from AST. Orientation is derived → base.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InheritanceRelation {
     pub source_symbol_id: Option<String>,
     pub source_name: String,

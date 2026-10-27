@@ -18,7 +18,6 @@ _SPAWN_PATHS = (
     ROOT / "src/gobby/mcp_proxy/tools/spawn_agent/_runtime.py",
     ROOT / "src/gobby/mcp_proxy/tools/spawn_agent/_health.py",
     ROOT / "src/gobby/mcp_proxy/tools/spawn_agent/_execution.py",
-    ROOT / "src/gobby/dispatch/spawn_actions.py",
     ROOT / "src/gobby/servers/routes/agent_spawn.py",
     ROOT / "src/gobby/agents/dry_run.py",
 )

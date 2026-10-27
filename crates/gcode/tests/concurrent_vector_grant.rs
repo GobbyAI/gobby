@@ -278,7 +278,9 @@ mod serial_db {
                     .nth(1)
                     .and_then(|rest| rest.split('"').next())
                     .unwrap_or("");
-                let proof = hmac_sha256_hex(CLI_TOKEN.as_bytes(), &b64url_decode(nonce));
+                // Interactive proof: HMAC(HMAC(bearer, label), nonce), as the daemon verifies it.
+                let proof_key = hmac_sha256(CLI_TOKEN.as_bytes(), b"gobby-interactive-proof-v1");
+                let proof = hex_encode(&hmac_sha256(&proof_key, &b64url_decode(nonce)));
                 write_json(&mut stream, "200 OK", &format!("{{\"proof\":\"{proof}\"}}"));
             } else if line.contains("/api/runtime/handshake") {
                 counts.handshakes.fetch_add(1, Ordering::SeqCst);
@@ -365,7 +367,7 @@ mod serial_db {
             .unwrap_or(0)
     }
 
-    fn hmac_sha256_hex(key: &[u8], data: &[u8]) -> String {
+    fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
         const BLOCK: usize = 64;
         let mut key_block = [0u8; BLOCK];
         if key.len() > BLOCK {
@@ -387,7 +389,7 @@ mod serial_db {
         let mut outer = Sha256::new();
         outer.update(opad);
         outer.update(inner_hash);
-        hex_encode(&outer.finalize())
+        outer.finalize().to_vec()
     }
 
     fn hex_encode(bytes: &[u8]) -> String {

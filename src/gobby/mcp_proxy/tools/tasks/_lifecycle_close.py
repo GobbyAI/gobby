@@ -29,6 +29,7 @@ from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.git import descends_from_all
 from gobby.utils.session_context import get_current_session_id
 
 
@@ -41,6 +42,7 @@ async def _evaluate_close(
     project_path: str | None,
     response_detail: Literal["concise", "diagnostic"] = "concise",
     closing_session_id: str | None = None,
+    superseded_by: str | None = None,
 ) -> CloseEvaluation:
     evaluation = CloseEvaluation(task_id, response_detail=response_detail)
     try:
@@ -52,6 +54,11 @@ async def _evaluate_close(
         return evaluation.refuse("task_not_found", f"Task {task_id} not found.")
     evaluation.task, evaluation.task_id = task, resolved_id
     evaluation.is_epic = task.task_type == "epic"
+    if reason.casefold() == "superseded" and not (superseded_by or "").strip():
+        return evaluation.refuse(
+            "superseded_by_required",
+            "A superseded close names the superseding task or commit in superseded_by.",
+        )
     session_ref = closing_session_id or get_current_session_id() or get_claimed_session_id(task)
     if not session_ref:
         return evaluation.refuse("no_session_context", "close_task requires an active session.")
@@ -108,8 +115,16 @@ async def _evaluate_close(
         if not isinstance(resolved, GitOk):
             return evaluation.refuse("invalid_commit_sha", "commit_sha must resolve to a commit.")
         candidate = resolved.stdout.strip()
-        if not any(candidate.startswith(sha) or sha.startswith(candidate) for sha in commits):
+        named = [sha for sha in commits if candidate.startswith(sha) or sha.startswith(candidate)]
+        others = [sha for sha in commits if sha not in named]
+        if not named:
             commits.append(candidate)
+        elif commits[-1] not in named and await asyncio.to_thread(
+            descends_from_all, candidate, others, repo
+        ):
+            # A named commit that descends from every other link is the tip, whatever
+            # the link order; an older one never bypasses newer work (#25160).
+            commits = [*others, *named]
         evaluation.candidate_commit_sha = candidate
     elif commits:
         resolved = await daemon_git.run(

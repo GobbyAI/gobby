@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +24,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
+from gobby.utils.daemon_git import GitOk, GitResult, GitTimeout, daemon_git
 
 pytestmark = pytest.mark.unit
 
@@ -663,6 +664,35 @@ async def test_net_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path)
 
     with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
         await task_scope.collect_net_commit_paths_async(["0" * 40], str(tmp_path))
+
+
+async def test_net_commit_paths_trust_a_clean_candidate_listing_with_stderr_noise(
+    tmp_path: Path,
+) -> None:
+    """Git exits 0 and prints a sandbox warning; the candidate listing is complete, not unknown."""
+    git = _git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("VALUE = 1\n")
+    git("add", ".")
+    git("commit", "-qm", "landed")
+    landed_sha = git("rev-parse", "HEAD")
+    real_run = daemon_git.run
+
+    async def run_with_warning(args: list[str], **kwargs: Any) -> GitResult:
+        result = await real_run(args, **kwargs)
+        if args[0] == "ls-tree" and isinstance(result, GitOk):
+            warned = (
+                "warning: could not open directory 'xcrun_db' (errno=Operation not permitted)\n"
+            )
+            return GitOk(status="ok", argv=result.argv, stdout=result.stdout, stderr=warned)
+        return result
+
+    with patch.object(daemon_git, "run", side_effect=run_with_warning):
+        net = await task_scope.collect_net_commit_paths_async(
+            [landed_sha], str(tmp_path), candidate=landed_sha
+        )
+
+    assert net == task_scope.NetCommitPaths(changed=frozenset({"src/a.py"}), deleted=frozenset())
 
 
 def _commit_files(

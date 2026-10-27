@@ -316,6 +316,7 @@ class TestCloseTask(_CloseTaskGitIsolation):
             cwd=TEST_REPO_PATH,
             expected_updated_at=task.updated_at,
             closed_ancestors=[],
+            closing_note=None,
         )
         mock_task_manager.link_commit.assert_not_called()
         mock_task_manager.close_task.assert_not_called()

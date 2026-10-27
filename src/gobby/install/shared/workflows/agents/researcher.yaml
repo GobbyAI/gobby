@@ -23,8 +23,6 @@ prompts:
   agent: &seat |
     {% if seat_context %}
     ## Assignment
-    Lane: {{ seat_context.get('lane') or 'unassigned' }}
-    Lane epic: {{ seat_context.get('lane_epic') or 'unassigned' }}
     Worktree: {{ seat_context.get('worktree') or 'unassigned' }}
     First job: {{ seat_context.get('first_job') or 'await assignment' }}
     {% endif %}

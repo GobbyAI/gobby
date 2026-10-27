@@ -52,6 +52,8 @@ mod serial_db {
             assert!(git_status.success(), "git init should succeed");
             test_env::seed_test_checkout(&mut conn, &project_id, root.path())
                 .expect("seed test checkout");
+            test_env::seed_test_principal_binding(&mut conn, &project_id)
+                .expect("seed managed principal binding");
 
             let home = isolated_gobby_home(root.path());
             Self {
@@ -296,6 +298,10 @@ mod serial_db {
 
     fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = uuid::Uuid::parse_str(project_id)?;
+        conn.execute(
+            "DELETE FROM gobby_agent_auth.principal_bindings WHERE project_id = $1",
+            &[&project_id],
+        )?;
         conn.execute(
             "DELETE FROM code_indexed_file_states WHERE project_id = $1",
             &[&project_id],

@@ -12,6 +12,7 @@ from typing import Protocol
 
 from gobby.communications.group_policy import evaluate_group_message
 from gobby.communications.models import AnswerOutcome, ChannelConfig, CommsMessage
+from gobby.communications.operator_routing import is_operator_dm
 
 logger = logging.getLogger(__name__)
 
@@ -532,6 +533,8 @@ class CommunicationsResponder:
         channel: ChannelConfig,
         message: CommsMessage,
     ) -> ResponderContext | None:
+        if is_operator_dm(channel, message):
+            return None
         channel_config = _object_mapping(channel.config_json)
         responder_config = _object_mapping(channel_config.get("responder"))
         if responder_config.get("enabled") is not True:

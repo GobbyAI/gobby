@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -202,6 +204,19 @@ async def _delete_worktree(
     )
 
 
+def _remove_empty_shell(path: Path) -> bool:
+    """Remove a non-worktree directory that holds no file; True when it was removed.
+
+    A seat relaunched into a deleted tree recreates empty scratch directories
+    (``.gobby/tmp``, ``.nextest``) at its path. They hold nothing, so the tree is
+    as gone as a missing one and its record must stay deletable (#25165).
+    """
+    if any(entry.is_file() or entry.is_symlink() for entry in path.rglob("*")):
+        return False
+    shutil.rmtree(path)
+    return True
+
+
 def _finish_storage_deletion(
     request: WorktreeDeletionRequest,
     worktree: Worktree,
@@ -286,6 +301,10 @@ async def _mcp_precheck(
         return None
 
     status = await git_manager.get_worktree_status(worktree.worktree_path)
+    if status is None and await asyncio.to_thread(
+        _remove_empty_shell, Path(worktree.worktree_path)
+    ):
+        return None  # the missing-tree probe now proves registration and branch are gone
     if status is None:
         return WorktreeDeletionResult(
             success=False,

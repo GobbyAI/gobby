@@ -349,3 +349,236 @@ fn managed_main_checkout_reads_sibling_commands_without_refresh_writes() {
         .execute("DELETE FROM worktrees WHERE id = $1", &[&worktree_id])
         .unwrap();
 }
+
+#[test]
+#[serial_test::serial(serial_db, serial_env)]
+fn stale_sibling_overlay_serves_unchanged_parent_files_to_managed_reader() {
+    use crate::config::ServiceConfigSelection;
+    use crate::freshness::{FreshnessScope, FreshnessStatus, ensure_fresh};
+    use crate::index::api::{IndexOptions, IndexRequest};
+    use crate::search::fts;
+    use gobby_core::grant::{DirectConnections, managed_direct_grant, write_managed_bootstrap};
+
+    let (mut owner, database_url, parent_id, _parent_cleanup) = seeded_project("sibling-stale");
+    let tmp = tempfile::tempdir().expect("temporary workspace");
+    let root = tmp.path().canonicalize().expect("canonical root");
+    let parent_root = root.join("parent");
+    let sibling_root = root.join("sibling");
+    // `a.rs` is identical in both checkouts and has no row or pin in the sibling
+    // overlay. `b.rs` is the one file the sibling changes after its index was written.
+    for workspace in [&parent_root, &sibling_root] {
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::create_dir_all(workspace.join(".gobby")).unwrap();
+        fs::write(
+            workspace.join(".gobby/project.json"),
+            serde_json::json!({"id": parent_id}).to_string(),
+        )
+        .unwrap();
+        fs::write(workspace.join("src/a.rs"), "pub fn unchanged_symbol() {}\n").unwrap();
+        fs::write(workspace.join("src/b.rs"), "pub fn edited_symbol() {}\n").unwrap();
+    }
+    fs::write(
+        sibling_root.join(".gobby/isolation.json"),
+        serde_json::json!({
+            "parent_project_id": parent_id, "parent_project_path": parent_root
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // Give the parent its own repository boundary, independent of the lane.
+    let git = std::process::Command::new("git")
+        .current_dir(&parent_root)
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "init",
+            "--quiet",
+            "--template=",
+            "--separate-git-dir",
+        ])
+        .arg(root.join("gitdir"))
+        .output()
+        .unwrap();
+    assert!(
+        git.status.success(),
+        "{}",
+        String::from_utf8_lossy(&git.stderr)
+    );
+    let mut managed = managed_principal(
+        &mut owner,
+        &database_url,
+        &parent_id,
+        &parent_root,
+        &sibling_root,
+        None,
+    );
+    let sibling_id = crate::project::code_index_id_for_root(&sibling_root);
+    let _sibling_cleanup = ProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: sibling_id.clone(),
+    };
+    let worktree_id = uuid::Uuid::new_v4();
+    owner
+        .execute(
+            "INSERT INTO worktrees(id, project_id, machine_id, branch_name, worktree_path)
+        VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &worktree_id,
+                &db::id_param(&parent_id).unwrap(),
+                &managed.machine_id,
+                &worktree_id.to_string(),
+                &sibling_root.to_string_lossy().as_ref(),
+            ],
+        )
+        .unwrap();
+    let mut parent_ctx = test_context(database_url.clone(), &parent_id, ProjectIndexScope::Single);
+    parent_ctx.project_root = parent_root.clone();
+    api::index_files(
+        IndexRequest {
+            project_root: parent_root.clone(),
+            path_filter: None,
+            explicit_files: vec![PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")],
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &parent_ctx,
+        IndexOptions::default(),
+    )
+    .unwrap();
+    let mut overlay_ctx = test_context(
+        database_url.clone(),
+        &sibling_id,
+        ProjectIndexScope::Overlay {
+            overlay_project_id: sibling_id.clone(),
+            overlay_root: sibling_root.clone(),
+            parent_project_id: parent_id.clone(),
+            parent_root: parent_root.clone(),
+        },
+    );
+    overlay_ctx.project_root = sibling_root.clone();
+    api::index_files(
+        IndexRequest {
+            project_root: sibling_root.clone(),
+            path_filter: None,
+            explicit_files: vec![PathBuf::from("src/b.rs")],
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: false,
+        },
+        &overlay_ctx,
+        IndexOptions::default(),
+    )
+    .unwrap();
+    // Fixture check: the stale overlay holds no pin and no row for the unchanged file.
+    let overlay_uuid = db::id_param(&sibling_id).unwrap();
+    let pins: i64 = owner
+        .query_one(
+            "SELECT count(*) FROM code_overlay_pins WHERE overlay_project_id = $1",
+            &[&overlay_uuid],
+        )
+        .unwrap()
+        .get(0);
+    let owned: Vec<String> = owner
+        .query(
+            "SELECT file_path FROM code_indexed_file_states WHERE project_id = $1",
+            &[&overlay_uuid],
+        )
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        pins, 0,
+        "fixture: the sibling overlay was indexed without pins"
+    );
+    assert!(
+        !owned.iter().any(|file| file.as_str() == "src/a.rs"),
+        "fixture: the overlay must hold no row for src/a.rs, found {owned:?}"
+    );
+    fs::write(sibling_root.join("src/b.rs"), "pub fn edited_later() {}\n").unwrap();
+    let home = root.join("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("machine_id"), managed.machine_id.to_string()).unwrap();
+    let mut grant = managed_direct_grant(
+        &parent_id,
+        &managed.machine_id.to_string(),
+        &DirectConnections::postgres(&managed.managed_database_url),
+    );
+    grant.principal.kind = gobby_core::grant::PrincipalKind::ToolChat;
+    grant.principal.execution_id = Some(managed.execution_id.to_string());
+    grant.principal.session_id = Some(managed.session_id.to_string());
+    assert!(grant.principal.code_overlay_project_id.is_none());
+    let bootstrap = write_managed_bootstrap(&home, &grant.with_checksum()).unwrap();
+    let daemon = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let daemon_url = format!("http://{}", daemon.local_addr().unwrap());
+    temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home.as_os_str())),
+            (
+                gobby_core::grant::MANAGED_BOOTSTRAP_ENV,
+                Some(bootstrap.as_os_str()),
+            ),
+            ("GOBBY_DAEMON_URL", Some(std::ffi::OsStr::new(&daemon_url))),
+            ("GOBBY_AGENT_RUN_ID", None),
+            ("GOBBY_MANAGED_EXECUTION_ID", None),
+            ("GOBBY_AGENT_API_TOKEN", None),
+            ("GCODE_FRESHNESS_INFLIGHT", None),
+        ],
+        || {
+            let ctx = Context::resolve_with_services(
+                Some(sibling_root.to_str().unwrap()),
+                true,
+                ServiceConfigSelection::database_only(),
+            )
+            .expect("main-checkout role admits active sibling");
+            assert_eq!(ctx.project_id, sibling_id);
+            assert!(!ctx.can_refresh_index().unwrap());
+            // Criterion 1, file level: the unchanged parent file stays served.
+            let tree = crate::visibility::visible_tree(managed.client(), &ctx).unwrap();
+            let served: Vec<&str> = tree.iter().map(|file| file.file_path.as_str()).collect();
+            assert!(
+                served.contains(&"src/a.rs"),
+                "stale overlay must keep serving unchanged parent file src/a.rs: {served:?}"
+            );
+            // Criterion 1, outline half: the parent symbol is listed for the file.
+            let symbols =
+                crate::visibility::visible_symbols_for_file(managed.client(), &ctx, "src/a.rs")
+                    .unwrap();
+            let names: Vec<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+            assert!(
+                names.contains(&"unchanged_symbol"),
+                "outline of src/a.rs must list unchanged_symbol: {names:?}"
+            );
+            // Criterion 1, search-symbol half: the same symbol is found by name.
+            let hits = fts::search_symbols_exact_first_visible(
+                managed.client(),
+                "unchanged_symbol",
+                &ctx,
+                None,
+                None,
+                &[],
+                50,
+            )
+            .unwrap();
+            assert!(
+                hits.iter()
+                    .any(|symbol| symbol.file_path == "src/a.rs"
+                        && symbol.name == "unchanged_symbol"),
+                "search-symbol must find unchanged_symbol in src/a.rs: {:?}",
+                hits.iter()
+                    .map(|symbol| (&symbol.file_path, &symbol.name))
+                    .collect::<Vec<_>>()
+            );
+            // Criterion 2: the stale warning names only the changed path.
+            assert_eq!(
+                ensure_fresh(&ctx, FreshnessScope::Project).unwrap(),
+                FreshnessStatus::Stale(vec!["src/b.rs".to_string()]),
+                "the stale list must name only the path the reader cannot refresh"
+            );
+        },
+    );
+    owner
+        .execute("DELETE FROM worktrees WHERE id = $1", &[&worktree_id])
+        .unwrap();
+}

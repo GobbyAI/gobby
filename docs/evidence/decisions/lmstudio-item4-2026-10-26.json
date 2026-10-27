@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-10-26T22:41:46.250165+00:00",
+  "plan": {
+    "live": false,
+    "wire": "lmstudio",
+    "model": "clef-flash",
+    "max_http_calls": 3,
+    "per_call_deadline_seconds": 15,
+    "sum_call_deadlines_seconds": 45,
+    "retries": 0,
+    "secret_name": null,
+    "spend_cap_usd": 0,
+    "input_price_per_million_usd": 0,
+    "estimated_cost_usd": "0 API charge; local compute",
+    "maximum_reserved_per_hosted_post_usd": 0.011010048,
+    "request_byte_cap": 400000,
+    "response_byte_cap": 1048576,
+    "local_context_tokens": 262144,
+    "local_boundary_probes": false
+  },
+  "completed": true,
+  "activation_gate_met": false,
+  "checklist": {
+    "usage_scope": {
+      "status": "unverified",
+      "detail": "Observed token growth is not a complete usage contract",
+      "evidence": []
+    },
+    "default_mode_limits": {
+      "status": "unverified",
+      "detail": "OpenRouter automatically selects long-context above about 32000 text bytes; default-mode enforcement is not isolated",
+      "evidence": []
+    },
+    "header_honored": {
+      "status": "unverified",
+      "detail": "Acceptance cannot distinguish ignored header from auto-long-context",
+      "evidence": []
+    },
+    "backend_identity": {
+      "status": "unmet",
+      "detail": "Loaded identifier is not a verified pinned version; source contract unavailable",
+      "evidence": [
+        "catalog"
+      ]
+    },
+    "noul_parsed": {
+      "status": "met",
+      "detail": "Production Noul parser accepted the calibration responses",
+      "evidence": [
+        "calibrate_state_4096",
+        "calibrate_state_8192"
+      ]
+    },
+    "local_limit_probes": {
+      "status": "unverified",
+      "detail": "Unknown context or >16384 tokens; large local prefill intentionally not sent",
+      "evidence": []
+    }
+  },
+  "measured_chars_per_token": {
+    "state": 2.4294187425860025
+  },
+  "documentation": {
+    "openrouter": "https://openrouter.ai/docs/guides/community/jev",
+    "typesafe": "https://docs.typesafe.ai/models",
+    "price": "https://openrouter.ai/typesafe/jev-1.14"
+  },
+  "parser_source_sha256": "9a6a8147e81575baa16610242628b037cf6faf0029c080214104dbfda4ee6f8f",
+  "catalog": {
+    "id": "clef-flash",
+    "identity_fields_present": []
+  },
+  "calibration_overhead_tokens": {
+    "state": 152.00000000000023
+  },
+  "probes": [
+    {
+      "name": "catalog",
+      "method": "GET",
+      "endpoint": "http://127.0.0.1:1234/v1/models",
+      "request_bytes": 0,
+      "request_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "long_context_requested": false,
+      "status": 200,
+      "response_bytes": 1321
+    },
+    {
+      "name": "calibrate_state_4096",
+      "method": "POST",
+      "endpoint": "http://127.0.0.1:1234/v1/systemone",
+      "request_bytes": 4361,
+      "request_sha256": "0446d3e9dd808278bc52d80e324bf02f99ae39c752acaf7729f2e0d1495ce72f",
+      "long_context_requested": false,
+      "request_model": "clef-flash",
+      "question_count": 1,
+      "state_chars": 4096,
+      "status": 200,
+      "response_bytes": 129,
+      "response_model": "clef-flash",
+      "usage": {
+        "input_tokens": 1838
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.9758969379261029
+        }
+      }
+    },
+    {
+      "name": "calibrate_state_8192",
+      "method": "POST",
+      "endpoint": "http://127.0.0.1:1234/v1/systemone",
+      "request_bytes": 8577,
+      "request_sha256": "f5254f68681636f96c77826919c7e5ee0f768712b67d4a6e4ce17b42b2eb706b",
+      "long_context_requested": false,
+      "request_model": "clef-flash",
+      "question_count": 1,
+      "state_chars": 8192,
+      "status": 200,
+      "response_bytes": 129,
+      "response_model": "clef-flash",
+      "usage": {
+        "input_tokens": 3524
+      },
+      "parsed_answers": {
+        "q0": {
+          "probability": 0.9744102746319381
+        }
+      }
+    }
+  ],
+  "cost_usd": 0.0,
+  "cost_basis": "Reported successful usage.cost; full context reservation retained for unknown/error costs",
+  "script_sha256": "7d4b7f6c6cf9393b5a7d733af8b0d09f4753a918f5a61f5c9f6c96be96f452c0"
+}

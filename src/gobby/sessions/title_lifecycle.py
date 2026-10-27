@@ -72,8 +72,17 @@ def latest_open_claimed_task(
     return ClaimedTaskTitle(row["seq_num"], title) if title else None
 
 
+def definition_display_name(agent_name: str) -> str:
+    """The seat title for an agent definition: its name, title-cased (dev-manager -> Dev Manager)."""
+    return agent_name.replace("-", " ").title()
+
+
 def update_title_for_claim(session_manager: Any, session_id: str, task: Any) -> Any:
-    """Apply the deterministic task title after a successful claim."""
+    """Apply the claimed task's title, unless the session has an agent definition.
+
+    A defined seat keeps its definition title through a claim; task text never
+    reaches its title. Contract: docs/contracts/seat-titles.md, rule 1.
+    """
     task_seq_num = getattr(task, "seq_num", None)
     title = getattr(task, "title", None)
     session = session_manager.get(session_id)
@@ -88,6 +97,8 @@ def update_title_for_claim(session_manager: Any, session_id: str, task: Any) -> 
     context = _session_title_context(session_manager.db, session)
     if context is None:
         return session
+    if _definition_title(session_manager.db, session_id) is not None:
+        return recompute_automatic_title(session_manager, session_id)
     return session_manager.update_title(
         session_id,
         format_task_session_title(
@@ -113,15 +124,19 @@ def _definition_title(db: Any, session_id: str) -> str | None:
 
 
 def recompute_automatic_title(session_manager: Any, session_id: str) -> Any:
-    """Recompute a nonmanual title: open claim, then applied definition, then provisional."""
+    """Recompute a nonmanual title: applied definition, then open claim, then provisional.
+
+    Contract: docs/contracts/seat-titles.md, rule 1. A defined seat never takes a task title.
+    """
     session = session_manager.get(session_id)
     if session is None or getattr(session, "title_source", None) == MANUAL_TITLE_SOURCE:
         return session
     context = _session_title_context(session_manager.db, session)
     if context is None:
         return session
-    task = latest_open_claimed_task(session_manager.db, session_id)
-    if task is not None:
+    if definition_title := _definition_title(session_manager.db, session_id):
+        title, source = definition_title, DEFINITION_TITLE_SOURCE
+    elif task := latest_open_claimed_task(session_manager.db, session_id):
         title = format_task_session_title(
             context.project_name,
             context.session_seq_num,
@@ -129,8 +144,6 @@ def recompute_automatic_title(session_manager: Any, session_id: str) -> Any:
             task.title,
         )
         source = TASK_TITLE_SOURCE
-    elif definition_title := _definition_title(session_manager.db, session_id):
-        title, source = definition_title, DEFINITION_TITLE_SOURCE
     else:
         title = format_provisional_session_title(
             context.project_name,

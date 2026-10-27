@@ -51,6 +51,9 @@ class _FakeManager:
         assert channel_name == "telegram"
         return self.supports_edit
 
+    def attached_destination(self, channel_id: str, session_id: str) -> str | None:
+        return None
+
     def supports_typing(self, channel_name: str) -> bool:
         assert channel_name == "telegram"
         return self.typing_supported
@@ -163,11 +166,12 @@ def _context(
     *,
     content: str = "hello",
     session_id: str = "session-1",
+    channel_type: str = "telegram",
     responder_config: dict[str, Any] | None = None,
 ) -> ResponderContext:
     channel = ChannelConfig(
         id="channel-1",
-        channel_type="telegram",
+        channel_type=channel_type,
         name="telegram",
         enabled=True,
         config_json={"responder": {"enabled": True}},
@@ -274,7 +278,7 @@ async def test_transport_throttles_edits_and_flushes_latest_text() -> None:
     clock = _Clock()
     transport = CommunicationsChatStreamTransport(
         manager,
-        _context(),
+        _context(channel_type="slack"),
         edit_interval=1.5,
         clock=clock,
     )
@@ -318,7 +322,7 @@ async def test_transport_delivers_the_answer_when_the_platform_rejects_its_edits
     manager = _RejectingEditManager(supports_edit=True)
     clock = _Clock()
     transport = CommunicationsChatStreamTransport(
-        manager, _context(), edit_interval=1.5, clock=clock
+        manager, _context(channel_type="slack"), edit_interval=1.5, clock=clock
     )
 
     await transport.safe_send({"type": "chat_stream", "content": "A", "done": False})
@@ -335,7 +339,7 @@ async def test_transport_delivers_the_answer_when_the_platform_rejects_its_edits
 @pytest.mark.asyncio
 async def test_transport_replaces_placeholder_with_short_final_text() -> None:
     manager = _FakeManager(supports_edit=True)
-    transport = CommunicationsChatStreamTransport(manager, _context())
+    transport = CommunicationsChatStreamTransport(manager, _context(channel_type="slack"))
 
     await transport.safe_send({"type": "chat_stream", "content": "OK", "done": False})
     await transport.safe_send({"type": "chat_stream", "content": "", "done": True})
@@ -482,17 +486,17 @@ async def test_backend_honors_explicit_surface_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_backend_flushes_fallback_when_stream_ends_without_done_event() -> None:
+async def test_backend_discards_incomplete_telegram_stream() -> None:
     manager = _FakeManager(supports_edit=False)
     backend = ChatSessionCommsBackend(_IncompleteChatHost(), manager)
 
     await backend.run_turn(_context())
 
-    assert [sent[1] for sent in manager.sent] == ["partial reply"]
+    assert manager.sent == []
 
 
 @pytest.mark.asyncio
-async def test_backend_cancellation_flushes_partial_stream_before_stop_returns() -> None:
+async def test_backend_cancellation_discards_partial_telegram_stream() -> None:
     manager = _FakeManager(supports_edit=False)
     host = _BlockingChatHost()
     backend = ChatSessionCommsBackend(host, manager)
@@ -504,7 +508,7 @@ async def test_backend_cancellation_flushes_partial_stream_before_stop_returns()
 
     assert result == "Stopped the active turn."
     assert turn.cancelled()
-    assert [sent[1] for sent in manager.sent] == ["partial reply"]
+    assert manager.sent == []
 
 
 @pytest.mark.asyncio

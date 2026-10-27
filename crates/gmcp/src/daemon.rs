@@ -89,7 +89,13 @@ impl Dialer {
             has_tmux_pane: terminal
                 .get("tmux_pane")
                 .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())),
-            agent: ureq::AgentBuilder::new().redirects(0).build(),
+            // No idle pool: a kept-alive socket can outlive its daemon process, and a
+            // request sent on it after a restart fails (ureq 2's pool liveness peek even
+            // surfaces the reset as an error). Loopback connects are cheap.
+            agent: ureq::AgentBuilder::new()
+                .redirects(0)
+                .max_idle_connections(0)
+                .build(),
             tool_timeouts: Mutex::new(None),
             state: Mutex::new(CachedState {
                 auth: auth_headers()?,

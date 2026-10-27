@@ -157,8 +157,12 @@ def _fresh_seat(
     create_time: float,
     cwd: str = "/repo",
     parent: MagicMock | None = None,
+    agent_run_id: str | None = None,
 ) -> MagicMock:
-    """A seat launched as ``codex --yolo <prompt>``: no thread id in argv."""
+    """A seat launched as ``codex --yolo <prompt>``: no thread id in argv.
+
+    ``agent_run_id`` makes it a seat Gobby spawned for an agent run.
+    """
     seat = _codex_tui(
         pid,
         ["codex", "--yolo", "fix the failing test"],
@@ -168,6 +172,8 @@ def _fresh_seat(
     )
     seat.cwd.return_value = cwd
     seat.parent.return_value = parent
+    if agent_run_id is not None:
+        seat.environ.return_value["GOBBY_AGENT_RUN_ID"] = agent_run_id
     return seat
 
 
@@ -605,6 +611,116 @@ def test_new_thread_never_adopts_an_owned_or_later_seat() -> None:
 
     assert result == {"cwd": "/repo"}
     assert checked == [70100]
+
+
+# #23438: a TUI that Gobby spawned for an agent run carries GOBBY_AGENT_RUN_ID. A
+# human thread in the same cwd must never adopt it, whichever seat is newest or alone.
+REVIEWER_RUN_ID = "c91331b5-cf90-46f7-a630-629761c40248"
+
+
+def test_fresh_seat_never_adopts_a_spawned_agent_tui() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    reviewer = _fresh_seat(
+        64785,
+        tty="/dev/ttys002",
+        terminal_id="pane-reviewer",
+        create_time=FRESH_MINTED_AT - 5.0,
+        agent_run_id=REVIEWER_RUN_ID,
+    )
+
+    with _process_table([_managed_host(), reviewer]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == {"cwd": "/repo"}
+
+
+def test_fresh_seat_adopts_the_human_tui_not_a_newer_spawned_agent_tui() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    human = _fresh_seat(
+        70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=FRESH_MINTED_AT - 10.0
+    )
+    reviewer = _fresh_seat(
+        71386,
+        tty="/dev/ttys001",
+        terminal_id="pane-reviewer",
+        create_time=FRESH_MINTED_AT - 2.0,
+        agent_run_id=REVIEWER_RUN_ID,
+    )
+
+    with _process_table([_managed_host(), human, reviewer]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == _seat_context(
+        70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=FRESH_MINTED_AT - 10.0
+    )
+
+
+def test_fresh_seat_adopts_the_human_tui_when_the_spawned_agent_tui_is_older() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    reviewer = _fresh_seat(
+        71386,
+        tty="/dev/ttys001",
+        terminal_id="pane-reviewer",
+        create_time=FRESH_MINTED_AT - 10.0,
+        agent_run_id=REVIEWER_RUN_ID,
+    )
+    human = _fresh_seat(
+        70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=FRESH_MINTED_AT - 2.0
+    )
+
+    with _process_table([_managed_host(), reviewer, human]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=thread)
+
+    assert result == _seat_context(
+        70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=FRESH_MINTED_AT - 2.0
+    )
+
+
+def test_new_thread_never_adopts_a_spawned_agent_tui_past_the_window() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    reviewer = _fresh_seat(
+        71386,
+        tty="/dev/ttys001",
+        terminal_id="pane-reviewer",
+        create_time=SLOW_SEAT_STARTED_AT,
+        agent_run_id=REVIEWER_RUN_ID,
+    )
+
+    with _process_table([_managed_host(), reviewer]):
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT),
+            "/repo",
+            external_id=thread,
+            seat_available=lambda _pid, _create_time: True,
+        )
+
+    assert result == {"cwd": "/repo"}
+
+
+def test_new_thread_adopts_the_human_tui_beside_a_spawned_agent_tui_past_the_window() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    human = _fresh_seat(
+        70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=SLOW_SEAT_STARTED_AT - 30
+    )
+    reviewer = _fresh_seat(
+        71386,
+        tty="/dev/ttys001",
+        terminal_id="pane-reviewer",
+        create_time=SLOW_SEAT_STARTED_AT,
+        agent_run_id=REVIEWER_RUN_ID,
+    )
+
+    with _process_table([_managed_host(), human, reviewer]):
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT),
+            "/repo",
+            external_id=thread,
+            seat_available=lambda _pid, _create_time: True,
+        )
+
+    assert result == _seat_context(
+        70100, tty="/dev/ttys004", terminal_id="pane-human", create_time=SLOW_SEAT_STARTED_AT - 30
+    )
 
 
 # #23049 option A: a pane locks only under Gobby's SRT, which the launch and

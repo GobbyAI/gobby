@@ -168,6 +168,7 @@ def test_group_resolution_preserves_existing_dm_session_link() -> None:
     store.get_identity_by_external.return_value = dm_identity
     session_store = MagicMock()
     session_store.register.return_value.id = "group-session"
+    session_store.get.return_value.status = "active"
     manager = _manager(store=store, session_store=session_store)
 
     group = manager.resolve_inbound_identity(

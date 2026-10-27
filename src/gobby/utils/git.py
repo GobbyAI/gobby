@@ -409,6 +409,17 @@ def normalize_commit_sha(sha: str | None, cwd: str | Path | None = None) -> str 
     return result if result else None
 
 
+def descends_from_all(commit: str, others: list[str], cwd: str | Path | None = None) -> bool:
+    """Return whether every commit in ``others`` is an ancestor of ``commit``."""
+    return all(
+        run_git_command(
+            ["git", "merge-base", "--is-ancestor", other, commit], cwd=cwd or Path.cwd()
+        )
+        is not None
+        for other in others
+    )
+
+
 def is_valid_sha_format(sha: str) -> bool:
     """
     Check if string looks like a valid SHA format (hex, >= 4 chars).

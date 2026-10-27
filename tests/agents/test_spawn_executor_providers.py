@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents import spawn_executor_codex
+from gobby.agents.agent_workspaces import _SESSION_LOCATION_SQL
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
@@ -35,14 +36,14 @@ def test_spawn_preamble_renders_launch_assignment(monkeypatch: pytest.MonkeyPatc
     request, _, _ = _sandbox_request()
     request.agent_name = "assigned-seat"
     request.session_manager = MagicMock()
-    request.initial_variables = {"seat_context": {"lane": "custom"}}
+    request.initial_variables = {"seat_context": {"worktree": "custom"}}
     body = make_agent_definition(
-        name="assigned-seat", prompts={"agent": "Assigned lane {{ seat_context.lane }}."}
+        name="assigned-seat", prompts={"agent": "Assigned worktree {{ seat_context.worktree }}."}
     )
     resolver = MagicMock(return_value=body)
     monkeypatch.setattr("gobby.workflows.agent_resolver.resolve_agent", resolver)
 
-    assert _agent_prompt_prefix(request) == "Assigned lane custom."
+    assert _agent_prompt_prefix(request) == "Assigned worktree custom."
     resolver.assert_called_once_with(
         "assigned-seat", request.session_manager._storage.db, project_id="project"
     )
@@ -255,6 +256,17 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     )
     request, spawn_context, _ = _sandbox_request()
     request.session_manager = MagicMock()
+
+    # The seat's own folder is named from its session row, which spawn reads at spawn time.
+    def fetch_session_row(sql: str, _params: object) -> MagicMock:
+        cursor = MagicMock()
+        is_location = sql == _SESSION_LOCATION_SQL
+        cursor.fetchone.return_value = (
+            {"project_id": "project", "seq_num": 7} if is_location else None
+        )
+        return cursor
+
+    request.session_manager._storage.db.execute.side_effect = fetch_session_row
     request.machine_id = "machine"
     request.project_path = str(lane)
     request.cwd = str(lane)

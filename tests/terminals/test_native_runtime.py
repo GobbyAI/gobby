@@ -459,16 +459,18 @@ async def test_ctrl_c_reaches_gterm_as_key_bar_bytes() -> None:
 
 
 async def test_trailing_newline_is_text_then_a_separate_enter() -> None:
-    """A submit is two host writes: the text, then Enter. Codex drops a newline inside one write."""
+    """A submit is two host writes: the text as one paste, then Enter.
+
+    Short text pastes too, as tmux does (#23445). Codex drops a newline inside one write.
+    """
     runtime, host = _runtime()
     terminal = _native_terminal(host)
 
     delivered = await runtime.write_text(terminal, "resume", submit=True)
 
     assert isinstance(delivered, Delivered)
-    assert [item["kind"] for item in host.writes] == ["text", "key"]
+    assert [item["kind"] for item in host.writes] == ["paste", "key"]
     assert base64.b64decode(host.writes[0]["data"]) == b"resume"
-    assert host.writes[0]["submit"] is False
     assert base64.b64decode(host.writes[1]["data"]) == b"enter"
     assert host.pty == [b"resume", b"\n"]
 
@@ -494,7 +496,57 @@ async def test_submit_enter_waits_out_the_tmux_paste_gap(
 
     assert isinstance(delivered, Delivered)
     assert gaps == [(TMUX_TEXT_ENTER_DELAY_SECONDS, 1)]
-    assert [item["kind"] for item in host.writes] == ["text", "key"]
+    assert [item["kind"] for item in host.writes] == ["paste", "key"]
+
+
+def _long_kickoff() -> str:
+    """A single-line kickoff of 2,600+ characters; #23445 saw the head lost at this size."""
+    text = " ".join(f"({n}) Run the focused tests, then report what changed." for n in range(1, 60))
+    assert len(text) >= 2_600
+    assert "\n" not in text
+    return text
+
+
+async def test_long_text_submit_is_one_bracketed_paste_then_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long kickoff reaches a native pane as one paste, not a typed stream, then a separate Enter.
+
+    In #23445 typed kickoffs of 2,000 to 2,600 characters reached Claude Code with
+    their head missing, while 130-character ones arrived intact. A paste is one unit
+    the child reads as text, so its inner text does not submit.
+    """
+    runtime, host = _runtime()
+    host.bracketed_paste = True
+    terminal = _native_terminal(host)
+
+    async def no_gap(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("gobby.terminals.native_runtime.asyncio.sleep", no_gap)
+    text = _long_kickoff()
+
+    delivered = await runtime.write_text(terminal, text, submit=True)
+
+    assert isinstance(delivered, Delivered)
+    assert [item["kind"] for item in host.writes] == ["paste", "key"]
+    assert base64.b64decode(host.writes[0]["data"]) == text.encode("utf-8")
+    assert base64.b64decode(host.writes[1]["data"]) == b"enter"
+    assert host.pty == [b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~", b"\n"]
+
+
+async def test_long_text_without_submit_is_one_bracketed_paste() -> None:
+    """A long text with no submit is still one paste write; nothing is typed as keystrokes."""
+    runtime, host = _runtime()
+    host.bracketed_paste = True
+    terminal = _native_terminal(host)
+    text = _long_kickoff()
+
+    delivered = await runtime.write_text(terminal, text, submit=False)
+
+    assert isinstance(delivered, Delivered)
+    assert [item["kind"] for item in host.writes] == ["paste"]
+    assert host.pty == [b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~"]
 
 
 def test_named_key_bytes_match_the_web_key_bar() -> None:
@@ -1074,9 +1126,9 @@ async def test_sequence_holds_lock_across_steps_native(monkeypatch: pytest.Monke
     await task
     kinds = [item["kind"] for item in host.writes]
     assert kinds[0] == "key"
-    assert "text" in kinds
+    assert "paste" in kinds
     assert interleaved == ["trying", "done"]
-    assert kinds[-1] == "text" or host.writes[-1]["kind"] in {"text", "key"}
+    assert kinds[-1] == "paste" or host.writes[-1]["kind"] in {"paste", "key"}
 
 
 async def _prepared_ledger_spawn(

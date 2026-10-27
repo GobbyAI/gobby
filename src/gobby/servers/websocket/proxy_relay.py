@@ -363,8 +363,13 @@ class ProxyHub:
             if overflow is not None:
                 await relay.shutdown(overflow)
                 completion.cancel()
-                raise ConnectionError(f"terminal proxy relay closed: {overflow}")
-            await asyncio.shield(completion)
+                return
+            try:
+                await asyncio.shield(completion)
+            except ConnectionError:
+                # shutdown settles this future after retiring the failed recipient.
+                # Its lost delivery must not fence the daemon-wide publisher.
+                return
 
         await self._owner._leases().publish_lifecycle(event, publish)
 

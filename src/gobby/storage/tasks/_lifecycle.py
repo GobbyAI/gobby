@@ -182,6 +182,7 @@ def close_task(
     closed_commit_sha: str | None = None,
     closed_ancestors: list[str] | None = None,
     expected_updated_at: datetime | None = None,
+    closing_note: str | None = None,
 ) -> None:
     """Close a task.
 
@@ -217,6 +218,7 @@ def close_task(
         closed_commit_sha=closed_commit_sha,
         closed_ancestors=collected,
         expected_updated_at=expected_updated_at,
+        closing_note=closing_note,
     )
 
 
@@ -336,6 +338,28 @@ def link_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     if cursor.rowcount > 0:
         return True
     return False
+
+
+def move_commit_to_tip(db: HubDatabase, task_id: str, commit_sha: str) -> None:
+    """Move an already-linked commit to the end of the task's link order.
+
+    The caller proves the commit descends from every other linked commit first.
+    """
+    _require_commit_sha(commit_sha)
+    with db.transaction() as conn:
+        conn.execute(
+            f"""
+            UPDATE tasks
+               SET commits = (
+                   SELECT jsonb_agg(linked.sha ORDER BY ({_SAME_COMMIT_SQL}), linked.position)
+                     FROM jsonb_array_elements_text(commits)
+                          WITH ORDINALITY AS linked(sha, position)
+               ),
+                   updated_at = %(now)s
+             WHERE id = %(task_id)s AND jsonb_array_length(commits) > 0
+            """,
+            {"sha": commit_sha, "now": utc_now(), "task_id": task_id},
+        )
 
 
 def unlink_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:

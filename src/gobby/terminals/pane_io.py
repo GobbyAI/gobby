@@ -711,8 +711,8 @@ async def submit_text(
         if composer_read is None:
             return SubmitResult(
                 False,
-                f"{label} was typed and Enter sent, but {cli_source or 'this CLI'} "
-                "has no composer reader to verify it",
+                f"{label} was written and Enter sent, but {cli_source or 'this CLI'} "
+                "has no composer reader to verify the text arrived",
                 SUBMIT_UNVERIFIED_ERROR_CODE,
             )
         verdict = await composer_verdict(
@@ -746,15 +746,15 @@ async def submit_text(
             )
             return SubmitResult(
                 False,
-                f"{label} was typed and Enter sent, but the composer could not be read "
-                "to verify it",
+                f"{label} was written and Enter sent, but the composer could not be read "
+                "to verify the text arrived",
                 SUBMIT_UNVERIFIED_ERROR_CODE,
             )
         if verdict == "changed":
             return SubmitResult(
                 False,
-                f"{label} was typed and Enter sent, but a different draft remains in the "
-                "composer; submission cannot be verified",
+                f"{label} was written and Enter sent, but a different draft remains in the "
+                "composer; the text's arrival and submission cannot be verified",
                 SUBMIT_UNVERIFIED_ERROR_CODE,
             )
         logger.debug(
@@ -766,7 +766,7 @@ async def submit_text(
         return SubmitResult(True)
     return SubmitResult(
         False,
-        f"{label} was typed but stayed in the composer: the CLI never submitted it",
+        f"{label} was written but stayed in the composer: the CLI never submitted it",
         TEXT_NOT_SUBMITTED_ERROR_CODE,
     )
 

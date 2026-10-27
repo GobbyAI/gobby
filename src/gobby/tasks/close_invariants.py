@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence, Set
 
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
-from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
 NO_WORK_CLOSE_REASONS = frozenset({"moot", "superseded", "wont_do"})
@@ -121,6 +121,7 @@ async def _data_invariants(
         if integration_ref and integration_repo_path
         else None
     )
+    landed_shas: list[str] = []
     unlanded: list[str] = []
     unresolved: list[str] = []
     for sha in commit_shas:
@@ -133,23 +134,43 @@ async def _data_invariants(
             result = await daemon_git.run(
                 ("merge-base", "--is-ancestor", resolved, tip), cwd=integration_repo_path
             )
-            if not isinstance(result, GitOk):
+            if isinstance(result, GitOk):
+                landed_shas.append(sha)
+            elif isinstance(result, GitFailed) and result.returncode == 1:
                 unlanded.append(sha)
+            else:
+                # Git could not answer, so the commit is neither proven landed nor unlanded.
+                unresolved.append(sha)
     landed = tip is not None and not unresolved and not unlanded
+    if reason.casefold() in NO_WORK_CLOSE_REASONS:
+        # A no-work close carries no linked work: landed work closes as done, and unlanded
+        # candidates leave through the audited unlink before the close.
+        passed = False
+        message = (
+            f"Landed commits cannot close as {reason}; close with reason done."
+            if landed_shas
+            else "Unlink linked commits with unlink_commit before a no-work close."
+        )
+    else:
+        passed = landed
+        message = (
+            "Linked work is on the integration branch."
+            if landed
+            else "Linked work must resolve and be an ancestor of the integration tip."
+        )
     gates.append(
         CloseGateResult(
             4,
             "integration_ancestry",
-            "passed" if landed else "failed",
-            "Linked work is on the integration branch."
-            if landed
-            else "Linked work must resolve and be an ancestor of the integration tip.",
+            "passed" if passed else "failed",
+            message,
             {
                 "integration_ref": integration_ref,
                 "integration_tip": tip,
                 "integration_repo_path": integration_repo_path,
                 "unresolved_commits": unresolved,
                 "unlanded_commits": unlanded,
+                "landed_commits": landed_shas,
             },
         )
     )

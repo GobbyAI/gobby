@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import click
 import pytest
@@ -16,10 +17,21 @@ from scripts.generate_parity_ledger import (
     ParityStatus,
     cli_verbs,
     collect_surfaces,
+    committed_ledger,
     http_surfaces,
     load_statuses,
     render_ledger,
 )
+from scripts.parity_waivers import (
+    DIFF,
+    NATIVE_EXTENSION,
+    PASSED,
+    WAIVED,
+    Waiver,
+    WaiverError,
+    load_waivers,
+)
+from tests.contracts.http_corpus import CorpusError, classify_replay
 
 pytestmark = pytest.mark.unit
 
@@ -30,8 +42,8 @@ def surfaces() -> set[str]:
 
 
 def test_committed_ledger_matches_current_public_inventory(surfaces: set[str]) -> None:
-    """Any inventory, mapping or generator drift must update the committed document."""
-    assert render_ledger(surfaces, load_statuses()) == LEDGER_PATH.read_bytes()
+    """Any inventory, mapping, waiver or generator drift must update the committed document."""
+    assert committed_ledger(surfaces) == LEDGER_PATH.read_bytes()
 
 
 def test_inventory_contains_all_four_protocols_and_terminal_flip(surfaces: set[str]) -> None:
@@ -253,3 +265,255 @@ def test_node_run_outcome_routes_match_sibling_node_routes(surface: str, handler
     assert all("#24151" in s.note for s in siblings.values())
     assert "#24151" in entry.note
     assert f"src/gobby/servers/routes/node_runs.py::create_node_runs_router.{handler}" in entry.note
+
+
+CRON_PATCH = "HTTP PATCH /api/cron/jobs/{job_id}"
+CRON_LIST = "HTTP GET /api/cron/jobs"
+CRON_OUTPUT = "HTTP GET /api/cron/runs/{run_id}/output"
+INVENTORY = {CRON_PATCH, CRON_LIST}
+ADDITIVE = {CRON_OUTPUT}
+VALIDATION_ID = "cron.patch-job.schedule-validation"
+VALIDATION_DECISION = ".gobby/plans/gdaemon-cron-family.md#3.2"
+VALIDATION_BEHAVIOUR = "An invalid schedule on PATCH returns 400 instead of an internal error."
+VALIDATION_REPLACEMENT = 'Native 400 with {"detail": "Invalid cron schedule"}.'
+OUTPUT_ID = "cron.get-run-output.native-extension"
+OUTPUT_DECISION = ".gobby/plans/gdaemon-cron-family.md#3.1a"
+PYTHON_RESPONSE = {"status": 500, "headers": {}, "body": {"detail": "internal"}}
+NATIVE_RESPONSE = {"status": 400, "headers": {}, "body": {"detail": "Invalid cron schedule"}}
+
+
+def _entry(**changes: str) -> dict[str, str]:
+    entry = {
+        "id": VALIDATION_ID,
+        "surface": CRON_PATCH,
+        "behaviour": VALIDATION_BEHAVIOUR,
+        "decision": VALIDATION_DECISION,
+        "replacement": VALIDATION_REPLACEMENT,
+    }
+    entry.update(changes)
+    return entry
+
+
+def _manifest(tmp_path: Path, *entries: dict[str, str]) -> Path:
+    path = tmp_path / "parity-waivers.json"
+    path.write_text(json.dumps({"schema_version": 1, "waivers": list(entries)}))
+    return path
+
+
+def _waiver(**changes: str) -> Waiver:
+    fields = {
+        "id": VALIDATION_ID,
+        "surface": CRON_PATCH,
+        "behaviour": VALIDATION_BEHAVIOUR,
+        "decision": VALIDATION_DECISION,
+        "replacement": VALIDATION_REPLACEMENT,
+    }
+    fields.update(changes)
+    return Waiver(**fields)
+
+
+def _row(rendered: bytes, surface: str) -> str:
+    prefix = f"| `{surface}` |"
+    rows = [line for line in rendered.decode().splitlines() if line.startswith(prefix)]
+    assert rows, f"no ledger row for {surface}"
+    return rows[0]
+
+
+@pytest.mark.parametrize("field", ["id", "surface", "behaviour", "decision", "replacement"])
+def test_waiver_entry_requires_every_field(tmp_path: Path, field: str) -> None:
+    entry = {key: value for key, value in _entry().items() if key != field}
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, entry), surfaces=INVENTORY)
+
+
+@pytest.mark.parametrize("field", ["behaviour", "decision", "replacement"])
+def test_waiver_entry_rejects_empty_text(tmp_path: Path, field: str) -> None:
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, _entry(**{field: ""})), surfaces=INVENTORY)
+
+
+@pytest.mark.parametrize(
+    "bad_id",
+    [
+        "Cron.patch-job.schedule-validation",
+        "cron.patch-job",
+        "cron.patch_job.schedule-validation",
+        "cron.patch-job.schedule-validation.extra",
+        "cron..schedule-validation",
+        "cron.patch-job.-schedule-validation",
+        "cron.patch-job.schedule-validation-",
+    ],
+)
+def test_waiver_id_is_three_lowercase_kebab_segments(tmp_path: Path, bad_id: str) -> None:
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, _entry(id=bad_id)), surfaces=INVENTORY)
+
+
+def test_waiver_surface_must_be_an_exact_ledger_key(tmp_path: Path) -> None:
+    entry = _entry(surface="HTTP PATCH /api/cron/jobs/{id}")
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, entry), surfaces=INVENTORY)
+
+
+def test_duplicate_waiver_ids_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, _entry(), _entry()), surfaces=INVENTORY)
+
+
+@pytest.mark.parametrize("decision", ["#24952", "#1", ".gobby/plans/gdaemon-cron-family.md#3.1a"])
+def test_decision_accepts_a_task_ref_or_plan_citation(tmp_path: Path, decision: str) -> None:
+    loaded = load_waivers(_manifest(tmp_path, _entry(decision=decision)), surfaces=INVENTORY)
+    assert loaded == {VALIDATION_ID: _waiver(decision=decision)}
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        "#0",
+        "#12a",
+        "#",
+        "https://example.com/issues/24952",
+        "see the cron plan",
+        ".gobby/plans/gdaemon-cron-family.md",
+        ".gobby/plans/gdaemon-cron-family.md#",
+        "gdaemon-cron-family.md#3.2",
+    ],
+)
+def test_decision_rejects_any_other_form(tmp_path: Path, decision: str) -> None:
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, _entry(decision=decision)), surfaces=INVENTORY)
+
+
+def test_native_extension_for_an_exact_additive_surface_is_accepted(tmp_path: Path) -> None:
+    entry = _entry(id=OUTPUT_ID, surface=CRON_OUTPUT, decision=OUTPUT_DECISION)
+    loaded = load_waivers(
+        _manifest(tmp_path, entry), surfaces=INVENTORY, additive_surfaces=ADDITIVE
+    )
+    assert set(loaded) == {OUTPUT_ID}
+    assert loaded[OUTPUT_ID].surface == CRON_OUTPUT
+    assert loaded[OUTPUT_ID].decision == OUTPUT_DECISION
+    assert loaded[OUTPUT_ID].native_extension
+
+
+def test_native_extension_surface_must_be_new_to_the_python_inventory(tmp_path: Path) -> None:
+    entry = _entry(id="cron.patch-job.native-extension", surface=CRON_PATCH)
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, entry), surfaces=INVENTORY, additive_surfaces={CRON_PATCH})
+
+
+def test_native_extension_must_name_a_declared_additive_surface(tmp_path: Path) -> None:
+    entry = _entry(
+        id=OUTPUT_ID, surface="HTTP GET /api/cron/runs/{run_id}/raw", decision=OUTPUT_DECISION
+    )
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path, entry), surfaces=INVENTORY, additive_surfaces=ADDITIVE)
+
+
+def test_additive_surface_without_an_entry_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(WaiverError):
+        load_waivers(_manifest(tmp_path), surfaces=INVENTORY, additive_surfaces=ADDITIVE)
+
+
+def test_ledger_row_reports_a_waived_behaviour_with_its_citation_and_keeps_status() -> None:
+    rendered = render_ledger(
+        {CRON_PATCH}, {CRON_PATCH: ParityStatus("proxied")}, {VALIDATION_ID: _waiver()}
+    )
+    row = _row(rendered, CRON_PATCH)
+    assert row.startswith(f"| `{CRON_PATCH}` | proxied |")
+    assert WAIVED in row
+    assert VALIDATION_ID in row
+    assert VALIDATION_DECISION in row
+
+
+def test_ledger_reports_a_native_extension_with_its_citation_and_no_python_status() -> None:
+    waiver = _waiver(id=OUTPUT_ID, surface=CRON_OUTPUT, decision=OUTPUT_DECISION)
+    rendered = render_ledger(set(), {}, {OUTPUT_ID: waiver})
+    row = _row(rendered, CRON_OUTPUT)
+    assert row.startswith(f"| `{CRON_OUTPUT}` | {NATIVE_EXTENSION} |")
+    assert OUTPUT_DECISION in row
+    for python_evidence in ("proxied", "delegated", PASSED, "Verified"):
+        assert python_evidence not in row
+
+
+def _case(**changes: object) -> dict[str, Any]:
+    case: dict[str, Any] = {
+        "name": "cron_patch_invalid_schedule",
+        "family": "cron",
+        "request": {
+            "method": "PATCH",
+            "path": "/api/cron/jobs/job-1",
+            "query": {},
+            "headers": {},
+            "body": {"schedule": "not a cron"},
+        },
+        "response": PYTHON_RESPONSE,
+        "mask": [],
+    }
+    case.update(changes)
+    return case
+
+
+def test_waived_case_reports_waived_with_its_citation() -> None:
+    case = _case(waiver=VALIDATION_ID, native_response=NATIVE_RESPONSE)
+
+    result = classify_replay(case, NATIVE_RESPONSE, {VALIDATION_ID: _waiver()})
+
+    assert result.outcome == WAIVED
+    assert result.waiver == VALIDATION_ID
+    assert result.decision == VALIDATION_DECISION
+
+
+def test_waived_case_that_still_matches_python_is_a_diff() -> None:
+    case = _case(waiver=VALIDATION_ID, native_response=NATIVE_RESPONSE)
+
+    result = classify_replay(case, PYTHON_RESPONSE, {VALIDATION_ID: _waiver()})
+
+    assert result.outcome == DIFF
+
+
+def test_unwaived_case_passes_only_on_the_python_outcome() -> None:
+    case = _case()
+
+    assert classify_replay(case, PYTHON_RESPONSE, {}).outcome == PASSED
+    difference = classify_replay(case, NATIVE_RESPONSE, {})
+    assert difference.outcome == DIFF
+    assert difference.waiver is None
+
+
+def test_waived_case_citing_an_unknown_waiver_is_rejected() -> None:
+    case = _case(waiver="cron.nope.nope", native_response=NATIVE_RESPONSE)
+
+    with pytest.raises(WaiverError):
+        classify_replay(case, NATIVE_RESPONSE, {VALIDATION_ID: _waiver()})
+
+
+def test_waived_case_must_assert_its_native_outcome() -> None:
+    case = _case(waiver=VALIDATION_ID)
+
+    with pytest.raises(CorpusError):
+        classify_replay(case, NATIVE_RESPONSE, {VALIDATION_ID: _waiver()})
+
+
+def test_native_extension_case_never_reports_python_success() -> None:
+    native_response = {"status": 200, "headers": {}, "body": {"output": "hello"}}
+    case: dict[str, Any] = {
+        "name": "cron_run_output",
+        "family": "cron",
+        "request": {
+            "method": "GET",
+            "path": "/api/cron/runs/run-1/output",
+            "query": {},
+            "headers": {},
+            "body": None,
+        },
+        "mask": [],
+        "waiver": OUTPUT_ID,
+        "native_response": native_response,
+    }
+    waiver = _waiver(id=OUTPUT_ID, surface=CRON_OUTPUT, decision=OUTPUT_DECISION)
+
+    result = classify_replay(case, native_response, {OUTPUT_ID: waiver})
+
+    assert result.outcome == NATIVE_EXTENSION
+    assert result.decision == OUTPUT_DECISION
+    assert result.outcome not in {PASSED, WAIVED}

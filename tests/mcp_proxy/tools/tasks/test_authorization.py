@@ -59,6 +59,16 @@ def task_manager() -> MagicMock:
     return manager
 
 
+@pytest.fixture(autouse=True)
+def no_integration_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authorization is under test here; landed-commit refusal has its own tests."""
+
+    async def unknown_integration(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr("gobby.tasks.commit_unlink.integration_refusal", unknown_integration)
+
+
 class TestRequireClaimAuthority:
     def test_unclaimed_allowed_without_session_context(self, task_manager: MagicMock) -> None:
         assert require_claim_authority(task_manager, _task(None), "update_task") is None
@@ -283,6 +293,11 @@ class TestLinkTaskToSessionGuard:
         task_manager.db.fetchone.return_value = {"id": "reviewer-run"} if live_reviewer else None
         with ExitStack() as stack:
             tool, writer = _build_link_task_to_session(task_manager, stack)
+            # The mocked db returns the reviewer row for every fetchone, including the
+            # grant lookup's session query, so stub the grant to test the live-seat rule.
+            stack.enter_context(
+                patch("gobby.mcp_proxy.tools.tasks._session.session_grants", return_value=True)
+            )
             with session_context_for_test(CALLER_SESSION):
                 result = tool(
                     task_id=TASK_UUID,
@@ -404,6 +419,7 @@ def _build_commit_tool(tool_name: str) -> Callable[[MagicMock, ExitStack], Build
                 new=AsyncMock(return_value=NetCommitPaths()),
             )
         )
+        stack.enter_context(patch("gobby.tasks.commit_unlink.TaskLifecycleEventManager"))
         registry = create_commit_registry(task_manager=manager)
         tool = registry.get_tool(tool_name)
         assert tool is not None
@@ -508,7 +524,8 @@ TOOL_SPECS = [
     ToolSpec(
         name="unlink_commit",
         build=_build_commit_tool("unlink_commit"),
-        kwargs={"task_id": TASK_UUID, "commit_sha": "abc123"},
+        kwargs={"task_id": TASK_UUID, "commit_sha": "abc123", "reason": "Superseded"},
+        unclaimed_context=CALLER_SESSION,
     ),
     ToolSpec(
         name="set_affected_files",

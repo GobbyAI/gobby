@@ -10,6 +10,7 @@ use gobby_core::schema::{
     sweep_test_schemas as sweep_orphaned_test_schemas,
 };
 use gobby_daemon::front_door::compare;
+use gobby_daemon::front_door::waivers::WaiverManifest;
 use time::OffsetDateTime;
 
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
@@ -105,7 +106,8 @@ fn main() -> Result<()> {
 
 fn compare_report(since: Option<i64>) -> Result<()> {
     let path = compare::log_path(&gobby_core::gobby_home()?);
-    let report = compare::report(&path, since)?;
+    let manifest = WaiverManifest::embedded()?;
+    let report = compare::report(&path, since, &manifest)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     if !report.passes() {
         std::process::exit(1);

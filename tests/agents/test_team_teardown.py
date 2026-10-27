@@ -6,13 +6,17 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
+import gobby.runner_lifecycle_agents as lifecycle_agents
 import gobby.runner_lifecycle_callbacks as lifecycle_callbacks
+from gobby.agents import resume_executor
+from gobby.agents.resume_executor import ResumeAgentResult
 from gobby.agents.team_lifecycle import (
     SeatTarget,
     TeamAdmissionRefused,
@@ -20,13 +24,18 @@ from gobby.agents.team_lifecycle import (
     check_team_spawn,
 )
 from gobby.agents.team_teardown import FINDING_LABEL, TEARDOWN_GRACE
+from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.runner_maintenance.isolation import team_tree_deleter
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees.deletion import WorktreeDeletionResult
+from tests.config_runtime_helpers import static_runtime_capture
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.postgres import TEST_USER_ID
 from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
@@ -42,6 +51,9 @@ from tests.fixtures.team_teardown_case import (
     teardown,
     teardown_pass,
 )
+
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
 
 pytestmark = pytest.mark.unit
 
@@ -90,6 +102,46 @@ def close(world: TeamWorld, team: Team, sha: str, *, minutes_ago: int = 0) -> Ta
 def finding_tasks(world: TeamWorld, team: Team) -> list[Task]:
     return LocalTaskManager(world.case.db).list_tasks(
         project_id=world.case.project_id, label=f"team-{team.binding.team_id}"
+    )
+
+
+def seat_run(db: HubDatabase, team: Team, index: int) -> AgentRun:
+    """The pending run the runbook launched ``team.seats[index]`` with."""
+    (run,) = [
+        run
+        for run in LocalAgentRunManager(db).list_by_parent(team.runbook.id)
+        if run.child_session_id == team.seats[index]
+    ]
+    return run
+
+
+def park(db: HubDatabase, team: Team, index: int) -> AgentRun:
+    """A daemon stop parked ``team.seats[index]``: run cancelled, process gone, session paused."""
+    session = team.seats[index]
+    runs = LocalAgentRunManager(db)
+    run = seat_run(db, team, index)
+    SessionManager(db).update_terminal_pickup_metadata(session, agent_run_id=run.id)
+    assert runs.start(run.id) is not None
+    runs.merge_resume_metadata(run.id, {"provider_native_session_id": f"native-{index}"})
+    parked = runs.cancel(run.id, terminal_reason="daemon_stop")
+    assert parked is not None and (parked.status, parked.pid) == ("cancelled", None)
+    assert session_status(db, session) == "paused"
+    return parked
+
+
+def recovering(db: HubDatabase) -> GobbyRunner:
+    """The daemon pieces the parked-seat resume retry uses."""
+    return cast(
+        "GobbyRunner",
+        SimpleNamespace(
+            agent_runner=SimpleNamespace(run_storage=LocalAgentRunManager(db)),
+            database=db,
+            db_executor=None,
+            session_manager=SessionManager(db),
+            config_runtime=SimpleNamespace(capture=static_runtime_capture(DaemonConfig())),
+            completion_registry=None,
+            websocket_server=None,
+        ),
     )
 
 
@@ -294,3 +346,108 @@ async def test_cleanup_preserves_unsafe_trees(
         "operator-experiment"
     )
     assert session_status(db, stranger) == "active"
+
+
+async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#25165: a seat parked by a daemon stop, its process gone, must not hold the closed tree."""
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    team = await admitted_team(world, "Parked seat team")
+    parked = park(db, team, 1)
+    closed = close(world, team, land(world, team, "parked.py"))
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert finding_tasks(world, team) == []
+    assert not Path(team.binding.worktree_path).exists()
+    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+    assert not branch_exists(world, team.binding.branch)
+    assert {session_status(db, session) for session in team.seats} == {"expired"}
+    run = LocalAgentRunManager(db).get(parked.id)
+    assert run is not None and run.status == "cancelled"
+
+
+async def test_delete_ignores_a_parked_seat_whose_run_went_terminal(world: TeamWorld) -> None:
+    """#25162: the seats had ended, yet the delete was refused for a parked seat's paused row."""
+    db = world.case.db
+    team = await admitted_team(world, "Ended seats team")
+    park(db, team, 1)
+    for session in team.seats:
+        if session != team.seats[1]:
+            SessionManager(db).update_status(session, "expired")
+    close(world, team, land(world, team, "ended.py"))
+
+    result = await team_tree_deleter(db, None)(team.binding)
+
+    assert (result.success, result.error_code, result.error) == (True, None, None)
+    assert not Path(team.binding.worktree_path).exists()
+    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
+
+
+async def test_teardown_does_not_escalate_when_every_seat_ended_cooperatively(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#25148: a seat whose run ended stayed paused because its session named an older parked run."""
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    team = await admitted_team(world, "Cooperative team")
+    runs = LocalAgentRunManager(db)
+    stale = park(db, team, 1)
+    relaunched = runs.create(
+        parent_session_id=team.runbook.id,
+        provider="claude",
+        prompt="Resume the test-writer seat.",
+        agent_name="test-writer",
+        child_session_id=team.seats[1],
+    )
+    for run in runs.list_by_parent(team.runbook.id):
+        # Every seat ends through end_agent_run; only the relaunch's session names another run.
+        assert run.child_session_id is not None
+        if run.id != relaunched.id:
+            SessionManager(db).update_terminal_pickup_metadata(
+                run.child_session_id, agent_run_id=run.id
+            )
+        assert runs.start(run.id) is not None
+        assert runs.complete(run.id, result="Seat ended.") is not None
+    assert {session_status(db, s) for s in team.seats if s != team.seats[1]} == {"expired"}
+    assert session_status(db, team.seats[1]) == "paused"
+    seat_row = SessionManager(db).get(team.seats[1])
+    assert seat_row is not None and seat_row.agent_run_id == stale.id
+    closed = close(world, team, land(world, team, "cooperative.py"))
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert finding_tasks(world, team) == []
+    assert not Path(team.binding.worktree_path).exists()
+    assert not branch_exists(world, team.binding.branch)
+    assert session_status(db, team.seats[1]) == "expired"
+
+
+async def test_recovery_does_not_relaunch_a_torn_down_seat(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#25165: recovery relaunched a closed team's parked seat into its deleted tree, repeatedly."""
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    resume = AsyncMock(return_value=ResumeAgentResult(success=True))
+    monkeypatch.setattr(resume_executor, "resume_agent_run", resume)
+    torn_down = await admitted_team(world, "Torn-down team")
+    waiting = await admitted_team(world, "Team waiting for its daemon")
+    gone = park(db, torn_down, 1)
+    parked = park(db, waiting, 1)
+    candidates = LocalAgentRunManager(db).list_parked_non_task_resume_candidates(
+        machine_id=require_machine_id()
+    )
+    assert sorted(run.id for run in candidates) == sorted([gone.id, parked.id])
+    closed = close(world, torn_down, land(world, torn_down, "gone.py"))
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    resumed = await lifecycle_agents._retry_parked_non_task_resumes(recovering(db))
+
+    assert resumed == 1
+    assert [call.args[0].id for call in resume.await_args_list] == [parked.id]
+    assert session_status(db, waiting.seats[1]) == "paused", "the open team's seat still waits"

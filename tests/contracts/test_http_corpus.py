@@ -12,6 +12,15 @@ import httpx
 import pytest
 
 from gobby.runtime_grants.handshake import encode_grant_header
+from scripts.parity_waivers import (
+    DIFF,
+    NATIVE_EXTENSION,
+    PASSED,
+    WAIVED,
+    Waiver,
+    WaiverError,
+    surface_matches,
+)
 from tests.contracts import http_corpus
 from tests.e2e import conftest as e2e_fixtures
 from tests.e2e import test_runtime_boundary as boundary_fixtures
@@ -272,14 +281,72 @@ def test_recorder_is_deterministic(boundary: BoundaryHarness, tmp_path: Path) ->
             assert value not in text, left.name
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("native_extension", [False, True])
+def test_recording_preserves_waiver_contract(tmp_path: Path, native_extension: bool) -> None:
+    case = _synthetic_case("waiver_recording", "health", version=2)
+    waiver_id = "health.api.native-extension" if native_extension else "health.api.validation"
+    native = {"status": 422, "headers": {}, "body": None}
+    case.update(waiver=waiver_id, native_response=native)
+    if native_extension:
+        del case["response"]
+    original = copy.deepcopy(case)
+    with httpx.Client(
+        base_url="http://corpus.test",
+        transport=httpx.MockTransport(lambda request: httpx.Response(201, json={"captured": True})),
+    ) as client:
+        paths = http_corpus.record_cases(client, [case], tmp_path, operator={}, grant={})
+    recorded = json.loads(paths[0].read_text())
+    assert recorded["waiver"] == waiver_id
+    assert recorded["native_response"] == native
+    if native_extension:
+        assert "response" not in recorded
+    else:
+        assert recorded["response"]["status"] == 201
+        assert recorded["response"]["body"] == {"captured": True}
+    result = http_corpus.classify_replay(
+        recorded, native, {waiver_id: _waiver("HTTP GET /", waiver_id)}
+    )
+    assert result == http_corpus.ReplayResult(
+        outcome=NATIVE_EXTENSION if native_extension else WAIVED,
+        waiver=waiver_id,
+        decision="#24963",
+    )
+    assert case == original
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("origin", ["python", "gdaemon"])
+def test_python_loader_excludes_native_extension_cases(tmp_path: Path, origin: str) -> None:
+    case = _synthetic_case("native_only", "native_only", version=2)
+    case.update(waiver="runtime.native-only.native-extension", native_response=case.pop("response"))
+    _write_corpus(
+        tmp_path,
+        version=2,
+        families={"native_only": {"origin": origin, "parity": "native"}},
+        cases=[case],
+    )
+    if origin == "python":
+        with pytest.raises(http_corpus.CorpusError, match="native-extension.*gdaemon"):
+            http_corpus.load_cases(tmp_path)
+    else:
+        assert http_corpus.load_cases(tmp_path) == []
+
+
 @pytest.mark.e2e
 def test_case_replays_equal(boundary: BoundaryHarness) -> None:
     # Stateful cases must share a daemon: hooks_execute_replay depends on the
     # processed envelope written by hooks_execute_ok earlier in manifest order.
+    waivers = http_corpus.load_replay_waivers()
     with _client(boundary) as client:
         for case in PYTHON_CASES:
-            expected, actual = http_corpus.replay_case(client, case, **_credentials(boundary))
-            assert actual == expected, case["name"]
+            result, actual = http_corpus.replay_case(
+                client, case, waivers=waivers, **_credentials(boundary)
+            )
+            assert result.outcome in (PASSED, WAIVED), case["name"]
+            if result.outcome == WAIVED:
+                assert result.waiver and result.decision, case["name"]
+                print(f"{case['name']}: {WAIVED} waiver={result.waiver} decision={result.decision}")
             if case["name"] == "hooks_execute_replay":
                 # Codex Interrupt freshly serializes to {}, unlike the stored
                 # Claude Notification response. A fresh ID proves that the
@@ -290,6 +357,205 @@ def test_case_replays_equal(boundary: BoundaryHarness) -> None:
                 assert response.status_code == 200
                 assert response.json() == {}
                 assert response.json() != actual["body"]
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("drift", [False, True])
+def test_manifest_loop_reports_waivers_and_rejects_native_drift(
+    boundary: BoundaryHarness,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    drift: bool,
+) -> None:
+    health = copy.deepcopy(next(case for case in PYTHON_CASES if case["name"] == "health_ok"))
+    with _client(boundary) as client:
+        native = http_corpus.normalize_response(
+            health, http_corpus.send_case(client, health, **_credentials(boundary))
+        )
+    health.update(name="health_waived", waiver="health.api.live-contract", native_response=native)
+    health["response"]["status"] = 599  # Matching Python cannot accidentally satisfy this case.
+    if drift:
+        health["native_response"]["status"] = 598
+    _write_corpus(
+        tmp_path,
+        version=2,
+        families={"health": {"origin": "python", "parity": "native"}},
+        cases=[health],
+    )
+    waiver_path = tmp_path / "parity-waivers.json"
+    waiver_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "waivers": [
+                    {
+                        "id": "health.api.live-contract",
+                        "surface": "HTTP GET /api/health",
+                        "behaviour": "Health answers the native contract.",
+                        "decision": "#24963",
+                        "replacement": "Native health response.",
+                    }
+                ],
+            }
+        )
+    )
+    waivers = http_corpus.load_replay_waivers(waiver_path)
+    monkeypatch.setattr(
+        "tests.contracts.test_http_corpus.PYTHON_CASES", http_corpus.load_cases(tmp_path)
+    )
+    monkeypatch.setattr(http_corpus, "load_replay_waivers", lambda: waivers)
+    if drift:
+        with pytest.raises(AssertionError, match="health_waived"):
+            test_case_replays_equal(boundary)
+    else:
+        test_case_replays_equal(boundary)
+        report = capsys.readouterr().out
+        assert "Waived" in report
+        assert "health.api.live-contract" in report
+        assert "#24963" in report
+
+
+@pytest.mark.e2e
+def test_waived_replay_classifies_against_native_contract(
+    boundary: BoundaryHarness, tmp_path: Path
+) -> None:
+    # The live boundary answers health with the Python-proxied body, so the native contract
+    # is that live answer: a matching contract waives, and a drifted one diverges.
+    health = next(case for case in PYTHON_CASES if case["name"] == "health_ok")
+    manifest = tmp_path / "parity-waivers.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "waivers": [
+                    {
+                        "id": "health.api.live-contract",
+                        "surface": "HTTP GET /api/health",
+                        "behaviour": "Health answers the live native contract.",
+                        "decision": "#24963",
+                        "replacement": "Native health response.",
+                    }
+                ],
+            }
+        )
+    )
+    waivers = http_corpus.load_replay_waivers(manifest)
+    with _client(boundary) as client:
+        live = http_corpus.normalize_response(
+            health, http_corpus.send_case(client, health, **_credentials(boundary))
+        )
+        waived = {
+            **copy.deepcopy(health),
+            "name": "health_waived",
+            "waiver": "health.api.live-contract",
+            "native_response": live,
+        }
+        drifted = {**waived, "name": "health_drifted", "native_response": {**live, "status": 599}}
+        result, _ = http_corpus.replay_case(
+            client, waived, waivers=waivers, **_credentials(boundary)
+        )
+        assert result == http_corpus.ReplayResult(
+            outcome=WAIVED, waiver="health.api.live-contract", decision="#24963"
+        )
+        result, _ = http_corpus.replay_case(
+            client, drifted, waivers=waivers, **_credentials(boundary)
+        )
+        assert result.outcome == DIFF
+
+
+PATCH_JOB = "HTTP PATCH /api/cron/jobs/{job_id}"
+NATIVE_ONLY = "HTTP GET /api/native-only"
+BEHAVIOUR_ID = "cron.patch-job.validation-500"
+NATIVE_ID = "runtime.native-only.native-extension"
+JSON_RESPONSE = {"status": 422, "headers": {}, "body": None}
+
+
+def _waiver(surface: str, waiver_id: str) -> Waiver:
+    return Waiver(
+        id=waiver_id,
+        surface=surface,
+        behaviour="Rejects an invalid body.",
+        decision="#24963",
+        replacement="Native 422.",
+    )
+
+
+def _waived_case(
+    method: str, path: str, waiver_id: str, *, native: dict[str, Any], python: bool = True
+) -> dict[str, Any]:
+    case: dict[str, Any] = {
+        "schema_version": 2,
+        "name": "waived_probe",
+        "family": "cron",
+        "backend": "up",
+        "credential": "none",
+        "request": {"method": method, "path": path, "query": {}, "headers": {}, "body": None},
+        "mask": [],
+        "waiver": waiver_id,
+        "native_response": native,
+    }
+    if python:
+        case["response"] = JSON_RESPONSE
+    return case
+
+
+def test_surface_matches_method_and_route_template() -> None:
+    assert surface_matches(PATCH_JOB, "PATCH", "/api/cron/jobs/job-1")
+    assert not surface_matches(PATCH_JOB, "GET", "/api/cron/jobs/job-1")
+    assert not surface_matches(PATCH_JOB, "PATCH", "/api/other/job-1")
+    assert not surface_matches(PATCH_JOB, "PATCH", "/api/cron/jobs/")
+    assert not surface_matches(PATCH_JOB, "PATCH", "/api/cron/jobs/job-1/extra")
+    assert not surface_matches("CLI gobby cron", "PATCH", "/api/cron/jobs/job-1")
+
+
+def test_waiver_binds_to_the_case_surface() -> None:
+    waivers = {BEHAVIOUR_ID: _waiver(PATCH_JOB, BEHAVIOUR_ID)}
+    native = JSON_RESPONSE
+    with pytest.raises(WaiverError, match="is not waiver"):
+        http_corpus.classify_replay(
+            _waived_case("GET", "/api/other", BEHAVIOUR_ID, native=native), native, waivers
+        )
+    with pytest.raises(WaiverError, match="is not waiver"):
+        http_corpus.classify_replay(
+            _waived_case("PATCH", "/api/other/job-1", BEHAVIOUR_ID, native=native),
+            native,
+            waivers,
+        )
+    result = http_corpus.classify_replay(
+        _waived_case("PATCH", "/api/cron/jobs/job-1", BEHAVIOUR_ID, native=native),
+        native,
+        waivers,
+    )
+    assert result == http_corpus.ReplayResult(
+        outcome=WAIVED, waiver=BEHAVIOUR_ID, decision="#24963"
+    )
+
+
+def test_behaviour_waiver_diverges_from_its_native_contract() -> None:
+    waivers = {BEHAVIOUR_ID: _waiver(PATCH_JOB, BEHAVIOUR_ID)}
+    case = _waived_case("PATCH", "/api/cron/jobs/job-1", BEHAVIOUR_ID, native=JSON_RESPONSE)
+    drifted = {**JSON_RESPONSE, "status": 500}
+    assert http_corpus.classify_replay(case, drifted, waivers).outcome == DIFF
+
+
+def test_native_extension_cannot_cite_a_python_response() -> None:
+    waivers = {NATIVE_ID: _waiver(NATIVE_ONLY, NATIVE_ID)}
+    native = {"status": 200, "headers": {}, "body": None}
+    case = _waived_case("GET", "/api/native-only", NATIVE_ID, native=native)
+    with pytest.raises(http_corpus.CorpusError, match="cannot cite a Python response"):
+        http_corpus.classify_replay(case, native, waivers)
+
+
+def test_native_only_case_classifies_against_its_native_contract() -> None:
+    waivers = {NATIVE_ID: _waiver(NATIVE_ONLY, NATIVE_ID)}
+    native = {"status": 200, "headers": {}, "body": None}
+    case = _waived_case("GET", "/api/native-only", NATIVE_ID, native=native, python=False)
+    assert http_corpus.classify_replay(case, native, waivers) == http_corpus.ReplayResult(
+        outcome=NATIVE_EXTENSION, waiver=NATIVE_ID, decision="#24963"
+    )
+    drifted = {**native, "status": 500}
+    assert http_corpus.classify_replay(case, drifted, waivers).outcome == DIFF
 
 
 @pytest.mark.e2e

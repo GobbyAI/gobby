@@ -221,6 +221,10 @@ class TestGobbyRunnerRun:
         """The shared runner mocks match production shapes, so a clean run logs no ERROR."""
         mock_mcp_manager = AsyncMock()
         patches = create_base_patches(mock_config=mock_config, mock_mcp_manager=mock_mcp_manager)
+        # The readiness probe would call the machine's configured embedding endpoint.
+        patches.append(
+            patch.object(runner_lifecycle_subsystems, "_check_embedding_service", AsyncMock())
+        )
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]

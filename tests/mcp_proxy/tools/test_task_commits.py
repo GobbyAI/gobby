@@ -218,11 +218,22 @@ class TestLinkCommit:
 class TestUnlinkCommit:
     """Tests for unlink_commit MCP tool."""
 
+    @pytest.fixture(autouse=True)
+    def unlink_caller(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+        """Give unlinks a caller session and capture the audit row instead of writing it."""
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.task_commits.get_current_session_id", lambda: "session-1"
+        )
+        audit = MagicMock()
+        monkeypatch.setattr("gobby.tasks.commit_unlink.TaskLifecycleEventManager", audit)
+        return audit
+
     async def test_unlink_commit_success(self, patched_project_context: MagicMock) -> None:
         """Test successful commit unlinking."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
+        task_manager.get_task.return_value.id = "task-1"
         mock_task = MagicMock()
         mock_task.id = "task-1"
         mock_task.commits = []  # After unlink
@@ -234,11 +245,75 @@ class TestUnlinkCommit:
 
         unlink = registry.get_tool("unlink_commit")
         assert unlink is not None
-        result = await unlink(task_id="task-1", commit_sha="abc123")
+        result = await unlink(task_id="task-1", commit_sha="abc123", reason="Superseded by #24970")
 
         assert result["task_id"] == "task-1"
         assert result["commits"] == []
         task_manager.unlink_commit.assert_called_once_with("task-1", "abc123")
+
+    async def test_unlink_commit_records_the_reason_and_caller(
+        self, patched_project_context: MagicMock, unlink_caller: MagicMock
+    ) -> None:
+        """The removal lands on the task's lifecycle with the reason and the caller."""
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value.id = "task-1"
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.commits = []
+        task_manager.unlink_commit.return_value = mock_task
+
+        registry = create_commit_registry(task_manager=task_manager)
+        unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
+        await unlink(task_id="task-1", commit_sha="abc123", reason="Superseded by #24970")
+
+        unlink_caller.return_value.record_lifecycle_event.assert_called_once_with(
+            "task-1",
+            "commit:linked",
+            "commit:unlinked",
+            "Unlinked abc123: Superseded by #24970",
+            by_actor="session-1",
+        )
+
+    async def test_unlink_commit_refuses_a_blank_reason_without_unlinking(
+        self, patched_project_context: MagicMock, unlink_caller: MagicMock
+    ) -> None:
+        """A removal without a reason is refused before the link is touched or audited."""
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
+
+        task_manager = MagicMock()
+        task_manager.get_task.return_value.id = "task-1"
+        registry = create_commit_registry(task_manager=task_manager)
+        unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
+
+        result = await unlink(task_id="task-1", commit_sha="abc123", reason="  ")
+
+        assert "reason is required" in result["error"]
+        task_manager.unlink_commit.assert_not_called()
+        unlink_caller.assert_not_called()
+
+    async def test_unlink_commit_needs_a_caller_session(
+        self, patched_project_context: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The audit row names the caller, so an unlink without a session is refused."""
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
+
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.task_commits.get_current_session_id", lambda: None
+        )
+        task_manager = MagicMock()
+        task_manager.get_task.return_value.id = "task-1"
+        registry = create_commit_registry(task_manager=task_manager)
+        unlink = registry.get_tool("unlink_commit")
+        assert unlink is not None
+
+        result = await unlink(task_id="task-1", commit_sha="abc123", reason="Superseded")
+
+        assert result == {"error": "Unlinking a commit requires session context."}
+        task_manager.unlink_commit.assert_not_called()
 
     async def test_unlink_commit_error(self, patched_project_context: MagicMock) -> None:
         """Test unlink_commit returns error on failure."""
@@ -253,7 +328,7 @@ class TestUnlinkCommit:
 
         unlink = registry.get_tool("unlink_commit")
         assert unlink is not None
-        result = await unlink(task_id="task-1", commit_sha="abc123")
+        result = await unlink(task_id="task-1", commit_sha="abc123", reason="Superseded")
 
         assert "error" in result
         assert "Commit not linked" in result["error"]
@@ -274,7 +349,7 @@ class TestUnlinkCommit:
 
         unlink = registry.get_tool("unlink_commit")
         assert unlink is not None
-        result = await unlink(task_id="task-uuid", commit_sha="abc123")
+        result = await unlink(task_id="task-uuid", commit_sha="abc123", reason="Superseded")
 
         assert result == {"error": "Task task-uuid not found"}
         task_manager.unlink_commit.assert_not_called()
@@ -310,6 +385,7 @@ class TestUnlinkCommit:
         result = await unlink(
             task_id="task-1",
             commit_sha="abc123",
+            reason="Superseded",
             project_path=str(repo_path),
         )
 
@@ -351,7 +427,12 @@ class TestUnlinkCommit:
             "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
             side_effect=ValueError("project_path is outside the task project repo"),
         ):
-            result = await unlink(task_id="task-1", commit_sha="abc123", project_path=str(outside))
+            result = await unlink(
+                task_id="task-1",
+                commit_sha="abc123",
+                reason="Superseded",
+                project_path=str(outside),
+            )
 
         assert "error" in result
         assert "outside the task project repo" in result["error"]
@@ -780,7 +861,7 @@ async def test_task_git_helpers_follow_repo_path_resolution() -> None:
         assert auto_link is not None and get_diff is not None
         results = [
             await link(task_id="task-1", commit_sha="abc123"),
-            await unlink(task_id="task-1", commit_sha="abc123"),
+            await unlink(task_id="task-1", commit_sha="abc123", reason="Superseded"),
             await auto_link(task_id="task-1"),
             await get_diff(task_id="task-1"),
         ]

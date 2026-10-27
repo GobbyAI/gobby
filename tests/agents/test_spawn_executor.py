@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
 from gobby.agents import spawn_executor, spawn_executor_support
+from gobby.agents.agent_workspaces import _SESSION_LOCATION_SQL
 from gobby.agents.constants import (
     CARGO_HOME,
     CARGO_TARGET_DIR,
@@ -1609,6 +1610,17 @@ class TestExecuteSpawnSandbox:
         """Test that sandbox_config is resolved and passed to the terminal runtime."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
+
+        # The seat's own folder is named from its session row, which spawn reads at spawn time.
+        def fetch_session_row(sql: str, _params: object) -> MagicMock:
+            cursor = MagicMock()
+            is_location = sql == _SESSION_LOCATION_SQL
+            cursor.fetchone.return_value = (
+                {"project_id": "proj", "seq_num": 7} if is_location else None
+            )
+            return cursor
+
+        mock_session_manager._storage.db.execute.side_effect = fetch_session_row
         request = SpawnRequest(
             prompt="Test with sandbox",
             cwd=str(tmp_path),
@@ -1689,6 +1701,7 @@ class TestExecuteSpawnSandbox:
             "logs",
             "cache",
             "cargo-home",
+            "session-7",
             sandbox_target.name,
         }
         assert _runtime_of(request).last_request is not None

@@ -318,7 +318,10 @@ fn assert_error(output: &std::process::Output, code: &str) -> Value {
         .trim();
     assert_eq!(stderr.lines().count(), 1, "typed error is one JSON line");
     let payload: Value = serde_json::from_str(stderr).expect("error output is JSON");
-    assert_eq!(payload["error"], code);
+    assert_eq!(
+        payload["error"], code,
+        "unexpected evidence error: {payload}"
+    );
     assert!(payload["message"].is_string());
     assert!(payload["recovery"].is_string());
     payload
@@ -1179,7 +1182,15 @@ fn attach_audited_hybrid_grant(
         .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .env_remove("GOBBY_AGENT_API_TOKEN")
         .env_remove("GOBBY_AGENT_RUN_ID")
-        .env_remove("GOBBY_MANAGED_EXECUTION_ID");
+        .env_remove("GOBBY_MANAGED_EXECUTION_ID")
+        .env_remove("GOBBY_SESSION_ID")
+        .env_remove("GOBBY_PARENT_SESSION_ID")
+        .env_remove("GOBBY_PROJECT_ID")
+        .env_remove("GOBBY_MACHINE_ID")
+        .env_remove("GOBBY_TERMINAL_ID")
+        .env_remove("GOBBY_TERMINAL_ROUTE")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
+        .env_remove("GOBBY_AGENT_DEPTH");
     Ok(())
 }
 
@@ -1312,7 +1323,15 @@ fn attach_managed_grant(
         .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
         .env_remove("GOBBY_AGENT_API_TOKEN")
         .env_remove("GOBBY_AGENT_RUN_ID")
-        .env_remove("GOBBY_MANAGED_EXECUTION_ID");
+        .env_remove("GOBBY_MANAGED_EXECUTION_ID")
+        .env_remove("GOBBY_SESSION_ID")
+        .env_remove("GOBBY_PARENT_SESSION_ID")
+        .env_remove("GOBBY_PROJECT_ID")
+        .env_remove("GOBBY_MACHINE_ID")
+        .env_remove("GOBBY_TERMINAL_ID")
+        .env_remove("GOBBY_TERMINAL_ROUTE")
+        .env_remove("GOBBY_IS_SPAWNED_AGENT")
+        .env_remove("GOBBY_AGENT_DEPTH");
     Ok(())
 }
 

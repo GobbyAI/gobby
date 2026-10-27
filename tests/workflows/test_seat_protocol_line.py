@@ -80,6 +80,7 @@ def test_candidate_run_with_whitespace_names_run() -> None:
         ("EVENT=PROOF_REQUEST TASK=#7 NOTE=prove it now", "SHA"),
         (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA}ab NOTE=prove it now", "SHA"),
         (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} BOGUS=1", "BOGUS"),
+        (f"EVENT=PROOF_REQUEST TASK=#7 SHA={SHA} COMMIT={'b' * 40}", "COMMIT"),
         (f"EVENT=CANDIDATE_VERDICT TASK=#7 SHA={SHA} DISPOSITION=moot VERDICT=BOUNCE", "SHA"),
         (f"EVENT=CANDIDATE_WITHDRAWN TASK=#7 SHA={SHA} DISPOSITION=moot", "SHA"),
         ("EVENT=CANDIDATE_WITHDRAWN TASK=#7 NOTE=reassigned", "SHA"),

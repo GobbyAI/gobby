@@ -204,6 +204,13 @@ class ChatStreamingMixin:
                 )
                 if session is None:
                     return
+            else:
+                await send_session_info(
+                    session,
+                    conversation_id,
+                    transport,
+                    session_ref=persistence.session_ref(),
+                )
             cast(Any, session)._chat_stream_transport = transport
 
             if websocket is not None:
