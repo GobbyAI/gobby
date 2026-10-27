@@ -91,6 +91,15 @@ def test_recovery_steward_support_default_is_codex_gpt_6_1_luna_at_medium() -> N
     ) == ("codex", "gpt-6.1-luna", "medium")
 
 
+def test_devteam_test_writer_default_is_codex_gpt_6_1_sol_at_medium() -> None:
+    devteam = _policy_value()["launch_defaults"]["devteam"]
+    assert (
+        devteam["test_writer_provider"],
+        devteam["test_writer_model"],
+        devteam["test_writer_reasoning_effort"],
+    ) == ("codex", "gpt-6.1-sol", "medium")
+
+
 def test_consolidator_first_job_names_only_current_roots() -> None:
     value = _policy_value()
     roots = {entry["epic"] for entry in value["roots"]}
