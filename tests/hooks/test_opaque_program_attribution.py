@@ -27,6 +27,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.daemon_git import daemon_git
+from gobby.workflows.checkout_fingerprint import file_fingerprint
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.state_manager import SessionVariableManager
@@ -206,6 +207,15 @@ def checkout(
     # Dirt before the call: the session's own, and an operator edit no session owns.
     for name in ("owned.txt", "stale.txt"):
         (repo / name).write_text("edited\n", encoding="utf-8")
+    # The claimant's Gobby edit of owned.txt left this content hash; stale.txt has no record.
+    variables.merge_variables(
+        current.id,
+        {
+            "task_edited_checkout_hashes": {
+                task.id: {str(repo): {"owned.txt": file_fingerprint(repo / "owned.txt")}}
+            }
+        },
+    )
     return Checkout(temp_db, repo, project.id, current.id, foreign.id, task.id)
 
 
@@ -284,6 +294,28 @@ def test_independently_resolved_mutations_still_attribute(
     assert checkout.task_ledger() == {"out.txt"}
     reason = checkout.rule_3_reason("out.txt")
     assert reason == "", reason
+
+
+def test_claimant_shell_rewrite_of_its_ledgered_file_stays_owned(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    """The claimant's Gobby edit, then its opaque program rewrites that file: still its own."""
+    checkout.write("base.txt", "gobby edit\n")
+    SessionVariableManager(checkout.db).record_edited_files(
+        checkout.session_id, ["base.txt"], checkout_root=str(checkout.repo)
+    )
+
+    def shell_rewrites() -> None:
+        checkout.write("base.txt", "shell rewrite\n")
+
+    checkout.run(
+        _handlers(mock_dependencies, checkout.db),
+        "uv run python /tmp/tool.py base.txt",
+        shell_rewrites,
+    )
+
+    assert checkout.task_ledger() == {"base.txt"}
+    assert checkout.rule_3_reason("base.txt") == ""
 
 
 def test_split_assembly_attributes_only_the_output(
