@@ -54,6 +54,7 @@ from gobby.workflows.task_claim_state import (
     resolve_edit_pair,
     task_edit_path_covers,
     task_edited_file_set_for_checkout,
+    task_edited_file_set_with_history,
     task_selection_events,
 )
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
@@ -345,7 +346,11 @@ async def foreign_dirty_edit_conflict(
                     for owner in scoped[ledger]
                 ]
                 # A holder working a task this session now claims is this session's past self.
-                holders = [owner for owner in overlapping if owner.owner_task_id not in own_tasks]
+                holders = [
+                    owner
+                    for owner in overlapping
+                    if (owner.owner_task_id or owner.ledger_task_id) not in own_tasks
+                ]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
                 elif not (
@@ -493,6 +498,7 @@ def _live_path_owners(
                 SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
                 "claimed_tasks",
                 "task_edited_file_checkouts",
+                "task_edited_file_checkouts_history",
                 "task_live_edit_starts",
                 "task_selection_history",
             ),
@@ -516,6 +522,14 @@ def _live_path_owners(
             project_name=row["project_name"],
             project_id=row["session_project_id"],
         )
+        # A session that handed off a claim, or whose live ledger was cleared, still owns its edits.
+        live_ledger = variables.get("task_edited_file_checkouts")
+        history_ledger = variables.get("task_edited_file_checkouts_history")
+        ledger_tasks = [
+            *claimed_tasks,
+            *(live_ledger if isinstance(live_ledger, dict) else {}),
+            *(history_ledger if isinstance(history_ledger, dict) else {}),
+        ]
         for path in held:
             # Edit history outlives a clean reconcile; the live interval names the owner.
             task_id = _live_interval_task(
@@ -528,6 +542,14 @@ def _live_path_owners(
                 ),
                 None,
             )
+            ledger_task_id = next(
+                (
+                    task
+                    for task in ledger_tasks
+                    if path in task_edited_file_set_with_history(variables, task, checkout_root)
+                ),
+                None,
+            )
             task_ref = str(claimed_tasks[task_id]) if task_id is not None else ""
             owners.setdefault(path, []).append(
                 ForeignPathOwner(
@@ -536,6 +558,7 @@ def _live_path_owners(
                     task_ref=task_ref,
                     owner_session_id=owner_session_id,
                     owner_task_id=task_id,
+                    ledger_task_id=ledger_task_id,
                 )
             )
     return {path: tuple(holders) for path, holders in owners.items()}

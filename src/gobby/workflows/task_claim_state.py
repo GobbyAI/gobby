@@ -355,6 +355,22 @@ def task_edited_file_set_for_checkout(
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
 
 
+def task_edited_file_set_with_history(
+    variables: dict[str, Any],
+    task_id: str | None,
+    checkout_root: str,
+) -> set[str]:
+    """Return live and historical task-attributed paths in one absolute checkout root."""
+    root = normalize_task_checkout_root(checkout_root)
+    if not task_id or root is None:
+        return set()
+    checkouts = (
+        _task_edited_file_checkouts(variables, name).get(task_id, {})
+        for name in ("task_edited_file_checkouts", "task_edited_file_checkouts_history")
+    )
+    return {path for checkout in checkouts for path in checkout.get(root, [])}
+
+
 def task_edit_path_covers(parent: str, child: str) -> bool:
     """A root/directory ledger entry covers its descendants, with a path boundary."""
     return parent == "." or parent == child or child.startswith(parent.rstrip("/") + "/")

@@ -23,7 +23,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     normalize_task_checkout_root,
-    task_edited_file_set_for_checkout,
+    task_edited_file_set_with_history,
 )
 
 OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE = "operator_dirty_path_approvals"
@@ -37,21 +37,29 @@ def claimed_task_carriers(
         """
         SELECT tasks.id::text AS task_id,
                (session_variables.variables -> 'task_edited_file_checkouts'
-                   -> tasks.id::text)::text AS checkouts
+                   -> tasks.id::text)::text AS checkouts,
+               (session_variables.variables -> 'task_edited_file_checkouts_history'
+                   -> tasks.id::text)::text AS history_checkouts
         FROM tasks
-        LEFT JOIN session_tasks ON session_tasks.task_id = tasks.id
-        LEFT JOIN session_variables ON session_variables.session_id = session_tasks.session_id
+        LEFT JOIN session_variables
+            ON session_variables.variables -> 'task_edited_file_checkouts' ? tasks.id::text
+            OR session_variables.variables -> 'task_edited_file_checkouts_history' ? tasks.id::text
         WHERE tasks.claimed_by_session_id = %s
         """,
         (session_id,),
     )
     carriers: set[str] = set()
     for row in rows:
-        if row["checkouts"] is None:
+        if row["checkouts"] is None and row["history_checkouts"] is None:
             continue
         task_id = str(row["task_id"])
-        ledger = {"task_edited_file_checkouts": {task_id: json.loads(row["checkouts"])}}
-        carriers |= task_edited_file_set_for_checkout(ledger, task_id, checkout_root)
+        ledger = {
+            "task_edited_file_checkouts": {task_id: json.loads(row["checkouts"] or "{}")},
+            "task_edited_file_checkouts_history": {
+                task_id: json.loads(row["history_checkouts"] or "{}")
+            },
+        }
+        carriers |= task_edited_file_set_with_history(ledger, task_id, checkout_root)
     return frozenset(str(row["task_id"]) for row in rows), carriers
 
 

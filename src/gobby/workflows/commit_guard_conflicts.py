@@ -15,6 +15,8 @@ class ForeignPathOwner:
     task_ref: str
     owner_session_id: str
     owner_task_id: str | None
+    # The task whose live or historical edit ledger holds the path, claimed or not.
+    ledger_task_id: str | None = None
 
 
 def scope_foreign_owners(
