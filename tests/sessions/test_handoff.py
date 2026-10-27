@@ -615,6 +615,79 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     assert consume_pending_handoff(temp_db, successor_id) is None
 
 
+def _bound_clear_handoff(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    attempt_id: str,
+) -> tuple[Session, str]:
+    predecessor = _registered_session(session_manager)
+    clear_state = stage_handoff_attempt(
+        temp_db,
+        predecessor.id,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
+        clear_session=True,
+    )
+    successor_id = session_manager.register_session(
+        external_id="clear-successor",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=predecessor.project_id,
+        parent_session_id=predecessor.id,
+    )
+    record_handoff_delivery(
+        temp_db,
+        handoff_id=clear_state.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="clear",
+        continuation_session_id=successor_id,
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True}
+    )
+    return predecessor, successor_id
+
+
+def _subagent_of(session_manager: SessionManager, predecessor: Session) -> str:
+    return session_manager.register_session(
+        external_id="pipeline-subagent",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=predecessor.project_id,
+        parent_session_id=predecessor.id,
+    )
+
+
+def test_non_owner_subagent_cannot_consume_parent_clear_handoff(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    predecessor, successor_id = _bound_clear_handoff(temp_db, session_manager, "c" * 32)
+    subagent_id = _subagent_of(session_manager, predecessor)
+
+    assert consume_pending_handoff(temp_db, subagent_id) is None
+    sv_mgr = SessionVariableManager(temp_db)
+    assert PENDING_HANDOFF_VARIABLE in sv_mgr.get_variables(predecessor.id)
+    cleared = consume_pending_handoff(temp_db, successor_id)
+    assert cleared is not None and cleared.session_id == predecessor.id
+
+
+def test_only_the_session_holding_the_clear_handoff_is_gated(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+) -> None:
+    predecessor, successor_id = _bound_clear_handoff(temp_db, session_manager, "d" * 32)
+    subagent_id = _subagent_of(session_manager, predecessor)
+    sv_mgr = SessionVariableManager(temp_db)
+
+    consume_pending_handoff(temp_db, subagent_id)
+
+    subagent_vars = sv_mgr.get_variables(subagent_id)
+    assert HANDOFF_PULL_PENDING_VARIABLE not in subagent_vars
+    assert PENDING_HANDOFF_VARIABLE not in subagent_vars
+    assert sv_mgr.get_variables(successor_id)[HANDOFF_PULL_PENDING_VARIABLE] is True
+
+
 @pytest.mark.asyncio
 async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_handoff(
     temp_db: HubDatabase,
