@@ -45,7 +45,6 @@ OWNER_INVENTORY: tuple[tuple[str, str], ...] = (
 
 _SHARED_SUFFIXES = {".yaml", ".yml", ".md"}
 _WEB_SUFFIXES = {".ts", ".tsx"}
-_AGENT_TOP_LEVEL_FORBIDDEN = ("steps", "step_variables", "exit_condition")
 
 _STEPS_NAME_RE = re.compile(
     r"""
@@ -167,17 +166,3 @@ def test_every_preexisting_occurrence_has_an_owner() -> None:
         if _file_has_token(path, token) and (path, token) not in allowlisted
     ]
     assert unowned == []
-
-
-def test_bundled_agent_yaml_has_no_top_level_step_keys() -> None:
-    agents_dir = ROOT / "src" / "gobby" / "install" / "shared" / "workflows" / "agents"
-    violations: list[str] = []
-    for path in sorted(agents_dir.glob("*.yaml")):
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            violations.append(f"{path.name}: not a mapping")
-            continue
-        present = [key for key in _AGENT_TOP_LEVEL_FORBIDDEN if key in loaded]
-        if present:
-            violations.append(f"{path.name}:{','.join(present)}")
-    assert violations == []

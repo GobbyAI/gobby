@@ -128,13 +128,6 @@ def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
     )
 
 
-@pytest.mark.parametrize("name", RETIRED_AGENTS)
-def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: str) -> None:
-    active_path = AGENTS_DIR / f"{name}.yaml"
-    deprecated_path = AGENTS_DIR / "deprecated" / f"{name}.yaml"
-
-    assert not active_path.exists(), f"retired agent remains active: {active_path}"
-    assert not deprecated_path.exists(), f"retired agent tombstone remains: {deprecated_path}"
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)

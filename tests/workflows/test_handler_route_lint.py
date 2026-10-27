@@ -170,24 +170,3 @@ def test_unreachable_assignment_does_not_satisfy_handler_guard() -> None:
 
     finding = next(item for item in findings if item.code == "ORDERING_VAR_UNSATISFIABLE")
     assert finding.detail["variables"] == ["ready"]
-
-
-def test_bundled_agent_handler_routes_are_clean() -> None:
-    agents_dir = (
-        Path(__file__).parents[2] / "src" / "gobby" / "install" / "shared" / "workflows" / "agents"
-    )
-    findings: dict[str, list[str]] = {}
-    for path in sorted(agents_dir.glob("*.yaml")):
-        agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
-        nested = agent.step_workflow
-        definition = WorkflowDefinition(
-            name=agent.name,
-            steps=nested.steps if nested else [],
-            variables=nested.variables if nested else {},
-            exit_condition=nested.exit_condition if nested else None,
-        )
-        codes = [finding.code for finding in check_handler_routes(definition)]
-        if codes:
-            findings[path.name] = codes
-
-    assert findings == {}

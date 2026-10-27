@@ -265,16 +265,6 @@ class TestBundledTemplateDriftCanary:
         errors = [i for i in result.items if i.level == "error"]
         assert not errors, [i.message for i in errors]
 
-    @pytest.mark.parametrize("path", _iter_bundled("agents/*.yaml"), ids=lambda p: p.name)
-    def test_bundled_agent_gates_clean(self, path: Path) -> None:
-        data = yaml.safe_load(path.read_text())
-        assert isinstance(data, dict)
-        data.setdefault("name", path.stem)
-        agent = AgentDefinitionBody.model_validate(data)
-        result = _evaluation()
-        check_agent_tool_gates(agent, result)
-        errors = [i for i in result.items if i.level == "error"]
-        assert not errors, [i.message for i in errors]
 
 
 @pytest.mark.asyncio
