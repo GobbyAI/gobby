@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from gobby.storage.daemon_resume_keys import (
+    daemon_resume_not_reaping_condition,
+    daemon_resume_unconsumed_condition,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -88,19 +92,31 @@ class PipelineCompletionSubscriberMixin:
 
         ``wait_for_agent`` also supports observers of daemon-launched runs. The
         subscription belongs to the waiting session even when it is not the parent.
-        Terminal and orphaned subscriptions cannot keep the stop gates suppressed.
+        A daemon-stop original parked for recovery is still awaited until it is
+        consumed or fenced for orphan reap. Other terminal and orphaned subscriptions
+        cannot keep the stop gates suppressed.
         """
         from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 
+        unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
+        not_reaping_sql = daemon_resume_not_reaping_condition(self.db, "ar.resume_metadata_json")
         try:
             row = self.db.fetchone(
-                """
+                f"""
                 SELECT EXISTS (
                     SELECT 1
                     FROM completion_subscribers AS subscribers
-                    JOIN agent_runs AS runs ON runs.id = subscribers.completion_id
+                    JOIN agent_runs AS ar ON ar.id = subscribers.completion_id
                     WHERE subscribers.session_id = %s
-                      AND runs.status = ANY(%s)
+                      AND (
+                        ar.status = ANY(%s)
+                        OR (
+                          ar.status = 'cancelled'
+                          AND ar.terminal_reason = 'daemon_stop'
+                          AND {unconsumed_sql}
+                          AND {not_reaping_sql}
+                        )
+                      )
                 ) AS has_active_agent_wait
                 """,
                 (session_id, list(ACTIVE_AGENT_RUN_STATUSES)),
