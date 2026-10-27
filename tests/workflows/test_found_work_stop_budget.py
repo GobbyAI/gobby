@@ -496,3 +496,29 @@ async def test_replaced_transcript_with_a_longer_body_fails_the_tail_hash(
     assert 0 < read_spy.bytes_read < size // 2, (
         f"stop after replacement read {read_spy.bytes_read} bytes of a {size}-byte transcript"
     )
+
+
+async def test_stop_past_a_multi_mebibyte_transcript_reads_only_the_latest_turn(
+    tmp_path: Path, in_process_pool: None, read_spy: _ReadSpy
+) -> None:
+    """Megabytes of earlier turns cost the stop only the latest turn and one backward chunk."""
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, _warm_records(WARM_TURNS, prefix="warm"))
+    read_spy.watched.add(transcript.resolve())
+    session = _session("claude", transcript)
+    variables: dict[str, Any] = {}
+    assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == ()
+
+    _append(transcript, _warm_records(BULK_TURNS, prefix="bulk", first_at=3 * WARM_TURNS))
+    latest_bytes = _append_latest_red(transcript, at=3 * (WARM_TURNS + BULK_TURNS) + 10)
+    size = transcript.stat().st_size
+    assert size > 2 * ONE_MIB, size
+    assert latest_bytes < BACKWARD_CHUNK_BYTES, latest_bytes
+    read_spy.reset()
+
+    assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == (LATEST_RED,)
+    # One backward chunk, whatever the transcript's size: the cost never scales with the file.
+    assert read_spy.bytes_read <= BACKWARD_CHUNK_BYTES + APPEND_SLACK_BYTES, (
+        f"stop read {read_spy.bytes_read} bytes of a {size}-byte transcript; "
+        f"the latest turn is {latest_bytes} bytes"
+    )
