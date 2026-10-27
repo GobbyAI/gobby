@@ -433,10 +433,14 @@ def _recorded_process(pid: int, create_time: float) -> psutil.Process | None:
 
 
 def _is_fresh_seat_tui(process: psutil.Process, cwd: str | None) -> bool:
-    """A seat TUI is launched from a shell, never forked by another codex process, and
-    runs in the hook's cwd when that cwd is known."""
+    """A seat TUI is launched from a shell, never forked by another codex process, runs
+    in the hook's cwd when that cwd is known, and is not one Gobby spawned for an agent
+    run (``GOBBY_AGENT_RUN_ID``). An unreadable environment raises to the caller, which
+    skips the seat."""
     parent = process.parent()
     if parent is not None and parent.name() == _CODEX_PROCESS_NAME:
+        return False
+    if _non_empty_str(process.environ().get("GOBBY_AGENT_RUN_ID")) is not None:
         return False
     if cwd is None:
         return True
