@@ -79,7 +79,7 @@ class TaskStepRecord(StepSubmission):
     id: str
     task_id: str
     step: TaskStep
-    sequence: int = Field(gt=0)
+    sequence: int = Field(gt=0, strict=True)
     agent_definition: str
     agent_definition_version: str
     agent_definition_hash: str
