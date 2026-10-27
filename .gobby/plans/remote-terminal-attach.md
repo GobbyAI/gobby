@@ -835,6 +835,14 @@ fake provider. RT-F4: 5.2 spells out the admitted invocation with both gate
 variables and the admission prerequisites, and counts only a run with five
 passed and none skipped.
 
+2026-10-27 — Consensus. The Plan Writer (gobby#18199) and the Plan Adversary
+(gobby#18200) agree on the narrative at
+50b35e87a567987854a91b85c1a7c66c6209f1ed. RT-F1 through RT-F4 are resolved, no
+decisions remain open, and base validation passes. The existing moved-terminal
+refusal stays after gclient switches to the owning machine's workspace; it does
+not restore the previous workspace. D2 (single-use relay token) and 5.2's real
+Claude usage await Josh's confirmation at approval.
+
 ## V2 Verification
 `kind: verification`
 
