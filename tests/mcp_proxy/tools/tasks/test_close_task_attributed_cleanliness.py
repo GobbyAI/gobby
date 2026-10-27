@@ -18,9 +18,11 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.tasks.close_checklist import CloseChecklist
 from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.utils.daemon_git import GitFailed, GitOk
@@ -97,6 +99,9 @@ def close_harness(
 ) -> CloseHarness:
     repo_path = Path(sample_git_project["repo_path"])
     commit_sha = _commit_fixture_paths(repo_path)
+    LocalProjectCheckoutManager(temp_db).register(
+        require_machine_id(), sample_git_project["id"], str(repo_path)
+    )
     manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
     variable_manager = SessionVariableManager(temp_db)
@@ -140,6 +145,7 @@ def _attribute_path(
     session_id: str,
     task: Task,
     path: str,
+    root: Path | None = None,
 ) -> None:
     harness.variable_manager.merge_variables(
         session_id,
@@ -149,9 +155,18 @@ def _attribute_path(
             "active_task_id": task.id,
             "task_edited_files": {task.id: [path]},
             "task_edited_file_checkouts": {
-                task.id: {str(harness.repo_path): [path]},
+                task.id: {str(root or harness.repo_path): [path]},
             },
         },
+    )
+
+
+def _register_worktree(db: HubDatabase, harness: CloseHarness, path: Path) -> None:
+    LocalWorktreeManager(db).create(
+        project_id=harness.task.project_id,
+        branch_name="task-worktree",
+        worktree_path=str(path),
+        task_id=harness.task.id,
     )
 
 
@@ -570,3 +585,95 @@ async def test_later_live_claim_takes_an_uncommitted_path_from_the_earlier_claim
 
     assert _clean_gate(result)["status"] == "passed"
     assert result["closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_vanished_unregistered_checkout_does_not_block_gate_three(
+    close_harness: CloseHarness,
+    tmp_path: Path,
+) -> None:
+    _attribute_path(
+        close_harness,
+        session_id=close_harness.session_id,
+        task=close_harness.task,
+        path="note.py",
+        root=tmp_path / "gone-export",
+    )
+
+    result = await _close_task(close_harness)
+
+    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_gate(result)["details"]["unavailable_checkouts"] == []
+
+
+@pytest.mark.asyncio
+async def test_non_git_unregistered_checkout_does_not_block_gate_three(
+    close_harness: CloseHarness,
+    tmp_path: Path,
+) -> None:
+    export = tmp_path / "plain-export"
+    export.mkdir()
+    (export / "note.py").write_text("EXPORT = True\n", encoding="utf-8")
+    _attribute_path(
+        close_harness,
+        session_id=close_harness.session_id,
+        task=close_harness.task,
+        path="note.py",
+        root=export,
+    )
+
+    result = await _close_task(close_harness)
+
+    assert _clean_gate(result)["status"] == "passed"
+    assert _clean_gate(result)["details"]["unavailable_checkouts"] == []
+
+
+@pytest.mark.asyncio
+async def test_vanished_registered_worktree_fails_gate_three(
+    close_harness: CloseHarness,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    vanished = tmp_path / "vanished-worktree"
+    _register_worktree(temp_db, close_harness, vanished)
+    _attribute_path(
+        close_harness,
+        session_id=close_harness.session_id,
+        task=close_harness.task,
+        path="note.py",
+        root=vanished,
+    )
+
+    result = await _close_task(close_harness)
+
+    assert result["closed"] is False
+    assert result["error"] == "uncommitted_task_edits"
+    assert _clean_gate(result)["details"]["unavailable_checkouts"] == [str(vanished)]
+    assert close_harness.manager.get_task(close_harness.task.id).closed_at is None
+
+
+@pytest.mark.asyncio
+async def test_dirty_registered_worktree_fails_gate_three(
+    close_harness: CloseHarness,
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "task-worktree"
+    worktree.mkdir()
+    _git(worktree, "init", "--initial-branch=main")
+    _register_worktree(temp_db, close_harness, worktree)
+    (worktree / "note.py").write_text("DIRTY = True\n", encoding="utf-8")
+    _attribute_path(
+        close_harness,
+        session_id=close_harness.session_id,
+        task=close_harness.task,
+        path="note.py",
+        root=worktree,
+    )
+
+    result = await _close_task(close_harness)
+
+    assert result["closed"] is False
+    assert result["error"] == "uncommitted_task_edits"
+    assert _clean_gate(result)["details"]["dirty_checkouts"] == {str(worktree): ["note.py"]}
+    assert close_harness.manager.get_task(close_harness.task.id).closed_at is None

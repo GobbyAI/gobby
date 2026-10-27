@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_dirty_state import task_dirty_paths
@@ -234,16 +235,72 @@ async def test_another_tasks_dirty_files_do_not_block_release(world: ReleaseWorl
 
 @pytest.mark.asyncio
 async def test_unavailable_attributed_checkout_fails_closed(world: ReleaseWorld) -> None:
+    vanished = world.repo.parent / "vanished-worktree"
+    LocalWorktreeManager(world.db).create(
+        project_id=world.task.project_id,
+        branch_name="task-worktree",
+        worktree_path=str(vanished),
+        task_id=world.task.id,
+    )
     world.variables.merge_variables(
         world.holder,
-        {
-            "task_edited_file_checkouts": {
-                world.task.id: {str(world.repo / "missing"): ["note.py"]}
-            },
-        },
+        {"task_edited_file_checkouts": {world.task.id: {str(vanished): ["note.py"]}}},
     )
     result = await world.release()
     assert result.get("error_code") == "checkout_unresolved", result
+    assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
+
+
+@pytest.mark.asyncio
+async def test_vanished_unregistered_checkout_does_not_block_release(
+    world: ReleaseWorld,
+) -> None:
+    gone = world.repo.parent / "gone-export"
+    world.variables.merge_variables(
+        world.holder,
+        {"task_edited_file_checkouts": {world.task.id: {str(gone): ["note.py"]}}},
+    )
+    result = await world.release()
+    assert result.get("success") is True, result
+    assert world.tasks.get_task(world.task.id).claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_non_git_unregistered_checkout_does_not_block_release(
+    world: ReleaseWorld,
+) -> None:
+    export = world.repo.parent / "plain-export"
+    export.mkdir()
+    (export / "note.py").write_text("EXPORT = True\n", encoding="utf-8")
+    world.variables.merge_variables(
+        world.holder,
+        {"task_edited_file_checkouts": {world.task.id: {str(export): ["note.py"]}}},
+    )
+    result = await world.release()
+    assert result.get("success") is True, result
+    assert world.tasks.get_task(world.task.id).claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_dirty_registered_worktree_refuses_release(world: ReleaseWorld) -> None:
+    worktree = world.repo.parent / "task-worktree"
+    worktree.mkdir()
+    subprocess.run(
+        ["git", "init", "--initial-branch=main", str(worktree)], check=True, capture_output=True
+    )
+    LocalWorktreeManager(world.db).create(
+        project_id=world.task.project_id,
+        branch_name="task-worktree",
+        worktree_path=str(worktree),
+        task_id=world.task.id,
+    )
+    (worktree / "note.py").write_text("in_flight = True\n", encoding="utf-8")
+    world.variables.merge_variables(
+        world.holder,
+        {"task_edited_file_checkouts": {world.task.id: {str(worktree): ["note.py"]}}},
+    )
+    result = await world.release()
+    assert result.get("error_code") == "task_has_uncommitted_changes", result
     assert world.tasks.get_task(world.task.id).claimed_by_session_id == world.holder
 
 
