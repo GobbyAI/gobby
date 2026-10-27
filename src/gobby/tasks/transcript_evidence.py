@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -21,6 +21,8 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
     ParsedToolEvent,
+    ParseEvent,
+    TranscriptParser,
 )
 from gobby.storage.session_models import Session
 from gobby.tasks.transcript_background import (
@@ -49,6 +51,7 @@ from gobby.tasks.transcript_evidence_snapshots import (
 )
 from gobby.tasks.transcript_evidence_sources import (
     _as_utc,
+    _resolve_transcript_path,
     _resolve_transcript_paths,
     select_window_raw_lines,
 )
@@ -86,6 +89,7 @@ from gobby.tasks.transcript_tool_arguments import (
 from gobby.tasks.transcript_tool_arguments import (
     tool_workdir,
 )
+from gobby.tasks.transcript_turn_read import read_latest_turn
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +150,30 @@ async def derive_transcript_evidence(
         local_machine_id,
     )
     return cast(TranscriptEvidence, await decode_cooperatively(payload))
+
+
+async def derive_latest_turn_evidence(
+    session: Session,
+    window_start: datetime | str | None,
+    detection_config: ValidationDetectionConfig,
+    boundary: object,
+) -> tuple[TranscriptEvidence, dict[str, Any] | None]:
+    """Parse the live transcript's latest turn, resuming from a stored boundary.
+
+    Returns the evidence and the boundary the next call resumes from.
+    """
+    local_machine_id = require_local_session_ownership(session)
+    payload = await run_in_transcript_evidence_pool(
+        _derive_chunked_turn_evidence,
+        session,
+        _coerce_datetime(window_start),
+        detection_config,
+        boundary,
+        local_machine_id,
+    )
+    return cast(
+        tuple[TranscriptEvidence, dict[str, Any] | None], await decode_cooperatively(payload)
+    )
 
 
 def _derive_chunked_transcript_evidence(
@@ -293,17 +321,7 @@ def _derive_transcript_path_evidence(
         state.order = resume.order
         state.latest_record_at = resume.latest_record_at
 
-    for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
-        for outcome in event.codex_exec_outcomes:
-            _consume_codex_outcome(state, outcome)
-        for record in event.records:
-            if isinstance(record, ParsedMessage):
-                _observe_record_time(state, record.timestamp)
-                _consume_message(state, record)
-            elif isinstance(record, ParsedToolEvent):
-                _observe_record_time(state, record.timestamp)
-                _consume_tool_event(state, record)
-    state.runs = _drop_settled_command_output(state.runs)
+    _consume_events(state, parser.iter_parse_events(select_window_raw_lines(lines, window_start)))
 
     snapshot = None
     if read is not None and not read.has_partial_tail:
@@ -332,16 +350,66 @@ def _derive_transcript_path_evidence(
         },
     )
 
-    return (
-        TranscriptEvidence(
-            validation_runs=tuple(run for run in state.runs if run.categories),
-            command_runs=tuple(run for run in state.runs if not run.categories),
-            attempted_paths=tuple(attempted_paths),
-            sessions=(session.id,),
-            degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
-            latest_record_at=state.latest_record_at,
-        ),
-        snapshot,
+    return _state_evidence(state, attempted_paths), snapshot
+
+
+def _derive_chunked_turn_evidence(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    boundary: object,
+    local_machine_id: str,
+) -> ChunkedPayload:
+    """Pool entry for :func:`derive_latest_turn_evidence`."""
+    path, attempted_paths = _resolve_transcript_path(session, None, local_machine_id)
+    if path is None or path.endswith(".gz"):
+        raise TranscriptEvidenceUnavailable(
+            f"No live transcript was found for {session.source} session {session.ref}.",
+            source=session.source,
+            attempted_paths=attempted_paths,
+        )
+
+    def new_parser() -> TranscriptParser:
+        return get_parser(session.source, session_id=session.id, transcript_path=path)
+
+    try:
+        turn = read_latest_turn(path, boundary, new_parser)
+        parser = new_parser()
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise TranscriptEvidenceUnavailable(
+            f"Transcript {path} could not be read: {exc}",
+            source=session.source,
+            attempted_paths=attempted_paths,
+        ) from exc
+    state = _DerivationState(
+        session=session, detection_config=detection_config, window_start=window_start
+    )
+    _consume_events(state, parser.iter_parse_events(turn.lines))
+    return encode((_state_evidence(state, attempted_paths), turn.boundary))
+
+
+def _consume_events(state: _DerivationState, events: Iterable[ParseEvent]) -> None:
+    for event in events:
+        for outcome in event.codex_exec_outcomes:
+            _consume_codex_outcome(state, outcome)
+        for record in event.records:
+            if isinstance(record, ParsedMessage):
+                _observe_record_time(state, record.timestamp)
+                _consume_message(state, record)
+            elif isinstance(record, ParsedToolEvent):
+                _observe_record_time(state, record.timestamp)
+                _consume_tool_event(state, record)
+    state.runs = _drop_settled_command_output(state.runs)
+
+
+def _state_evidence(state: _DerivationState, attempted_paths: list[str]) -> TranscriptEvidence:
+    return TranscriptEvidence(
+        validation_runs=tuple(run for run in state.runs if run.categories),
+        command_runs=tuple(run for run in state.runs if not run.categories),
+        attempted_paths=tuple(attempted_paths),
+        sessions=(state.session.id,),
+        degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
+        latest_record_at=state.latest_record_at,
     )
 
 
@@ -613,5 +681,6 @@ def _coerce_datetime(value: datetime | str | None) -> datetime | None:
 
 
 __all__ = [
+    "derive_latest_turn_evidence",
     "derive_transcript_evidence",
 ]
