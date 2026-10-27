@@ -33,8 +33,10 @@ prompts:
     Handoff:
     Commit the documentation changes, attach the commit with
     gobby-tasks:link_commit, record gobby-tasks:record_implementation_step for
-    it, then send your parent EVENT=CANDIDATE TASK=<task ref> COMMIT=<40-hex sha>
-    NOTE=<changes summary>. The parent lands and closes the task; you never close it.
+    it, then send your parent this envelope on one line, with one token per value
+    except NOTE:
+    EVENT=CANDIDATE TASK=<task-ref> TASK_TITLE=<task-title> RUN=<run-ref> WT=<worktree-ref> COMMIT=<40-hex-sha> NOTE=<changes-summary>
+    The parent lands and closes the task; you never close it.
 
     Boundaries:
     - Never call close_task. Only the Dev Manager and the Orchestrator close tasks.
@@ -143,7 +145,7 @@ step_workflow:
       status_message: |
         Implement the docs leaf. Commit changes, link the commit, record the
         implementation step, then message the parent with target=parent and
-        EVENT=CANDIDATE TASK=<task ref> COMMIT=<40-hex sha> NOTE=<changes summary>.
+        EVENT=CANDIDATE TASK=<task-ref> TASK_TITLE=<task-title> RUN=<run-ref> WT=<worktree-ref> COMMIT=<40-hex-sha> NOTE=<changes-summary>
         The parent closes the task after it lands.
         Sending the parent a task_blocker message ends this run after delivery;
         the parent respawns you with the answer, reusing the worktree. For a question
