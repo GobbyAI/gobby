@@ -442,13 +442,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
-                let mut budget = budget - 2;
-                // The lock sits ahead of the ref and stays put with it.
-                if let Some(mark) = row.sandbox_mark {
-                    spans.push(Span::styled(mark, secondary_style));
-                    spans.push(Span::raw(" "));
-                    budget = budget.saturating_sub(display_width(mark) + 1);
-                }
+                let budget = budget - 2;
                 let definition = (row.definition.as_str(), title_style);
                 let pinned = pinned_width(row);
                 if pinned < budget {
@@ -541,7 +535,7 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
             let budget = usize::from(width).saturating_sub(3 + display_width(&nest_prefix(row)));
             let name = overrun(
                 display_width(&row.definition),
-                budget.saturating_sub(pinned_width(row) + sandbox_width(row)),
+                budget.saturating_sub(pinned_width(row)),
             );
             let task = task_line(row).map_or(0, |(lead, title)| {
                 overrun(display_width(&lead) + display_width(&title), budget)
@@ -562,7 +556,7 @@ fn overrun(text_width: usize, window: usize) -> usize {
     text_width.saturating_sub(window)
 }
 
-/// Cells an agent's sandbox lock and the space after it take on line one.
+/// Cells an agent's sandbox lock and the space after it take on the model line.
 fn sandbox_width(row: &SidebarRow) -> usize {
     row.sandbox_mark.map_or(0, |mark| display_width(mark) + 1)
 }
@@ -706,18 +700,24 @@ fn split_segments(text: &str, segments: &[(&str, Style)]) -> Vec<Span<'static>> 
 }
 
 /// Line two under an agent's title: its model, in the theme's model colour, a
-/// muted hue no state uses (the model-line board, #23416). A terminal shows
-/// its working directory here.
+/// muted hue no state uses (the model-line board, #23416), with a sandboxed
+/// agent's lock ahead of it. A terminal shows its working directory here.
 pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     let indent = 3 + display_width(&nest_prefix(row));
     let budget = usize::from(width).saturating_sub(indent);
     let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
-        RowKind::Agent => spans.push(Span::styled(
-            truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.model),
-        )),
+        RowKind::Agent => {
+            if let Some(mark) = row.sandbox_mark {
+                spans.push(Span::styled(mark, style));
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(
+                truncate_end(&row.model_slug, budget.saturating_sub(sandbox_width(row))),
+                Style::default().fg(chrome.palette.model),
+            ));
+        }
         RowKind::Terminal => spans.push(Span::styled(truncate_end(&row.detail, budget), style)),
         _ => return Line::default(),
     }
