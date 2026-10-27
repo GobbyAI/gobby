@@ -37,6 +37,20 @@ def daemon_resume_unconsumed_condition(db: object, column: str) -> str:
     return f"({expr} IS NULL OR {expr} = '')"
 
 
+def daemon_resume_not_reaping_condition(db: object, column: str) -> str:
+    """SQL condition matching parked originals not fenced for orphan reap.
+
+    A requested, started, or finished reap owns the run's release, so none of
+    them may be resumed.
+    """
+    _validate_resume_metadata_column(column)
+    return " AND ".join(
+        f"({expr} IS NULL OR {expr} = '')"
+        for key in (REAP_REQUESTED_AT_KEY, REAP_STARTED_AT_KEY, REAPED_AT_KEY)
+        for expr in (json_text_expr(db, column, key),)
+    )
+
+
 def daemon_resume_consumed_condition(db: object, column: str) -> str:
     """SQL condition matching originals already consumed by a successor."""
     _validate_resume_metadata_column(column)

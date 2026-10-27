@@ -284,7 +284,7 @@ pub(super) const GROK_RUNTIME_DIRECTORIES: &[&str] = &[
 ];
 
 /// `GROK_CONTROL_FILES`.
-const GROK_CONTROL_FILES: &[&str] = &[
+pub(super) const GROK_CONTROL_FILES: &[&str] = &[
     "hooks",
     "hooks-paths",
     "config.toml",

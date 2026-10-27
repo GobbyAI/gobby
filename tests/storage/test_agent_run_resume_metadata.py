@@ -164,3 +164,40 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
     )
 
     assert [candidate.id for candidate in candidates] == [recent.id]
+
+
+def test_daemon_stop_resume_candidates_exclude_runs_fenced_for_reap(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    session = SessionManager(temp_db).register(
+        external_id="parent-resume-reap-fence",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="test",
+        project_id=sample_project["id"],
+    )
+    manager = LocalAgentRunManager(temp_db)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Resume candidate reap fence",
+        validation_criteria="Runs fenced for orphan reap are never task resume candidates.",
+    )
+    fenced = manager.create(
+        parent_session_id=session.id,
+        provider="codex",
+        prompt="fenced",
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddddd15",
+        task_id=task.id,
+        resume_metadata_json={
+            "provider": "codex",
+            "daemon_stop_orphan_reap_requested_at": "2026-10-26T00:00:00+00:00",
+        },
+    )
+    manager.start(fenced.id)
+    manager.cancel(fenced.id, terminal_reason="daemon_stop")
+
+    candidates = manager.list_daemon_stop_resume_candidates(
+        task.id, machine_id=require_machine_id(), max_age_hours=24
+    )
+
+    assert candidates == []

@@ -23,6 +23,9 @@ from gobby.storage.daemon_resume_keys import (
     PRE_BIND_SESSION_STATUS_KEY as _PRE_BIND_SESSION_STATUS_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
+    REAP_REQUESTED_AT_KEY as _REAP_REQUESTED_AT_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
     RESUME_PHASE_KEY as _RESUME_PHASE_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
@@ -32,6 +35,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.datetime import utc_now
+
+# Error prefix of a parked original fenced because its agent definition is gone.
+DEFINITION_UNAVAILABLE_ERROR_PREFIX = "resume_agent_definition_unavailable:"
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,55 @@ def _lock_resume_fence(conn: Any, run_id: str) -> None:
 
 def _metadata(value: Any) -> dict[str, Any]:
     return normalize_resume_metadata(value) or {}
+
+
+def refuse_parked_daemon_resume(
+    db: HubDatabase, *, original_run_id: str, child_session_id: str, error: str
+) -> bool:
+    """Fence an unavailable definition's parked run against further replay."""
+    with db.transaction() as conn:
+        _lock_resume_fence(conn, original_run_id)
+        row = conn.execute(
+            """
+            SELECT ar.resume_metadata_json
+            FROM agent_runs ar
+            JOIN sessions s ON s.id = ar.child_session_id
+            WHERE ar.id = %s AND ar.child_session_id = %s
+              AND ar.status = 'cancelled' AND ar.terminal_reason = 'daemon_stop'
+              AND s.agent_run_id = ar.id
+            FOR UPDATE OF ar, s
+            """,
+            (original_run_id, child_session_id),
+        ).fetchone()
+        if row is None:
+            return False
+        metadata = _metadata(row["resume_metadata_json"])
+        if (
+            metadata.get(_CONSUMED_AT_KEY)
+            or metadata.get("daemon_stop_orphan_reap_started_at")
+            or metadata.get(_REAP_REQUESTED_AT_KEY)
+        ):
+            return False
+        # Stay daemon_stop so the orphan reaper releases the parked resources;
+        # the reap request keeps the run out of every resume candidate query.
+        now = utc_now()
+        conn.execute(
+            """
+            UPDATE agent_runs
+            SET resume_metadata_json =
+                    COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
+                error = %s,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (
+                dump_resume_metadata({_REAP_REQUESTED_AT_KEY: now.isoformat()}),
+                error,
+                now,
+                original_run_id,
+            ),
+        )
+        return True
 
 
 def finalize_daemon_resume(

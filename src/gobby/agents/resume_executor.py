@@ -128,9 +128,6 @@ async def resume_agent_run(
         daemon_config: Optional daemon config used for tmux spawn settings.
         agent_pane_reserver: Daemon pane reserver; a placed snapshot is refused without it.
     """
-    if original_run.agent_name == "task-close-reviewer":
-        # Historical queue runs are inert after retirement, including parked runs.
-        return ResumeAgentResult(False, error="retired_close_review_run")
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     try:
         await asyncio.to_thread(revalidate_write_grant, resume_metadata)
@@ -242,6 +239,42 @@ async def resume_agent_run(
     child_session_id = original_run.child_session_id
     if not child_session_id:
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
+    agent_name = _metadata_str(resume_metadata, "agent_slug") or original_run.agent_name
+    if agent_name:
+        from gobby.storage.agent_resume import (
+            DEFINITION_UNAVAILABLE_ERROR_PREFIX,
+            refuse_parked_daemon_resume,
+        )
+        from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
+
+        try:
+            definition = await asyncio.to_thread(
+                resolve_agent,
+                agent_name,
+                runner.run_storage.db,
+                cli_source=provider,
+                project_id=project_id,
+            )
+        except (AgentResolutionError, ValueError):
+            definition = None
+        if definition is None:
+            from gobby.agents import terminal_delivery
+
+            error = f"{DEFINITION_UNAVAILABLE_ERROR_PREFIX}{agent_name}"
+
+            async def refuse() -> None:
+                # The fenced run stays parked for the orphan reaper, which releases
+                # its resources and delivers the terminal notification.
+                await asyncio.to_thread(
+                    refuse_parked_daemon_resume,
+                    runner.run_storage.db,
+                    original_run_id=original_run.id,
+                    child_session_id=child_session_id,
+                    error=error,
+                )
+
+            await terminal_delivery.shielded_terminal_delivery(original_run.id, refuse)
+            return ResumeAgentResult(False, error=error)
     metadata = dict(resume_metadata)
     cli_mode = "agent"
     if provider == "grok":

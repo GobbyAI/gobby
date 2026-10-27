@@ -255,7 +255,7 @@ fn sensitive_write_roots(gobby: &Path, home: &Path, env: &BTreeMap<String, Strin
 }
 
 /// `credential_read_roots`: user and every provider's credentials, denied for all providers.
-fn credential_read_roots(home: &Path) -> Vec<String> {
+pub(super) fn credential_read_roots(home: &Path) -> Vec<String> {
     let paths = tables::USER_CREDENTIAL_READ_PATHS
         .iter()
         .copied()
@@ -273,7 +273,7 @@ fn credential_read_roots(home: &Path) -> Vec<String> {
 }
 
 /// `provider_credential_read_exceptions`: the active provider's declared necessities.
-fn provider_credential_read_exceptions(provider: &str, home: &Path) -> Vec<String> {
+pub(super) fn provider_credential_read_exceptions(provider: &str, home: &Path) -> Vec<String> {
     canonical_paths(
         tables::lookup(tables::AUTH_PATHS, provider)
             .iter()
@@ -680,7 +680,7 @@ fn default_write_paths(config: &Sandbox, workspace: &Path, home: &Path) -> Vec<S
 }
 
 /// `assert_sensitive_path_contract`: reject a grant that exposes a sensitive root.
-fn assert_sensitive_path_contract(
+pub(super) fn assert_sensitive_path_contract(
     allow_lists: &[&[String]],
     gobby: &Path,
     home: &Path,
@@ -726,7 +726,7 @@ fn assert_sensitive_path_contract(
 
 /// `assert_credential_read_contract`: a read grant may not shadow a credential deny
 /// unless it is a declared necessity.
-fn assert_credential_read_contract(
+pub(super) fn assert_credential_read_contract(
     read_paths: &[String],
     credential_roots: &[String],
     required: &[String],

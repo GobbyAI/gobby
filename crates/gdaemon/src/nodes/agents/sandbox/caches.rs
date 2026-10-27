@@ -354,6 +354,7 @@ fn check_cache_path(shared: &Path, path: &Path) -> Result<()> {
 /// `SandboxRunPaths`: one run's root, its writable siblings, and its cache layout.
 #[derive(Debug, Clone)]
 pub(super) struct RunLayout {
+    pub root: PathBuf,
     pub tmp: PathBuf,
     pub hooks: PathBuf,
     pub logs: PathBuf,
@@ -433,6 +434,7 @@ pub(super) fn run_layout(
     check_cache_path(&shared_cache, &shared_cache.join("cargo-home"))?;
     check_cache_path(&shared_cache, &cargo_target)?;
     Ok(RunLayout {
+        root: root.clone(),
         tmp: root.join("tmp"),
         hooks: root.join("hooks"),
         logs: root.join("logs"),
@@ -441,3 +443,22 @@ pub(super) fn run_layout(
         cargo_target,
     })
 }
+
+/// Re-checks the cargo grants once `compile_policy` has rendered them, so a link
+/// swapped in during compilation is refused as one present at layout time would be.
+pub(super) fn recheck_cache_grants(layout: &RunLayout, write_paths: &[String]) -> Result<()> {
+    for path in [layout.cargo_home(), layout.cargo_target.clone()] {
+        check_cache_path(&layout.shared_cache, &path)?;
+        if !write_paths.contains(&text(&resolve_nonstrict(&path))) {
+            bail!(
+                "Sandbox cache grant {} resolved outside the sandbox cache",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "caches/tests.rs"]
+mod tests;

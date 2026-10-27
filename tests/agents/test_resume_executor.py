@@ -161,6 +161,7 @@ def _patch_common(
     monkeypatch.setattr(uuid, "uuid4", lambda: _SUCCESSOR_ID)
     monkeypatch.setattr(resume_executor, "prepare_terminal_resume", prepare)
     monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
+    monkeypatch.setattr("gobby.workflows.agent_resolver.resolve_agent", MagicMock())
     monkeypatch.setattr(
         resume_executor,
         "prepare_sandbox_launch",
@@ -173,6 +174,7 @@ def _patch_common(
                 violation_path="/policy/violations.jsonl",
                 node_path="/managed/node",
                 runner_path="/managed/runner.mjs",
+                policy_hash="e" * 64,
             )
         ),
     )
@@ -218,23 +220,6 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     assert delivery_args[2] == "Continue"
     assert delivery_args[3] == str(_SUCCESSOR_ID)
     assert delivery_args[4] is runner.run_storage
-
-
-@pytest.mark.asyncio
-async def test_resume_refuses_task_close_reviewer(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Retired reviewer runs remain inert after a daemon restart."""
-    prepare = _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
-
-    result = await resume_executor.resume_agent_run(
-        _original_run(agent_name="task-close-reviewer"),
-        resume_metadata=_resume_metadata(),
-        runner=_runner(),
-        session_manager=MagicMock(),
-    )
-
-    assert result.success is False
-    assert result.error == "retired_close_review_run"
-    prepare.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -390,16 +375,20 @@ async def test_resume_reuses_child_session_and_finalizes_durable_phases(
     finalize = AsyncMock()
     prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
 
+    sessions = MagicMock()
     result = await resume_executor.resume_agent_run(
         _original_run(),
         resume_metadata=_resume_metadata(),
         runner=runner,
-        session_manager=MagicMock(),
+        session_manager=sessions,
     )
 
     assert result.success is True
     assert result.run_id == str(_SUCCESSOR_ID)
     assert result.child_session_id == _original_run().child_session_id
+    runner.child_session_manager.update_sandbox_policy_hash.assert_called_once_with(
+        _original_run().child_session_id, "e" * 64
+    )
     assert prepare.call_args.kwargs["existing_session_id"] == _original_run().child_session_id
     assert prepare.call_args.kwargs["original_run_id"] == _original_run().id
     assert storage.transition_resume_phase.call_args_list[0].kwargs == {
@@ -489,6 +478,53 @@ async def test_srt_resume_executes_resolved_provider_target(
     assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
     assert prepare_sandbox.await_args.kwargs["run_id"] == str(_SUCCESSOR_ID)
     assert prepare_sandbox.await_args.kwargs["config"].extra_write_paths == roots
+
+
+@pytest.mark.parametrize("metadata_slug", [None, "retired-metadata-seat"])
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_resume_refuses_unresolved_definition_before_successor(
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_slug: str | None,
+    invalid: bool,
+) -> None:
+    from gobby.storage import agent_resume
+    from gobby.workflows import agent_resolver
+
+    runner = _runner()
+    prepare = _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+    resolve = MagicMock(return_value=None)
+    if invalid:
+        resolve.side_effect = agent_resolver.AgentResolutionError("invalid definition")
+    refuse = MagicMock(return_value=True)
+    delivery = AsyncMock()
+    monkeypatch.setattr("gobby.agents.terminal_delivery.deliver_and_cleanup_terminal_run", delivery)
+    monkeypatch.setattr(agent_resolver, "resolve_agent", resolve)
+    monkeypatch.setattr(agent_resume, "refuse_parked_daemon_resume", refuse)
+    metadata = _resume_metadata()
+    if metadata_slug is not None:
+        metadata["agent_slug"] = metadata_slug
+    original = _original_run(agent_name="retired-seat")
+    result = await resume_executor.resume_agent_run(
+        original, resume_metadata=metadata, runner=runner, session_manager=MagicMock()
+    )
+    assert result.success is False
+    assert result.error == f"resume_agent_definition_unavailable:{metadata_slug or 'retired-seat'}"
+    resolve.assert_called_once_with(
+        metadata_slug or "retired-seat",
+        runner.run_storage.db,
+        cli_source="codex",
+        project_id=metadata["project_id"],
+    )
+    refuse.assert_called_once_with(
+        runner.run_storage.db,
+        original_run_id=original.id,
+        child_session_id=original.child_session_id,
+        error=result.error,
+    )
+    prepare.assert_not_called()
+    # The fenced run stays parked for the orphan reaper, which releases its
+    # resources and delivers the single terminal notification.
+    delivery.assert_not_awaited()
 
 
 async def test_resume_rejects_changed_grant_before_successor(

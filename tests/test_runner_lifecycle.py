@@ -267,6 +267,9 @@ class TestGobbyRunnerRun:
 
                 with (
                     patch("gobby.runner_maintenance.setup_signal_handlers"),
+                    patch.object(
+                        runner_lifecycle_subsystems, "_check_embedding_service", AsyncMock()
+                    ),
                     caplog.at_level(logging.ERROR),
                 ):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
