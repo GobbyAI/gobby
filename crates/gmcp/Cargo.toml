@@ -1,6 +1,6 @@
 [package]
 name = "gobby-mcp"
-version = "0.1.14"
+version = "0.1.15"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -32,6 +32,7 @@ unicode_names2 = "=2.0.0"
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
 temp-env = "0.3.6"
+socket2 = "0.6"
 
 [lints]
 workspace = true

@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-mcp"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "anyhow",
  "clap",
@@ -2589,6 +2589,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "socket2",
  "temp-env",
  "tempfile",
  "tokio",

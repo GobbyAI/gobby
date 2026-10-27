@@ -59,21 +59,36 @@ impl Default for RequestOptions<'_> {
 }
 
 impl Dialer {
-    /// Probe the current endpoint without authentication, retries, or starting anything.
+    /// Probe the current endpoint without authentication or starting anything.
     pub fn probe_health(&self) -> anyhow::Result<HealthProbe> {
         let base = daemon_url()?;
-        let answer = self
-            .agent
-            .get(&format!("{}/api/health", base.trim_end_matches('/')))
-            .timeout(Duration::from_secs(2))
-            .call();
-        Ok(match answer {
+        Ok(match self.get_health(base.trim_end_matches('/')) {
             Ok(response) if response.status() == 200 => HealthProbe::Healthy,
-            Ok(response) | Err(ureq::Error::Status(_, response)) => {
-                HealthProbe::Answered(response.status())
-            }
-            Err(ureq::Error::Transport(_)) => HealthProbe::Unreachable,
+            Ok(response) => HealthProbe::Answered(response.status()),
+            Err(_) => HealthProbe::Unreachable,
         })
+    }
+
+    /// GET the health endpoint, retrying once when the pooled keep-alive connection to a
+    /// previous daemon process is dead. ureq 2 reports the reset from its pool liveness
+    /// peek, before sending anything, instead of discarding the stream; the dead stream
+    /// has already left the pool, so the retry dials fresh.
+    fn get_health(&self, base: &str) -> Result<ureq::Response, Box<ureq::Transport>> {
+        let mut retried = false;
+        loop {
+            let answer = self
+                .agent
+                .get(&format!("{base}/api/health"))
+                .timeout(Duration::from_secs(2))
+                .call();
+            match answer {
+                Ok(response) | Err(ureq::Error::Status(_, response)) => return Ok(response),
+                Err(ureq::Error::Transport(error)) if !retried && is_connection_closed(&error) => {
+                    retried = true;
+                }
+                Err(ureq::Error::Transport(error)) => return Err(Box::new(error)),
+            }
+        }
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -179,16 +194,11 @@ impl Dialer {
                 .as_ref()
                 .is_some_and(|(url, when)| url == &base && when.elapsed() < Duration::from_secs(5));
             if !recent {
-                let response = self
-                    .agent
-                    .get(&format!("{base}/api/health"))
-                    .timeout(Duration::from_secs(2))
-                    .call();
-                match response {
+                match self.get_health(&base) {
                     Ok(response) if response.status() == 200 => {
                         self.cached()?.last_preflight = Some((base.clone(), Instant::now()));
                     }
-                    Err(ureq::Error::Status(503, response)) => {
+                    Ok(response) if response.status() == 503 => {
                         let text = response.into_string()?;
                         if let Some(detail) = backend_unavailable(&text) {
                             return Ok(unavailable(&base, &detail));
@@ -199,7 +209,7 @@ impl Dialer {
                         ));
                     }
                     // Busy read timeouts are tolerated but never cached as success.
-                    Err(ureq::Error::Transport(error)) if is_timeout(&error) => {}
+                    Err(error) if is_timeout(error.as_ref()) => {}
                     _ => {
                         return Ok(unavailable(
                             &base,
@@ -391,13 +401,26 @@ fn request_timeout(path: &str, timeout: Duration) -> Value {
 }
 
 fn is_timeout(error: &(dyn Error + 'static)) -> bool {
+    has_io_kind(error, &[io::ErrorKind::TimedOut, io::ErrorKind::WouldBlock])
+}
+
+fn is_connection_closed(error: &(dyn Error + 'static)) -> bool {
+    has_io_kind(
+        error,
+        &[
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::BrokenPipe,
+            io::ErrorKind::UnexpectedEof,
+        ],
+    )
+}
+
+fn has_io_kind(error: &(dyn Error + 'static), kinds: &[io::ErrorKind]) -> bool {
     let mut current = Some(error);
     while let Some(error) = current {
         if let Some(error) = error.downcast_ref::<io::Error>()
-            && matches!(
-                error.kind(),
-                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
-            )
+            && kinds.contains(&error.kind())
         {
             return true;
         }
