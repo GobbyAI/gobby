@@ -7,7 +7,10 @@ the serving checkout, Gobby home, local/remote mode, and active work.
 
 1. Announce a restart or cutover with a `global` `gobby-agents:send_message`
    (every live session on this machine, across projects) as a heads-up, then
-   proceed. Inspect pending handoffs and protected cron runs.
+   proceed. Wait for a quiet window only during project quiet hours or when the
+   operation can kill agent panes, such as `--terminals` or a terminal-host
+   cutover; a plain restart cannot. Inspect pending handoffs and protected cron
+   runs.
 2. Start from the main checkout. Startup checks native schema identity and
    dependencies, acquires daemon singleton ownership or a service reservation,
    and starts local managed services. Remote mode skips their local lifecycle.
