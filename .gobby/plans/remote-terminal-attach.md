@@ -290,6 +290,16 @@ Targets:
      `Attached`. Failure answers `command_failed` with stage `"none"`.
   3. `dial_hub(node, "/api/nodes/terminal-relay", x-gobby-relay-token)`. A refusal
      answers `command_failed` with stage `"none"` and detaches the host.
+  - Setup bound: steps 2 and 3 run on their own task under one 10 s deadline
+    from command receipt, which matches the hub's open deadline. The task races
+    that deadline against the closure of the reply sender, the writer mpsc
+    that #24376's `run_client` feeds, whose `closed()` resolves at channel end.
+    The deadline answers `command_failed` with stage `"none"`. Channel loss
+    answers nothing. Every exit before the `{}` reply drops the host stream,
+    sending `Detach` first once `Attached` arrived, and closes a dialed hub
+    socket. `FrameClient` sets no timeout of its own
+    (`crates/gterminals/src/frames.rs::FrameClient::recv`), so this deadline is
+    the only bound on a silent host.
   4. Reply `{}`, then pump on its own task. Host to hub: each `ServerMessage` is
      encoded and sent as one binary message. Hub to node: each binary message is
      decoded as one `ClientMessage`; only `SetViewport`, `SetScrollOffset`,
@@ -320,6 +330,7 @@ Targets:
 - 1.2.4 - A live relay does not block `terminal.write` or `agent.cancel` for the same run. test: `crates/gdaemon/tests/node_relay.rs::relay_does_not_hold_the_run_queue`.
 - 1.2.5 - Closing either side detaches the host terminal exactly once. test: `crates/gdaemon/tests/node_relay.rs::relay_close_detaches_once`.
 - 1.2.6 - Across dispatch, a refused relay socket, a relayed frame and close, the node's stderr names the terminal id and close reason but never the token, its digest or frame payload bytes. test: `crates/gdaemon/tests/node_relay.rs::relay_stderr_carries_no_secrets`.
+- 1.2.7 - A host that never sends `Welcome`, a host that never sends `Attached`, and channel loss during setup each end the setup task within 10 s, leaving no host attachment and no hub socket. The deadline cases answer `command_failed` with stage `"none"`. test: `crates/gdaemon/tests/node_relay.rs::relay_setup_is_bounded_and_cleans_up`.
 
 ## P2: Hub relay endpoint and remote link
 `kind: framing`
