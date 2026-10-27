@@ -407,3 +407,41 @@ def test_round_two_approval_leaves_the_implementation_step_approved(
     assert (implementation.status, implementation.commit_sha) == ("approved", _NEXT)
     # Gate 5 reads the same requirements; only the closing record is still outstanding.
     assert task_step_requirements(temp_db, approved).missing == ("closing",)
+
+
+def test_stored_review_status_follows_the_approval_at_the_latest_commit(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    """An approval at the latest linked commit reads as valid, whatever the stored copy says."""
+    manager = LocalTaskManager(temp_db)
+    _step(temp_db, task, team["reviewer"], "review", "approved")
+    temp_db.execute("UPDATE tasks SET review_status = 'pending' WHERE id = %s", (task.id,))
+
+    assert manager.get_task(task.id).review_status == "valid"
+
+
+def test_a_new_linked_commit_leaves_no_approval_in_the_stored_status(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    """A commit linked after the approval has no approval of its own, so the status is pending."""
+    manager = LocalTaskManager(temp_db)
+    _step(temp_db, task, team["reviewer"], "review", "approved")
+
+    manager.link_commit(task.id, _NEXT[:10])
+
+    assert manager.get_task(task.id).review_status == "pending"
+
+
+def test_close_gate_reads_the_approval_not_the_stored_status(
+    temp_db: HubDatabase, task: Task, team: dict[str, str]
+) -> None:
+    """The close preview's step gate counts a review approved at the tip despite a stale copy."""
+    manager = LocalTaskManager(temp_db)
+    _set_close_policy(temp_db, task.project_id, {"enforce_step_records": True})
+    _step(temp_db, task, team["developer"], "implementation", "approved", feedback="Implemented.")
+    _step(temp_db, task, team["reviewer"], "review", "approved")
+    temp_db.execute("UPDATE tasks SET review_status = 'pending' WHERE id = %s", (task.id,))
+
+    missing = task_step_requirements(temp_db, manager.get_task(task.id)).missing
+
+    assert missing == ("closing",)
