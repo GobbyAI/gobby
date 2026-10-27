@@ -50,7 +50,8 @@ def team_resolved_blocker_sql(blocker: str, blocked: str) -> str:
                     WHERE c.task_id = {blocker}.id AND c.author_type = 'task_step'
                 ) steps
                 WHERE steps.record ->> 'step' = 'implementation'
-                  AND (steps.record ->> 'epoch')::int = {blocker}.review_epoch
+                  AND steps.record ->> 'epoch' = {blocker}.review_epoch::text
+                  AND steps.record ->> 'sequence' ~ '^[0-9]{{1,9}}$'
                   AND steps.record ->> 'agent_definition' <> 'security-reviewer'
                 ORDER BY (steps.record ->> 'sequence')::int DESC
                 LIMIT 1

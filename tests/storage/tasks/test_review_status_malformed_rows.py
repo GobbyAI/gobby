@@ -67,8 +67,17 @@ def test_step_submission_refuses_a_non_integer_epoch_or_round(field: str) -> Non
         StepSubmission.model_validate(submission)
 
 
-@pytest.mark.parametrize("field", ["epoch", "sequence"])
-def test_backed_up_step_history_refuses_a_non_integer_field(field: str) -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("epoch", "not-an-integer"),
+        ("sequence", "not-an-integer"),
+        ("sequence", "1"),
+        ("sequence", 1.0),
+        ("sequence", True),
+    ],
+)
+def test_backed_up_step_history_refuses_a_non_integer_field(field: str, value: object) -> None:
     task_id = str(uuid4())
     now = datetime.now(UTC)
     record = TaskStepRecord(
@@ -88,7 +97,7 @@ def test_backed_up_step_history_refuses_a_non_integer_field(field: str) -> None:
         created_at=now,
         updated_at=now,
     )
-    entry = {**record.model_dump(mode="json"), field: "not-an-integer"}
+    entry = {**record.model_dump(mode="json"), field: value}
 
     with pytest.raises(ValueError):
         deserialize_task_step_records({"epoch": 1, "step_records": [entry]}, task_id=task_id)
