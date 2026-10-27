@@ -384,7 +384,14 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
             await self._client.spawn_commit(
                 str(prepared.terminal_id), prepared.spawn_key, commit_deadline_ms
             )
-        except CommitTransportError:
+        except CommitTransportError as exc:
+            # The host never received the commit, so the control connection is redialed to
+            # the epoch the spawn was prepared on. A failed redial leaves the commit unsent.
+            if not exc.request_written and expected_epoch:
+                try:
+                    await self._reconnect_epoch(expected_epoch)
+                except (HostUnavailableError, OSError) as redial_error:
+                    raise exc from redial_error
             raise
         except HostCommandError as exc:
             _mark_host_error_stage(exc, "commit")
