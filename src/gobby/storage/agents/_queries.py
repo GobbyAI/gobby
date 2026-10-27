@@ -7,8 +7,8 @@ from typing import Protocol
 
 from gobby.storage.daemon_resume_keys import (
     REAP_REQUESTED_AT_KEY,
-    REAP_STARTED_AT_KEY,
     REAPED_AT_KEY,
+    daemon_resume_not_reaping_condition,
     daemon_resume_unconsumed_condition,
 )
 from gobby.storage.hub.protocol import HubDatabase
@@ -123,6 +123,7 @@ class _AgentRunQueryMixin:
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
         unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
+        not_reaping_sql = daemon_resume_not_reaping_condition(self.db, "ar.resume_metadata_json")
         recent_sql = newer_than_now_expr(
             self.db,
             "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
@@ -136,6 +137,7 @@ class _AgentRunQueryMixin:
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
               AND {unconsumed_sql}
+              AND {not_reaping_sql}
               AND {recent_sql}
             """,
             (task_id, machine_id, max_age_hours),
@@ -158,11 +160,7 @@ class _AgentRunQueryMixin:
         if max_age_hours <= 0:
             raise ValueError("max_age_hours must be positive")
         unconsumed_sql = daemon_resume_unconsumed_condition(self.db, "ar.resume_metadata_json")
-        not_reaping_sql = " AND ".join(
-            f"({expr} IS NULL OR {expr} = '')"
-            for key in (REAP_REQUESTED_AT_KEY, REAP_STARTED_AT_KEY, REAPED_AT_KEY)
-            for expr in (json_text_expr(self.db, "ar.resume_metadata_json", key),)
-        )
+        not_reaping_sql = daemon_resume_not_reaping_condition(self.db, "ar.resume_metadata_json")
         recent_sql = newer_than_now_expr(
             self.db,
             "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",

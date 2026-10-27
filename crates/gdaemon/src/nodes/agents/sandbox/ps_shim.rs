@@ -2,6 +2,11 @@
 //! `droid_ps_shim.py`). Seatbelt refuses to exec the setuid `/bin/ps`, so a sandboxed
 //! `ps` probe fails without a copy. The copy is re-signed ad hoc because AMFI kills an
 //! Apple binary executed outside its trusted location.
+//!
+//! TODO(#22407): Droid's supervisor, the upstream defect that first needed this shim,
+//! SIGKILLs its process group when its `ps` probe fails. Drop Droid's dependency once
+//! Factory ships a fix. Reviewer seats keep the shim for stall diagnosis (#25069).
+//! Upstream issue: https://github.com/Factory-AI/factory/issues/33
 
 use super::wait_bounded;
 use anyhow::{Context, Result, bail};

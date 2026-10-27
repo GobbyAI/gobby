@@ -407,3 +407,22 @@ pub(super) fn run_layout(
         cargo_target,
     })
 }
+
+/// Re-checks the cargo grants once `compile_policy` has rendered them, so a link
+/// swapped in during compilation is refused as one present at layout time would be.
+pub(super) fn recheck_cache_grants(layout: &RunLayout, write_paths: &[String]) -> Result<()> {
+    for path in [layout.cargo_home(), layout.cargo_target.clone()] {
+        check_cache_path(&layout.shared_cache, &path)?;
+        if !write_paths.contains(&text(&resolve_nonstrict(&path))) {
+            bail!(
+                "Sandbox cache grant {} resolved outside the sandbox cache",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "caches/tests.rs"]
+mod tests;

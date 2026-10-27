@@ -12,10 +12,11 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, DirBuilder},
-    io::{Read, Write},
+    io::{self, Read, Write},
+    os::fd::AsRawFd,
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{ChildStderr, Command, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -181,6 +182,7 @@ pub fn prepare_launch_with(
     let mut run_inputs = inputs.clone();
     run_inputs.env.extend(run_env);
     let compiled = compile_policy(&run_inputs, &home_writes, &home_denies).map_err(lift)?;
+    caches::recheck_cache_grants(&layout, &compiled.resolved.write_paths).map_err(lift)?;
     let gobby = inputs.gobby_home.as_path();
     let home = inputs.home.as_path();
     let managed_root = paths::resolve_nonstrict(&paths::managed_execution_root(gobby));
@@ -204,11 +206,18 @@ pub fn prepare_launch_with(
     }
 
     let mut resolved = compiled.resolved;
-    resolved.read_paths.push(paths::text(&assets));
-    resolved.read_paths.push(paths::text(&installation.root));
+    // Resolved like every compiled grant, as Python resolves them before rendering.
+    resolved
+        .read_paths
+        .push(paths::text(&paths::resolve_nonstrict(&assets)));
+    resolved
+        .read_paths
+        .push(paths::text(&paths::resolve_nonstrict(&installation.root)));
     let shim_dir = ps_shim::droid_shim_dir(gobby, &inputs.platform);
     if let Some(dir) = &shim_dir {
-        resolved.read_paths.push(paths::text(dir));
+        resolved
+            .read_paths
+            .push(paths::text(&paths::resolve_nonstrict(dir)));
     }
     paths::assert_sensitive_path_contract(
         &[
@@ -328,28 +337,71 @@ fn preflight(launch: &SandboxLaunch, workspace: &Path) -> Result<(), SandboxErro
     let mut command = launch.wrap(&[]);
     command.pop();
     command.push("--preflight".to_string());
+    run_preflight(&command, workspace, &launch.env, PREFLIGHT_TIMEOUT)
+}
+
+/// Stderr kept from a preflight run: enough for a diagnostic line, never unbounded.
+const PREFLIGHT_DETAIL_LIMIT: usize = 64 * 1024;
+
+/// Makes a child's stderr nonblocking, so a read returns at once when nothing is buffered.
+fn set_nonblocking(pipe: &ChildStderr) -> io::Result<()> {
+    // SAFETY: the descriptor belongs to `pipe`, which stays alive for this call.
+    // F_GETFL takes no third argument; F_SETFL keeps the existing flags.
+    let fd = pipe.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Moves the bytes buffered on `stderr` into `detail`. It never blocks and never waits
+/// for EOF, so a descendant that inherited the pipe cannot hold the launch.
+fn drain_buffered(stderr: &mut Option<ChildStderr>, detail: &mut Vec<u8>) {
+    let Some(pipe) = stderr.as_mut() else {
+        return;
+    };
+    let mut bytes = [0; 4096];
+    while detail.len() < PREFLIGHT_DETAIL_LIMIT {
+        match pipe.read(&mut bytes) {
+            Ok(count) if count > 0 => detail.extend_from_slice(&bytes[..count]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            // EOF, or WouldBlock when nothing more is buffered right now.
+            _ => break,
+        }
+    }
+    detail.truncate(PREFLIGHT_DETAIL_LIMIT);
+}
+
+/// Runs a preflight command within `timeout`, refusing a nonzero exit.
+fn run_preflight(
+    command: &[String],
+    workspace: &Path,
+    env: &BTreeMap<String, String>,
+    timeout: Duration,
+) -> Result<(), SandboxError> {
     let mut child = Command::new(&command[0])
         .args(&command[1..])
         .current_dir(workspace)
-        .envs(&launch.env)
+        .envs(env)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|_| SandboxError::new("managed SRT preflight could not start"))?;
     let mut stderr = child.stderr.take();
-    let reader = thread::spawn(move || {
-        let mut text = String::new();
-        if let Some(stream) = stderr.as_mut() {
-            let _ = stream.read_to_string(&mut text);
-        }
-        text
-    });
+    if stderr.as_ref().map_or(Ok(()), set_nonblocking).is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(SandboxError::new("managed SRT preflight execution failed"));
+    }
+    let mut detail = Vec::new();
     let started = Instant::now();
     let status = loop {
+        drain_buffered(&mut stderr, &mut detail);
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() < PREFLIGHT_TIMEOUT => {
+            Ok(None) if started.elapsed() < timeout => {
                 thread::sleep(Duration::from_millis(20));
             }
             Ok(None) => {
@@ -358,18 +410,21 @@ fn preflight(launch: &SandboxLaunch, workspace: &Path) -> Result<(), SandboxErro
                 return Err(SandboxError::new(format!(
                     "managed SRT preflight timed out after {:.1}s (bound {}s)",
                     started.elapsed().as_secs_f64(),
-                    PREFLIGHT_TIMEOUT.as_secs_f64()
+                    timeout.as_secs_f64()
                 )));
             }
             Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
                 return Err(SandboxError::new("managed SRT preflight execution failed"));
             }
         }
     };
-    let detail = reader.join().unwrap_or_default();
+    drain_buffered(&mut stderr, &mut detail);
     if status.success() {
         return Ok(());
     }
+    let detail = String::from_utf8_lossy(&detail);
     let detail = detail.trim();
     Err(SandboxError::new(format!(
         "managed SRT preflight failed: {}",
@@ -407,3 +462,7 @@ fn write_private_file(path: &Path, content: &[u8]) -> Result<(), SandboxError> {
 fn lift(error: anyhow::Error) -> SandboxError {
     SandboxError::new(format!("{error:#}"))
 }
+
+#[cfg(test)]
+#[path = "runtime/tests.rs"]
+mod tests;

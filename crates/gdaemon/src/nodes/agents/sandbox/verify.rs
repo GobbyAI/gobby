@@ -12,7 +12,10 @@ use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
     io::{self, Read},
-    os::unix::{fs::PermissionsExt, io::AsRawFd},
+    os::unix::{
+        fs::{OpenOptionsExt, PermissionsExt},
+        io::AsRawFd,
+    },
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -107,6 +110,7 @@ fn with_install_lock<T>(
         .write(true)
         .create(true)
         .truncate(false)
+        .mode(0o600)
         .open(&lock_path)
         .or_else(|_| OpenOptions::new().read(true).open(&lock_path))
         .map_err(|error| lockout(format!("managed SRT lock: {error}")))?;

@@ -520,10 +520,9 @@ async def test_resume_refuses_unresolved_definition_before_successor(
         error=result.error,
     )
     prepare.assert_not_called()
-    delivery.assert_awaited_once()
-    assert delivery.await_args is not None
-    assert delivery.await_args.kwargs["run_id"] == original.id
-    assert delivery.await_args.kwargs["result"]["terminal_reason"] == "agent_definition_unavailable"
+    # The fenced run stays parked for the orphan reaper, which releases its
+    # resources and delivers the single terminal notification.
+    delivery.assert_not_awaited()
 
 
 async def test_resume_rejects_changed_grant_before_successor(

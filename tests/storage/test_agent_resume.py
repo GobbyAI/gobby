@@ -51,10 +51,13 @@ def test_refuse_missing_definition_preserves_resume_ownership(
     assert refused is (ownership == "parked")
     stored = runs.get(original.id)
     assert stored is not None
-    assert stored.terminal_reason == ("agent_definition_unavailable" if refused else "daemon_stop")
+    assert stored.terminal_reason == "daemon_stop"
     if refused:
         assert stored.error == "resume_agent_definition_unavailable:retired-seat"
         assert runs.list_parked_non_task_resume_candidates(machine_id=LOCAL_MACHINE_ID) == []
+        assert [run.id for run in runs.list_daemon_stop_orphans(machine_id=LOCAL_MACHINE_ID)] == [
+            original.id
+        ]
         assert not refuse_parked_daemon_resume(
             temp_db, original_run_id=original.id, child_session_id=child.id, error="retry"
         )

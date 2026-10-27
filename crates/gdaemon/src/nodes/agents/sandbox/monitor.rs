@@ -22,6 +22,7 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    thread,
     time::Duration,
 };
 
@@ -309,6 +310,11 @@ fn start(
             log_tail(&log)
         );
     }
+    // The monitor outlives this launch; reap it whenever it exits so it never
+    // lingers as a zombie of the daemon.
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
     Ok(())
 }
 

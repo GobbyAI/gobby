@@ -23,6 +23,9 @@ from gobby.storage.daemon_resume_keys import (
     PRE_BIND_SESSION_STATUS_KEY as _PRE_BIND_SESSION_STATUS_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
+    REAP_REQUESTED_AT_KEY as _REAP_REQUESTED_AT_KEY,
+)
+from gobby.storage.daemon_resume_keys import (
     RESUME_PHASE_KEY as _RESUME_PHASE_KEY,
 )
 from gobby.storage.daemon_resume_keys import (
@@ -32,6 +35,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.datetime import utc_now
+
+# Error prefix of a parked original fenced because its agent definition is gone.
+DEFINITION_UNAVAILABLE_ERROR_PREFIX = "resume_agent_definition_unavailable:"
 
 
 @dataclass(frozen=True)
@@ -91,15 +97,30 @@ def refuse_parked_daemon_resume(
         if row is None:
             return False
         metadata = _metadata(row["resume_metadata_json"])
-        if metadata.get(_CONSUMED_AT_KEY) or metadata.get("daemon_stop_orphan_reap_started_at"):
+        if (
+            metadata.get(_CONSUMED_AT_KEY)
+            or metadata.get("daemon_stop_orphan_reap_started_at")
+            or metadata.get(_REAP_REQUESTED_AT_KEY)
+        ):
             return False
+        # Stay daemon_stop so the orphan reaper releases the parked resources;
+        # the reap request keeps the run out of every resume candidate query.
+        now = utc_now()
         conn.execute(
             """
             UPDATE agent_runs
-            SET terminal_reason = 'agent_definition_unavailable', error = %s, updated_at = %s
+            SET resume_metadata_json =
+                    COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb,
+                error = %s,
+                updated_at = %s
             WHERE id = %s
             """,
-            (error, utc_now(), original_run_id),
+            (
+                dump_resume_metadata({_REAP_REQUESTED_AT_KEY: now.isoformat()}),
+                error,
+                now,
+                original_run_id,
+            ),
         )
         return True
 

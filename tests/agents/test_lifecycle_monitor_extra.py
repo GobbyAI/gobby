@@ -1377,7 +1377,20 @@ class TestTerminalizeCancelledRun:
         assert mock_completion_registry.notify.await_args is None
 
     @pytest.mark.asyncio
-    async def test_daemon_stop_orphan_reaper_performs_full_cleanup(self) -> None:
+    @pytest.mark.parametrize(
+        ("error", "terminal_reason", "message"),
+        [
+            (None, "daemon_stop", "Agent run-orphan recovery window expired"),
+            (
+                "resume_agent_definition_unavailable:retired-seat",
+                "agent_definition_unavailable",
+                "resume_agent_definition_unavailable:retired-seat",
+            ),
+        ],
+    )
+    async def test_daemon_stop_orphan_reaper_performs_full_cleanup(
+        self, error: str | None, terminal_reason: str, message: str
+    ) -> None:
         run = AgentRun(
             id="run-orphan",
             parent_session_id="parent-1",
@@ -1387,6 +1400,7 @@ class TestTerminalizeCancelledRun:
             prompt="resume after restart",
             status="cancelled",
             terminal_reason="daemon_stop",
+            error=error,
             created_at=datetime(2024, 1, 1, tzinfo=UTC),
             updated_at=datetime(2024, 1, 1, tzinfo=UTC),
         )
@@ -1436,10 +1450,10 @@ class TestTerminalizeCancelledRun:
             cleanup_session_id="child-1",
             notification_result={
                 "status": "cancelled",
-                "terminal_reason": "daemon_stop",
+                "terminal_reason": terminal_reason,
                 "run_id": "run-orphan",
             },
-            notification_message="Agent run-orphan recovery window expired",
+            notification_message=message,
             force_full_cleanup=True,
         )
         assert full_cleanup.await_count == 1

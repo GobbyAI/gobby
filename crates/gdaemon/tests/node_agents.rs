@@ -1867,11 +1867,14 @@ fn chokepoint_fixture(
     inputs.provider_executable = Some(tree.path("bin").join(provider));
     inputs.platform = "darwin".to_string();
     // The monitor socket goes in a short directory beside the case root. The shared /tmp
-    // root is denied to seats, and macOS caps a unix socket path at 103 bytes.
-    let monitor_socket = case_dir
-        .parent()
-        .context("the case directory has no parent")?
-        .join("m");
+    // root is denied to seats, and macOS caps a unix socket path at 103 bytes. The
+    // parent is canonical because the launch resolves it (macOS /var is /private/var).
+    let monitor_socket = fs::canonicalize(
+        case_dir
+            .parent()
+            .context("the case directory has no parent")?,
+    )?
+    .join("m");
     let socket_name = format!("v-{}", &python_srt_release_field("runner_sha256")[..12]);
     anyhow::ensure!(
         monitor_socket.join(&socket_name).as_os_str().len() < 104,

@@ -240,7 +240,10 @@ async def resume_agent_run(
         return ResumeAgentResult(False, error="daemon_stop_child_session_missing")
     agent_name = _metadata_str(resume_metadata, "agent_slug") or original_run.agent_name
     if agent_name:
-        from gobby.storage.agent_resume import refuse_parked_daemon_resume
+        from gobby.storage.agent_resume import (
+            DEFINITION_UNAVAILABLE_ERROR_PREFIX,
+            refuse_parked_daemon_resume,
+        )
         from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
         try:
@@ -256,31 +259,20 @@ async def resume_agent_run(
         if definition is None:
             from gobby.agents import terminal_delivery
 
-            error = f"resume_agent_definition_unavailable:{agent_name}"
+            error = f"{DEFINITION_UNAVAILABLE_ERROR_PREFIX}{agent_name}"
 
-            async def refuse_and_deliver() -> None:
-                refused = await asyncio.to_thread(
+            async def refuse() -> None:
+                # The fenced run stays parked for the orphan reaper, which releases
+                # its resources and delivers the terminal notification.
+                await asyncio.to_thread(
                     refuse_parked_daemon_resume,
                     runner.run_storage.db,
                     original_run_id=original_run.id,
                     child_session_id=child_session_id,
                     error=error,
                 )
-                if refused:
-                    await terminal_delivery.deliver_and_cleanup_terminal_run(
-                        db=runner.run_storage.db,
-                        completion_registry=completion_registry,
-                        run_id=original_run.id,
-                        result={
-                            "status": "cancelled",
-                            "error": error,
-                            "terminal_reason": "agent_definition_unavailable",
-                        },
-                        message=error,
-                        run_db=asyncio.to_thread,
-                    )
 
-            await terminal_delivery.shielded_terminal_delivery(original_run.id, refuse_and_deliver)
+            await terminal_delivery.shielded_terminal_delivery(original_run.id, refuse)
             return ResumeAgentResult(False, error=error)
     metadata = dict(resume_metadata)
     cli_mode = "agent"

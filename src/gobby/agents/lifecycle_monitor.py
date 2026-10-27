@@ -478,6 +478,7 @@ class AgentLifecycleMonitor:
     async def _reap_daemon_stop_orphan(self, run: AgentRun) -> bool:
         """Give up on one elapsed parked original, delivering to durable waiters."""
         from gobby.storage.agent_resume import (
+            DEFINITION_UNAVAILABLE_ERROR_PREFIX,
             claim_daemon_stop_orphan_reap,
             expire_parked_daemon_session,
         )
@@ -512,15 +513,19 @@ class AgentLifecycleMonitor:
             run,
             outcome="cancelled",
         )
+        # A run fenced by a refused resume is released with its refusal, not expiry.
+        refused = (run.error or "").startswith(DEFINITION_UNAVAILABLE_ERROR_PREFIX)
         await self._cleanup_handler.post_terminal_cleanup(
             run,
             cleanup_session_id=run.child_session_id,
             notification_result={
                 "status": "cancelled",
-                "terminal_reason": "daemon_stop",
+                "terminal_reason": "agent_definition_unavailable" if refused else "daemon_stop",
                 "run_id": run.id,
             },
-            notification_message=f"Agent {run.id} recovery window expired",
+            notification_message=(
+                run.error or "" if refused else f"Agent {run.id} recovery window expired"
+            ),
             force_full_cleanup=True,
         )
         expire_kwargs: dict[str, object] = {
