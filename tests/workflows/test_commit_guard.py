@@ -1158,6 +1158,30 @@ async def test_unlinked_predecessor_dirt_stays_owned_by_the_claimant_task(
 
 
 @pytest.mark.asyncio
+async def test_claimant_history_only_dirt_stays_owned_by_its_claimed_task(
+    guard_harness: GuardHarness,
+) -> None:
+    """Dirt whose live ledger entry was cleared, with history kept, stays owned (#25161)."""
+    h = guard_harness
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                h.current_task.id: {str(h.repo): ["orphan.txt"]},
+            },
+            "session_dirty_files": [],
+            "session_dirty_file_checkouts": {},
+        },
+    )
+    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
 async def test_rule3_claim_successor_still_refused_for_another_tasks_live_claim(
     guard_harness: GuardHarness,
 ) -> None:
