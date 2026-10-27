@@ -31,7 +31,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.tasks import LocalTaskManager, Task, TaskStepRecordsMissingError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.worktrees.deletion import WorktreeDeletionResult
@@ -46,6 +46,7 @@ from tests.fixtures.team_teardown_case import (
     branch_exists,
     closed_at,
     daemon,
+    dispatched_seat,
     seat,
     session_status,
     teardown,
@@ -479,3 +480,93 @@ async def test_recovery_does_not_relaunch_a_torn_down_seat(
     assert resumed == 1
     assert [call.args[0].id for call in resume.await_args_list] == [parked.id]
     assert session_status(db, waiting.seats[1]) == "paused", "the open team's seat still waits"
+
+
+def enforce_step_records(repo: Path, project_id: str) -> None:
+    """Turn on the step-record close gates in the primary checkout's project marker."""
+    marker = repo / ".gobby" / "project.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    data = json.loads(marker.read_text(encoding="utf-8")) if marker.exists() else {"id": project_id}
+    marker.write_text(
+        json.dumps({**data, "task_close_policy": {"enforce_step_records": True}}),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_team_close_ends_a_dispatched_seat_and_removes_the_tree_without_refusing(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seat the Dev Manager dispatched is not a runbook child, so the run list misses it."""
+    db = world.case.db
+    terminations = Terminations(db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    team = await admitted_team(world, "Close over a dispatched seat")
+    dispatched = dispatched_seat(world, team, team.binding.worktree_path)
+    closed = close(world, team, land(world, team, "dispatched.py"))
+    later = closed_at(closed) + TEARDOWN_GRACE
+
+    # The first pass may end seats; it must not refuse the tree while a seat is still in it.
+    await teardown_pass(db, daemon(db), later)
+    assert teardown(world, team).get("outcome") != "refused"
+    assert finding_tasks(world, team) == []
+
+    await teardown_pass(db, daemon(db), later)
+    assert terminations.ended() == sorted([*team.seats, dispatched])
+    assert session_status(db, dispatched) == "expired"
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert not Path(team.binding.worktree_path).exists()
+    assert finding_tasks(world, team) == []
+
+
+@pytest.mark.asyncio
+async def test_team_close_retries_while_a_dispatched_seat_is_still_exiting(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seat that is signalled but has not exited keeps its tree; a later pass deletes it."""
+    db = world.case.db
+
+    async def signal_only(**_kwargs: Any) -> dict[str, Any]:
+        return {"success": True}
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", signal_only)
+    team = await admitted_team(world, "Close while a seat exits")
+    dispatched = dispatched_seat(world, team, team.binding.worktree_path)
+    closed = close(world, team, land(world, team, "exiting.py"))
+    later = closed_at(closed) + TEARDOWN_GRACE
+
+    await teardown_pass(db, daemon(db), later)
+    assert Path(team.binding.worktree_path).is_dir()
+    assert teardown(world, team).get("outcome") != "refused"
+    assert finding_tasks(world, team) == []
+
+    SessionManager(db).update_status(dispatched, "expired")
+    await teardown_pass(db, daemon(db), later)
+    assert teardown(world, team) == {"outcome": "cleaned"}
+    assert not Path(team.binding.worktree_path).exists()
+    assert finding_tasks(world, team) == []
+
+
+@pytest.mark.asyncio
+async def test_refusal_ticket_closes_without_step_records_once_its_tree_is_gone(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = world.case.db
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", Terminations(db))
+    team = await admitted_team(world, "Refused teardown ticket")
+    sha = land(world, team, "refused.py")
+    (Path(team.binding.worktree_path) / "README.md").write_text("edited after landing\n")
+    closed = close(world, team, sha)
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+    assert teardown(world, team)["outcome"] == "refused"
+    (ticket,) = finding_tasks(world, team)
+    enforce_step_records(world.case.repo, world.case.project_id)
+    tasks = LocalTaskManager(db)
+
+    # While the refused tree is still on disk, closing the ticket still needs its records.
+    with pytest.raises(TaskStepRecordsMissingError):
+        tasks.close_task(ticket.id, reason="moot")
+
+    world.case.git("worktree", "remove", "--force", team.binding.worktree_path)
+    tasks.close_task(ticket.id, reason="moot")
+    assert tasks.get_task(ticket.id).closed_at is not None
