@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.session import ChildSessionManager
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.mcp_proxy.tools.spawn_agent._placement import PlacedLaunch, preflight_placement
@@ -42,7 +43,14 @@ placed_harness = placed_fixture
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(
+    monkeypatch: pytest.MonkeyPatch, _mock_spawn_machine_id: None
+) -> Iterator[None]:
+    # Runs after the package conftest's stand-in spawn machine, so the local one wins.
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+    )
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -182,3 +190,45 @@ async def test_epic_manager_fresh_seat_stays_refused_outside_its_team(
     assert spawn_placement._panes(h) == panes
     assert spawn_placement._terminal_states(h) == terminals
     assert h.events == []
+
+
+def _epic_depth_sessions(h: spawn_placement._Harness) -> None:
+    """Nest the epic manager at the production depth (5), not the harness default of 1."""
+    child_sessions = ChildSessionManager(h.sessions, max_agent_depth=5)
+    h.runner.child_session_manager = child_sessions
+    h.runner._child_session_manager = child_sessions
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
+    world: TeamWorld,
+    placed_harness: spawn_placement._Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real spawn_agent from an epic Dev Manager lands its developer in its own team tab."""
+    _restore_real_spawn(monkeypatch)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    h = placed_harness
+    _epic_depth_sessions(h)
+    tab_title = f"Dev Team - #{epic.seq_num}"
+    team_pane = spawn_placement._held_seat(h, tab_title, state="exited")
+    split = {
+        "workspace": h.workspace.id,
+        "tab_title": tab_title,
+        "axis": "right",
+        "title": "developer",
+    }
+
+    reply = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+
+    assert reply["success"] is True, reply
+    tab_panes = [
+        pane for pane in h.workspaces.list_panes(h.workspace.id) if pane.tab_id == team_pane.tab_id
+    ]
+    [seat] = [pane for pane in tab_panes if pane.id != team_pane.id]
+    assert seat.terminal_id is not None
+    terminal = h.terminals.get(seat.terminal_id)
+    assert terminal is not None and terminal.state == "live", terminal
+    assert [event["kind"] for event in h.events] == ["pane.added"]
