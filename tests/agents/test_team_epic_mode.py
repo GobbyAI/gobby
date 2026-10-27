@@ -17,7 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.worktrees.deletion import WorktreeDeletionResult
-from tests.fixtures.landing_case import make_landing_case
+from tests.fixtures.landing_case import bind_task_manager, make_landing_case
 from tests.fixtures.team_case import SLUG, TITLE, TeamWorld, git_in, make_team_world
 
 pytestmark = pytest.mark.unit
@@ -200,6 +200,77 @@ async def test_dispatched_seat_resolves_its_team_and_claims_its_leaf(world: Team
         reply = cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
     assert reply.get("success") is True, reply
     assert tasks.get_task(leaf.id).claimed_by_session_id == seat
+
+
+@pytest.mark.asyncio
+async def test_epic_dev_manager_releases_its_teams_leaf_claim(world: TeamWorld) -> None:
+    """The Dev Manager bound to an epic releases a team seat's claim on one of its open leaves."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    await world.admit(runbook, epic)
+    manager = world.case.session("dev-manager", parent=runbook.id)
+    bind_task_manager(
+        db, manager=manager, parent=runbook.id, project_id=world.case.project_id, task=epic
+    )
+    holder = world.case.session("test-writer", parent=runbook.id)
+    with session_context_for_test(holder):
+        claimed = cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
+    assert claimed.get("success") is True, claimed
+
+    with session_context_for_test(manager):
+        released = cast(
+            dict[str, Any],
+            await tools.call(
+                "release_task_claim",
+                {"task_id": leaf.id, "holder_session_ref": holder, "reason": "Seat is stuck"},
+            ),
+        )
+    assert released.get("success") is True, released
+    assert released["released_by_session_id"] == manager
+    assert tasks.get_task(leaf.id).claimed_by_session_id is None
+
+
+@pytest.mark.asyncio
+async def test_other_teams_dev_manager_cannot_release_an_epic_leaf_claim(
+    world: TeamWorld,
+) -> None:
+    """A Dev Manager bound to a different epic is refused for a leaf that epic does not own."""
+    db = world.case.db
+    tasks = LocalTaskManager(db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    runbook = world.child(epic)
+    await world.admit(runbook, epic)
+    holder = world.case.session("test-writer", parent=runbook.id)
+    tasks.claim_task(leaf.id, holder, force=True)
+
+    other_epic = new_task(world, "Another team's epic", epic=True)
+    other_runbook = world.child(other_epic)
+    await world.admit(other_runbook, other_epic)
+    other_manager = world.case.session("dev-manager", parent=other_runbook.id)
+    bind_task_manager(
+        db,
+        manager=other_manager,
+        parent=other_runbook.id,
+        project_id=world.case.project_id,
+        task=other_epic,
+    )
+
+    with session_context_for_test(other_manager):
+        refused = cast(
+            dict[str, Any],
+            await tools.call(
+                "release_task_claim",
+                {"task_id": leaf.id, "holder_session_ref": holder, "reason": "Seat is stuck"},
+            ),
+        )
+    assert refused.get("error_code") == "coordinator_required", refused
+    assert tasks.get_task(leaf.id).claimed_by_session_id == holder
 
 
 @pytest.mark.asyncio
