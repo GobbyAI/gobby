@@ -282,6 +282,43 @@ class TestProviderInheritance:
         assert result.provider == "codex"
 
 
+class TestCliSourceSeatAuthority:
+    """cli_source picks the provider; it never changes what a seat is allowed to do."""
+
+    def test_cli_source_changes_only_provider_and_model(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        _create_agent(
+            definition_db,
+            "synthetic-reviewer",
+            body={
+                "provider": "inherit",
+                "blocked_tools": ["Write", "Edit"],
+                "send_message_targets": ["parent", "session"],
+                "workflows": {
+                    "rule_selectors": {"include": ["tag:review"], "exclude": ["name:no-comms"]}
+                },
+            },
+        )
+
+        default_source = resolve_agent("synthetic-reviewer", definition_db, cli_source=None)
+        grok_source = resolve_agent("synthetic-reviewer", definition_db, cli_source="grok")
+
+        assert default_source is not None
+        assert grok_source is not None
+        assert grok_source.provider == "grok"
+        assert grok_source.blocked_tools == default_source.blocked_tools == ["Write", "Edit"]
+        assert (
+            grok_source.send_message_targets
+            == default_source.send_message_targets
+            == ["parent", "session"]
+        )
+        assert grok_source.workflows.rule_selectors == default_source.workflows.rule_selectors
+        assert grok_source.model_dump(exclude={"provider", "model"}) == (
+            default_source.model_dump(exclude={"provider", "model"})
+        )
+
+
 class TestStepfulAndSteplessConsumers:
     """Resolution, dry-run, and required-skills work for both agent shapes."""
 

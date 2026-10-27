@@ -231,3 +231,16 @@ steps:
           or 'developer' in steps.guard.output.launch else
           {'tab': {'workspace': steps.guard.output.workspace_id,
           'title': steps.guard.output.tab_title}} }}
+
+  # Tiles the team tab once the launched seats have joined it, on a fresh launch or a re-run.
+  - id: arrange
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-workspaces
+      tool: rebalance_tab
+      arguments:
+        workspace: "${{ steps.guard.output.workspace_id }}"
+        tab: "${{ steps.guard.output.tab_title }}"
+        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        rows: 100
+        layout: tiled
