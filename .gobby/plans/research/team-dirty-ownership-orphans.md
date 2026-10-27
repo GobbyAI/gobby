@@ -48,9 +48,19 @@ Relay cause: an upsert on reclaim rewrote the row timestamp, consistent with thi
 
 ## Relation to the candidate fix
 
-The candidate in #25161 covers three shapes. `claimed_task_carriers` no longer requires
-a `session_tasks` link, and `_live_path_owners` attributes a handed-off session's live
-ledger to its task. Both also read `task_edited_file_checkouts_history` for the claimed
-task. The #22604 shape (live map cleared, history retained, claimant is the same session)
-is fixed: the claimant's history-only paths are carriers, and history attributes a
-foreign session's live dirt to the claimed task. History never creates a holder.
+Shapes 1 and 2: `claimed_task_carriers` no longer requires a `session_tasks` link, and
+`_live_path_owners` attributes a handed-off session's live ledger to its task.
+
+The #22604 shape (live map cleared, history retained, claimant is the same session)
+keeps its history-only paths as carriers. History never creates a holder.
+
+Bounce d063d81a narrowed the carrier rule. History alone no longer carries a path. A path
+is owned by the task whose newest Gobby edit of it is newer than the last commit touching
+it in that checkout. The edit time is `task_edited_checkout_times` (per task, checkout and
+path, epoch seconds, written at each Gobby edit). Among tasks, the newest edit owns the
+path, and ledger key order never decides the owner. A path committed after its last Gobby
+edit, then changed outside Gobby, is refused until `approve-dirty-paths`. Git commit times
+are whole seconds, so an edit in the commit's own second is refused rather than carried.
+
+Known gap, not fixed here: script-body writes (for example `python3 gen.py`) have no
+snapshot. The seat checkpoint-commits its own script-written paths, as #25171 did.

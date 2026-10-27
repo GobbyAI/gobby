@@ -605,6 +605,25 @@ def task_edited_file_times(variables: dict[str, Any], task_id: str) -> dict[str,
     return times
 
 
+def task_checkout_edit_times(
+    variables: dict[str, Any], task_id: str, checkout_root: str
+) -> dict[str, float]:
+    """Return epoch seconds of the newest Gobby edit per path for one task in one checkout."""
+    root = normalize_task_checkout_root(checkout_root)
+    raw = variables.get("task_edited_checkout_times")
+    raw_task = raw.get(task_id) if isinstance(raw, dict) else None
+    raw_root = raw_task.get(root) if isinstance(raw_task, dict) and root is not None else None
+    if not isinstance(raw_root, dict):
+        return {}
+    times: dict[str, float] = {}
+    for value, stamp in raw_root.items():
+        path = normalize_task_edited_path(value)
+        if path is None or isinstance(stamp, bool) or not isinstance(stamp, int | float):
+            continue
+        times[path] = float(stamp)
+    return times
+
+
 def target_task_has_edits(variables: dict[str, Any], task_id: str | None) -> bool:
     """Return whether the resolved task has attributed edit paths."""
     return bool(task_id and _task_edited_files(variables).get(task_id))

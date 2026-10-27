@@ -31,6 +31,7 @@ from gobby.workflows.commit_guard_conflicts import (
 )
 from gobby.workflows.dirty_edit_grants import (
     approved_dirty_paths,
+    checkout_path_owners,
     claimed_task_carriers,
     dirty_path_approval_command,
 )
@@ -54,7 +55,6 @@ from gobby.workflows.task_claim_state import (
     resolve_edit_pair,
     task_edit_path_covers,
     task_edited_file_set_for_checkout,
-    task_edited_file_set_with_history,
     task_selection_events,
 )
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
@@ -333,7 +333,7 @@ async def foreign_dirty_edit_conflict(
             if not dirty:
                 continue
             own_tasks, carriers = await asyncio.to_thread(
-                claimed_task_carriers, db, session_id=session_id, checkout_root=root
+                claimed_task_carriers, db, session_id=session_id, checkout_root=root, paths=dirty
             )
             approved = await asyncio.to_thread(approved_dirty_paths, variables, root)
             root_unowned: set[str] = set()
@@ -488,7 +488,7 @@ def _live_path_owners(
         (exclude_session_id, list(LIVE_SESSION_STATUS_ORDER), event_machine_id()),
     )
     variable_manager = SessionVariableManager(db)
-    owners: dict[str, list[ForeignPathOwner]] = {}
+    live_sessions: list[tuple[Any, str, dict[str, Any], AbstractSet[str]]] = []
     for row in rows:
         owner_session_id = str(row["session_id"])
         variables = variable_manager.get_variable_subset(
@@ -498,14 +498,22 @@ def _live_path_owners(
                 SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE,
                 "claimed_tasks",
                 "task_edited_file_checkouts",
-                "task_edited_file_checkouts_history",
                 "task_live_edit_starts",
                 "task_selection_history",
             ),
         )
-        held = session_dirty_file_set_for_checkout(variables, checkout_root)
+        held: AbstractSet[str] = session_dirty_file_set_for_checkout(variables, checkout_root)
         if paths is not None:
             held = overlapping_task_edit_paths(held, paths)
+        live_sessions.append((row, owner_session_id, variables, held))
+    # The newest Gobby edit of a held path names its ledger owner, whichever session holds it.
+    ledger_owners = checkout_path_owners(
+        db,
+        checkout_root=checkout_root,
+        paths={path for _, _, _, held in live_sessions for path in held},
+    )
+    owners: dict[str, list[ForeignPathOwner]] = {}
+    for row, owner_session_id, variables, held in live_sessions:
         claims = variables.get("claimed_tasks")
         claimed_tasks = claims if isinstance(claims, dict) else {}
         live = variables.get("task_live_edit_starts")
@@ -522,14 +530,6 @@ def _live_path_owners(
             project_name=row["project_name"],
             project_id=row["session_project_id"],
         )
-        # A session that handed off a claim, or whose live ledger was cleared, still owns its edits.
-        live_ledger = variables.get("task_edited_file_checkouts")
-        history_ledger = variables.get("task_edited_file_checkouts_history")
-        ledger_tasks = [
-            *claimed_tasks,
-            *(live_ledger if isinstance(live_ledger, dict) else {}),
-            *(history_ledger if isinstance(history_ledger, dict) else {}),
-        ]
         for path in held:
             # Edit history outlives a clean reconcile; the live interval names the owner.
             task_id = _live_interval_task(
@@ -542,14 +542,6 @@ def _live_path_owners(
                 ),
                 None,
             )
-            ledger_task_id = next(
-                (
-                    task
-                    for task in ledger_tasks
-                    if path in task_edited_file_set_with_history(variables, task, checkout_root)
-                ),
-                None,
-            )
             task_ref = str(claimed_tasks[task_id]) if task_id is not None else ""
             owners.setdefault(path, []).append(
                 ForeignPathOwner(
@@ -558,7 +550,7 @@ def _live_path_owners(
                     task_ref=task_ref,
                     owner_session_id=owner_session_id,
                     owner_task_id=task_id,
-                    ledger_task_id=ledger_task_id,
+                    ledger_task_id=ledger_owners.get(path),
                 )
             )
     return {path: tuple(holders) for path, holders in owners.items()}

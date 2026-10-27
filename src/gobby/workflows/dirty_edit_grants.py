@@ -1,8 +1,8 @@
 """Grounds that let a session write dirt its own ledger does not cover.
 
-A task's carriers follow its claim: a path any session's task edit ledger
-attributes to a task this session holds (``tasks.claimed_by_session_id``) is
-this session's own. An operator approval names exact paths in one checkout for
+A path is this session's own when the newest Gobby edit of it since the last
+commit touching it belongs to a task this session holds (``tasks.claimed_by_session_id``).
+An operator approval names exact paths in one checkout for
 one session, and holds for each path only while it keeps the content it had
 when approved. Only the operator route writes the reserved approval variable: the
 daemon's dirty-path-approvals endpoint, which admits only a verified operator API key.
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shlex
 from collections.abc import Iterable, Mapping
@@ -20,9 +21,12 @@ from pathlib import Path
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.git import run_git_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     normalize_task_checkout_root,
+    task_checkout_edit_times,
+    task_edit_path_covers,
     task_edited_file_set_with_history,
 )
 
@@ -30,37 +34,90 @@ OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE = "operator_dirty_path_approvals"
 
 
 def claimed_task_carriers(
-    db: HubDatabase, *, session_id: str, checkout_root: str
+    db: HubDatabase, *, session_id: str, checkout_root: str, paths: Iterable[str]
 ) -> tuple[frozenset[str], set[str]]:
-    """Return the tasks this session holds and the paths any session edited for them."""
+    """Return the tasks this session holds and the ledger paths whose newest edit they own."""
     rows = db.fetchall(
-        """
-        SELECT tasks.id::text AS task_id,
-               (session_variables.variables -> 'task_edited_file_checkouts'
-                   -> tasks.id::text)::text AS checkouts,
-               (session_variables.variables -> 'task_edited_file_checkouts_history'
-                   -> tasks.id::text)::text AS history_checkouts
-        FROM tasks
-        LEFT JOIN session_variables
-            ON session_variables.variables -> 'task_edited_file_checkouts' ? tasks.id::text
-            OR session_variables.variables -> 'task_edited_file_checkouts_history' ? tasks.id::text
-        WHERE tasks.claimed_by_session_id = %s
-        """,
+        "SELECT id::text AS task_id FROM tasks WHERE claimed_by_session_id = %s",
         (session_id,),
     )
-    carriers: set[str] = set()
+    own_tasks = frozenset(str(row["task_id"]) for row in rows)
+    owners = checkout_path_owners(db, checkout_root=checkout_root, paths=paths)
+    return own_tasks, {path for path, task_id in owners.items() if task_id in own_tasks}
+
+
+def checkout_path_owners(
+    db: HubDatabase, *, checkout_root: str, paths: Iterable[str]
+) -> dict[str, str]:
+    """Map each ledger path covering ``paths`` to the task whose newest edit still leaves it dirty.
+
+    Every session's ledger counts. A task's Gobby edit is dirt only while it is newer than
+    the last commit touching the path in this checkout, and among tasks that edited a path
+    the newest edit owns it. Ledger key order never decides the owner.
+    """
+    root = normalize_task_checkout_root(checkout_root)
+    wanted = set(paths)
+    if root is None or not wanted:
+        return {}
+    rows = db.fetchall(
+        """
+        SELECT (session_variables.variables -> 'task_edited_file_checkouts')::text AS checkouts,
+               (session_variables.variables -> 'task_edited_file_checkouts_history')::text
+                   AS history_checkouts,
+               (session_variables.variables -> 'task_edited_checkout_times')::text AS times
+        FROM session_variables
+        WHERE session_variables.variables ?| ARRAY[
+            'task_edited_file_checkouts', 'task_edited_file_checkouts_history'
+        ]
+        """
+    )
+    newest: dict[str, dict[str, float]] = {}
     for row in rows:
-        if row["checkouts"] is None and row["history_checkouts"] is None:
-            continue
-        task_id = str(row["task_id"])
-        ledger = {
-            "task_edited_file_checkouts": {task_id: json.loads(row["checkouts"] or "{}")},
-            "task_edited_file_checkouts_history": {
-                task_id: json.loads(row["history_checkouts"] or "{}")
-            },
+        variables = {
+            "task_edited_file_checkouts": _json_object(row["checkouts"]),
+            "task_edited_file_checkouts_history": _json_object(row["history_checkouts"]),
+            "task_edited_checkout_times": _json_object(row["times"]),
         }
-        carriers |= task_edited_file_set_with_history(ledger, task_id, checkout_root)
-    return frozenset(str(row["task_id"]) for row in rows), carriers
+        task_ids = {
+            *variables["task_edited_file_checkouts"],
+            *variables["task_edited_file_checkouts_history"],
+        }
+        for task_id in task_ids:
+            stamps = task_checkout_edit_times(variables, task_id, root)
+            for entry in task_edited_file_set_with_history(variables, task_id, root):
+                if any(task_edit_path_covers(entry, path) for path in wanted):
+                    by_task = newest.setdefault(entry, {})
+                    by_task[task_id] = max(stamps.get(entry, 0.0), by_task.get(task_id, 0.0))
+    owners: dict[str, str] = {}
+    for entry, by_task in newest.items():
+        task_id, stamp = max(by_task.items(), key=lambda item: (item[1], item[0]))
+        last_commit = _last_commit_second(root, entry)
+        # Git commit times are whole seconds, so an edit in the commit's own second is not
+        # proven newer. Unstamped entries (stamp 0.0) own nothing once the path was committed.
+        if last_commit is None or math.floor(stamp) > last_commit:
+            owners[entry] = task_id
+    return owners
+
+
+def _last_commit_second(root: str, path: str) -> float | None:
+    """Return the epoch second of the newest commit touching ``path``, or None if there is none.
+
+    An unreadable history returns ``inf``, which proves no edit newer than the commit.
+    """
+    newest = run_git_command(
+        ["git", "--literal-pathspecs", "log", "-1", "--format=%ct", "--", path],
+        cwd=root,
+        timeout=10,
+    )
+    if newest is None:
+        unborn = run_git_command(["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=root)
+        return None if unborn is None else math.inf
+    return float(newest) if newest else None
+
+
+def _json_object(text: str | None) -> dict[str, Any]:
+    value = json.loads(text) if text else None
+    return value if isinstance(value, dict) else {}
 
 
 def record_dirty_path_approval(
