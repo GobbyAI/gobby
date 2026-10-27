@@ -93,7 +93,22 @@ FINISHED = frozenset({"completed", "failed", "cancelled", "interrupted"})
 ACTIVE_RUNS = frozenset({"pending", "running"})
 UNSETTLED_TERMINALS = frozenset({"pending", "live", "orphaned"})
 RUNBOOK_INPUTS = frozenset(
-    {"workspace", "writer_title", "enhancer_title", "adversary_title", "seats"}
+    {
+        "workspace",
+        "writer_title",
+        "enhancer_title",
+        "adversary_title",
+        "writer_provider",
+        "writer_model",
+        "writer_reasoning_effort",
+        "enhancer_provider",
+        "enhancer_model",
+        "enhancer_reasoning_effort",
+        "adversary_provider",
+        "adversary_model",
+        "adversary_reasoning_effort",
+        "seats",
+    }
 )
 SEAT_AGENTS = {"writer": "plan-writer", "enhancer": "plan-enhancer", "adversary": "plan-adversary"}
 SEAT_RUNTIMES = {
