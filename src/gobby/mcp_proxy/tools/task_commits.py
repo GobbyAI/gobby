@@ -45,6 +45,11 @@ if TYPE_CHECKING:
 __all__ = ["create_commit_registry"]
 
 
+def _is_test_path(path: str) -> bool:
+    """A path under a tests/ directory is test evidence, not production code."""
+    return path.startswith("tests/") or "/tests/" in path
+
+
 def get_current_project_id() -> str | None:
     """Get the current project ID from context."""
     context = get_project_context()
@@ -165,10 +170,11 @@ def create_commit_registry(
             paths = await collect_net_commit_paths_async(
                 [normalized], repo_path, candidate=normalized
             )
+            changed = set(paths.changed) | set(paths.deleted)
             await assert_task_commit_paths_available_async(
                 task_manager,
                 current_task,
-                set(paths.changed) | set(paths.deleted),
+                changed,
                 repo_path,
                 [normalized],
             )
@@ -176,6 +182,7 @@ def create_commit_registry(
             return {
                 "task_id": task.id,
                 "commits": task.commits or [],
+                "production_changes": any(not _is_test_path(path) for path in changed),
             }
         except (ValueError, RuntimeError) as e:
             return {"error": str(e)}

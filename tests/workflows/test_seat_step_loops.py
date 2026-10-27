@@ -1392,7 +1392,7 @@ async def linked_developer(
     arguments = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
     with session_context_for_test(SESSION_ID):
         output = cast(dict[str, Any], await registry.call("link_commit", arguments))
-    assert output == {"task_id": task.id, "commits": [short_sha]}
+    assert output == {"task_id": task.id, "commits": [short_sha], "production_changes": True}
     assert LocalTaskManager(temp_db).get_task(task.id).commits == [short_sha]
     assert len(short_sha) < len(sha) == 40
     SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
