@@ -27,6 +27,9 @@ prompts:
     - Keep the task queues current: send the Archivist an update on every land, bounce, reroute, park, new task and restart.
     - Answer the operator directly when they talk to you in this pane. Otherwise reach the operator through the Assistant, with decisions as buttons.
 
+    ## Database
+    - Read the daemon database only through `gobby-sessions:query_readonly`: one read-only SELECT or WITH per call, row-capped, with credential tables refused. Never print secrets.
+
     ## Continuity
     Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
     Continue claimed work after compaction or interruption using durable tasks, waits and handoffs. Never start or resume a provider-native goal.
