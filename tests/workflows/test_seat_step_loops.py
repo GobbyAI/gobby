@@ -1573,6 +1573,40 @@ async def test_developer_declared_test_only_repair_after_bounce_returns_to_submi
     assert (run.step, run.vars["bounced"]) == ("submit", False)
 
 
+async def test_developer_declared_candidate_survives_an_ordinary_red_unlink(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    red = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, red)
+    repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
+    await _link(run, temp_db, task, repo, repair, candidate=True)
+    assert run.step == "submit"
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, red)
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
+    await _unlink(run, temp_db, task.id, repo, repair)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_declared_candidate_survives_a_production_unlink(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
+    await _link(run, temp_db, task, repo, repair, candidate=True)
+    assert run.step == "submit"
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
+    await _unlink(run, temp_db, task.id, repo, repair)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
 async def test_developer_bounce_requires_incoming_assigned_reviewer(
     linked_developer: tuple[SeatRun, Task, str, str],
 ) -> None:
