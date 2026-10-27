@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.team_lifecycle import TeamBinding
-from gobby.agents.team_teardown import TeamRunTerminator, TeamTreeDeleter
+from gobby.agents.team_teardown import (
+    SEAT_NOT_ENDED,
+    TeamRunTerminator,
+    TeamSeatNotEndedError,
+    TeamTreeDeleter,
+)
 from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.clones.git import CloneGitManager, GitOperationResult
 from gobby.hub.remote_workspaces import expire_remote_workspaces
@@ -294,7 +299,14 @@ def team_run_terminator(runner: GobbyRunner) -> TeamRunTerminator:
             effective_status="cancelled",
             debug=False,
         )
-        return bool(result.get("success"))
+        if result.get("success"):
+            return True
+        if result.get("error_code") == agent_cancellation.TERMINATE_DAEMON_SHUTDOWN:
+            return False  # admission is closed for shutdown; the next pass retries
+        raise TeamSeatNotEndedError(
+            str(result.get("error_code") or SEAT_NOT_ENDED),
+            str(result.get("error") or f"run {run.id} could not be ended"),
+        )
 
     return terminate
 

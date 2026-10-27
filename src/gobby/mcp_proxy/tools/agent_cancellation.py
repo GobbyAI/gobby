@@ -16,6 +16,8 @@ from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 logger = logging.getLogger(__name__)
 
 _SELF_REPORTED_ERROR = "Agent self-reported error"
+# terminate_agent_run's error_code while daemon shutdown has closed terminal-delivery admission.
+TERMINATE_DAEMON_SHUTDOWN = "daemon_shutdown"
 
 
 async def _reap_terminal_srt_runner(run_id: str) -> None:
@@ -314,7 +316,11 @@ async def terminate_agent_run(
 
     response = await shielded_terminal_delivery(run_id, kill_and_deliver)
     if response is None:
-        return {"success": False, "error": "Daemon shutdown is in progress"}
+        return {
+            "success": False,
+            "error": "Daemon shutdown is in progress",
+            "error_code": TERMINATE_DAEMON_SHUTDOWN,
+        }
     return response
 
 
