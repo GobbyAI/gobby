@@ -94,6 +94,8 @@ async def _manager_spawns_developer(
         "agent": "developer",
         "task_id": leaf.id,
         "prompt": "Work the leaf",
+        "provider": "claude",
+        "model": "claude-sonnet-5",
         "checkout_mode": "worktree",
         "placement": placement,
         "project_path": h.project_path,
