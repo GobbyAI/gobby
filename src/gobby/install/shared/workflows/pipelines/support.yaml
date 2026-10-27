@@ -229,11 +229,13 @@ steps:
           else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
 
   # Tiles the Support tab once the launched seats have joined it, on a first run or a re-run.
+  # A refused layout (a resumed run has no request principal) is recorded; the seats stay launched.
   - id: arrange
     condition: "${{ len(steps.guard.output.launch) > 0 }}"
     mcp:
       server: gobby-workspaces
       tool: rebalance_tab
+      on_refused: record
       arguments:
         workspace: "${{ inputs.workspace }}"
         tab: Support

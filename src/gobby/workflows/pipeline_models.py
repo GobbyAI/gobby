@@ -38,6 +38,9 @@ class MCPStepConfig(BaseModel):
     server: str
     tool: str
     arguments: dict[str, Any] | None = None
+    # "record" keeps a forbidden reply as this step's output, so a refused layout write
+    # ends the step and the run continues; "fail" (the default) raises it as a step error.
+    on_refused: Literal["fail", "record"] = "fail"
 
 
 class PipelineStep(BaseModel):
