@@ -140,6 +140,7 @@ async def _evaluate_close(
             resolved_session_id=session_id,
             repo_path=repo,
             prospective_commit_shas=commits,
+            machine_id=session.machine_id,
         )
     except CloseAttributionLookupError as exc:
         return evaluation.refuse("session_variable_lookup_failed", str(exc))

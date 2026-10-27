@@ -79,14 +79,15 @@ async def _evaluate(repo: Path, linked: list[str], requested: str | None) -> Clo
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stored_short", [False, True])
 @pytest.mark.parametrize("requested_short", [False, True])
-async def test_already_linked_tip_keeps_complete_link_order(
+async def test_already_linked_tip_moves_last_in_link_order(
     candidate_repo: tuple[Path, str, str], stored_short: bool, requested_short: bool
 ) -> None:
     repo, old, tip = candidate_repo
     linked = [tip[:10], old[:10]] if stored_short else [tip, old]
     evaluation = await _evaluate(repo, linked, tip[:12] if requested_short else tip)
     assert evaluation.ready, evaluation.response(preview=True)
-    assert evaluation.commit_shas == linked
+    # The named tip descends from the other link, so it closes as the last link (#25160).
+    assert evaluation.commit_shas == [linked[1], linked[0]]
     assert evaluation.candidate_commit_sha == tip
 
 

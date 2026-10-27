@@ -18,6 +18,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.team_records import EPIC_MODE
+from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.lifecycle_access import (
     is_operator_coordinator,
     session_agent_definition,
@@ -66,6 +67,13 @@ def _uncommitted_refusal(
     for root, paths in sorted(by_root.items()):
         found = task_dirty_paths(paths, root)
         if found is None:
+            if is_ignorable_attributed_root(
+                ctx.task_manager.db,
+                project_id=holder.project_id,
+                machine_id=holder.machine_id,
+                root=root,
+            ):
+                continue
             return {
                 "error": f"Cannot verify holder checkout {root}",
                 "error_code": "checkout_unresolved",

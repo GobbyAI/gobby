@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_page
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.tasks import Task
+from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.tasks.step_records import StepRequirements, task_step_requirements
 from gobby.workflows.commit_guard import (
@@ -58,6 +59,7 @@ async def capture_attribution(
     resolved_session_id: str,
     repo_path: str,
     prospective_commit_shas: Sequence[str],
+    machine_id: str | None = None,
 ) -> CloseAttributionSnapshot:
     owner = get_claimed_session_id(task) or resolved_session_id
     try:
@@ -80,6 +82,17 @@ async def capture_attribution(
             logger.debug("Cannot inspect linked paths for %s", task.id, exc_info=True)
     clean_checkouts: dict[str, frozenset[str]] = {}
     for checkout_root, checkout_paths in checkouts.items():
+        if await asyncio.to_thread(
+            is_ignorable_attributed_root,
+            ctx.task_manager.db,
+            project_id=task.project_id,
+            machine_id=machine_id,
+            root=checkout_root,
+        ):
+            logger.debug(
+                "Ignoring unregistered non-checkout root %s for %s", checkout_root, task.id
+            )
+            continue
         paths = frozenset(await committable_task_paths_async(checkout_paths, checkout_root))
         dirty = session_dirty_file_set_for_checkout(variables, checkout_root)
         committed = frozenset(
