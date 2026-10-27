@@ -96,6 +96,57 @@ async def test_close_invariant_matrix(
     assert len(result.gates) == 5
 
 
+@pytest.mark.parametrize("reason", ["moot", "superseded", "wont_do"])
+@pytest.mark.asyncio
+async def test_no_work_close_skips_commit_and_step_gates(reason: str) -> None:
+    from gobby.tasks.close_invariants import evaluate_close_invariants
+
+    # Nothing is linked, so there is no commit to check and no step records to judge:
+    # gates 2, 4 and 5 are skipped, not passed or failed.
+    result = await evaluate_close_invariants(
+        open_children=[],
+        commit_shas=[],
+        reason=reason,
+        attributed_checkouts={},
+        integration_repo_path=None,
+        integration_ref=None,
+        required_steps=("implementation", "closing"),
+        missing_steps=("implementation", "closing"),
+    )
+    assert {gate.item: gate.status for gate in result.gates} == {
+        1: "passed",
+        2: "skipped",
+        3: "passed",
+        4: "skipped",
+        5: "skipped",
+    }
+    assert result.ready
+
+
+@pytest.mark.asyncio
+async def test_no_work_close_with_a_linked_commit_still_checks_ancestry(
+    repository: tuple[Path, str, str],
+) -> None:
+    from gobby.tasks.close_invariants import evaluate_close_invariants
+
+    repo, landed, _unlanded = repository
+    result = await evaluate_close_invariants(
+        open_children=[],
+        commit_shas=[landed],
+        reason="moot",
+        attributed_checkouts={},
+        integration_repo_path=str(repo),
+        integration_ref="refs/heads/integration",
+        required_steps=("closing",),
+        missing_steps=("closing",),
+    )
+    statuses = {gate.item: gate.status for gate in result.gates}
+    assert statuses[2] == "passed"
+    assert statuses[4] == "failed"
+    assert statuses[5] == "skipped"
+    assert not result.ready
+
+
 @pytest.mark.asyncio
 async def test_all_linked_commits_must_be_landed(repository: tuple[Path, str, str]) -> None:
     from gobby.tasks.close_invariants import evaluate_close_invariants
