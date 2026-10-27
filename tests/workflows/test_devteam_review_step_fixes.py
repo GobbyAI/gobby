@@ -4,6 +4,7 @@ a reviewer may wait on a background run with Monitor, and the bare CANDIDATE for
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -14,8 +15,10 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.seat_messages import _CANDIDATE_GRAMMAR
 from tests.workflows.test_seat_step_loops import (
+    _SYNTHETIC_SEATS,
     OWNER_ID,
     REPLACEMENT_SHA,
+    SESSION_ID,
     SHA,
     SeatRun,
 )
@@ -178,3 +181,50 @@ async def test_bare_candidate_is_refused_with_canonical_grammar(
     assert result["candidate_binding_error"] == _CANDIDATE_GRAMMAR
     assert "EVENT=CANDIDATE TASK=" in _CANDIDATE_GRAMMAR
     messages.create_message.assert_not_called()
+
+
+def _held_claim_seat() -> dict[str, Any]:
+    """The synthetic developer, with a load_skills step that holds its claim step."""
+    seat: dict[str, Any] = copy.deepcopy(_SYNTHETIC_SEATS["developer"])
+    workflow = seat["step_workflow"]
+    workflow["variables"]["required_skills"] = ["synthetic-procedure"]
+    workflow["steps"].insert(
+        0,
+        {
+            "name": "load_skills",
+            "allowed_mcp_tools": ["gobby-skills:get_skill", "gobby-skills:get_skill_file"],
+            "transitions": [
+                {
+                    "to": "claim",
+                    "when": "all(skill_loaded(skill) for skill in vars.required_skills)",
+                }
+            ],
+        },
+    )
+    return seat
+
+
+async def test_held_claim_refused_before_bootstrap_then_binds_and_advances(
+    temp_db: HubDatabase,
+) -> None:
+    # A claim_task before the bootstrap skills load never binds the task. Once they load, a
+    # claim the seat already holds reports success with the task id; the claim step binds it
+    # and advances without branching on the already_claimed flag.
+    run = SeatRun(temp_db, "developer", definition=_held_claim_seat())
+    assert run.step == "load_skills"
+    assert not await run.admits("gobby-tasks", "claim_task", {"task_id": "#1"})
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "claim"
+
+    task = run.task(owner=SESSION_ID)
+    ref = f"#{task.seq_num}"
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": ref},
+        {"result": {"task_id": task.id, "ref": ref, "already_claimed": True}},
+    )
+
+    assert run.step == "route_skills"
+    assert run.vars["assigned_task_id"] == task.id
+    assert run.vars["assigned_task_ref"] == ref

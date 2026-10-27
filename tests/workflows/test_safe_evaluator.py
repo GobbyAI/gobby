@@ -519,6 +519,25 @@ class TestSkillLoaded:
         variables["loaded_skill_references"] = [reference]
         assert evaluator.evaluate(f"skill_loaded('{reference}')") is True
 
+    def test_reference_guard_needs_every_required_reference_loaded(self) -> None:
+        first = "gobby:references/synthetic/first.md"
+        second = "gobby:references/synthetic/second.md"
+        third = "gobby:references/synthetic/third.md"
+        guard = " and ".join(f"skill_loaded('{ref}')" for ref in (first, second, third))
+        # The third reference sits in the menu-only ledger until it is loaded as a reference.
+        variables: dict[str, Any] = {
+            "loaded_skills": ["gobby", third],
+            "loaded_skill_references": [],
+        }
+        evaluator = _build_evaluator({"variables": variables})
+        assert evaluator.evaluate(guard) is False
+        variables["loaded_skill_references"] = [first]
+        assert evaluator.evaluate(guard) is False
+        variables["loaded_skill_references"] = [first, second]
+        assert evaluator.evaluate(guard) is False
+        variables["loaded_skill_references"] = [first, second, third]
+        assert evaluator.evaluate(guard) is True
+
     def test_returns_true_when_loaded_skill_present(self) -> None:
         ctx: dict[str, Any] = {"variables": {"loaded_skills": ["python"]}}
         ev = _build_evaluator(ctx)

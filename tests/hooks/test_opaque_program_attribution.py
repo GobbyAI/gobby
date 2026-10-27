@@ -10,7 +10,9 @@ Redirections and other canonical write targets still attribute as before.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -296,26 +298,76 @@ def test_independently_resolved_mutations_still_attribute(
     assert reason == "", reason
 
 
-def test_claimant_shell_rewrite_of_its_ledgered_file_stays_owned(
+def test_claimant_cp_p_rewrite_of_its_ledgered_file_stays_owned(
     mock_dependencies: dict[str, Any], checkout: Checkout
 ) -> None:
-    """The claimant's Gobby edit, then its opaque program rewrites that file: still its own."""
+    """A claimant rewrite that restores an older mtime (cp -p) is still its own edit (#25161)."""
     checkout.write("base.txt", "gobby edit\n")
     SessionVariableManager(checkout.db).record_edited_files(
         checkout.session_id, ["base.txt"], checkout_root=str(checkout.repo)
     )
+    older = time.time() - 3600.0
 
-    def shell_rewrites() -> None:
-        checkout.write("base.txt", "shell rewrite\n")
+    def cp_p_rewrites() -> None:
+        checkout.write("base.txt", "cp -p rewrite\n")
+        os.utime(checkout.repo / "base.txt", (older, older))
 
     checkout.run(
         _handlers(mock_dependencies, checkout.db),
         "uv run python /tmp/tool.py base.txt",
-        shell_rewrites,
+        cp_p_rewrites,
     )
 
     assert checkout.task_ledger() == {"base.txt"}
     assert checkout.rule_3_reason("base.txt") == ""
+
+
+def test_claimant_formatter_between_its_edits_keeps_the_path_owned(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    """A claimant formatter rewrite between two of its Gobby edits keeps the path its own."""
+    variables = SessionVariableManager(checkout.db)
+    checkout.write("base.txt", "gobby edit\n")
+    variables.record_edited_files(
+        checkout.session_id, ["base.txt"], checkout_root=str(checkout.repo)
+    )
+
+    def formatter_rewrites() -> None:
+        checkout.write("base.txt", "gobby edit, formatted\n")
+
+    checkout.run(
+        _handlers(mock_dependencies, checkout.db),
+        "uv run python /tmp/format.py base.txt",
+        formatter_rewrites,
+    )
+    checkout.write("base.txt", "gobby edit, formatted, edited again\n")
+    variables.record_edited_files(
+        checkout.session_id, ["base.txt"], checkout_root=str(checkout.repo)
+    )
+
+    assert checkout.rule_3_reason("base.txt") == ""
+
+
+def test_outside_delete_then_sibling_create_in_claimant_call_stays_unowned(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    """An outside deletion before a claimant call stays unowned when the call makes a sibling."""
+    checkout.write("pkg/gone.txt", "gobby edit\n")
+    SessionVariableManager(checkout.db).record_edited_files(
+        checkout.session_id, ["pkg/gone.txt"], checkout_root=str(checkout.repo)
+    )
+    (checkout.repo / "pkg" / "gone.txt").unlink()
+
+    def sibling_create() -> None:
+        checkout.write("pkg/sibling.txt", "generated\n")
+
+    checkout.run(
+        _handlers(mock_dependencies, checkout.db),
+        "uv run python /tmp/tool.py",
+        sibling_create,
+    )
+
+    assert f"pkg/gone.txt — {UNOWNED}" in checkout.rule_3_reason("pkg/gone.txt")
 
 
 def test_split_assembly_attributes_only_the_output(

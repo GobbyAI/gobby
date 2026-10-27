@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from gobby.storage.session_models import Session
     from gobby.workflows.definitions import AgentDefinitionBody
 
+# A launch that names no reasoning effort from its spawn or its definition runs at this level.
+DEFAULT_LAUNCH_REASONING_EFFORT = "medium"
+
 STANDING_SEAT_SUFFIX = (
     "\n\nThis is an interactive standing seat. Remain available between turns and tasks. "
     "An idle prompt, completed task, or finished runbook does not end this seat. "
@@ -91,6 +94,18 @@ async def resolve_launch_model(
                         ),
                     }
                 )
+    if effective_model is None:
+        owner = f"agent {agent_body.name!r}" if agent_body else "this spawn"
+        raise LaunchRefused(
+            {
+                "success": False,
+                "error": (
+                    f"No model for the {provider} launch of {owner}. Pass model= on the spawn "
+                    "or set model: on the agent definition. A launch without a model would "
+                    "run the CLI's default model, so it is refused."
+                ),
+            }
+        )
     pair_error = await incompatible_spawn_model_provider_after_recollect(
         provider=provider,
         model=effective_model,
@@ -99,8 +114,10 @@ async def resolve_launch_model(
         raise LaunchRefused(pair_error.to_response())
 
     requested_effort = reasoning_effort
-    if requested_effort is None and agent_body:
+    if not requested_effort and agent_body:
         requested_effort = agent_body.reasoning_effort
+    if not requested_effort:
+        requested_effort = DEFAULT_LAUNCH_REASONING_EFFORT
     effective_required = reasoning_required
     if effective_required is None and agent_body:
         effective_required = agent_body.reasoning_required

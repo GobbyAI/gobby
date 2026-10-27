@@ -14,6 +14,7 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
@@ -167,6 +168,22 @@ def _register_steps_workflow(
         )
     )
     return instance_manager
+
+
+def _before_mcp_call_event(server: str, tool: str) -> HookEvent:
+    data: dict[str, object] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {"server_name": server, "tool_name": tool, "arguments": {}},
+    }
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=AGENT_SESSION_ID,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={},
+    )
 
 
 def _handler(
@@ -773,6 +790,77 @@ class TestAgentWorkflowCompletion:
         completion_registry.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_saved_report_then_handoff_terminalizes_workflow(self, db: HubDatabase) -> None:
+        instance_manager = _register_steps_workflow(
+            db,
+            workflow_name="synthetic-report-handoff",
+            steps=[
+                {
+                    "name": "report",
+                    "on_mcp_success": [
+                        _handler("synthetic-reports", "save_report", "report_saved", True)
+                    ],
+                    "transitions": [{"to": "handoff", "when": "vars.report_saved"}],
+                },
+                {
+                    "name": "handoff",
+                    "on_mcp_success": [
+                        _handler("gobby-sessions", "set_handoff", "handoff_saved", True)
+                    ],
+                    "transitions": [{"to": "terminate", "when": "vars.handoff_saved"}],
+                },
+                {"name": "terminate"},
+            ],
+            variables={"report_saved": False, "handoff_saved": False},
+            current_step="report",
+        )
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(
+            id="ff807256-1906-55de-b7b3-94163bb18352"
+        )
+        runner.run_storage.db = db
+        runner.complete_run.return_value = True
+        runner.get_run.return_value = MagicMock(status="success", error=None)
+        runner.agent_lifecycle_monitor = MagicMock()
+        runner.agent_lifecycle_monitor.complete_workflow_run = AsyncMock(return_value=True)
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        await engine.evaluate(
+            _after_tool_event(
+                mcp_server="synthetic-reports",
+                mcp_tool="save_report",
+                tool_arguments={"path": "reports/expansion.md"},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        instance = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert instance is not None
+        assert instance.current_step == "handoff"
+
+        response = await engine.evaluate(
+            _after_tool_event(
+                mcp_server="gobby-sessions",
+                mcp_tool="set_handoff",
+                tool_arguments={"clear_session": False},
+            ),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+
+        terminal = instance_manager.get_for_session(AGENT_SESSION_ID)
+        assert terminal is not None
+        assert terminal.current_step == "terminate"
+        assert variables["step_workflow_complete"] is True
+        assert response.decision == "allow"
+        runner.agent_lifecycle_monitor.complete_workflow_run.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_parent_wait_unblocks_without_end_agent_run_tool_call(
         self, db: HubDatabase
     ) -> None:
@@ -1188,6 +1276,53 @@ class TestAgentWorkflowCompletion:
             assert instance.current_step == "implement"
             assert instance.variables["blocker_handed_off"] is False
             assert "step_workflow_complete" not in variables
+
+    @pytest.mark.asyncio
+    async def test_unassigned_seat_admits_bootstrap_and_report_tools_only(
+        self, db: HubDatabase
+    ) -> None:
+        _register_steps_workflow(
+            db,
+            workflow_name="synthetic-unassigned-seat",
+            steps=[
+                {
+                    "name": "bootstrap",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "allowed_mcp_tools": [
+                        "gobby-skills:get_skill",
+                        "gobby-skills:get_skill_file",
+                        "gobby-skills:list_skills",
+                        "gobby-skills:search_skills",
+                        "gobby-agents:send_message",
+                    ],
+                }
+            ],
+            variables={"assigned_task_id": None},
+            current_step="bootstrap",
+        )
+        engine = RuleEngine(db)
+        variables: dict[str, object] = {"assigned_task_id": None}
+
+        for server, tool in (
+            ("gobby-skills", "get_skill"),
+            ("gobby-skills", "get_skill_file"),
+            ("gobby-skills", "list_skills"),
+            ("gobby-skills", "search_skills"),
+            ("gobby-agents", "send_message"),
+        ):
+            response = await engine.evaluate(
+                _before_mcp_call_event(server, tool),
+                session_id=AGENT_SESSION_ID,
+                variables=variables,
+            )
+            assert response.decision == "allow", f"{server}:{tool} should be admitted"
+
+        refused = await engine.evaluate(
+            _before_mcp_call_event("gobby-tasks", "claim_task"),
+            session_id=AGENT_SESSION_ID,
+            variables=variables,
+        )
+        assert refused.decision == "block"
 
 
 ASSIGNED_TASK_REF = "#22997"

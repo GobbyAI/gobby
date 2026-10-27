@@ -65,11 +65,21 @@ _PROVISIONAL_RECORDS = [_REVALIDATING, _UNPUBLISHED]
 _PROVISIONAL_IDS = ["revalidating", "unpublished"]
 
 
+# A definition names the model for its own provider; a launch with no model is refused.
+_MODEL_FOR_PROVIDER = {
+    "agy": "claude-sonnet-5",
+    "claude": "claude-sonnet-5",
+    "codex": "gpt-5.4",
+    "inherit": "claude-sonnet-5",
+}
+
+
 def _agent_body(provider: str) -> AgentDefinitionBody:
     return make_agent_definition(
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="default",
         provider=provider,
+        model=_MODEL_FOR_PROVIDER[provider],
     )
 
 
@@ -103,6 +113,8 @@ _SELECTION_PATHS: dict[str, dict[str, Any]] = {
         "sources": {"parent": "agy"},
     },
 }
+# The default path has no definition or model argument, so it is refused for its model.
+_MODELED_PATHS = sorted(path for path in _SELECTION_PATHS if path != "default")
 
 
 class _SideEffects:
@@ -177,7 +189,7 @@ async def test_agy_gate_refuses_before_any_side_effect(path: str, record: AgySup
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("record", _PROVISIONAL_RECORDS, ids=_PROVISIONAL_IDS)
-@pytest.mark.parametrize("path", sorted(_SELECTION_PATHS))
+@pytest.mark.parametrize("path", _MODELED_PATHS)
 async def test_revalidating_peek_reprobes_and_spawns(
     path: str,
     record: AgySupportRecord,
@@ -232,7 +244,7 @@ async def test_revalidating_peek_refuses_when_reprobe_unsupported(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", sorted(_SELECTION_PATHS))
+@pytest.mark.parametrize("path", _MODELED_PATHS)
 async def test_supported_record_passes_the_gate(path: str) -> None:
     with (
         _SideEffects() as effects,
@@ -253,10 +265,28 @@ async def test_non_agy_providers_never_consult_the_gate() -> None:
         patch.object(_implementation, "peek_agy_support") as peek,
     ):
         effects.mocks["get_project_context"].return_value = None
-        result = await _spawn(effects, {**_SELECTION_PATHS["explicit"], "provider": "codex"})
+        selection = {
+            **_SELECTION_PATHS["explicit"],
+            "provider": "codex",
+            "agent_body": _agent_body("codex"),
+        }
+        result = await _spawn(effects, selection)
 
     peek.assert_not_called()
     assert result == {"success": False, "error": "Could not resolve project context"}
+
+
+@pytest.mark.asyncio
+async def test_default_path_is_refused_for_its_model_after_the_gate() -> None:
+    with (
+        _SideEffects() as effects,
+        patch.object(_implementation, "peek_agy_support", return_value=_SUPPORTED) as peek,
+    ):
+        result = await _spawn(effects, _SELECTION_PATHS["default"])
+
+    peek.assert_called_once_with()
+    assert result["success"] is False
+    assert result["error"].startswith("No model for the agy launch of this spawn")
 
 
 @pytest.mark.asyncio

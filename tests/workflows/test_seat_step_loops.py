@@ -25,6 +25,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
@@ -51,6 +52,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.workflow_audit import WorkflowAuditManager
+from gobby.tasks.step_records import list_task_step_records
 from gobby.utils.git import normalize_commit_sha
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.agent_models import AgentStepWorkflowBody
@@ -1041,7 +1043,12 @@ async def test_developer_submit_unlinks_a_superseded_commit(
         "gobby-tasks",
         "unlink_commit",
         {"task_id": task.id, "commit_sha": sha},
-        {"task_id": task.id, "commits": updated.commits},
+        {
+            "task_id": task.id,
+            "commits": updated.commits,
+            "production_commits_remain": not last_commit,
+            "unlinked": commits[0],
+        },
     )
     assert run.step == ("implement" if last_commit else "submit")
 
@@ -1359,6 +1366,10 @@ async def linked_developer(
     )
     _git(repo, *commit, "unlinked base")
     unlinked_sha = _git(repo, "rev-parse", "HEAD")
+    candidate = repo / "src" / "gobby" / "candidate.py"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text("VALUE = 1\n")
+    _git(repo, "add", "--", "src/gobby/candidate.py")
     _git(repo, *commit, "linked candidate")
     sha = _git(repo, "rev-parse", "HEAD")
     short_sha = _git(repo, "rev-parse", "--short", "HEAD")
@@ -1386,7 +1397,12 @@ async def linked_developer(
     arguments = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
     with session_context_for_test(SESSION_ID):
         output = cast(dict[str, Any], await registry.call("link_commit", arguments))
-    assert output == {"task_id": task.id, "commits": [short_sha]}
+    assert output == {
+        "task_id": task.id,
+        "commits": [short_sha],
+        "production_changes": True,
+        "declared_candidate": None,
+    }
     assert LocalTaskManager(temp_db).get_task(task.id).commits == [short_sha]
     assert len(short_sha) < len(sha) == 40
     SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
@@ -1394,6 +1410,202 @@ async def linked_developer(
     assert run.step == "submit"
     await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree COMMIT={sha} NOTE=ready")
     return run, task, sha, unlinked_sha
+
+
+_TEST_ONLY_RED = {"tests/workflows/test_red_only.py": "def test_red_only():\n    assert False\n"}
+_PRODUCTION_FIX = {"src/gobby/red_fix.py": "VALUE = 1\n"}
+_TEST_ONLY_REPAIR = {
+    "tests/workflows/test_repair_only.py": "def test_repair_only():\n    assert True\n"
+}
+_BUNDLED_DEVELOPER = (
+    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
+)
+
+
+def _commit_files(repo: Path, message: str, files: dict[str, str]) -> str:
+    for relative, text in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    _git(repo, "add", "--", *files)
+    _git(
+        repo,
+        "-c",
+        "user.name=Gobby Tests",
+        "-c",
+        "user.email=gobby-tests@example.com",
+        "commit",
+        "--no-gpg-sign",
+        "-q",
+        "-m",
+        message,
+    )
+    return _git(repo, "rev-parse", "HEAD")
+
+
+async def _claimed_developer(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SeatRun, Task, Path]:
+    checkout = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "repo",
+        name="seat-link-kind",
+        machine_id=AUTHORITY_MACHINE_ID,
+        monkeypatch=monkeypatch,
+    )
+    repo = Path(checkout.root_path)
+    _git(repo, "init", "-q", "-b", "main")
+    _commit_files(repo, "unlinked base", {"README.md": "base\n"})
+    _git(repo, "checkout", "-q", "-b", "seat-work")
+    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
+    run = SeatRun(temp_db, "developer", project_id=checkout.project.id, definition=definition)
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    return run, task, repo
+
+
+def _registry(run: SeatRun, temp_db: HubDatabase) -> InternalToolRegistry:
+    return create_commit_registry(
+        task_manager=LocalTaskManager(temp_db),
+        project_manager=LocalProjectManager(temp_db),
+        session_manager=run.sessions,
+    )
+
+
+async def _link(
+    run: SeatRun,
+    temp_db: HubDatabase,
+    task: Task,
+    repo: Path,
+    sha: str,
+    *,
+    candidate: bool = False,
+) -> None:
+    arguments: dict[str, Any] = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
+    if candidate:
+        arguments["candidate"] = True
+    registry = _registry(run, temp_db)
+    with session_context_for_test(SESSION_ID):
+        output = cast(dict[str, Any], await registry.call("link_commit", arguments))
+    assert "error" not in output, output
+    await run.call("gobby-tasks", "link_commit", arguments, output)
+
+
+async def _unlink(run: SeatRun, temp_db: HubDatabase, task_ref: str, repo: Path, sha: str) -> None:
+    arguments = {
+        "task_id": task_ref,
+        "commit_sha": sha,
+        "reason": "superseded",
+        "project_path": str(repo),
+    }
+    registry = _registry(run, temp_db)
+    with session_context_for_test(SESSION_ID):
+        output = cast(dict[str, Any], await registry.call("unlink_commit", arguments))
+    assert "error" not in output, output
+    await run.call("gobby-tasks", "unlink_commit", arguments, output)
+
+
+async def test_developer_linked_test_only_red_commit_stays_in_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_linked_production_commit_moves_to_submit(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
+
+
+async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_unlinking_the_candidate_beside_red_returns_to_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    red = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, red)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_declared_test_only_repair_after_bounce_returns_to_submit(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE", PEER_ID)
+    assert run.step == "implement"
+    repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
+    await _link(run, temp_db, task, repo, repair, candidate=True)
+    assert (run.step, run.vars["bounced"]) == ("submit", False)
+
+
+async def test_developer_declared_candidate_survives_an_ordinary_red_unlink(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    red = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, red)
+    repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
+    await _link(run, temp_db, task, repo, repair, candidate=True)
+    assert run.step == "submit"
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, red)
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
+    await _unlink(run, temp_db, task.id, repo, repair)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_declared_candidate_survives_a_production_unlink(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
+    await _link(run, temp_db, task, repo, repair, candidate=True)
+    assert run.step == "submit"
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
+    await _unlink(run, temp_db, task.id, repo, repair)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
 
 async def test_developer_bounce_requires_incoming_assigned_reviewer(
@@ -1846,6 +2058,35 @@ async def test_reviewer_withdrawal_requires_own_unit_authority(
         assert run.step == step
 
 
+@pytest.mark.parametrize("succeeded", [True, False])
+async def test_reviewer_withdrawal_acknowledgment_delivery_gates_the_unit(
+    reviewer_authorities: tuple[SeatRun, Task, dict[str, str]], succeeded: bool
+) -> None:
+    run, task, _ = reviewer_authorities
+    before, step = run.vars, run.step
+    comments = run.db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,))
+    records = list_task_step_records(run.db, task.id)
+    line = f"EVENT=CANDIDATE_WITHDRAWN TASK={task.id} SHA={SHA} NOTE=reassigned"
+    message = InterSessionMessageManager(run.db).create_message(SESSION_ID, COORDINATOR_ID, line)
+    await run.call(
+        *SEND,
+        {"target": "session", "target_id": COORDINATOR_ID, "content": line},
+        {"success": succeeded, "message_ids": [message.id]},
+    )
+    # Neither branch writes a task comment or an approval record for the acknowledgment.
+    after_comments = run.db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,))
+    assert after_comments == comments
+    assert list_task_step_records(run.db, task.id) == records
+    if succeeded:
+        assert run.step == "await"
+        assert run.vars["candidate_received"] is False
+        assert run.vars["verdict_ready"] is False
+    else:
+        # A failed delivery holds the unit where it was: no withdrawal, no verdict.
+        assert run.step == step
+        assert run.vars == before
+
+
 @pytest.mark.parametrize("mismatch", ["task", "sha"])
 @pytest.mark.parametrize("actor", ["reviewer", "orchestrator", "own_dm"])
 async def test_reviewer_withdrawal_refuses_another_unit(
@@ -1892,6 +2133,51 @@ async def test_monitor_windows_complete_from_durable_reports(
         assert run.vars["tick_window"]
 
 
+@pytest.mark.parametrize("target_form", ["uuid", "local_ref"])
+async def test_metrics_monitor_window_needs_both_delivered_recipients(
+    temp_db: HubDatabase, target_form: str
+) -> None:
+    run = SeatRun(temp_db, "metrics-monitor")
+    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
+    SessionVariableManager(run.db).set_variable(PEER_ID, "_agent_type", "log-monitor")
+    await run.load(*run.vars["required_skills"])
+    window = "Systems nominal | sample window"
+
+    def target(recipient: str) -> str:
+        # The engine reads the stored recipient, so the argument form must not matter.
+        if target_form == "uuid":
+            return recipient
+        session = run.sessions.get(recipient)
+        assert session is not None
+        return f"#{session.seq_num}"
+
+    async def deliver(recipient: str, *, succeeded: bool = True) -> None:
+        message = InterSessionMessageManager(run.db).create_message(SESSION_ID, recipient, window)
+        await run.call(
+            *SEND,
+            {"target": "session", "target_id": target(recipient), "content": window},
+            {"success": succeeded, "message_ids": [message.id]},
+        )
+
+    # A failed triage delivery opens no window.
+    await deliver(COORDINATOR_ID, succeeded=False)
+    assert run.step == "tick"
+    assert run.vars["tick_window"] is None
+    # A delivered triage report opens the window and still waits on the log monitor.
+    await deliver(COORDINATOR_ID)
+    assert run.step == "report"
+    assert run.vars["triage_reported"] is True
+    # A failed log-monitor delivery and a non-recipient target leave the window open.
+    await deliver(PEER_ID, succeeded=False)
+    await deliver(OWNER_ID)
+    assert run.step == "report"
+    assert run.vars["log_monitor_reported"] is False
+    # Only a delivered log-monitor report completes the window.
+    await deliver(PEER_ID)
+    assert run.step == "tick"
+    assert run.vars["tick_done"] is False
+
+
 async def test_plan_adversary_consensus_withdrawal_reopens_review(temp_db: HubDatabase) -> None:
     run = SeatRun(temp_db, "plan-adversary")
     await run.load(*run.vars["required_skills"])
@@ -1923,6 +2209,27 @@ async def test_plan_adversary_unbound_stamp_can_withdraw(temp_db: HubDatabase) -
     await run.send(f"EVENT=CONSENSUS_WITHDRAWN SHA={SHA} NOTE=re-review needed")
     assert run.step == "review"
     assert run.vars["consensus"] is False
+
+
+@pytest.mark.parametrize("step", ["review", "stamp"])
+@pytest.mark.parametrize("name,value", [("consensus", True), ("consensus_sha", SHA)])
+async def test_plan_adversary_consensus_variables_are_handler_owned(
+    temp_db: HubDatabase, step: str, name: str, value: object
+) -> None:
+    run = SeatRun(temp_db, "plan-adversary")
+    await run.load(*run.vars["required_skills"])
+    if step == "stamp":
+        await run.send(f"EVENT=CONSENSUS SHA={SHA}")
+        # Only the handler's own write lands: the consensus pair holds the handler-written SHA.
+        assert run.vars["consensus"] is True
+        assert run.vars["consensus_sha"] == SHA
+    before = dict(run.vars)
+    assert not await run.admits_native(
+        "mcp__gobby__set_variable",
+        {"name": name, "value": value, "session_id": SESSION_ID, "scope": "step"},
+    )
+    assert run.vars == before
+    assert run.step == step
 
 
 @pytest.mark.parametrize(

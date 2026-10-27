@@ -6,7 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.llm.sdk_utils import fit_additional_context, truncate_additional_context
+from gobby.llm.sdk_utils import (
+    ADDITIONAL_CONTEXT_LIMIT,
+    fit_additional_context,
+    truncate_additional_context,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -101,3 +105,26 @@ def test_fitting_text_reports_nothing_omitted() -> None:
 
     assert fit.text == "x\n\ny"
     assert fit.omitted == []
+
+
+def test_seat_prompt_guidance_and_policy_fit_the_additional_context_limit() -> None:
+    seat_prompt, guidance, policy = "s" * 6_000, "g" * 3_000, "p" * 2_000
+
+    over = fit_additional_context(
+        [("agent_prompt", seat_prompt), ("shared_guidance", guidance), ("project_policy", policy)]
+    )
+
+    assert over.text == seat_prompt + "\n\n" + policy + "\n\nomitted contributors=[shared_guidance]"
+    assert over.omitted == [("shared_guidance", guidance)]
+    assert len(over.text) <= ADDITIONAL_CONTEXT_LIMIT
+
+    fits = fit_additional_context(
+        [
+            ("agent_prompt", "s" * 3_000),
+            ("shared_guidance", "g" * 3_000),
+            ("project_policy", "p" * 3_000),
+        ]
+    )
+
+    assert fits.text == "\n\n".join(["s" * 3_000, "g" * 3_000, "p" * 3_000])
+    assert fits.omitted == []

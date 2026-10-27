@@ -37,6 +37,7 @@ async def _spawn(runner: MagicMock, daemon_config: DaemonConfig) -> dict[str, An
         prompt="Do the thing",
         runner=runner,
         provider="claude",
+        model="claude-sonnet-5",
         parent_session_id="parent-session-xyz",
         daemon_config=daemon_config,
     )

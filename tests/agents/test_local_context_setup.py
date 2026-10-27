@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents import local_model
+from gobby.agents import local_model, reasoning
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.config.ai import GenerationEndpointConfig
@@ -248,6 +248,9 @@ async def test_coding_setup_remote_unchanged(
         return endpoint.model
 
     monkeypatch.setattr(local_model, "ensure_local_model", ensure)
+    # The medium reasoning default reads the capability catalog through app context.
+    # That is not the local service, so the resolver takes its built-in fallback here.
+    monkeypatch.setattr(reasoning, "_get_capability_resolver", lambda: reasoning._fallback_resolver)
     monkeypatch.setattr(
         "gobby.app_context.get_app_context",
         MagicMock(side_effect=AssertionError("remote context must not use the local service")),

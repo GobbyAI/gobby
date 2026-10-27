@@ -35,12 +35,14 @@ def _seat_definition(seat: str) -> AgentDefinitionBody:
         return make_agent_definition(
             name=seat,
             prompts={"agent": "Synthetic team manager."},
+            model="claude-sonnet-5",
             task_step_writes=["closing"],
             workflows=make_agent_workflows(variables={"team_manager": True}),
         )
     return make_agent_definition(
         name=seat,
         prompts={"agent": "Synthetic developer."},
+        model="claude-sonnet-5",
         task_step_writes=["implementation"],
     )
 

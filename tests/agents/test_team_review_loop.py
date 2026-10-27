@@ -657,15 +657,17 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     with pytest.raises(StepRecordError, match="claimant"):
         submit(db, team.sol, task_id, "review", "rejected", 3, second_fix)
 
-    # The team launched its seats with the Sol reviewer and opened the branch's tab.
+    # The team launched its seats with the Sol reviewer and opened the branch's tab; the
+    # arrange step tiles that tab last, once every seat has launched.
     initial = launch(team.runbook, await admitted(world, team.runbook, {"task": task_id}))
     seats = ["dev-manager", "test-writer", "developer", "code-reviewer"]
-    assert list(initial) == ["guard", "admit", *seats]
+    assert list(initial) == ["guard", "admit", *seats, "arrange"]
     assert identity(initial["code-reviewer"]) == SOL
     assert initial["dev-manager"]["placement"] == {
         "tab": {"workspace": WORKSPACE, "title": f"Dev Team - #{team.task.seq_num}"}
     }
-    # The Orchestrator's relaunch for REJECTION_2 starts only an Opus reviewer in that tab.
+    # The Orchestrator's relaunch for REJECTION_2 starts only an Opus reviewer in that tab, then
+    # re-tiles the tab once the reviewer has joined it.
     fresh_inputs = {
         "task": task_id,
         "team_id": team_id,
@@ -673,7 +675,7 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
         "exclude_reviewers": session_ref(db, team.sol),
     }
     fresh = launch(fresh_run, await admitted(world, fresh_run, fresh_inputs))
-    assert list(fresh) == ["guard", "admit", "code-reviewer"]
+    assert list(fresh) == ["guard", "admit", "code-reviewer", "arrange"]
     assert fresh["guard"]["requested"] == "code-reviewer"
     reviewer = fresh["code-reviewer"]
     assert identity(reviewer) == OPUS

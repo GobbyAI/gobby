@@ -83,6 +83,7 @@ async def test_spawn_preparation_does_not_block_event_loop(
             prompt="test",
             runner=runner,
             provider="claude",
+            model="claude-sonnet-5",
             parent_session_id="parent",
         )
         heartbeat_times.append(loop.time())
@@ -152,6 +153,7 @@ async def test_cancelled_prepare_waits_for_worker_and_rolls_back(
             prompt="test",
             runner=runner,
             provider="claude",
+            model="claude-sonnet-5",
             parent_session_id="parent",
         )
     )
@@ -218,6 +220,7 @@ async def test_cancelled_lease_acquire_waits_then_releases_unattached(
             prompt="test",
             runner=runner,
             provider="claude",
+            model="claude-sonnet-5",
             parent_session_id="parent",
         )
     )
@@ -286,6 +289,7 @@ async def test_cancelled_slot_entry_releases_acquired_lease(
             prompt="test",
             runner=runner,
             provider="claude",
+            model="claude-sonnet-5",
             parent_session_id="parent",
         )
     )
@@ -342,6 +346,7 @@ async def test_cancelled_post_prepare_attach_waits_then_rolls_back_child(
             prompt="test",
             runner=runner,
             provider="claude",
+            model="claude-sonnet-5",
             parent_session_id="parent",
         )
     )

@@ -14,7 +14,18 @@ from unittest.mock import patch
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.session import ChildSessionManager
+from gobby.mcp_proxy.tools.spawn_agent import _factory
+from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 from gobby.mcp_proxy.tools.spawn_agent._placement import PlacedLaunch, preflight_placement
+from gobby.storage.tasks import Task
+from gobby.utils.session_context import session_context_for_test
+from tests.agents import test_team_epic_dispatch as epic_dispatch
+from tests.agents.test_team_epic_dispatch import LEAF_TITLE, epic_team, new_task
+from tests.agents.test_team_epic_dispatch import world as world_fixture
+from tests.fixtures.team_case import TITLE, TeamWorld
+from tests.mcp_proxy.tools.spawn_agent import test_placement as spawn_placement
+from tests.mcp_proxy.tools.spawn_agent.test_placement import placed as placed_fixture
 from tests.terminals.test_workspace_agent_panes import (
     LOCAL_MACHINE_ID,
     _Harness,
@@ -27,10 +38,19 @@ from tests.workflows.test_spawn_scope_rules import teams as teams_fixture
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 harness = workspace_fixture
 teams = teams_fixture
+world = world_fixture
+placed_harness = placed_fixture
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity() -> Iterator[None]:
+def _local_machine_identity(
+    monkeypatch: pytest.MonkeyPatch, _mock_spawn_machine_id: None
+) -> Iterator[None]:
+    # Runs after the package conftest's stand-in spawn machine, so the local one wins.
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.get_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+    )
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
 
@@ -67,3 +87,148 @@ async def test_placed_resume_is_admitted_only_for_the_team_managers_own_seat(
     assert isinstance(fresh, dict) and fresh["placement_error"] == "forbidden"
     assert isinstance(other_team, dict) and other_team["placement_error"] == "forbidden"
     assert h.events == [] and h.minted == []
+
+
+def _restore_real_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo the world's launch stub so the real spawn path runs its placement."""
+    monkeypatch.setattr(_factory, "spawn_agent_impl", spawn_agent_impl)
+    monkeypatch.setattr(_factory, "_load_agent_body", epic_dispatch._REAL_AGENT_BODY)
+
+
+async def _manager_spawns_developer(
+    manager: str, h: spawn_placement._Harness, leaf: Task, placement: dict[str, Any]
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {
+        "agent": "developer",
+        "task_id": leaf.id,
+        "prompt": "Work the leaf",
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+        "checkout_mode": "worktree",
+        "placement": placement,
+        "project_path": h.project_path,
+    }
+    with session_context_for_test(manager):
+        reply: dict[str, Any] = await spawn_placement._registry(h).call("spawn_agent", arguments)
+    return reply
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
+    world: TeamWorld,
+    placed_harness: spawn_placement._Harness,
+) -> None:
+    """An epic Dev Manager's fresh seat resolves into its own team tab, and no other tab."""
+    epic = new_task(world, TITLE, epic=True)
+    other = new_task(world, "Another team's epic", epic=True)
+    new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    h = placed_harness
+    tab_title = f"Dev Team - #{epic.seq_num}"
+    team_pane = spawn_placement._held_seat(h, tab_title, state="exited")
+    spawn_placement._held_seat(h, f"Dev Team - #{other.seq_num}", state="exited")
+    spawn_placement._held_seat(h, "Operator", state="exited")
+
+    async def place(target_tab: str) -> PlacedLaunch | dict[str, Any] | None:
+        return await preflight_placement(
+            {
+                "split": {
+                    "workspace": h.workspace.id,
+                    "tab_title": target_tab,
+                    "axis": "right",
+                    "title": "developer",
+                }
+            },
+            reserver=h.reserver,
+            sandbox_config=SandboxConfig(enabled=True, backend="srt"),
+            parent_session_id=team.manager,
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=h.project_id,
+            project_context_authoritative=True,
+            session_manager=h.sessions,
+            agent_name="developer",
+        )
+
+    admitted = await place(tab_title)
+    assert isinstance(admitted, PlacedLaunch), admitted
+    assert admitted.resolved.tab_id == team_pane.tab_id
+    assert admitted.resolved.workspace_id == h.workspace.id
+    for refused in (f"Dev Team - #{other.seq_num}", "Operator"):
+        refusal = await place(refused)
+        assert isinstance(refusal, dict) and refusal["placement_error"] == "forbidden", refusal
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_fresh_seat_stays_refused_outside_its_team(
+    world: TeamWorld,
+    placed_harness: spawn_placement._Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another team's tab and an operator tab stay refused for an autonomous Dev Manager."""
+    _restore_real_spawn(monkeypatch)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    other = new_task(world, "Another team's epic", epic=True)
+    team = await epic_team(world, epic)
+    h = placed_harness
+    other_tab = f"Dev Team - #{other.seq_num}"
+    spawn_placement._held_seat(h, other_tab, state="exited")
+    spawn_placement._held_seat(h, "Operator", state="exited")
+    panes = spawn_placement._panes(h)
+    terminals = spawn_placement._terminal_states(h)
+    for title in (other_tab, "Operator"):
+        split = {
+            "workspace": h.workspace.id,
+            "tab_title": title,
+            "axis": "right",
+            "title": "developer",
+        }
+        result = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+        assert result["success"] is False, (title, result)
+        assert result["placement_error"] == "forbidden", (title, result)
+    assert h.launches == []
+    assert spawn_placement._panes(h) == panes
+    assert spawn_placement._terminal_states(h) == terminals
+    assert h.events == []
+
+
+def _epic_depth_sessions(h: spawn_placement._Harness) -> None:
+    """Nest the epic manager at the production depth (5), not the harness default of 1."""
+    child_sessions = ChildSessionManager(h.sessions, max_agent_depth=5)
+    h.runner.child_session_manager = child_sessions
+    h.runner._child_session_manager = child_sessions
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_spawn_seats_its_developer_in_its_own_team_tab(
+    world: TeamWorld,
+    placed_harness: spawn_placement._Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real spawn_agent from an epic Dev Manager lands its developer in its own team tab."""
+    _restore_real_spawn(monkeypatch)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    team = await epic_team(world, epic)
+    h = placed_harness
+    _epic_depth_sessions(h)
+    tab_title = f"Dev Team - #{epic.seq_num}"
+    team_pane = spawn_placement._held_seat(h, tab_title, state="exited")
+    split = {
+        "workspace": h.workspace.id,
+        "tab_title": tab_title,
+        "axis": "right",
+        "title": "developer",
+    }
+
+    reply = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+
+    assert reply["success"] is True, reply
+    tab_panes = [
+        pane for pane in h.workspaces.list_panes(h.workspace.id) if pane.tab_id == team_pane.tab_id
+    ]
+    [seat] = [pane for pane in tab_panes if pane.id != team_pane.id]
+    assert seat.terminal_id is not None
+    terminal = h.terminals.get(seat.terminal_id)
+    assert terminal is not None and terminal.state == "live", terminal
+    assert [event["kind"] for event in h.events] == ["pane.added"]

@@ -128,6 +128,7 @@ async def test_network_applies_after_fallback(
     primary = make_agent_definition(
         name="primary",
         provider="claude",
+        model="claude-sonnet-5",
         network=original,
         fallback_agent="backup",
         prompts={"agent": "Work."},
@@ -135,6 +136,7 @@ async def test_network_applies_after_fallback(
     backup = make_agent_definition(
         name="backup",
         provider="codex",
+        model="gpt-5.4",
         network=final,
         prompts={"agent": "Work."},
     )
@@ -225,7 +227,9 @@ async def test_network_override_needs_resolved_definition() -> None:
 async def test_network_unreadable_seed_refuses_before_allocations() -> None:
     from gobby.mcp_proxy.tools.spawn_agent import _factory, _implementation
 
-    body = make_agent_definition(name="default", provider="claude", prompts={"agent": "Work."})
+    body = make_agent_definition(
+        name="default", provider="claude", model="claude-sonnet-5", prompts={"agent": "Work."}
+    )
     registry = _factory.create_spawn_agent_registry(MagicMock())
     project = {"id": "11111111-1111-4111-8111-111111110123", "project_path": "/test"}
     with (
@@ -337,6 +341,7 @@ class TestSpawnAgentDefaults:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -401,6 +406,7 @@ class TestSpawnAgentDefaults:
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
                     name="default",
                     provider="claude",
+                    model="claude-sonnet-5",
                 ),
             ),
             patch("gobby.workflows.pipeline_loader.PipelineLoader") as loader_class,
@@ -441,6 +447,7 @@ class TestSpawnAgentDefaults:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
         completion_registry = MagicMock()
         db = MagicMock()
@@ -492,6 +499,7 @@ class TestSpawnAgentDefaults:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
         completion_registry = MagicMock()
         db = MagicMock()
@@ -561,6 +569,7 @@ class TestSpawnAgentDefaults:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="spawn-reviewer-agent",
             provider="claude",
+            model="claude-sonnet-5",
         )
         registry = create_spawn_agent_registry(
             mock_runner,
@@ -743,6 +752,7 @@ class TestSpawnAgentDefaults:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
@@ -787,6 +797,7 @@ class TestSpawnAgentParamOverrides:
         body = make_agent_definition(
             name="developer",
             provider="claude",
+            model="claude-sonnet-5",
             execution_mode="interactive",
             prompts={"agent": "Implement the task."},
         )
@@ -819,6 +830,7 @@ class TestSpawnAgentParamOverrides:
         body = make_agent_definition(
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
             prompts={"agent": "Run the assigned task."},
             execution_mode=definition_mode,
             idle_ttl_seconds=ttl,
@@ -853,6 +865,7 @@ class TestSpawnAgentParamOverrides:
         body = make_agent_definition(
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
             prompts={"agent": "Run the assigned task."},
             execution_mode=definition_mode,
         )
@@ -938,6 +951,7 @@ class TestSpawnAgentParamOverrides:
         body = make_agent_definition(
             name="seat",
             provider="claude",
+            model="claude-sonnet-5",
             surfaces=surfaces,
             prompts={"agent": "Work.", "persona": "Be the seat."},
         )
@@ -974,6 +988,7 @@ class TestSpawnAgentParamOverrides:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
@@ -1461,6 +1476,7 @@ class TestSpawnAgentPromptPreamble:
             prompts={"agent": "## Role\nBackend developer\n\nWrite clean code."},
             name="dev",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())

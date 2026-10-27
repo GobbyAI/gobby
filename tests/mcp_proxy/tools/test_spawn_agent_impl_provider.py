@@ -236,6 +236,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
+            model="gpt-5.4",
         )
         runner = _make_runner()
 
@@ -289,6 +290,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
+            model="gpt-5.4",
         )
         runner = _make_runner()
 
@@ -324,6 +326,7 @@ class TestProviderResolution:
                 runner=runner,
                 agent_body=agent_body,
                 provider="claude",  # explicit override
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
             )
             await asyncio.gather(*_spawn_background_tasks.values())
@@ -524,7 +527,7 @@ class TestProviderResolution:
 
     @pytest.mark.asyncio
     async def test_provider_inherit_falls_back_to_claude(self) -> None:
-        """When provider='inherit' and no agent_body, defaults to 'claude'."""
+        """provider='inherit' with no agent_body is claude, and is refused without a model."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
@@ -568,13 +571,13 @@ class TestProviderResolution:
             )
             await asyncio.gather(*_spawn_background_tasks.values())
 
-        assert result["success"] is True
-        spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.provider == "claude"
+        assert result["success"] is False
+        assert "No model for the claude launch" in result["error"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_provider_none_no_agent_body_defaults_to_claude(self) -> None:
-        """When provider=None and no agent_body, defaults to 'claude'."""
+        """provider=None with no agent_body is claude, and is refused without a model."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
@@ -618,9 +621,9 @@ class TestProviderResolution:
             )
             await asyncio.gather(*_spawn_background_tasks.values())
 
-        assert result["success"] is True
-        spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.provider == "claude"
+        assert result["success"] is False
+        assert "No model for the claude launch" in result["error"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sandbox_defaults_come_from_daemon_config(self, tmp_path: Path) -> None:
@@ -669,6 +672,7 @@ class TestProviderResolution:
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
+                model="gpt-5.4",
                 parent_session_id="parent-session-xyz",
                 caller_session_id="caller",
                 session_manager=sessions,
@@ -760,6 +764,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#42",
                 task_manager=task_manager,
@@ -819,6 +824,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#99",
                 task_manager=task_manager,
@@ -880,6 +886,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#200",
                 task_manager=task_manager,
@@ -939,6 +946,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#201",
                 task_manager=task_manager,

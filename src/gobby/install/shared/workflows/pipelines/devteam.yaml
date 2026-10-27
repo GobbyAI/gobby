@@ -231,3 +231,20 @@ steps:
           or 'developer' in steps.guard.output.launch else
           {'tab': {'workspace': steps.guard.output.workspace_id,
           'title': steps.guard.output.tab_title}} }}
+
+  # Tiles the team tab once the launched seats have joined it, on a fresh launch or a re-run.
+  # A refused layout (a resumed run has no request principal) is recorded; the seats stay launched.
+  - id: arrange
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-workspaces
+      tool: rebalance_tab
+      on_refused: record
+      arguments:
+        workspace: "${{ steps.guard.output.workspace_id }}"
+        tab: "${{ steps.guard.output.tab_title }}"
+        # A seat's null pane_ref (its pane is gone) is reported as skipped, not tiled.
+        seats: "${{ [{'name': s, 'pane': steps[s].output.pane_ref} for s in steps.guard.output.launch] }}"
+        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        rows: 100
+        layout: tiled

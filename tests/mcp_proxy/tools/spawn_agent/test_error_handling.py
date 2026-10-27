@@ -66,6 +66,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -86,6 +87,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -106,6 +108,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
             )
             assert result["success"] is False
             assert "parent_session_id" in result["error"]
@@ -125,6 +128,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -159,6 +163,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 task_id="#99999",
                 task_manager=MagicMock(),
@@ -190,6 +195,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 worktree_id="wt-missing",
                 worktree_storage=worktree_storage,
@@ -233,6 +239,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
@@ -245,6 +252,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
@@ -273,6 +281,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 clone_id="clone-missing",
                 clone_storage=clone_storage,
@@ -315,6 +324,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 clone_id="clone-1",
                 clone_storage=clone_storage,
@@ -327,6 +337,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 clone_id="clone-1",
                 clone_storage=clone_storage,
@@ -365,6 +376,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
             )
             assert result["success"] is False
@@ -412,6 +424,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 checkout_mode="worktree",
                 cleanup_isolation_on_failure=True,
@@ -583,6 +596,7 @@ class TestSpawnAgentImplErrorBranches:
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -680,6 +694,7 @@ test"""
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 clone_id="clone-1",
                 clone_storage=clone_storage,
             )
@@ -774,6 +789,7 @@ test"""
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 worktree_id="wt-old",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -886,6 +902,7 @@ test"""
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -987,6 +1004,7 @@ test"""
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 task_id="#123",
                 task_manager=task_manager,
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
@@ -1081,6 +1099,7 @@ test"""
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -1152,6 +1171,7 @@ test"""
                 runner=runner,
                 parent_session_id="sess-1",
                 provider="codex",
+                model="gpt-5.4",
                 worktree_id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -1207,6 +1227,7 @@ test"""
                 prompt="test",
                 runner=runner,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="sess-1",
                 timeout=0,
             )
@@ -1329,6 +1350,7 @@ async def test_dirty_reused_worktree_refusal_surfaces_verbatim(
             prompt="test",
             runner=runner,
             provider="codex",
+            model="gpt-5.4",
             parent_session_id="sess-1",
             worktree_id="wt-dirty",
             worktree_storage=worktree_storage,

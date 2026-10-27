@@ -228,6 +228,22 @@ async def test_privileged_idle_declaration_keeps_own_session_gate(
     assert "seat_idle" not in manager.get_variables(OTHER)
 
 
+@pytest.mark.parametrize("scope", ["session", "step"])
+def test_standing_seat_refuses_native_idle_declaration(
+    sessions: SessionManager, scope: Literal["session", "step"]
+) -> None:
+    """A standing seat's idle step never accepts a native seat_idle write, in any scope."""
+    manager = SessionVariableManager(sessions.db)
+    manager.set_variable(CALLER, "_agent_type", "synthetic-standing")
+    _instance(sessions.db, "synthetic-standing", "idle")
+
+    result = set_variable(sessions, sessions.db, "seat_idle", True, CALLER, scope=scope)
+
+    assert result["success"] is False
+    assert "[native-variable-authority]" in result["error"]
+    assert "seat_idle" not in manager.get_variables(CALLER)
+
+
 def test_absent_role_is_default_only_without_a_bound_seat(sessions: SessionManager) -> None:
     result = set_variable(sessions, sessions.db, "sample", 1, CALLER)
     assert result["success"] is True
