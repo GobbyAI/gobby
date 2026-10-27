@@ -851,3 +851,346 @@ Claude usage await Josh's confirmation at approval.
   `## M1 Task Manifest` from consensus bytes.
 - Focused checks belong to their deliverables. No full pytest or whole-workspace
   Rust suite is required.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: '`terminal.relay` and `terminal.resize` in node-commands contract version
+    5'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `terminal.relay` and `terminal.resize` commands and
+    their `{}` and error replies round-trip byte-identically in Rust at contract version
+    5. test: `crates/gdaemon/tests/node_command_parity.rs::v5_terminal_commands_round_trip`.
+
+    1.1.2: The same corpus messages round-trip through the Python models at version
+    5. test: `tests/hub/test_node_command_parity.py::test_v5_terminal_commands_round_trip`.
+
+    1.1.3: A malformed `terminal.relay` request (unknown field, empty token) or `terminal.resize`
+    request (zero rows, unknown field) sends nothing to the node. test: `crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing`.
+
+    1.1.4: `node_commands.rs` stays under 1,000 lines with the terminal types in their
+    own module. file: `crates/gdaemon/src/node_commands/terminal.rs`.
+
+    1.1.5: The contract documents `terminal.relay`, `terminal.resize`, their replies
+    and the relay socket. behavior: "terminal.resize" in `docs/contracts/node-commands.md`.
+
+    1.1.6: `RelayPayload`''s `Debug` output prints the token as `<redacted>`, while
+    serialization carries it unchanged. test: `crates/gdaemon/tests/node_command_parity.rs::relay_payload_debug_redacts_token`.'
+  labels:
+  - covers:remote-terminal-attach:1.1:1.1.1
+  - covers:remote-terminal-attach:1.1:1.1.2
+  - covers:remote-terminal-attach:1.1:1.1.3
+  - covers:remote-terminal-attach:1.1:1.1.4
+  - covers:remote-terminal-attach:1.1:1.1.5
+  - covers:remote-terminal-attach:1.1:1.1.6
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Node relay executor
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `terminal.relay` for a launched run attaches the host
+    terminal, opens the relay socket with the token header, then answers `{}`. test:
+    `crates/gdaemon/tests/node_relay.rs::relay_attaches_and_dials_before_reply`.
+
+    1.2.2: An unknown or unlaunched terminal answers `not_found`; an unavailable host
+    or a refused relay socket answers `command_failed` with stage `"none"` and leaves
+    no host attachment. test: `crates/gdaemon/tests/node_relay.rs::relay_failure_dispositions`.
+
+    1.2.3: Host frames reach the hub as one encoded frame per binary message, and
+    only the five allowed client messages reach the host; any other message closes
+    the relay with 1008. test: `crates/gdaemon/tests/node_relay.rs::relay_forwards_frames_and_filters_client_messages`.
+
+    1.2.4: A live relay does not block `terminal.write` or `agent.cancel` for the
+    same run. test: `crates/gdaemon/tests/node_relay.rs::relay_does_not_hold_the_run_queue`.
+
+    1.2.5: Closing either side detaches the host terminal exactly once. test: `crates/gdaemon/tests/node_relay.rs::relay_close_detaches_once`.
+
+    1.2.6: Across dispatch, a refused relay socket, a relayed frame and close, the
+    node''s stderr names the terminal id and close reason but never the token, its
+    digest or frame payload bytes. test: `crates/gdaemon/tests/node_relay.rs::relay_stderr_carries_no_secrets`.
+
+    1.2.7: A host that never sends `Welcome`, a host that never sends `Attached`,
+    and channel loss during setup each end the setup task within 10 s, leaving no
+    host attachment and no hub socket. The deadline cases answer `command_failed`
+    with stage `"none"`. test: `crates/gdaemon/tests/node_relay.rs::relay_setup_is_bounded_and_cleans_up`.'
+  labels:
+  - covers:remote-terminal-attach:1.2:1.2.1
+  - covers:remote-terminal-attach:1.2:1.2.2
+  - covers:remote-terminal-attach:1.2:1.2.3
+  - covers:remote-terminal-attach:1.2:1.2.4
+  - covers:remote-terminal-attach:1.2:1.2.5
+  - covers:remote-terminal-attach:1.2:1.2.6
+  - covers:remote-terminal-attach:1.2:1.2.7
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Node `terminal.resize` executor
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `terminal.resize` for a launched run sends the host
+    `resize` for its host terminal and answers `{}`. test: `crates/gdaemon/tests/node_resize.rs::resize_reaches_host_control`.
+
+    1.3.2: An unknown or unlaunched terminal answers `not_found`; a host refusal or
+    an unavailable host answers `command_failed` with stage `"none"`. test: `crates/gdaemon/tests/node_resize.rs::resize_failure_dispositions`.
+
+    1.3.3: `terminal.resize` and `terminal.write` for one run apply in arrival order.
+    test: `crates/gdaemon/tests/node_resize.rs::resize_orders_with_writes`.'
+  labels:
+  - covers:remote-terminal-attach:1.3:1.3.1
+  - covers:remote-terminal-attach:1.3:1.3.2
+  - covers:remote-terminal-attach:1.3:1.3.3
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Relay tokens and the hub relay endpoint
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.1.1: A minted token is accepted once from its machine on
+    its channel within 10 s, and the socket reaches the waiter. test: `crates/gdaemon/tests/terminal_relay.rs::token_accepts_once`.
+
+    2.1.2: A reused, expired, unknown, wrong-machine or wrong-connection token gets
+    the same 401 `relay_token_invalid`. test: `crates/gdaemon/tests/terminal_relay.rs::invalid_tokens_are_indistinguishable`.
+
+    2.1.3: Dropping the waiter''s guard revokes its token. test: `crates/gdaemon/tests/terminal_relay.rs::dropped_waiter_revokes_token`.
+
+    2.1.4: `CommandSender::closed` resolves when the node channel ends. test: `crates/gdaemon/tests/terminal_relay.rs::sender_closed_follows_channel_end`.
+
+    2.1.5: The relay endpoint is served only by a hub door. test: `crates/gdaemon/tests/terminal_relay.rs::relay_route_is_hub_only`.
+
+    2.1.6: A channel connection holding 32 pending relays gets `RelayBusy` and no
+    entry; a dropped guard or an expired entry frees a slot, and another connection''s
+    pending relays do not count. test: `crates/gdaemon/tests/terminal_relay.rs::pending_relays_are_capped_per_connection`.'
+  labels:
+  - covers:remote-terminal-attach:2.1:2.1.1
+  - covers:remote-terminal-attach:2.1:2.1.2
+  - covers:remote-terminal-attach:2.1:2.1.3
+  - covers:remote-terminal-attach:2.1:2.1.4
+  - covers:remote-terminal-attach:2.1:2.1.5
+  - covers:remote-terminal-attach:2.1:2.1.6
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Remote terminal link over the node channel
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: `open` for an owned machine with a live channel returns
+    frames from the node''s relay socket, and sent allowlisted messages reach the
+    node. test: `crates/gdaemon/tests/terminal_relay.rs::open_relays_frames_both_ways`.
+
+    2.2.2: Another owner''s machine answers `machine_not_owned`, an unknown machine
+    `machine_not_found`, a machine with no channel `node_offline`, and a connection
+    at its pending ceiling `relay_busy`, with no command sent. test: `crates/gdaemon/tests/terminal_relay.rs::open_refusals_send_nothing`.
+
+    2.2.3: A node error reply, a missing socket after 10 s, and channel loss during
+    the wait each fail the open and revoke the token. test: `crates/gdaemon/tests/terminal_relay.rs::open_failures_revoke_token`.
+
+    2.2.4: Channel loss during a live relay closes the frame receiver. test: `crates/gdaemon/tests/terminal_relay.rs::channel_loss_ends_live_relay`.
+
+    2.2.5: `write` sends `terminal.write` after the owner check and maps node errors.
+    test: `crates/gdaemon/tests/terminal_relay.rs::write_sends_terminal_write`.
+
+    2.2.6: Across `terminal.relay` dispatch through the registry, an invalid-token
+    refusal, an accepted upgrade, a frame and a write in each direction, and close,
+    the hub''s stderr never carries the raw token, its SHA-256 digest in hex or base64url,
+    or the frame and input payload bytes. test: `crates/gdaemon/tests/terminal_relay.rs::relay_stderr_carries_no_secrets`.
+
+    2.2.7: `resize` sends `terminal.resize` after the owner check and maps node errors.
+    test: `crates/gdaemon/tests/terminal_relay.rs::resize_sends_terminal_resize`.'
+  labels:
+  - covers:remote-terminal-attach:2.2:2.2.1
+  - covers:remote-terminal-attach:2.2:2.2.2
+  - covers:remote-terminal-attach:2.2:2.2.3
+  - covers:remote-terminal-attach:2.2:2.2.4
+  - covers:remote-terminal-attach:2.2:2.2.5
+  - covers:remote-terminal-attach:2.2:2.2.6
+  - covers:remote-terminal-attach:2.2:2.2.7
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Owner-scoped hub-wide terminal inventory
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.1.1: A hub caller''s inventory lists rows from every machine
+    it owns and none from another owner''s machine. test: `crates/gterminals/tests/inventory.rs::inventory_is_owner_wide`.
+
+    3.1.2: Remote rows carry `machine_id` and `attach: null`; local rows keep their
+    locator. test: `crates/gterminals/tests/inventory.rs::remote_rows_have_no_locator`.
+
+    3.1.3: The single-row read answers an owned remote row and 404 for another owner''s
+    row. test: `crates/gterminals/tests/inventory.rs::row_read_is_owner_scoped`.
+
+    3.1.4: A caller without a user identity keeps the local-machine scope. test: `crates/gterminals/tests/inventory.rs::no_user_keeps_local_scope`.
+
+    3.1.5: The WS protocol documents owner-wide listing and `attach: null` rows. behavior:
+    "attach: null" in `docs/contracts/gterm-protocols.md`.'
+  labels:
+  - covers:remote-terminal-attach:3.1:3.1.1
+  - covers:remote-terminal-attach:3.1:3.1.2
+  - covers:remote-terminal-attach:3.1:3.1.3
+  - covers:remote-terminal-attach:3.1:3.1.4
+  - covers:remote-terminal-attach:3.1:3.1.5
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Remote attach through the hub relay
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: A proxied attach of an owned remote row delivers the
+    node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_attach.rs::remote_attach_streams_frames`.
+
+    3.2.2: `node_offline`, `machine_not_owned`, `relay_busy` and a `direct` request
+    fail the attach with their codes and leave no attachment. test: `crates/gterminals/tests/remote_attach.rs::remote_attach_refusals`.
+
+    3.2.3: A stalled client socket closes only that socket, and the link is not read
+    while its queue is full. test: `crates/gterminals/tests/remote_attach.rs::remote_backpressure_closes_only_the_slow_socket`.
+
+    3.2.4: Detach sends `Detach` to the node, and channel loss finalizes the attachment
+    exactly once. test: `crates/gterminals/tests/remote_attach.rs::remote_close_finalizes_once`.
+
+    3.2.5: A hub wires the link into the family; a standalone daemon does not. test:
+    `crates/gterminals/tests/remote_attach.rs::only_hub_family_has_remote_link`.
+
+    3.2.6: The WS protocol documents remote attach and its error codes. behavior:
+    "node_offline" in `docs/contracts/gterm-protocols.md`.'
+  labels:
+  - covers:remote-terminal-attach:3.2:3.2.1
+  - covers:remote-terminal-attach:3.2:3.2.2
+  - covers:remote-terminal-attach:3.2:3.2.3
+  - covers:remote-terminal-attach:3.2:3.2.4
+  - covers:remote-terminal-attach:3.2:3.2.5
+  - covers:remote-terminal-attach:3.2:3.2.6
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Remote terminal input and sizing through node commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: Input on a remote attachment reaches the link as one
+    write with its kind, data and submit flag, and never the local write route. test:
+    `crates/gterminals/tests/remote_attach.rs::remote_input_uses_terminal_write`.
+
+    3.3.2: Input to a node that went offline or to a machine the caller does not own
+    answers its code and writes nothing. test: `crates/gterminals/tests/remote_attach.rs::remote_input_refusals`.
+
+    3.3.3: `terminal_paste` on a remote attachment reaches the link as one `paste`
+    write. test: `crates/gterminals/tests/remote_attach.rs::remote_paste_uses_terminal_write`.
+
+    3.3.4: An elected `terminal_resize`, an attach that changes the election and a
+    detach that re-elects each send the elected geometry to the link once; a losing
+    requester changes only its viewport and sends nothing. test: `crates/gterminals/tests/remote_attach.rs::remote_sizing_follows_the_election`.
+
+    3.3.5: Take and release control on a remote attachment change only the lease and
+    call no host grant or revoke. test: `crates/gterminals/tests/remote_attach.rs::remote_control_applies_no_host_grant`.'
+  labels:
+  - covers:remote-terminal-attach:3.3:3.3.1
+  - covers:remote-terminal-attach:3.3:3.3.2
+  - covers:remote-terminal-attach:3.3:3.3.3
+  - covers:remote-terminal-attach:3.3:3.3.4
+  - covers:remote-terminal-attach:3.3:3.3.5
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Open another machine's terminal in its owning workspace
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '4.1.1: Selecting another machine''s agent attaches that machine''s
+    workspace (node argument set to its machine) and focuses the agent''s pane. test:
+    `crates/gclient/tests/remote_agent_open.rs::remote_agent_opens_in_owning_workspace`.
+
+    4.1.2: Selecting a local agent afterwards returns to the local workspace with
+    no node argument. test: `crates/gclient/tests/remote_agent_open.rs::local_agent_returns_to_local_workspace`.
+
+    4.1.3: Another machine''s agent row appears under `all` with its machine token
+    and is hidden under the default filter (carries gclient-workspace-sidebar 3.2.4).
+    test: `crates/gclient/tests/remote_agent_open.rs::remote_agent_row_shows_machine_token`.
+
+    4.1.4: Bare terminal rows follow the attached workspace''s machine. test: `crates/gclient/tests/remote_agent_open.rs::terminal_rows_follow_attached_machine`.
+
+    4.1.5: When no owning-machine workspace holds the remote agent''s pane, selecting
+    it attaches that machine''s default workspace for the agent''s project and places
+    the pane there; the previous machine''s workspace gets no pane. test: `crates/gclient/tests/remote_agent_open.rs::unplaced_remote_agent_opens_in_owning_default_workspace`.
+
+    4.1.6: A pane that moves between snapshot and attach answers the retry warning,
+    and a failed owning-workspace attach leaves the previous workspace and attach
+    target unchanged; neither opens a pane in the previous machine''s workspace. test:
+    `crates/gclient/tests/remote_agent_open.rs::remote_open_never_lands_in_previous_machine_workspace`.'
+  labels:
+  - covers:remote-terminal-attach:4.1:4.1.1
+  - covers:remote-terminal-attach:4.1:4.1.2
+  - covers:remote-terminal-attach:4.1:4.1.3
+  - covers:remote-terminal-attach:4.1:4.1.4
+  - covers:remote-terminal-attach:4.1:4.1.5
+  - covers:remote-terminal-attach:4.1:4.1.6
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: frontend
+- title: ROADMAP corrections for remote attach
+  category: docs
+  task_type: chore
+  depends_on: []
+  validation_criteria: '5.1.1: The S4.3 row and the Stage 0 paragraph name this plan
+    and no #19600 wait. behavior: "remote-terminal-attach" in `ROADMAP.md`.
+
+    5.1.2: No passage outside Decision 23 calls #19600 open or a gate. file: `ROADMAP.md`.
+
+    5.1.3: The S1.4 row lists the landed `machines` columns and no endpoint column.
+    behavior: "node_version" in `ROADMAP.md`.'
+  labels:
+  - covers:remote-terminal-attach:5.1:5.1.1
+  - covers:remote-terminal-attach:5.1:5.1.2
+  - covers:remote-terminal-attach:5.1:5.1.3
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: tech-writer
+- title: Live hub-to-node remote attach proof
+  category: test
+  task_type: task
+  depends_on:
+  - '4.1'
+  validation_criteria: '5.2.1: The hub''s inventory lists the node''s terminal with
+    `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach_live.py::test_remote_attach_streams_node_frames`.
+
+    5.2.2: `terminal_input` on the remote attachment appears in the node terminal''s
+    next frames. test: `tests/e2e/test_remote_terminal_attach_live.py::test_remote_input_round_trips`.
+
+    5.2.3: After the node stops, attach answers `node_offline` and the live attachment
+    finalizes. test: `tests/e2e/test_remote_terminal_attach_live.py::test_node_loss_finalizes_and_refuses`.
+
+    5.2.4: A real gclient whose local machine is the hub opens the node''s agent from
+    the `all` sidebar into the node''s workspace, shows its relayed output, and echoes
+    typed input. test: `tests/e2e/test_remote_terminal_attach_live.py::test_gclient_opens_remote_agent`.
+
+    5.2.5: Resizing the gclient window changes the node PTY size that the node host''s
+    control `list` reports (`rows`, `cols`; `crates/gterminal/src/host/helpers.rs`),
+    and a second, losing WS observer''s `terminal_resize` leaves it unchanged. test:
+    `tests/e2e/test_remote_terminal_attach_live.py::test_remote_pty_follows_elected_size`.'
+  labels:
+  - covers:remote-terminal-attach:5.2:5.2.1
+  - covers:remote-terminal-attach:5.2:5.2.2
+  - covers:remote-terminal-attach:5.2:5.2.3
+  - covers:remote-terminal-attach:5.2:5.2.4
+  - covers:remote-terminal-attach:5.2:5.2.5
+  tdd: false
+  source_section: '5.2'
+  assigned_agent: developer
+```
