@@ -1127,6 +1127,37 @@ async def test_rule3_claim_successor_writes_its_tasks_carriers(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("predecessor_ends", [False, True], ids=["handed-off", "ended"])
+async def test_unlinked_predecessor_dirt_stays_owned_by_the_claimant_task(
+    guard_harness: GuardHarness, predecessor_ends: bool
+) -> None:
+    """Dirt from an unlinked earlier editor of the claimed task stays owned (#25161)."""
+    h = guard_harness
+    predecessor = h.session_manager.register(
+        external_id="predecessor-unlinked",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=h.project.id,
+    )
+    SessionVariableManager(h.db).merge_variables(
+        predecessor.id,
+        {
+            "claimed_tasks": {},
+            "task_edited_file_checkouts": {h.current_task.id: {str(h.repo): ["orphan.txt"]}},
+            "session_dirty_files": ["orphan.txt"],
+            "session_dirty_file_checkouts": {str(h.repo): ["orphan.txt"]},
+        },
+    )
+    if predecessor_ends:
+        h.session_manager.update_status(predecessor.id, "completed")
+    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
 async def test_rule3_claim_successor_still_refused_for_another_tasks_live_claim(
     guard_harness: GuardHarness,
 ) -> None:
