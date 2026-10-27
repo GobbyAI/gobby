@@ -1251,15 +1251,18 @@ def _committable_spawn(
 async def test_commit_on_a_closed_control_client_redials_its_epoch_and_commits(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A socket closed before the commit was written is redialed, and the commit lands."""
+    """A socket closed before the commit was written is redialed; the next commit lands."""
     client = await _closed_control_client()
     reader = asyncio.StreamReader(limit=MAX_CONTROL_LINE + 1)
     socket = _HostControlSocket(reader, host_epoch="epoch-1")
     dialed = _dial_control_socket(monkeypatch, reader, socket)
     runtime, prepared = _committable_spawn(client, tmp_path)
 
+    with pytest.raises(CommitTransportError) as unsent:
+        await runtime.commit_spawn(prepared)
     handle = await runtime.commit_spawn(prepared)
 
+    assert unsent.value.request_written is False
     assert handle.terminal_id == prepared.terminal_id
     assert dialed == [str(control_socket_path(tmp_path))]
     assert socket.methods == ["ping", "spawn_commit"]
