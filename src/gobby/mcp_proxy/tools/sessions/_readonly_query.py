@@ -8,12 +8,13 @@ Credential boundary. Each statement runs under ``SET LOCAL ROLE
 gobby_query_readonly`` (migration 482), so privilege checks run as that role. The
 role holds column-level SELECT on public base tables only. It has no grants on
 views, the agent-auth schema, credential tables, credential-named columns, or the
-explicitly excluded columns, and it has no membership. The denied-name check is a
-second layer. ``set_config`` is refused by name because PUBLIC can execute it, and
-``set_config('role', 'none')`` in the same statement would reset the role to the
-daemon runtime. A statement cannot call a function named only by concatenation,
-the text-to-SQL entry points (``*_to_xml``, dblink) are refused, and ``SET ROLE``
-cannot start a SELECT or WITH.
+explicitly excluded columns (connection URLs and args included), and it has no
+membership. The denied-name check is a second layer. ``set_config`` is refused by
+name because PUBLIC can execute it, and ``set_config('role', 'none')`` in the same
+statement would reset the role to the daemon runtime. ``ts_stat`` runs SQL held in
+text, so it is refused by name too. A statement cannot call a function named only by
+concatenation, the text-to-SQL entry points (``*_to_xml``, dblink) are refused, and
+``SET ROLE`` cannot start a SELECT or WITH.
 
 Residual. A future Postgres function that runs SQL from text must join the denied
 names. Views must never be granted to the role. Tables added after migration 482
@@ -63,6 +64,7 @@ DENIED_NAMES = frozenset(
         "pg_user_mappings",
         "pg_stat_file",
         "set_config",
+        "ts_stat",  # executes SQL held in text, so the name gate must refuse it
     }
 )
 # Functions that read files, signal backends, or execute SQL held in text.

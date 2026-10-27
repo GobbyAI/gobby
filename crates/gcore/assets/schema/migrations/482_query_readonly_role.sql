@@ -34,12 +34,18 @@ BEGIN
            AND a.attnum > 0
            AND NOT a.attisdropped
            AND a.attname !~ '(secret|encrypt|ciphertext|wrapped_dek|(^|_)kek_|key_hash|token_hash|password|credential|signing|(^|_)token$)'
+           -- Connection URLs and args can carry tokens (query strings, userinfo,
+           -- argv flags), so they are withheld like the credential-bearing columns.
            AND (rel.relname, a.attname) NOT IN (
                ('config_store', 'value'),
                ('mcp_servers', 'env'),
                ('mcp_servers', 'headers'),
                ('mcp_servers', 'template_values'),
-               ('comms_channels', 'config_json')
+               ('mcp_servers', 'url'),
+               ('mcp_servers', 'args'),
+               ('clones', 'remote_url'),
+               ('comms_channels', 'config_json'),
+               ('comms_attachments', 'platform_url')
            );
         IF granted_columns IS NOT NULL THEN
             EXECUTE format(

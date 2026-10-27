@@ -193,3 +193,83 @@ async def test_mcp_server_env_is_unreadable(
     assert result["success"] is False
     assert "permission denied" in result["error"]
     assert not _leaked(result, SENTINEL)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT url::text AS v FROM mcp_servers",
+        "SELECT args::text AS v FROM mcp_servers",
+        "SELECT remote_url::text AS v FROM clones",
+        "SELECT platform_url::text AS v FROM comms_attachments",
+    ],
+)
+async def test_connection_url_and_args_columns_are_unreadable(
+    registry: InternalToolRegistry, sql: str
+) -> None:
+    """URLs and args can carry tokens, so these columns carry no grant for the query role."""
+    result = await _run(registry, sql=sql)
+
+    assert result["success"] is False
+    assert "permission denied" in result["error"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id::text AS v FROM mcp_servers",
+        "SELECT id::text AS v FROM clones",
+        "SELECT id::text AS v FROM comms_attachments",
+    ],
+)
+async def test_same_tables_stay_readable_outside_the_denied_columns(
+    registry: InternalToolRegistry, sql: str
+) -> None:
+    """Positive control: the denial is column-level, so the id column still reads."""
+    result = await _run(registry, sql=sql)
+
+    assert result["success"] is True
+
+
+async def test_mcp_server_url_sentinel_stays_unreadable_direct_and_whole_row(
+    registry: InternalToolRegistry, temp_db: HubDatabase
+) -> None:
+    """A token in mcp_servers.url is credential material even though the name looks benign."""
+    with temp_db.transaction() as conn:
+        project = conn.execute("SELECT id FROM projects LIMIT 1").fetchone()
+    assert project is not None
+    server_id = str(uuid.uuid4())
+    server_name = f"sentinel-{server_id[:8]}"
+    with temp_db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO mcp_servers (id, name, project_id, transport, url) "
+            "VALUES (%s, %s, %s, 'stdio', %s)",
+            (server_id, server_name, project["id"], f"https://example.test/mcp?token={SENTINEL}"),
+        )
+    try:
+        control = await _run(registry, sql="SELECT name::text AS v FROM mcp_servers")
+        direct = await _run(registry, sql="SELECT url::text AS v FROM mcp_servers")
+        whole_row = await _run(registry, sql="SELECT to_jsonb(m)::text AS v FROM mcp_servers m")
+    finally:
+        with temp_db.transaction() as conn:
+            conn.execute("DELETE FROM mcp_servers WHERE id = %s", (server_id,))
+
+    assert control["success"] is True
+    assert direct["success"] is False
+    assert whole_row["success"] is False
+    assert not _leaked(direct, SENTINEL)
+    assert not _leaked(whole_row, SENTINEL)
+
+
+async def test_ts_stat_is_refused_by_name(registry: InternalToolRegistry) -> None:
+    """ts_stat executes SQL from text, so it is refused by name like set_config.
+
+    The inner text reads a column the role can read, so privileges cannot refuse it.
+    Only the denied-name gate can, which makes this test fail if the name is removed.
+    """
+    result = await _run(
+        registry,
+        sql=("SELECT word::text AS v FROM ts_stat('SELECT to_tsvector(name) FROM mcp_servers')"),
+    )
+
+    assert result["success"] is False

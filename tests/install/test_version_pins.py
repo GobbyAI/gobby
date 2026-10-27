@@ -48,7 +48,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
     ("bin_name", "minimum"),
     [
         # gmcp: call_tool.rs changed in #24893 under installed 0.1.13.
-        ("gmcp", "0.1.15"),
+        # gmcp: gcore changed in #25195 under installed 0.1.15.
+        ("gmcp", "0.1.16"),
         # gclient: pane_chrome changed in #25128/#24901 and gcore in #24451 under installed 0.1.86.
         # gclient: gcore changed in #25195 under installed 0.1.87.
         ("gclient", "0.1.88"),

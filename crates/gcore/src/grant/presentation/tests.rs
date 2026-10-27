@@ -7,8 +7,8 @@ use crate::grant::{EXPECTED_API_CONTRACT, GRANT_VERSION, expected_schema_identit
 
 const SECRET: &[u8] = b"presentation-test-secret";
 /// Checksum and signature Python's `sign_grant` produces for the golden grant.
-const PYTHON_CHECKSUM: &str = "42e8ae04c6576773e155b6bce945a0cebc7fe9d0bceb8b3cb3a3f75902ca3385";
-const PYTHON_SIGNATURE: &str = "d644653da70891e50d8625e73e148246d22d5c033939a145da0910c661661cb9";
+const PYTHON_CHECKSUM: &str = "18a7d05068508a9c9e35a8e204c45d26b3dae1222670f2d78298d221f9605861";
+const PYTHON_SIGNATURE: &str = "61facfb283c811d27b2fde91baa63b0773810f1a4c349ddbe385863c90e7878f";
 const TOKEN: &str = "cafebabedeadbeef";
 const EPOCH: i64 = 7;
 const NOW: i64 = 1_700_000_100;
