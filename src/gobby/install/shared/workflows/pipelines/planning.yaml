@@ -26,6 +26,33 @@ inputs:
   adversary_title:
     type: string
     default: "Plan Adversary"
+  writer_provider:
+    type: string
+    default: null
+  writer_model:
+    type: string
+    default: null
+  writer_reasoning_effort:
+    type: string
+    default: null
+  enhancer_provider:
+    type: string
+    default: null
+  enhancer_model:
+    type: string
+    default: null
+  enhancer_reasoning_effort:
+    type: string
+    default: null
+  adversary_provider:
+    type: string
+    default: null
+  adversary_model:
+    type: string
+    default: null
+  adversary_reasoning_effort:
+    type: string
+    default: null
   seats:
     type: string
     default: "writer,enhancer,adversary"
@@ -62,6 +89,9 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-writer
+        provider: "${{ inputs.writer_provider }}"
+        model: "${{ inputs.writer_model }}"
+        reasoning_effort: "${{ inputs.writer_reasoning_effort }}"
         prompt: "You are ${{ inputs.writer_title }} in workspace ${{ inputs.workspace }}."
         reserved_run_id: "${{ invocation_id }}"
         placement:
@@ -76,6 +106,9 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-adversary
+        provider: "${{ inputs.adversary_provider }}"
+        model: "${{ inputs.adversary_model }}"
+        reasoning_effort: "${{ inputs.adversary_reasoning_effort }}"
         prompt: "You are ${{ inputs.adversary_title }} in workspace ${{ inputs.workspace }}."
         reserved_run_id: "${{ invocation_id }}"
         placement:
@@ -91,6 +124,9 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-adversary
+        provider: "${{ inputs.adversary_provider }}"
+        model: "${{ inputs.adversary_model }}"
+        reasoning_effort: "${{ inputs.adversary_reasoning_effort }}"
         prompt: "You are ${{ inputs.adversary_title }} in workspace ${{ inputs.workspace }}."
         reserved_run_id: "${{ invocation_id }}"
         placement:
@@ -105,6 +141,9 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-enhancer
+        provider: "${{ inputs.enhancer_provider }}"
+        model: "${{ inputs.enhancer_model }}"
+        reasoning_effort: "${{ inputs.enhancer_reasoning_effort }}"
         prompt: "You are ${{ inputs.enhancer_title }} in workspace ${{ inputs.workspace }}."
         reserved_run_id: "${{ invocation_id }}"
         placement:
@@ -120,6 +159,9 @@ steps:
       tool: spawn_agent
       arguments:
         agent: plan-enhancer
+        provider: "${{ inputs.enhancer_provider }}"
+        model: "${{ inputs.enhancer_model }}"
+        reasoning_effort: "${{ inputs.enhancer_reasoning_effort }}"
         prompt: "You are ${{ inputs.enhancer_title }} in workspace ${{ inputs.workspace }}."
         reserved_run_id: "${{ invocation_id }}"
         placement:

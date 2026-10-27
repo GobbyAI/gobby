@@ -373,6 +373,7 @@ async def _spawn(h: _Harness, placement: dict[str, Any] | None, **overrides: Any
         "prompt": "Run the seat",
         "runner": h.runner,
         "provider": "claude",
+        "model": "claude-sonnet-5",
         "checkout_mode": "worktree",
         "parent_session_id": h.parent_id,
         "project_path": h.project_path,
@@ -951,6 +952,7 @@ async def test_concurrent_placed_spawns_share_one_reserver(
     arguments = {
         "prompt": "Run the seat",
         "provider": "claude",
+        "model": "claude-sonnet-5",
         "checkout_mode": "worktree",
         "parent_session_id": h.parent_id,
         "placement": _tab(h),
@@ -1069,6 +1071,7 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
     arguments: dict[str, Any] = {
         "prompt": "Run the seat",
         "provider": "claude",
+        "model": "claude-sonnet-5",
         "checkout_mode": "worktree",
         "task_id": task.id,
         "parent_session_id": h.parent_id,
@@ -1119,6 +1122,7 @@ async def test_placed_task_refusal_reaches_pipeline_error(placed: _Harness) -> N
             arguments={
                 "prompt": "Run the seat",
                 "provider": "claude",
+                "model": "claude-sonnet-5",
                 "checkout_mode": "worktree",
                 "parent_session_id": h.parent_id,
                 "task_id": task.id,
@@ -1163,6 +1167,7 @@ async def test_messageless_placed_failure_names_exception(
     elif boundary == "initial_step":
         overrides["agent_body"] = make_agent_definition(
             name="default",
+            model="claude-sonnet-5",
             prompts={"agent": "Work the task"},
             step_workflow=AgentStepWorkflowBody(steps=[WorkflowStep(name="work")]),
         )
@@ -1232,7 +1237,9 @@ async def test_rendered_developer_spawn_with_task_bound_manager(
     assert h.runs.has_active_run_for_task(task.id)
     # A pane exists for the surviving manager, as it does on a real team re-run.
     _held_seat(h, f"Dev Team - #{task.seq_num}", state="exited")
-    definition = make_agent_definition(name="developer", prompts={"agent": "Develop the task"})
+    definition = make_agent_definition(
+        name="developer", model="claude-sonnet-5", prompts={"agent": "Develop the task"}
+    )
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
         lambda *a, **k: definition,
@@ -1436,7 +1443,7 @@ async def test_split_pane_takes_the_definition_name_for_a_defined_seat(
     overrides: dict[str, Any] = {"agent_lookup_name": "developer"}
     if defined:
         overrides["agent_body"] = make_agent_definition(
-            name="developer", prompts={"agent": "Work the seat"}
+            name="developer", model="claude-sonnet-5", prompts={"agent": "Work the seat"}
         )
     result = await _spawn(h, _split(beside.id, title="Task #25128 - seat slug"), **overrides)
 

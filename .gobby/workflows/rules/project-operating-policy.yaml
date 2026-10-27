@@ -55,6 +55,9 @@ rules:
                 "developer_provider": "claude",
                 "developer_model": "claude-haiku-5-5",
                 "developer_reasoning_effort": "xhigh",
+                "test_writer_provider": "claude",
+                "test_writer_model": "claude-haiku-5-5",
+                "test_writer_reasoning_effort": "xhigh",
                 "reviewer_provider": "codex",
                 "reviewer_model": "gpt-6.1-sol",
                 "reviewer_reasoning_effort": "medium",
@@ -71,6 +74,7 @@ rules:
                 "release_manager_reasoning_effort": "medium",
                 "triage_provider": "claude",
                 "triage_model": "claude-sonnet-5-5",
+                "triage_reasoning_effort": "medium",
                 "archivist_provider": "claude",
                 "archivist_model": "claude-opus-5-5",
                 "archivist_reasoning_effort": "medium",
@@ -81,13 +85,27 @@ rules:
                 "consolidator_model": "claude-opus-5-5",
                 "consolidator_reasoning_effort": "medium"
               },
+              "planning": {
+                "writer_provider": "claude",
+                "writer_model": "claude-opus-5-5",
+                "writer_reasoning_effort": "xhigh",
+                "enhancer_provider": "codex",
+                "enhancer_model": "gpt-5.6-sol",
+                "enhancer_reasoning_effort": "xhigh",
+                "adversary_provider": "codex",
+                "adversary_model": "gpt-6.1-sol",
+                "adversary_reasoning_effort": "medium"
+              },
               "team-planning": {
                 "plan_writer_provider": "claude",
                 "plan_writer_model": "claude-opus-5-5",
                 "plan_writer_reasoning_effort": "xhigh",
                 "plan_adversary_provider": "codex",
                 "plan_adversary_model": "gpt-6.1-sol",
-                "plan_adversary_reasoning_effort": "medium"
+                "plan_adversary_reasoning_effort": "medium",
+                "plan_enhancer_provider": "codex",
+                "plan_enhancer_model": "gpt-5.6-sol",
+                "plan_enhancer_reasoning_effort": "xhigh"
               }
             },
             "role_launch_defaults": {

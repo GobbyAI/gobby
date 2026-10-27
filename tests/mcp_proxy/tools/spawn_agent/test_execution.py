@@ -641,7 +641,7 @@ class TestSpawnAgentIsolation:
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = build_agent_body(provider="codex")
+        agent_body = build_agent_body(provider="codex", model="gpt-5.4")
         worktree_storage = MagicMock()
         git_manager = MagicMock()
         registry = create_spawn_agent_registry(
@@ -1447,7 +1447,7 @@ class TestSpawnAgentPreRegistration:
         assert result["error"] == error
         assert result["worktree_id"] is None
         assert result["branch_name"] is None
-        assert result["reasoning"]["status"] == "not_requested"
+        assert result["reasoning"]["requested_effort"] == "medium"
         assert run is not None
         assert run.status == "cancelled"
         assert run.error == error

@@ -135,6 +135,7 @@ async def _resume(crashed: CrashedTeam, seat: str, agent_name: str) -> dict[str,
             agent_body=AgentDefinitionBody(
                 name=agent_name,
                 prompts=AgentPromptBlocks(agent="Continue the seat"),
+                model="claude-sonnet-5",
                 workflows=AgentWorkflows(rule_selectors=AgentSelector()),
             ),
             db=db,

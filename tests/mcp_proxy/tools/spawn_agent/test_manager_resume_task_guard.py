@@ -120,7 +120,7 @@ async def _spawn(
         db=h.db,
     )
     context = {"id": caller.project_id, "project_path": "/workspace"}
-    body = make_agent_definition(name=agent, prompts={"agent": "Continue"})
+    body = make_agent_definition(name=agent, prompts={"agent": "Continue"}, model="claude-sonnet-5")
     seat = h.seats[SEAT_TYPE]
     prepared = PreparedSpawn(
         session_id=seat.id,

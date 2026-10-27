@@ -77,6 +77,7 @@ def agent_body() -> AgentDefinitionBody:
         prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
         name="default",
         provider="claude",
+        model="claude-sonnet-5",
     )
 
 
