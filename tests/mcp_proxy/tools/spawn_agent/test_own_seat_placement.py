@@ -109,31 +109,45 @@ async def _manager_spawns_developer(
 async def test_epic_manager_places_its_fresh_seat_into_its_own_team_tab(
     world: TeamWorld,
     placed_harness: spawn_placement._Harness,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An epic Dev Manager's fresh seat for its admitted leaf lands in its own team tab."""
-    _restore_real_spawn(monkeypatch)
+    """An epic Dev Manager's fresh seat resolves into its own team tab, and no other tab."""
     epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    other = new_task(world, "Another team's epic", epic=True)
+    new_task(world, LEAF_TITLE, parent=epic)
     team = await epic_team(world, epic)
     h = placed_harness
     tab_title = f"Dev Team - #{epic.seq_num}"
     team_pane = spawn_placement._held_seat(h, tab_title, state="exited")
-    split = {
-        "workspace": h.workspace.id,
-        "tab_title": tab_title,
-        "axis": "right",
-        "title": "developer",
-    }
+    spawn_placement._held_seat(h, f"Dev Team - #{other.seq_num}", state="exited")
+    spawn_placement._held_seat(h, "Operator", state="exited")
 
-    result = await _manager_spawns_developer(team.manager, h, leaf, {"split": split})
+    async def place(target_tab: str) -> PlacedLaunch | dict[str, Any] | None:
+        return await preflight_placement(
+            {
+                "split": {
+                    "workspace": h.workspace.id,
+                    "tab_title": target_tab,
+                    "axis": "right",
+                    "title": "developer",
+                }
+            },
+            reserver=h.reserver,
+            sandbox_config=SandboxConfig(enabled=True, backend="srt"),
+            parent_session_id=team.manager,
+            machine_id=LOCAL_MACHINE_ID,
+            project_id=h.project_id,
+            project_context_authoritative=True,
+            session_manager=h.sessions,
+            agent_name="developer",
+        )
 
-    assert result["success"] is True, result
-    [pane_id] = [
-        pane for pane, bound in spawn_placement._panes(h).items() if bound == result["terminal_id"]
-    ]
-    [pane] = [p for p in h.workspaces.list_panes(h.workspace.id) if p.id == pane_id]
-    assert pane.tab_id == team_pane.tab_id
+    admitted = await place(tab_title)
+    assert isinstance(admitted, PlacedLaunch), admitted
+    assert admitted.resolved.tab_id == team_pane.tab_id
+    assert admitted.resolved.workspace_id == h.workspace.id
+    for refused in (f"Dev Team - #{other.seq_num}", "Operator"):
+        refusal = await place(refused)
+        assert isinstance(refusal, dict) and refusal["placement_error"] == "forbidden", refusal
 
 
 @pytest.mark.asyncio
