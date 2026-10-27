@@ -312,6 +312,32 @@ class SessionVariableManager(SessionEditLedger):
                 )
             return result
 
+    def adopt_claimed_task_edits(
+        self, session_id: str, checkout_root: str, *, since: float
+    ) -> None:
+        """Record the content a claimant's shell call left in its tasks' ledger paths.
+
+        A path a claimed task holds, rewritten at or after ``since`` (the call's start), is
+        owned by that task's newest Gobby action. A write made before the call stays unowned.
+        """
+        from gobby.workflows.dirty_edit_grants import claimed_task_touched_digests
+        from gobby.workflows.task_claim_state import record_task_content_hashes
+
+        touched = claimed_task_touched_digests(
+            self.db, session_id=session_id, checkout_root=checkout_root, since=since
+        )
+        if not touched:
+            return
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            for task_id, digests in touched.items():
+                record_task_content_hashes(variables, task_id, checkout_root, digests)
+            return None, True
+
+        self._mutate_variables(
+            session_id, mutate, keys=("task_edited_checkout_hashes",), apply_defaults=False
+        )
+
     def get_variable_subset(self, session_id: str, keys: Iterable[str]) -> dict[str, Any]:
         """Read selected layered values without materializing the session blob."""
         scope = sorted(set(_sanitize_variables_payload(list(keys))))

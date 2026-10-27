@@ -54,13 +54,33 @@ Shapes 1 and 2: `claimed_task_carriers` no longer requires a `session_tasks` lin
 The #22604 shape (live map cleared, history retained, claimant is the same session)
 keeps its history-only paths as carriers. History never creates a holder.
 
-Bounce d063d81a narrowed the carrier rule. History alone no longer carries a path. A path
-is owned by the task whose newest Gobby edit of it is newer than the last commit touching
-it in that checkout. The edit time is `task_edited_checkout_times` (per task, checkout and
-path, epoch seconds, written at each Gobby edit). Among tasks, the newest edit owns the
-path, and ledger key order never decides the owner. A path committed after its last Gobby
-edit, then changed outside Gobby, is refused until `approve-dirty-paths`. Git commit times
-are whole seconds, so an edit in the commit's own second is refused rather than carried.
+Ownership is content-based. Bounces d063d81a and e9fff519 refuted a commit-clock design: a
+same-second edit was refused, and a backdated committer date kept stale ownership. The
+replacement, from the ORCH ruling, records content hashes.
 
-Known gap, not fixed here: script-body writes (for example `python3 gen.py`) have no
-snapshot. The seat checkpoint-commits its own script-written paths, as #25171 did.
+- Each Gobby edit records the git blob hash of each path it left, per task, checkout and
+  path, in `task_edited_checkout_hashes`. An absent path records null.
+- A task owns a path while the path's current hash matches a record of that task. Among
+  matching records the newest edit owns the path (`task_edited_checkout_times`), and ledger
+  key order never decides the owner. No commit time enters the test.
+- Any change outside Gobby breaks the match. The path then needs `approve-dirty-paths`,
+  including a path committed after its last Gobby edit and then changed outside Gobby.
+- The commit guard's own-session exemption counts a path only when its current hash matches a
+  record in the caller's ledger.
+- After each claimant Bash call, `adopt_claimed_task_edits` records the current hashes of the
+  claimed tasks' ledgered paths in that checkout whose file, or parent directory when the
+  file is absent, changed at or after the call's start. A write made before the call stays
+  unowned.
+
+Residual gaps, named and not fixed:
+
+- Script-body writes (for example `python3 gen.py`) have no snapshot. A new path a script
+  creates stays unowned until a Gobby edit records it. The seat checkpoint-commits its own
+  script-written paths, as #25171 did.
+- An outside write made during the claimant's own Bash call is adopted. The hook cannot
+  separate the two writes.
+- A Bash call that writes into a second checkout reached by `cd` adopts only the checkout of
+  its starting directory. The other checkout's paths stay unowned and need approval.
+- A directory-only ledger entry is not owned.
+- Ledgers recorded before this change carry no hashes. In-flight dirt needs one
+  `approve-dirty-paths` after deploy; no backward compatibility is kept (rule 10).

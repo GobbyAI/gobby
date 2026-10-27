@@ -1,18 +1,17 @@
 """Grounds that let a session write dirt its own ledger does not cover.
 
-A path is this session's own when the newest Gobby edit of it since the last
-commit touching it belongs to a task this session holds (``tasks.claimed_by_session_id``).
-An operator approval names exact paths in one checkout for
-one session, and holds for each path only while it keeps the content it had
+A task owns a path while the path still holds the content its latest Gobby action
+left: each record stores the path's git blob hash, and a match with the current
+content is the proof. Any change made outside Gobby breaks the match, and no commit
+time or clock enters the test. An operator approval names exact paths in one checkout
+for one session, and holds for each path only while it keeps the content it had
 when approved. Only the operator route writes the reserved approval variable: the
 daemon's dirty-path-approvals endpoint, which admits only a verified operator API key.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import math
 import os
 import shlex
 from collections.abc import Iterable, Mapping
@@ -21,39 +20,106 @@ from pathlib import Path
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.git import run_git_command
+from gobby.workflows.checkout_fingerprint import file_fingerprint, path_fingerprints
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     normalize_task_checkout_root,
+    task_checkout_edit_hashes,
     task_checkout_edit_times,
-    task_edit_path_covers,
-    task_edited_file_set_with_history,
 )
 
 OPERATOR_DIRTY_PATH_APPROVALS_VARIABLE = "operator_dirty_path_approvals"
+# Never a git blob hash, so an unreadable path matches no record.
+_UNREADABLE = "unreadable"
 
 
 def claimed_task_carriers(
     db: HubDatabase, *, session_id: str, checkout_root: str, paths: Iterable[str]
 ) -> tuple[frozenset[str], set[str]]:
     """Return the tasks this session holds and the ledger paths whose newest edit they own."""
+    own_tasks = _claimed_task_ids(db, session_id)
+    owners = checkout_path_owners(db, checkout_root=checkout_root, paths=paths)
+    return own_tasks, {path for path, task_id in owners.items() if task_id in own_tasks}
+
+
+def claimed_task_touched_digests(
+    db: HubDatabase, *, session_id: str, checkout_root: str, since: float
+) -> dict[str, dict[str, str | None]]:
+    """Return, per task this session holds, the digests of its ledger paths written since ``since``.
+
+    Only paths a task's ledger already holds in this checkout count, so a write to a path no
+    claimed task recorded stays unowned.
+    """
+    root = normalize_task_checkout_root(checkout_root)
+    if root is None:
+        return {}
+    ledger = claimed_task_ledger_paths(
+        db, task_ids=_claimed_task_ids(db, session_id), checkout_root=root
+    )
+    touched: dict[str, dict[str, str | None]] = {}
+    for task_id, paths in ledger.items():
+        changed = [path for path in sorted(paths) if _changed_since(Path(root), path, since)]
+        digests = path_fingerprints(Path(root), changed)
+        if digests:
+            touched[task_id] = digests
+    return touched
+
+
+def _claimed_task_ids(db: HubDatabase, session_id: str) -> frozenset[str]:
     rows = db.fetchall(
         "SELECT id::text AS task_id FROM tasks WHERE claimed_by_session_id = %s",
         (session_id,),
     )
-    own_tasks = frozenset(str(row["task_id"]) for row in rows)
-    owners = checkout_path_owners(db, checkout_root=checkout_root, paths=paths)
-    return own_tasks, {path for path, task_id in owners.items() if task_id in own_tasks}
+    return frozenset(str(row["task_id"]) for row in rows)
+
+
+def _changed_since(root: Path, path: str, since: float) -> bool:
+    """Return whether the path, or its parent when the path is absent, changed since ``since``."""
+    target = root / path
+    try:
+        return os.lstat(target).st_mtime >= since
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return False
+    try:
+        return os.lstat(target.parent).st_mtime >= since
+    except OSError:
+        return False
+
+
+def claimed_task_ledger_paths(
+    db: HubDatabase, *, task_ids: Iterable[str], checkout_root: str
+) -> dict[str, set[str]]:
+    """Return, per task, every path any session's ledger recorded for it in one checkout."""
+    root = normalize_task_checkout_root(checkout_root)
+    tasks = sorted(set(task_ids))
+    if root is None or not tasks:
+        return {}
+    rows = db.fetchall(
+        """
+        SELECT (session_variables.variables -> 'task_edited_checkout_hashes')::text AS hashes
+        FROM session_variables
+        WHERE (session_variables.variables -> 'task_edited_checkout_hashes') ?| %s
+        """,
+        (tasks,),
+    )
+    paths: dict[str, set[str]] = {task_id: set() for task_id in tasks}
+    for row in rows:
+        variables = {"task_edited_checkout_hashes": _json_object(row["hashes"])}
+        for task_id in tasks:
+            paths[task_id].update(task_checkout_edit_hashes(variables, task_id, root))
+    return paths
 
 
 def checkout_path_owners(
     db: HubDatabase, *, checkout_root: str, paths: Iterable[str]
 ) -> dict[str, str]:
-    """Map each ledger path covering ``paths`` to the task whose newest edit still leaves it dirty.
+    """Map each ledger path among ``paths`` to the task whose recorded content it still holds.
 
-    Every session's ledger counts. A task's Gobby edit is dirt only while it is newer than
-    the last commit touching the path in this checkout, and among tasks that edited a path
-    the newest edit owns it. Ledger key order never decides the owner.
+    A record counts while the path's current content matches the hash it had after that
+    task's Gobby action. Among matching records the newest edit owns the path, and ledger
+    key order never decides the owner. Every session's ledger counts.
     """
     root = normalize_task_checkout_root(checkout_root)
     wanted = set(paths)
@@ -61,58 +127,58 @@ def checkout_path_owners(
         return {}
     rows = db.fetchall(
         """
-        SELECT (session_variables.variables -> 'task_edited_file_checkouts')::text AS checkouts,
-               (session_variables.variables -> 'task_edited_file_checkouts_history')::text
-                   AS history_checkouts,
+        SELECT (session_variables.variables -> 'task_edited_checkout_hashes')::text AS hashes,
                (session_variables.variables -> 'task_edited_checkout_times')::text AS times
         FROM session_variables
-        WHERE session_variables.variables ?| ARRAY[
-            'task_edited_file_checkouts', 'task_edited_file_checkouts_history'
-        ]
+        WHERE session_variables.variables ? 'task_edited_checkout_hashes'
         """
     )
-    newest: dict[str, dict[str, float]] = {}
+    current: dict[str, str | None] = {}
+    newest: dict[str, tuple[float, str]] = {}
     for row in rows:
         variables = {
-            "task_edited_file_checkouts": _json_object(row["checkouts"]),
-            "task_edited_file_checkouts_history": _json_object(row["history_checkouts"]),
+            "task_edited_checkout_hashes": _json_object(row["hashes"]),
             "task_edited_checkout_times": _json_object(row["times"]),
         }
-        task_ids = {
-            *variables["task_edited_file_checkouts"],
-            *variables["task_edited_file_checkouts_history"],
-        }
-        for task_id in task_ids:
+        for task_id in variables["task_edited_checkout_hashes"]:
             stamps = task_checkout_edit_times(variables, task_id, root)
-            for entry in task_edited_file_set_with_history(variables, task_id, root):
-                if any(task_edit_path_covers(entry, path) for path in wanted):
-                    by_task = newest.setdefault(entry, {})
-                    by_task[task_id] = max(stamps.get(entry, 0.0), by_task.get(task_id, 0.0))
-    owners: dict[str, str] = {}
-    for entry, by_task in newest.items():
-        task_id, stamp = max(by_task.items(), key=lambda item: (item[1], item[0]))
-        last_commit = _last_commit_second(root, entry)
-        # Git commit times are whole seconds, so an edit in the commit's own second is not
-        # proven newer. Unstamped entries (stamp 0.0) own nothing once the path was committed.
-        if last_commit is None or math.floor(stamp) > last_commit:
-            owners[entry] = task_id
-    return owners
+            for entry, digest in task_checkout_edit_hashes(variables, task_id, root).items():
+                if entry not in wanted:
+                    continue
+                if entry not in current:
+                    current[entry] = _current_digest(root, entry)
+                if digest != current[entry]:
+                    continue
+                candidate = (stamps.get(entry, 0.0), task_id)
+                if entry not in newest or candidate > newest[entry]:
+                    newest[entry] = candidate
+    return {entry: task_id for entry, (_, task_id) in newest.items()}
 
 
-def _last_commit_second(root: str, path: str) -> float | None:
-    """Return the epoch second of the newest commit touching ``path``, or None if there is none.
+def content_recorded_paths(
+    variables: Mapping[str, Any], checkout_root: str, paths: Iterable[str]
+) -> set[str]:
+    """Return the paths, among ``paths``, whose current content matches a record in ``variables``."""
+    root = normalize_task_checkout_root(checkout_root)
+    hashes = variables.get("task_edited_checkout_hashes")
+    if root is None or not isinstance(hashes, dict):
+        return set()
+    records: dict[str, set[str | None]] = {}
+    for task_id in hashes:
+        for entry, digest in task_checkout_edit_hashes(
+            {"task_edited_checkout_hashes": hashes}, task_id, root
+        ).items():
+            records.setdefault(entry, set()).add(digest)
+    return {
+        path for path in paths if path in records and _current_digest(root, path) in records[path]
+    }
 
-    An unreadable history returns ``inf``, which proves no edit newer than the commit.
-    """
-    newest = run_git_command(
-        ["git", "--literal-pathspecs", "log", "-1", "--format=%ct", "--", path],
-        cwd=root,
-        timeout=10,
-    )
-    if newest is None:
-        unborn = run_git_command(["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=root)
-        return None if unborn is None else math.inf
-    return float(newest) if newest else None
+
+def _current_digest(root: str, path: str) -> str | None:
+    try:
+        return file_fingerprint(Path(root) / path)
+    except OSError:
+        return _UNREADABLE
 
 
 def _json_object(text: str | None) -> dict[str, Any]:
@@ -137,7 +203,7 @@ def record_dirty_path_approval(
     for path in paths:
         rel = _checkout_relative(root, path)
         try:
-            fingerprints[rel] = _fingerprint(root / rel)
+            fingerprints[rel] = file_fingerprint(root / rel)
         except OSError as exc:
             raise ValueError(f"{path} is not a file: {exc}") from exc
     if not fingerprints:
@@ -167,7 +233,7 @@ def approved_dirty_paths(variables: Mapping[str, Any], checkout_root: str) -> se
     approved: set[str] = set()
     for rel, expected in paths.items():
         try:
-            if _fingerprint(Path(root_key) / rel) == expected:
+            if file_fingerprint(Path(root_key) / rel) == expected:
                 approved.add(rel)
         except OSError:
             continue
@@ -191,12 +257,3 @@ def _checkout_relative(root: Path, path: str) -> str:
     if not path.strip() or rel == Path("."):
         raise ValueError(f"{path!r} does not name a path inside checkout {root}.")
     return rel.as_posix()
-
-
-def _fingerprint(path: Path) -> str | None:
-    """Git's blob hash of the path's content, or None when the path is absent."""
-    try:
-        data = os.readlink(path).encode() if path.is_symlink() else path.read_bytes()
-    except FileNotFoundError:
-        return None
-    return hashlib.sha1(b"blob %d\0" % len(data) + data, usedforsecurity=False).hexdigest()

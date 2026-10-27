@@ -33,6 +33,7 @@ from gobby.workflows.dirty_edit_grants import (
     approved_dirty_paths,
     checkout_path_owners,
     claimed_task_carriers,
+    content_recorded_paths,
     dirty_path_approval_command,
 )
 from gobby.workflows.git_commit_parsing import (
@@ -303,7 +304,13 @@ async def foreign_dirty_edit_conflict(
             rels = await asyncio.to_thread(_git_backed_targets, root, rels)
             if not rels:
                 continue
-            own = session_dirty_file_set_for_checkout(variables, root)
+            # Only dirt whose current content this session's own ledger recorded counts as its own.
+            own = await asyncio.to_thread(
+                content_recorded_paths,
+                variables,
+                root,
+                session_dirty_file_set_for_checkout(variables, root),
+            )
             candidates = {
                 rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
             }

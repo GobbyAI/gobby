@@ -25,6 +25,7 @@ from gobby.skills.parser import ParsedSkill
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     assert_task_edit_paths_available,
+    effective_tool_cwd,
     task_edited_file_set_for_checkout,
     task_selected_at,
 )
@@ -384,6 +385,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
+            if tool_name == "Bash" and self._session_manager is not None:
+                self._adopt_shell_writes(event, session_id)
+
             db = getattr(self._session_manager, "db", None)
             if db is not None:
                 TaskToolBindings(SessionVariableManager(db), session_id).complete(event)
@@ -414,6 +418,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 )
         return response
 
+    def _adopt_shell_writes(self, event: HookEvent, session_id: str) -> None:
+        """Let the claimed tasks own the ledger paths this Bash call rewrote."""
+        db = getattr(self._session_manager, "db", None)
+        cwd = effective_tool_cwd(event.cwd, event.data)
+        if db is None or cwd is None:
+            return
+        variable_manager = SessionVariableManager(db)
+        started_at = TaskToolBindings(variable_manager, session_id).started_at(event)
+        root = checkout_root(Path(cwd))
+        if started_at is None or root is None:
+            return
+        try:
+            variable_manager.adopt_claimed_task_edits(session_id, os.fspath(root), since=started_at)
+        except Exception:
+            self.logger.warning("Failed to adopt shell writes to claimed tasks", exc_info=True)
+
     def _record_successful_file_mutation(
         self,
         event: HookEvent,
@@ -442,7 +462,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
 
-        from gobby.workflows.task_claim_state import effective_tool_cwd, resolve_edit_pair
+        from gobby.workflows.task_claim_state import resolve_edit_pair
 
         db = getattr(self._session_manager, "db", None)
         variables = SessionVariableManager(db).get_variables(session_id) if db is not None else {}
