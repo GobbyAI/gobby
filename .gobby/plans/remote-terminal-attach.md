@@ -744,10 +744,23 @@ Targets:
   `spawn_daemon_instance` over the e2e harness's isolated config and database,
   with a self-signed certificate) and `pair_node` (an enrolled bare
   `gdaemon serve` with `GOBBY_HOME` in `tmp_path`), plus `_wait_connection`.
-  `tests/e2e/fake_provider.py` and hub-mode 5.1's SRT setup start a run on the
-  node. These are imported, not edited.
+  These are imported, not edited. Node terminals are run-backed, so the proof
+  needs an agent run on the node.
+- Real provider (Orchestrator ruling gobby#17281 via Triage, 2026-10-27, for
+  Josh to see at approval): Josh's 2026-10-20 correction on #24604 requires
+  real providers on the hub-node path; fake providers are never an accepted
+  final proof. The module therefore starts one real Claude run on the node
+  under managed SRT (`tests/e2e/conftest.py::link_operator_srt` in both homes,
+  failing instead of skipping as hub-mode Decision 22 does). The proof uses
+  real provider usage. It runs only behind the admission gate of
+  `tests/e2e/test_composer_live_proof.py`: the `GOBBY_COMPOSER_PROOF_EXECUTION`
+  grant and a reviewed admission file loaded through
+  `tests/e2e/composer_proof_admission.py::load_admission`. Rejected:
+  depending on #24604 and extending `tests/e2e/test_hub_node_live.py`, which
+  would couple 5.2 to #24604's blocked scope.
 - Chosen approach: one test module with a hub and a node from those fixtures and
-  one fake run on the node. A WS client authenticated as the owner drives the hub:
+  one real Claude run on the node. Every typed marker goes into the composer
+  without submitting and is then cleared, so the composer draft is preserved. A WS client authenticated as the owner drives the hub:
   list, attach with `frame_delivery: proxy`, read frames, type through
   `terminal_input` and see the echo, detach, then stop the node and attach again.
   Everything uses temporary homes, ports and databases; nothing is registered in
@@ -794,6 +807,15 @@ stderr capture. E-RT-02: a ceiling of 32 pending relays per channel connection
 with typed `relay_busy` (2.1.6, 2.2.2, 3.2). E-RT-03: a live gclient case
 through the node's loopback origin (5.2.4), because gclient cannot trust the
 hub's self-signed certificate. Base validation passes.
+
+2026-10-27 — Adversary findings applied. RT-F1: node relay setup runs under a
+10 s deadline and is cancelled on channel loss (1.2.7). RT-F2: contract v5 adds
+`terminal.resize`, deliverable 1.3 executes it on the node, and the hub's sizing
+election sends the elected geometry to the node (2.2.7, 3.3.3–3.3.5, 5.2.5).
+RT-F3: gclient attaches the owning machine's default workspace before opening an
+unplaced remote terminal (4.1.5–4.1.6). Per the Orchestrator's ruling, 5.2 now
+uses one real Claude run behind the composer-proof admission gate in place of a
+fake provider.
 
 ## V2 Verification
 `kind: verification`
