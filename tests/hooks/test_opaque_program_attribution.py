@@ -29,7 +29,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.daemon_git import daemon_git
-from gobby.workflows.checkout_fingerprint import file_fingerprint
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.state_manager import SessionVariableManager
@@ -49,6 +48,19 @@ def _local_machine_identity() -> Iterator[None]:
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def _blob_hash(path: Path) -> str | None:
+    """Return git's blob hash of a file as stored in the ledger, or None when it is absent."""
+    if not path.exists():
+        return None
+    result = subprocess.run(
+        ["git", "hash-object", "--no-filters", "--", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 @dataclass(frozen=True)
@@ -214,7 +226,7 @@ def checkout(
         current.id,
         {
             "task_edited_checkout_hashes": {
-                task.id: {str(repo): {"owned.txt": file_fingerprint(repo / "owned.txt")}}
+                task.id: {str(repo): {"owned.txt": _blob_hash(repo / "owned.txt")}}
             }
         },
     )

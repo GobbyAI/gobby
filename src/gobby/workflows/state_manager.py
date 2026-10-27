@@ -6,6 +6,7 @@ import weakref
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.sessions import startup_claim as _startup_claim
 from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
+from gobby.workflows.checkout_fingerprint import path_fingerprints
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.session_edit_ledger import SessionEditLedger
 from gobby.workflows.variable_defaults import (
@@ -312,30 +314,71 @@ class SessionVariableManager(SessionEditLedger):
                 )
             return result
 
-    def adopt_claimed_task_edits(
-        self, session_id: str, checkout_root: str, *, since: float
-    ) -> None:
-        """Record the content a claimant's shell call left in its tasks' ledger paths.
+    def snapshot_claimed_shell_edits(self, session_id: str, checkout_root: str) -> None:
+        """Remember which ledger paths a claimant's shell call is about to rewrite.
 
-        A path a claimed task holds, rewritten at or after ``since`` (the call's start), is
-        owned by that task's newest Gobby action. A write made before the call stays unowned.
+        Only paths whose current content a claimed task's Gobby action recorded are kept, so
+        content changed outside Gobby before the call never becomes the claimant's.
         """
-        from gobby.workflows.dirty_edit_grants import claimed_task_touched_digests
-        from gobby.workflows.task_claim_state import record_task_content_hashes
+        from gobby.workflows.dirty_edit_grants import claimed_task_owned_paths
 
-        touched = claimed_task_touched_digests(
-            self.db, session_id=session_id, checkout_root=checkout_root, since=since
+        owned = claimed_task_owned_paths(
+            self.db, session_id=session_id, checkout_root=checkout_root
         )
-        if not touched:
-            return
+        snapshot = (
+            {
+                "checkout_root": checkout_root,
+                "owned": {
+                    path: {"task_id": task_id, "digest": digest}
+                    for path, (task_id, digest) in owned.items()
+                },
+            }
+            if owned
+            else None
+        )
 
         def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
-            for task_id, digests in touched.items():
-                record_task_content_hashes(variables, task_id, checkout_root, digests)
+            if snapshot is None and variables.get("claimed_shell_snapshot") is None:
+                return None, False
+            variables["claimed_shell_snapshot"] = snapshot
             return None, True
 
         self._mutate_variables(
-            session_id, mutate, keys=("task_edited_checkout_hashes",), apply_defaults=False
+            session_id, mutate, keys=("claimed_shell_snapshot",), apply_defaults=False
+        )
+
+    def adopt_claimed_shell_edits(self, session_id: str) -> None:
+        """Let each claimed task own the content its claimant's shell call left in its paths.
+
+        A snapshotted path changed by the call is recorded as that task's newest Gobby action.
+        A path the call left alone, or one written outside the call, stays as it was.
+        """
+        from gobby.workflows.task_claim_state import record_task_content_hashes
+
+        snapshot = self.get_variable_subset(session_id, ("claimed_shell_snapshot",)).get(
+            "claimed_shell_snapshot"
+        )
+        if not isinstance(snapshot, dict):
+            return
+        root = str(snapshot["checkout_root"])
+        owned: dict[str, dict[str, Any]] = snapshot["owned"]
+        now = path_fingerprints(Path(root), owned)
+        changed: dict[str, dict[str, str | None]] = {}
+        for path, entry in owned.items():
+            if path in now and now[path] != entry["digest"]:
+                changed.setdefault(entry["task_id"], {})[path] = now[path]
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            variables["claimed_shell_snapshot"] = None
+            for task_id, digests in changed.items():
+                record_task_content_hashes(variables, task_id, root, digests)
+            return None, True
+
+        self._mutate_variables(
+            session_id,
+            mutate,
+            keys=("claimed_shell_snapshot", "task_edited_checkout_hashes"),
+            apply_defaults=False,
         )
 
     def get_variable_subset(self, session_id: str, keys: Iterable[str]) -> dict[str, Any]:

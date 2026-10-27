@@ -67,10 +67,11 @@ replacement, from the ORCH ruling, records content hashes.
   including a path committed after its last Gobby edit and then changed outside Gobby.
 - The commit guard's own-session exemption counts a path only when its current hash matches a
   record in the caller's ledger.
-- After each claimant Bash call, `adopt_claimed_task_edits` records the current hashes of the
-  claimed tasks' ledgered paths in that checkout whose file, or parent directory when the
-  file is absent, changed at or after the call's start. A write made before the call stays
-  unowned.
+- Before each claimant Bash call, `snapshot_claimed_shell_edits` keeps the claimed tasks'
+  ledgered paths that match a recorded hash now. After the call, `adopt_claimed_shell_edits`
+  records the new hash of each kept path the call changed, for its owning task. A path that
+  was not owned before the call, such as one written or deleted outside Gobby earlier, is
+  never adopted. No mtime or clock enters the test, so `cp -p` rewrites are owned.
 
 Residual gaps, named and not fixed:
 

@@ -129,6 +129,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
             except ValueError as exc:
                 return HookResponse(decision="block", reason=str(exc))
+            if tool_name == "Bash":
+                self._snapshot_shell_writes(event, session_id)
 
         return HookResponse(decision="allow")
 
@@ -386,7 +388,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
             if tool_name == "Bash" and self._session_manager is not None:
-                self._adopt_shell_writes(event, session_id)
+                self._adopt_shell_writes(session_id)
 
             db = getattr(self._session_manager, "db", None)
             if db is not None:
@@ -418,19 +420,25 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 )
         return response
 
-    def _adopt_shell_writes(self, event: HookEvent, session_id: str) -> None:
-        """Let the claimed tasks own the ledger paths this Bash call rewrote."""
+    def _snapshot_shell_writes(self, event: HookEvent, session_id: str) -> None:
+        """Remember the claimed-task ledger paths this Bash call may rewrite, before it runs."""
         db = getattr(self._session_manager, "db", None)
         cwd = effective_tool_cwd(event.cwd, event.data)
-        if db is None or cwd is None:
-            return
-        variable_manager = SessionVariableManager(db)
-        started_at = TaskToolBindings(variable_manager, session_id).started_at(event)
-        root = checkout_root(Path(cwd))
-        if started_at is None or root is None:
+        root = checkout_root(Path(cwd)) if cwd is not None else None
+        if db is None or root is None:
             return
         try:
-            variable_manager.adopt_claimed_task_edits(session_id, os.fspath(root), since=started_at)
+            SessionVariableManager(db).snapshot_claimed_shell_edits(session_id, os.fspath(root))
+        except Exception:
+            self.logger.warning("Failed to snapshot claimed task edits", exc_info=True)
+
+    def _adopt_shell_writes(self, session_id: str) -> None:
+        """Let the claimed tasks own the ledger paths this Bash call rewrote."""
+        db = getattr(self._session_manager, "db", None)
+        if db is None:
+            return
+        try:
+            SessionVariableManager(db).adopt_claimed_shell_edits(session_id)
         except Exception:
             self.logger.warning("Failed to adopt shell writes to claimed tasks", exc_info=True)
 

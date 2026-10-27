@@ -42,27 +42,25 @@ def claimed_task_carriers(
     return own_tasks, {path for path, task_id in owners.items() if task_id in own_tasks}
 
 
-def claimed_task_touched_digests(
-    db: HubDatabase, *, session_id: str, checkout_root: str, since: float
-) -> dict[str, dict[str, str | None]]:
-    """Return, per task this session holds, the digests of its ledger paths written since ``since``.
+def claimed_task_owned_paths(
+    db: HubDatabase, *, session_id: str, checkout_root: str
+) -> dict[str, tuple[str, str | None]]:
+    """Return each ledger path a claimed task owns now, as ``(task_id, hash now)``.
 
-    Only paths a task's ledger already holds in this checkout count, so a write to a path no
-    claimed task recorded stays unowned.
+    A path counts only while its current content matches a hash one of the session's claimed
+    tasks recorded, so a write made outside Gobby over that content owns nothing.
     """
     root = normalize_task_checkout_root(checkout_root)
-    if root is None:
+    own_tasks = _claimed_task_ids(db, session_id)
+    if root is None or not own_tasks:
         return {}
-    ledger = claimed_task_ledger_paths(
-        db, task_ids=_claimed_task_ids(db, session_id), checkout_root=root
+    ledger = claimed_task_ledger_paths(db, task_ids=own_tasks, checkout_root=root)
+    owners = checkout_path_owners(
+        db, checkout_root=root, paths={path for paths in ledger.values() for path in paths}
     )
-    touched: dict[str, dict[str, str | None]] = {}
-    for task_id, paths in ledger.items():
-        changed = [path for path in sorted(paths) if _changed_since(Path(root), path, since)]
-        digests = path_fingerprints(Path(root), changed)
-        if digests:
-            touched[task_id] = digests
-    return touched
+    owned = sorted(path for path, task_id in owners.items() if task_id in own_tasks)
+    digests = path_fingerprints(Path(root), owned)
+    return {path: (owners[path], digests[path]) for path in owned if path in digests}
 
 
 def _claimed_task_ids(db: HubDatabase, session_id: str) -> frozenset[str]:
@@ -71,21 +69,6 @@ def _claimed_task_ids(db: HubDatabase, session_id: str) -> frozenset[str]:
         (session_id,),
     )
     return frozenset(str(row["task_id"]) for row in rows)
-
-
-def _changed_since(root: Path, path: str, since: float) -> bool:
-    """Return whether the path, or its parent when the path is absent, changed since ``since``."""
-    target = root / path
-    try:
-        return os.lstat(target).st_mtime >= since
-    except FileNotFoundError:
-        pass
-    except OSError:
-        return False
-    try:
-        return os.lstat(target.parent).st_mtime >= since
-    except OSError:
-        return False
 
 
 def claimed_task_ledger_paths(
