@@ -368,6 +368,10 @@ gobby sessions {approve,list}-dirty-paths s7""",
 print(1)
 PY
 gobby {tasks,sessions} list""",
+    # Only interpreter flags are data-safe; another prefix can redirect the launch.
+    """PATH=/opt/shim uv run python - <<'PY'
+gobby {tasks,sessions} list
+PY""",
 )
 
 
