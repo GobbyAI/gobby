@@ -349,9 +349,23 @@ async def admitted(world: TeamWorld, run: Session, inputs: dict[str, Any]) -> di
 
 
 def launch(run: Session, context: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The MCP arguments of every devteam step that runs for ``context``, by step id."""
-    rendered = {step.id: render(run, step.id, context) for step in DEVTEAM.steps}
-    return {step_id: arguments for step_id, arguments in rendered.items() if arguments is not None}
+    """The MCP arguments of every devteam step that runs for ``context``, by step id.
+
+    Steps render in order, and each launched seat's step leaves the output a spawned seat
+    reports, so later steps such as arrange read its pane_ref as a real execution does.
+    """
+    context = {**context, "steps": dict(context["steps"])}
+    launched = set(context["steps"]["guard"]["output"]["launch"])
+    rendered: dict[str, dict[str, Any]] = {}
+    for step in DEVTEAM.steps:
+        arguments = render(run, step.id, context)
+        if arguments is None:
+            continue
+        rendered[step.id] = arguments
+        if step.id in launched:
+            seat = {"child_session_id": f"seat-{step.id}", "pane_ref": f"0:0:1:{len(rendered)}"}
+            context["steps"][step.id] = {"output": seat}
+    return rendered
 
 
 def identity(arguments: dict[str, Any]) -> dict[str, Any]:
