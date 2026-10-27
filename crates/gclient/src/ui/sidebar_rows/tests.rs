@@ -1152,10 +1152,9 @@ fn an_agent_puts_the_model_on_line_two_and_the_task_on_line_three() {
     );
 }
 
-/// A sandboxed agent's lock sits on line one only, between the state dot
-/// and `#ref: Role`; the model and task lines never carry it (#24895).
+/// A sandboxed agent's lock sits directly before the model on line two (#25233).
 #[test]
-fn a_sandboxed_agent_marks_its_first_line_and_only_its_first() {
+fn a_sandboxed_agent_marks_its_model_line_and_only_its_model_line() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
         definition: "Assistant".into(),
@@ -1166,21 +1165,28 @@ fn a_sandboxed_agent_marks_its_first_line_and_only_its_first() {
         ..SidebarRow::default()
     };
     let first = line_text(&row_line(&row, 40, &chrome, 0));
-    assert!(first.ends_with(" \u{f023} #15976: Assistant"), "{first}");
+    assert!(first.ends_with(" #15976: Assistant"), "{first}");
+    assert!(!first.contains('\u{f023}'), "{first}");
     let plain = SidebarRow {
         sandbox_mark: None,
         ..row.clone()
     };
     let plain_first = line_text(&row_line(&plain, 40, &chrome, 0));
     assert!(plain_first.ends_with(" #15976: Assistant"), "{plain_first}");
-    assert!(!line_text(&row_second_line(&row, 40, &chrome)).contains('\u{f023}'));
+    let model = line_text(&row_second_line(&row, 40, &chrome));
+    assert!(
+        model.ends_with("\u{f023} claude-opus-5.5-medium"),
+        "{model}"
+    );
+    let plain_model = line_text(&row_second_line(&plain, 40, &chrome));
+    assert_eq!(model.find('\u{f023}'), plain_model.find("claude-"));
+    assert!(!plain_model.contains('\u{f023}'));
     assert!(!line_text(&row_third_line(&row, 40, &chrome)).contains('\u{f023}'));
 }
 
-/// The lock takes its cells from the title window, so the travel of a
-/// sandboxed name grows by exactly those cells (#24895).
+/// Moving the lock to the model line leaves the title's width budget intact.
 #[test]
-fn the_sandbox_lock_takes_its_cells_from_the_title_window() {
+fn the_sandbox_lock_leaves_the_title_window_unchanged() {
     let row = SidebarRow {
         definition: "An extraordinarily long agent name".into(),
         reference: "#77".into(),
@@ -1193,5 +1199,36 @@ fn the_sandbox_lock_takes_its_cells_from_the_title_window() {
     };
     let plain_travel = row_travel(&row, 24);
     assert!(plain_travel > 0, "the name must overrun for this to bite");
-    assert_eq!(row_travel(&sandboxed, 24), plain_travel + 2);
+    assert_eq!(row_travel(&sandboxed, 24), plain_travel);
+}
+
+#[test]
+fn sandbox_text_fallback_precedes_the_model_on_line_two() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "Developer".into(),
+        reference: "#77".into(),
+        model_slug: "codex-gpt-6.1-sol-medium".into(),
+        kind: RowKind::Agent,
+        sandbox_mark: Some("sbx"),
+        ..SidebarRow::default()
+    };
+    assert!(!line_text(&row_line(&row, 50, &chrome, 0)).contains("sbx"));
+    let model = line_text(&row_second_line(&row, 50, &chrome));
+    assert!(model.ends_with("sbx codex-gpt-6.1-sol-medium"), "{model}");
+    assert!(!line_text(&row_third_line(&row, 50, &chrome)).contains("sbx"));
+}
+
+#[test]
+fn an_unsandboxed_model_has_no_mark_or_extra_leading_gap() {
+    let row = SidebarRow {
+        kind: RowKind::Agent,
+        model_slug: "codex-gpt-6.1-sol-medium".into(),
+        sandbox_mark: None,
+        ..SidebarRow::default()
+    };
+    assert_eq!(
+        line_text(&row_second_line(&row, 50, &Chrome::dark())),
+        "   codex-gpt-6.1-sol-medium"
+    );
 }

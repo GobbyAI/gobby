@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -37,6 +38,62 @@ DEVTEAM = PipelineDefinition.model_validate(
 )
 SEATS = ("dev-manager", "test-writer", "developer", "code-reviewer")
 RENDERER = StepRenderer(TemplateEngine())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fresh_reviewer", [False, True])
+async def test_dev_manager_receives_launched_seat_roster(
+    world: TeamWorld, fresh_reviewer: bool
+) -> None:
+    workspace = WorkspaceManager(world.case.db).create(require_machine_id(), "devteam")[0].id
+    task = world.case.task(TITLE)
+    team_id = (
+        await _team_with_live(world, task, workspace, ("dev-manager",)) if fresh_reviewer else None
+    )
+    inputs = _inputs(task, workspace, world.case.creator, team_id)
+    run = _execution(world, task, inputs)
+    context = await _admit(world, run, inputs)
+    if fresh_reviewer:
+        context["inputs"]["fresh_reviewer"] = True
+        await _call(world, run, "guard", context)
+    seats = _launched(run, context)
+    replies = {
+        seat: {
+            "success": True,
+            "child_session_id": str(uuid4()),
+            "run_id": str(uuid4()),
+            "pane_ref": f"pane-{seat}",
+        }
+        for seat in seats
+    }
+    manager = context["steps"]["guard"]["output"]["live"].get("dev-manager")
+    deliveries: list[str] = []
+    for step in DEVTEAM.steps:
+        if step.id in ("guard", "admit"):
+            continue
+        step_context = _step_context(run, step.id, context)
+        if not RENDERER.should_run_step(step, step_context) or step.mcp is None:
+            continue
+        arguments = RENDERER.render_mcp_arguments(
+            step.mcp.arguments or {}, step_context, drop_none=True
+        )
+        if step.id in replies:
+            if step.id == "dev-manager":
+                manager = replies[step.id]["child_session_id"]
+                deliveries.append(str(arguments.get("prompt", "")))
+            context["steps"][step.id] = {"output": replies[step.id]}
+        elif step.mcp.tool == "send_message" and arguments.get("target_id") == manager:
+            deliveries.append(str(arguments.get("content", "")))
+            context["steps"][step.id] = {"output": {"success": True}}
+    delivered = "\n".join(deliveries)
+    for seat, reply in replies.items():
+        if seat == "dev-manager":
+            continue
+        assert seat in delivered.lower().replace(" ", "-"), (
+            f"Dev Manager never receives the {seat} roster entry"
+        )
+        assert str(reply["child_session_id"]) in delivered, f"missing {seat} session ref"
+        assert str(reply["run_id"]) in delivered, f"missing {seat} run id"
 
 
 @pytest.fixture

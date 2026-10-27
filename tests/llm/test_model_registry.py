@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import psycopg
 import pytest
 from psycopg_pool import PoolTimeout
@@ -21,6 +23,36 @@ from gobby.llm.model_registry import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_trickling_model_fetch_has_a_total_deadline(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class Trickle(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            for _ in range(100):
+                next_chunk = asyncio.Event()
+                timer = asyncio.get_running_loop().call_later(0.01, next_chunk.set)
+                try:
+                    await next_chunk.wait()
+                finally:
+                    timer.cancel()
+                yield b" "
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=Trickle(), request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        task = asyncio.create_task(fetch_models_async(timeout=0.03, client=client))
+        try:
+            done, _ = await asyncio.wait({task}, timeout=0.2)
+            assert task in done, "per-read timeouts let a trickling body stall the fetch"
+            assert task.result() == []
+            assert any(record.levelno >= logging.WARNING for record in caplog.records)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.parametrize(
