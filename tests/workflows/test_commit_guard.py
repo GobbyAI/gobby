@@ -1181,6 +1181,107 @@ async def test_claimant_history_only_dirt_stays_owned_by_its_claimed_task(
     assert decision.decision == "allow", decision.reason
 
 
+def _key_sorting(order: str, claimant_id: str) -> str:
+    """A ledger key that sorts before or after the claimant's id in jsonb key order."""
+    # Equal-length keys sort by their first byte: '-' is below every hex digit, 'z' above.
+    return ("-" if order == "before" else "z") + claimant_id[1:]
+
+
+@pytest.mark.asyncio
+async def test_claimant_edit_committed_then_changed_outside_gobby_needs_approval(
+    guard_harness: GuardHarness,
+) -> None:
+    """A committed claimant edit does not carry a later write made outside Gobby (#25161)."""
+    h = guard_harness
+    _commit_files(h.repo, "claimant work", {"orphan.txt": "team's own earlier edit\n"})
+    committed_at = float(_git(h.repo, "log", "-1", "--format=%ct"))
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                h.current_task.id: {str(h.repo): ["orphan.txt"]},
+            },
+            "task_edited_checkout_times": {
+                h.current_task.id: {str(h.repo): {"orphan.txt": committed_at - 60}},
+            },
+            "session_dirty_files": [],
+            "session_dirty_file_checkouts": {},
+        },
+    )
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+    assert "orphan.txt" in (decision.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_claimant_edit_after_its_commit_stays_owned(guard_harness: GuardHarness) -> None:
+    """A Gobby edit recorded after the last commit keeps its path owned by the claimant (#25161)."""
+    h = guard_harness
+    _commit_files(h.repo, "claimant work", {"orphan.txt": "team's own earlier edit\n"})
+    committed_at = float(_git(h.repo, "log", "-1", "--format=%ct"))
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                h.current_task.id: {str(h.repo): ["orphan.txt"]},
+            },
+            "task_edited_checkout_times": {
+                h.current_task.id: {str(h.repo): {"orphan.txt": committed_at + 5}},
+            },
+            "session_dirty_files": [],
+            "session_dirty_file_checkouts": {},
+        },
+    )
+    (h.repo / "orphan.txt").write_text("claimant's post-commit edit\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_sorts", ["before", "after"])
+@pytest.mark.parametrize("claimant_edited_last", [True, False])
+async def test_latest_editor_owns_a_shared_path_whatever_the_ledger_key_order(
+    guard_harness: GuardHarness, claimant_edited_last: bool, other_sorts: str
+) -> None:
+    """Ownership follows the newest Gobby edit of the path, not ledger key order (#25161)."""
+    h = guard_harness
+    claimant = h.current_task.id
+    other = _key_sorting(other_sorts, claimant)
+    now = datetime.now(UTC).timestamp()
+    claimant_stamp, other_stamp = (
+        (now - 100, now - 200) if claimant_edited_last else (now - 200, now - 100)
+    )
+    (h.repo / "shared.txt").write_text("written by a predecessor\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                claimant: {str(h.repo): ["shared.txt"]},
+                other: {str(h.repo): ["shared.txt"]},
+            },
+            "task_edited_checkout_times": {
+                claimant: {str(h.repo): {"shared.txt": claimant_stamp}},
+                other: {str(h.repo): {"shared.txt": other_stamp}},
+            },
+            "session_dirty_files": ["foreign.txt", "shared.txt"],
+            "session_dirty_file_checkouts": {str(h.repo): ["foreign.txt", "shared.txt"]},
+        },
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("shared.txt"))
+
+    expected = "allow" if claimant_edited_last else "block"
+    assert decision.decision == expected, decision.reason
+
+
 @pytest.mark.asyncio
 async def test_rule3_claim_successor_still_refused_for_another_tasks_live_claim(
     guard_harness: GuardHarness,
