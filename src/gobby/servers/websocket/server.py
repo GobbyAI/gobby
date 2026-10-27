@@ -637,7 +637,18 @@ class WebSocketServer(
         except Exception:
             client = self.clients.get(websocket)
             client_id = client.get("id") if isinstance(client, dict) else None
-            logger.exception("Message handling error for client %s", client_id)
+            try:
+                data = json.loads(message)
+            except (ValueError, TypeError):
+                data = None
+            message_type = data.get("type") if isinstance(data, dict) else None
+            message_type = message_type[:64] if isinstance(message_type, str) else None
+            logger.exception(
+                "Message handling error for client %s (type=%r)",
+                client_id,
+                message_type,
+                extra={"client_id": client_id, "message_type": message_type},
+            )
             try:
                 await self._send_error(websocket, "Internal server error")
             except Exception:

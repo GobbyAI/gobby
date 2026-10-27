@@ -9,6 +9,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from websockets.exceptions import ConnectionClosedOK
+from websockets.frames import Close
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
@@ -16,6 +18,7 @@ from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.servers.websocket.message_classes import _off_loop_chain_key
 from gobby.servers.websocket.models import WebSocketConfig
+from gobby.servers.websocket.proxy_relay import ProxyAttachment, ProxyHub
 from gobby.servers.websocket.server import (
     SLOW_WEBSOCKET_HANDLER_SECONDS,
     WebSocketServer,
@@ -274,6 +277,110 @@ class _ScriptedSocket:
 
     async def send(self, payload: str) -> None:
         self.sent.append(payload)
+
+
+class _DisconnectDuringSendSocket(_ScriptedSocket):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.sending = asyncio.Event()
+        self.disconnect = asyncio.Event()
+        self.attempted: list[str] = []
+
+    async def send(self, payload: str) -> None:
+        self.attempted.append(payload)
+        self.sending.set()
+        await self.disconnect.wait()
+        raise ConnectionClosedOK(Close(1000, "gone"), Close(1000, "gone"), True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proxied", [True, False], ids=["proxy", "direct"])
+async def test_runoff_loop_message_disconnect_does_not_raise(
+    proxied: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One lost recipient must not fence concurrent or later healthy detach events."""
+    server = WebSocketServer(WebSocketConfig(), MagicMock(), AsyncMock(return_value="test-user"))
+    registry = server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    proxy = cast(ProxyHub, server._proxy())
+    bad = _DisconnectDuringSendSocket()
+    healthy = _ScriptedSocket([])
+    server.clients[bad] = {"id": "departing-client"}
+    server.clients[healthy] = {"id": "healthy-client"}
+    object.__setattr__(server, "_apply_terminal_sizing", AsyncMock())
+
+    async def detach(socket: _ScriptedSocket, terminal_id: str) -> None:
+        attachment = await registry.attach(terminal_id, websocket=socket)
+        if proxied and socket is bad:
+            proxy.attachments[attachment.attachment_id] = ProxyAttachment(
+                terminal_id=terminal_id,
+                attachment_id=attachment.attachment_id,
+                websocket=socket,
+                frame=SimpleNamespace(close=AsyncMock()),
+                encoding="terminal_ansi",
+                backend="native",
+            )
+            proxy.by_socket.setdefault(socket, set()).add(attachment.attachment_id)
+        await server._run_off_loop_message(
+            socket,
+            json.dumps(
+                {
+                    "type": "terminal_detach",
+                    "terminal_id": terminal_id,
+                    "attachment_id": attachment.attachment_id,
+                    "request_id": terminal_id,
+                }
+            ),
+            None,
+        )
+
+    first = asyncio.create_task(detach(bad, "departing-terminal"))
+    queued: list[asyncio.Task[None]] = []
+    try:
+        await asyncio.wait_for(bad.sending.wait(), timeout=2)
+        queued = [asyncio.create_task(detach(healthy, f"terminal-{i}")) for i in range(36)]
+        # Let the independent terminal chains enter the registry behind the blocked send.
+        await asyncio.sleep(0)
+        assert registry.lifecycle_queue_size == 36
+        bad.disconnect.set()
+        await asyncio.wait_for(asyncio.gather(first, *queued), timeout=2)
+        await detach(healthy, "later-terminal")
+        assert "Message handling error" not in caplog.text
+        assert not any("Internal server error" in raw for raw in bad.attempted + healthy.sent)
+        events = [json.loads(raw) for raw in healthy.sent]
+        finalized = [event for event in events if event["type"] == "terminal_attachment_finalized"]
+        replies = [event for event in events if event["type"] == "terminal_detach_result"]
+        assert [event["seq"] for event in finalized] == list(range(2, 39))
+        assert len(replies) == 37
+        assert all(event["success"] for event in replies)
+        assert registry.lifecycle_snapshot() == {"daemon_epoch": "test-epoch", "seq": 38}
+        assert len(bad.attempted) <= 2
+    finally:
+        bad.disconnect.set()
+        await asyncio.gather(first, *queued)
+        await proxy.drop_socket(bad, "ws_close")
+        await registry.shutdown_lifecycle_publication()
+
+
+@pytest.mark.asyncio
+async def test_runoff_loop_message_unexpected_failure_has_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = WebSocketServer(WebSocketConfig(), MagicMock(), AsyncMock(return_value="test-user"))
+    socket = _ScriptedSocket([])
+    server.clients[socket] = {"id": "client-1"}
+
+    async def fail(_websocket: Any, _data: dict[str, Any]) -> None:
+        raise RuntimeError("publisher bug")
+
+    server._dispatch_table = {"terminal_detach": fail}
+    await server._run_off_loop_message(socket, '{"type":"terminal_detach"}', None)
+    errors = [record for record in caplog.records if "Message handling error" in record.message]
+    assert len(errors) == 1
+    assert errors[0].exc_info is not None
+    assert getattr(errors[0], "client_id", None) == "client-1"
+    assert getattr(errors[0], "message_type", None) == "terminal_detach"
+    assert len(socket.sent) == 1
+    assert "Internal server error" in socket.sent[0]
 
 
 class _AttachThenInputSocket(_ScriptedSocket):
