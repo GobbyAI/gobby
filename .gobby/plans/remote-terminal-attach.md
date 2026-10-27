@@ -119,8 +119,8 @@ reversible at plan approval.
 
 6. **Crate seam.** `gobby-terminals` cannot depend on `gobby-daemon`. The terminal
    family therefore takes one injected `RemoteTerminals` trait object (new, in
-   `crates/gterminals/src/remote.rs`) with two operations, open a relay and write
-   input. gdaemon implements it over the node registry. It is the only
+   `crates/gterminals/src/remote.rs`) with three operations: open a relay, write
+   input and resize the PTY. gdaemon implements it over the node registry. It is the only
    production implementation; the trait exists because the dependency points
    the other way, and tests use a fake.
 
@@ -187,27 +187,27 @@ records each external edge and the related work that gets no edge.
 | none | node-halves 3.4 (#24388, `RemoteTerminalRuntime`) | relation | Its `attach_locator` keeps raising for remote terminals; the Rust family never calls it. |
 | none | #20203, #25068, #24452, #25187 | relation | Decisions 2, 3, 5 and 8. |
 
-**Granularity:** Ten deliverables, one per independently testable outcome: the
-wire contract, the node relay executor, the hub token store and endpoint, the
-remote link, the inventory, remote attach, remote input, the gclient flow, the
-ROADMAP fix and the live proof. The token store (2.1) and the link (2.2) are two
+**Granularity:** Eleven deliverables, one per independently testable outcome:
+the wire contract, the node relay executor, the node resize executor, the hub
+token store and endpoint, the remote link, the inventory, remote attach, remote
+input and sizing, the gclient flow, the ROADMAP fix and the live proof. The token store (2.1) and the link (2.2) are two
 lifecycle owners, so they stay separate.
 
 ## P1: Node-commands contract and node relay half
 `kind: framing`
 
-### 1.1 `terminal.relay` in node-commands contract version 5 [category: code]
+### 1.1 `terminal.relay` and `terminal.resize` in node-commands contract version 5 [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gdaemon/src/node_commands.rs::*` — scope-reason: move the terminal command types out, add the Relay variant to CommandFrame, and set CONTRACT_VERSION to 5
+- `crates/gdaemon/src/node_commands.rs::*` — scope-reason: move the terminal command types out, add the Relay and Resize variants to CommandFrame, and set CONTRACT_VERSION to 5
 - `crates/gdaemon/src/node_commands/terminal.rs`
 - `crates/gdaemon/src/node_commands/frame_dispatch.rs::command_frame`
-- `crates/gdaemon/src/nodes/registry.rs::*` — scope-reason: add the Relay arm to the request-id match in CommandReceiver::recv
-- `crates/gdaemon/tests/fixtures/node_commands/corpus.json::*` — scope-reason: add the terminal.relay command, reply and malformed messages to the shared corpus
+- `crates/gdaemon/src/nodes/registry.rs::*` — scope-reason: add the Relay and Resize arms to the request-id match in CommandReceiver::recv
+- `crates/gdaemon/tests/fixtures/node_commands/corpus.json::*` — scope-reason: add the terminal.relay and terminal.resize commands, replies and malformed messages to the shared corpus
 - `crates/gdaemon/tests/node_command_parity.rs::*` — scope-reason: add the version 5 message list and its round-trip test
 - `crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing`
-- `src/gobby/hub/node_commands.py::*` — scope-reason: set CONTRACT_VERSION to 5 and add the terminal.relay models to the command union
+- `src/gobby/hub/node_commands.py::*` — scope-reason: set CONTRACT_VERSION to 5 and add the terminal.relay and terminal.resize models to the command union
 - `tests/hub/test_node_command_parity.py::*` — scope-reason: add the version 5 message list and its round-trip test
 - `docs/contracts/node-commands.md`
 - `crates/gdaemon/Cargo.toml`
@@ -236,8 +236,17 @@ Targets:
   token: String }` with `deny_unknown_fields` and non-empty strings, and
   `RelayCommand`. The reply is `EmptyResult` (`{}`). `RelayPayload` implements
   `Debug` by hand and prints the token as `<redacted>`; serde stays transparent,
-  so the wire carries the raw token (D5).
-- Contract text: the node replies `{}` only after its relay socket is accepted;
+  so the wire carries the raw token (D5). Add `ResizeCommandName`
+  (`"terminal.resize"`), `ResizePayload { terminal_id: String, rows: u16, cols:
+  u16 }` with `deny_unknown_fields`, a non-empty `terminal_id` and `rows` and
+  `cols` of at least 1, and `ResizeCommand`, also replying `EmptyResult`. No
+  existing command resizes a node PTY:
+  `src/gobby/hub/remote_runtime.py::RemoteTerminalRuntime.resize` raises.
+- Contract text for `terminal.resize`: the node applies the size to the run's
+  host terminal and replies `{}`; `not_found` for an unknown or unlaunched
+  terminal; `command_failed` with stage `"none"` when the host refuses or is
+  unavailable. A resize never writes PTY input, so no stage is `"partial"`.
+- Contract text for `terminal.relay`: the node replies `{}` only after its relay socket is accepted;
   `not_found` for an unknown or unlaunched terminal; `command_failed` with stage
   `"none"` when the host is unavailable, the attach is refused, or the hub refuses
   the relay socket. Document the relay socket: `GET /api/nodes/terminal-relay`,
@@ -250,11 +259,11 @@ Targets:
 
 **Acceptance:**
 
-- 1.1.1 - `terminal.relay` commands and their `{}` and error replies round-trip byte-identically in Rust at contract version 5. test: `crates/gdaemon/tests/node_command_parity.rs::v5_terminal_relay_round_trips`.
-- 1.1.2 - The same corpus messages round-trip through the Python models at version 5. test: `tests/hub/test_node_command_parity.py::test_v5_terminal_relay_round_trips`.
-- 1.1.3 - A malformed `terminal.relay` request (unknown field, empty token) sends nothing to the node. test: `crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing`.
+- 1.1.1 - `terminal.relay` and `terminal.resize` commands and their `{}` and error replies round-trip byte-identically in Rust at contract version 5. test: `crates/gdaemon/tests/node_command_parity.rs::v5_terminal_commands_round_trip`.
+- 1.1.2 - The same corpus messages round-trip through the Python models at version 5. test: `tests/hub/test_node_command_parity.py::test_v5_terminal_commands_round_trip`.
+- 1.1.3 - A malformed `terminal.relay` request (unknown field, empty token) or `terminal.resize` request (zero rows, unknown field) sends nothing to the node. test: `crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing`.
 - 1.1.4 - `node_commands.rs` stays under 1,000 lines with the terminal types in their own module. file: `crates/gdaemon/src/node_commands/terminal.rs`.
-- 1.1.5 - The contract documents `terminal.relay`, its replies and the relay socket. behavior: "terminal.relay" in `docs/contracts/node-commands.md`.
+- 1.1.5 - The contract documents `terminal.relay`, `terminal.resize`, their replies and the relay socket. behavior: "terminal.resize" in `docs/contracts/node-commands.md`.
 - 1.1.6 - `RelayPayload`'s `Debug` output prints the token as `<redacted>`, while serialization carries it unchanged. test: `crates/gdaemon/tests/node_command_parity.rs::relay_payload_debug_redacts_token`.
 
 ### 1.2 Node relay executor (depends: 1.1, #24376) [category: code]
@@ -332,10 +341,44 @@ Targets:
 - 1.2.6 - Across dispatch, a refused relay socket, a relayed frame and close, the node's stderr names the terminal id and close reason but never the token, its digest or frame payload bytes. test: `crates/gdaemon/tests/node_relay.rs::relay_stderr_carries_no_secrets`.
 - 1.2.7 - A host that never sends `Welcome`, a host that never sends `Attached`, and channel loss during setup each end the setup task within 10 s, leaving no host attachment and no hub socket. The deadline cases answer `command_failed` with stage `"none"`. test: `crates/gdaemon/tests/node_relay.rs::relay_setup_is_bounded_and_cleans_up`.
 
+### 1.3 Node `terminal.resize` executor (depends: 1.2) [category: code]
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/nodes/agents/commands.rs`
+- `crates/gdaemon/tests/node_resize.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bump the gdaemon pin
+
+**Research context:**
+- Observed: #24376's `terminal.write` resolves `terminal_id` to a run and runs
+  under that run's queue. `crates/gdaemon/src/nodes/agents/host.rs::HostControl::call`
+  runs one control operation with the node's epoch authority and a ready
+  deadline. `crates/gterminals/src/control.rs::ControlClient::resize` sends the
+  host's `resize` for `host_terminal_id`, `rows` and `cols`, which changes the PTY
+  size. `SetViewport` on a frame stream changes only that attachment's render
+  size (`crates/gterminal/src/host/state.rs`).
+- Chosen approach: `terminal.resize` takes the run's queue like `terminal.write`,
+  so resizes and writes for one run apply in arrival order. It reads the run's
+  `host_terminal_id` and calls `HostControl::call` with `ControlClient::resize`.
+  An unknown or unlaunched terminal answers `not_found`. A host refusal,
+  including a stale epoch, or an unavailable host answers `command_failed` with
+  stage `"none"`. Only the terminal id and the outcome are logged.
+- Fixtures: `crates/gdaemon/tests/node_support/fake_gterm.rs` serves the fake
+  host's control socket.
+- Planned verification: `cargo nextest run -p gobby-daemon -E 'test(node_resize)'`.
+
+**Acceptance:**
+
+- 1.3.1 - `terminal.resize` for a launched run sends the host `resize` for its host terminal and answers `{}`. test: `crates/gdaemon/tests/node_resize.rs::resize_reaches_host_control`.
+- 1.3.2 - An unknown or unlaunched terminal answers `not_found`; a host refusal or an unavailable host answers `command_failed` with stage `"none"`. test: `crates/gdaemon/tests/node_resize.rs::resize_failure_dispositions`.
+- 1.3.3 - `terminal.resize` and `terminal.write` for one run apply in arrival order. test: `crates/gdaemon/tests/node_resize.rs::resize_orders_with_writes`.
+
 ## P2: Hub relay endpoint and remote link
 `kind: framing`
 
-### 2.1 Relay tokens and the hub relay endpoint (depends: 1.2) [category: code]
+### 2.1 Relay tokens and the hub relay endpoint (depends: 1.3) [category: code]
 `kind: deliverable`
 
 Targets:
@@ -404,8 +447,9 @@ Targets:
 **Research context:**
 - New in `crates/gterminals/src/remote.rs`: trait `RemoteTerminals` (Decision 6)
   with `open(RemoteTarget { user_id, machine_id, terminal_id, attachment_id })`
-  returning `RemoteFrames` and `write(RemoteWrite { user_id, machine_id,
-  terminal_id, kind, data, submit })`. `RemoteFrames` holds a capacity-1
+  returning `RemoteFrames`, `write(RemoteWrite { user_id, machine_id,
+  terminal_id, kind, data, submit })` and `resize(RemoteResize { user_id,
+  machine_id, terminal_id, rows, cols })`. `RemoteFrames` holds a capacity-1
   `mpsc::Receiver<ServerMessage>` and a capacity-1 `mpsc::Sender<ClientMessage>`.
   `RemoteError` is `NodeOffline`, `MachineNotOwned`, `MachineNotFound`,
   `NotFound`, `CommandFailed { stage }`, `RelayTimeout` or `RelayBusy`, each with
@@ -427,6 +471,8 @@ Targets:
      closes the receiver.
   5. `write`: owner check, then `terminal.write` with the caller's payload; node
      errors map to `RemoteError`.
+  6. `resize`: owner check, then `terminal.resize` (1.1, 1.3); node errors map
+     to `RemoteError`.
 - Log proof: the stderr re-run pattern of 1.2. The stub node receives
   `terminal.relay`, so the test knows the raw token.
 - Planned verification: `cargo nextest run -p gobby-daemon -E 'test(terminal_relay)'`
@@ -440,6 +486,7 @@ Targets:
 - 2.2.4 - Channel loss during a live relay closes the frame receiver. test: `crates/gdaemon/tests/terminal_relay.rs::channel_loss_ends_live_relay`.
 - 2.2.5 - `write` sends `terminal.write` after the owner check and maps node errors. test: `crates/gdaemon/tests/terminal_relay.rs::write_sends_terminal_write`.
 - 2.2.6 - Across `terminal.relay` dispatch through the registry, an invalid-token refusal, an accepted upgrade, a frame and a write in each direction, and close, the hub's stderr never carries the raw token, its SHA-256 digest in hex or base64url, or the frame and input payload bytes. test: `crates/gdaemon/tests/terminal_relay.rs::relay_stderr_carries_no_secrets`.
+- 2.2.7 - `resize` sends `terminal.resize` after the owner check and maps node errors. test: `crates/gdaemon/tests/terminal_relay.rs::resize_sends_terminal_resize`.
 
 ## P3: Hub terminal family
 `kind: framing`
@@ -531,7 +578,7 @@ Targets:
 - 3.2.5 - A hub wires the link into the family; a standalone daemon does not. test: `crates/gterminals/tests/remote_attach.rs::only_hub_family_has_remote_link`.
 - 3.2.6 - The WS protocol documents remote attach and its error codes. behavior: "node_offline" in `docs/contracts/gterm-protocols.md`.
 
-### 3.3 Remote terminal input through `terminal.write` (depends: 3.2, #24579) [category: code]
+### 3.3 Remote terminal input and sizing through node commands (depends: 3.2, #24579) [category: code]
 `kind: deliverable`
 
 Targets:
@@ -548,14 +595,36 @@ Targets:
   through the local write route.
 - Chosen approach: `terminal_input` for a remote attachment calls
   `RemoteTerminals::write` with the attachment's terminal and the caller's user,
-  instead of the local write route. Errors answer with their wire code. Input
-  payloads are never logged (D5). #25201 is unrelated (Decision 7).
+  instead of the local write route. `terminal_paste` does the same with kind
+  `paste`. Errors answer with their wire code. Input payloads are never logged
+  (D5). #25201 is unrelated (Decision 7).
+- Observed: #24577's `ws.rs` elects sizing through
+  `crates/gterminals/src/leases.rs::Registry::resize` (web over gclient,
+  re-election on detach) and applies the elected `Sizing` to the row's runtime
+  on attach, `terminal_resize` and detach. The oracle is
+  `src/gobby/servers/websocket/terminal_sizing.py::_handle_terminal_resize`.
+- Chosen approach for sizing: election stays on the hub unchanged, because the
+  hub holds every attachment of a remote row. For a remote row the sizing
+  applier calls `RemoteTerminals::resize` with the elected geometry. A losing
+  requester changes only its own viewport and sends nothing to the node. A
+  failed remote resize fails like a local one in #24577, with the remote wire
+  code.
+- The input-grant applier does nothing for a remote row. Every remote attachment
+  is proxied (3.2 refuses `direct`), so no attachment on the node host holds a
+  grant, and `terminal.write` writes through the node daemon's control socket.
+- Every other client action is accounted for. Theme, viewport and scroll offset
+  travel on the relay stream (1.2's allowlist). Focus and take or release
+  control change only the hub's lease. `terminal_create` and `terminal_kill`
+  are terminal lifecycle, not attach, and stay outside #20202's four items.
 - Planned verification: `cargo nextest run -p gobby-terminals -E 'test(remote_attach)'`.
 
 **Acceptance:**
 
 - 3.3.1 - Input on a remote attachment reaches the link as one write with its kind, data and submit flag, and never the local write route. test: `crates/gterminals/tests/remote_attach.rs::remote_input_uses_terminal_write`.
 - 3.3.2 - Input to a node that went offline or to a machine the caller does not own answers its code and writes nothing. test: `crates/gterminals/tests/remote_attach.rs::remote_input_refusals`.
+- 3.3.3 - `terminal_paste` on a remote attachment reaches the link as one `paste` write. test: `crates/gterminals/tests/remote_attach.rs::remote_paste_uses_terminal_write`.
+- 3.3.4 - An elected `terminal_resize`, an attach that changes the election and a detach that re-elects each send the elected geometry to the link once; a losing requester changes only its viewport and sends nothing. test: `crates/gterminals/tests/remote_attach.rs::remote_sizing_follows_the_election`.
+- 3.3.5 - Take and release control on a remote attachment change only the lease and call no host grant or revoke. test: `crates/gterminals/tests/remote_attach.rs::remote_control_applies_no_host_grant`.
 
 ## P4: gclient
 `kind: framing`
@@ -567,7 +636,7 @@ Targets:
 - `crates/gclient/src/app/live_loop/terminal_location.rs::locate_terminal_workspace`
 - `crates/gclient/src/ui/sidebar/agents.rs::agent_candidate`
 - `crates/gclient/src/ui/sidebar/terminals.rs::terminal_rows`
-- `crates/gclient/tests/mock_daemon/workspace.rs::*` — scope-reason: record the node argument of workspace list, snapshot and attach, and seed a workspace on another machine
+- `crates/gclient/tests/mock_daemon/workspace.rs::*` — scope-reason: record the node argument of workspace list, snapshot and attach, seed a workspace on another machine, and attach a machine's default workspace by project
 - `crates/gclient/tests/remote_agent_open.rs`
 - `crates/gclient/Cargo.toml`
 - `Cargo.lock`
@@ -599,6 +668,20 @@ Consumers unchanged:
     attaches with `node = Some(machine_id)` and sets the attach target's `node` to
     it; for a local terminal it uses `None`. Pane attach is unchanged: the row has
     no locator, so `FrameDelivery::Auto` uses `ProxyFrameSource`.
+  - Fallback (adversary RT-F3): when no workspace on the owning machine holds
+    the terminal's pane, the roster check's final `Ok(true)` would let
+    `projects.rs::agent_pane` open the pane in the current workspace, which may
+    belong to another machine. Before that return, a terminal whose machine
+    differs from the attached workspace's machine attaches that machine's
+    default workspace for the agent's project (`attach_workspace(Some(machine),
+    None, Some(project))`), applies the snapshot, and sets the attach target's
+    `node` and `workspace`. The caller then places the pane there. A failed
+    attach warns and returns `false` before applying anything, so the previous
+    workspace and attach target stay unchanged. The search loop's existing
+    "Terminal moved; select it again" refusal already runs after it switched
+    to an owning-machine workspace. The `reuse_client_pane` shortcut is safe:
+    `src/gobby/terminals/workspace_pane_access.py::WorkspacePaneAccess._adoptable`
+    refuses a pane for a terminal not live on the workspace's node.
   - `agent_candidate` prefixes the row's `reference` with the machine token
     `short_terminal_id(machine_id)` and a space when the agent's machine is not
     the local one. `agent_reference` stays unchanged because the pane chrome
@@ -614,6 +697,8 @@ Consumers unchanged:
 - 4.1.2 - Selecting a local agent afterwards returns to the local workspace with no node argument. test: `crates/gclient/tests/remote_agent_open.rs::local_agent_returns_to_local_workspace`.
 - 4.1.3 - Another machine's agent row appears under `all` with its machine token and is hidden under the default filter (carries gclient-workspace-sidebar 3.2.4). test: `crates/gclient/tests/remote_agent_open.rs::remote_agent_row_shows_machine_token`.
 - 4.1.4 - Bare terminal rows follow the attached workspace's machine. test: `crates/gclient/tests/remote_agent_open.rs::terminal_rows_follow_attached_machine`.
+- 4.1.5 - When no owning-machine workspace holds the remote agent's pane, selecting it attaches that machine's default workspace for the agent's project and places the pane there; the previous machine's workspace gets no pane. test: `crates/gclient/tests/remote_agent_open.rs::unplaced_remote_agent_opens_in_owning_default_workspace`.
+- 4.1.6 - A pane that moves between snapshot and attach answers the retry warning, and a failed owning-workspace attach leaves the previous workspace and attach target unchanged; neither opens a pane in the previous machine's workspace. test: `crates/gclient/tests/remote_agent_open.rs::remote_open_never_lands_in_previous_machine_workspace`.
 
 ## P5: Documentation and live proof
 `kind: framing`
@@ -693,6 +778,7 @@ Targets:
 - 5.2.2 - `terminal_input` on the remote attachment appears in the node terminal's next frames. test: `tests/e2e/test_remote_terminal_attach_live.py::test_remote_input_round_trips`.
 - 5.2.3 - After the node stops, attach answers `node_offline` and the live attachment finalizes. test: `tests/e2e/test_remote_terminal_attach_live.py::test_node_loss_finalizes_and_refuses`.
 - 5.2.4 - A real gclient whose local machine is the hub opens the node's agent from the `all` sidebar into the node's workspace, shows its relayed output, and echoes typed input. test: `tests/e2e/test_remote_terminal_attach_live.py::test_gclient_opens_remote_agent`.
+- 5.2.5 - Resizing the gclient window changes the node PTY size that the node host's control `list` reports (`rows`, `cols`; `crates/gterminal/src/host/helpers.rs`), and a second, losing WS observer's `terminal_resize` leaves it unchanged. test: `tests/e2e/test_remote_terminal_attach_live.py::test_remote_pty_follows_elected_size`.
 
 ## V1 Plan Changelog
 `kind: framing`
