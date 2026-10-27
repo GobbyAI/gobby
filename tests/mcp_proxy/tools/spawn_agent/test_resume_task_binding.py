@@ -133,7 +133,9 @@ async def _resume_seat(previous_task: str, explicit_task: str | None) -> tuple[d
             target_project_id="project",
             resume_session_id="gobby#123",
             reserved_run_id="new-run",
-            agent_body=make_agent_definition(name="dev-manager", prompts={"agent": "Continue"}),
+            agent_body=make_agent_definition(
+                name="dev-manager", prompts={"agent": "Continue"}, model="claude-sonnet-5"
+            ),
             db=MagicMock(),
         )
         await asyncio.gather(*implementation._spawn_background_tasks.values())

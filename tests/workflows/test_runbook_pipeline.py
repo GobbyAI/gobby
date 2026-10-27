@@ -136,6 +136,15 @@ async def test_runbook_syncs_bundled_and_tagged(temp_db: HubDatabase) -> None:
         "enhancer_title",
         "adversary_title",
         "seats",
+        "writer_provider",
+        "writer_model",
+        "writer_reasoning_effort",
+        "enhancer_provider",
+        "enhancer_model",
+        "enhancer_reasoning_effort",
+        "adversary_provider",
+        "adversary_model",
+        "adversary_reasoning_effort",
     }
     steps = {step.id: step for step in pipeline.steps}
     assert list(steps) == ["guard", *SEAT_AGENTS]

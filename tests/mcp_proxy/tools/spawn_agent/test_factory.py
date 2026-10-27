@@ -227,7 +227,9 @@ async def test_network_override_needs_resolved_definition() -> None:
 async def test_network_unreadable_seed_refuses_before_allocations() -> None:
     from gobby.mcp_proxy.tools.spawn_agent import _factory, _implementation
 
-    body = make_agent_definition(name="default", provider="claude", prompts={"agent": "Work."})
+    body = make_agent_definition(
+        name="default", provider="claude", model="claude-sonnet-5", prompts={"agent": "Work."}
+    )
     registry = _factory.create_spawn_agent_registry(MagicMock())
     project = {"id": "11111111-1111-4111-8111-111111110123", "project_path": "/test"}
     with (

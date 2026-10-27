@@ -133,8 +133,8 @@ def _insert_session(
     session_id = str(uuid4())
     db.execute(
         """
-        INSERT INTO sessions (id, external_id, machine_id, source, project_id, status)
-        VALUES (%s, %s, %s, 'claude', %s, %s)
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, model)
+        VALUES (%s, %s, %s, 'claude', %s, %s, 'claude-sonnet-5')
         """,
         (session_id, f"remote-spawn-{session_id}", machine_id, project_id, status),
     )
@@ -663,7 +663,13 @@ async def test_project_cap_counts_remote_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(spawn_guards, "configured_max_active_agents", lambda: 1)
-    args = {"prompt": "x", "parent_session_id": local_parent, "machine": remote_machine}
+    args = {
+        "prompt": "x",
+        "parent_session_id": local_parent,
+        "machine": remote_machine,
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+    }
 
     first = await spawn_registry.call("spawn_agent", args)
     second = await spawn_registry.call("spawn_agent", args)
@@ -849,7 +855,13 @@ async def test_origin_is_the_calling_session(
     # A caller on the node, whose parent is on the hub, spawns on the node.
     monkeypatch.setattr(factory, "enforce_spawn_caller", AsyncMock(return_value=remote_parent))
     node_caller = await spawn_registry.call(
-        "spawn_agent", {"prompt": "x", "parent_session_id": local_parent}
+        "spawn_agent",
+        {
+            "prompt": "x",
+            "parent_session_id": local_parent,
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+        },
     )
     assert node_caller["success"] is True
     assert node_caller["status"] == "pending"
@@ -951,7 +963,14 @@ async def test_remote_target_needs_no_hub_checkout(
     temp_db.execute("DELETE FROM project_checkouts WHERE machine_id = %s", (local_machine,))
 
     mcp_result = await spawn_registry.call(
-        "spawn_agent", {"prompt": "x", "parent_session_id": local_parent, "machine": remote_machine}
+        "spawn_agent",
+        {
+            "prompt": "x",
+            "parent_session_id": local_parent,
+            "machine": remote_machine,
+            "provider": "claude",
+            "model": "claude-sonnet-5",
+        },
     )
 
     assert mcp_result["success"] is True
@@ -1189,7 +1208,13 @@ async def test_spawn_needs_owned_machine(
         project_id=sample_project["id"],
         validation_criteria="Spawn is observable.",
     )
-    args = {"prompt": "x", "parent_session_id": local_parent, "machine": remote_machine}
+    args = {
+        "prompt": "x",
+        "parent_session_id": local_parent,
+        "machine": remote_machine,
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+    }
 
     token = bind_caller(OTHER_USER_ID, temp_db)
     try:
@@ -1216,7 +1241,13 @@ async def test_spawn_needs_owned_machine(
     assert unbound["success"] is True
     assert node.send.await_count == 2
 
-    body = {"task_id": task.id, "prompt": "x", "machine": remote_machine, "provider": "claude"}
+    body = {
+        "task_id": task.id,
+        "prompt": "x",
+        "machine": remote_machine,
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+    }
     with _owner_http_client(temp_db, OTHER_USER_ID, runner) as client:
         refused_http = client.post("/api/agents/spawn", json=body)
     assert refused_http.json()["error_code"] == "machine_not_owned"

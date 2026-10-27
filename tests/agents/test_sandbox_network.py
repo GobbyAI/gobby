@@ -30,6 +30,7 @@ def _body(network: Literal["none", "trusted"]) -> AgentDefinitionBody:
         {
             "name": "net-agent",
             "provider": "claude",
+            "model": "claude-sonnet-5",
             "prompts": {"agent": "Run the assigned task."},
             "workflows": {"rule_selectors": {"include": []}},
             "network": network,

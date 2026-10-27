@@ -277,6 +277,7 @@ async def test_all_spawn_request_producers_emit_run_lifetime() -> None:
             prompt="go",
             runner=runner,
             provider="claude",
+            model="claude-sonnet-5",
             daemon_config=SimpleNamespace(terminals=TerminalConfig()),
             project_path="/repo",
             parent_session_id="parent",

@@ -68,6 +68,8 @@ def _claim_first_body() -> AgentDefinitionBody:
     return AgentDefinitionBody.model_validate(
         {
             "name": "tech-writer",
+            "provider": "claude",
+            "model": "claude-sonnet-5",
             "prompts": {"agent": "Synthetic task-bound seat."},
             "workflows": {"rule_selectors": {"include": [], "exclude": []}},
             "step_workflow": {
@@ -238,6 +240,8 @@ class TestSpawnAgentPipelineInjection:
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="pipeline-agent",
+            provider="claude",
+            model="claude-sonnet-5",
             workflows=make_agent_workflows(pipeline="my-pipeline"),
         )
 
@@ -301,6 +305,8 @@ class TestSpawnAgentPipelineInjection:
         agent_body = make_agent_definition(
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="step-agent",
+            provider="claude",
+            model="claude-sonnet-5",
             workflows=make_agent_workflows(pipeline="my-workflow"),
         )
 
@@ -366,6 +372,7 @@ class TestSpawnAgentStepVariables:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="qa-agent",
             provider="claude",
+            model="claude-sonnet-5",
             workflows=make_agent_workflows(rules=["no-code-writing"]),
         )
 
@@ -453,6 +460,7 @@ class TestSpawnAgentStepVariables:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="plan-adversary",
             provider="codex",
+            model="gpt-5.4",
             step_workflow=AgentStepWorkflowBody(
                 variables={
                     "task_claimed": False,
@@ -609,6 +617,7 @@ class TestSpawnAgentStepVariables:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="plan-adversary",
             provider="codex",
+            model="gpt-5.4",
         )
         registry = create_spawn_agent_registry(
             mock_runner,
@@ -799,7 +808,13 @@ class TestSpawnAgentStepVariables:
             session_manager=session_manager,
             db=db,
         )
-        agent_body = synthetic_developer_body() if seat_body is None else seat_body
+        agent_body = (
+            synthetic_developer_body().model_copy(
+                update={"provider": "claude", "model": "claude-sonnet-5"}
+            )
+            if seat_body is None
+            else seat_body
+        )
         if task_assignment == "initial_variables":
             agent_body.workflows.variables["assigned_task_id"] = f"#{task.seq_num}"
 

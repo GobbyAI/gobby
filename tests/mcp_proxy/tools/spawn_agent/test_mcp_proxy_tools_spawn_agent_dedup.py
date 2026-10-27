@@ -49,6 +49,7 @@ class TestSpawnAgentDedup:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         mock_task_manager = MagicMock()
@@ -115,6 +116,7 @@ class TestSpawnAgentDedup:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="default",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         mock_task_manager = MagicMock()
@@ -200,6 +202,7 @@ class TestSpawnAgentDedup:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="epic-reviewer",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         mock_task_manager = MagicMock()
@@ -294,6 +297,7 @@ class TestSpawnAgentDedup:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         mock_task_manager = MagicMock()
@@ -401,6 +405,7 @@ class TestSpawnAgentDedup:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="merge-worker",
             provider="claude",
+            model="claude-sonnet-5",
         )
 
         mock_task_manager = MagicMock()
