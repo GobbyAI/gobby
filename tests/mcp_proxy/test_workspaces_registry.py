@@ -367,6 +367,81 @@ async def test_rebalance_tab_names_a_tab_by_title_within_its_workspace(stack: _S
     assert _row_sizes(tiled["tab"]["layout"]) == [2, 1]
 
 
+async def test_rebalance_tab_reports_the_seats_it_tiled_and_skipped(stack: _Stack) -> None:
+    """A seat with a pane is tiled; a paneless seat is skipped with its reason."""
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25189",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        await _ok(registry, "split_pane", pane=pane, axis="horizontal")
+        seats = [{"name": "code-reviewer", "pane": pane}, {"name": "developer", "pane": None}]
+        arranged = await _ok(
+            registry,
+            "rebalance_tab",
+            tab="Dev Team - #25189",
+            workspace=home,
+            rows=100,
+            layout="tiled",
+            seats=seats,
+        )
+    assert arranged["tiled"] == ["code-reviewer"]
+    assert arranged["skipped"] == [{"seat": "developer", "reason": "pane_missing"}]
+
+
+async def test_rebalance_tab_refuses_a_seat_with_no_name_before_the_layout_write(
+    stack: _Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seat entry with no name is refused as invalid_ref; the tab layout is left as it was."""
+    rebalance_calls: list[str] = []
+    real_rebalance = WorkspaceOps.tab_rebalance
+
+    async def counted_rebalance(self: WorkspaceOps, *args: Any, **kwargs: Any) -> Any:
+        rebalance_calls.append("tab_rebalance")
+        return await real_rebalance(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkspaceOps, "tab_rebalance", counted_rebalance)
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25189",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        await _ok(registry, "split_pane", pane=pane, axis="horizontal")
+        before = _row_sizes(stack.workspaces.list_tabs(created["id"])[0].layout)
+        code = await _code(
+            registry,
+            "rebalance_tab",
+            tab="Dev Team - #25189",
+            workspace=home,
+            rows=100,
+            layout="tiled",
+            seats=[{"pane": None}],
+        )
+    assert code == "invalid_ref"
+    assert rebalance_calls == []
+    assert _row_sizes(stack.workspaces.list_tabs(created["id"])[0].layout) == before
+
+
 class _PipelineProxy:
     """The pipeline's tool proxy, forwarding each MCP step to the internal registry."""
 
@@ -550,6 +625,7 @@ def test_team_planning_arrange_finds_its_tab_by_title_when_a_seat_pane_vanished(
     )
     assert arguments.get("workspace") == "node:planning", arguments
     assert arguments.get("tab") == "Team Planning - #25186", arguments
+    assert arguments.get("seats") == [{"name": seat, "pane": None} for seat in seats], arguments
 
 
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:

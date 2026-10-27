@@ -642,7 +642,11 @@ def _run_support(env: _Env) -> tuple[dict[str, Any], dict[str, Any]]:
     context["steps"]["guard"] = {"output": reply}
     placements: dict[str, Any] = {}
     for step in definition.steps[1:]:
-        if step.mcp is not None and renderer.should_run_step(step, context):
+        if (
+            step.mcp is not None
+            and step.mcp.tool == "spawn_agent"
+            and renderer.should_run_step(step, context)
+        ):
             assert step.mcp.arguments is not None
             rendered = renderer.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
             placements[step.id] = rendered["placement"]
