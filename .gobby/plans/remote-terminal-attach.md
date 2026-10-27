@@ -514,7 +514,7 @@ Targets:
 **Acceptance:**
 
 - 3.2.1 - A proxied attach of an owned remote row delivers the node's history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_attach.rs::remote_attach_streams_frames`.
-- 3.2.2 - `node_offline`, `machine_not_owned` and a `direct` request fail the attach with their codes and leave no attachment. test: `crates/gterminals/tests/remote_attach.rs::remote_attach_refusals`.
+- 3.2.2 - `node_offline`, `machine_not_owned`, `relay_busy` and a `direct` request fail the attach with their codes and leave no attachment. test: `crates/gterminals/tests/remote_attach.rs::remote_attach_refusals`.
 - 3.2.3 - A stalled client socket closes only that socket, and the link is not read while its queue is full. test: `crates/gterminals/tests/remote_attach.rs::remote_backpressure_closes_only_the_slow_socket`.
 - 3.2.4 - Detach sends `Detach` to the node, and channel loss finalizes the attachment exactly once. test: `crates/gterminals/tests/remote_attach.rs::remote_close_finalizes_once`.
 - 3.2.5 - A hub wires the link into the family; a standalone daemon does not. test: `crates/gterminals/tests/remote_attach.rs::only_hub_family_has_remote_link`.
