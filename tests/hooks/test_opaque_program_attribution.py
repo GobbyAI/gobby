@@ -12,15 +12,18 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import yaml
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -31,7 +34,9 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -238,6 +243,91 @@ def _handlers(mock_dependencies: dict[str, Any], db: HubDatabase) -> EventHandle
     return EventHandlers(
         **{**mock_dependencies, "session_manager": sessions, "session_storage": sessions}
     )
+
+
+def _shell_write_refused(handlers: EventHandlers, event: HookEvent) -> bool:
+    """Include the bundled scope gate alongside the real before-tool handler."""
+    if handlers.handle_before_tool(event).decision != "allow":
+        return True
+    rule_path = (
+        get_bundled_rules_path() / "task-enforcement/block-unresolved-scope-shell-write.yaml"
+    )
+    rule = yaml.safe_load(rule_path.read_text())["rules"]["block-unresolved-scope-shell-write"]
+    evaluator = SafeExpressionEvaluator(
+        {"event": SimpleNamespace(data=event.data)}, build_condition_helpers()
+    )
+    return bool(rule["enabled"] and evaluator.evaluate(rule["when"]))
+
+
+@pytest.mark.parametrize("prefix", ["python", "uv run python"])
+@pytest.mark.parametrize("rel_path", ["base.txt", "owned.txt", "generated.txt"])
+def test_script_write_is_prevented_or_owned_before_next_edit(
+    mock_dependencies: dict[str, Any], checkout: Checkout, prefix: str, rel_path: str
+) -> None:
+    """A real script cannot leave its writer locked out of new or existing dirt."""
+    script = checkout.repo.parent / "rewrite.py"
+    script.write_text(
+        "from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text('script write\\n')\n",
+        encoding="utf-8",
+    )
+    target = checkout.repo / rel_path
+    before = target.read_bytes() if target.exists() else None
+    command = f"{prefix} {script} {rel_path}"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    if _shell_write_refused(handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)):
+        assert (target.read_bytes() if target.exists() else None) == before
+        return
+
+    subprocess.run([sys.executable, str(script), rel_path], cwd=checkout.repo, check=True)
+    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+
+    assert target.read_text() == "script write\n"
+    assert checkout.rule_3_reason(rel_path) == "", "The script writer is locked out of its own file"
+
+
+@pytest.mark.parametrize("operation", ["format", "check --fix"])
+def test_literal_ruff_write_remains_owned(
+    mock_dependencies: dict[str, Any], checkout: Checkout, operation: str
+) -> None:
+    """Literal formatter targets keep provenance through the next structured Edit."""
+    checkout.write("format_me.py", "import os\nx=1\n")
+    SessionVariableManager(checkout.db).record_edited_files(
+        checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
+    )
+    command = f"uv run ruff {operation} format_me.py"
+    handlers = _handlers(mock_dependencies, checkout.db)
+    assert not _shell_write_refused(
+        handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    )
+    subprocess.run(
+        [sys.executable, "-m", "ruff", *operation.split(), "format_me.py"],
+        cwd=checkout.repo,
+        check=True,
+        capture_output=True,
+    )
+    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+
+    assert checkout.rule_3_reason("format_me.py") == ""
+    assert "format_me.py" in checkout.ledger()
+
+
+def test_script_call_does_not_adopt_another_sessions_write(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    """An overlapping foreign writer stays foreign even if its ledger arrives late."""
+    handlers = _handlers(mock_dependencies, checkout.db)
+    command = "uv run python /tmp/read_only_probe.py racer.txt"
+    refused = _shell_write_refused(
+        handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    )
+    checkout.write("racer.txt", "foreign edit\n")
+    if not refused:
+        handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+    checkout.foreign_ledger_lands("racer.txt")
+
+    assert "racer.txt" not in checkout.ledger()
+    assert "racer.txt" not in checkout.task_ledger()
+    assert "racer.txt — session" in checkout.rule_3_reason("racer.txt")
 
 
 @pytest.mark.parametrize(
