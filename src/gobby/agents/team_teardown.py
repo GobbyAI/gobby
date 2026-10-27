@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from gobby.agents.team_lifecycle import (
     _recorded,
 )
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.daemon_resume_keys import CONSUMED_AT_KEY, CONSUMED_BY_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
@@ -138,10 +140,11 @@ def _live_runs(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
 
 
 def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
-    """Expire every team seat's session a stop or cancel left live, so nothing resumes it.
+    """Expire every team seat's session a stop or cancel left live, and retire its resume.
 
     This covers runs already terminal before teardown (a daemon-stop parked seat),
-    which ``_live_runs`` never sees.
+    which ``_live_runs`` never sees. The parked resume is marked consumed by the
+    teardown, so recovery skips it while other expired parked children stay resumable.
     """
     executions = LocalPipelineExecutionManager(db, team.binding.project_id)
     runbooks = [
@@ -151,6 +154,15 @@ def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
     ]
     if not runbooks:
         return
+    retired = {CONSUMED_AT_KEY: datetime.now(UTC).isoformat(), CONSUMED_BY_KEY: TEARDOWN_KEY}
+    db.execute(
+        "UPDATE agent_runs SET resume_metadata_json = "
+        "COALESCE(resume_metadata_json, '{}'::jsonb) || %s::jsonb "
+        "WHERE parent_session_id = ANY(%s) AND status = 'cancelled' "
+        "AND terminal_reason = 'daemon_stop' "
+        "AND NOT (COALESCE(resume_metadata_json, '{}'::jsonb) ? %s)",
+        (json.dumps(retired), runbooks, CONSUMED_AT_KEY),
+    )
     rows = db.fetchall(
         "SELECT DISTINCT s.id::text AS id FROM agent_runs r "
         "JOIN sessions s ON s.id = r.child_session_id "
