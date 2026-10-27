@@ -480,6 +480,13 @@ def take_clear_handoff_marker(
                     "UPDATE sessions SET status = 'expired', updated_at = %s WHERE id = %s",
                     (now, predecessor_id),
                 )
+            else:
+                # The superseding successor now holds the handoff; its delivery owner moves too.
+                conn.execute(
+                    "UPDATE session_handoff_deliveries SET continuation_session_id = %s "
+                    "WHERE handoff_id = %s AND attempt_id = %s AND boundary_kind = 'clear'",
+                    (successor_id, handoff_record_id, attempt_id),
+                )
             move_clear_run_lineage(
                 conn,
                 predecessor_id=predecessor_id,
