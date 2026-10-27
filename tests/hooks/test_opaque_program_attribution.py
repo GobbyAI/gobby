@@ -1,21 +1,24 @@
-"""A program the classifier cannot read earns no ownership of the paths it touches.
+"""Opaque shell writes stay fail closed except in the caller's own task worktree.
 
 ``uv run python tool.py out.txt`` carries no writer evidence: its arguments may
 be inputs it only reads, and a path that turns dirty while it runs may be an
 operator's or another session's edit. Absent an independently resolved
 mutation target, every such path stays unowned, so rule 3 keeps guarding it.
 Redirections and other canonical write targets still attribute as before.
+In a registered task worktree, call snapshots attribute changed paths unless
+another session's write or Bash call overlaps.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 import sys
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,13 +34,14 @@ from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.daemon_git import daemon_git
 from gobby.workflows.commit_guard import foreign_dirty_edit_conflict
 from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
-from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, write_project_marker
 
 pytestmark = pytest.mark.unit
 
@@ -238,6 +242,40 @@ def checkout(
     return Checkout(temp_db, repo, project.id, current.id, foreign.id, task.id)
 
 
+@pytest.fixture
+def task_worktree(checkout: Checkout) -> Checkout:
+    """Use a real linked checkout registered to the caller's claimed task."""
+    root = (checkout.repo.parent / "task-worktree").resolve()
+    _git(checkout.repo, "worktree", "add", "-q", "-b", "task-script-writes", str(root))
+    write_project_marker(root, project_id=checkout.project_id, name="opaque-writes")
+    LocalWorktreeManager(checkout.db).create(
+        project_id=checkout.project_id,
+        branch_name="task-script-writes",
+        worktree_path=str(root),
+        task_id=checkout.task_id,
+        agent_session_id=checkout.session_id,
+    )
+    SessionManager(checkout.db).update(checkout.session_id, workspace_path=str(root))
+    variables = SessionVariableManager(checkout.db)
+    for session_id, paths in (
+        (checkout.session_id, ["owned.txt"]),
+        (checkout.foreign_session_id, ["foreign.txt"]),
+    ):
+        variables.merge_variables(session_id, {"session_dirty_file_checkouts": {str(root): paths}})
+    linked = replace(checkout, repo=root)
+    linked.write("owned.txt", "edited\n")
+    linked.write("stale.txt", "edited\n")
+    variables.merge_variables(
+        checkout.session_id,
+        {
+            "task_edited_checkout_hashes": {
+                checkout.task_id: {str(root): {"owned.txt": _blob_hash(root / "owned.txt")}}
+            }
+        },
+    )
+    return linked
+
+
 def _handlers(mock_dependencies: dict[str, Any], db: HubDatabase) -> EventHandlers:
     sessions = SessionManager(db)
     return EventHandlers(
@@ -261,35 +299,50 @@ def _shell_write_refused(handlers: EventHandlers, event: HookEvent) -> bool:
 
 @pytest.mark.parametrize("prefix", ["python", "uv run python"])
 @pytest.mark.parametrize("rel_path", ["base.txt", "owned.txt", "generated.txt"])
-def test_script_write_is_prevented_or_owned_before_next_edit(
-    mock_dependencies: dict[str, Any], checkout: Checkout, prefix: str, rel_path: str
+@pytest.mark.parametrize("failed", [False, True])
+def test_script_write_in_task_worktree_is_owned_before_next_mutation(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    prefix: str,
+    rel_path: str,
+    failed: bool,
 ) -> None:
-    """A real script cannot leave its writer locked out of new or existing dirt."""
+    """Even a failed script owns its changes, allowing Edit, restore and deletion."""
+    checkout = task_worktree
     script = checkout.repo.parent / "rewrite.py"
     script.write_text(
-        "from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text('script write\\n')\n",
+        "from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text('script write\\n')\n"
+        f"sys.exit({int(failed)})\n",
         encoding="utf-8",
     )
     target = checkout.repo / rel_path
-    before = target.read_bytes() if target.exists() else None
     command = f"{prefix} {script} {rel_path}"
     handlers = _handlers(mock_dependencies, checkout.db)
-    if _shell_write_refused(handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)):
-        assert (target.read_bytes() if target.exists() else None) == before
-        return
+    assert not _shell_write_refused(
+        handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    ), "Scripts must remain allowed in the task worktree"
 
-    subprocess.run([sys.executable, str(script), rel_path], cwd=checkout.repo, check=True)
-    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+    result = subprocess.run([sys.executable, str(script), rel_path], cwd=checkout.repo, check=False)
+    assert result.returncode == int(failed)
+    handlers.handle_after_tool(
+        checkout.tool_event(HookEventType.AFTER_TOOL, command, failed=failed)
+    )
 
     assert target.read_text() == "script write\n"
+    assert rel_path in checkout.ledger()
+    assert rel_path in checkout.task_ledger()
     assert checkout.rule_3_reason(rel_path) == "", "The script writer is locked out of its own file"
+    for mutation in (f"git restore -- {rel_path}", f"git checkout -- {rel_path}", f"rm {rel_path}"):
+        assert checkout.rule_3_reason(rel_path, command=mutation) == ""
+    assert "stale.txt" not in checkout.ledger(), "Unchanged dirt must not be adopted"
 
 
 @pytest.mark.parametrize("operation", ["format", "check --fix"])
 def test_literal_ruff_write_remains_owned(
-    mock_dependencies: dict[str, Any], checkout: Checkout, operation: str
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, operation: str
 ) -> None:
     """Literal formatter targets keep provenance through the next structured Edit."""
+    checkout = task_worktree
     checkout.write("format_me.py", "import os\nx=1\n")
     SessionVariableManager(checkout.db).record_edited_files(
         checkout.session_id, ["format_me.py"], checkout_root=str(checkout.repo)
@@ -312,22 +365,59 @@ def test_literal_ruff_write_remains_owned(
 
 
 def test_script_call_does_not_adopt_another_sessions_write(
-    mock_dependencies: dict[str, Any], checkout: Checkout
+    mock_dependencies: dict[str, Any], task_worktree: Checkout
 ) -> None:
     """An overlapping foreign writer stays foreign even if its ledger arrives late."""
+    checkout = task_worktree
     handlers = _handlers(mock_dependencies, checkout.db)
     command = "uv run python /tmp/read_only_probe.py racer.txt"
-    refused = _shell_write_refused(
+    assert not _shell_write_refused(
         handlers, checkout.tool_event(HookEventType.BEFORE_TOOL, command)
     )
     checkout.write("racer.txt", "foreign edit\n")
-    if not refused:
-        handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
+    # The foreign session's structured write completes before this call does.
+    SessionVariableManager(checkout.db).record_edited_files(
+        checkout.foreign_session_id, ["racer.txt"], checkout_root=str(checkout.repo)
+    )
+    handlers.handle_after_tool(checkout.tool_event(HookEventType.AFTER_TOOL, command))
     checkout.foreign_ledger_lands("racer.txt")
 
     assert "racer.txt" not in checkout.ledger()
     assert "racer.txt" not in checkout.task_ledger()
     assert "racer.txt — session" in checkout.rule_3_reason("racer.txt")
+
+
+@pytest.mark.parametrize("foreign_finishes_first", [False, True])
+def test_overlapping_bash_calls_leave_changed_paths_foreign(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, foreign_finishes_first: bool
+) -> None:
+    """Unknown writer paths stay guarded for both possible after-tool orderings."""
+    checkout = task_worktree
+    handlers = _handlers(mock_dependencies, checkout.db)
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    command = "uv run python /tmp/rewrite.py racer.txt"
+    current_before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    foreign_before = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, command),
+        session_id="foreign-external",
+        request_id="toolu_foreign",
+    )
+    assert not _shell_write_refused(handlers, current_before)
+    assert not _shell_write_refused(handlers, foreign_before)
+    checkout.write("racer.txt", "overlapping write\n")
+    current_after = checkout.tool_event(HookEventType.AFTER_TOOL, command)
+    foreign_after = replace(foreign_before, event_type=HookEventType.AFTER_TOOL)
+    events = (
+        (foreign_after, current_after) if foreign_finishes_first else (current_after, foreign_after)
+    )
+    for event in events:
+        handlers.handle_after_tool(event)
+
+    assert "racer.txt" not in checkout.ledger()
+    assert "racer.txt" not in checkout.task_ledger()
+    reason = checkout.rule_3_reason("racer.txt")
+    assert "racer.txt" in reason
+    assert re.search(r"\boverlap(?:ped|ping)?\b", reason, re.IGNORECASE), reason
 
 
 @pytest.mark.parametrize(
