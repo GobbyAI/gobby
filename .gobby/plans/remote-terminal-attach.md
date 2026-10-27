@@ -234,7 +234,9 @@ Targets:
   parent so every path stays valid. Add there `RelayCommandName`
   (`"terminal.relay"`), `RelayPayload { terminal_id: String, attachment_id: String,
   token: String }` with `deny_unknown_fields` and non-empty strings, and
-  `RelayCommand`. The reply is `EmptyResult` (`{}`).
+  `RelayCommand`. The reply is `EmptyResult` (`{}`). `RelayPayload` implements
+  `Debug` by hand and prints the token as `<redacted>`; serde stays transparent,
+  so the wire carries the raw token (D5).
 - Contract text: the node replies `{}` only after its relay socket is accepted;
   `not_found` for an unknown or unlaunched terminal; `command_failed` with stage
   `"none"` when the host is unavailable, the attach is refused, or the hub refuses
@@ -253,6 +255,7 @@ Targets:
 - 1.1.3 - A malformed `terminal.relay` request (unknown field, empty token) sends nothing to the node. test: `crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing`.
 - 1.1.4 - `node_commands.rs` stays under 1,000 lines with the terminal types in their own module. file: `crates/gdaemon/src/node_commands/terminal.rs`.
 - 1.1.5 - The contract documents `terminal.relay`, its replies and the relay socket. behavior: "terminal.relay" in `docs/contracts/node-commands.md`.
+- 1.1.6 - `RelayPayload`'s `Debug` output prints the token as `<redacted>`, while serialization carries it unchanged. test: `crates/gdaemon/tests/node_command_parity.rs::relay_payload_debug_redacts_token`.
 
 ### 1.2 Node relay executor (depends: 1.1, #24376) [category: code]
 `kind: deliverable`
@@ -300,6 +303,10 @@ Targets:
      droppable delta queue (64 entries, 2 MiB, keyframe resync) absorbs it.
   5. Either side ending sends `Detach` to the host and closes both. Nothing is
      logged except the terminal id and the close reason.
+- Log proof: gdaemon logs with `eprintln!` and has no tracing subscriber, so the
+  test re-runs one of its own cases with `--exact <case> --nocapture` and reads
+  that run's stderr, the pattern of
+  `crates/gdaemon/tests/heartbeat.rs::panic_is_logged_with_the_registrant_name`.
 - Fixtures: `crates/gdaemon/tests/node_support/fake_gterm.rs` and
   `node_support/mod.rs` provide a fake host; the new test file serves a stub
   hub relay endpoint.
@@ -312,6 +319,7 @@ Targets:
 - 1.2.3 - Host frames reach the hub as one encoded frame per binary message, and only the five allowed client messages reach the host; any other message closes the relay with 1008. test: `crates/gdaemon/tests/node_relay.rs::relay_forwards_frames_and_filters_client_messages`.
 - 1.2.4 - A live relay does not block `terminal.write` or `agent.cancel` for the same run. test: `crates/gdaemon/tests/node_relay.rs::relay_does_not_hold_the_run_queue`.
 - 1.2.5 - Closing either side detaches the host terminal exactly once. test: `crates/gdaemon/tests/node_relay.rs::relay_close_detaches_once`.
+- 1.2.6 - Across dispatch, a refused relay socket, a relayed frame and close, the node's stderr names the terminal id and close reason but never the token, its digest or frame payload bytes. test: `crates/gdaemon/tests/node_relay.rs::relay_stderr_carries_no_secrets`.
 
 ## P2: Hub relay endpoint and remote link
 `kind: framing`
@@ -346,7 +354,11 @@ Targets:
   - `mint(machine, connection, terminal_id, attachment_id)` draws 32 bytes from
     `rand`'s OS RNG, stores `{machine, connection, terminal_id, attachment_id,
     expires_at: now + 10 s, deliver: oneshot::Sender<WebSocket>}`, and returns the
-    base64url token with a guard whose drop removes the entry.
+    base64url token with a guard whose drop removes the entry. It first counts
+    that channel connection's unexpired entries; at `MAX_PENDING_RELAYS` (a
+    constant of 32, above one workspace restore's simultaneous attaches) it
+    stores nothing and returns `RelayBusy`. The ceiling bounds pending setups
+    only; an established relay is bounded by its attachment.
   - `handle(nodes, request)` reads `x-gobby-relay-token`, removes the entry
     (single use), and accepts only when it is unexpired, its machine equals
     `x-gobby-machine-id`, and its connection equals `Registry::connection_id`.
@@ -364,6 +376,7 @@ Targets:
 - 2.1.3 - Dropping the waiter's guard revokes its token. test: `crates/gdaemon/tests/terminal_relay.rs::dropped_waiter_revokes_token`.
 - 2.1.4 - `CommandSender::closed` resolves when the node channel ends. test: `crates/gdaemon/tests/terminal_relay.rs::sender_closed_follows_channel_end`.
 - 2.1.5 - The relay endpoint is served only by a hub door. test: `crates/gdaemon/tests/terminal_relay.rs::relay_route_is_hub_only`.
+- 2.1.6 - A channel connection holding 32 pending relays gets `RelayBusy` and no entry; a dropped guard or an expired entry frees a slot, and another connection's pending relays do not count. test: `crates/gdaemon/tests/terminal_relay.rs::pending_relays_are_capped_per_connection`.
 
 ### 2.2 Remote terminal link over the node channel (depends: 2.1) [category: code]
 `kind: deliverable`
@@ -384,14 +397,16 @@ Targets:
   terminal_id, kind, data, submit })`. `RemoteFrames` holds a capacity-1
   `mpsc::Receiver<ServerMessage>` and a capacity-1 `mpsc::Sender<ClientMessage>`.
   `RemoteError` is `NodeOffline`, `MachineNotOwned`, `MachineNotFound`,
-  `NotFound`, `CommandFailed { stage }` or `RelayTimeout`, each with its wire code.
+  `NotFound`, `CommandFailed { stage }`, `RelayTimeout` or `RelayBusy`, each with
+  its wire code.
   `relayable(&ClientMessage)` is the five-message allowlist.
 - gdaemon's `HubRemoteTerminals` (in `terminal_relay.rs`) implements it:
   1. Owner check: `SELECT owner_user_id FROM machines WHERE id = $1` must equal
      the caller; otherwise `machine_not_found` or `machine_not_owned`, the codes
      `src/gobby/hub/caller_scope.py::require_machine_owned` uses.
   2. `Registry::command_sender` and `connection_id`, else `node_offline`.
-  3. `open`: mint, send `terminal.relay` with a 10 s deadline, and select over the
+  3. `open`: mint (`RelayBusy` answers `relay_busy` with no command sent), send
+     `terminal.relay` with a 10 s deadline, and select over the
      reply error, the delivered socket, the deadline (`relay_timeout`) and
      `CommandSender::closed` (`node_offline`). A late `{}` reply after delivery is
      ignored.
@@ -401,16 +416,19 @@ Targets:
      closes the receiver.
   5. `write`: owner check, then `terminal.write` with the caller's payload; node
      errors map to `RemoteError`.
+- Log proof: the stderr re-run pattern of 1.2. The stub node receives
+  `terminal.relay`, so the test knows the raw token.
 - Planned verification: `cargo nextest run -p gobby-daemon -E 'test(terminal_relay)'`
   and `cargo nextest run -p gobby-terminals`.
 
 **Acceptance:**
 
 - 2.2.1 - `open` for an owned machine with a live channel returns frames from the node's relay socket, and sent allowlisted messages reach the node. test: `crates/gdaemon/tests/terminal_relay.rs::open_relays_frames_both_ways`.
-- 2.2.2 - Another owner's machine answers `machine_not_owned`, an unknown machine `machine_not_found`, and a machine with no channel `node_offline`, with no command sent. test: `crates/gdaemon/tests/terminal_relay.rs::open_refusals_send_nothing`.
+- 2.2.2 - Another owner's machine answers `machine_not_owned`, an unknown machine `machine_not_found`, a machine with no channel `node_offline`, and a connection at its pending ceiling `relay_busy`, with no command sent. test: `crates/gdaemon/tests/terminal_relay.rs::open_refusals_send_nothing`.
 - 2.2.3 - A node error reply, a missing socket after 10 s, and channel loss during the wait each fail the open and revoke the token. test: `crates/gdaemon/tests/terminal_relay.rs::open_failures_revoke_token`.
 - 2.2.4 - Channel loss during a live relay closes the frame receiver. test: `crates/gdaemon/tests/terminal_relay.rs::channel_loss_ends_live_relay`.
 - 2.2.5 - `write` sends `terminal.write` after the owner check and maps node errors. test: `crates/gdaemon/tests/terminal_relay.rs::write_sends_terminal_write`.
+- 2.2.6 - Across `terminal.relay` dispatch through the registry, an invalid-token refusal, an accepted upgrade, a frame and a write in each direction, and close, the hub's stderr never carries the raw token, its SHA-256 digest in hex or base64url, or the frame and input payload bytes. test: `crates/gdaemon/tests/terminal_relay.rs::relay_stderr_carries_no_secrets`.
 
 ## P3: Hub terminal family
 `kind: framing`
@@ -481,7 +499,8 @@ Targets:
     `open` with the caller's `x-gobby-user-id`. A `direct` request for it gets the
     refusal #24577 gives a row with no locator. `open` errors answer the attach
     with their wire code (`node_offline`, `machine_not_owned`,
-    `machine_not_found`, `not_found`, `command_failed`, `relay_timeout`).
+    `machine_not_found`, `not_found`, `command_failed`, `relay_timeout`,
+    `relay_busy`).
   - The pump's frame source becomes local host or `RemoteFrames`; everything after
     the source (history before live, per-socket accounting, overflow closing only
     that socket, the single finalizer) is #24578's unchanged code. Finalization
@@ -622,6 +641,7 @@ Targets:
 
 Targets:
 - `tests/e2e/test_remote_terminal_attach_live.py`
+- `tests/e2e/conftest.py::_TERMINAL_E2E_BINARIES`
 
 **Research context:**
 - Observed: `tests/e2e/test_hub_node_pair.py` provides `pair_hub` (a hub-mode
@@ -636,6 +656,24 @@ Targets:
   `terminal_input` and see the echo, detach, then stop the node and attach again.
   Everything uses temporary homes, ports and databases; nothing is registered in
   the live daemon.
+- Observed for the gclient case: `tests/e2e/gclient_driver.py::GclientDriver`
+  runs the selected gclient under a PTY. gclient trusts only webpki roots
+  (`rustls-tls-webpki-roots` in `crates/gclient/Cargo.toml`), so it cannot
+  dial the hub's self-signed front door. The node's loopback origin
+  (`pair_node.origin`) forwards HTTP and splices every upgrade, `/ws` included,
+  to the hub (`crates/gdaemon/src/front_door/mod.rs::FrontDoor::handle`,
+  `Door::Node`), which is D1's hairpin path. gclient takes its local machine from
+  `GOBBY_HOME`'s machine id (`crates/gclient/src/views/mod.rs::run_ready`).
+- Chosen approach for the gclient case: launch `GclientDriver` with the hub
+  instance's environment, so its local machine is the hub's, plus `--daemon-url`
+  set to `pair_node.origin` and `--token-file` holding an owner key minted for
+  the hub's machine id, as `test_node_enrolls_and_relays` mints its observer key.
+  Set the sidebar machine filter to `all`, select the node's agent row by its
+  machine token, and open it. Assert three things: the hub's `workspace_snapshot`
+  for the node's machine holds the agent's pane, the screen shows the node
+  terminal's marker, and a typed second marker echoes on screen. The WS cases
+  above stay for exact error assertions. `_TERMINAL_E2E_BINARIES` maps the new
+  module to gterm and gclient so the run header reports their provenance.
 - Planned verification: `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_remote_terminal_attach_live.py -v`.
 
 **Acceptance:**
@@ -643,12 +681,22 @@ Targets:
 - 5.2.1 - The hub's inventory lists the node's terminal with `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach_live.py::test_remote_attach_streams_node_frames`.
 - 5.2.2 - `terminal_input` on the remote attachment appears in the node terminal's next frames. test: `tests/e2e/test_remote_terminal_attach_live.py::test_remote_input_round_trips`.
 - 5.2.3 - After the node stops, attach answers `node_offline` and the live attachment finalizes. test: `tests/e2e/test_remote_terminal_attach_live.py::test_node_loss_finalizes_and_refuses`.
+- 5.2.4 - A real gclient whose local machine is the hub opens the node's agent from the `all` sidebar into the node's workspace, shows its relayed output, and echoes typed input. test: `tests/e2e/test_remote_terminal_attach_live.py::test_gclient_opens_remote_agent`.
 
 ## V1 Plan Changelog
 `kind: framing`
 
 2026-10-27 — Narrative draft by the Plan Writer under the Orchestrator's D1–D5
 rulings. Enhancement and adversarial review have not run.
+
+2026-10-27 — The Orchestrator (gobby#17281, relayed by Triage) ruled that all
+three enhancer edits be implemented as placed. E-RT-01: a redacted relay-token
+`Debug` (1.1.6) and stderr proofs that no token, digest or payload is logged
+(1.2.6, 2.2.6). gdaemon logs with `eprintln!`, so the ruled tracing capture is a
+stderr capture. E-RT-02: a ceiling of 32 pending relays per channel connection
+with typed `relay_busy` (2.1.6, 2.2.2, 3.2). E-RT-03: a live gclient case
+through the node's loopback origin (5.2.4), because gclient cannot trust the
+hub's self-signed certificate. Base validation passes.
 
 ## V2 Verification
 `kind: verification`
