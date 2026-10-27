@@ -47,6 +47,8 @@ _DATA_COMMANDS = frozenset(
     {"echo", "printf", "rg", "grep", "gcode", "cat", "ls", "wc", "git", "cp"}
 )
 _DATA_BASENAME_HEADS = (_DATA_COMMANDS - {"git"}) | {"cd", "curl", "test", "["}
+# Interpreter flags that cannot load code. PYTHONPATH and similar can load a shadowing module.
+_PYTHON_FLAG = re.compile(r"(PYTHONDONTWRITEBYTECODE|PYTHONUNBUFFERED|PYTHONUTF8)=[01]")
 # Git subcommands whose operands are revisions or pathspecs. Git runs a program
 # from a positional only for subcommands such as `bisect run`, so these stay data.
 _GIT_READ_ONLY_SUBCOMMANDS = frozenset(
@@ -766,6 +768,8 @@ def _literal_language_heredoc(command: str, scan: ShellScan) -> bool:
     if any(command[start:end] != token.value for token, (start, end) in argv):
         return False
     words = [token.value for token, _ in argv]
+    while words and _PYTHON_FLAG.fullmatch(words[0]):
+        words = words[1:]
     if words[:1] in (["node"], ["nodejs"]):
         return all(word in {"--input-type=module", "--input-type=commonjs"} for word in words[1:])
     if words[:2] == ["uv", "run"]:
