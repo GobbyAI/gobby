@@ -1445,6 +1445,31 @@ async def test_overlapping_claimant_shell_calls_keep_their_writes_owned(
 
 
 @pytest.mark.asyncio
+async def test_shell_call_snapshotting_between_an_overlapping_write_and_its_post_adopts_nothing(
+    guard_harness: GuardHarness,
+) -> None:
+    """A call snapshotting after an overlapping write, before its post, fails closed (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-a")
+    (h.repo / "orphan.txt").write_text("first formatter output\n", encoding="utf-8")
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-b")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-a")
+
+    adopted = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert adopted.decision == "allow", adopted.reason
+    (h.repo / "orphan.txt").write_text("second formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-b")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
 async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_ends(
     guard_harness: GuardHarness, tmp_path: Path, terminal_line: str

@@ -93,7 +93,7 @@ Residual gaps, named and not fixed:
   unowned.
 - A call that snapshots after an overlapping call wrote a path, and before that call's
   post, does not snapshot that path. Its own rewrite of the path stays unowned and needs
-  approval. This fails closed.
+  approval. This fails closed; `test_shell_call_snapshotting_between_an_overlapping_write_and_its_post_adopts_nothing` pins it.
 - A background call whose output ends with a terminal line other than `[exited with code N]`
   or `[killed]` stays pending and is re-read at each tool call.
 - Ledgers recorded before this change carry no hashes. In-flight dirt needs one
