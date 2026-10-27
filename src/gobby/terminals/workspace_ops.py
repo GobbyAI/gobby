@@ -578,11 +578,31 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         rows: int | None = None,
         *,
         node: str | None = None,
+        workspace: str | None = None,
+        arrangement: str = "balanced",
     ) -> WorkspaceTab:
-        target = _tab_of(await self._enter(tab, node), tab)
-        updated = await self._db_guarded(self._workspaces.rebalance_tab, target.id, columns, rows)
+        if workspace is None:
+            target = _tab_of(await self._enter(tab, node), tab)
+        else:
+            target = await self._titled_tab(workspace, node, tab)
+        updated = await self._db_guarded(
+            self._workspaces.rebalance_tab, target.id, columns, rows, arrangement
+        )
         await self._emit("pane.resized", updated.workspace_id, tabs=(updated,))
         return updated
+
+    async def _titled_tab(self, workspace: str, node: str | None, title: str) -> WorkspaceTab:
+        """Resolve the one tab of ``workspace`` titled ``title``."""
+        found = _workspace_of(await self._enter(workspace, node), workspace)
+        listed = await self._db(self._workspaces.list_tabs, found.id)
+        tabs = [tab for tab in listed if tab.title == title]
+        if len(tabs) != 1:
+            raise WorkspaceOpError(
+                "invalid_ref",
+                f"Workspace {workspace!r} needs exactly one tab titled {title!r}; "
+                f"{len(tabs)} tabs have that title",
+            )
+        return tabs[0]
 
     async def pane_resize(
         self, actor: str, pane: str, ratio: float, *, node: str | None = None

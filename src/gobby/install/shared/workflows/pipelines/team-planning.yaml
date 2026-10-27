@@ -3,7 +3,7 @@ type: pipeline
 version: "1.0"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
-  'Team Planning' tab in the shared checkout. Each seat runs its own agent definition, and
+  'Team Planning - #<task>' tab in the shared checkout. Each seat runs its own agent definition, and
   each seat pane takes its definition name (docs/contracts/seat-titles.md).
   Approved seats: plan-writer, plan-adversary, plan-enhancer.
 
@@ -21,6 +21,10 @@ inputs:
     type: string
     required: true
     description: "Existing target workspace UUID or ref"
+  task:
+    type: string
+    required: true
+    description: "Task the planning run is for; its tab takes the task's sequence number"
   seat_pane:
     type: string
     default: null
@@ -84,6 +88,8 @@ steps:
         requested: "${{ inputs.seats }}"
         report_to: "${{ inputs.report_to }}"
         require_report_to: true
+        task: "${{ inputs.task }}"
+        tab_title: Team Planning
         catalogue:
           - name: plan-writer
             title: Plan Writer
@@ -114,7 +120,7 @@ steps:
           ${{ {'split': {'pane': inputs.seat_pane,
           'axis': 'right', 'title': 'Plan Writer'}}
           if inputs.seat_pane
-          else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
+          else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
   - id: plan-adversary
     condition: "${{ 'plan-adversary' in inputs.seats.split(',') }}"
@@ -135,7 +141,7 @@ steps:
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref),
           'axis': 'right', 'title': 'Plan Adversary'}}
           if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
-          else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
+          else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
 
   - id: plan-enhancer
     condition: "${{ 'plan-enhancer' in inputs.seats.split(',') }}"
@@ -158,4 +164,20 @@ steps:
           'axis': 'right', 'title': 'Plan Enhancer'}}
           if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
           or 'plan-adversary' in inputs.seats.split(',')
-          else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
+          else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
+
+  # Tiles the tab the launched seats joined, by the tab_ref their placement returned. A supplied
+  # seat_pane can sit in a tab with any title, so the tab is named by ref, not by title.
+  - id: arrange
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-workspaces
+      tool: rebalance_tab
+      arguments:
+        tab: >-
+          ${{ steps['plan-writer'].output.tab_ref if 'plan-writer' in inputs.seats.split(',')
+          else steps['plan-adversary'].output.tab_ref if 'plan-adversary' in inputs.seats.split(',')
+          else steps['plan-enhancer'].output.tab_ref }}
+        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        rows: 100
+        layout: tiled

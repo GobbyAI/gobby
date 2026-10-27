@@ -264,13 +264,24 @@ def create_workspaces_registry(
     @registry.tool(
         description=(
             "Balance a tab from viewport dimensions: at an 80-column, 12-row floor when it "
-            f"fits, else tiled evenly across the viewport. {_NODE}"
+            "fits, else tiled evenly across the viewport. layout='tiled' always tiles, as "
+            "gclient's Arrange > Tiled does. With workspace, tab is the title of that "
+            f"workspace's one tab. {_NODE}"
         )
     )
     async def rebalance_tab(
-        tab: str, rows: int, columns: int = 80, node: str | None = None
+        tab: str,
+        rows: int,
+        columns: int = 80,
+        node: str | None = None,
+        layout: Literal["balanced", "tiled"] = "balanced",
+        workspace: str | None = None,
     ) -> dict[str, Any]:
-        return await _run(lambda actor: ops().tab_rebalance(actor, tab, columns, rows, node=node))
+        return await _run(
+            lambda actor: ops().tab_rebalance(
+                actor, tab, columns, rows, node=node, workspace=workspace, arrangement=layout
+            )
+        )
 
     @registry.tool(
         description=(
