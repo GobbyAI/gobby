@@ -41,14 +41,8 @@ def _can_release(ctx: RegistryContext, caller: Session, holder: Session, task_id
     role = ctx.session_var_manager.get_variable_subset(caller.id, ("_agent_type",))
     if role.get("_agent_type") == "orchestrator":
         return is_operator_coordinator(ctx.task_manager, caller)
-    db = ctx.task_manager.db
-    team = seat_team(db, caller.id)
-    return (
-        team is not None
-        and team.task_id == task_id
-        and _bound_dev_manager(ctx, caller, task_id)
-        and seat_team(db, holder.id) == team
-    )
+    team = _managed_team(ctx, caller, task_id)
+    return team is not None and seat_team(ctx.task_manager.db, holder.id) == team
 
 
 def _uncommitted_refusal(
@@ -186,6 +180,19 @@ def _team_task(db: HubDatabase, team: TeamBinding, task_id: str) -> bool:
     return team.mode == EPIC_MODE and open_leaf_below(db, team.task_id, task_id) is not None
 
 
+def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBinding | None:
+    """The team the caller manages for ``task_id``: its Dev Manager, bound to the team's task.
+
+    The team's own task and, in epic mode, the open leaves below its epic are managed. The
+    team comes from the caller's runbook execution (``seat_team``), shared by every caller.
+    """
+    db = ctx.task_manager.db
+    team = seat_team(db, caller.id)
+    if team is None or not _team_task(db, team, task_id):
+        return None
+    return team if _bound_dev_manager(ctx, caller, team.task_id) else None
+
+
 def _recipient_refusal(
     db: HubDatabase, caller_id: str, recipient: Session, task_id: str, epoch: int
 ) -> dict[str, str] | None:
@@ -232,12 +239,8 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                 return {"error": "Caller not found", "error_code": "session_required"}
             resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
             db = ctx.task_manager.db
-            team = seat_team(db, caller.id)
-            if (
-                team is None
-                or not _team_task(db, team, resolved_id)
-                or not _bound_dev_manager(ctx, caller, team.task_id)
-            ):
+            team = _managed_team(ctx, caller, resolved_id)
+            if team is None:
                 return {
                     "error": "Only the task's Dev Manager may hand off its claim",
                     "error_code": "team_manager_required",

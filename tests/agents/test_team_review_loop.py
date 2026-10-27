@@ -163,17 +163,18 @@ class ReviewTeam:
     candidate: str
 
 
-def commit(db: HubDatabase, binding: TeamBinding, name: str) -> str:
-    """Commit ``name`` in the team tree and link it as the task's latest commit."""
+def commit(db: HubDatabase, binding: TeamBinding, name: str, task: Task | None = None) -> str:
+    """Commit ``name`` in the team tree and link it to ``task`` (default: the team's task)."""
     tree = Path(binding.worktree_path)
     (tree / name).write_text(f"# {name}\n")
     git_in(tree, "add", name)
     git_in(tree, "commit", "-m", f"Add {name}")
     sha = git_in(tree, "rev-parse", "HEAD")
-    commits = LocalTaskManager(db).get_task(binding.task_id).commits or []
+    task_id = binding.task_id if task is None else task.id
+    commits = LocalTaskManager(db).get_task(task_id).commits or []
     db.execute(
         "UPDATE tasks SET commits = %s WHERE id = %s",
-        (json.dumps([*commits, sha]), binding.task_id),
+        (json.dumps([*commits, sha]), task_id),
     )
     return sha
 
@@ -881,9 +882,16 @@ async def read_candidate(
     disposition: str | None = None,
 ) -> tuple[dict[str, Any], AgentStepInstance]:
     """Deliver a CANDIDATE from ``sender`` and consume it the way the reviewer does."""
-    messages = InterSessionMessageManager(db)
     proof = f"COMMIT={sha}" if sha else f"DISPOSITION={disposition}"
     content = f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree {proof} NOTE=relayed"
+    return await deliver_message(db, reviewer, sender, content)
+
+
+async def deliver_message(
+    db: HubDatabase, reviewer: str, sender: str, content: str
+) -> tuple[dict[str, Any], AgentStepInstance]:
+    """Deliver ``content`` from ``sender`` and consume it through the reviewer's intake."""
+    messages = InterSessionMessageManager(db)
     message = messages.create_message(sender, reviewer, content)
     registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
     add_messaging_tools(registry, messages, SessionManager(db), db)
@@ -1041,6 +1049,64 @@ def assert_candidate_cleared(instance: AgentStepInstance) -> None:
         "candidate_owner": None,
         "candidate_received_at": None,
     }
+
+
+def _new_leaf(world: TeamWorld, epic: Task, title: str) -> Task:
+    return LocalTaskManager(world.case.db).create_task(
+        world.case.project_id,
+        title,
+        parent_task_id=epic.id,
+        created_in_session_id=world.case.creator,
+        validation_criteria="The leaf works.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_epic_dev_manager_withdrawal_clears_the_reviewers_candidate(
+    world: TeamWorld,
+) -> None:
+    """An epic's Dev Manager withdraws a leaf's candidate; the next leaf's candidate then binds."""
+    db, project_id = world.case.db, world.case.project_id
+    tasks = LocalTaskManager(db)
+    epic = tasks.create_task(
+        project_id, TITLE, created_in_session_id=world.case.creator, task_type="epic"
+    )
+    first, second = _new_leaf(world, epic, "Scroll leaf"), _new_leaf(world, epic, "Type leaf")
+    runbook = world.child(epic, DEVTEAM)
+    binding = await world.admit(runbook, epic)
+    manager = seat(world, runbook, "dev-manager", manages=epic)
+    developer, sol = (seat(world, runbook, role) for role in ("developer", "code-reviewer"))
+    grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
+    grant_review_writes(db, sol, project_id)
+    reviewer_at_await(db, sol)
+
+    tasks.claim_task(first.id, developer, force=True)
+    first_sha = commit(db, binding, "scroll.py", first)
+    _, instance = await read_candidate(db, sol, developer, first, first_sha)
+    assert instance.variables["candidate_task"] == first.id
+
+    withdrawn = f"EVENT=CANDIDATE_WITHDRAWN TASK=#{first.seq_num} SHA={first_sha} NOTE=reassigned"
+    _, instance = await deliver_message(db, sol, manager, withdrawn)
+    assert instance.variables["candidate_task"] is None
+
+    tasks.claim_task(second.id, developer, force=True)
+    second_sha = commit(db, binding, "type.py", second)
+    result, instance = await read_candidate(db, sol, manager, second, second_sha)
+    assert "candidate_binding_error" not in result, result
+    assert instance.variables["candidate_task"] == second.id
+
+    other_epic = tasks.create_task(
+        project_id,
+        "Another team's epic",
+        created_in_session_id=world.case.creator,
+        task_type="epic",
+    )
+    other_runbook = world.child(other_epic, DEVTEAM)
+    await world.admit(other_runbook, other_epic)
+    other_manager = seat(world, other_runbook, "dev-manager", manages=other_epic)
+    stray = f"EVENT=CANDIDATE_WITHDRAWN TASK=#{second.seq_num} SHA={second_sha} NOTE=not mine"
+    _, instance = await deliver_message(db, sol, other_manager, stray)
+    assert instance.variables["candidate_task"] == second.id
 
 
 @pytest.mark.asyncio
