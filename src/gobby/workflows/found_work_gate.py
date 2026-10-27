@@ -26,12 +26,11 @@ from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.tasks.command_equivalence import target_covers
-from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.tasks.transcript_evidence import derive_latest_turn_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
 )
-from gobby.tasks.transcript_evidence_stream import TranscriptEvidenceStream
 from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
 from gobby.workflows.validation_cover import (
     cargo_package_selection_failed,
@@ -47,9 +46,8 @@ logger = logging.getLogger(__name__)
 # In-process only. Persisted analysis cache must not outlive this daemon.
 _PROCESS_BOOT_AT = datetime.now(UTC)
 FOUND_WORK_GATE_ARMED_AT_VARIABLE = "_found_work_gate_armed_at"
+TRANSCRIPT_BOUNDARY_VARIABLE = "_found_work_transcript_boundary"
 _FOUND_WORK_TASK_ACTIONS = frozenset({"claimed", "closed"})
-# Sessions whose evidence streams stay resident; an evicted session re-derives cold once.
-_EVIDENCE_STREAM_LIMIT = 16
 
 
 def found_work_gate_armed_at(value: object) -> datetime | None:
@@ -331,16 +329,6 @@ class FoundWorkStopAnalyzer:
         self._session_manager = session_manager
         self._session_task_manager = session_task_manager
         self._db = db
-        self._evidence_streams: dict[str, TranscriptEvidenceStream] = {}
-
-    def _evidence_stream(self, session_id: str) -> TranscriptEvidenceStream:
-        """Return the session's evidence stream, most recently used last, bounded in count."""
-        streams = self._evidence_streams
-        stream = streams.pop(session_id, None)
-        streams[session_id] = stream if stream is not None else TranscriptEvidenceStream()
-        while len(streams) > _EVIDENCE_STREAM_LIMIT:
-            streams.pop(next(iter(streams)))
-        return streams[session_id]
 
     async def analyze(
         self,
@@ -575,10 +563,16 @@ class FoundWorkStopAnalyzer:
         self,
         *,
         session_id: str,
-        variables: Mapping[str, Any],
+        variables: dict[str, Any],
         project_path: str | None,
         project_id: str | None,
     ) -> tuple[str, ...]:
+        """Uncovered validation failures in the latest turn (#25143).
+
+        A stop reads only the transcript bytes after the boundary its previous
+        clean stop stored, or back to the latest user prompt. The boundary stays
+        put while failures remain, so a repeated stop in the same turn sees them.
+        """
         if self._session_manager is None or not project_path:
             return ()
         try:
@@ -591,12 +585,11 @@ class FoundWorkStopAnalyzer:
                 project_path=project_path,
             )
             window_start = await asyncio.to_thread(self._latest_task_close, session_id)
-            evidence = await derive_transcript_evidence(
+            evidence, boundary = await derive_latest_turn_evidence(
                 session,
                 window_start if window_start is not None else session.created_at,
                 config,
-                stream=self._evidence_stream(session_id),
-                project_path=project_path,
+                variables.get(TRANSCRIPT_BOUNDARY_VARIABLE),
             )
         except TranscriptEvidenceUnavailable:
             logger.debug("Found-work validation evidence unavailable for session %s", session_id)
@@ -613,9 +606,8 @@ class FoundWorkStopAnalyzer:
                 project_id=project_id or getattr(session, "project_id", None),
                 project_path=project_path,
             )
-        # The cover check grows with the runs since the window start and the
-        # disposition check reads storage, so keep both off the loop.
-        return await asyncio.to_thread(
+        # The disposition check reads storage, so keep it off the loop.
+        failures = await asyncio.to_thread(
             self._uncovered_failure_commands,
             evidence.validation_runs,
             session_id=session_id,
@@ -623,6 +615,9 @@ class FoundWorkStopAnalyzer:
             foreign_paths=foreign_paths,
             project_path=project_path,
         )
+        if boundary is not None and not failures:
+            variables[TRANSCRIPT_BOUNDARY_VARIABLE] = boundary
+        return failures
 
     def _uncovered_failure_commands(
         self,

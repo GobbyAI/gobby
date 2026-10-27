@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
-from collections.abc import Callable, Sequence
+from collections.abc import Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -22,17 +21,17 @@ from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import (
     ParsedMessage,
     ParsedToolEvent,
+    ParseEvent,
+    TranscriptParser,
 )
 from gobby.storage.session_models import Session
 from gobby.tasks.transcript_background import (
     pending_background_run,
     recover_background_receipt,
 )
-from gobby.tasks.transcript_evidence_delta import lean_runs, path_delta
-from gobby.tasks.transcript_evidence_merge import merge_path_evidence
+from gobby.tasks.transcript_evidence_merge import archive_before_live, merge_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
-    TranscriptEvidenceDelta,
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
     TranscriptValidationSegment,
@@ -52,10 +51,10 @@ from gobby.tasks.transcript_evidence_snapshots import (
 )
 from gobby.tasks.transcript_evidence_sources import (
     _as_utc,
+    _resolve_transcript_path,
     _resolve_transcript_paths,
     select_window_raw_lines,
 )
-from gobby.tasks.transcript_evidence_stream import TranscriptEvidenceStream
 from gobby.tasks.transcript_evidence_transfer import (
     ChunkedPayload,
     decode_cooperatively,
@@ -90,6 +89,7 @@ from gobby.tasks.transcript_tool_arguments import (
 from gobby.tasks.transcript_tool_arguments import (
     tool_workdir,
 )
+from gobby.tasks.transcript_turn_read import read_latest_turn
 
 logger = logging.getLogger(__name__)
 
@@ -138,24 +138,8 @@ async def derive_transcript_evidence(
     detection_config: ValidationDetectionConfig,
     *,
     archive_dir: str | None = None,
-    stream: TranscriptEvidenceStream | None = None,
-    project_path: str | None = None,
 ) -> TranscriptEvidence:
-    """Parse provider transcripts for validation failures and their later resolutions.
-
-    With ``stream``, only runs appended since the stream's checkpoint cross the pool,
-    and the stream keeps the window's accumulated evidence for the next call. A single
-    transcript's streamed answer is reduced for the gate, judged in ``project_path``.
-    """
-    if stream is not None:
-        return await _derive_streamed_evidence(
-            stream,
-            session,
-            _coerce_datetime(window_start),
-            detection_config,
-            archive_dir,
-            project_path,
-        )
+    """Parse provider transcripts for validation failures and their later resolutions."""
     local_machine_id = require_local_session_ownership(session)
     payload = await run_in_transcript_evidence_pool(
         _derive_chunked_transcript_evidence,
@@ -168,81 +152,27 @@ async def derive_transcript_evidence(
     return cast(TranscriptEvidence, await decode_cooperatively(payload))
 
 
-async def derive_transcript_evidence_delta(
+async def derive_latest_turn_evidence(
     session: Session,
     window_start: datetime | str | None,
     detection_config: ValidationDetectionConfig,
-    *,
-    base: tuple[object, ...] | None,
-    archive_dir: str | None = None,
-) -> TranscriptEvidenceDelta:
-    """Evidence appended since ``base``, the checkpoint from the caller's previous delta.
+    boundary: object,
+) -> tuple[TranscriptEvidence, dict[str, Any] | None]:
+    """Parse the live transcript's latest turn, resuming from a stored boundary.
 
-    A ``base`` the stored snapshot does not match, including ``None``, re-derives the
-    whole window; those paths come back with ``resumed=False``.
+    Returns the evidence and the boundary the next call resumes from.
     """
     local_machine_id = require_local_session_ownership(session)
     payload = await run_in_transcript_evidence_pool(
-        _derive_transcript_delta_chunked,
+        _derive_chunked_turn_evidence,
         session,
         _coerce_datetime(window_start),
         detection_config,
-        archive_dir,
+        boundary,
         local_machine_id,
-        base,
     )
-    return cast(TranscriptEvidenceDelta, await decode_cooperatively(payload))
-
-
-async def _derive_streamed_evidence(
-    stream: TranscriptEvidenceStream,
-    session: Session,
-    window_start: datetime | None,
-    detection_config: ValidationDetectionConfig,
-    archive_dir: str | None,
-    project_path: str | None,
-) -> TranscriptEvidence:
-    """Extend ``stream`` from the worker's delta; derive cold when the delta has no base."""
-    evidence = stream.apply(
-        await derive_transcript_evidence_delta(
-            session,
-            window_start,
-            detection_config,
-            base=stream.checkpoint,
-            archive_dir=archive_dir,
-        ),
-        project_path,
-    )
-    if evidence is None:
-        stream.reset()
-        evidence = stream.apply(
-            await derive_transcript_evidence_delta(
-                session,
-                window_start,
-                detection_config,
-                base=None,
-                archive_dir=archive_dir,
-            ),
-            project_path,
-        )
-    if evidence is None:
-        raise RuntimeError("a cold transcript evidence delta must apply")
-    return evidence
-
-
-def _derive_transcript_delta_chunked(
-    session: Session,
-    window_start: datetime | None,
-    detection_config: ValidationDetectionConfig,
-    archive_dir: str | None,
-    local_machine_id: str,
-    base: tuple[object, ...] | None,
-) -> ChunkedPayload:
-    """Pool entry: the delta crosses the boundary in chunks, as the full window does."""
-    return encode(
-        _derive_transcript_delta_sync(
-            session, window_start, detection_config, archive_dir, local_machine_id, base
-        )
+    return cast(
+        tuple[TranscriptEvidence, dict[str, Any] | None], await decode_cooperatively(payload)
     )
 
 
@@ -308,8 +238,7 @@ def _derive_transcript_evidence_sync(
         )
         for index, path in enumerate(paths)
     )
-    # An archive primary has no live snapshot to store; its archives are the session's only paths.
-    updated = None if paths[0].endswith(".gz") else results[0][1]
+    updated = results[0][1]
     if updated is not None:
         updated = replace(
             updated,
@@ -321,9 +250,12 @@ def _derive_transcript_evidence_sync(
         )
         if resume is None or updated.checkpoint() != resume.checkpoint():
             store_durable_snapshot(snapshot_key, updated)
-    return merge_path_evidence(
+    return merge_transcript_evidence(
         results[0][0],
-        [(path, evidence) for path, (evidence, _) in zip(paths[1:], results[1:], strict=True)],
+        *(
+            archive_before_live(evidence, results[0][0]) if path.endswith(".gz") else evidence
+            for path, (evidence, _) in zip(paths[1:], results[1:], strict=True)
+        ),
     ), updated
 
 
@@ -336,71 +268,19 @@ def _derive_transcript_path_evidence(
     *,
     resume: EvidenceSnapshot | None,
 ) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
-    evidence, snapshot, _ = _derive_transcript_path_delta(
-        session,
-        path,
-        window_start,
-        detection_config,
-        attempted_paths,
-        resume=resume,
-        snapshot_runs=tuple,
-    )
-    return evidence, snapshot
-
-
-def _archive_identity(path: str) -> str:
-    """Size and mtime name an archive's content, so a rewritten archive changes identity."""
-    stat = os.stat(path)
-    return f"{stat.st_size}:{stat.st_mtime_ns}"
-
-
-def _archived_evidence(
-    session: Session, resume: EvidenceSnapshot, attempted_paths: list[str]
-) -> tuple[TranscriptEvidence, EvidenceSnapshot, tuple[TranscriptValidationRun, ...]]:
-    """Evidence of an archive whose identity the held parse still matches."""
-    evidence = TranscriptEvidence(
-        validation_runs=tuple(run for run in resume.runs if run.categories),
-        command_runs=tuple(run for run in resume.runs if not run.categories),
-        attempted_paths=tuple(attempted_paths),
-        sessions=(session.id,),
-        degraded_capabilities=resume.degraded,
-        latest_record_at=resume.latest_record_at,
-    )
-    return evidence, resume, resume.runs
-
-
-def _derive_transcript_path_delta(
-    session: Session,
-    path: str,
-    window_start: datetime | None,
-    detection_config: ValidationDetectionConfig,
-    attempted_paths: list[str],
-    *,
-    resume: EvidenceSnapshot | None,
-    snapshot_runs: Callable[[list[TranscriptValidationRun]], Sequence[TranscriptValidationRun]],
-) -> tuple[TranscriptEvidence, EvidenceSnapshot | None, tuple[TranscriptValidationRun, ...] | None]:
-    """Derive one path's window, resuming from ``resume`` when it still describes the file.
-
-    The snapshot keeps ``snapshot_runs`` of the runs. The third value is the runs ``resume``
-    held (None if cold), which the caller splits a delta against.
-    """
     fingerprint = _derivation_fingerprint(
         session,
         window_start,
         detection_config,
     )
-    if resume is not None and (resume.fingerprint != fingerprint or resume.transcript_path != path):
+    if resume is not None and (
+        resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
+    ):
         resume = None
 
     read: TranscriptRead | None = None
-    archive_identity = ""
     try:
         if path.endswith(".gz"):
-            # An archive's parse holds while its size and mtime do not change.
-            archive_identity = _archive_identity(path)
-            if resume is not None and resume.archive_identity == archive_identity:
-                return _archived_evidence(session, resume, attempted_paths)
-            resume = None
             lines = list(_iter_archive_lines(path))
         else:
             if resume is not None:
@@ -441,17 +321,7 @@ def _derive_transcript_path_delta(
         state.order = resume.order
         state.latest_record_at = resume.latest_record_at
 
-    for event in parser.iter_parse_events(select_window_raw_lines(lines, window_start)):
-        for outcome in event.codex_exec_outcomes:
-            _consume_codex_outcome(state, outcome)
-        for record in event.records:
-            if isinstance(record, ParsedMessage):
-                _observe_record_time(state, record.timestamp)
-                _consume_message(state, record)
-            elif isinstance(record, ParsedToolEvent):
-                _observe_record_time(state, record.timestamp)
-                _consume_tool_event(state, record)
-    state.runs = _drop_settled_command_output(state.runs)
+    _consume_events(state, parser.iter_parse_events(select_window_raw_lines(lines, window_start)))
 
     snapshot = None
     if read is not None and not read.has_partial_tail:
@@ -464,25 +334,10 @@ def _derive_transcript_path_delta(
             parser_state=parser.snapshot_state(),
             pending=dict(state.pending),
             order=state.order,
-            runs=tuple(snapshot_runs(state.runs)),
-            degraded=tuple(dict.fromkeys(state.degraded)),
+            runs=tuple(state.runs),
+            degraded=tuple(state.degraded),
             parsed_from_offset=resume.watermark if resume is not None else 0,
             latest_record_at=state.latest_record_at,
-        )
-    elif archive_identity:
-        snapshot = EvidenceSnapshot(
-            fingerprint=fingerprint,
-            transcript_path=path,
-            watermark=0,
-            tail_len=0,
-            tail_sha256="",
-            parser_state={},
-            pending={},
-            order=state.order,
-            runs=tuple(snapshot_runs(state.runs)),
-            degraded=tuple(dict.fromkeys(state.degraded)),
-            latest_record_at=state.latest_record_at,
-            archive_identity=archive_identity,
         )
     logger.debug(
         "Derived validation transcript evidence",
@@ -495,80 +350,66 @@ def _derive_transcript_path_delta(
         },
     )
 
-    return (
-        TranscriptEvidence(
-            validation_runs=tuple(run for run in state.runs if run.categories),
-            command_runs=tuple(run for run in state.runs if not run.categories),
-            attempted_paths=tuple(attempted_paths),
-            sessions=(session.id,),
-            degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
-            latest_record_at=state.latest_record_at,
-        ),
-        snapshot,
-        resume.runs if resume is not None else None,
-    )
+    return _state_evidence(state, attempted_paths), snapshot
 
 
-def _derive_transcript_delta_sync(
+def _derive_chunked_turn_evidence(
     session: Session,
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
-    archive_dir: str | None,
+    boundary: object,
     local_machine_id: str,
-    base: tuple[object, ...] | None,
-) -> TranscriptEvidenceDelta:
-    fingerprint = _derivation_fingerprint(session, window_start, detection_config)
-    snapshot_key = f"{session.id}:{fingerprint}:delta"
-    stored = load_durable_snapshot(snapshot_key)
-    # Resume only when the caller's checkpoint describes the stored snapshot exactly.
-    resume = stored if stored is not None and stored.checkpoint() == base else None
-    paths, attempted_paths = _resolve_transcript_paths(
-        session, archive_dir, local_machine_id, window_start
-    )
-    if not paths:
+) -> ChunkedPayload:
+    """Pool entry for :func:`derive_latest_turn_evidence`."""
+    path, attempted_paths = _resolve_transcript_path(session, None, local_machine_id)
+    if path is None or path.endswith(".gz"):
         raise TranscriptEvidenceUnavailable(
-            f"No transcript was found for {session.source} session {session.ref}.",
+            f"No live transcript was found for {session.source} session {session.ref}.",
             source=session.source,
             attempted_paths=attempted_paths,
         )
-    results = tuple(
-        _derive_transcript_path_delta(
-            session,
-            path,
-            window_start,
-            detection_config,
-            attempted_paths,
-            resume=(
-                resume
-                if index == 0
-                else resume.supplemental.get(path)
-                if resume is not None
-                else None
-            ),
-            snapshot_runs=lean_runs,
-        )
-        for index, path in enumerate(paths)
+
+    def new_parser() -> TranscriptParser:
+        return get_parser(session.source, session_id=session.id, transcript_path=path)
+
+    try:
+        turn = read_latest_turn(path, boundary, new_parser)
+        parser = new_parser()
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise TranscriptEvidenceUnavailable(
+            f"Transcript {path} could not be read: {exc}",
+            source=session.source,
+            attempted_paths=attempted_paths,
+        ) from exc
+    state = _DerivationState(
+        session=session, detection_config=detection_config, window_start=window_start
     )
-    # An archive primary has no live snapshot to store; its archives are the session's only paths.
-    updated = None if paths[0].endswith(".gz") else results[0][1]
-    if updated is not None:
-        updated = replace(
-            updated,
-            supplemental={
-                path: snapshot
-                for path, (_, snapshot, _) in zip(paths[1:], results[1:], strict=True)
-                if snapshot is not None
-            },
-        )
-        if resume is None or updated.checkpoint() != resume.checkpoint():
-            store_durable_snapshot(snapshot_key, updated)
-    return TranscriptEvidenceDelta(
-        base=base if resume is not None else None,
-        checkpoint=updated.checkpoint() if updated is not None else None,
-        paths=tuple(
-            path_delta(path, evidence, previous)
-            for path, (evidence, _, previous) in zip(paths, results, strict=True)
-        ),
+    _consume_events(state, parser.iter_parse_events(turn.lines))
+    return encode((_state_evidence(state, attempted_paths), turn.boundary))
+
+
+def _consume_events(state: _DerivationState, events: Iterable[ParseEvent]) -> None:
+    for event in events:
+        for outcome in event.codex_exec_outcomes:
+            _consume_codex_outcome(state, outcome)
+        for record in event.records:
+            if isinstance(record, ParsedMessage):
+                _observe_record_time(state, record.timestamp)
+                _consume_message(state, record)
+            elif isinstance(record, ParsedToolEvent):
+                _observe_record_time(state, record.timestamp)
+                _consume_tool_event(state, record)
+    state.runs = _drop_settled_command_output(state.runs)
+
+
+def _state_evidence(state: _DerivationState, attempted_paths: list[str]) -> TranscriptEvidence:
+    return TranscriptEvidence(
+        validation_runs=tuple(run for run in state.runs if run.categories),
+        command_runs=tuple(run for run in state.runs if not run.categories),
+        attempted_paths=tuple(attempted_paths),
+        sessions=(state.session.id,),
+        degraded_capabilities=tuple(dict.fromkeys(state.degraded)),
+        latest_record_at=state.latest_record_at,
     )
 
 
@@ -715,7 +556,6 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             started_at=completed_at,
             completed_at=completed_at,
             order=order,
-            run_id=order,
             exit_code=exit_code,
             unknown_reason=unknown_reason,
             output=output,
@@ -800,7 +640,6 @@ def _record_validation_run(
             started_at=pending.timestamp,
             completed_at=completed_at,
             order=order,
-            run_id=order,
             exit_code=exit_code,
             unknown_reason=unknown_reason,
             output=output,
@@ -842,6 +681,6 @@ def _coerce_datetime(value: datetime | str | None) -> datetime | None:
 
 
 __all__ = [
+    "derive_latest_turn_evidence",
     "derive_transcript_evidence",
-    "derive_transcript_evidence_delta",
 ]

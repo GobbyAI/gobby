@@ -327,8 +327,8 @@ async def test_cargo_package_spec_stop_failure(
     runs: tuple[TranscriptValidationRun, ...] = (failed,)
     if green_command is not None:
         runs += (_run(2, "success", green_command),)
-    derive = AsyncMock(return_value=TranscriptEvidence(validation_runs=runs))
-    monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", derive)
+    derive = AsyncMock(return_value=(TranscriptEvidence(validation_runs=runs), None))
+    monkeypatch.setattr("gobby.workflows.found_work_gate.derive_latest_turn_evidence", derive)
     session = SimpleNamespace(created_at=datetime.now(UTC))
     analyzer = FoundWorkStopAnalyzer(
         llm_service_resolver=lambda: None,
@@ -996,8 +996,10 @@ class TestTerminalValidationFailures:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        derive = AsyncMock(return_value=TranscriptEvidence(validation_runs=(_run(1, "failure"),)))
-        monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", derive)
+        derive = AsyncMock(
+            return_value=(TranscriptEvidence(validation_runs=(_run(1, "failure"),)), None)
+        )
+        monkeypatch.setattr("gobby.workflows.found_work_gate.derive_latest_turn_evidence", derive)
         session = SimpleNamespace(created_at=datetime.now(UTC))
         analyzer = FoundWorkStopAnalyzer(
             llm_service_resolver=lambda: None,
@@ -1490,8 +1492,10 @@ class TestStopCoverCost:
     async def test_cover_check_runs_off_the_event_loop(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        derive = AsyncMock(return_value=TranscriptEvidence(validation_runs=(_run(1, "failure"),)))
-        monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", derive)
+        derive = AsyncMock(
+            return_value=(TranscriptEvidence(validation_runs=(_run(1, "failure"),)), None)
+        )
+        monkeypatch.setattr("gobby.workflows.found_work_gate.derive_latest_turn_evidence", derive)
         threads: list[int] = []
 
         def recording_unresolved(*args: Any, **kwargs: Any) -> tuple[TranscriptValidationRun, ...]:
@@ -1567,12 +1571,12 @@ def _window_bound_derive(
         window_start: datetime | None,
         *_args: Any,
         **_kwargs: Any,
-    ) -> TranscriptEvidence:
+    ) -> tuple[TranscriptEvidence, None]:
         kept = tuple(run for run in runs if window_start is None or run.started_at >= window_start)
-        return TranscriptEvidence(validation_runs=kept)
+        return TranscriptEvidence(validation_runs=kept), None
 
     mock = AsyncMock(side_effect=derive)
-    monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", mock)
+    monkeypatch.setattr("gobby.workflows.found_work_gate.derive_latest_turn_evidence", mock)
     return mock
 
 

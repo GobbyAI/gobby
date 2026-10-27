@@ -281,6 +281,33 @@ async def test_earlier_turn_failure_is_not_reraised_at_a_later_stop(
     assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == ()
 
 
+async def test_repeated_stop_in_the_same_turn_still_reports_its_failure(
+    tmp_path: Path, in_process_pool: None, read_spy: _ReadSpy
+) -> None:
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, _warm_records(WARM_TURNS, prefix="warm"))
+    read_spy.watched.add(transcript.resolve())
+    session = _session("claude", transcript)
+    variables: dict[str, Any] = {}
+    assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == ()
+
+    _append_latest_red(transcript, at=3 * WARM_TURNS + 10)
+    assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == (LATEST_RED,)
+
+    # The blocked stop continues the turn with no new prompt and no covering run.
+    _append(
+        transcript,
+        _claude_tool_pair(
+            command="git status --short",
+            call_id="same-turn",
+            start=_at(3 * WARM_TURNS + 20),
+            result={"exit_code": 0, "stdout": ""},
+        ),
+    )
+
+    assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == (LATEST_RED,)
+
+
 async def test_latest_turn_terminal_failure_is_reported_after_a_large_prior_transcript(
     tmp_path: Path, in_process_pool: None, read_spy: _ReadSpy
 ) -> None:
