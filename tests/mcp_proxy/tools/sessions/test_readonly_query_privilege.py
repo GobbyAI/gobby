@@ -19,6 +19,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.mcp_proxy.tools.sessions._readonly_query import SQL_FROM_TEXT_FUNCTIONS
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
@@ -273,3 +274,57 @@ async def test_ts_stat_is_refused_by_name(registry: InternalToolRegistry) -> Non
     )
 
     assert result["success"] is False
+
+
+# Real call shapes where a valid call proves the refusal; the rest are refused by name alone.
+SQL_FROM_TEXT_SHAPES = {
+    "dblink": "SELECT dblink('dbname=unused', 'SELECT 1')::text AS v",
+    "query_to_xml": "SELECT query_to_xml('SELECT 1', false, false, '')::text AS v",
+    "query_to_xml_and_xmlschema": (
+        "SELECT query_to_xml_and_xmlschema('SELECT 1', false, false, '')::text AS v"
+    ),
+    "query_to_xmlschema": "SELECT query_to_xmlschema('SELECT 1', false, false, '')::text AS v",
+    "set_config": "SELECT set_config('role', 'none', true)::text AS v",
+    "ts_rewrite": (
+        "SELECT ts_rewrite('a'::tsquery, 'SELECT ''a''::tsquery, ''b''::tsquery')::text AS v"
+    ),
+    "ts_stat": "SELECT word::text AS v FROM ts_stat('SELECT ''x''::tsvector')",
+}
+
+
+@pytest.mark.parametrize("name", sorted(SQL_FROM_TEXT_FUNCTIONS))
+async def test_sql_from_text_builtin_is_refused_by_name(
+    registry: InternalToolRegistry, name: str
+) -> None:
+    """Each built-in that runs SQL held in text is refused before Postgres resolves the call."""
+    sql = SQL_FROM_TEXT_SHAPES.get(name, f"SELECT {name}()::text AS v")
+    result = await _run(registry, sql=sql)
+
+    assert result["success"] is False
+    assert result["error_code"] == "query_refused"
+
+
+async def test_function_outside_pg_catalog_is_refused(
+    registry: InternalToolRegistry, temp_db: HubDatabase
+) -> None:
+    """A public plpgsql function can EXECUTE text, so any function outside pg_catalog is refused.
+
+    The query role holds USAGE on the schema, so only the name gate can refuse the call.
+    """
+    schema = f"fn_{uuid.uuid4().hex[:12]}"
+    with temp_db.transaction() as conn:
+        conn.execute(f"CREATE SCHEMA {schema}")
+        conn.execute(
+            f"CREATE FUNCTION {schema}.run_text(sql text) RETURNS text LANGUAGE plpgsql AS "
+            "$$ BEGIN EXECUTE sql; RETURN 'ran'; END $$"
+        )
+        conn.execute(f"GRANT USAGE ON SCHEMA {schema} TO gobby_query_readonly")
+        conn.execute(f"GRANT EXECUTE ON FUNCTION {schema}.run_text(text) TO gobby_query_readonly")
+    try:
+        result = await _run(registry, sql=f"SELECT {schema}.run_text('SELECT 1')::text AS v")
+    finally:
+        with temp_db.transaction() as conn:
+            conn.execute(f"DROP SCHEMA {schema} CASCADE")
+
+    assert result["success"] is False
+    assert result["error_code"] == "query_refused"

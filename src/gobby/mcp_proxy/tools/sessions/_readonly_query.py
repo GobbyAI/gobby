@@ -9,17 +9,20 @@ gobby_query_readonly`` (migration 482), so privilege checks run as that role. Th
 role holds column-level SELECT on public base tables only. It has no grants on
 views, the agent-auth schema, credential tables, credential-named columns, or the
 explicitly excluded columns (connection URLs and args included), and it has no
-membership. The denied-name check is a second layer. ``set_config`` is refused by
-name because PUBLIC can execute it, and ``set_config('role', 'none')`` in the same
-statement would reset the role to the daemon runtime. ``ts_stat`` runs SQL held in
-text, so it is refused by name too. A statement cannot call a function named only by
-concatenation, the text-to-SQL entry points (``*_to_xml``, dblink) are refused, and
-``SET ROLE`` cannot start a SELECT or WITH.
+membership. The denied-name check is a second layer. ``SQL_FROM_TEXT_FUNCTIONS`` lists
+every built-in that runs SQL held in text. ``set_config`` is one: PUBLIC can execute it,
+and ``set_config('role', 'none')`` in the same statement would reset the role to the
+daemon runtime. A statement that names one of them is refused, and so is one that names
+any function outside pg_catalog, since a public plpgsql function can EXECUTE text. A
+statement cannot call a function named only by concatenation, the text-to-SQL entry
+points (``*_to_xml``, dblink) are refused, and ``SET ROLE`` cannot start a SELECT or
+WITH.
 
-Residual. A future Postgres function that runs SQL from text must join the denied
-names. Views must never be granted to the role. Tables added after migration 482
-stay unreadable until granted. The code index, projects, and project checkouts
-are row-level secured with no policy for this role, so it reads zero rows there.
+Residual. A future Postgres built-in that runs SQL from text must join
+SQL_FROM_TEXT_FUNCTIONS. Views must never be granted to the role. Tables added after
+migration 482 stay unreadable until granted. The code index, projects, and project
+checkouts are row-level secured with no policy for this role, so it reads zero rows
+there.
 """
 
 from __future__ import annotations
@@ -55,16 +58,41 @@ CREDENTIAL_COLUMN_PATTERNS = (
 )
 # Tables that hold credentials by design; refused even if the catalog scan finds nothing.
 CREDENTIAL_TABLES = frozenset({"secrets", "secret_key_material", "api_keys", "auth_sessions"})
-# Catalogs that expose password hashes. set_config resets the role inside one statement.
-DENIED_NAMES = frozenset(
+# Built-ins that parse and run SQL held in text, so a statement can assemble the text at run
+# time and the lexical checks never see it. set_config resets the role the same way, and
+# dblink runs SQL on another connection. Each name is refused before Postgres resolves the
+# call; the privilege tests run every one to prove it. Other functions outside pg_catalog are
+# refused by the catalog check, since a public plpgsql function can EXECUTE text.
+SQL_FROM_TEXT_FUNCTIONS = frozenset(
+    {
+        "cursor_to_xml",
+        "cursor_to_xmlschema",
+        "database_to_xml",
+        "database_to_xml_and_xmlschema",
+        "database_to_xmlschema",
+        "dblink",
+        "query_to_xml",
+        "query_to_xml_and_xmlschema",
+        "query_to_xmlschema",
+        "schema_to_xml",
+        "schema_to_xml_and_xmlschema",
+        "schema_to_xmlschema",
+        "set_config",
+        "table_to_xml",
+        "table_to_xml_and_xmlschema",
+        "table_to_xmlschema",
+        "ts_rewrite",
+        "ts_stat",
+    }
+)
+# Catalogs that expose password hashes or host files, plus every SQL-from-text built-in.
+DENIED_NAMES = SQL_FROM_TEXT_FUNCTIONS | frozenset(
     {
         "pg_authid",
         "pg_shadow",
         "pg_user_mapping",
         "pg_user_mappings",
         "pg_stat_file",
-        "set_config",
-        "ts_stat",  # executes SQL held in text, so the name gate must refuse it
     }
 )
 # Functions that read files, signal backends, or execute SQL held in text.
@@ -85,6 +113,13 @@ _CATALOG_SQL = (
     "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
     "AND column_name ILIKE ANY(%s::text[])"
 )
+# Functions outside pg_catalog. A public plpgsql function can EXECUTE text, so the name gate
+# refuses any statement that names one.
+_FUNCTION_SQL = (
+    "SELECT DISTINCT p.proname AS name FROM pg_proc p "
+    "JOIN pg_namespace n ON n.oid = p.pronamespace "
+    "WHERE n.nspname <> 'pg_catalog'"
+)
 _NAME = re.compile(r"[a-z_][a-z0-9_$]*")
 _UNICODE_ESCAPE = re.compile(r"\bu&", re.IGNORECASE)
 _STATEMENT_START = re.compile(r"(select|with)\b", re.IGNORECASE)
@@ -96,6 +131,7 @@ class _Catalog:
 
     columns: frozenset[str]
     tables: frozenset[str]
+    functions: frozenset[str]
 
 
 def _single_statement(sql: str) -> str:
@@ -129,6 +165,11 @@ def _name_refusal(names: set[str], catalog: _Catalog) -> str | None:
             "That names a credential table or column, or a catalog that holds one. "
             "Those are never readable through query_readonly."
         )
+    if names & catalog.functions:
+        return (
+            "That calls a function outside pg_catalog, which can run SQL held in text. "
+            "It is refused."
+        )
     for name in names:
         if name.startswith(DENIED_PREFIXES) or any(f in name for f in DENIED_FRAGMENTS):
             return f"{name} reads files, signals backends, or runs SQL from text; it is refused."
@@ -139,7 +180,12 @@ def _load_catalog(txn: Transaction) -> _Catalog:
     rows = txn.execute(_CATALOG_SQL, (list(CREDENTIAL_COLUMN_PATTERNS),)).fetchall()
     tables = {str(row["table_name"]).lower() for row in rows}
     columns = {str(row["column_name"]).lower() for row in rows}
-    return _Catalog(columns=frozenset(columns), tables=frozenset(tables | CREDENTIAL_TABLES))
+    functions = {str(row["name"]).lower() for row in txn.execute(_FUNCTION_SQL).fetchall()}
+    return _Catalog(
+        columns=frozenset(columns),
+        tables=frozenset(tables | CREDENTIAL_TABLES),
+        functions=frozenset(functions),
+    )
 
 
 def _refused(message: str) -> dict[str, Any]:
