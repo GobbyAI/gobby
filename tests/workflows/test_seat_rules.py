@@ -670,9 +670,12 @@ async def test_persona_name_alone_matches_no_seat_rule(harness: _ProxyHarness) -
         assert await harness.call(persona, server, tool, arguments) is None, tool
 
 
-# Every seat and spawned agent that once held close_task. The Assistant is left out: an
-# operator pane, it is neither a task closer nor a seat this rule refuses.
+# Every seat, spawned agent and persona that may not close tasks. Josh's ruling for #25226:
+# only the Dev Manager and the Orchestrator close, so the Assistant and personas are refused too.
 NON_CLOSERS = (
+    "assistant",
+    "comms-agent",
+    "triage-agent",
     "developer",
     "code-reviewer",
     "docs-reviewer",
@@ -721,6 +724,24 @@ async def test_only_dev_managers_and_the_orchestrator_close_tasks(engine: RuleEn
         assert (await _decide(engine, close, closer)).decision == "allow", closer
 
 
+@pytest.mark.asyncio
+async def test_preview_stays_open_to_every_seat(engine: RuleEngine) -> None:
+    preview = _proxy_call(
+        "gobby-tasks", "close_task", {"task_id": "#25226", "reason": "moot", "preview": True}
+    )
+    for agent_type in NON_CLOSERS:
+        allowed = await _decide(engine, preview, {"_agent_type": agent_type})
+        assert allowed.decision == "allow", (agent_type, allowed.reason)
+
+
+@pytest.mark.asyncio
+async def test_persona_overlays_cannot_close_tasks(engine: RuleEngine) -> None:
+    close = _proxy_call("gobby-tasks", "close_task", {"task_id": "#25226", "reason": "moot"})
+    for persona in ("comms-agent", "plan-writer"):
+        blocked = await _decide(engine, close, {"_persona_name": persona})
+        assert blocked.decision == "block", persona
+
+
 def _close_task_names(node: object) -> list[str]:
     if isinstance(node, dict):
         return [name for value in node.values() for name in _close_task_names(value)]
@@ -734,6 +755,6 @@ def test_only_dev_managers_and_the_orchestrator_are_granted_close_task() -> None
     granted = {
         path.stem: _close_task_names(yaml.safe_load(path.read_text()))
         for path in sorted(AGENTS_DIR.glob("*.yaml"))
-        if path.stem not in ("assistant", "dev-manager", "orchestrator")
+        if path.stem not in ("dev-manager", "orchestrator")
     }
     assert {stem: names for stem, names in granted.items() if names} == {}

@@ -141,7 +141,6 @@ step_workflow:
       blocked_mcp_tools:
         - "gobby-tasks:create_task"
         - "gobby-tasks:claim_task"
-        - "gobby-tasks:close_task"
         - "gobby-tasks:reopen_task"
         - "gobby-tasks:escalate_task"
         - "gobby-agents:spawn_agent"

@@ -763,14 +763,15 @@ async def test_required_step_records_follow_project_policy(
         required_steps=requirements.required,
         missing_steps=requirements.missing,
     )
+    # A no-work close records no step records, so the missing closing record fails no gate.
     gate = preview.gates[-1]
     assert (gate.item, gate.name, gate.status, gate.details["missing_steps"]) == (
         5,
         "step_records",
-        "failed",
+        "skipped",
         ["closing"],
     )
-    assert [failure.name for failure in preview.all_failures] == ["step_records"]
+    assert [failure.name for failure in preview.all_failures] == []
     with pytest.raises(TaskStepRecordsMissingError, match="closing"):
         manager.close_task(work.id, force=True)
     record(work, closer, "closing")
@@ -781,11 +782,6 @@ async def test_required_step_records_follow_project_policy(
     research = manager.create_task(
         project_id, "Policy research", category="research", validation_criteria="Moot."
     )
-    with pytest.raises(TaskStepRecordsMissingError, match="implementation, review, closing"):
-        manager.close_task(research.id, reason="moot")
-    record(research, developer, "implementation", linked=False)
-    record(research, reviewer, "review", linked=False)
-    record(research, closer, "closing", linked=False)
     assert manager.close_task(research.id, reason="moot").closed_at is not None
 
     _set_close_policy(

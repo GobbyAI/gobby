@@ -7,9 +7,8 @@ import click
 
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.storage.tasks import TaskStaleStateError
-from gobby.tasks.close_invariants import NO_WORK_CLOSE_REASONS
 from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
-from gobby.tasks.state_semantics import is_task_closed
+from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS, is_task_closed
 
 
 def create_task_impl(

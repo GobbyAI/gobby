@@ -109,6 +109,9 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
         "session", SimpleNamespace(id="session", machine_id=require_machine_id())
     )
     cast(MagicMock, ctx.session_var_manager).get_variables.side_effect = record("variables", {})
+    cast(MagicMock, ctx.session_var_manager).get_variable_subset.side_effect = record(
+        "closer_role", {"_agent_type": "orchestrator"}
+    )
     monkeypatch.setattr(lifecycle, "resolve_task_id_for_mcp", record("resolve_task", task.id))
     monkeypatch.setattr(lifecycle, "resolve_task_repo_path", record("repo", "/repo"))
 
@@ -127,6 +130,7 @@ async def test_close_evaluation_storage_stays_off_the_event_loop(
         "children",
         "resolve_session",
         "session",
+        "closer_role",
         "variables",
         "resolve_task",
         "repo",
