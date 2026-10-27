@@ -67,11 +67,18 @@ replacement, from the ORCH ruling, records content hashes.
   including a path committed after its last Gobby edit and then changed outside Gobby.
 - The commit guard's own-session exemption counts a path only when its current hash matches a
   record in the caller's ledger.
-- Before each claimant Bash call, `snapshot_claimed_shell_edits` keeps the claimed tasks'
-  ledgered paths that match a recorded hash now. After the call, `adopt_claimed_shell_edits`
-  records the new hash of each kept path the call changed, for its owning task. A path that
-  was not owned before the call, such as one written or deleted outside Gobby earlier, is
-  never adopted. No mtime or clock enters the test, so `cp -p` rewrites are owned.
+- Snapshots are keyed by tool-call ID, so overlapping Bash calls keep separate snapshots.
+  Before each claimant Bash call, `snapshot_claimed_shell_edits` keeps the claimed tasks'
+  ledgered paths that match a recorded hash now, under that call's ID. After the call,
+  `adopt_claimed_shell_edits` records the new hash of each kept path the call changed, for
+  its owning task. A post with no snapshot under its ID adopts nothing. A path that was not
+  owned before the call, such as one written or deleted outside Gobby earlier, is never
+  adopted. No mtime or clock enters the test, so `cp -p` rewrites are owned.
+- A Bash call the CLI moved to the background (its tool response names an output file)
+  stays pending after its post. `settle_pending_shell_calls` runs before each BEFORE_TOOL
+  rule evaluation. A finished output (last line `[exited with code N]` or `[killed]`)
+  adopts the call's later changes and drops the call. A running output keeps it. A missing
+  output drops it without adopting, so its paths need approval.
 
 Residual gaps, named and not fixed:
 
@@ -82,6 +89,12 @@ Residual gaps, named and not fixed:
   separate the two writes.
 - A Bash call that writes into a second checkout reached by `cd` adopts only the checkout of
   its starting directory. The other checkout's paths stay unowned and need approval.
-- A directory-only ledger entry is not owned.
+- A directory-only ledger entry is not owned. A file a shell call creates under it stays
+  unowned.
+- A call that snapshots after an overlapping call wrote a path, and before that call's
+  post, does not snapshot that path. Its own rewrite of the path stays unowned and needs
+  approval. This fails closed.
+- A background call whose output ends with a terminal line other than `[exited with code N]`
+  or `[killed]` stays pending and is re-read at each tool call.
 - Ledgers recorded before this change carry no hashes. In-flight dirt needs one
   `approve-dirty-paths` after deploy; no backward compatibility is kept (rule 10).

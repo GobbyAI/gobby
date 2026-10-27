@@ -1396,9 +1396,9 @@ async def test_claimant_shell_rewrite_keeps_its_edit_owned(guard_harness: GuardH
     (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
     _record_claimant_edit(h, "orphan.txt")
     manager = SessionVariableManager(h.db)
-    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo))
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="shell-call")
     (h.repo / "orphan.txt").write_text("claimant's formatter output\n", encoding="utf-8")
-    manager.adopt_claimed_shell_edits(h.current_session.id)
+    manager.adopt_claimed_shell_edits(h.current_session.id, "shell-call")
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
@@ -1415,8 +1415,110 @@ async def test_outside_edit_before_claimant_shell_call_stays_unowned(
     _record_claimant_edit(h, "orphan.txt")
     (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
     manager = SessionVariableManager(h.db)
-    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo))
-    manager.adopt_claimed_shell_edits(h.current_session.id)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="shell-call")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "shell-call")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_overlapping_claimant_shell_calls_keep_their_writes_owned(
+    guard_harness: GuardHarness,
+) -> None:
+    """Two overlapping claimant shell calls each keep their own rewrite owned (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-a")
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-b")
+    (h.repo / "orphan.txt").write_text("first formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-a")
+    (h.repo / "orphan.txt").write_text("second formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-b")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
+async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_ends(
+    guard_harness: GuardHarness, tmp_path: Path, terminal_line: str
+) -> None:
+    """A background shell rewrite is owned once its output shows the process ended (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    output = tmp_path / "background.output"
+    output.write_text("", encoding="utf-8")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="bg-call")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "bg-call", output_path=str(output))
+    manager.settle_pending_shell_calls(h.current_session.id)
+    (h.repo / "orphan.txt").write_text("background formatter output\n", encoding="utf-8")
+    output.write_text(f"formatted\n{terminal_line}\n", encoding="utf-8")
+    manager.settle_pending_shell_calls(h.current_session.id)
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_shell_adoption_without_its_own_snapshot_adopts_nothing(
+    guard_harness: GuardHarness,
+) -> None:
+    """A shell call with no snapshot of its own adopts no outside write (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="snapped")
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "unsnapped")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_file_created_under_a_directory_only_ledger_entry_stays_unowned(
+    guard_harness: GuardHarness,
+) -> None:
+    """A file a shell call creates under a directory-only ledger entry stays unowned (#25161)."""
+    h = guard_harness
+    (h.repo / "generated").mkdir()
+    _record_claimant_edit(h, "generated")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="mkdir-call")
+    (h.repo / "generated" / "output.txt").write_text("script output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "mkdir-call")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("generated/output.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_background_shell_call_without_an_output_file_adopts_nothing(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    """A background rewrite with no output file to settle against stays unowned (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="lost-call")
+    manager.adopt_claimed_shell_edits(
+        h.current_session.id, "lost-call", output_path=str(tmp_path / "gone.output")
+    )
+    (h.repo / "orphan.txt").write_text("written by the lost process\n", encoding="utf-8")
+    manager.settle_pending_shell_calls(h.current_session.id)
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 

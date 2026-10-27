@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -62,6 +64,21 @@ _EXPECTED_SKILL_RESOLUTION_ERRORS = (
     PermissionError,
     TimeoutError,
 )
+
+
+_BACKGROUND_OUTPUT_RECEIPT = re.compile(
+    r"Output is being written to: ([^\s\"\\]+?)\.(?=[\s\"\\]|$)"
+)
+
+
+def _background_output_path(data: dict[str, Any]) -> str | None:
+    """Return the output file of a Bash call that the CLI moved to the background."""
+    response = data.get("tool_output", data.get("tool_response", data.get("tool_result")))
+    if response is None:
+        return None
+    text = response if isinstance(response, str) else json.dumps(response, default=str)
+    match = _BACKGROUND_OUTPUT_RECEIPT.search(text)
+    return match.group(1) if match else None
 
 
 class ToolEventHandlerMixin(EventHandlersBase):
@@ -388,7 +405,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
             if tool_name == "Bash" and self._session_manager is not None:
-                self._adopt_shell_writes(session_id)
+                self._adopt_shell_writes(event, session_id)
 
             db = getattr(self._session_manager, "db", None)
             if db is not None:
@@ -427,18 +444,27 @@ class ToolEventHandlerMixin(EventHandlersBase):
         root = checkout_root(Path(cwd)) if cwd is not None else None
         if db is None or root is None:
             return
+        if event.request_id is None:
+            self.logger.debug("Bash call has no tool-call id; claimed task edits not snapshotted")
+            return
         try:
-            SessionVariableManager(db).snapshot_claimed_shell_edits(session_id, os.fspath(root))
+            SessionVariableManager(db).snapshot_claimed_shell_edits(
+                session_id, os.fspath(root), event.request_id
+            )
         except Exception:
             self.logger.warning("Failed to snapshot claimed task edits", exc_info=True)
 
-    def _adopt_shell_writes(self, session_id: str) -> None:
+    def _adopt_shell_writes(self, event: HookEvent, session_id: str) -> None:
         """Let the claimed tasks own the ledger paths this Bash call rewrote."""
         db = getattr(self._session_manager, "db", None)
-        if db is None:
+        if db is None or event.request_id is None:
             return
         try:
-            SessionVariableManager(db).adopt_claimed_shell_edits(session_id)
+            SessionVariableManager(db).adopt_claimed_shell_edits(
+                session_id,
+                event.request_id,
+                output_path=_background_output_path(event.data),
+            )
         except Exception:
             self.logger.warning("Failed to adopt shell writes to claimed tasks", exc_info=True)
 
