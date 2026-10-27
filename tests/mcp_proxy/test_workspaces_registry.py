@@ -508,6 +508,31 @@ async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
     assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
 
 
+@pytest.mark.parametrize("seats", [("plan-writer",), ("plan-writer", "plan-adversary")])
+def test_team_planning_arrange_finds_its_tab_by_title_when_a_seat_pane_vanished(
+    seats: tuple[str, ...],
+) -> None:
+    """A restart-resumed team whose adopted seat pane is gone has no tab_ref to tile by.
+
+    Arrange then names the team tab by its workspace and title, as devteam's arrange does.
+    """
+    definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
+    arrange = next(step for step in definition.steps if step.id == "arrange")
+    assert arrange.mcp is not None and arrange.mcp.arguments is not None
+    context = {
+        "inputs": {"workspace": "node:planning", "task": "#25186", "seats": ",".join(seats)},
+        "steps": {
+            "guard": {"output": {"launch": list(seats), "tab_title": "Team Planning - #25186"}},
+            **{seat: {"output": {"tab_ref": None, "pane_ref": None}} for seat in seats},
+        },
+    }
+    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        arrange.mcp.arguments, context, drop_none=True
+    )
+    assert arguments.get("workspace") == "node:planning", arguments
+    assert arguments.get("tab") == "Team Planning - #25186", arguments
+
+
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:
     registry = _registry(stack)
     with _principal(None):
