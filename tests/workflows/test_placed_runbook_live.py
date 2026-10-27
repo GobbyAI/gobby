@@ -10,6 +10,7 @@ CLIs are inert stand-ins on a curated PATH that holds no real provider.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -30,6 +31,7 @@ import psutil
 import pytest
 
 import tests.e2e.conftest as e2e_fixtures
+from gobby.agents.sync import sync_bundled_agents
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
 from gobby.storage.definitions._shared import decode_json_object
@@ -45,6 +47,7 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.pipeline_executor import step_invocation_id
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+from tests.e2e.composer_proof import link_existing_auth
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
@@ -120,6 +123,14 @@ SEAT_RUNTIMES = {
 SPLIT_AXES = {"right": "horizontal", "down": "vertical"}
 _INPUT_REF = re.compile(r"\$\{\{\s*inputs\.(\w+)\s*\}\}")
 _PANE_SOURCE = re.compile(r"steps\.(\w+)\.output\.pane_ref")
+STEWARD_PIPELINE = "support"
+STEWARD_SEAT = "recovery-steward"
+# The steward's runtime, as the Orchestrator's launch_defaults.support gives it.
+STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-luna", "medium"
+# Triage's wait is the patrol cadence: each timeout wakes the steward for one patrol.
+STEWARD_CADENCE_SECONDS = 600
+STEWARD_TOLERANCE_SECONDS = 60
+STEWARD_TIMEOUT_PATROLS = 2
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -515,11 +526,11 @@ def _workspace(live: Live, name: str) -> Place:
     return place
 
 
-def _launch(live: Live, place: Place, **inputs: str) -> str:
+def _launch(live: Live, place: Place, *, pipeline: str = PIPELINE, **inputs: str) -> str:
     started = live.client.post(
         "/api/pipelines/run",
         json={
-            "name": PIPELINE,
+            "name": pipeline,
             "inputs": {"workspace": place.ref, **inputs},
             "project_id": PROJECT_ID,
             "background": True,
@@ -1105,3 +1116,303 @@ def test_live_partial_redeploy(live: Live, failing: str) -> None:
         "kills": _kill(live, second),
     }
     _assert_live(live, retained + repaired)
+
+
+def _startup_ready(client: httpx.Client) -> bool:
+    response = client.get("/api/admin/startup-progress")
+    response.raise_for_status()
+    progress = response.json()
+    return progress.get("done") is True and progress.get("restart_recovery_pending") is False
+
+
+def _support_runbook(db: HubDatabase) -> PipelineDefinition:
+    row = PipelineDefinitionManager(db).get_by_name(STEWARD_PIPELINE)
+    assert row is not None and row.enabled, "the bundled support runbook is not installed"
+    definition = asyncio.run(PipelineLoader(db).load_pipeline(STEWARD_PIPELINE))
+    assert definition is not None, STEWARD_PIPELINE
+    assert "runbook" in definition.tags
+    return definition
+
+
+def _link_codex_auth(home: Path) -> None:
+    """Link the operator's existing codex login into the isolated home. Nothing is read."""
+    providers = home / "providers"
+    providers.mkdir(mode=0o700)
+    source = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")) / "auth.json"
+    link_existing_auth(providers, "codex", source)
+    (home / ".codex").symlink_to(providers / "codex", target_is_directory=True)
+
+
+def _unlink_codex_auth(home: Path) -> dict[str, bool]:
+    """Remove the links _link_codex_auth made; each entry says whether that link survived."""
+    links = {"codex_home": home / ".codex", "auth": home / "providers" / "codex" / "auth.json"}
+    for link in links.values():
+        link.unlink(missing_ok=True)
+    for directory in (home / "providers" / "codex", home / "providers"):
+        with contextlib.suppress(OSError):
+            directory.rmdir()
+    return {name: link.is_symlink() for name, link in links.items()}
+
+
+@pytest.fixture
+def steward_rig(
+    postgres_db: HubDatabase,
+    e2e_config: tuple[Path, int, int],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Rig]:
+    """The Recovery Steward's rig: the real codex on PATH, with no provider stand-ins."""
+    home = e2e_config[0].parent
+    root = tmp_path / "steward-rig"
+    root.mkdir()
+    # Resolved before the curated PATH replaces the search path.
+    codex = shutil.which("codex")
+    assert codex is not None, "the Recovery Steward needs the real codex on PATH"
+    assert not sync_bundled_pipelines(postgres_db)["errors"]
+    assert not sync_bundled_agents(postgres_db)["errors"]
+    seed_seat_catalog(postgres_db, [(STEWARD_PROVIDER, STEWARD_MODEL)])
+    path, _ = curated_path(root, [])
+    codex_dir = root / "codex"
+    codex_dir.mkdir()
+    (codex_dir / "codex").symlink_to(codex)
+    path = os.pathsep.join([str(codex_dir), path])
+    monkeypatch.setenv("PATH", path)
+    barrier = Barrier(root / "barrier")
+    barrier.directory.mkdir()
+    monkeypatch.setenv(BARRIER_DIR_ENV, str(barrier.directory))
+    pythonpath = [str(CHECKOUT_ROOT), *filter(None, [os.environ.get("PYTHONPATH")])]
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(pythonpath))
+    srt = stage_real_srt(home)
+    with host_socket_dir() as socket_dir:
+        for directory in (home, home / ".gobby", socket_dir):
+            directory.mkdir(exist_ok=True)
+            copy_daemon_api_key(home, directory)
+        control_token_path(socket_dir).write_text(uuid4().hex)
+        control_token_path(socket_dir).chmod(0o600)
+        (home / ".gobby" / "build.yaml").write_text("max_active_agents: 8\n")
+        mutations = ConfigMutations(postgres_db)
+        mutations.patch_internal(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(
+                values={
+                    "terminal_host.socket_dir": str(socket_dir),
+                    "tmux.init_timeout_seconds": 600,
+                }
+            ),
+            source="placed-runbook-live",
+        )
+        env = prepare_daemon_env(home_dir=home)
+        env.update(GOBBY_CONFIG=str(e2e_config[0]), GOBBY_HOME=str(home))
+        native_bin = Path(env[NATIVE_BIN_DIR_ENV])
+        binaries = {
+            name: sha256_file(native_bin / native_bin_name(name)) for name in ("gdaemon", "gterm")
+        }
+        with fixture_host(native_bin / native_bin_name("gterm"), socket_dir, env) as host:
+            yield Rig(barrier, {}, {}, path, host, srt, binaries)
+
+
+@pytest.fixture
+def steward_daemon(
+    e2e_project_dir: Path, e2e_config: tuple[Path, int, int], steward_rig: Rig
+) -> Iterator[DaemonInstance]:
+    yield from e2e_fixtures.spawn_daemon_instance(
+        e2e_project_dir, e2e_config, runner_module=RUNNER_MODULE
+    )
+
+
+@pytest.fixture
+def steward_live(
+    steward_daemon: DaemonInstance,
+    postgres_db: HubDatabase,
+    steward_rig: Rig,
+    e2e_config: tuple[Path, int, int],
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> Iterator[Live]:
+    home = e2e_config[0].parent
+    # Seats work in a clone outside the daemon project, which holds GOBBY_HOME.
+    checkout = (tmp_path / "steward-checkout").resolve()
+    subprocess.run(
+        ["git", "clone", "--quiet", str(steward_daemon.project_dir), str(checkout)],
+        check=True,
+        capture_output=True,
+    )
+    write_project_marker(checkout, project_id=PROJECT_ID, name="E2E Test Project")
+    LocalProjectCheckoutManager(postgres_db).rebind(MACHINE_ID, PROJECT_ID, str(checkout))
+    machine = LocalMachineManager(postgres_db).upsert_seen(MACHINE_ID, TEST_USER_ID)
+    assert machine.ref is not None
+    token = daemon_token(steward_daemon.gobby_home)
+    events = CLIEventSimulator(steward_daemon.http_url, token)
+    # The coordinator stands in for Triage: the steward's wait owner and report_to.
+    coordinator = events.register_session(
+        f"steward-coordinator-{uuid4().hex}", project_id=PROJECT_ID, cwd=str(checkout)
+    )
+    events.close()
+    mcp = MCPTestClient(steward_daemon.http_url, token)
+    mcp.session_id = str(coordinator["id"])
+    client = httpx.Client(
+        base_url=steward_daemon.http_url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60.0,
+    )
+    evidence: dict[str, Any] = {
+        "test": request.node.name,
+        "srt": steward_rig.srt,
+        "native_sha256": steward_rig.binaries,
+        "checkout": str(checkout),
+        "coordinator": str(coordinator["id"]),
+        # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
+        "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
+    }
+    state = Live(
+        steward_daemon,
+        postgres_db,
+        steward_rig,
+        client,
+        mcp,
+        machine.ref,
+        _support_runbook(postgres_db),
+        evidence,
+    )
+    try:
+        _link_codex_auth(home)
+        _until(lambda: _startup_ready(client), 120, "initial daemon recovery")
+        state.evidence["checkout_mode"] = _assert_isolated(state)
+        state.evidence["host"] = _assert_adopted(state)
+        yield state
+    finally:
+        cleanup: dict[str, Any] = {}
+        state.evidence["cleanup"] = cleanup
+        try:
+            _cleanup(state, cleanup)
+        finally:
+            state.evidence["codex_auth"]["unlinked"] = _unlink_codex_auth(home)
+            evidence_dir = Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
+            write_evidence(evidence_dir, request.node.name, state.evidence)
+            client.close()
+            mcp.close()
+
+
+def _steward_run(live: Live, execution_id: str) -> dict[str, Any]:
+    run_id = step_invocation_id(execution_id, STEWARD_SEAT)
+
+    def started() -> dict[str, Any] | None:
+        run = _run(live.db, run_id)
+        if run is None or run["started_at"] is None or not run["terminal_id"]:
+            return None
+        return run
+
+    return _until(
+        started,
+        240,
+        f"the {STEWARD_SEAT} run to start",
+        lambda: _diagnosis(live, _steps(_execution(live, execution_id))),
+    )
+
+
+def _reply_waits(db: HubDatabase, owner: str) -> list[dict[str, Any]]:
+    """Every reply wait this owner has received, oldest first."""
+    rows = db.fetchall(
+        "SELECT id, waiter_session_id, condition_key, outcome, created_at, expires_at, "
+        "delivered_at FROM coordination_waits WHERE owner_session_id = %s AND reply "
+        "ORDER BY created_at",
+        (owner,),
+    )
+    return [dict(row) for row in rows]
+
+
+def _registered_waits(db: HubDatabase, owner: str, count: int) -> list[dict[str, Any]] | None:
+    waits = _reply_waits(db, owner)
+    return waits if len(waits) >= count else None
+
+
+def _timed_out_waits(db: HubDatabase, owner: str, index: int) -> list[dict[str, Any]] | None:
+    """Waits once wait ``index`` has completed by its timeout and the daemon delivered it."""
+    waits = _reply_waits(db, owner)
+    timed_out = (
+        len(waits) > index
+        and waits[index]["outcome"] == "timeout"
+        and waits[index]["delivered_at"] is not None
+    )
+    return waits if timed_out else None
+
+
+def _patrol_state(live: Live, owner: str) -> str:
+    waits = [
+        {key: str(value) for key, value in wait.items()} for wait in _reply_waits(live.db, owner)
+    ]
+    return _diagnosis(live, {"waits": waits})
+
+
+def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) -> None:
+    """Criterion 3: the codex Recovery Steward re-arms its timed wait after every timeout.
+
+    The launch patrol registers wait 1. Each timeout wakes the steward, which patrols and
+    registers the next wait, so STEWARD_TIMEOUT_PATROLS timeouts leave one wait more than
+    there are timeouts. The steward's only wake is its own wait, so no scheduler is involved.
+    """
+    live = steward_live
+    owner = str(live.evidence["coordinator"])
+    place = _workspace(live, "steward")
+    launch = _launch(
+        live,
+        place,
+        pipeline=STEWARD_PIPELINE,
+        project_path=str(live.evidence["checkout"]),
+        seats=STEWARD_SEAT,
+        report_to=owner,
+        recovery_steward_provider=STEWARD_PROVIDER,
+        recovery_steward_model=STEWARD_MODEL,
+        recovery_steward_reasoning_effort=STEWARD_EFFORT,
+    )
+    execution = _completed(live, launch)["id"]
+    run = _steward_run(live, execution)
+    assert run["agent_name"] == STEWARD_SEAT, run
+    live.evidence["recovery_steward"] = {"execution": execution, "run": str(run["id"])}
+
+    explain = partial(_patrol_state, live, owner)
+    waits = _until(
+        partial(_registered_waits, live.db, owner, 1), 900, "the first reply wait", explain
+    )
+    first = waits[0]
+    assert first["condition_key"] == "[null,null]", first
+    armed = (first["expires_at"] - first["created_at"]).total_seconds()
+    assert abs(armed - STEWARD_CADENCE_SECONDS) <= 2, first
+    waiter = first["waiter_session_id"]
+
+    for index in range(STEWARD_TIMEOUT_PATROLS):
+        waits = _until(
+            partial(_timed_out_waits, live.db, owner, index),
+            STEWARD_CADENCE_SECONDS + 300,
+            f"reply wait {index + 1} to time out and be delivered",
+            explain,
+        )
+        timed = waits[index]
+        assert timed["waiter_session_id"] == waiter, timed
+        gap = (timed["delivered_at"] - timed["created_at"]).total_seconds()
+        assert abs(gap - STEWARD_CADENCE_SECONDS) <= STEWARD_TOLERANCE_SECONDS, timed
+        waits = _until(
+            partial(_registered_waits, live.db, owner, index + 2),
+            600,
+            f"the steward's patrol {index + 2} to re-arm its wait",
+            explain,
+        )
+        renewed = waits[index + 1]
+        assert renewed["waiter_session_id"] == waiter, renewed
+        assert renewed["condition_key"] == timed["condition_key"], renewed
+        assert renewed["created_at"] >= timed["delivered_at"], (timed, renewed)
+        # A patrol turn adds its own time to the cadence, so the spacing gets a wider bound.
+        spacing = (renewed["created_at"] - timed["created_at"]).total_seconds()
+        assert (
+            STEWARD_CADENCE_SECONDS - STEWARD_TOLERANCE_SECONDS
+            <= spacing
+            <= STEWARD_CADENCE_SECONDS + 3 * STEWARD_TOLERANCE_SECONDS
+        ), (timed, renewed)
+
+    waits = _reply_waits(live.db, owner)
+    assert len(waits) == STEWARD_TIMEOUT_PATROLS + 1, waits
+    assert {wait["waiter_session_id"] for wait in waits} == {waiter}, waits
+    assert waits[-1]["outcome"] == "waiting", waits[-1]
+    live.evidence["recovery_steward"]["waits"] = [
+        {key: str(value) for key, value in wait.items()} for wait in waits
+    ]
