@@ -243,6 +243,8 @@ steps:
       arguments:
         workspace: "${{ steps.guard.output.workspace_id }}"
         tab: "${{ steps.guard.output.tab_title }}"
+        # A seat's null pane_ref (its pane is gone) is reported as skipped, not tiled.
+        seats: "${{ [{'name': s, 'pane': steps[s].output.pane_ref} for s in steps.guard.output.launch] }}"
         # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
         rows: 100
         layout: tiled

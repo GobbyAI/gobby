@@ -94,6 +94,18 @@ async def _run(
     return {"success": True, **_payload(result)}
 
 
+def _seat_outcome(seats: list[dict[str, Any]]) -> dict[str, Any]:
+    """Name the seats a layout tiled, and the paneless seats it skipped with the reason."""
+    return {
+        "tiled": [seat["name"] for seat in seats if seat.get("pane")],
+        "skipped": [
+            {"seat": seat["name"], "reason": "pane_missing"}
+            for seat in seats
+            if not seat.get("pane")
+        ],
+    }
+
+
 def create_workspaces_registry(
     workspace_manager: WorkspaceManager, ops_resolver: OpsResolver
 ) -> InternalToolRegistry:
@@ -276,12 +288,16 @@ def create_workspaces_registry(
         node: str | None = None,
         layout: Literal["balanced", "tiled"] = "balanced",
         workspace: str | None = None,
+        seats: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return await _run(
+        reply = await _run(
             lambda actor: ops().tab_rebalance(
                 actor, tab, columns, rows, node=node, workspace=workspace, arrangement=layout
             )
         )
+        if seats is None or not reply["success"]:
+            return reply
+        return {**reply, **_seat_outcome(seats)}
 
     @registry.tool(
         description=(

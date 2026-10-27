@@ -129,6 +129,10 @@ async def _dry_run(world: TeamWorld, task: Task) -> tuple[dict[str, Any], dict[s
         rendered = _render(run, step.id, context)
         if rendered is not None and step.mcp is not None and step.mcp.tool == "spawn_agent":
             seats[step.id] = rendered["agent"]
+            # The spawn reply a later step reads: the seat's child session and its pane.
+            context["steps"][step.id] = {
+                "output": {"child_session_id": f"child-{step.id}", "pane_ref": f"pane-{step.id}"}
+            }
     return reply, seats
 
 
@@ -263,6 +267,8 @@ def test_devteam_tab_stays_tiled_after_any_seat_launch(launch: list[str]) -> Non
     assert len(arrange) == 1, arrange
     step = next(step for step in DEVTEAM.steps if step.id == arrange[0])
     context = _placement_context(launch=launch, tab_exists=True)
+    for seat in launch:
+        context["steps"][seat] = {"output": {"pane_ref": f"pane-{seat}"}}
     assert RENDERER.should_run_step(step, context), launch
     assert step.mcp is not None and step.mcp.arguments is not None
     arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
@@ -335,14 +341,19 @@ def test_team_planning_tiles_the_policy_tab_its_writer_opens() -> None:
             "guard": {
                 "output": {"workspace_id": WORKSPACE, "launch": ["plan-writer"], "tab_title": title}
             },
-            "plan-writer": {"output": {"tab_ref": tab_ref}},
+            "plan-writer": {"output": {"tab_ref": tab_ref, "pane_ref": f"{tab_ref}:pane-1"}},
         },
         "_string_inputs": frozenset({"workspace", "task"}),
     }
     arrange = steps["arrange"].mcp
     assert arrange is not None and arrange.arguments is not None
     arranged = RENDERER.render_mcp_arguments(arrange.arguments, context, drop_none=True)
-    assert arranged == {"tab": tab_ref, "rows": 100, "layout": "tiled"}
+    assert arranged == {
+        "tab": tab_ref,
+        "seats": [{"name": "plan-writer", "pane": f"{tab_ref}:pane-1"}],
+        "rows": 100,
+        "layout": "tiled",
+    }
     writer = steps["plan-writer"].mcp
     assert writer is not None and writer.arguments is not None
     placement = RENDERER.render_mcp_arguments(

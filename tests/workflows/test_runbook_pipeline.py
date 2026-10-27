@@ -220,8 +220,30 @@ LAYOUT_REFUSED = {
 }
 
 
+def _layout_reply(arguments: dict[str, Any]) -> dict[str, Any]:
+    """The tiled and skipped seats of a layout call, as rebalance_tab replies them."""
+    seats = arguments.get("seats", [])
+    return {
+        "success": True,
+        "tiled": [seat["name"] for seat in seats if seat["pane"]],
+        "skipped": [
+            {"seat": seat["name"], "reason": "pane_missing"} for seat in seats if not seat["pane"]
+        ],
+    }
+
+
 class DevteamProxy(RunbookAgentsProxy):
-    """Stub devteam proxy: the guard launches every seat and the layout write is refused."""
+    """Stub devteam proxy: the guard launches every seat; the layout write is refused unless asked.
+
+    A seat in ``paneless`` spawns with a null pane_ref, as an adopted seat whose pane is gone does.
+    """
+
+    def __init__(
+        self, *, paneless: frozenset[str] = frozenset(), layout_refused: bool = True
+    ) -> None:
+        super().__init__()
+        self.paneless = paneless
+        self.layout_refused = layout_refused
 
     async def call_tool(
         self,
@@ -251,9 +273,15 @@ class DevteamProxy(RunbookAgentsProxy):
                 "team": {"team_id": "team-1"},
             }
         if server == "gobby-workspaces":
-            return dict(LAYOUT_REFUSED)
+            return dict(LAYOUT_REFUSED) if self.layout_refused else _layout_reply(arguments)
         index = len(self.calls)
-        return {"success": True, "run_id": f"run-{index}", "child_session_id": f"child-{index}"}
+        pane_ref = None if arguments.get("agent") in self.paneless else f"pane-{index}"
+        return {
+            "success": True,
+            "run_id": f"run-{index}",
+            "child_session_id": f"child-{index}",
+            "pane_ref": pane_ref,
+        }
 
 
 async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
@@ -284,6 +312,40 @@ async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
         step for step in manager.get_steps_for_execution(execution.id) if step.step_id == "arrange"
     ]
     assert "forbidden" in f"{arrange.output_json or ''}{arrange.error or ''}"
+
+
+async def test_devteam_arrange_names_the_paneless_seat_it_skipped(temp_db: HubDatabase) -> None:
+    """A resumed team whose developer pane is gone: the layout tiles the rest and names the skip."""
+    sync_bundled_pipelines(temp_db)
+    pipeline = await PipelineLoader(temp_db).load_pipeline("devteam")
+    assert pipeline is not None
+    inputs = {name: spec.get("default") for name, spec in pipeline.inputs.items()}
+    inputs.update(
+        task="task-1",
+        workspace="devteam",
+        report_to="report-session",
+        reviewer_agent="code-reviewer",
+    )
+
+    proxy = DevteamProxy(paneless=frozenset({"developer"}), layout_refused=False)
+    execution = await _executor(temp_db, proxy).execute(pipeline, inputs, PROJECT_ID)
+
+    assert execution.status == ExecutionStatus.COMPLETED
+    [layout] = [call for call in proxy.calls if call["tool"] == "gobby-workspaces:rebalance_tab"]
+    seats = layout["arguments"]["seats"]
+    assert [(seat["name"], seat["pane"] is None) for seat in seats] == [
+        ("dev-manager", False),
+        ("test-writer", False),
+        ("developer", True),
+        ("code-reviewer", False),
+    ]
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    [arrange] = [
+        step for step in manager.get_steps_for_execution(execution.id) if step.step_id == "arrange"
+    ]
+    output = json.loads(arrange.output_json or "null")
+    assert output["tiled"] == ["dev-manager", "test-writer", "code-reviewer"]
+    assert output["skipped"] == [{"seat": "developer", "reason": "pane_missing"}]
 
 
 def _assert_seats_parented(
