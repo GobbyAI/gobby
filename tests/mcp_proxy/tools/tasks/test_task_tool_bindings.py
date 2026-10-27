@@ -621,3 +621,94 @@ def test_unclaimed_started_edit_keeps_session_dirty_ledger(
     assert state["session_edited_files"] == ["exempt.py"]
     assert state["session_dirty_files"] == ["exempt.py"]
     assert state.get("task_edited_files", {}) == {}
+
+
+def _claude_prompt_after_selection(
+    temp_db: HubDatabase, sample_project: dict[str, Any], canonical_task_session: Session
+) -> tuple[LocalTaskManager, SessionVariableManager, TaskToolBindings, HookEvent]:
+    """A claimed Claude session whose Bash call is about to start under its selection."""
+    tasks = LocalTaskManager(temp_db)
+    first = tasks.create_task(
+        sample_project["id"], "First", validation_criteria="Pending calls fence switches."
+    )
+    tasks.claim_task_for_agent(first.id, canonical_task_session.id)
+    variables = SessionVariableManager(temp_db)
+    epoch = variables.get_variables(canonical_task_session.id)["task_selection_history"][-1][
+        "epoch"
+    ]
+    call = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        source=SessionSource.CLAUDE,
+        session_id=canonical_task_session.external_id,
+        request_id="toolu_call",
+        timestamp=datetime.fromisoformat(epoch),
+        data={"tool_name": "Bash"},
+    )
+    return tasks, variables, TaskToolBindings(variables, canonical_task_session.id), call
+
+
+def _next_claude_prompt(call: HookEvent) -> HookEvent:
+    return replace(
+        call,
+        event_type=HookEventType.BEFORE_AGENT,
+        timestamp=call.timestamp + timedelta(minutes=5),
+        data={"prompt": "next turn"},
+    )
+
+
+def test_new_claude_prompt_retires_a_rejected_call_fence(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+) -> None:
+    """A Bash call rejected at its permission prompt fences no later turn's claim (#25169)."""
+    tasks, variables, bindings, call = _claude_prompt_after_selection(
+        temp_db, sample_project, canonical_task_session
+    )
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Rejected calls fence nothing."
+    )
+    bindings.start(call)  # Pre-tool only: the rejection fires no post-tool or stop event.
+
+    task_tool_bindings.cleanup_task_tool_bindings(
+        _next_claude_prompt(call),
+        variables,
+        canonical_task_session.id,
+        variables.get_variables(canonical_task_session.id),
+    )
+    tasks.claim_task_for_agent(second.id, canonical_task_session.id)
+
+    assert variables.get_variables(canonical_task_session.id)["active_task_id"] == second.id
+
+
+def test_new_claude_prompt_keeps_a_running_background_call_fenced(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    canonical_task_session: Session,
+) -> None:
+    """Background work still running across a new prompt keeps fencing the switch."""
+    tasks, variables, bindings, call = _claude_prompt_after_selection(
+        temp_db, sample_project, canonical_task_session
+    )
+    second = tasks.create_task(
+        sample_project["id"], "Second", validation_criteria="Running background calls fence."
+    )
+    background = replace(call, request_id="toolu_background")
+    bindings.start(background)
+    bindings.complete(
+        replace(
+            background,
+            event_type=HookEventType.AFTER_TOOL,
+            data={"_verification_pending": True},
+        )
+    )
+
+    task_tool_bindings.cleanup_task_tool_bindings(
+        _next_claude_prompt(call),
+        variables,
+        canonical_task_session.id,
+        variables.get_variables(canonical_task_session.id),
+    )
+
+    with pytest.raises(ValueError, match="toolu_background.*wait.*stop"):
+        tasks.claim_task_for_agent(second.id, canonical_task_session.id)
