@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.utils.machine_id import require_machine_id
@@ -24,6 +25,8 @@ def refuse_occupied_worktree(
     and the worktree's claimant counts wherever it runs. Deleting the directory
     under a live session strands its process on a dead cwd (#23631).
     ``exclude_session_id`` is the session asking for its own worktree's removal.
+    A spawned seat is live only while one of its runs is active: a daemon stop or
+    cancel leaves its session paused after the process is gone (#25165).
     """
     rows = db.fetchall(
         """
@@ -36,8 +39,20 @@ def refuse_occupied_worktree(
         WHERE s.status = ANY(%s)
           AND s.machine_id = %s
           AND (s.workspace_path IS NOT NULL OR s.id IN (SELECT agent_session_id FROM bound))
+          AND (
+            NOT EXISTS (SELECT 1 FROM agent_runs r WHERE r.child_session_id = s.id)
+            OR EXISTS (
+              SELECT 1 FROM agent_runs r
+              WHERE r.child_session_id = s.id AND r.status = ANY(%s)
+            )
+          )
         """,
-        (worktree_id, list(LIVE_SESSION_STATUS_ORDER), require_machine_id()),
+        (
+            worktree_id,
+            list(LIVE_SESSION_STATUS_ORDER),
+            require_machine_id(),
+            list(ACTIVE_AGENT_RUN_STATUSES),
+        ),
     )
     refs = sorted(
         {

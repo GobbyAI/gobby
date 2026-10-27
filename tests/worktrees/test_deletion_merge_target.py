@@ -369,6 +369,28 @@ async def test_missing_cleanup_preserves_unrelated_unlanded_registration(
 
 
 @pytest.mark.asyncio
+async def test_empty_scratch_shell_at_a_removed_tree_does_not_block_deletion(
+    landed_worktree: tuple[Path, Worktree],
+    deletion_registry: tuple[InternalToolRegistry, MagicMock],
+) -> None:
+    """#25165: a relaunched seat recreated empty scratch dirs at the removed tree's path."""
+    repo, worktree = landed_worktree
+    registry, storage = deletion_registry
+    _git(repo, "worktree", "remove", "--force", worktree.worktree_path)
+    path = Path(worktree.worktree_path)
+    (path / ".gobby" / "tmp").mkdir(parents=True)
+    (path / ".nextest").mkdir()
+    delete = registry.get_tool("delete_worktree")
+    assert delete is not None
+
+    result = await delete(worktree_id=worktree.id, merged_into="0.5.0")
+
+    assert result["success"] is True, result
+    assert not path.exists()
+    storage.delete.assert_called_once_with(worktree.id)
+
+
+@pytest.mark.asyncio
 async def test_already_unregistered_missing_checkout_cleans_merged_branch(
     landed_worktree: tuple[Path, Worktree],
     deletion_registry: tuple[InternalToolRegistry, MagicMock],
