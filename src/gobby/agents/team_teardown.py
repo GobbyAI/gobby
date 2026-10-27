@@ -7,7 +7,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -19,7 +19,7 @@ from gobby.agents.team_lifecycle import (
     _merge,
     _recorded,
 )
-from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.daemon_resume_keys import CONSUMED_AT_KEY, CONSUMED_BY_KEY
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -30,6 +30,7 @@ from gobby.storage.team_records import ADMISSION_STEP
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.pipeline_state import StepExecution
+from gobby.worktrees.containment import path_is_within
 from gobby.worktrees.deletion import WorktreeDeletionResult
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,12 @@ class _DueTeam:
     executions: list[str]  # the team's own execution and every execution that joined it
 
 
+@dataclass(frozen=True)
+class _DueLeaf:
+    team: _DueTeam  # the epic team whose branch the leaf's sub-tree was cut from
+    binding: TeamBinding  # the sub-tree, bound as a tree so the team's deleter removes it
+
+
 async def reconcile_team_teardowns(
     db: HubDatabase,
     *,
@@ -76,6 +83,11 @@ async def reconcile_team_teardowns(
             actions += await _tear_down(db, team, terminate, delete)
         except Exception:
             logger.exception("Team %s teardown failed; the next pass retries", team.binding.team_id)
+    for leaf in await asyncio.to_thread(_due_leaves, db, cutoff):
+        try:
+            actions += await _tear_down_leaf(db, leaf, terminate, delete)
+        except Exception:
+            logger.exception("Leaf %s teardown failed; the next pass retries", leaf.binding.task_id)
     return actions
 
 
@@ -100,34 +112,80 @@ ORDER BY se.id
         (ADMISSION_STEP, cutoff, require_machine_id()),
     )
     due = [b for b in (_binding(_recorded(StepExecution.from_row(row))) for row in rows) if b]
-    if not due:
+    return _with_members(db, due)
+
+
+def _with_members(db: HubDatabase, bindings: list[TeamBinding]) -> list[_DueTeam]:
+    """Pair each team with its own execution and every execution that joined it."""
+    if not bindings:
         return []
-    members: dict[str, list[str]] = {binding.team_id: [] for binding in due}
+    members: dict[str, list[str]] = {binding.team_id: [] for binding in bindings}
     for row in db.fetchall(
         "SELECT execution_id, output_json #>> '{team,team_id}' AS team_id FROM step_executions "
         "WHERE step_id = %s AND output_json #>> '{team,team_id}' = ANY(%s) ORDER BY id",
         (ADMISSION_STEP, list(members)),
     ):
         members[row["team_id"]].append(str(row["execution_id"]))
-    return [_DueTeam(binding, members[binding.team_id]) for binding in due]
+    return [_DueTeam(binding, members[binding.team_id]) for binding in bindings]
+
+
+def _due_leaves(db: HubDatabase, cutoff: datetime) -> list[_DueLeaf]:
+    """Sub-trees of epic leaves that closed before ``cutoff``, each paired with its epic's team.
+
+    A sub-tree is cut from its epic's team branch, so the epic's admission on this machine
+    names it. The epic may still be open: a leaf can close while its epic works on.
+    """
+    rows = db.fetchall(
+        """
+SELECT w.id::text AS worktree_id, w.worktree_path, w.branch_name, w.base_branch,
+       t.id::text AS task_id, t.parent_task_id::text AS epic_id
+FROM worktrees w
+JOIN tasks t ON t.id = w.task_id
+WHERE t.closed_at <= %s AND t.parent_task_id IS NOT NULL AND w.machine_id = %s
+ORDER BY w.id
+""",
+        (cutoff, require_machine_id()),
+    )
+    if not rows:
+        return []
+    admissions = db.fetchall(
+        "SELECT se.* FROM step_executions se "
+        "WHERE se.step_id = %s AND se.output_json #>> '{team,team_id}' = se.execution_id::text "
+        "AND se.output_json #>> '{team,task_id}' = ANY(%s)",
+        (ADMISSION_STEP, sorted({row["epic_id"] for row in rows})),
+    )
+    bindings = [_binding(_recorded(StepExecution.from_row(row))) for row in admissions]
+    teams = {
+        (team.binding.task_id, team.binding.branch): team
+        for team in _with_members(db, [b for b in bindings if b])
+    }
+    due: list[_DueLeaf] = []
+    for row in rows:
+        team = teams.get((row["epic_id"], row["base_branch"]))
+        if team is None:
+            continue
+        binding = replace(
+            team.binding,
+            task_id=row["task_id"],
+            worktree_id=row["worktree_id"],
+            worktree_path=row["worktree_path"],
+            branch=row["branch_name"],
+            base_branch=row["base_branch"],
+        )
+        due.append(_DueLeaf(team, binding))
+    return due
 
 
 async def _tear_down(
     db: HubDatabase, team: _DueTeam, terminate: TeamRunTerminator, delete: TeamTreeDeleter
 ) -> int:
     folder = await asyncio.to_thread(release_epic_workspace, db, team.binding)
-    runs = await asyncio.to_thread(_live_runs, db, team)
-    ended: list[bool] = []
-    unended: TeamSeatNotEndedError | None = None
-    for run in runs:
-        try:
-            ended.append(await terminate(run))
-        except TeamSeatNotEndedError as exc:
-            if unended is None:
-                unended = exc
-    if unended is not None:
-        refusal = WorktreeDeletionResult(success=False, error_code=unended.code, error=str(unended))
-        outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal)
+    live = await asyncio.to_thread(_live_runs, db, team)
+    dispatched = await asyncio.to_thread(_dispatched_runs, db, live, team.binding.worktree_path)
+    ended, refusal = await _end_seats(terminate, [*live, *dispatched])
+    if refusal is not None:
+        label = f"team-{team.binding.team_id}"
+        outcome = await asyncio.to_thread(_refuse, db, team.binding, refusal, label)
         await asyncio.to_thread(_record, db, team.binding, outcome)
         return sum(ended)
     if not all(ended):
@@ -136,18 +194,75 @@ async def _tear_down(
     await asyncio.to_thread(_expire_seats, db, team)
     if folder is not None:
         schedule_workspace_commit(team.binding.project_id, folder.name)
-    result: WorktreeDeletionResult | None = await delete(team.binding)
-    if result is not None and result.error_code == "worktree_not_eligible":
-        result = await asyncio.to_thread(_ineligible, db, team.binding)
+    if team.binding.worktree_id is None:  # a treeless team has no tree to delete
+        await asyncio.to_thread(_record, db, team.binding, {"outcome": "cleaned"})
+        return len(ended) + 1
+    if await asyncio.to_thread(_occupied, db, dispatched):
+        logger.info("Team %s keeps its tree while a dispatched seat exits", team.binding.team_id)
+        return sum(ended)
+    result = await _delete_tree(db, team.binding, delete)
     if result is None or result.abandoned:
         return len(ended)  # a shutdown or another cleanup interrupted it; the next pass retries
     outcome = (
         {"outcome": "cleaned"}
         if result.success
-        else await asyncio.to_thread(_refuse, db, team.binding, result)
+        else await asyncio.to_thread(
+            _refuse, db, team.binding, result, f"team-{team.binding.team_id}"
+        )
     )
     await asyncio.to_thread(_record, db, team.binding, outcome)
     return len(ended) + 1
+
+
+async def _tear_down_leaf(
+    db: HubDatabase, leaf: _DueLeaf, terminate: TeamRunTerminator, delete: TeamTreeDeleter
+) -> int:
+    """End the seats a merged leaf dispatched, then delete its sub-tree and branch.
+
+    The epic is still open, so no teardown outcome goes on its admission. A retained
+    sub-tree stays due, and its finding is found again on the next pass, not filed twice.
+    """
+    live = await asyncio.to_thread(_live_runs, db, leaf.team)
+    dispatched = await asyncio.to_thread(_dispatched_runs, db, live, leaf.binding.worktree_path)
+    ended, refusal = await _end_seats(terminate, dispatched)
+    label = f"leaf-{leaf.binding.worktree_id}"
+    if refusal is not None:
+        await asyncio.to_thread(_refuse, db, leaf.binding, refusal, label)
+        return sum(ended)
+    if not all(ended) or await asyncio.to_thread(_occupied, db, dispatched):
+        return sum(ended)
+    result = await _delete_tree(db, leaf.binding, delete)
+    if result is None or result.abandoned:
+        return len(ended)
+    if not result.success:
+        await asyncio.to_thread(_refuse, db, leaf.binding, result, label)
+        return len(ended)
+    return len(ended) + 1
+
+
+async def _end_seats(
+    terminate: TeamRunTerminator, runs: list[AgentRun]
+) -> tuple[list[bool], WorktreeDeletionResult | None]:
+    """End each run; the first seat that cannot be ended becomes the refusal."""
+    ended: list[bool] = []
+    refusal: WorktreeDeletionResult | None = None
+    for run in runs:
+        try:
+            ended.append(await terminate(run))
+        except TeamSeatNotEndedError as exc:
+            if refusal is None:
+                refusal = WorktreeDeletionResult(success=False, error_code=exc.code, error=str(exc))
+    return ended, refusal
+
+
+async def _delete_tree(
+    db: HubDatabase, binding: TeamBinding, delete: TeamTreeDeleter
+) -> WorktreeDeletionResult | None:
+    """Delete a tree; a lock that names a holder becomes a retry or a refusal."""
+    result: WorktreeDeletionResult | None = await delete(binding)
+    if result is not None and result.error_code == "worktree_not_eligible":
+        return await asyncio.to_thread(_ineligible, db, binding)
+    return result
 
 
 def _live_runs(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
@@ -160,6 +275,52 @@ def _live_runs(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
         if execution is not None and execution.session_id is not None:
             live.extend(runs.list_by_parent(execution.session_id))
     return live
+
+
+def _dispatched_runs(db: HubDatabase, seats: list[AgentRun], tree: str | None) -> list[AgentRun]:
+    """Active runs a team seat dispatched into ``tree``, such as a Dev Manager's developer.
+
+    A dispatched seat is a child of the seat that dispatched it, not of the runbook, so
+    ``_live_runs`` never sees it.
+    """
+    if tree is None or not seats:
+        return []
+    runs = LocalAgentRunManager(db)
+    children = [
+        run
+        for seat in seats
+        if seat.child_session_id is not None
+        for run in runs.list_by_parent(seat.child_session_id)
+    ]
+    if not children:
+        return []
+    paths = {
+        row["id"]: row["workspace_path"]
+        for row in db.fetchall(
+            "SELECT id::text AS id, workspace_path FROM sessions WHERE id = ANY(%s)",
+            ([str(run.child_session_id) for run in children],),
+        )
+    }
+    inside = {
+        session_id for session_id, path in paths.items() if path and path_is_within(path, tree)
+    }
+    return [run for run in children if str(run.child_session_id) in inside]
+
+
+def _occupied(db: HubDatabase, runs: list[AgentRun]) -> bool:
+    """Whether any of these runs' sessions still works in a tree while its run is active."""
+    if not runs:
+        return False
+    rows = db.fetchall(
+        "SELECT 1 FROM agent_runs r JOIN sessions s ON s.id = r.child_session_id "
+        "WHERE r.id = ANY(%s) AND r.status = ANY(%s) AND s.status = ANY(%s) LIMIT 1",
+        (
+            [run.id for run in runs],
+            list(ACTIVE_AGENT_RUN_STATUSES),
+            list(LIVE_SESSION_STATUS_ORDER),
+        ),
+    )
+    return bool(rows)
 
 
 def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
@@ -199,7 +360,7 @@ def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
 
 def _ineligible(db: HubDatabase, binding: TeamBinding) -> WorktreeDeletionResult | None:
     """Why the cleanup lock passed over the tree, or None when only a row lock held it."""
-    tree = LocalWorktreeManager(db).get(binding.worktree_id)
+    tree = LocalWorktreeManager(db).get(binding.worktree_id) if binding.worktree_id else None
     if tree is None:
         return WorktreeDeletionResult(success=True, found=False)  # deleted before a restart
     holder = (
@@ -217,14 +378,17 @@ def _ineligible(db: HubDatabase, binding: TeamBinding) -> WorktreeDeletionResult
 
 
 def _refuse(
-    db: HubDatabase, binding: TeamBinding, result: WorktreeDeletionResult
+    db: HubDatabase, binding: TeamBinding, result: WorktreeDeletionResult, label: str
 ) -> dict[str, Any]:
-    """File, or find again after a restart, the Triage finding for a refused deletion."""
+    """File, or find again after a restart, the Triage finding for a refused deletion.
+
+    ``label`` names the tree's finding: a team tree's is its team's, and each retained leaf
+    sub-tree of an epic keeps its own, so one leaf's finding never answers for another.
+    """
     code = result.error_code or (
         "uncommitted_changes" if result.uncommitted_changes else "deletion_refused"
     )
     tasks = LocalTaskManager(db)
-    label = f"team-{binding.team_id}"
     found = tasks.list_tasks(project_id=binding.project_id, label=label, closed=False, limit=1)
     finding = (
         found[0]
