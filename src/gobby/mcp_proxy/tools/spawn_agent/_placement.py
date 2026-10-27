@@ -19,7 +19,7 @@ from gobby.terminals.workspace_agent_panes import (
     ResolvedPlacement,
 )
 from gobby.utils.git import run_to_completion
-from gobby.workflows.condition_helpers_sessions import own_seat_resume
+from gobby.workflows.condition_helpers_sessions import own_seat_resume, own_team_tab
 
 
 @dataclass(frozen=True)
@@ -77,7 +77,8 @@ async def preflight_placement(
         )
     if reserver is None:
         return _refusal("invalid_op", "Agent pane placement is not available")
-    # Only a team manager's own-team seat resume may place from an autonomous caller.
+    # Only a team manager's own-team seat may place from an autonomous caller: a resume,
+    # or a fresh seat into its epic team's tab.
     own_seat = (
         resume_session_id is not None
         and session_manager is not None
@@ -85,12 +86,18 @@ async def preflight_placement(
             own_seat_resume, session_manager, parent_session_id, agent_name, resume_session_id
         )
     )
+    own_tab: str | None = None
+    if resume_session_id is None and session_manager is not None and agent_name is not None:
+        own_tab = await asyncio.to_thread(
+            own_team_tab, session_manager, parent_session_id, agent_name
+        )
     try:
         resolved = await reserver.preflight(
             f"session:{parent_session_id}",
             project_id,
             parsed,
             own_seat_resume=own_seat,
+            own_team_tab=own_tab,
         )
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc) or type(exc).__name__)
