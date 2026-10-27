@@ -33,6 +33,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.storage.workspace_layout import LayoutNode
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
@@ -286,6 +287,45 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
     assert unconfigured is not None
     with _principal(None):
         assert await _code(unconfigured, "read_pane", pane=first_ref) == "terminal_failed"
+
+
+def _pane_count(node: LayoutNode) -> int:
+    return 1 if node["kind"] == "pane" else sum(_pane_count(child) for child in node["children"])
+
+
+def _row_sizes(node: LayoutNode) -> list[int]:
+    """Panes per row of a tiled tab: rows stack vertically and each row runs horizontally."""
+    if node["kind"] == "pane":
+        return [1]
+    if node["axis"] == "horizontal":
+        return [_pane_count(node)]
+    return [_pane_count(row) for row in node["children"]]
+
+
+# gclient's Arrange > Tiled: ceil(sqrt N) rows filled left to right, so five panes sit 2-2-1.
+@pytest.mark.parametrize(
+    ("panes", "expected_rows"),
+    [(1, [1]), (2, [1, 1]), (3, [2, 1]), (4, [2, 2]), (5, [2, 2, 1]), (6, [2, 2, 2])],
+)
+async def test_rebalance_tab_tiled_arranges_panes_like_gclient(
+    stack: _Stack, panes: int, expected_rows: list[int]
+) -> None:
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        first_ref = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        for _ in range(panes - 1):
+            await _ok(registry, "split_pane", pane=first_ref, axis="horizontal")
+        assert len(stack.workspaces.list_panes(created["id"])) == panes
+        tiled = await _ok(
+            registry, "rebalance_tab", tab=tab_ref, columns=80, rows=100, layout="tiled"
+        )
+    assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
 
 
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:

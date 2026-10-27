@@ -339,3 +339,43 @@ def test_seats_open_the_team_tab_only_when_nothing_opens_it(
     context = _placement_context(launch=launch, tab_exists=tab_exists)
     placement = _seat_arguments("test-writer", context)["placement"]
     assert ("split" in placement) is splits
+
+
+def _arrange_steps() -> list[str]:
+    return [
+        step.id
+        for step in DEVTEAM.steps
+        if step.mcp is not None and step.mcp.tool == "rebalance_tab"
+    ]
+
+
+def test_devteam_tiles_the_team_tab_after_the_last_seat() -> None:
+    """One arrange step tiles the team tab once every seat has been launched."""
+    arrange = _arrange_steps()
+    assert len(arrange) == 1, arrange
+    order = [step.id for step in DEVTEAM.steps]
+    seats = [
+        step.id for step in DEVTEAM.steps if step.mcp is not None and step.mcp.tool == "spawn_agent"
+    ]
+    assert seats, order
+    assert order.index(arrange[0]) > max(order.index(seat) for seat in seats)
+
+
+@pytest.mark.parametrize(
+    "launch",
+    [
+        ["dev-manager", "test-writer", "developer", "code-reviewer"],  # a fresh team
+        ["code-reviewer"],  # a re-run adds the one missing seat
+    ],
+    ids=["fresh-team", "re-run-adds-a-seat"],
+)
+def test_devteam_tab_stays_tiled_after_any_seat_launch(launch: list[str]) -> None:
+    arrange = _arrange_steps()
+    assert len(arrange) == 1, arrange
+    step = next(step for step in DEVTEAM.steps if step.id == arrange[0])
+    context = _placement_context(launch=launch, tab_exists=True)
+    assert RENDERER.should_run_step(step, context), launch
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+    assert arguments.get("layout") == "tiled", arguments
+    assert "Dev Team - #25128" in str(arguments.get("tab")), arguments
