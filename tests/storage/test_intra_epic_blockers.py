@@ -10,6 +10,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -219,3 +220,34 @@ async def test_no_work_and_superseded_blockers(world: TeamWorld) -> None:
     # The latest implementation record wins, even at the same commit.
     epic.record(superseded, "implementation", "rejected", sha=IMPL_SHA, round_number=2)
     assert epic.views(superseded, dependent) == BLOCKED
+
+
+@pytest.mark.parametrize("field", ["epoch", "sequence"])
+async def test_malformed_implementation_row_never_finishes_a_blocker(
+    world: TeamWorld, field: str
+) -> None:
+    """A malformed implementation row is no approval, and the team blocker read never raises."""
+    epic = Epic(world, "Malformed implementation row")
+    blocker, dependent = epic.leaf("Blocker"), epic.leaf("Waits on it")
+    epic.blocks(blocker, dependent)
+    await _admit(world, epic)
+    epic.link(blocker, IMPL_SHA)
+    body: dict[str, Any] = {
+        "step": "implementation",
+        "status": "approved",
+        "epoch": 1,
+        "round_number": 1,
+        "commit_sha": IMPL_SHA,
+        "sequence": 1,
+        "agent_definition": MAKER,
+        "session_id": epic.maker,
+    }
+    body[field] = "not-an-integer"
+    epic.db.execute(
+        "INSERT INTO task_comments (id, task_id, author, author_type, body) "
+        "VALUES (%s, %s, %s, 'task_step', %s)",
+        (str(uuid4()), blocker.id, epic.maker, json.dumps(body)),
+    )
+
+    active = _fetch_active_blocker_map(epic.db, [dependent.id])
+    assert blocker.id in active.get(dependent.id, set())

@@ -9,6 +9,8 @@ def review_status_sql(task: str) -> str:
     NULL when the epoch has no review record, so callers fall back to the stored copy.
     An approval counts only at the latest linked commit, as ``approved_task_step`` does,
     and a rejection stands whatever the commit, as the step writer records it.
+    A row whose epoch or sequence is not a plain integer is no review: the epoch compares
+    as text and the sequence is filtered before its cast, so the read never raises.
     """
     commits = f"{task}.commits"
     tip = f"({commits} ->> (jsonb_array_length({commits}) - 1))"
@@ -34,7 +36,8 @@ def review_status_sql(task: str) -> str:
             ) steps
             WHERE steps.record ->> 'step' = 'review'
               AND steps.record ->> 'agent_definition' <> 'security-reviewer'
-              AND (steps.record ->> 'epoch')::int = {task}.review_epoch
+              AND steps.record ->> 'epoch' = {task}.review_epoch::text
+              AND steps.record ->> 'sequence' ~ '^[0-9]{{1,9}}$'
             ORDER BY (steps.record ->> 'sequence')::int DESC
             LIMIT 1
         ) latest
