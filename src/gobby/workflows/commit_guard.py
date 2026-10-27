@@ -31,7 +31,9 @@ from gobby.workflows.commit_guard_conflicts import (
 )
 from gobby.workflows.dirty_edit_grants import (
     approved_dirty_paths,
+    checkout_path_owners,
     claimed_task_carriers,
+    content_recorded_paths,
     dirty_path_approval_command,
 )
 from gobby.workflows.git_commit_parsing import (
@@ -302,7 +304,13 @@ async def foreign_dirty_edit_conflict(
             rels = await asyncio.to_thread(_git_backed_targets, root, rels)
             if not rels:
                 continue
-            own = session_dirty_file_set_for_checkout(variables, root)
+            # Only dirt whose current content this session's own ledger recorded counts as its own.
+            own = await asyncio.to_thread(
+                content_recorded_paths,
+                variables,
+                root,
+                session_dirty_file_set_for_checkout(variables, root),
+            )
             candidates = {
                 rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
             }
@@ -332,7 +340,7 @@ async def foreign_dirty_edit_conflict(
             if not dirty:
                 continue
             own_tasks, carriers = await asyncio.to_thread(
-                claimed_task_carriers, db, session_id=session_id, checkout_root=root
+                claimed_task_carriers, db, session_id=session_id, checkout_root=root, paths=dirty
             )
             approved = await asyncio.to_thread(approved_dirty_paths, variables, root)
             root_unowned: set[str] = set()
@@ -345,7 +353,11 @@ async def foreign_dirty_edit_conflict(
                     for owner in scoped[ledger]
                 ]
                 # A holder working a task this session now claims is this session's past self.
-                holders = [owner for owner in overlapping if owner.owner_task_id not in own_tasks]
+                holders = [
+                    owner
+                    for owner in overlapping
+                    if (owner.owner_task_id or owner.ledger_task_id) not in own_tasks
+                ]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
                 elif not (
@@ -483,7 +495,7 @@ def _live_path_owners(
         (exclude_session_id, list(LIVE_SESSION_STATUS_ORDER), event_machine_id()),
     )
     variable_manager = SessionVariableManager(db)
-    owners: dict[str, list[ForeignPathOwner]] = {}
+    live_sessions: list[tuple[Any, str, dict[str, Any], AbstractSet[str]]] = []
     for row in rows:
         owner_session_id = str(row["session_id"])
         variables = variable_manager.get_variable_subset(
@@ -497,9 +509,18 @@ def _live_path_owners(
                 "task_selection_history",
             ),
         )
-        held = session_dirty_file_set_for_checkout(variables, checkout_root)
+        held: AbstractSet[str] = session_dirty_file_set_for_checkout(variables, checkout_root)
         if paths is not None:
             held = overlapping_task_edit_paths(held, paths)
+        live_sessions.append((row, owner_session_id, variables, held))
+    # The newest Gobby edit of a held path names its ledger owner, whichever session holds it.
+    ledger_owners = checkout_path_owners(
+        db,
+        checkout_root=checkout_root,
+        paths={path for _, _, _, held in live_sessions for path in held},
+    )
+    owners: dict[str, list[ForeignPathOwner]] = {}
+    for row, owner_session_id, variables, held in live_sessions:
         claims = variables.get("claimed_tasks")
         claimed_tasks = claims if isinstance(claims, dict) else {}
         live = variables.get("task_live_edit_starts")
@@ -536,6 +557,7 @@ def _live_path_owners(
                     task_ref=task_ref,
                     owner_session_id=owner_session_id,
                     owner_task_id=task_id,
+                    ledger_task_id=ledger_owners.get(path),
                 )
             )
     return {path: tuple(holders) for path, holders in owners.items()}

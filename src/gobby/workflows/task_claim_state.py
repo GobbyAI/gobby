@@ -355,6 +355,22 @@ def task_edited_file_set_for_checkout(
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
 
 
+def task_edited_file_set_with_history(
+    variables: dict[str, Any],
+    task_id: str | None,
+    checkout_root: str,
+) -> set[str]:
+    """Return live and historical task-attributed paths in one absolute checkout root."""
+    root = normalize_task_checkout_root(checkout_root)
+    if not task_id or root is None:
+        return set()
+    checkouts = (
+        _task_edited_file_checkouts(variables, name).get(task_id, {})
+        for name in ("task_edited_file_checkouts", "task_edited_file_checkouts_history")
+    )
+    return {path for checkout in checkouts for path in checkout.get(root, [])}
+
+
 def task_edit_path_covers(parent: str, child: str) -> bool:
     """A root/directory ledger entry covers its descendants, with a path boundary."""
     return parent == "." or parent == child or child.startswith(parent.rstrip("/") + "/")
@@ -587,6 +603,66 @@ def task_edited_file_times(variables: dict[str, Any], task_id: str) -> dict[str,
             continue
         times[path] = float(stamp)
     return times
+
+
+def task_checkout_edit_times(
+    variables: dict[str, Any], task_id: str, checkout_root: str
+) -> dict[str, float]:
+    """Return epoch seconds of the newest Gobby edit per path for one task in one checkout."""
+    root = normalize_task_checkout_root(checkout_root)
+    raw = variables.get("task_edited_checkout_times")
+    raw_task = raw.get(task_id) if isinstance(raw, dict) else None
+    raw_root = raw_task.get(root) if isinstance(raw_task, dict) and root is not None else None
+    if not isinstance(raw_root, dict):
+        return {}
+    times: dict[str, float] = {}
+    for value, stamp in raw_root.items():
+        path = normalize_task_edited_path(value)
+        if path is None or isinstance(stamp, bool) or not isinstance(stamp, int | float):
+            continue
+        times[path] = float(stamp)
+    return times
+
+
+def task_checkout_edit_hashes(
+    variables: dict[str, Any], task_id: str, checkout_root: str
+) -> dict[str, str | None]:
+    """Return each path's content hash after one task's Gobby action in one checkout.
+
+    A None hash records a path that was absent at that action.
+    """
+    root = normalize_task_checkout_root(checkout_root)
+    raw = variables.get("task_edited_checkout_hashes")
+    raw_task = raw.get(task_id) if isinstance(raw, dict) else None
+    raw_root = raw_task.get(root) if isinstance(raw_task, dict) and root is not None else None
+    if not isinstance(raw_root, dict):
+        return {}
+    hashes: dict[str, str | None] = {}
+    for value, digest in raw_root.items():
+        path = normalize_task_edited_path(value)
+        if path is None or not (digest is None or isinstance(digest, str)):
+            continue
+        hashes[path] = digest
+    return hashes
+
+
+def record_task_content_hashes(
+    variables: dict[str, Any], task_id: str, checkout_root: str, digests: dict[str, str | None]
+) -> None:
+    """Store each path's content hash as one task's newest Gobby action left it."""
+    root = normalize_task_checkout_root(checkout_root)
+    if root is None or not digests:
+        return
+    raw = variables.get("task_edited_checkout_hashes")
+    all_hashes = dict(raw) if isinstance(raw, dict) else {}
+    raw_task = all_hashes.get(task_id)
+    task_hashes = dict(raw_task) if isinstance(raw_task, dict) else {}
+    raw_root = task_hashes.get(root)
+    root_hashes = dict(raw_root) if isinstance(raw_root, dict) else {}
+    root_hashes.update(digests)
+    task_hashes[root] = root_hashes
+    all_hashes[task_id] = task_hashes
+    variables["task_edited_checkout_hashes"] = all_hashes
 
 
 def target_task_has_edits(variables: dict[str, Any], task_id: str | None) -> bool:

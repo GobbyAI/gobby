@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -25,6 +27,7 @@ from gobby.skills.parser import ParsedSkill
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
     assert_task_edit_paths_available,
+    effective_tool_cwd,
     task_edited_file_set_for_checkout,
     task_selected_at,
 )
@@ -61,6 +64,21 @@ _EXPECTED_SKILL_RESOLUTION_ERRORS = (
     PermissionError,
     TimeoutError,
 )
+
+
+_BACKGROUND_OUTPUT_RECEIPT = re.compile(
+    r"Output is being written to: ([^\s\"\\]+?)\.(?=[\s\"\\]|$)"
+)
+
+
+def _background_output_path(data: dict[str, Any]) -> str | None:
+    """Return the output file of a Bash call that the CLI moved to the background."""
+    response = data.get("tool_output", data.get("tool_response", data.get("tool_result")))
+    if response is None:
+        return None
+    text = response if isinstance(response, str) else json.dumps(response, default=str)
+    match = _BACKGROUND_OUTPUT_RECEIPT.search(text)
+    return match.group(1) if match else None
 
 
 class ToolEventHandlerMixin(EventHandlersBase):
@@ -128,6 +146,8 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 TaskToolBindings(SessionVariableManager(db), session_id).start(event)
             except ValueError as exc:
                 return HookResponse(decision="block", reason=str(exc))
+            if tool_name == "Bash":
+                self._snapshot_shell_writes(event, session_id)
 
         return HookResponse(decision="allow")
 
@@ -384,6 +404,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     # Don't fail the event if tracking fails
                     self.logger.warning("Failed to process file edit: %s", e, exc_info=True)
 
+            if tool_name == "Bash" and self._session_manager is not None:
+                self._adopt_shell_writes(event, session_id)
+
             db = getattr(self._session_manager, "db", None)
             if db is not None:
                 TaskToolBindings(SessionVariableManager(db), session_id).complete(event)
@@ -414,6 +437,37 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 )
         return response
 
+    def _snapshot_shell_writes(self, event: HookEvent, session_id: str) -> None:
+        """Remember the claimed-task ledger paths this Bash call may rewrite, before it runs."""
+        db = getattr(self._session_manager, "db", None)
+        cwd = effective_tool_cwd(event.cwd, event.data)
+        root = checkout_root(Path(cwd)) if cwd is not None else None
+        if db is None or root is None:
+            return
+        if event.request_id is None:
+            self.logger.debug("Bash call has no tool-call id; claimed task edits not snapshotted")
+            return
+        try:
+            SessionVariableManager(db).snapshot_claimed_shell_edits(
+                session_id, os.fspath(root), event.request_id
+            )
+        except Exception:
+            self.logger.warning("Failed to snapshot claimed task edits", exc_info=True)
+
+    def _adopt_shell_writes(self, event: HookEvent, session_id: str) -> None:
+        """Let the claimed tasks own the ledger paths this Bash call rewrote."""
+        db = getattr(self._session_manager, "db", None)
+        if db is None or event.request_id is None:
+            return
+        try:
+            SessionVariableManager(db).adopt_claimed_shell_edits(
+                session_id,
+                event.request_id,
+                output_path=_background_output_path(event.data),
+            )
+        except Exception:
+            self.logger.warning("Failed to adopt shell writes to claimed tasks", exc_info=True)
+
     def _record_successful_file_mutation(
         self,
         event: HookEvent,
@@ -442,7 +496,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
         else:
             file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
 
-        from gobby.workflows.task_claim_state import effective_tool_cwd, resolve_edit_pair
+        from gobby.workflows.task_claim_state import resolve_edit_pair
 
         db = getattr(self._session_manager, "db", None)
         variables = SessionVariableManager(db).get_variables(session_id) if db is not None else {}

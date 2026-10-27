@@ -50,6 +50,19 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
+def _blob_hash(path: Path) -> str | None:
+    """Return git's blob hash of a file as stored in the ledger, or None when it is absent."""
+    if not path.exists():
+        return None
+    result = subprocess.run(
+        ["git", "hash-object", "--no-filters", "--", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 @dataclass(frozen=True)
 class Checkout:
     db: HubDatabase
@@ -208,6 +221,15 @@ def checkout(
     # Dirt before the call: the session's own, and an operator edit no session owns.
     for name in ("owned.txt", "stale.txt"):
         (repo / name).write_text("edited\n", encoding="utf-8")
+    # The claimant's Gobby edit of owned.txt left this content hash; stale.txt has no record.
+    variables.merge_variables(
+        current.id,
+        {
+            "task_edited_checkout_hashes": {
+                task.id: {str(repo): {"owned.txt": _blob_hash(repo / "owned.txt")}}
+            }
+        },
+    )
     return Checkout(temp_db, repo, project.id, current.id, foreign.id, task.id)
 
 

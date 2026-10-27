@@ -225,6 +225,9 @@ async def test_rule3_allows_owned_and_clean_paths_and_releases_stale_holder(
 ) -> None:
     h = guard_harness
     (h.repo / "owned.txt").write_text("own dirt\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id, _content_ledger(h, h.current_task, ["owned.txt"])
+    )
     with patch("gobby.workflows.commit_guard.task_dirty_paths_async") as status:
         result = await h.handler._evaluate_rules(h.edit_event("owned.txt"))
     assert result.decision == "allow"
@@ -731,6 +734,13 @@ async def test_rule3_root_writes_check_dirty_descendants(
         _git(root, "commit", "-m", "unowned base")
     if owner != "clean":
         (root / path).write_text("dirty descendant\n", encoding="utf-8")
+    if owner in {"requester", "foreign"}:
+        session, task = (
+            (h.current_session, h.current_task)
+            if owner == "requester"
+            else (h.foreign_session, h.foreign_task)
+        )
+        variables.merge_variables(session.id, _content_ledger(h, task, [path], root=root))
     assert resolve_edit_pair(
         str(root),
         str(root),
@@ -771,6 +781,7 @@ async def test_rule3_directory_write_allows_requester_owned_child(
         {
             "session_dirty_files": ["sub/owned.txt"],
             "session_dirty_file_checkouts": {str(h.repo): ["sub/owned.txt"]},
+            **_content_ledger(h, h.current_task, ["sub/owned.txt"]),
         },
     )
     response = await h.handler._evaluate_rules(h.event("git restore -- sub"))
@@ -829,6 +840,25 @@ def _git(repo: Path, *args: str, env: Mapping[str, str] | None = None) -> str:
         env={**os.environ, **env} if env else None,
     )
     return result.stdout.strip()
+
+
+def _blob_hash(path: Path) -> str | None:
+    """Return git's blob hash of a file as stored in the ledger, or None when it is absent."""
+    if not path.exists():
+        return None
+    return _git(path.parent, "hash-object", "--no-filters", "--", path.name)
+
+
+def _content_ledger(
+    h: GuardHarness, task: Task, paths: Sequence[str], *, root: Path | None = None
+) -> dict[str, Any]:
+    """Return the hash ledger a Gobby edit by ``task`` leaves for ``paths`` at their current content.
+
+    Call it after the test writes the content, as the edit hook records after the write.
+    """
+    checkout = h.repo if root is None else root
+    fingerprints = {path: _blob_hash(checkout / path) for path in paths}
+    return {"task_edited_checkout_hashes": {task.id: {str(checkout): fingerprints}}}
 
 
 @pytest.fixture
@@ -1162,7 +1192,10 @@ async def test_claimant_edit_committed_then_changed_outside_gobby_needs_approval
 
 
 def _predecessor_holding(h: GuardHarness, task: Task, path: str, *, live: bool) -> Session:
-    """Register an earlier session that edited `path` for `task`, as a handoff leaves it."""
+    """Register an earlier session that edited `path` for `task`, as a handoff leaves it.
+
+    Write `path` before calling: its ledger records the content present now.
+    """
     predecessor = h.session_manager.register(
         external_id=f"predecessor-{path}",
         machine_id=LOCAL_MACHINE_ID,
@@ -1177,6 +1210,7 @@ def _predecessor_holding(h: GuardHarness, task: Task, path: str, *, live: bool) 
             "task_edited_file_checkouts": {task.id: {str(h.repo): [path]}},
             "session_dirty_files": [path],
             "session_dirty_file_checkouts": {str(h.repo): [path]},
+            **_content_ledger(h, task, [path]),
         },
     )
     if not live:
@@ -1190,8 +1224,8 @@ async def test_rule3_claim_successor_writes_its_tasks_carriers(
     guard_harness: GuardHarness, predecessor_live: bool
 ) -> None:
     h = guard_harness
-    _predecessor_holding(h, h.current_task, "carrier.txt", live=predecessor_live)
     (h.repo / "carrier.txt").write_text("generated carrier\n", encoding="utf-8")
+    _predecessor_holding(h, h.current_task, "carrier.txt", live=predecessor_live)
 
     claimed = await h.handler._evaluate_rules(h.edit_event("carrier.txt"))
     h.db.execute(
@@ -1210,6 +1244,7 @@ async def test_unlinked_predecessor_dirt_stays_owned_by_the_claimant_task(
 ) -> None:
     """Dirt from an unlinked earlier editor of the claimed task stays owned (#25161)."""
     h = guard_harness
+    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
     predecessor = h.session_manager.register(
         external_id="predecessor-unlinked",
         machine_id=LOCAL_MACHINE_ID,
@@ -1223,11 +1258,11 @@ async def test_unlinked_predecessor_dirt_stays_owned_by_the_claimant_task(
             "task_edited_file_checkouts": {h.current_task.id: {str(h.repo): ["orphan.txt"]}},
             "session_dirty_files": ["orphan.txt"],
             "session_dirty_file_checkouts": {str(h.repo): ["orphan.txt"]},
+            **_content_ledger(h, h.current_task, ["orphan.txt"]),
         },
     )
     if predecessor_ends:
         h.session_manager.update_status(predecessor.id, "completed")
-    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
 
     decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
 
@@ -1235,14 +1270,295 @@ async def test_unlinked_predecessor_dirt_stays_owned_by_the_claimant_task(
 
 
 @pytest.mark.asyncio
+async def test_claimant_history_only_dirt_stays_owned_by_its_claimed_task(
+    guard_harness: GuardHarness,
+) -> None:
+    """Dirt whose live ledger entry was cleared, with history kept, stays owned (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
+    SessionVariableManager(h.db).merge_variables(
+        h.current_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                h.current_task.id: {str(h.repo): ["orphan.txt"]},
+            },
+            "session_dirty_files": [],
+            "session_dirty_file_checkouts": {},
+            **_content_ledger(h, h.current_task, ["orphan.txt"]),
+        },
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+def _key_sorting(order: str, claimant_id: str) -> str:
+    """A ledger key that sorts before or after the claimant's id in jsonb key order."""
+    # Equal-length keys sort by their first byte: '-' is below every hex digit, 'z' above.
+    return ("-" if order == "before" else "z") + claimant_id[1:]
+
+
+@pytest.mark.asyncio
+async def test_claimant_edit_after_its_commit_stays_owned(guard_harness: GuardHarness) -> None:
+    """A Gobby edit recorded after the last commit keeps its path owned by the claimant (#25161)."""
+    h = guard_harness
+    _commit_files(h.repo, "claimant work", {"orphan.txt": "team's own earlier edit\n"})
+    (h.repo / "orphan.txt").write_text("claimant's post-commit edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_sorts", ["before", "after"])
+@pytest.mark.parametrize("claimant_edited_last", [True, False])
+async def test_latest_editor_owns_a_shared_path_whatever_the_ledger_key_order(
+    guard_harness: GuardHarness, claimant_edited_last: bool, other_sorts: str
+) -> None:
+    """Ownership follows the newest Gobby edit of the path, not ledger key order (#25161)."""
+    h = guard_harness
+    claimant = h.current_task.id
+    other = _key_sorting(other_sorts, claimant)
+    now = datetime.now(UTC).timestamp()
+    claimant_stamp, other_stamp = (
+        (now - 100, now - 200) if claimant_edited_last else (now - 200, now - 100)
+    )
+    (h.repo / "shared.txt").write_text("written by a predecessor\n", encoding="utf-8")
+    digest = _blob_hash(h.repo / "shared.txt")
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                claimant: {str(h.repo): ["shared.txt"]},
+                other: {str(h.repo): ["shared.txt"]},
+            },
+            "task_edited_checkout_times": {
+                claimant: {str(h.repo): {"shared.txt": claimant_stamp}},
+                other: {str(h.repo): {"shared.txt": other_stamp}},
+            },
+            "task_edited_checkout_hashes": {
+                claimant: {str(h.repo): {"shared.txt": digest}},
+                other: {str(h.repo): {"shared.txt": digest}},
+            },
+            "session_dirty_files": ["foreign.txt", "shared.txt"],
+            "session_dirty_file_checkouts": {str(h.repo): ["foreign.txt", "shared.txt"]},
+        },
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("shared.txt"))
+
+    expected = "allow" if claimant_edited_last else "block"
+    assert decision.decision == expected, decision.reason
+
+
+@pytest.mark.asyncio
+async def test_same_second_history_only_edit_stays_owned(guard_harness: GuardHarness) -> None:
+    """A predecessor's history-only record of a same-second edit still owns it (#25161)."""
+    h = guard_harness
+    _commit_files(h.repo, "claimant work", {"orphan.txt": "team's own earlier edit\n"})
+    committed_at = float(_git(h.repo, "log", "-1", "--format=%ct"))
+    (h.repo / "orphan.txt").write_text("claimant's same-second edit\n", encoding="utf-8")
+    # A predecessor session recorded the claimant's edit, then its live ledger was cleared.
+    SessionVariableManager(h.db).merge_variables(
+        h.foreign_session.id,
+        {
+            "task_edited_file_checkouts": {},
+            "task_edited_file_checkouts_history": {
+                h.current_task.id: {str(h.repo): ["orphan.txt"]},
+            },
+            "task_edited_checkout_times": {
+                h.current_task.id: {str(h.repo): {"orphan.txt": committed_at + 0.4}},
+            },
+            "task_edited_checkout_hashes": {
+                h.current_task.id: {
+                    str(h.repo): {"orphan.txt": _blob_hash(h.repo / "orphan.txt")},
+                },
+            },
+            "session_dirty_files": ["orphan.txt"],
+            "session_dirty_file_checkouts": {str(h.repo): ["orphan.txt"]},
+        },
+    )
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_claimant_shell_rewrite_keeps_its_edit_owned(guard_harness: GuardHarness) -> None:
+    """A claimed task's own shell rewrite of its edited path stays owned (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="shell-call")
+    (h.repo / "orphan.txt").write_text("claimant's formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "shell-call")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_outside_edit_before_claimant_shell_call_stays_unowned(
+    guard_harness: GuardHarness,
+) -> None:
+    """A shell call that writes nothing does not adopt an earlier outside write (criterion 3, #25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="shell-call")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "shell-call")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_overlapping_claimant_shell_calls_keep_their_writes_owned(
+    guard_harness: GuardHarness,
+) -> None:
+    """Two overlapping claimant shell calls each keep their own rewrite owned (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-a")
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-b")
+    (h.repo / "orphan.txt").write_text("first formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-a")
+    (h.repo / "orphan.txt").write_text("second formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-b")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_shell_call_snapshotting_between_an_overlapping_write_and_its_post_adopts_nothing(
+    guard_harness: GuardHarness,
+) -> None:
+    """A call snapshotting after an overlapping write, before its post, fails closed (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-a")
+    (h.repo / "orphan.txt").write_text("first formatter output\n", encoding="utf-8")
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="call-b")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-a")
+
+    adopted = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert adopted.decision == "allow", adopted.reason
+    (h.repo / "orphan.txt").write_text("second formatter output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "call-b")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_line", ["[exited with code 0]", "[killed]"])
+async def test_background_claimant_shell_rewrite_stays_owned_until_its_process_ends(
+    guard_harness: GuardHarness, tmp_path: Path, terminal_line: str
+) -> None:
+    """A background shell rewrite is owned once its output shows the process ended (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    output = tmp_path / "background.output"
+    output.write_text("", encoding="utf-8")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="bg-call")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "bg-call", output_path=str(output))
+    manager.settle_pending_shell_calls(h.current_session.id)
+    (h.repo / "orphan.txt").write_text("background formatter output\n", encoding="utf-8")
+    output.write_text(f"formatted\n{terminal_line}\n", encoding="utf-8")
+    manager.settle_pending_shell_calls(h.current_session.id)
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_shell_adoption_without_its_own_snapshot_adopts_nothing(
+    guard_harness: GuardHarness,
+) -> None:
+    """A shell call with no snapshot of its own adopts no outside write (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="snapped")
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "unsnapped")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_file_created_under_a_directory_only_ledger_entry_stays_unowned(
+    guard_harness: GuardHarness,
+) -> None:
+    """A file a shell call creates under a directory-only ledger entry stays unowned (#25161)."""
+    h = guard_harness
+    (h.repo / "generated").mkdir()
+    _record_claimant_edit(h, "generated")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="mkdir-call")
+    (h.repo / "generated" / "output.txt").write_text("script output\n", encoding="utf-8")
+    manager.adopt_claimed_shell_edits(h.current_session.id, "mkdir-call")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("generated/output.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_background_shell_call_without_an_output_file_adopts_nothing(
+    guard_harness: GuardHarness, tmp_path: Path
+) -> None:
+    """A background rewrite with no output file to settle against stays unowned (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    manager = SessionVariableManager(h.db)
+    manager.snapshot_claimed_shell_edits(h.current_session.id, str(h.repo), call_id="lost-call")
+    manager.adopt_claimed_shell_edits(
+        h.current_session.id, "lost-call", output_path=str(tmp_path / "gone.output")
+    )
+    (h.repo / "orphan.txt").write_text("written by the lost process\n", encoding="utf-8")
+    manager.settle_pending_shell_calls(h.current_session.id)
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
 async def test_rule3_claim_successor_still_refused_for_another_tasks_live_claim(
     guard_harness: GuardHarness,
 ) -> None:
     h = guard_harness
-    _predecessor_holding(h, h.current_task, "foreign.txt", live=False)
-    _predecessor_holding(h, h.foreign_task, "orphan.txt", live=False)
     (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     (h.repo / "orphan.txt").write_text("other task carrier\n", encoding="utf-8")
+    _predecessor_holding(h, h.current_task, "foreign.txt", live=False)
+    _predecessor_holding(h, h.foreign_task, "orphan.txt", live=False)
 
     held = await h.handler._evaluate_rules(h.edit_event("foreign.txt"))
     other_task = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
@@ -1345,6 +1661,9 @@ async def test_foreign_root_owner_allows_requester_owned_or_clean_child(
     )
     (harness.repo / "foreign.txt").write_text("foreign change\n")
     (harness.repo / "owned.txt").write_text("owned change\n")
+    SessionVariableManager(harness.db).merge_variables(
+        harness.current_session.id, _content_ledger(harness, harness.current_task, ["owned.txt"])
+    )
     if action == "commit_only":
         event = harness.event("git commit --only -m mine -- owned.txt")
     elif action == "commit_staged":
@@ -1896,6 +2215,11 @@ async def test_dirty_edit_allows_own_path_and_blocks_unattributed_path(
     contents: str,
 ) -> None:
     (guard_harness.repo / path).write_text(contents, encoding="utf-8")
+    if path == "owned.txt":
+        SessionVariableManager(guard_harness.db).merge_variables(
+            guard_harness.current_session.id,
+            _content_ledger(guard_harness, guard_harness.current_task, [path]),
+        )
 
     response = await guard_harness.handler._evaluate_rules(guard_harness.edit_event(path))
 

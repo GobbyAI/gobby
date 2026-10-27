@@ -1,11 +1,13 @@
 import json
 import logging
+import re
 import threading
 import time
 import weakref
 from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, TypeVar
 from uuid import uuid4
 
@@ -21,6 +23,7 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.sessions import startup_claim as _startup_claim
 from gobby.storage.sessions._contested_expiry import read_session_variables_row
 from gobby.storage.sessions.startup_claim import StartupClaimState, StartupContextClaim
+from gobby.workflows.checkout_fingerprint import path_fingerprints
 from gobby.workflows.memory_review_conditions import pending_memory_reviews_complete
 from gobby.workflows.session_edit_ledger import SessionEditLedger
 from gobby.workflows.variable_defaults import (
@@ -113,6 +116,28 @@ def _clear_variable_defaults_caches() -> None:
 
 
 register_revision_listener("variables", _clear_variable_defaults_caches)
+
+
+_BACKGROUND_TAIL_BYTES = 512
+_BACKGROUND_END_LINE = re.compile(r"\[(?:exited with code -?\d+|killed)\]")
+
+
+def _background_output_state(output_path: str) -> str:
+    """Return ``running``, ``finished`` or ``missing`` for a background call's output file.
+
+    The CLI ends the file with an ``[exited with code N]`` or ``[killed]`` line when the
+    process stops.
+    """
+    path = Path(output_path)
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - _BACKGROUND_TAIL_BYTES))
+            tail = handle.read().decode("utf-8", "replace")
+    except OSError:
+        return "missing"
+    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    return "finished" if lines and _BACKGROUND_END_LINE.fullmatch(lines[-1]) else "running"
 
 
 class SessionVariableManager(SessionEditLedger):
@@ -311,6 +336,117 @@ class SessionVariableManager(SessionEditLedger):
                     (session_id, encoded_defaults, stored_scope, encoded, now),
                 )
             return result
+
+    def snapshot_claimed_shell_edits(
+        self, session_id: str, checkout_root: str, call_id: str
+    ) -> None:
+        """Remember which ledger paths one claimant shell call is about to rewrite.
+
+        Only paths whose current content a claimed task's Gobby action recorded are kept, so
+        content changed outside Gobby before the call never becomes the claimant's.
+        """
+        from gobby.workflows.dirty_edit_grants import claimed_task_owned_paths
+
+        owned = claimed_task_owned_paths(
+            self.db, session_id=session_id, checkout_root=checkout_root
+        )
+        if not owned:
+            return
+        entry = {
+            "checkout_root": checkout_root,
+            "owned": {
+                path: {"task_id": task_id, "digest": digest}
+                for path, (task_id, digest) in owned.items()
+            },
+            "output_path": None,
+        }
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            entries = dict(variables.get("claimed_shell_snapshots") or {})
+            entries[call_id] = entry
+            variables["claimed_shell_snapshots"] = entries
+            return None, True
+
+        self._mutate_variables(
+            session_id, mutate, keys=("claimed_shell_snapshots",), apply_defaults=False
+        )
+
+    def settle_pending_shell_calls(self, session_id: str) -> None:
+        """Settle background shell calls whose output file shows the process ended or is gone.
+
+        A finished call adopts the content it left. A call whose output file is gone drops
+        without adopting, so its paths stay unowned and need approval. A running call stays.
+        """
+        for call_id, entry in self._pending_shell_calls(session_id).items():
+            if not isinstance(entry, dict) or not entry.get("output_path"):
+                continue
+            state = _background_output_state(str(entry["output_path"]))
+            if state == "finished":
+                self.adopt_claimed_shell_edits(session_id, call_id)
+            elif state == "missing":
+                self._drop_shell_call(session_id, call_id)
+
+    def _pending_shell_calls(self, session_id: str) -> dict[str, Any]:
+        value = self.get_variable_subset(session_id, ("claimed_shell_snapshots",)).get(
+            "claimed_shell_snapshots"
+        )
+        return value if isinstance(value, dict) else {}
+
+    def _drop_shell_call(self, session_id: str, call_id: str) -> None:
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            entries = dict(variables.get("claimed_shell_snapshots") or {})
+            entries.pop(call_id, None)
+            variables["claimed_shell_snapshots"] = entries or None
+            return None, True
+
+        self._mutate_variables(
+            session_id, mutate, keys=("claimed_shell_snapshots",), apply_defaults=False
+        )
+
+    def adopt_claimed_shell_edits(
+        self, session_id: str, call_id: str, *, output_path: str | None = None
+    ) -> None:
+        """Let the claimed tasks own the content one claimant shell call left in its paths.
+
+        A snapshotted path changed by the call is recorded as that task's newest Gobby action.
+        A path the call left alone, or one written outside the call, stays as it was. A call
+        with an output path stays pending until its output shows the process ended.
+        """
+        from gobby.workflows.task_claim_state import record_task_content_hashes
+
+        entry = self._pending_shell_calls(session_id).get(call_id)
+        if not isinstance(entry, dict):
+            return
+        root = str(entry["checkout_root"])
+        owned: dict[str, dict[str, Any]] = entry["owned"]
+        now = path_fingerprints(Path(root), owned)
+        changed: dict[str, dict[str, str | None]] = {}
+        kept: dict[str, dict[str, Any]] = {}
+        for path, state in owned.items():
+            if path not in now:
+                kept[path] = state
+                continue
+            if now[path] != state["digest"]:
+                changed.setdefault(state["task_id"], {})[path] = now[path]
+            kept[path] = {**state, "digest": now[path]}
+
+        def mutate(variables: dict[str, Any]) -> tuple[None, bool]:
+            entries = dict(variables.get("claimed_shell_snapshots") or {})
+            if output_path is None:
+                entries.pop(call_id, None)
+            else:
+                entries[call_id] = {**entry, "owned": kept, "output_path": output_path}
+            variables["claimed_shell_snapshots"] = entries or None
+            for task_id, digests in changed.items():
+                record_task_content_hashes(variables, task_id, root, digests)
+            return None, True
+
+        self._mutate_variables(
+            session_id,
+            mutate,
+            keys=("claimed_shell_snapshots", "task_edited_checkout_hashes"),
+            apply_defaults=False,
+        )
 
     def get_variable_subset(self, session_id: str, keys: Iterable[str]) -> dict[str, Any]:
         """Read selected layered values without materializing the session blob."""

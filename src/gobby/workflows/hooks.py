@@ -302,6 +302,22 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     event.data.setdefault("cwd", event.cwd)
                     await asyncio.to_thread(normalize_tool_fields, event.data)
 
+                # A background Bash call that ended adopts its edits before this call's
+                # claimed-edit guards read the ledger.
+                if (
+                    self._session_var_manager
+                    and session_id
+                    and event.event_type == HookEventType.BEFORE_TOOL
+                ):
+                    try:
+                        await asyncio.to_thread(
+                            self._session_var_manager.settle_pending_shell_calls, session_id
+                        )
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning("Failed to settle background shell edits", exc_info=True)
+
                 # Load session-scoped variables (canonical store).
                 # session_id may be "" for session-less events; session_variables.session_id
                 # is a native uuid column, so skip the lookup instead of binding "".

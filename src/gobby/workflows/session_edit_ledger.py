@@ -4,7 +4,10 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Any, TypeVar
+
+from gobby.workflows.checkout_fingerprint import path_fingerprints
 
 logger = logging.getLogger(__name__)
 _MutationResult = TypeVar("_MutationResult")
@@ -74,12 +77,19 @@ class SessionEditLedger(ABC):
             active_task_id_for_edit,
             assert_task_edit_paths_available,
             normalize_task_checkout_root,
+            record_task_content_hashes,
             record_task_live_edit_starts,
             task_selected_at,
             transfer_live_checkout_paths,
         )
 
         normalized_checkout = normalize_task_checkout_root(checkout_root)
+        # Content as this edit left it; a later Gobby edit or claimant shell call replaces it.
+        digests = (
+            path_fingerprints(Path(normalized_checkout), normalized_paths)
+            if normalized_checkout is not None
+            else {}
+        )
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             task_id = (
@@ -182,6 +192,7 @@ class SessionEditLedger(ABC):
                     task_pairs[normalized_checkout] = root_times
                     pair_times[task_id] = task_pairs
                     variables["task_edited_checkout_times"] = pair_times
+                    record_task_content_hashes(variables, task_id, normalized_checkout, digests)
                     # Clean paths leave the live starts only. This live ledger keeps
                     # the pair until a later claim takes the path with an edit.
                     variables.setdefault(
@@ -226,6 +237,7 @@ class SessionEditLedger(ABC):
                 "task_edited_files",
                 "task_edited_file_times",
                 "task_edited_checkout_times",
+                "task_edited_checkout_hashes",
                 "task_live_edit_starts",
                 "task_edited_file_checkouts",
                 "task_edited_file_checkouts_history",
