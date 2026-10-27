@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-import yaml
 
 from gobby.agents.agent_workspaces import (
     bind_epic_workspace,
@@ -57,7 +56,13 @@ from gobby.worktrees.executor import run_worktree_delete
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
-from tests.fixtures.team_case import TITLE, TeamWorld, git_in, make_team_world
+from tests.fixtures.team_case import (
+    TITLE,
+    TeamWorld,
+    git_in,
+    make_team_world,
+    synthetic_manager_body,
+)
 from tests.fixtures.team_teardown_case import (
     Terminations,
     branch_exists,
@@ -70,10 +75,6 @@ from tests.fixtures.team_teardown_case import (
 pytestmark = pytest.mark.e2e
 
 _REAL_AGENT_BODY = _factory._load_agent_body
-DEV_MANAGER_YAML = (
-    Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/dev-manager.yaml"
-)
 LEAF_TITLE = "Wire the scroll handler"
 # Definitions by the one step each writes; the Dev Manager is the shipped definition.
 DEFINITIONS: dict[str, tuple[str, ...]] = {
@@ -167,8 +168,7 @@ def world(
             },
             project_id=project_id,
         )
-    manager_body = yaml.safe_load(DEV_MANAGER_YAML.read_text())
-    definitions.create("dev-manager", manager_body, project_id=project_id)
+    definitions.create("dev-manager", synthetic_manager_body(), project_id=project_id)
     return world
 
 

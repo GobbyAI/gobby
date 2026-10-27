@@ -36,6 +36,24 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import LandingCase
 from tests.fixtures.postgres import TEST_USER_ID
 
+
+def synthetic_manager_body() -> dict[str, Any]:
+    """A synthetic team manager: the team_manager grant and the spawn scope the tests exercise."""
+    return {
+        "name": "dev-manager",
+        "version": "1.0",
+        "surfaces": ["spawn"],
+        "send_message_targets": ["parent", "session", "project"],
+        "spawnable_agents": ["developer", "code-reviewer", "docs-reviewer", "research-reviewer"],
+        "prompts": {"agent": "Run the dev-manager seat."},
+        "workflows": {
+            "rule_selectors": {"include": []},
+            "variables": {"team_manager": True},
+        },
+        "task_step_writes": ["closing"],
+    }
+
+
 TITLE = "Scroll and type during daemon outage window"
 # The spawn default slugs the title and truncates the slug to 40 characters.
 SLUG = "scroll-and-type-during-daemon-outage-win"

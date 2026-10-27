@@ -172,7 +172,7 @@ def _write_validation_artifacts_plan(path: Path) -> Path:
 Wire the agent contract.
 
 **Acceptance:**
-- 1.1.1 - Workflow file exists. file: `src/gobby/install/shared/workflows/agents/demo.yaml`
+- 1.1.1 - Workflow file exists. file: `src/gobby/demo/workflows/demo.yaml`
 - 1.1.2 - Non-yolo rejects with instructions. behavior: `non-yolo rejection path`
 - 1.1.3 - Tool surface is tested. test: `tests/agents/test_demo_agent.py::test_tool_surface`
 
@@ -184,7 +184,7 @@ Wire the agent contract.
   category: config
   task_type: task
   depends_on: []
-  validation_criteria: "src/gobby/install/shared/workflows/agents/demo.yaml"
+  validation_criteria: "src/gobby/demo/workflows/demo.yaml"
   labels:
     - "covers:validation-artifacts:1.1:1.1.1"
     - "covers:validation-artifacts:1.1:1.1.2"
@@ -299,7 +299,7 @@ def test_compile_entry_validation_includes_acceptance_artifact_refs(
     spec = service.compile_plan_to_spec(plan_doc, parent)
     task = next(task for task in spec["tasks"] if task["id"] == "1.1::single")
 
-    assert task["validation"].startswith("src/gobby/install/shared/workflows/agents/demo.yaml")
+    assert task["validation"].startswith("src/gobby/demo/workflows/demo.yaml")
     for item_id in ("1.1.1", "1.1.2", "1.1.3"):
         result = validate_covers(
             CoversRecord("validation-artifacts", "1.1", item_id),

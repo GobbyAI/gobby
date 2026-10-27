@@ -10,7 +10,6 @@ ACTIVE_GUIDANCE_ROOTS = (
     PROJECT_ROOT / "docs/guides",
     PROJECT_ROOT / "src/gobby/install/shared/prompts",
     PROJECT_ROOT / "src/gobby/install/shared/skills",
-    PROJECT_ROOT / "src/gobby/install/shared/workflows/agents",
     PROJECT_ROOT / "src/gobby/install/shared/workflows/rules",
 )
 ACTIVE_GUIDANCE_FILES = (

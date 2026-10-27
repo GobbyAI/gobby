@@ -4,12 +4,10 @@ import asyncio
 import threading
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
@@ -34,11 +32,13 @@ async def test_help_lists_unselected_skills_and_honors_explicit_exclusions(
     from gobby.workflows.agent_models import AgentDefinitionBody, AgentSelector
     from gobby.workflows.state_manager import SessionVariableManager
 
-    agent_path = (
-        Path(__file__).resolve().parents[4]
-        / "src/gobby/install/shared/workflows/agents/default.yaml"
+    agent = AgentDefinitionBody.model_validate(
+        {
+            "name": "default",
+            "prompts": {"agent": "Synthetic default seat."},
+            "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+        }
     )
-    agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
     agent.workflows.skill_selectors = (
         AgentSelector(include=include or [], exclude=exclude)
         if include is not None or exclude

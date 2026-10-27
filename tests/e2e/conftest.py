@@ -933,8 +933,7 @@ def e2e_project_dir() -> Generator[Path]:
             )
         )
 
-        # Copy shared pipelines and agents for spawn_agent tests
-        from gobby.agents.sync import get_bundled_agents_path
+        # Copy shared pipelines for spawn_agent tests
         from gobby.workflows.sync_pipelines import get_bundled_pipelines_path
 
         shared_pipelines = get_bundled_pipelines_path()
@@ -943,13 +942,6 @@ def e2e_project_dir() -> Generator[Path]:
             target_workflows.mkdir(parents=True, exist_ok=True)
             for wf_file in shared_pipelines.glob("*.yaml"):
                 shutil.copy2(wf_file, target_workflows / wf_file.name)
-
-        shared_agents = get_bundled_agents_path()
-        if shared_agents.exists():
-            target_agents = gobby_dir / "agents"
-            target_agents.mkdir(parents=True, exist_ok=True)
-            for agent_file in shared_agents.glob("*.yaml"):
-                shutil.copy2(agent_file, target_agents / agent_file.name)
 
         yield project_dir
 

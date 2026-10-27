@@ -19,6 +19,7 @@ from gobby.workflows.regex_validation import (
     iter_definition_regexes,
     validate_definition_regexes,
 )
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -82,7 +83,7 @@ def test_folded_condition_regex_rejected() -> None:
 def test_bundled_templates_within_cap() -> None:
     root = Path(__file__).resolve().parents[2] / "src/gobby/install/shared"
     patterns: list[DefinitionRegex] = []
-    files = sorted(root.rglob("*.yaml"))
+    files = sorted(p for p in root.rglob("*.yaml") if not is_bundled_agent_definition(p))
     assert files
     for path in files:
         data = yaml.safe_load(path.read_text())

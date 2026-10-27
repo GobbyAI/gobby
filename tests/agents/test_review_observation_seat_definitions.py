@@ -1,385 +1,129 @@
-"""Contract tests for the review and observation seat definitions.
+"""Behavior tests for the review and observation seats.
 
-The code-reviewer, archivist, log-monitor and researcher seats are bundled
-definitions whose prompt is the role text of record (agent-definition-profiles
-P3, section 3.3). They share the seat shape and differ in their tool
-restrictions, step workflows and message contracts.
+Every seat here is synthetic: step graphs are built inline and carry only the transition or
+admission under test. No test reads a bundled definition, so prompt wording, field values,
+sync state and reference paths are not pinned.
 """
 
 from __future__ import annotations
 
-import re
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.agents.sandbox_network import definition_sandbox_config
 from gobby.agents.sandbox_policy import allowed_domains
-from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import Task
 from gobby.utils.machine_id import get_machine_id
 from gobby.workflows.condition_helpers_sessions import session_refs_equal
-from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
-from gobby.workflows.dry_run import evaluate_agent_definition
-from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.safe_evaluator import (
-    SafeExpressionEvaluator,
-    build_agent_workflow_allowed_funcs,
-)
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
-from tests.agents._yaml_helpers import flat
+from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.workflows.test_seat_step_loops import COORDINATOR_ID, SESSION_ID, SHA, SeatRun
 
 pytestmark = pytest.mark.unit
 
-SEATS = ("code-reviewer", "archivist", "log-monitor", "metrics-monitor", "researcher")
-# Decision 8: the write tools a read-only seat may not call.
-READ_ONLY_BLOCKED_TOOLS = frozenset(
-    {
-        "Edit",
-        "KillShell",
-        "MultiEdit",
-        "NotebookEdit",
-        "Write",
-        "apply_patch",
-        "edit_file",
-        "notebook_edit",
-        "replace",
-        "write_file",
-    }
-)
-READ_ONLY_SEATS = ("log-monitor", "metrics-monitor")
-# The Code Reviewer reviews read-only and edits only as the second-rejection fixer.
-CODE_REVIEWER_REVIEW_STEPS = ("load_skills", "await", "review", "verdict")
-# Sync metadata keys `validate_workflow_definition_data` strips before the body.
-SYNC_METADATA_KEYS = frozenset({"tags", "priority", "type"})
-OBSERVATION_SELECTORS = frozenset(
-    {
-        "tag:default",
-        "name:no-send-keys",
-        "tag:context-handoff",
-        "tag:memory-lifecycle",
-        "tag:worker-safety",
-    }
-)
-RULE_SELECTORS = {
-    # The operator's hold: never tag:review-learning.
-    # The second-rejection fixer edits and commits, so it needs the worker-safety rules.
-    "code-reviewer": frozenset(
-        {"tag:default", "tag:worker-safety", "name:no-send-keys", "name:require-seat-procedure"}
-    ),
-    "archivist": OBSERVATION_SELECTORS,
-    "log-monitor": OBSERVATION_SELECTORS,
-    "metrics-monitor": OBSERVATION_SELECTORS,
-    "researcher": OBSERVATION_SELECTORS | {"tag:task-skill-gates"},
+CALL = "mcp__gobby__call_tool"
+EDIT = {"file_path": "src/gobby/example.py", "old_string": "a", "new_string": "b"}
+
+REVIEWER_VARIABLES: dict[str, Any] = {
+    "candidate_received": False,
+    "verdict_ready": False,
+    "candidate_task": None,
+    "candidate_sha": None,
+    "candidate_owner": None,
+    "candidate_received_at": None,
+    "required_skills": [],
+    "fixing": False,
+    "candidate_disposition": None,
 }
-# Decision 10: continuity is prose.
-COMPACT_SEATS = ("archivist", "log-monitor", "metrics-monitor")
-DELIVERABLE_SEATS = ("code-reviewer", "researcher", "developer")
-STEP_SEATS = ("code-reviewer", "log-monitor", "metrics-monitor", "researcher")
-LOAD_SKILLS_WHEN = "all(skill_loaded(skill) for skill in vars.required_skills)"
 
 
-def _raw(name: str) -> dict[str, Any]:
-    data = yaml.safe_load((get_bundled_agents_path() / f"{name}.yaml").read_text())
-    assert isinstance(data, dict), name
-    return data
+def _protocol(tool: str) -> dict[str, str]:
+    """Route one successful call through the engine's seat protocol handler."""
+    return {"server": "gobby-agents", "tool": tool, "action": "advance_seat"}
 
 
-def _load(name: str) -> AgentDefinitionBody:
-    return AgentDefinitionBody.model_validate(_raw(name))
-
-
-def _prompt(name: str) -> str:
-    body = _load(name)
-    prompts = body.prompts
-    assert prompts is not None, name
-    prompt = prompts.agent or ""
-    reference = body.workflows.variables.get("_seat_procedure")
-    if reference:
-        assert reference in prompt
-        path = get_bundled_agents_path().parents[1] / "skills/gobby" / reference.split(":", 1)[1]
-        prompt += "\n" + path.read_text()
-    return flat(prompt)
-
-
-def _section(text: str, heading: str) -> str:
-    """``heading`` and its body, up to the next level-2 heading."""
-    start = text.index(heading)
-    end = text.find("\n## ", start + len(heading))
-    return text[start:] if end == -1 else text[start:end]
-
-
-def _baseline_sections() -> list[str]:
-    persona = _raw("default")["prompts"]["persona"]
-    assert isinstance(persona, str)
-    return [flat(_section(persona, heading)) for heading in ("## Platform Context", "## Skills")]
-
-
-def _variables(name: str) -> dict[str, Any]:
-    step_workflow = _load(name).step_workflow
-    assert step_workflow is not None, name
-    assert step_workflow.exit_condition is None, name
-    return step_workflow.variables
-
-
-def _steps(name: str) -> dict[str, WorkflowStep]:
-    step_workflow = _load(name).step_workflow
-    assert step_workflow is not None, name
-    return {step.name: step for step in step_workflow.steps}
-
-
-def _transitions(step: WorkflowStep) -> list[tuple[str, str]]:
-    return [(transition.to, transition.when) for transition in step.transitions]
-
-
-def _allowed_tools(step: WorkflowStep) -> set[str]:
-    assert isinstance(step.allowed_tools, list), step.name
-    return set(step.allowed_tools)
-
-
-def _allowed_mcp_tools(step: WorkflowStep) -> set[str]:
-    assert isinstance(step.allowed_mcp_tools, list), step.name
-    return set(step.allowed_mcp_tools)
-
-
-async def _reviewer_run(db: PostgresHubDatabase, step: str = "verdict") -> tuple[SeatRun, Task]:
-    run = SeatRun(db, "code-reviewer")
-    await run.load(*run.vars["required_skills"])
-    task = run.task()
-    await run.intake(task)
-    SessionTaskManager(db).link_task(SESSION_ID, task.id, "reviewing")
-    if step == "verdict":
-        await run.approve(task)
-    assert run.step == step
-    return run, task
-
-
-def _matches(condition: str, content: str, **variables: Any) -> bool:
-    context: dict[str, Any] = {"vars": variables, "tool_input": {"content": content}}
-    evaluator = SafeExpressionEvaluator(context, build_agent_workflow_allowed_funcs(context))
-    return bool(evaluator.evaluate(condition))
-
-
-@pytest.mark.parametrize("name", SEATS)
-def test_seat_carries_the_common_seat_shape(name: str) -> None:
-    raw = _raw(name)
-    body = _load(name)
-    prompt = _prompt(name)
-
-    assert raw["tags"] == ["gobby", "seat"]
-    assert set(raw) <= set(AgentDefinitionBody.model_fields) | SYNC_METADATA_KEYS
-    assert body.name == name
-    assert body.version == "1.0"
-    assert body.surfaces == ["spawn", "persona"]
-    assert (body.provider, body.model, body.checkout_mode, body.timeout) == (
-        "inherit",
-        None,
-        "inherit",
-        0,
-    )
-    assert body.prompts is not None
-    assert body.prompts.persona == body.prompts.agent
-    assert body.workflows.rule_selectors is not None
-    assert set(body.workflows.rule_selectors.include) == RULE_SELECTORS[name]
-    assert body.workflows.variables == (
-        {"_seat_procedure": "gobby:references/agents/procedures/code-reviewer.md"}
-        if name == "code-reviewer"
-        else {}
-    )
-    assert body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
-    assert set(body.send_message_targets) == {"parent", "session"}
-    for section in _baseline_sections():
-        assert section in prompt
-    assert "gobby-agents:send_message" in prompt
-    assert "lesson" not in prompt.lower()
-
-
-def test_metrics_monitor_has_only_observation_tools_and_loopback_network() -> None:
-    body = _load("metrics-monitor")
-    steps = _steps("metrics-monitor")
-    allowed_mcp = {
-        "gobby-skills:get_skill",
-        "gobby-skills:get_skill_file",
-        "gobby-agents:send_message",
-        "gobby-agents:wait_for_coordination",
+def _seat(
+    name: str,
+    steps: list[dict[str, Any]],
+    variables: dict[str, Any] | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "name": name,
+        "prompts": {"agent": f"Synthetic {name} seat."},
+        "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+        "step_workflow": {"variables": dict(variables or {}), "steps": steps},
     }
-    assert body.network == "none"
-    sandbox = definition_sandbox_config(None, body)
-    assert sandbox.enabled is True
-    assert sandbox.allow_network is False
-    assert {"localhost", "127.0.0.1"} <= set(allowed_domains(sandbox, "claude", None))
-    assert body.prewarm_pre_commit_store is False
-    assert body.spawnable_agents == []
-    assert list(steps) == ["load_skills", "tick", "report"]
-    for step in steps.values():
-        assert _allowed_mcp_tools(step) <= allowed_mcp
-        assert _allowed_tools(step) <= {
-            "Bash",
-            "mcp__gobby__call_tool",
-            "mcp__gobby__list_mcp_servers",
-            "mcp__gobby__list_tools",
-            "mcp__gobby__get_tool_schema",
-            "mcp__gobby__set_variable",
-        }
-    assert "Bash" in _allowed_tools(steps["tick"])
-    assert "Bash" not in _allowed_tools(steps["report"])
-    prompt = _prompt("metrics-monitor")
-    assert "reply=true, timeout=600" in prompt
-    assert "Never run ps or read process environments" in prompt
-    assert body.description is not None and "RSS sustained above 4 GB" in " ".join(
-        body.description.split()
-    )
-    assert "45 seconds" in prompt
-    assert "uptime decrease" in prompt
-    assert "Reset the watch baseline after a restart" in prompt
+    body.update(fields)
+    return body
 
 
-@pytest.mark.parametrize(
-    ("target", "content", "expected"),
-    [
-        ("gobby#10", "Systems nominal | RSS 200", {"triage_reported"}),
-        ("gobby#11", "EVENT=ALARM | uptime decreased", {"log_monitor_reported"}),
-        ("gobby#12", "Systems nominal | RSS 200", set()),
-        ("gobby#10", "checking", set()),
-        ("gobby#10", "Please report Systems nominal | with evidence", set()),
-        ("gobby#11", "Please explain EVENT=ALARM", set()),
-    ],
-)
-@pytest.mark.parametrize("stored_form", ["uuid", "qualified", "local"])
-@pytest.mark.parametrize("succeeded", [True, False])
-@pytest.mark.parametrize("tick_done_value", [True, "true"])
-async def test_metrics_monitor_report_requires_both_live_recipients(
-    temp_db: PostgresHubDatabase,
-    sample_project: dict[str, Any],
-    target: str,
-    content: str,
-    expected: set[str],
-    stored_form: str,
-    succeeded: bool,
-    tick_done_value: bool | str,
-) -> None:
-    sessions = SessionManager(temp_db)
-    caller, triage, log_monitor, other = (
-        sessions.register(
-            external_id=f"metrics-report-{name}",
-            machine_id=get_machine_id(),
-            source="codex",
-            project_id=sample_project["id"],
-        )
-        for name in ("caller", "triage", "log-monitor", "other")
-    )
-    recipients = {"gobby#10": triage, "gobby#11": log_monitor, "gobby#12": other}
-    for recipient, role in ((triage, "triage"), (log_monitor, "log-monitor")):
-        SessionVariableManager(temp_db).set_variable(recipient.id, "_agent_type", role)
-    body = _load("metrics-monitor")
-    assert body.step_workflow is not None
-    stored_refs = {
-        "uuid": (triage.id, log_monitor.id),
-        "qualified": (
-            f"{sample_project['name']}#{triage.seq_num}",
-            f"{sample_project['name']}#{log_monitor.seq_num}",
-        ),
-        "local": (f"#{triage.seq_num}", f"#{log_monitor.seq_num}"),
-    }
-    variables = {
-        **body.step_workflow.variables,
-        "triage_session": stored_refs[stored_form][0],
-        "log_monitor_session": stored_refs[stored_form][1],
-        "tick_done": tick_done_value,
-        "tick_window": "sample-window",
-        "_window_report": content,
-        "triage_reported": False,
-        "log_monitor_reported": False,
-    }
-    manager = AgentStepInstanceManager(temp_db)
-    manager.save(
-        build_step_instance(
-            body,
-            session_id=caller.id,
-            step_workflow_id=None,
-            variables=variables,
-            current_step="report",
-        )
-    )
-    engine = RuleEngine(temp_db)
-
-    async def send(recipient_id: str, recipient_seq: int | None) -> str | None:
-        ref = f"{sample_project['name']}#{recipient_seq}" if stored_form == "uuid" else recipient_id
-        message = InterSessionMessageManager(temp_db).create_message(
-            caller.id, recipient_id, content
-        )
-        event = HookEvent(
-            event_type=HookEventType.AFTER_TOOL,
-            session_id=caller.id,
-            source=SessionSource.CLAUDE,
-            timestamp=datetime.now(UTC),
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-agents",
-                    "tool_name": "send_message",
-                    "arguments": {"target": "session", "target_id": ref, "content": content},
-                },
-                "tool_output": {
-                    "success": succeeded,
-                    "result": {"target_id": recipient_id, "message_ids": [message.id]},
-                },
-            },
-            metadata={},
-        )
-        return await engine._process_step_after_tool(event, caller.id, {})
-
-    recipient = recipients[target]
-    assert await send(recipient.id, recipient.seq_num) is None
-    instance = manager.get_for_session(caller.id)
+def _set_state(run: SeatRun, step: str, **variables: Any) -> None:
+    """Place the seat in ``step`` with the given snapshot variables."""
+    instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
-    matched = {
-        name for name in ("triage_reported", "log_monitor_reported") if instance.variables[name]
-    }
-    assert matched == (expected if succeeded else set())
-    assert instance.current_step == "report"
-    if expected and succeeded:
-        remaining = log_monitor if target == "gobby#10" else triage
-        notice = await send(remaining.id, remaining.seq_num)
-        assert notice is not None and notice.startswith("Step transition: report -> tick")
-        instance = manager.get_for_session(caller.id)
-        assert instance is not None
-        assert instance.current_step == "tick"
-        assert instance.variables["tick_done"] is False
-        assert instance.variables["tick_window"] == "sample-window"
-
-        # The first durable report opens the next window without a native setter.
-        notice = await send(recipient.id, recipient.seq_num)
-        assert notice is not None and notice.startswith("Step transition: tick -> report")
-        instance = manager.get_for_session(caller.id)
-        assert instance is not None and instance.current_step == "report"
-        assert instance.variables["triage_reported"] is (target == "gobby#10")
-        assert instance.variables["log_monitor_reported"] is (target == "gobby#11")
-        assert instance.variables["tick_window"] != "sample-window"
-        # Repeating one recipient cannot complete the two-recipient window.
-        assert await send(recipient.id, recipient.seq_num) is None
-        notice = await send(remaining.id, remaining.seq_num)
-        assert notice is not None and notice.startswith("Step transition: report -> tick")
-        instance = manager.get_for_session(caller.id)
-        assert instance is not None and instance.current_step == "tick"
-        assert instance.variables["tick_done"] is False
+    instance.current_step = step
+    instance.variables.update(variables)
+    run.instances.save(instance)
 
 
-async def test_metrics_monitor_handlers_use_supported_runtime_conditions_and_resets() -> None:
-    result = await evaluate_agent_definition(_load("metrics-monitor"))
-    assert result.valid
-    assert {item.code for item in result.warnings} == {"CIRCULAR_ONLY_PATH"}
+# A synthetic claim-gated fixer. Only the claim hand-off transition is under test.
+CLAIM_GATED_FIXER = _seat(
+    "claim-fixer",
+    [
+        {
+            "name": "await",
+            "allowed_tools": [CALL],
+            "allowed_mcp_tools": ["gobby-tasks:claim_task"],
+            "on_mcp_success": [
+                {
+                    "server": "gobby-tasks",
+                    "tool": "claim_task",
+                    "action": "set_variable",
+                    "variable": "fixing",
+                    "value": True,
+                }
+            ],
+            "transitions": [{"to": "fix", "when": "vars.fixing"}],
+        },
+        {"name": "fix", "allowed_tools": ["Edit", "Write"], "allowed_mcp_tools": []},
+    ],
+    {"fixing": False, "required_skills": []},
+)
+
+# A verdict seat: the protocol handler completes the unit, and the unit ends in await.
+VERDICT_STEPS: list[dict[str, Any]] = [
+    {
+        "name": "verdict",
+        "allowed_tools": [CALL],
+        "on_mcp_success": [_protocol("send_message"), _protocol("get_inter_session_message")],
+        "transitions": [{"to": "await", "when": "not vars.candidate_received"}],
+    },
+    {"name": "await", "allowed_tools": [CALL]},
+]
+
+# A minimal reviewer for the malformed-SHA case: only the verdict-completion transition.
+MALFORMED_SHA_REVIEWER = _seat("code-reviewer", VERDICT_STEPS, REVIEWER_VARIABLES)
+
+# A log monitor whose report step leaves for tick only on a durable report.
+MONITOR = _seat(
+    "log-monitor",
+    [
+        {
+            "name": "report",
+            "allowed_tools": [CALL],
+            "on_mcp_success": [_protocol("send_message"), _protocol("get_inter_session_message")],
+            "transitions": [{"to": "tick", "when": "not vars.tick_done"}],
+        },
+        {"name": "tick", "allowed_tools": [CALL]},
+    ],
+    {"tick_done": False, "tick_window": None},
+)
 
 
 def test_session_refs_equal_preserves_caller_project_scope(temp_db: PostgresHubDatabase) -> None:
@@ -409,286 +153,265 @@ def test_session_refs_equal_preserves_caller_project_scope(temp_db: PostgresHubD
         assert not session_refs_equal(sessions, invalid, local.id, local.id)
 
 
-@pytest.mark.parametrize("name", READ_ONLY_SEATS)
-def test_read_only_seats_block_every_write_tool(name: str) -> None:
-    assert set(_load(name).blocked_tools) == READ_ONLY_BLOCKED_TOOLS
-
-
-def test_code_reviewer_edits_only_after_the_claim_hand_off() -> None:
-    steps = _steps("code-reviewer")
-    edit_tools = READ_ONLY_BLOCKED_TOOLS - {"KillShell"}
-    fix = steps["fix"]
-    (claim,) = (
-        handler for handler in steps["await"].on_mcp_success if handler["tool"] == "claim_task"
+def test_network_none_seat_keeps_loopback_for_the_sandbox() -> None:
+    body = AgentDefinitionBody.model_validate(
+        {
+            "name": "offline-seat",
+            "prompts": {"agent": "Synthetic offline seat."},
+            "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+            "network": "none",
+        }
     )
-
-    assert _load("code-reviewer").blocked_tools == ["KillShell"]
-    for name in CODE_REVIEWER_REVIEW_STEPS:
-        assert not _allowed_tools(steps[name]) & edit_tools, name
-    assert "gobby-tasks:claim_task" in _allowed_mcp_tools(steps["await"])
-    # Only a claim the Dev Manager handed over reports already_claimed.
-    assert (claim["action"], claim["variable"]) == ("set_variable", "fixing")
-    assert "already_claimed" in claim["when"]
-    assert {"Edit", "Write", "apply_patch"} <= _allowed_tools(fix)
-    assert {"gobby-tasks:link_commit", "gobby-tasks:record_implementation_step"} <= (
-        _allowed_mcp_tools(fix)
-    )
-    assert "gobby-tasks:record_review_step" not in _allowed_mcp_tools(fix)
-    assert not fix.transitions
+    sandbox = definition_sandbox_config(None, body)
+    assert sandbox.enabled is True
+    assert sandbox.allow_network is False
+    assert {"localhost", "127.0.0.1"} <= set(allowed_domains(sandbox, "claude", None))
 
 
-@pytest.mark.parametrize("name", COMPACT_SEATS)
-def test_standing_seats_compact_and_never_clear(name: str) -> None:
-    prompt = _prompt(name)
-
-    assert "Continuity: compact, never /clear." in prompt
-    assert "set_handoff(clear_session=false)" in prompt
-
-
-@pytest.mark.parametrize("name", DELIVERABLE_SEATS)
-def test_deliverable_seats_compact_in_place_between_deliverables(name: str) -> None:
-    prompt = _prompt(name)
-
-    assert "`gobby-sessions:set_handoff` without `clear_session`" in prompt
-    assert "The session compacts and continues." in prompt
-
-
-@pytest.mark.parametrize("name", STEP_SEATS)
-def test_step_seats_open_by_loading_their_required_skills(name: str) -> None:
-    load_skills = next(iter(_steps(name).values()))
-
-    assert load_skills.name == "load_skills"
-    expected = {
-        "gobby-skills:get_skill",
-        "gobby-skills:get_skill_file",
-    }
-    if name == "code-reviewer":
-        expected.update(
-            {
+async def test_monitor_tick_admits_shell_and_report_does_not(temp_db: PostgresHubDatabase) -> None:
+    steps = [
+        {
+            "name": "tick",
+            "allowed_tools": [CALL, "Bash"],
+            "allowed_mcp_tools": ["gobby-agents:wait_for_coordination"],
+        },
+        {
+            "name": "report",
+            "allowed_tools": [CALL],
+            "allowed_mcp_tools": [
                 "gobby-agents:send_message",
-                "gobby-agents:get_inter_session_message",
                 "gobby-agents:wait_for_coordination",
-                "gobby-agents:list_running_agents",
-                "gobby-sessions:get_session",
+            ],
+        },
+    ]
+    run = SeatRun(temp_db, "log-monitor", definition=_seat("log-monitor", steps))
+    assert await run.admits_native("Bash", {"command": "ls"})
+    assert await run.admits("gobby-agents", "wait_for_coordination")
+    _set_state(run, "report")
+    assert not await run.admits_native("Bash", {"command": "ls"})
+    assert await run.admits("gobby-agents", "send_message")
+
+
+async def test_step_allowlist_refuses_an_unlisted_write_and_admits_a_listed_one(
+    temp_db: PostgresHubDatabase,
+) -> None:
+    definition = _seat(
+        "reviewer-scribe",
+        [{"name": "write", "allowed_tools": ["Write", CALL]}],
+    )
+    run = SeatRun(temp_db, "reviewer-scribe", definition=definition)
+    assert not await run.admits_native("Edit", EDIT)
+    assert await run.admits_native("Write", EDIT)
+
+
+async def test_load_step_refuses_serve_calls_and_serve_step_admits_its_handoff(
+    temp_db: PostgresHubDatabase,
+) -> None:
+    steps: list[dict[str, Any]] = [
+        {
+            "name": "load_skills",
+            "allowed_tools": [CALL],
+            "allowed_mcp_tools": [
+                "gobby-skills:get_skill",
+                "gobby-skills:get_skill_file",
                 "gobby-sessions:set_title",
-            }
-        )
-    if name == "researcher":
-        expected.add("gobby-sessions:set_title")
-    assert _allowed_mcp_tools(load_skills) == expected
-    assert _transitions(load_skills)[0][1] == LOAD_SKILLS_WHEN
-    assert _variables(name)["required_skills_loaded"] is False
-
-
-def test_code_reviewer_requires_fresh_intake_for_replacement_sha() -> None:
-    prompt = _prompt("code-reviewer")
-    steps = _steps("code-reviewer")
-    replacement = prompt.split("- Replacement SHA.", 1)[1].split("\n    - ", 1)[0]
-    assert "Read the stored incoming replacement CANDIDATE" in replacement
-    assert "same-task replacement resets verdict state" in replacement
-    assert "fresh approved review step record for its full SHA" in replacement
-    assert "Finish the active unit before reading a different queued task" in replacement
-    assert "- Resume." not in prompt
-    assert 'action="reviewing"' in prompt.split("- Review.", 1)[1].split("\n    - ", 1)[0]
-    assert "gobby-tasks:link_task_to_session" in _allowed_mcp_tools(steps["review"])
-    status = steps["verdict"].status_message
-    assert status is not None
-    assert "supersede the current SHA and return to fresh review" in status
-    assert "never reuse the old one" in status
-
-
-def test_code_reviewer_runs_the_await_review_verdict_loop() -> None:
-    variables = _variables("code-reviewer")
-    steps = _steps("code-reviewer")
-    prompt = _prompt("code-reviewer")
-
-    assert variables["required_skills"] == [
-        "gobby:references/agents/procedures/code-reviewer.md",
-        "code-review",
-        "restraint",
+            ],
+            "transitions": [
+                {
+                    "to": "serve",
+                    "when": "all(skill_loaded(skill) for skill in vars.required_skills)",
+                }
+            ],
+        },
+        {
+            "name": "serve",
+            "allowed_tools": [CALL],
+            "allowed_mcp_tools": [
+                "gobby-agents:send_message",
+                "gobby-agents:wait_for_coordination",
+                "gobby-agents:end_agent_run",
+            ],
+        },
     ]
-    assert {key: variables[key] for key in ("candidate_received", "verdict_ready", "fixing")} == {
-        "candidate_received": False,
-        "verdict_ready": False,
-        "fixing": False,
-    }
-    assert variables["candidate_task"] is None
-    assert "parked_candidates" not in variables
-    assert list(steps) == [*CODE_REVIEWER_REVIEW_STEPS, "fix"]
-    assert _transitions(steps["load_skills"]) == [("await", LOAD_SKILLS_WHEN)]
-    assert _transitions(steps["await"]) == [
-        ("fix", "vars.fixing"),
-        ("verdict", "vars.candidate_received and vars.verdict_ready"),
-        ("review", "vars.candidate_received"),
-    ]
-    assert _transitions(steps["review"]) == [
-        ("await", "not vars.candidate_received"),
-        ("verdict", "vars.verdict_ready"),
-    ]
-    assert _transitions(steps["verdict"]) == [
-        ("review", "vars.candidate_received and not vars.verdict_ready"),
-        ("await", "not vars.candidate_received"),
-    ]
-    # A directed end of an idle standing reviewer exits as success.
-    assert {
-        "gobby-agents:send_message",
-        "gobby-agents:wait_for_coordination",
-        "gobby-agents:end_agent_run",
-    } <= _allowed_mcp_tools(steps["await"])
-    for step in steps.values():
-        assert "mcp__gobby__set_variable" not in _allowed_tools(step)
-    assert {"Bash", "Read", "Grep"} <= _allowed_tools(steps["review"])
-    assert "gobby-agents:send_message" in _allowed_mcp_tools(steps["review"])
-    assert "stored incoming" in prompt
-    assert "set_variable(" not in prompt
-    assert "integration branch named by the injected project policy" in prompt
-    assert "EVENT=CANDIDATE_VERDICT TASK=#NNNNN" in prompt
-    assert "VERDICT=LAND|BOUNCE" in prompt
-    assert "HIGH, MEDIUM or LOW" in prompt
-    assert "`gcode evidence`" in prompt
+    definition = _seat(
+        "research-seat",
+        steps,
+        {"required_skills": ["gobby:references/synthetic/research.md"]},
+    )
+    run = SeatRun(temp_db, "research-seat", definition=definition)
+    assert await run.admits("gobby-sessions", "set_title")
+    assert not await run.admits("gobby-tasks", "claim_task")
+    # A send without a target is a parent send that every step admits, so the refusal is
+    # checked with a session target.
+    assert not await run.admits(
+        "gobby-agents",
+        "send_message",
+        {"target": "session", "target_id": COORDINATOR_ID, "content": "ping"},
+    )
+    assert not await run.admits("gobby-agents", "wait_for_coordination")
+    await run.load(*run.vars["required_skills"])
+    assert run.step == "serve"
+    assert await run.admits("gobby-agents", "end_agent_run")
+    assert not await run.admits_native("Edit", EDIT)
 
 
-@pytest.mark.parametrize("step_name", ["review", "verdict"])
-@pytest.mark.parametrize("succeeded", [True, False])
+async def test_edit_tools_admitted_only_after_a_claim_hands_the_seat_to_fix(
+    temp_db: PostgresHubDatabase,
+) -> None:
+    run = SeatRun(temp_db, "claim-fixer", definition=CLAIM_GATED_FIXER)
+    assert not await run.admits_native("Edit", EDIT)
+    task = run.task()
+    await run.call("gobby-tasks", "claim_task", {"task_id": task.id}, {"success": True})
+    assert run.step == "fix"
+    assert await run.admits_native("Edit", EDIT)
+    assert await run.admits_native("Write", EDIT)
+
+
+def _single_transition_seat(start: str, target: str, when: str) -> dict[str, Any]:
+    """A two-step reviewer seat carrying exactly one transition."""
+    steps: list[dict[str, Any]] = [
+        {"name": start, "allowed_tools": [CALL], "transitions": [{"to": target, "when": when}]},
+        {"name": target, "allowed_tools": [CALL]},
+    ]
+    return _seat("code-reviewer", steps, REVIEWER_VARIABLES)
+
+
 @pytest.mark.parametrize(
-    ("content", "withdrawn"),
+    ("start", "target", "when", "state", "expected"),
     [
-        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24164 NOTE=already reviewed elsewhere", True),
-        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24188 NOTE=Dev Manager reassignment", True),
-        ("EVENT=CANDIDATE_WITHDRAWN TASK=#24236 NOTE=Dev Manager reassignment", True),
-        ("EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate", False),
-        ("Prose EVENT=CANDIDATE_WITHDRAWN TASK=#24164", False),
-        ("EVENT=PROOF_REQUEST TASK=#24164 NOTE=EVENT=CANDIDATE_WITHDRAWN", False),
+        pytest.param(
+            "review",
+            "await",
+            "not vars.candidate_received",
+            {"candidate_received": False, "verdict_ready": False},
+            "await",
+            id="stand-down-exits-without-a-verdict",
+        ),
+        pytest.param(
+            "review",
+            "verdict",
+            "vars.verdict_ready",
+            {"candidate_received": True, "verdict_ready": False},
+            "review",
+            id="unready-candidate-stays-in-review",
+        ),
+        pytest.param(
+            "verdict",
+            "review",
+            "vars.candidate_received and not vars.verdict_ready",
+            {"candidate_received": True, "verdict_ready": False},
+            "review",
+            id="verdict-returns-to-review-when-unready",
+        ),
+        pytest.param(
+            "await",
+            "verdict",
+            "vars.candidate_received and vars.verdict_ready",
+            {"candidate_received": True, "verdict_ready": True},
+            "verdict",
+            id="ready-candidate-goes-to-verdict",
+        ),
     ],
 )
-async def test_code_reviewer_withdrawal_acknowledgment_exits_without_verdict_or_receipt(
+async def test_reviewer_step_moves_only_on_its_own_transition(
     temp_db: PostgresHubDatabase,
-    step_name: str,
-    succeeded: bool,
-    content: str,
-    withdrawn: bool,
+    start: str,
+    target: str,
+    when: str,
+    state: dict[str, Any],
+    expected: str,
 ) -> None:
-    run, task = await _reviewer_run(temp_db, step_name)
-    candidate = content.split("TASK=", 1)[1].split(" ", 1)[0] if withdrawn else "#24164"
-    content = content.replace(candidate, task.id).replace(" NOTE=", f" SHA={SHA} NOTE=")
-    before = run.vars
-    comments = temp_db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,))
-    message = InterSessionMessageManager(temp_db).create_message(
-        SESSION_ID, COORDINATOR_ID, content
+    run = SeatRun(
+        temp_db,
+        "code-reviewer",
+        definition=_single_transition_seat(start, target, when),
     )
+    _set_state(run, start, **state)
     await run.call(
         "gobby-agents",
         "send_message",
-        {"target": "session", "target_id": message.to_session, "content": content},
-        {"success": succeeded, "message_ids": [message.id]},
+        {"target": "session", "target_id": COORDINATOR_ID, "content": "ping"},
     )
-    if withdrawn and succeeded:
-        assert run.step == "await"
+    assert run.step == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "succeeded", "expected"),
+    [
+        pytest.param(
+            "EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha} NOTE=already reviewed elsewhere",
+            True,
+            "await",
+            id="exact-unit-delivered",
+        ),
+        pytest.param(
+            "EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha} NOTE=already reviewed elsewhere",
+            False,
+            "verdict",
+            id="exact-unit-failed-delivery",
+        ),
+        pytest.param(
+            "EVENT=CANDIDATE_WITHDRAWN TASK=#99 NOTE=other candidate",
+            True,
+            "verdict",
+            id="other-task",
+        ),
+        pytest.param(
+            "EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={other} NOTE=other sha",
+            True,
+            "verdict",
+            id="other-sha",
+        ),
+        pytest.param(
+            "Prose EVENT=CANDIDATE_WITHDRAWN TASK={task} SHA={sha}",
+            True,
+            "verdict",
+            id="prose-prefix",
+        ),
+        pytest.param(
+            "EVENT=PROOF_REQUEST TASK={task} SHA={sha} NOTE=EVENT=CANDIDATE_WITHDRAWN",
+            True,
+            "verdict",
+            id="proof-request-echo",
+        ),
+    ],
+)
+async def test_candidate_withdrawal_exits_only_for_its_own_unit(
+    temp_db: PostgresHubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    succeeded: bool,
+    expected: str,
+) -> None:
+    patch_local_machine_id(monkeypatch, "21000000-0000-4000-8000-000000000001")
+    run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
+    task = run.task()
+    await run.intake(task)
+    text = content.format(task=task.id, sha=SHA, other="b" * 40)
+    message = InterSessionMessageManager(temp_db).create_message(COORDINATOR_ID, SESSION_ID, text)
+    before = run.vars
+    # A withdrawal is a stored incoming message the seat reads; a failed read must not clear.
+    await run.call(
+        "gobby-agents",
+        "get_inter_session_message",
+        {"message_id": message.id},
+        {"success": succeeded, "message": message.to_dict()},
+    )
+    assert run.step == expected
+    if expected == "await":
         assert run.vars["candidate_task"] is None
         assert run.vars["candidate_sha"] is None
         assert run.vars["candidate_received"] is False
         assert run.vars["verdict_ready"] is False
     else:
-        assert run.step == step_name
         assert run.vars == before
-    assert (
-        temp_db.fetchall("SELECT id FROM task_comments WHERE task_id = %s", (task.id,)) == comments
-    )
-
-
-def test_security_reviewer_has_no_step_workflow_to_strand() -> None:
-    definition = _load("security-reviewer")
-    assert definition.step_workflow is None
-    assert definition.execution_mode == "interactive"
-
-
-@pytest.mark.parametrize(
-    ("candidate_received", "verdict_ready", "expected"),
-    [(False, False, "await"), (True, False, None), (True, True, "verdict")],
-)
-def test_code_reviewer_stand_down_exits_without_fabricating_a_verdict(
-    candidate_received: bool, verdict_ready: bool, expected: str | None
-) -> None:
-    transition = next(
-        (
-            item.to
-            for item in _steps("code-reviewer")["review"].transitions
-            if _matches(
-                item.when or "True",
-                "",
-                candidate_received=candidate_received,
-                verdict_ready=verdict_ready,
-            )
-        ),
-        None,
-    )
-    assert transition == expected
-
-
-@pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
-async def test_land_verdict_rejects_malformed_bound_sha(
-    temp_db: PostgresHubDatabase, candidate_sha: str | None
-) -> None:
-    run, task = await _reviewer_run(temp_db)
-    instance = run.instances.get_for_session(SESSION_ID)
-    assert instance is not None
-    # A corrupt recovered snapshot must never complete the unit.
-    instance.variables["candidate_sha"] = candidate_sha
-    run.instances.save(instance)
-    content = f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={candidate_sha} VERDICT=LAND"
-    before = run.vars
-    await run.send(content)
-    assert run.step == "verdict"
-    assert run.vars == before
-
-
-def test_code_reviewer_hands_each_land_verdict_to_the_dev_manager() -> None:
-    verdict = _steps("code-reviewer")["verdict"]
-    prompt = _prompt("code-reviewer")
-
-    assert _allowed_mcp_tools(verdict) == {
-        "gobby-agents:send_message",
-        "gobby-agents:get_inter_session_message",
-        "gobby-tasks:get_task",
-        "gobby-tasks:record_review_step",
-        "gobby-agents:wait_for_coordination",
-    }
-    assert not verdict.on_mcp_before
-    assert "Bash" in _allowed_tools(verdict)
-    assert "mcp__gobby__set_variable" not in _allowed_tools(verdict)
-    approval = prompt.index('gobby-tasks:record_review_step(task_id, status="approved"')
-    assert approval < prompt.index("send the LAND verdict to your Dev Manager and the author")
-    assert "Your Dev Manager lands the approved SHA" in prompt
-    assert "starts with that line, after your approved review step record" in prompt
-    definition = str(_raw("code-reviewer"))
-    for retired in (
-        "land_commit",
-        "LAND_PENDING",
-        "LAND_BLOCKED",
-        "ALREADY_LANDED",
-        "CANDIDATE_PARKED",
-        "CANDIDATE_RESUMED",
-        "REVIEW_ONLY_REQUIRED",
-        "REVIEW_COMPLETE",
-        "landing_approval",
-        "parked",
-        "EVENT=LANDED",
-        "PROOF_RESULT",
-        "RETEST=",
-    ):
-        assert retired not in prompt
-        assert retired not in definition
-    # A new SHA needs its own approval before the Dev Manager can land it.
-    new_sha = prompt.index("- Replacement SHA.")
-    assert "fresh approved review step record for its full SHA" in prompt[new_sha:]
-    assert "Merge Manager" not in prompt
 
 
 @pytest.mark.parametrize(
     ("content", "resets"),
     [
         ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=BOUNCE NOTE=HIGH", True),
-        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND NOTE=approved", True),
+        ("EVENT=CANDIDATE_VERDICT TASK=#42 SHA=abc VERDICT=LAND NOTE=approved", False),
         ("EVENT=CANDIDATE_VERDICT TASK=#43 SHA=abc VERDICT=LAND", False),
         (f"EVENT=CANDIDATE_VERDICT TASK=#42 SHA={'b' * 40} VERDICT=LAND", False),
         ("EVENT=LANDED TASK=#42 SHA=abc RECEIPT=r1 RETEST=NOT_REQUIRED", False),
@@ -699,7 +422,7 @@ def test_code_reviewer_hands_each_land_verdict_to_the_dev_manager() -> None:
     ],
     ids=[
         "bounce",
-        "land-verdict",
+        "land-without-stored-approval",
         "other-task",
         "other-sha",
         "landed",
@@ -709,10 +432,19 @@ def test_code_reviewer_hands_each_land_verdict_to_the_dev_manager() -> None:
         "note",
     ],
 )
-async def test_code_reviewer_resets_only_on_its_own_verdict_for_its_candidate(
+async def test_candidate_verdict_resets_only_for_its_own_unit(
     temp_db: PostgresHubDatabase, content: str, resets: bool
 ) -> None:
-    run, task = await _reviewer_run(temp_db)
+    run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
+    task = run.task()
+    _set_state(
+        run,
+        "verdict",
+        candidate_received=True,
+        verdict_ready=True,
+        candidate_task=task.id,
+        candidate_sha=SHA,
+    )
     before = run.vars
     await run.send(content.replace("TASK=#42", f"TASK={task.id}").replace("SHA=abc", f"SHA={SHA}"))
     assert run.step == ("await" if resets else "verdict")
@@ -730,55 +462,27 @@ async def test_code_reviewer_resets_only_on_its_own_verdict_for_its_candidate(
         assert run.vars == before
 
 
-def test_archivist_writes_only_the_workspace_digest() -> None:
-    body = _load("archivist")
-    prompt = _prompt("archivist")
-
-    assert body.blocked_tools == []
-    assert body.step_workflow is None
-    assert "`archivist-write-scope`" in prompt
-    assert "<project>/.gobby/reports/gobby-digest-YYYY-MM-DD.md" in prompt
-    assert "~/Desktop" not in prompt
-    assert "No one else writes the digest" in prompt
-    assert '"Epic queues — current"' in prompt
-    assert "only active and parked" in prompt
-    assert "Carries forward" in prompt
-    assert "only from Orchestrator evidence" in prompt
-    assert "Flag gaps or contradictions to Triage" in prompt
-
-
-def test_log_monitor_runs_the_tick_report_loop() -> None:
-    variables = _variables("log-monitor")
-    steps = _steps("log-monitor")
-    prompt = _prompt("log-monitor")
-
-    assert variables["required_skills"] == [
-        "brevity",
-        "gobby:references/observability/diagnostics.md",
-        "gobby:references/observability/metrics.md",
-    ]
-    assert variables["tick_done"] is False
-    assert variables["tick_window"] is None
-    assert list(steps) == ["load_skills", "tick", "report"]
-    assert _transitions(steps["load_skills"]) == [("tick", LOAD_SKILLS_WHEN)]
-    assert _transitions(steps["tick"]) == []
-    assert _transitions(steps["report"]) == [("tick", "not vars.tick_done")]
-    assert "gobby-agents:wait_for_coordination" in _allowed_mcp_tools(steps["tick"])
-    assert {"gobby-agents:send_message", "gobby-agents:wait_for_coordination"} <= (
-        _allowed_mcp_tools(steps["report"])
+@pytest.mark.parametrize("candidate_sha", ["", "abc", "g" * 40, None])
+async def test_land_verdict_rejects_malformed_bound_sha(
+    temp_db: PostgresHubDatabase, candidate_sha: str | None
+) -> None:
+    run = SeatRun(temp_db, "code-reviewer", definition=MALFORMED_SHA_REVIEWER)
+    task = run.task()
+    instance = run.instances.get_for_session(SESSION_ID)
+    assert instance is not None
+    # A corrupt recovered snapshot must never complete the unit.
+    instance.current_step = "verdict"
+    instance.variables.update(
+        candidate_received=True,
+        verdict_ready=True,
+        candidate_task=task.id,
+        candidate_sha=candidate_sha,
     )
-    for step in ("tick", "report"):
-        assert "mcp__gobby__set_variable" not in _allowed_tools(steps[step])
-    assert "reply=true, timeout=600" in prompt
-    assert "set_variable(" not in prompt
-    assert (
-        "Systems nominal | window HH:MM-HH:MM | <N> warnings in <K> families, all mapped"
-    ) in prompt
-    assert "EVENT=ALARM" in prompt
-    assert "Copy every ALARM to the Assistant" in prompt
-    assert "matched time windows" in prompt
-    assert "~/.gobby/logs/" in prompt
-    assert "log-monitor-tick" not in prompt
+    run.instances.save(instance)
+    before = run.vars
+    await run.send(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={candidate_sha} VERDICT=LAND")
+    assert run.step == "verdict"
+    assert run.vars == before
 
 
 @pytest.mark.parametrize(
@@ -790,18 +494,13 @@ def test_log_monitor_runs_the_tick_report_loop() -> None:
     ],
     ids=["nominal", "alarm", "status-reply"],
 )
-async def test_log_monitor_resets_only_on_a_nominal_or_alarm_report(
+async def test_monitor_leaves_report_only_on_a_nominal_or_alarm_report(
     temp_db: PostgresHubDatabase, content: str, resets: bool
 ) -> None:
-    run = SeatRun(temp_db, "log-monitor")
-    SessionVariableManager(run.db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
-    await run.load(*run.vars["required_skills"])
-    instance = run.instances.get_for_session(SESSION_ID)
-    assert instance is not None
-    # Recover an older report-step snapshot; fresh monitors remain in tick.
-    instance.current_step = "report"
-    instance.variables.update(tick_done=True, tick_window="previous-window")
-    run.instances.save(instance)
+    run = SeatRun(temp_db, "log-monitor", definition=MONITOR)
+    # Monitors report to Triage; only a durable report to Triage counts.
+    SessionVariableManager(temp_db).set_variable(COORDINATOR_ID, "_agent_type", "triage")
+    _set_state(run, "report", tick_done=True, tick_window="previous-window")
     before = run.vars
     await run.send(content)
     assert run.step == ("tick" if resets else "report")
@@ -810,74 +509,3 @@ async def test_log_monitor_resets_only_on_a_nominal_or_alarm_report(
         assert run.vars["tick_window"] != "previous-window"
     else:
         assert run.vars == before
-
-
-def test_researcher_is_a_research_only_serving_seat() -> None:
-    variables = _variables("researcher")
-    steps = _steps("researcher")
-    prompt = _prompt("researcher")
-
-    # Absorbed #23003: a sandboxed researcher reaches the web through the trusted allowlist.
-    assert _load("researcher").network == "trusted"
-    assert variables["required_skills"] == ["research", "restraint", "brevity"]
-    assert list(steps) == ["load_skills", "serve"]
-    assert _transitions(steps["load_skills"]) == [("serve", LOAD_SKILLS_WHEN)]
-    assert steps["serve"].transitions == []
-    assert {
-        "gobby-agents:send_message",
-        "gobby-agents:wait_for_coordination",
-        "gobby-agents:end_agent_run",
-    } <= _allowed_mcp_tools(steps["serve"])
-    assert "claim" not in steps
-    assert "Research only" in prompt
-    assert "Send findings and proposals to Triage" in prompt
-    assert "through the Assistant" in prompt
-    assert "Ask Triage for the Orchestrator's go before killing processes" in prompt
-
-
-def test_review_and_observation_seats_sync_as_installed_rows(
-    definition_db: PostgresHubDatabase,
-) -> None:
-    result = sync_bundled_agents(definition_db)
-
-    assert result["success"] is True
-    assert result["errors"] == []
-    manager = AgentDefinitionManager(definition_db)
-    for name in SEATS:
-        row = manager.get_by_name(name)
-        assert row is not None, name
-        assert row.enabled is True, name
-        assert AgentDefinitionBody.model_validate(row.definition_json) == _load(name), name
-
-
-@pytest.mark.parametrize(
-    ("seat", "step_name"),
-    [("developer", "load_skills"), ("code-reviewer", "load_skills"), ("code-reviewer", "await")],
-)
-def test_bootstrap_steps_allow_role_title_setup(seat: str, step_name: str) -> None:
-    workflow = _load(seat).step_workflow
-    assert workflow is not None
-    step = next(step for step in workflow.steps if step.name == step_name)
-    assert {"gobby-sessions:get_session", "gobby-sessions:set_title"} <= set(step.allowed_mcp_tools)
-
-
-@pytest.mark.parametrize(
-    "name", sorted(path.stem for path in get_bundled_agents_path().glob("*.yaml"))
-)
-def test_bundled_agent_definitions_never_request_autonomous_clear(name: str) -> None:
-    definition = (get_bundled_agents_path() / f"{name}.yaml").read_text()
-    assert re.search(r"clear_session\s*[:=]\s*true\b", definition, re.IGNORECASE) is None, name
-
-
-@pytest.mark.parametrize(
-    "name", sorted(path.stem for path in get_bundled_agents_path().glob("*.yaml"))
-)
-def test_bundled_agents_never_explicitly_block_handoff_or_resume(name: str) -> None:
-    definition = _load(name)
-    handoff_tools = {"gobby-sessions:set_handoff", "gobby-sessions:get_handoff"}
-    assert handoff_tools.isdisjoint(definition.blocked_mcp_tools)
-    workflow = definition.step_workflow
-    if workflow is None:
-        return
-    for step in workflow.steps:
-        assert handoff_tools.isdisjoint(step.blocked_mcp_tools), step.name

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -17,9 +16,6 @@ _SESSION_ID = "08e60e7e-1f89-4e30-b37e-db276d81a6b6"
 _CLOSE_ARGUMENTS = {"task_id": "#1"}
 _FULL_RESULT = {"success": True, "closed": True, "task_id": "#1"}
 _BOUND_RESULT = f"project/{_SESSION_ID}/tool-results/mcp-gobby-call_tool-1789424128611.txt"
-_DEVELOPER = (
-    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
-)
 
 
 def _post_tool_output(tool_response: str) -> object:
@@ -85,15 +81,11 @@ def test_missing_saved_result_keeps_the_pointer(tmp_path: Path) -> None:
     assert _post_tool_output(pointer) == pointer
 
 
-def test_recovered_close_task_result_satisfies_developer_close_condition(
-    tmp_path: Path,
-) -> None:
-    agent = yaml.safe_load(_DEVELOPER.read_text(encoding="utf-8"))
-    submit = next(step for step in agent["step_workflow"]["steps"] if step["name"] == "submit")
-    close_hook = next(
-        handler
-        for handler in submit["on_mcp_success"]
-        if handler["server"] == "gobby-tasks" and handler["tool"] == "close_task"
+def test_recovered_close_task_result_satisfies_close_hook_condition(tmp_path: Path) -> None:
+    # Synthetic copy of a seat's close_task success condition, for a recovered result.
+    when = (
+        "tool_output.get('closed') is True "
+        "or (tool_output.get('result') or {}).get('closed') is True"
     )
     evaluator = SafeExpressionEvaluator(
         {
@@ -104,4 +96,33 @@ def test_recovered_close_task_result_satisfies_developer_close_condition(
         {},
     )
 
-    assert evaluator.evaluate(close_hook["when"]) is True
+    assert evaluator.evaluate(when) is True
+
+
+@pytest.mark.parametrize(
+    ("tool_output", "satisfied"),
+    [
+        pytest.param({"result": None}, False, id="null-result"),
+        pytest.param({"closed": False}, False, id="unclosed"),
+        pytest.param({"result": {"closed": False}}, False, id="unclosed-nested"),
+        pytest.param({"closed": True}, True, id="closed"),
+    ],
+)
+def test_close_task_condition_tolerates_null_and_unclosed_results(
+    tool_output: dict[str, object], satisfied: bool
+) -> None:
+    # Synthetic copy of a seat's close_task success condition, for a null or open result.
+    when = (
+        "tool_output.get('closed') is True "
+        "or (tool_output.get('result') or {}).get('closed') is True"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "vars": {"assigned_task_id": "#1"},
+            "tool_input": _CLOSE_ARGUMENTS,
+            "tool_output": tool_output,
+        },
+        {},
+    )
+
+    assert evaluator.evaluate(when) is satisfied

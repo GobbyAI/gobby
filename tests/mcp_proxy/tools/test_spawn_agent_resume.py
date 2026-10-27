@@ -399,7 +399,7 @@ async def test_resume_returns_to_the_previous_run_worktree(tmp_path: Path, in_fl
         agent_run_id="old-run",
         parent_session_id="old-parent",
         workflow_name=None,
-        model=None,
+        model="gpt-5.4",
         reasoning_effort=None,
     )
     sessions = MagicMock()
@@ -533,7 +533,7 @@ async def test_resume_cwd_and_sandbox_root_follow_the_resolved_checkout(
         agent_run_id="old-run",
         parent_session_id="old-parent",
         workflow_name=None,
-        model=None,
+        model="gpt-5.4",
         reasoning_effort=None,
         workspace_path=str(lane_path),
     )

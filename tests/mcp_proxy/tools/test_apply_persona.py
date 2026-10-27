@@ -6,14 +6,9 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import (
-    AgentDefinitionBody,
-    AgentStepWorkflowBody,
-)
+from gobby.workflows.definitions import AgentStepWorkflowBody
 from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = pytest.mark.unit
@@ -128,14 +123,21 @@ class TestBuildSessionPersonaChanges:
         }
         assert active_skills is None
 
-    def test_tech_writer_definition_separates_persona_from_agent_lifecycle(
-        self,
-        db: HubDatabase,
+    def test_persona_and_spawned_prompt_split_guidance_from_lifecycle(
+        self, db: HubDatabase
     ) -> None:
         from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
 
-        path = get_bundled_agents_path() / "tech-writer.yaml"
-        agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
+        agent = make_agent_definition(
+            name="technical-writer",
+            surfaces=["spawn", "persona"],
+            prompts={
+                "persona": "You give interactive technical-writing guidance to the operator.",
+                "agent": (
+                    "Work on assigned_task_id. Finish with submit_for_review, then end_agent_run."
+                ),
+            },
+        )
 
         persona, _ = build_session_persona_context(agent, db, cli_source="codex")
         assert persona is not None

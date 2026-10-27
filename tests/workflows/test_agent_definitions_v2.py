@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -616,7 +617,6 @@ def test_skills_map_is_rejected_with_migration_hint() -> None:
 
 
 def test_version_is_stored_in_body(db: HubDatabase) -> None:
-    from gobby.agents.sync import sync_bundled_agents
     from gobby.workflows.definitions import AgentDefinitionBody
 
     body = AgentDefinitionBody.model_validate(
@@ -631,23 +631,9 @@ def test_version_is_stored_in_body(db: HubDatabase) -> None:
     assert AgentDefinitionBody.model_validate(body.model_dump()).version == "2.3"
     assert body.model_dump()["version"] == "2.3"
 
-    result = sync_bundled_agents(db)
-    assert result["errors"] == []
-    row = AgentDefinitionManager(db).get_by_name("developer")
+    AgentDefinitionManager(db).create(
+        name=body.name, source="custom", definition_json=json.dumps(body.model_dump(mode="json"))
+    )
+    row = AgentDefinitionManager(db).get_by_name("versioned")
     assert row is not None
-    assert row.definition_json["version"] == "1.0"
-
-
-def test_bundled_agents_carry_no_skills_map() -> None:
-    import yaml
-
-    from gobby.agents.sync import get_bundled_agents_path
-    from gobby.workflows.definitions import AgentDefinitionBody
-
-    paths = sorted(get_bundled_agents_path().glob("*.yaml"))
-    assert paths
-    for path in paths:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert isinstance(raw, dict)
-        assert "skills" not in raw, f"{path.name} still has a top-level skills map"
-        assert AgentDefinitionBody.model_validate(raw).name
+    assert row.definition_json["version"] == "2.3"

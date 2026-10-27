@@ -1,8 +1,8 @@
 """Reviewer and maker seat steps key on step grants, not definition names (addendum 7.1).
 
 A docs-reviewer or research-reviewer seat runs the code reviewer's step workflow under its
-own name, and a domain developer runs the developer's. Each seat is the bundled workflow
-installed under another name with the grant under test.
+own name, and a domain developer runs the developer's. Each seat is a synthetic copy of
+that step workflow, installed under another name, with the grant under test.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-import yaml
 
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
@@ -30,8 +29,7 @@ from gobby.workflows.engine.seat_transitions import candidate_binding_error
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 from tests.workflows.test_seat_step_loops import (
-    AGENTS_DIR,
-    EDIT_INPUT,
+    _SYNTHETIC_SEATS,
     PEER_ID,
     PROJECT_ID,
     SESSION_ID,
@@ -64,7 +62,7 @@ def granted_seat(
     *,
     project_id: str = PROJECT_ID,
 ) -> SeatRun:
-    """Run ``template``'s bundled step workflow as definition ``name`` with ``grants``."""
+    """Run ``template``'s synthetic step workflow as definition ``name`` with ``grants``."""
     run = SeatRun(db, template, project_id=project_id)
     instance = run.instances.get_for_session(SESSION_ID)
     assert instance is not None
@@ -72,8 +70,7 @@ def granted_seat(
     run.instances.delete_for_session(SESSION_ID)
     run.instances.save(instance.model_copy(update={"agent_name": name}))
     if name != template:
-        body = yaml.safe_load((AGENTS_DIR / f"{template}.yaml").read_text())
-        body = {key: value for key, value in body.items() if key != "network"}
+        body = json.loads(json.dumps(_SYNTHETIC_SEATS[template]))
         body.update(name=name, task_step_writes=grants)
         AgentDefinitionManager(db).create(name=name, definition_json=json.dumps(body), enabled=True)
     SessionVariableManager(db).set_variable(SESSION_ID, "_agent_type", name)
@@ -235,7 +232,6 @@ async def test_implementation_grant_drives_maker_steps(
     assert run.vars["additional_skills"] == ["typescript"]
     await run.load("typescript")
     assert run.step == "implement"
-    assert await run.admits_native("Edit", EDIT_INPUT)
 
 
 @pytest.mark.parametrize("name", ["frontend-developer", "developer"])

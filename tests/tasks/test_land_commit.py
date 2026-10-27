@@ -99,6 +99,20 @@ async def test_approved_review_record_at_exact_tip_lands(case: LandingCase) -> N
     assert case.git("rev-parse", "trunk") == sha
 
 
+async def test_land_preview_follows_the_approval_not_a_drifted_stored_status(
+    case: LandingCase,
+) -> None:
+    """The land preview reads the approval at the exact tip, not the stored review status."""
+    sha = case.candidate("lane", {"docs/change.md": "drifted copy"})
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+    case.db.execute("UPDATE tasks SET review_status = 'pending' WHERE id = %s", (task.id,))
+    landed = await case.land(task, sha)
+    assert landed["landed"] is True
+    assert case.git("rev-parse", "trunk") == sha
+
+
 @pytest.mark.parametrize("staleness", ["superseded_tip", "prior_epoch"])
 async def test_stale_review_record_refuses_landing(case: LandingCase, staleness: str) -> None:
     sha = case.candidate("lane", {"docs/change.md": "first"})

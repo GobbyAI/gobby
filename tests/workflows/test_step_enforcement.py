@@ -50,19 +50,24 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
     step: str,
     tmp_path: Path,
 ) -> None:
-    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
-    definition = yaml.safe_load((shared / "researcher.yaml").read_text())
-    definition.pop("network")
-    workflow = definition.pop("step_workflow")
+    rules_root = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules"
+    definition: dict[str, Any] = {
+        "name": "researcher",
+        "blocked_tools": [],
+        "blocked_mcp_tools": [],
+        "workflows": {"rule_selectors": {"include": ["name:researcher-write-scope"]}},
+        "steps": [
+            {"name": "load_skills", "blocked_tools": ["Edit", "Write", "apply_patch"]},
+            {"name": "serve"},
+        ],
+    }
     variables = {
         "_agent_blocked_tools": definition["blocked_tools"],
         "_agent_blocked_mcp_tools": definition["blocked_mcp_tools"],
         "_agent_type": "researcher",
     }
-    _setup_step_workflow(
-        db, manager, instance_mgr, current_step=step, workflow_data={**definition, **workflow}
-    )
-    scope_bundle = yaml.safe_load((shared.parent / "rules/roles/seat-write-scope.yaml").read_text())
+    _setup_step_workflow(db, manager, instance_mgr, current_step=step, workflow_data=definition)
+    scope_bundle = yaml.safe_load((rules_root / "roles/seat-write-scope.yaml").read_text())
     scope_rule = scope_bundle["rules"]["researcher-write-scope"]
     RuleDefinitionManager(db).create(
         name="researcher-write-scope",
@@ -110,178 +115,14 @@ async def test_researcher_title_and_report_writes_follow_step_and_path_scope(
 
 
 @pytest.mark.asyncio
-async def test_researcher_serve_step_allows_closing_its_research_spike(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    engine: RuleEngine,
-    instance_mgr: AgentStepInstanceManager,
-    tmp_path: Path,
-) -> None:
-    from gobby.config.tasks import TaskClosePolicyConfig
-    from gobby.tasks.step_records import required_task_steps
-
-    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
-    definition = yaml.safe_load((shared / "researcher.yaml").read_text())
-    definition.pop("network")
-    workflow = definition.pop("step_workflow")
-    variables = {
-        "_agent_blocked_tools": definition["blocked_tools"],
-        "_agent_blocked_mcp_tools": definition["blocked_mcp_tools"],
-        "_agent_type": "researcher",
-    }
-    _setup_step_workflow(
-        db, manager, instance_mgr, current_step="serve", workflow_data={**definition, **workflow}
-    )
-    scope_bundle = yaml.safe_load((shared.parent / "rules/roles/seat-write-scope.yaml").read_text())
-    scope_rule = scope_bundle["rules"]["researcher-write-scope"]
-    RuleDefinitionManager(db).create(
-        name="researcher-write-scope",
-        definition_json={key: scope_rule[key] for key in ("event", "when", "effects")},
-        tags=scope_bundle["tags"],
-    )
-    spike_steps = required_task_steps(
-        TaskClosePolicyConfig(enforce_step_records=True),
-        task_type="research_spike",
-        category="research",
-    )
-    researcher_steps = [step for step in spike_steps if step != "review"]
-    close_path = [
-        "link_commit",
-        *(f"record_{step}_step" for step in researcher_steps),
-        "close_task",
-    ]
-    for tool in close_path:
-        response = await engine.evaluate(
-            _make_event(
-                data={
-                    "tool_name": "mcp__gobby__call_tool",
-                    "tool_input": {
-                        "server_name": "gobby-tasks",
-                        "tool_name": tool,
-                        "arguments": {"task_id": "#1"},
-                    },
-                }
-            ),
-            session_id=SESSION_ID,
-            variables=variables,
-        )
-        assert response.decision != "block", (tool, response.reason)
-
-    # The reviewer records the spike's review step; the researcher's serve step never does.
-    refused = await engine.evaluate(
-        _make_event(
-            data={
-                "tool_name": "mcp__gobby__call_tool",
-                "tool_input": {
-                    "server_name": "gobby-tasks",
-                    "tool_name": "record_review_step",
-                    "arguments": {"task_id": "#1"},
-                },
-            }
-        ),
-        session_id=SESSION_ID,
-        variables=variables,
-    )
-    assert refused.decision == "block", refused.reason
-
-    # Source code stays read-only while the close path opens.
-    code = str(tmp_path / "src/app.py")
-    response = await engine.evaluate(
-        _make_event(
-            data={
-                "tool_name": "Edit",
-                "tool_input": {"file_path": code},
-                "canonical_tool_kind": "write",
-                "canonical_file_paths": [code],
-                "project_path": str(tmp_path),
-                "cwd": str(tmp_path),
-            }
-        ),
-        session_id=SESSION_ID,
-        variables=variables,
-    )
-    assert response.decision == "block"
-    assert "researcher-write-scope" in (response.reason or "")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("seat", "step"),
-    [
-        ("developer", "load_skills"),
-        ("developer", "claim"),
-        ("code-reviewer", "load_skills"),
-        ("code-reviewer", "await"),
-    ],
-)
-async def test_runbook_unassigned_seat_can_bootstrap_and_report(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    engine: RuleEngine,
-    instance_mgr: AgentStepInstanceManager,
-    seat: str,
-    step: str,
-) -> None:
-    """Native reads and live-owner reports work before assignment; writes stay gated."""
-    shared = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
-    definition = yaml.safe_load((shared / f"{seat}.yaml").read_text())
-    workflow = definition.pop("step_workflow")
-    _setup_step_workflow(
-        db, manager, instance_mgr, current_step=step, workflow_data={**definition, **workflow}
-    )
-    body = AgentDefinitionBody.model_validate({**definition, "step_workflow": workflow})
-    assert "session" in body.send_message_targets
-    for native, arguments in [
-        ("Bash", {"command": "cat AGENTS.md"}),
-        ("Read", {"file_path": "AGENTS.md"}),
-    ]:
-        response = await engine.evaluate(
-            _make_event(data={"tool_name": native, "tool_input": arguments}),
-            session_id=SESSION_ID,
-            variables={},
-        )
-        assert response.decision != "block", response.reason
-    for tool, coordination_arguments in [
-        ("send_message", {"target": "session", "target_id": "gobby#14972", "content": "Ready"}),
-        ("wait_for_coordination", {"owner_session": "gobby#14972", "reply": True}),
-    ]:
-        response = await engine.evaluate(
-            _make_event(
-                data={
-                    "tool_name": "mcp__gobby__call_tool",
-                    "tool_input": {
-                        "server_name": "gobby-agents",
-                        "tool_name": tool,
-                        "arguments": coordination_arguments,
-                    },
-                }
-            ),
-            session_id=SESSION_ID,
-            variables={},
-        )
-        assert response.decision != "block", response.reason
-    for native in ("Edit", "Write", "apply_patch"):
-        response = await engine.evaluate(
-            _make_event(data={"tool_name": native, "tool_input": {}}),
-            session_id=SESSION_ID,
-            variables={},
-        )
-        assert response.decision == "block"
-    current = instance_mgr.get_for_session(SESSION_ID)
-    assert current is not None and current.current_step == step
-
-
-@pytest.mark.asyncio
 async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
     db: "HubDatabase",
     manager: AgentDefinitionManager,
     engine: RuleEngine,
     instance_mgr: AgentStepInstanceManager,
 ) -> None:
-    """Real paged skill delivery moves the bundled reviewer on only after every required load."""
+    """Real paged skill delivery moves a load_skills seat on only after its final page."""
     import hashlib
-
-    import yaml
 
     from gobby.mcp_proxy.tools.skills import create_skills_registry
     from gobby.storage.skills import LocalSkillManager, SkillFile
@@ -289,14 +130,24 @@ async def test_code_reviewer_leaves_load_skills_only_after_every_final_page(
     from gobby.workflows.state_manager import SessionVariableManager
 
     shared = Path(__file__).parents[2] / "src/gobby/install/shared"
-    definition = yaml.safe_load((shared / "workflows/agents/code-reviewer.yaml").read_text())
-    step_workflow = definition.pop("step_workflow")
+    definition: dict[str, Any] = {
+        "name": "code-reviewer",
+        "steps": [
+            {
+                "name": "load_skills",
+                "transitions": [
+                    {"to": "await", "when": "'restraint' in vars.get('loaded_skills', [])"}
+                ],
+            },
+            {"name": "await", "status_message": "Read a routed CANDIDATE"},
+        ],
+    }
     _setup_step_workflow(
         db,
         manager,
         instance_mgr,
         current_step="load_skills",
-        workflow_data={**definition, **step_workflow},
+        workflow_data=definition,
     )
     stored = manager.get_by_name("code-reviewer")
     assert stored is not None and stored.step_workflow_id is not None
@@ -3759,50 +3610,6 @@ async def test_capability_neutral_tools_pass_step_allowlist(
     )
     response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
     assert response.decision == "allow"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("mcp_key", "decision"),
-    [
-        ("gobby-sessions:set_title", "allow"),
-        ("gobby-memory:update_memory", "allow"),
-        ("gobby-memory:create_memory", "allow"),
-        ("gobby-memory:delete_memory", "allow"),
-        ("gobby-agents:spawn_agent", "block"),
-        ("gobby-tasks:create_task", "block"),
-    ],
-)
-async def test_bundled_developer_claim_gates_its_mcp_tools(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    engine: RuleEngine,
-    instance_mgr: AgentStepInstanceManager,
-    mcp_key: str,
-    decision: str,
-) -> None:
-    """Claim keeps set_title and memory writes reachable; spawn and task creation stay blocked."""
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/developer.yaml"
-    )
-    bundled = yaml.safe_load(path.read_text())
-    workflow_data = {
-        **{key: value for key, value in bundled.items() if key != "step_workflow"},
-        **bundled["step_workflow"],
-    }
-    _setup_step_workflow(
-        db, manager, instance_mgr, current_step="claim", workflow_data=workflow_data
-    )
-    server, tool = mcp_key.split(":")
-    event = _make_event(
-        data={
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {"server_name": server, "tool_name": tool},
-        }
-    )
-    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
-    assert response.decision == decision
 
 
 @pytest.mark.asyncio

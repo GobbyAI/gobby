@@ -236,13 +236,15 @@ class AgentPaneReserver:
         placement: AgentPlacement,
         *,
         own_seat_resume: bool = False,
+        own_team_tab: str | None = None,
     ) -> ResolvedPlacement:
         """Resolve and authorize ``placement`` read-only.
 
         ``own_seat_resume`` admits an autonomous caller only for its own team's seat resume.
+        ``own_team_tab`` admits an autonomous caller's fresh seat only into that team tab.
         """
         return await asyncio.to_thread(
-            self._preflight, actor, project_id, placement, own_seat_resume
+            self._preflight, actor, project_id, placement, own_seat_resume, own_team_tab
         )
 
     def _preflight(
@@ -251,11 +253,15 @@ class AgentPaneReserver:
         project_id: str,
         placement: AgentPlacement,
         own_seat_resume: bool,
+        own_team_tab: str | None,
     ) -> ResolvedPlacement:
         with _placement_errors():
             target = self._workspaces.resolve_reference(placement.ref)
+            allow_autonomous = own_seat_resume or own_team_tab is not None
             try:
-                scope = resolve_actor_scope(self._sessions, actor, allow_autonomous=own_seat_resume)
+                scope = resolve_actor_scope(
+                    self._sessions, actor, allow_autonomous=allow_autonomous
+                )
             except ActorScopeError as exc:
                 raise AgentPlacementError("forbidden", str(exc)) from exc
             if not scope.admits(project_id=project_id):
@@ -263,6 +269,8 @@ class AgentPaneReserver:
             _require_local(target.node)
             beside_pane_id = tab_id = None
             if placement.kind == "tab":
+                if own_team_tab is not None:
+                    raise AgentPlacementError("forbidden", "A team seat joins its team tab")
                 workspace = _workspace_of(target, placement.ref)
             else:
                 tab, beside = (
@@ -273,6 +281,10 @@ class AgentPaneReserver:
                 if tab.project_id != project_id:
                     raise AgentPlacementError(
                         "forbidden", f"Pane {beside.id} belongs to another project"
+                    )
+                if own_team_tab is not None and tab.title != own_team_tab:
+                    raise AgentPlacementError(
+                        "forbidden", f"A team seat joins tab {own_team_tab!r}, not {tab.title!r}"
                     )
                 workspace, beside_pane_id, tab_id = target.workspace, beside.id, tab.id
             if target.node.ref is None:

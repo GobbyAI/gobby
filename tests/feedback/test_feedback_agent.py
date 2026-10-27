@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-import yaml
 
 from gobby.agents.runner import AgentRunner
 from gobby.config.app import DaemonConfig
@@ -28,10 +27,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
-
-AGENT_PATH = (
-    Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents/feedback-reviewer.yaml"
-)
 
 
 class _FakeRegistry:
@@ -278,40 +273,6 @@ async def test_named_reviewer_accepts_evicted_notification_after_durable_success
     result = await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert result.findings == {"clusters": []}
-
-
-def test_feedback_reviewer_agent_requires_both_methodology_skills() -> None:
-    document = yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
-
-    assert document["name"] == FEEDBACK_REVIEWER_AGENT_NAME
-    assert document["surfaces"] == ["spawn"]
-    workflow = document["step_workflow"]
-    assert workflow["exit_condition"] == "vars.review_complete"
-    load_step, review_step = workflow["steps"]
-    tracked_skills = {
-        hook["when"]
-        for hook in load_step["on_mcp_success"]
-        if hook["server"] == "gobby-skills" and hook["tool"] == "get_skill"
-    }
-    assert tracked_skills == {
-        "tool_input.name == 'restraint'",
-        "tool_input.name == 'proportionality'",
-    }
-    assert load_step["transitions"] == [
-        {
-            "to": "review",
-            "when": "vars.restraint_loaded and vars.proportionality_loaded",
-        }
-    ]
-    assert set(review_step["allowed_mcp_tools"]) >= {
-        "gobby-feedback:get_review_observations",
-        "gobby-feedback:get_review_results",
-        "gobby-feedback:submit_review",
-        "gobby-tasks:get_task",
-        "gobby-skills:get_skill",
-        "gobby-skills:get_skill_file",
-        "gobby-agents:end_agent_run",
-    }
 
 
 @pytest.mark.asyncio

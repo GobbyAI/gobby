@@ -11,7 +11,6 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
@@ -25,10 +24,10 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
-from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import make_team_world, running_seat
 
@@ -578,7 +577,7 @@ class TestLimitSpawnNetworkOverride:
         session_manager: SessionManager,
         callers: dict[str, Session],
     ) -> None:
-        sync_bundled_agents(temp_db)
+        seed_seat(temp_db, "default", spawnable_agents=["*"])
         _only_rules_enabled(temp_db, LIMIT_SPAWNABLE_AGENTS, LIMIT_SPAWN_NETWORK_OVERRIDE)
         caller_id = callers["default"].id
 
@@ -588,9 +587,6 @@ class TestLimitSpawnNetworkOverride:
             variables={},
         )
 
-        body = resolve_agent("default", temp_db)
-        assert body is not None
-        assert body.spawnable_agents == ["*"]
         assert response.decision == "allow"
 
     @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -164,17 +163,18 @@ class ReviewTeam:
     candidate: str
 
 
-def commit(db: HubDatabase, binding: TeamBinding, name: str) -> str:
-    """Commit ``name`` in the team tree and link it as the task's latest commit."""
+def commit(db: HubDatabase, binding: TeamBinding, name: str, task: Task | None = None) -> str:
+    """Commit ``name`` in the team tree and link it to ``task`` (default: the team's task)."""
     tree = Path(binding.worktree_path)
     (tree / name).write_text(f"# {name}\n")
     git_in(tree, "add", name)
     git_in(tree, "commit", "-m", f"Add {name}")
     sha = git_in(tree, "rev-parse", "HEAD")
-    commits = LocalTaskManager(db).get_task(binding.task_id).commits or []
+    task_id = binding.task_id if task is None else task.id
+    commits = LocalTaskManager(db).get_task(task_id).commits or []
     db.execute(
         "UPDATE tasks SET commits = %s WHERE id = %s",
-        (json.dumps([*commits, sha]), binding.task_id),
+        (json.dumps([*commits, sha]), task_id),
     )
     return sha
 
@@ -349,9 +349,23 @@ async def admitted(world: TeamWorld, run: Session, inputs: dict[str, Any]) -> di
 
 
 def launch(run: Session, context: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The MCP arguments of every devteam step that runs for ``context``, by step id."""
-    rendered = {step.id: render(run, step.id, context) for step in DEVTEAM.steps}
-    return {step_id: arguments for step_id, arguments in rendered.items() if arguments is not None}
+    """The MCP arguments of every devteam step that runs for ``context``, by step id.
+
+    Steps render in order, and each launched seat's step leaves the output a spawned seat
+    reports, so later steps such as arrange read its pane_ref as a real execution does.
+    """
+    context = {**context, "steps": dict(context["steps"])}
+    launched = set(context["steps"]["guard"]["output"]["launch"])
+    rendered: dict[str, dict[str, Any]] = {}
+    for step in DEVTEAM.steps:
+        arguments = render(run, step.id, context)
+        if arguments is None:
+            continue
+        rendered[step.id] = arguments
+        if step.id in launched:
+            seat = {"child_session_id": f"seat-{step.id}", "pane_ref": f"0:0:1:{len(rendered)}"}
+            context["steps"][step.id] = {"output": seat}
+    return rendered
 
 
 def identity(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -657,15 +671,17 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     with pytest.raises(StepRecordError, match="claimant"):
         submit(db, team.sol, task_id, "review", "rejected", 3, second_fix)
 
-    # The team launched its seats with the Sol reviewer and opened the branch's tab.
+    # The team launched its seats with the Sol reviewer and opened the branch's tab; the
+    # arrange step tiles that tab last, once every seat has launched.
     initial = launch(team.runbook, await admitted(world, team.runbook, {"task": task_id}))
     seats = ["dev-manager", "test-writer", "developer", "code-reviewer"]
-    assert list(initial) == ["guard", "admit", *seats]
+    assert list(initial) == ["guard", "admit", *seats, "arrange"]
     assert identity(initial["code-reviewer"]) == SOL
     assert initial["dev-manager"]["placement"] == {
         "tab": {"workspace": WORKSPACE, "title": f"Dev Team - #{team.task.seq_num}"}
     }
-    # The Orchestrator's relaunch for REJECTION_2 starts only an Opus reviewer in that tab.
+    # The Orchestrator's relaunch for REJECTION_2 starts only an Opus reviewer in that tab, then
+    # re-tiles the tab once the reviewer has joined it.
     fresh_inputs = {
         "task": task_id,
         "team_id": team_id,
@@ -673,7 +689,7 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
         "exclude_reviewers": session_ref(db, team.sol),
     }
     fresh = launch(fresh_run, await admitted(world, fresh_run, fresh_inputs))
-    assert list(fresh) == ["guard", "admit", "code-reviewer"]
+    assert list(fresh) == ["guard", "admit", "code-reviewer", "arrange"]
     assert fresh["guard"]["requested"] == "code-reviewer"
     reviewer = fresh["code-reviewer"]
     assert identity(reviewer) == OPUS
@@ -776,10 +792,87 @@ NOT_LINKED = "CANDIDATE not bound: COMMIT is not linked to the claimant's task"
 NOT_CLAIMANT = "CANDIDATE not bound: sender does not claim task"
 
 
+_SEAT_ADVANCE = {"action": "advance_seat"}
+_ALREADY_CLAIMED = "(tool_output.get('result') or tool_output).get('already_claimed')"
+
+
+def _review_seat_advances() -> list[dict[str, Any]]:
+    return [
+        {"server": "gobby-agents", "tool": "get_inter_session_message", **_SEAT_ADVANCE},
+        {"server": "gobby-agents", "tool": "send_message", **_SEAT_ADVANCE},
+        {"server": "gobby-tasks", "tool": "get_task", **_SEAT_ADVANCE},
+        {"server": "gobby-tasks", "tool": "record_review_step", **_SEAT_ADVANCE},
+    ]
+
+
+def _reviewer_step_workflow() -> dict[str, Any]:
+    """A synthetic candidate-intake graph: await, review, verdict and fix.
+
+    It carries the transitions and seat-advance bindings the intake tests drive, written
+    inline so the tests do not depend on the installed code-reviewer seat.
+    """
+    return {
+        "variables": {
+            "candidate_received": False,
+            "verdict_ready": False,
+            "fixing": False,
+            "candidate_task": None,
+            "candidate_sha": None,
+            "candidate_disposition": None,
+        },
+        "steps": [
+            {
+                "name": "await",
+                "mcp_error_policy": "stay",
+                "idle": True,
+                "on_mcp_success": [
+                    {"server": "gobby-agents", "tool": "send_message", **_SEAT_ADVANCE},
+                    {
+                        "server": "gobby-agents",
+                        "tool": "get_inter_session_message",
+                        **_SEAT_ADVANCE,
+                    },
+                    {
+                        "server": "gobby-tasks",
+                        "tool": "claim_task",
+                        "action": "set_variable",
+                        "variable": "fixing",
+                        "value": True,
+                        "when": _ALREADY_CLAIMED,
+                    },
+                ],
+                "transitions": [
+                    {"to": "fix", "when": "vars.fixing"},
+                    {"to": "verdict", "when": "vars.candidate_received and vars.verdict_ready"},
+                    {"to": "review", "when": "vars.candidate_received"},
+                ],
+            },
+            {
+                "name": "review",
+                "mcp_error_policy": "stay",
+                "on_mcp_success": _review_seat_advances(),
+                "transitions": [
+                    {"to": "await", "when": "not vars.candidate_received"},
+                    {"to": "verdict", "when": "vars.verdict_ready"},
+                ],
+            },
+            {
+                "name": "verdict",
+                "mcp_error_policy": "stay",
+                "on_mcp_success": _review_seat_advances(),
+                "transitions": [
+                    {"to": "review", "when": "vars.candidate_received and not vars.verdict_ready"},
+                    {"to": "await", "when": "not vars.candidate_received"},
+                ],
+            },
+            {"name": "fix", "mcp_error_policy": "stay"},
+        ],
+    }
+
+
 def reviewer_at_await(db: HubDatabase, session_id: str) -> None:
     """Run ``session_id`` as a code-reviewer step instance waiting for a candidate."""
-    agent = yaml.safe_load((get_bundled_agents_path() / "code-reviewer.yaml").read_text())
-    workflow = agent["step_workflow"]
+    workflow = _reviewer_step_workflow()
     SessionVariableManager(db).set_variable(session_id, "_agent_type", "code-reviewer")
     AgentStepInstanceManager(db).save(
         AgentStepInstance(
@@ -805,9 +898,16 @@ async def read_candidate(
     disposition: str | None = None,
 ) -> tuple[dict[str, Any], AgentStepInstance]:
     """Deliver a CANDIDATE from ``sender`` and consume it the way the reviewer does."""
-    messages = InterSessionMessageManager(db)
     proof = f"COMMIT={sha}" if sha else f"DISPOSITION={disposition}"
     content = f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree {proof} NOTE=relayed"
+    return await deliver_message(db, reviewer, sender, content)
+
+
+async def deliver_message(
+    db: HubDatabase, reviewer: str, sender: str, content: str
+) -> tuple[dict[str, Any], AgentStepInstance]:
+    """Deliver ``content`` from ``sender`` and consume it through the reviewer's intake."""
+    messages = InterSessionMessageManager(db)
     message = messages.create_message(sender, reviewer, content)
     registry = InternalToolRegistry(name="gobby-agents", description="Candidate intake")
     add_messaging_tools(registry, messages, SessionManager(db), db)
@@ -965,6 +1065,64 @@ def assert_candidate_cleared(instance: AgentStepInstance) -> None:
         "candidate_owner": None,
         "candidate_received_at": None,
     }
+
+
+def _new_leaf(world: TeamWorld, epic: Task, title: str) -> Task:
+    return LocalTaskManager(world.case.db).create_task(
+        world.case.project_id,
+        title,
+        parent_task_id=epic.id,
+        created_in_session_id=world.case.creator,
+        validation_criteria="The leaf works.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_epic_dev_manager_withdrawal_clears_the_reviewers_candidate(
+    world: TeamWorld,
+) -> None:
+    """An epic's Dev Manager withdraws a leaf's candidate; the next leaf's candidate then binds."""
+    db, project_id = world.case.db, world.case.project_id
+    tasks = LocalTaskManager(db)
+    epic = tasks.create_task(
+        project_id, TITLE, created_in_session_id=world.case.creator, task_type="epic"
+    )
+    first, second = _new_leaf(world, epic, "Scroll leaf"), _new_leaf(world, epic, "Type leaf")
+    runbook = world.child(epic, DEVTEAM)
+    binding = await world.admit(runbook, epic)
+    manager = seat(world, runbook, "dev-manager", manages=epic)
+    developer, sol = (seat(world, runbook, role) for role in ("developer", "code-reviewer"))
+    grant_step_writes(db, developer, project_id, "fixture-developer", ("implementation",))
+    grant_review_writes(db, sol, project_id)
+    reviewer_at_await(db, sol)
+
+    tasks.claim_task(first.id, developer, force=True)
+    first_sha = commit(db, binding, "scroll.py", first)
+    _, instance = await read_candidate(db, sol, developer, first, first_sha)
+    assert instance.variables["candidate_task"] == first.id
+
+    withdrawn = f"EVENT=CANDIDATE_WITHDRAWN TASK=#{first.seq_num} SHA={first_sha} NOTE=reassigned"
+    _, instance = await deliver_message(db, sol, manager, withdrawn)
+    assert instance.variables["candidate_task"] is None
+
+    tasks.claim_task(second.id, developer, force=True)
+    second_sha = commit(db, binding, "type.py", second)
+    result, instance = await read_candidate(db, sol, manager, second, second_sha)
+    assert "candidate_binding_error" not in result, result
+    assert instance.variables["candidate_task"] == second.id
+
+    other_epic = tasks.create_task(
+        project_id,
+        "Another team's epic",
+        created_in_session_id=world.case.creator,
+        task_type="epic",
+    )
+    other_runbook = world.child(other_epic, DEVTEAM)
+    await world.admit(other_runbook, other_epic)
+    other_manager = seat(world, other_runbook, "dev-manager", manages=other_epic)
+    stray = f"EVENT=CANDIDATE_WITHDRAWN TASK=#{second.seq_num} SHA={second_sha} NOTE=not mine"
+    _, instance = await deliver_message(db, sol, other_manager, stray)
+    assert instance.variables["candidate_task"] == second.id
 
 
 @pytest.mark.asyncio

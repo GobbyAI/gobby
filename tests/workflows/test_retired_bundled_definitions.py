@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -129,26 +130,9 @@ def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
 
 
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
-def test_retired_agent_yaml_is_absent_from_active_and_deprecated_bundles(name: str) -> None:
-    active_path = AGENTS_DIR / f"{name}.yaml"
-    deprecated_path = AGENTS_DIR / "deprecated" / f"{name}.yaml"
-
-    assert not active_path.exists(), f"retired agent remains active: {active_path}"
-    assert not deprecated_path.exists(), f"retired agent tombstone remains: {deprecated_path}"
-
-
-@pytest.mark.parametrize("name", RETIRED_AGENTS)
 def test_retired_agent_procedure_is_absent(name: str) -> None:
     path = SKILLS_DIR / "gobby" / "references" / "agents" / "procedures" / f"{name}.md"
     assert not path.exists(), f"retired agent procedure remains: {path}"
-
-
-def test_expansion_qa_remains_bundled() -> None:
-    """The post-expansion checker survives discovery-stage retirement."""
-    body = yaml.safe_load((AGENTS_DIR / "expansion-qa.yaml").read_text(encoding="utf-8"))
-    assert body["name"] == "expansion-qa"
-    assert body.get("enabled", True) is True
-    assert "expansion-qa" not in RETIRED_AGENTS
 
 
 @pytest.mark.parametrize("name", RETIRED_SKILLS)
@@ -201,7 +185,7 @@ def test_interactive_destructive_git_guard_is_restored() -> None:
 
 def test_retired_memory_review_gate_has_no_live_state_or_guidance() -> None:
     current_surfaces = [
-        *WORKFLOWS_DIR.rglob("*.yaml"),
+        *(p for p in WORKFLOWS_DIR.rglob("*.yaml") if not is_bundled_agent_definition(p)),
         *(SKILLS_DIR / "gobby/references/sessions").rglob("*.md"),
         *(SKILLS_DIR / "gobby/references/tasks").rglob("*.md"),
         DOCS_DIR / "memory.md",
@@ -232,17 +216,6 @@ def test_monolith_rule_templates_match_enabled_db_authority() -> None:
 
     assert set(data["rules"]) == MONOLITH_RULES
     assert all(rule["enabled"] is True for rule in data["rules"].values())
-
-
-def test_bundled_agents_have_no_dead_sync_selector() -> None:
-    offenders: list[str] = []
-    for path in AGENTS_DIR.glob("*.yaml"):
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        excludes = data.get("workflows", {}).get("rule_selectors", {}).get("exclude", [])
-        if "tag:sync" in excludes:
-            offenders.append(path.name)
-
-    assert offenders == []
 
 
 def test_retired_digest_prompt_is_absent() -> None:

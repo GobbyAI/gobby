@@ -10,10 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
-import yaml
 
 from gobby import app_context
-from gobby.agents.sync import get_bundled_agents_path
 from gobby.mcp_proxy.tools.spawn_agent import _factory, _spawn_guards
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import resolve_spawn_task_context
 from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
@@ -214,13 +212,18 @@ async def test_seeded_spawn_caller_scope(
 
 
 @pytest.mark.asyncio
-async def test_bundled_developer_admits_no_spawns(
+async def test_developer_shaped_seat_admits_no_spawns(
     monkeypatch: pytest.MonkeyPatch, spawn_caller: _SpawnCaller
 ) -> None:
     monkeypatch.setattr(
         _spawn_guards, "get_request_principal", AsyncMock(return_value=None), raising=False
     )
-    definition = yaml.safe_load((get_bundled_agents_path() / "developer.yaml").read_text())
+    definition = {
+        "prompts": {"agent": "Synthetic developer seat."},
+        "task_step_writes": ["implementation"],
+        "spawnable_agents": [],
+        "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+    }
     manager = AgentDefinitionManager(spawn_caller.sessions.db)
     row = manager.get_by_name("scope-caller", project_id=spawn_caller.child.project_id)
     assert row is not None

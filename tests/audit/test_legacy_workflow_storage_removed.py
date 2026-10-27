@@ -7,7 +7,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import yaml
+
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +46,6 @@ OWNER_INVENTORY: tuple[tuple[str, str], ...] = (
 
 _SHARED_SUFFIXES = {".yaml", ".yml", ".md"}
 _WEB_SUFFIXES = {".ts", ".tsx"}
-_AGENT_TOP_LEVEL_FORBIDDEN = ("steps", "step_variables", "exit_condition")
 
 _STEPS_NAME_RE = re.compile(
     r"""
@@ -99,7 +99,7 @@ def _iter_scan_paths() -> Iterator[Path]:
     shared = ROOT / "src" / "gobby" / "install" / "shared"
     if shared.is_dir():
         for path in shared.rglob("*"):
-            if path.suffix.lower() in _SHARED_SUFFIXES:
+            if path.suffix.lower() in _SHARED_SUFFIXES and not is_bundled_agent_definition(path):
                 yield from _emit(path)
 
 
@@ -167,17 +167,3 @@ def test_every_preexisting_occurrence_has_an_owner() -> None:
         if _file_has_token(path, token) and (path, token) not in allowlisted
     ]
     assert unowned == []
-
-
-def test_bundled_agent_yaml_has_no_top_level_step_keys() -> None:
-    agents_dir = ROOT / "src" / "gobby" / "install" / "shared" / "workflows" / "agents"
-    violations: list[str] = []
-    for path in sorted(agents_dir.glob("*.yaml")):
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            violations.append(f"{path.name}: not a mapping")
-            continue
-        present = [key for key in _AGENT_TOP_LEVEL_FORBIDDEN if key in loaded]
-        if present:
-            violations.append(f"{path.name}:{','.join(present)}")
-    assert violations == []

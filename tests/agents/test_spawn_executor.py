@@ -66,7 +66,13 @@ from gobby.terminals.host_protocol import write_pidfile
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.lifetime import NATIVE_FIRST_BACKEND, TerminalLifetime
 from gobby.terminals.native_runtime import HostManagerControl
-from gobby.terminals.runtime import Delivered, SnapshotMode, SnapshotResult
+from gobby.terminals.runtime import (
+    Delivered,
+    SnapshotMode,
+    SnapshotResult,
+    TerminalHandle,
+)
+from gobby.terminals.runtime import PreparedSpawn as TerminalPreparedSpawn
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from gobby.utils.native_bin import native_bin_name
 from tests.agents.prepared_spawn import prepared_spawn
@@ -4227,6 +4233,61 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
     else:
         assert result.terminal_id is not None
         assert manager.rows[result.terminal_id].state != "live"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
+async def test_dropped_commit_the_host_never_received_is_resent_and_launches(
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A websocket close before the host got the commit is retried, not a lost seat."""
+    host = await _host_in_state(short_socket_dir, "healthy")
+    request, native, tmux, manager = _host_backed_request(host)
+    commit = native.commit_spawn
+    commits: list[TerminalPreparedSpawn] = []
+
+    async def drop_first_commit(prepared: TerminalPreparedSpawn) -> TerminalHandle:
+        commits.append(prepared)
+        if len(commits) == 1:
+            raise CommitTransportError("ws closed before send", request_written=False)
+        return await commit(prepared)
+
+    monkeypatch.setattr(native, "commit_spawn", drop_first_commit)
+    try:
+        result = await execute_spawn(request)
+    finally:
+        await host.stop()
+
+    assert result.success is True, result.error
+    assert len(commits) == 2
+    assert tmux.create_calls == 0
+    assert result.backend == "native"
+    assert manager.rows[str(result.terminal_id)].backend == "native"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("short_host_deadline")
+async def test_commit_the_host_may_have_received_is_never_resent(
+    short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A commit whose send may have reached the host is not resent: a resend could spawn twice."""
+    host = await _host_in_state(short_socket_dir, "healthy")
+    request, native, tmux, _manager = _host_backed_request(host)
+    commits: list[TerminalPreparedSpawn] = []
+
+    async def lose_reply(prepared: TerminalPreparedSpawn) -> TerminalHandle:
+        commits.append(prepared)
+        raise CommitTransportError("ws closed after send", request_written=True)
+
+    monkeypatch.setattr(native, "commit_spawn", lose_reply)
+    try:
+        result = await execute_spawn(request)
+    finally:
+        await host.stop()
+
+    assert len(commits) == 1
+    assert tmux.create_calls == 0
+    assert result.success is False
 
 
 @pytest.mark.asyncio

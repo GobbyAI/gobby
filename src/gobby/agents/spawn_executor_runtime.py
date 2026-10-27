@@ -12,12 +12,14 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult, is_infrastructu
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import UnregisteredBackendError
+from gobby.terminals.host_client import CommitTransportError
 from gobby.terminals.native_runtime import (
     classify_native_spawn_failure,
     refuse_unavailable_host,
 )
 from gobby.terminals.runtime import (
     CommitSpawnRefusedError,
+    TerminalHandle,
     TerminalRuntime,
     TerminalSpawnFailed,
     TerminalSpawnRequest,
@@ -327,6 +329,27 @@ async def _unplaced_runtime_spawn(
     )
 
 
+async def _commit_resending_unsent(
+    runtime: TerminalRuntime, prepared: RuntimePreparedSpawn
+) -> TerminalHandle:
+    """Commit once, resending once only when no request byte reached the host.
+
+    ``request_written=False`` proves the host never received the commit, so one
+    resend cannot spawn twice. A commit that may have reached the host is never
+    resent, and a cancelled commit is never retried.
+    """
+    try:
+        return await runtime.commit_spawn(prepared)
+    except CommitTransportError as exc:
+        if exc.request_written or isinstance(exc.__cause__, asyncio.CancelledError):
+            raise
+        logger.warning(
+            "Resending spawn commit the host never received for terminal %s",
+            prepared.terminal_id,
+        )
+    return await runtime.commit_spawn(prepared)
+
+
 async def _promote_prepared(
     request: SpawnRequest,
     plan: ProviderSpawnPlan,
@@ -398,7 +421,7 @@ async def _promote_prepared(
             terminal_id=terminal_id,
         )
     try:
-        handle = await runtime.commit_spawn(prepared)
+        handle = await _commit_resending_unsent(runtime, prepared)
     except asyncio.CancelledError as exc:
         if not defer_failure:
             await _settle_native_spawn_failure(

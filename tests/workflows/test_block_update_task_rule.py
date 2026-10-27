@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.session_activation import (
     _resolve_active_rule_names,
     clear_active_rule_names_cache,
 )
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
@@ -30,11 +31,35 @@ TASK_EDITORS = ("orchestrator", "assistant")
 BLOCKED_DEFINITIONS = ("default", "developer", "code-reviewer", "researcher", "dev-manager")
 
 
+def _seat_json(name: str, *, selects_rule: bool) -> str:
+    """A synthetic seat that either selects the rule or excludes it."""
+    selectors = (
+        {"include": [f"name:{RULE}"], "exclude": []}
+        if selects_rule
+        else {"include": [], "exclude": [f"name:{RULE}"]}
+    )
+    return json.dumps(
+        {
+            "name": name,
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": selectors},
+        }
+    )
+
+
 @pytest.fixture
 def db(temp_db: HubDatabase) -> Iterator[HubDatabase]:
-    """Sync the bundled agents and rules, the inputs session activation reads."""
+    """Seed synthetic seats on both sides of the rule, plus the rules session activation reads."""
     clear_active_rule_names_cache()
-    assert sync_bundled_agents(temp_db)["success"] is True
+    agents = AgentDefinitionManager(temp_db)
+    for name in TASK_EDITORS:
+        agents.create(
+            name=name, source="custom", definition_json=_seat_json(name, selects_rule=False)
+        )
+    for name in BLOCKED_DEFINITIONS:
+        agents.create(
+            name=name, source="custom", definition_json=_seat_json(name, selects_rule=True)
+        )
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     yield temp_db
     clear_active_rule_names_cache()

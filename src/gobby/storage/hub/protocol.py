@@ -399,8 +399,13 @@ class HubDatabase(Protocol):
         *,
         statement_timeout_ms: int = 5_000,
         lock_timeout_ms: int = 5_000,
+        repeatable_read_read_only: bool = False,
     ) -> AbstractContextManager[Transaction]:
-        """Open a transaction with transaction-local statement and lock bounds."""
+        """Open a transaction with transaction-local statement and lock bounds.
+
+        ``repeatable_read_read_only`` makes the transaction a REPEATABLE READ READ ONLY
+        snapshot, enforced by Postgres, before any statement runs.
+        """
         ...
 
     def transaction_immediate(

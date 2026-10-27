@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.phase5_contract_helpers import is_bundled_agent_definition
+
 ROOT = Path(__file__).resolve().parents[2]
 
 _MONITOR_PATHS = (
@@ -211,6 +213,8 @@ def test_tmux_session_name_field_sweep() -> None:
             if not path.is_file():
                 continue
             if "__pycache__" in path.parts or "node_modules" in path.parts:
+                continue
+            if is_bundled_agent_definition(path):
                 continue
             rel = str(path.relative_to(ROOT))
             if rel.startswith("src/gobby/agents/tmux/"):

@@ -12,11 +12,11 @@ from gobby.hooks import provider_launch_guard
 from gobby.hooks._provider_shell_syntax import _prepare
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
-from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_rule_file
+from tests.fixtures.agent_definitions import seed_seat
 
 pytestmark = pytest.mark.unit
 
@@ -762,6 +762,11 @@ RULE = SHARED / "workflows/rules/worker-safety/block-direct-provider-launch.yaml
 SESSION = "abababab-0000-4000-8000-000000000001"
 
 
+def _synthetic_seat_workflows(*rules: str) -> dict[str, Any]:
+    """Activate the named rules on a synthetic seat, with no bundled rule selectors."""
+    return {"rules": list(rules), "rule_selectors": {"include": [], "exclude": []}}
+
+
 @pytest.mark.parametrize("error", [MemoryError, RecursionError])
 @pytest.mark.parametrize("target", ["ast.parse", "_python_skeleton"])
 def test_python_parse_resource_limit_fails_closed(
@@ -972,9 +977,12 @@ async def test_native_codex_command_alias_with_command_pattern_rules(
 ) -> None:
     for path in (RULE, SHARED / "workflows/rules/task-enforcement/block-gobby-tasks-cli.yaml"):
         assert sync_rule_file(hub_db, path, tag="gobby")["success"]
-    agent_body = yaml.safe_load((SHARED / "workflows/agents/default.yaml").read_text())
-    AgentDefinitionManager(hub_db).create(
-        name="default", definition_json=agent_body, source="custom"
+    seed_seat(
+        hub_db,
+        "default",
+        workflows=_synthetic_seat_workflows(
+            "block-direct-provider-launch", "block-gobby-tasks-cli"
+        ),
     )
     event = CodexHooksAdapter().translate_to_hook_event(
         {
@@ -1330,8 +1338,11 @@ async def test_real_engine_rule(
     assert synced["success"]
     row = RuleDefinitionManager(hub_db).get_by_name("block-direct-provider-launch")
     assert row is not None
-    agent_body = yaml.safe_load((SHARED / f"workflows/agents/{agent}.yaml").read_text())
-    AgentDefinitionManager(hub_db).create(name=agent, definition_json=agent_body, source="custom")
+    seed_seat(
+        hub_db,
+        agent,
+        workflows=_synthetic_seat_workflows("block-direct-provider-launch"),
+    )
     event = HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
         session_id=SESSION,

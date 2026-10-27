@@ -11,11 +11,6 @@ SKILLS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/ski
 WORKFLOWS_DIR = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
 UPDATED_SKILLS = ("plan/expansion.md", "plan/review.md")
 WAKE_DRIVEN_GUIDANCE = (pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),)
-REVIEW_DISPATCH_GUIDANCE = (
-    pytest.param(SKILLS_DIR / "gobby/references/review/epic.md", id="review"),
-    pytest.param(WORKFLOWS_DIR / "agents/epic-reviewer.yaml", id="epic-reviewer"),
-    pytest.param(WORKFLOWS_DIR / "review.yaml", id="review-workflow"),
-)
 CAPTURE_GUIDANCE = (pytest.param(SKILLS_DIR / "gobby/references/plan/review.md", id="plan"),)
 
 
@@ -83,12 +78,3 @@ def test_terminal_result_guidance_pages_capture_metadata(path: Path) -> None:
     assert "get_agent_capture" in lifecycle
     assert "capture metadata" in lifecycle
     assert "every page" in lifecycle
-
-
-@pytest.mark.parametrize("path", REVIEW_DISPATCH_GUIDANCE)
-def test_review_dispatch_guidance_avoids_removed_wait_controls(path: Path) -> None:
-    body = _guidance_text(path)
-
-    assert "wait_for_completion" not in body
-    assert "wait_timeout" not in body
-    assert "timeout_seconds" not in body

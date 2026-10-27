@@ -1029,7 +1029,7 @@ class TestWakeDispatch:
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """An active Claude row idle at its prompt is paused, then the retry delivers."""
+        """An active Claude row idle at its prompt is paused and takes the wake at once (#25155)."""
         session = FakeSession(
             id=WAKE_SESSION_ID,
             terminal_context={"tmux_pane": "%12"},
@@ -1071,7 +1071,8 @@ class TestWakeDispatch:
         )
 
         result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
-        assert result["skipped"] == "session_active"
+        assert result.get("skipped") is None
+        assert result["delivered"] is True
         await asyncio.wait_for(wake_delivered.wait(), 0.5)
         assert session.status == "paused"
 

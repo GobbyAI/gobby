@@ -166,6 +166,8 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
 
 
 _TEAM_SEAT_TYPES = frozenset({"test-writer", "developer", "code-reviewer"})
+# The devteam runbook titles its team tab "Dev Team"; an epic team's tab is "<this> - #<seq>".
+_DEV_TEAM_TAB = "Dev Team"
 
 
 def own_seat_resume(
@@ -184,6 +186,60 @@ def own_seat_resume(
         )
     except (ValueError, AgentResolutionError):
         return False
+
+
+def own_team_tab(session_manager: SessionManager, caller_ref: Any, agent: Any) -> str | None:
+    """The team tab a running epic team manager's fresh seat may open into, or None.
+
+    Placement admits an autonomous fresh seat only where its spawn is for the caller's own
+    epic team: the caller is a running team manager, the seat is a team seat type, and the
+    caller's team is an epic. The tab is the one the devteam runbook titles for that epic.
+    A single-task team and any other spawn get no tab.
+    """
+    from gobby.agents.team_lifecycle import seat_team
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.team_records import EPIC_MODE
+
+    if agent not in _TEAM_SEAT_TYPES:
+        return None
+    try:
+        caller, agent_name = _spawn_caller(session_manager, caller_ref)
+    except (ValueError, AgentResolutionError):
+        return None
+    if not _running_team_manager(session_manager, caller, agent_name):
+        return None
+    team = seat_team(session_manager.db, caller.id)
+    if team is None or team.mode != EPIC_MODE:
+        return None
+    seq_num = LocalTaskManager(session_manager.db).get_task(team.task_id).seq_num
+    return None if seq_num is None else f"{_DEV_TEAM_TAB} - #{seq_num}"
+
+
+def _running_team_manager(
+    session_manager: SessionManager, caller: Session, agent_name: str | None
+) -> bool:
+    """Whether the caller runs as an enabled team manager definition, bound to its run.
+
+    The definition must set the ``team_manager`` variable, so a session variable alone
+    never grants it. The caller's running run must be bound to the caller.
+    """
+    if agent_name is None:
+        return False
+    found = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
+    if found is None or not found[1].enabled:
+        return False
+    if found[0].workflows.variables.get("team_manager") is not True:
+        return False
+    manager_run = (
+        LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
+        if caller.agent_run_id
+        else None
+    )
+    return (
+        manager_run is not None
+        and manager_run.status == "running"
+        and manager_run.child_session_id == caller.id
+    )
 
 
 def _manager_resumes_own_seat(
@@ -205,21 +261,11 @@ def _manager_resumes_own_seat(
     from gobby.agents.team_lifecycle import seat_team
     from gobby.workflows.state_manager import SessionVariableManager
 
-    if agent_name is None or not isinstance(resume_session_id, str) or not resume_session_id:
+    if not isinstance(resume_session_id, str) or not resume_session_id:
         return False
-    found = resolve_agent_with_row(agent_name, session_manager.db, project_id=caller.project_id)
-    if found is None or not found[1].enabled:
-        return False
-    if found[0].workflows.variables.get("team_manager") is not True:
+    if not _running_team_manager(session_manager, caller, agent_name):
         return False
     runs = LocalAgentRunManager(session_manager.db)
-    manager_run = runs.get(caller.agent_run_id) if caller.agent_run_id else None
-    if (
-        manager_run is None
-        or manager_run.status != "running"
-        or manager_run.child_session_id != caller.id
-    ):
-        return False
     team = seat_team(session_manager.db, caller.id)
     if team is None:
         return False

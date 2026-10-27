@@ -41,6 +41,7 @@ from gobby.storage.workspace_layout import (
     _with_ratio,
     _without_panes,
     balanced_layout,
+    tab_arrangement,
 )
 from gobby.storage.workspace_layout import LayoutSplit as LayoutSplit
 from gobby.storage.workspace_layout import WorkspaceNotFoundError as WorkspaceNotFoundError
@@ -764,14 +765,19 @@ class WorkspaceManager:
         )
 
     def rebalance_tab(
-        self, tab_id: str, columns: int = 80, rows: int | None = None
+        self,
+        tab_id: str,
+        columns: int = 80,
+        rows: int | None = None,
+        arrangement: str = "balanced",
     ) -> WorkspaceTab:
         """Rearrange a tab atomically without changing any pane or terminal identity."""
         tab_id = _uuid(tab_id)
         with self.db.transaction() as conn:
             tab = _lock_tabs(conn, tab_id)[tab_id]
             self._guard(conn, "p.tab_id = %s::uuid", [tab_id], True)
-            return _write_layout(conn, tab_id, balanced_layout(tab.layout, columns, rows))
+            layout = balanced_layout(tab.layout, columns, rows, tab_arrangement(arrangement))
+            return _write_layout(conn, tab_id, layout)
 
     def set_ratio(self, pane_id: str, ratio: float) -> WorkspaceTab:
         """Set the ratio of the split directly holding ``pane_id``."""

@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.mcp_proxy.tools.agents_registry import create_agents_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.servers.websocket.server import WebSocketServer
@@ -32,6 +31,7 @@ from gobby.utils.session_context import (
     set_request_principal,
 )
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
@@ -77,7 +77,13 @@ def _local_machine_identity() -> Iterator[None]:
 @pytest.fixture
 async def stack(temp_db: HubDatabase, sample_project: dict[str, Any]) -> AsyncIterator[_Stack]:
     LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID, hostname="local")
-    sync_bundled_agents(temp_db)
+    for seat in ("assistant", "orchestrator"):
+        seed_seat(
+            temp_db,
+            seat,
+            surfaces=["spawn", "persona"],
+            prompts={"agent": f"Synthetic {seat} seat.", "persona": f"Synthetic {seat} persona."},
+        )
     config = MagicMock(host="localhost", port=60888, ping_interval=30, ping_timeout=10)
     config.max_message_size = 1024
     server = WebSocketServer(config, MagicMock(), MagicMock())

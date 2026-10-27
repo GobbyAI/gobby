@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
@@ -37,27 +36,58 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
     ],
     ids=["definition-defaults", "launch-overrides"],
 )
-async def test_support_runbook_uses_definition_defaults_for_null_inputs(
+async def test_release_manager_step_renders_definition_defaults_for_null_inputs(
     model: str | None, effort: str | None, expected_model: str, expected_effort: str
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-    workflows = Path(__file__).resolve().parents[3] / "src/gobby/install/shared/workflows"
-    # Bundled definitions name no model, so the definition defaults come from the test.
+    # Synthetic seat and pipeline step shaped like the release-manager step of a support
+    # runbook. The seat names no model, so the definition defaults come from the test.
     agent_body = AgentDefinitionBody.model_validate(
-        yaml.safe_load((workflows / "agents/release-manager.yaml").read_text())
+        {
+            "name": "release-manager",
+            "surfaces": ["spawn"],
+            "prompts": {"agent": "Manage releases"},
+            "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+        }
     ).model_copy(update={"model": "claude-sonnet-5-5", "reasoning_effort": "medium"})
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((workflows / "pipelines/support.yaml").read_text())
+        {
+            "name": "release-support",
+            "inputs": {
+                "project_path": {"default": None},
+                "release_manager_provider": {"default": None},
+                "release_manager_model": {"default": None},
+                "release_manager_reasoning_effort": {"default": None},
+            },
+            "steps": [
+                {
+                    "id": "release-manager",
+                    "condition": "${{ 'release-manager' in steps.guard.output.launch }}",
+                    "mcp": {
+                        "server": "gobby-agents",
+                        "tool": "spawn_agent",
+                        "arguments": {
+                            "agent": "release-manager",
+                            "provider": "${{ inputs.release_manager_provider }}",
+                            "model": "${{ inputs.release_manager_model }}",
+                            "reasoning_effort": "${{ inputs.release_manager_reasoning_effort }}",
+                            "execution_mode": "interactive",
+                            "checkout_mode": "none",
+                            "project_path": "${{ inputs.project_path }}",
+                            "reserved_run_id": "${{ invocation_id }}",
+                            "prompt": "Manage releases",
+                        },
+                    },
+                }
+            ],
+        }
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     for field in ("provider", "model", "reasoning_effort"):
         assert inputs[f"release_manager_{field}"] is None
     inputs.update(
-        seats="release-manager",
-        workspace="pilot-workspace",
         project_path="/repo",
-        report_to="pilot-coordinator",
         release_manager_provider="claude" if model is not None else None,
         release_manager_model=model,
         release_manager_reasoning_effort=effort,
@@ -206,6 +236,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
+            model="gpt-5.4",
         )
         runner = _make_runner()
 
@@ -259,6 +290,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="codex-worker",
             provider="codex",
+            model="gpt-5.4",
         )
         runner = _make_runner()
 
@@ -294,6 +326,7 @@ class TestProviderResolution:
                 runner=runner,
                 agent_body=agent_body,
                 provider="claude",  # explicit override
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
             )
             await asyncio.gather(*_spawn_background_tasks.values())
@@ -494,7 +527,7 @@ class TestProviderResolution:
 
     @pytest.mark.asyncio
     async def test_provider_inherit_falls_back_to_claude(self) -> None:
-        """When provider='inherit' and no agent_body, defaults to 'claude'."""
+        """provider='inherit' with no agent_body is claude, and is refused without a model."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
@@ -538,13 +571,13 @@ class TestProviderResolution:
             )
             await asyncio.gather(*_spawn_background_tasks.values())
 
-        assert result["success"] is True
-        spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.provider == "claude"
+        assert result["success"] is False
+        assert "No model for the claude launch" in result["error"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_provider_none_no_agent_body_defaults_to_claude(self) -> None:
-        """When provider=None and no agent_body, defaults to 'claude'."""
+        """provider=None with no agent_body is claude, and is refused without a model."""
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         runner = _make_runner()
@@ -588,9 +621,9 @@ class TestProviderResolution:
             )
             await asyncio.gather(*_spawn_background_tasks.values())
 
-        assert result["success"] is True
-        spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.provider == "claude"
+        assert result["success"] is False
+        assert "No model for the claude launch" in result["error"]
+        mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sandbox_defaults_come_from_daemon_config(self, tmp_path: Path) -> None:
@@ -639,6 +672,7 @@ class TestProviderResolution:
                 prompt="Do the thing",
                 runner=runner,
                 provider="codex",
+                model="gpt-5.4",
                 parent_session_id="parent-session-xyz",
                 caller_session_id="caller",
                 session_manager=sessions,
@@ -730,6 +764,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#42",
                 task_manager=task_manager,
@@ -789,6 +824,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#99",
                 task_manager=task_manager,
@@ -850,6 +886,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#200",
                 task_manager=task_manager,
@@ -909,6 +946,7 @@ class TestSpawnAutoClaimOwner:
                 runner=runner,
                 agent_body=None,
                 provider="claude",
+                model="claude-sonnet-5",
                 parent_session_id="parent-session-xyz",
                 task_id="#201",
                 task_manager=task_manager,

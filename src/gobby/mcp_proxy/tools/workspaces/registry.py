@@ -94,6 +94,28 @@ async def _run(
     return {"success": True, **_payload(result)}
 
 
+def _seat_error(seats: list[Any]) -> str | None:
+    """Name the first seat entry the layout cannot read: a named dict with a pane ref or null."""
+    for seat in seats:
+        if not isinstance(seat, dict) or not isinstance(seat.get("name"), str):
+            return f"A seat entry needs a name: {seat!r}"
+        if not isinstance(seat.get("pane"), str | None):
+            return f"Seat {seat['name']!r} needs a pane ref or null"
+    return None
+
+
+def _seat_outcome(seats: list[dict[str, Any]]) -> dict[str, Any]:
+    """Name the seats a layout tiled, and the paneless seats it skipped with the reason."""
+    return {
+        "tiled": [seat["name"] for seat in seats if seat.get("pane")],
+        "skipped": [
+            {"seat": seat["name"], "reason": "pane_missing"}
+            for seat in seats
+            if not seat.get("pane")
+        ],
+    }
+
+
 def create_workspaces_registry(
     workspace_manager: WorkspaceManager, ops_resolver: OpsResolver
 ) -> InternalToolRegistry:
@@ -264,13 +286,31 @@ def create_workspaces_registry(
     @registry.tool(
         description=(
             "Balance a tab from viewport dimensions: at an 80-column, 12-row floor when it "
-            f"fits, else tiled evenly across the viewport. {_NODE}"
+            "fits, else tiled evenly across the viewport. layout='tiled' always tiles, as "
+            "gclient's Arrange > Tiled does. With workspace, tab is the title of that "
+            f"workspace's one tab. {_NODE}"
         )
     )
     async def rebalance_tab(
-        tab: str, rows: int, columns: int = 80, node: str | None = None
+        tab: str,
+        rows: int,
+        columns: int = 80,
+        node: str | None = None,
+        layout: Literal["balanced", "tiled"] = "balanced",
+        workspace: str | None = None,
+        seats: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        return await _run(lambda actor: ops().tab_rebalance(actor, tab, columns, rows, node=node))
+        seat_error = None if seats is None else _seat_error(seats)
+        if seat_error is not None:
+            return {"success": False, "error": seat_error, "code": "invalid_ref"}
+        reply = await _run(
+            lambda actor: ops().tab_rebalance(
+                actor, tab, columns, rows, node=node, workspace=workspace, arrangement=layout
+            )
+        )
+        if seats is None or not reply["success"]:
+            return reply
+        return {**reply, **_seat_outcome(seats)}
 
     @registry.tool(
         description=(

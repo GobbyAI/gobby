@@ -227,3 +227,18 @@ steps:
           or 'triage' in steps.guard.output.launch or 'archivist' in steps.guard.output.launch
           or 'recovery-steward' in steps.guard.output.launch
           else {'tab': {'workspace': inputs.workspace, 'title': 'Support'}} }}
+
+  # Tiles the Support tab once the launched seats have joined it, on a first run or a re-run.
+  # A refused layout (a resumed run has no request principal) is recorded; the seats stay launched.
+  - id: arrange
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-workspaces
+      tool: rebalance_tab
+      on_refused: record
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        tab: Support
+        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        rows: 100
+        layout: tiled

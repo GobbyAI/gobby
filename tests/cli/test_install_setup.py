@@ -49,6 +49,7 @@ from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage import schema_contract
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from tests.fixtures.fake_hub import fake_database_url
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
@@ -198,6 +199,7 @@ class TestEnsureDaemonConfig:
             for path in _BUNDLED_INSTALL_ROOT.rglob("*")
             if "__pycache__" not in path.parts
             and path.is_file()
+            and not is_bundled_agent_definition(path)
             and b"gobby_dev" in path.read_bytes()
         ]
 

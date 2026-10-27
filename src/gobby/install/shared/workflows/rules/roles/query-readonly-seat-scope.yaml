@@ -1,0 +1,20 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+# query_readonly reads the daemon database. The operator ruled that only the
+# Assistant and the Orchestrator may run these reads without per-query approval.
+# Every other seat is refused, the default agent included, and so is a session
+# whose agent definition did not resolve.
+rules:
+  query-readonly-seat-scope:
+    description: "Only the Assistant and Orchestrator may run read-only daemon DB queries"
+    event: before_tool
+    enabled: true
+    priority: 10
+    when: "variables.get('_agent_type') not in ['assistant', 'orchestrator']"
+    effects:
+      - type: block
+        mcp_tools: ["gobby-sessions:query_readonly"]
+        reason: >-
+          query_readonly is available only to the Assistant and the Orchestrator.
+          Send the database need to Triage or your Dev Manager through
+          gobby-agents:send_message.

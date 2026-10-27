@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-import yaml
 
 from gobby.workflows import selectors as selectors_module
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -340,16 +338,18 @@ def test_resolve_skills_explicit_only() -> None:
     assert result is None
 
 
-def test_bundled_default_agent_auto_selects_no_skills() -> None:
-    """Default agent has an empty skill_selectors.include — skills inject
-    on-demand via rules (brevity on first turn, code-index on first code read)
-    rather than being auto-attached to the agent.
-    """
-    agent_path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/default.yaml"
+def test_agent_with_empty_skill_include_auto_selects_no_skills() -> None:
+    """An empty skill_selectors.include attaches no skills; rules inject them on demand."""
+    agent = AgentDefinitionBody.model_validate(
+        {
+            "name": "default",
+            "prompts": {"agent": "Synthetic default seat."},
+            "workflows": {
+                "rule_selectors": {"include": [], "exclude": []},
+                "skill_selectors": {"include": [], "exclude": []},
+            },
+        }
     )
-    agent = AgentDefinitionBody.model_validate(yaml.safe_load(agent_path.read_text()))
 
     brevity = MagicMock()
     brevity.name = "brevity"

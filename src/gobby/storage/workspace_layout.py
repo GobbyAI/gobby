@@ -9,6 +9,7 @@ from typing import Literal, TypedDict
 from gobby.utils.uuid_validation import parse_uuid_reference
 
 type LayoutAxis = Literal["horizontal", "vertical"]
+type TabArrangement = Literal["balanced", "tiled"]
 
 
 class WorkspaceNotFoundError(LookupError):
@@ -37,14 +38,27 @@ MIN_PANE_COLUMNS = 80
 MIN_PANE_ROWS = 12
 
 
-def balanced_layout(
-    layout: LayoutNode, columns: int = MIN_PANE_COLUMNS, rows: int | None = None
-) -> LayoutNode:
-    """Keep pane order and IDs, filling columns of evenly sized rows.
+def tab_arrangement(value: str) -> TabArrangement:
+    """Validate an arrangement name from a caller."""
+    if value == "balanced":
+        return "balanced"
+    if value == "tiled":
+        return "tiled"
+    raise InvalidWorkspaceOpError(f"Unknown tab arrangement {value!r}; use balanced or tiled")
 
-    Reserve a cell for every divider. Columns keep each pane at the width and
-    height interactive agents need, and a narrow viewport uses one column. A tab
-    too crowded for that floor tiles the whole viewport instead, as gclient's
+
+def balanced_layout(
+    layout: LayoutNode,
+    columns: int = MIN_PANE_COLUMNS,
+    rows: int | None = None,
+    arrangement: TabArrangement = "balanced",
+) -> LayoutNode:
+    """Keep pane order and IDs, arranging the panes of a tab.
+
+    ``balanced`` fills columns of evenly sized rows. Reserve a cell for every
+    divider. Columns keep each pane at the width and height interactive agents
+    need, and a narrow viewport uses one column. A tab too crowded for that floor
+    tiles the whole viewport instead. ``tiled`` always tiles, as gclient's
     Arrange > Tiled does: ceil(sqrt N) even rows, each filled left to right.
     """
     if not isinstance(columns, int) or isinstance(columns, bool) or columns < MIN_PANE_COLUMNS:
@@ -54,7 +68,8 @@ def balanced_layout(
     panes: list[LayoutNode] = [_leaf(pane_id) for pane_id in layout_pane_ids(layout)]
     count = min(len(panes), (columns + 1) // (MIN_PANE_COLUMNS + 1))
     per_column, remainder = divmod(len(panes), count)
-    if rows >= (per_column + bool(remainder)) * (MIN_PANE_ROWS + 1) - 1:
+    fits_columns = rows >= (per_column + bool(remainder)) * (MIN_PANE_ROWS + 1) - 1
+    if arrangement == "balanced" and fits_columns:
         stacks: list[LayoutNode] = []
         offset = 0
         for index in range(count):

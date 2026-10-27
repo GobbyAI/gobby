@@ -12,12 +12,6 @@ pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_standalone_test_architect_definition_removed() -> None:
-    path = ROOT / "src/gobby/install/shared/workflows/agents/test-architect.yaml"
-
-    assert not path.exists()
-
-
 def test_test_architecture_skill_outputs_structured_prose_not_expansion_tasks() -> None:
     skill_path = ROOT / "src/gobby/install/shared/skills/architecture/SKILL.md"
     skill_text = skill_path.read_text(encoding="utf-8")

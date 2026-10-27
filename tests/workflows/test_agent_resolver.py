@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-import yaml
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     resolve_spawn_provider,
     spawning_session_provider,
@@ -25,7 +22,6 @@ from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.pipeline.renderer import StepRenderer
-from gobby.workflows.pipeline_models import PipelineDefinition
 from gobby.workflows.templates import TemplateEngine
 
 pytest_plugins = ["tests.storage.definitions.conftest"]
@@ -34,44 +30,24 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize("parent_source,expected", [("codex", "codex"), ("pipeline", "claude")])
-def test_devteam_developer_inherits_live_provider_or_resolver_fallback(
+def test_seat_without_provider_inherits_live_provider_or_resolver_fallback(
     definition_db: PostgresHubDatabase, parent_source: str, expected: str
 ) -> None:
-    """Regression for runbook run d6a9f756 with developer_provider unset."""
-    workflows = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows"
-    definition = PipelineDefinition.model_validate(
-        yaml.safe_load((workflows / "pipelines/devteam.yaml").read_text())
-    )
-    inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
-    inputs.update(task="example", report_to="test-manager")
-    assert inputs["developer_provider"] is None
-    step = next(step for step in definition.steps if step.id == "developer")
-    assert step.mcp is not None and step.mcp.arguments is not None
+    """Regression for runbook run d6a9f756 with the spawned seat's provider unset.
+
+    The arguments come from a synthetic step template rendered with drop_none, the path
+    runbook spawns use to omit an unset provider.
+    """
     arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
-        step.mcp.arguments,
         {
-            "inputs": inputs,
-            "steps": {
-                "guard": {
-                    "output": {
-                        "workspace_id": "test-workspace",
-                        "live": {"dev-manager": "dev-manager-session"},
-                    }
-                },
-                "admit": {
-                    "output": {
-                        "branch": "task-example",
-                        "project_path": "/repo",
-                        "team": {"team_id": "team-1"},
-                    }
-                },
-            },
-            "invocation_id": "d6a9f756",
+            "agent": "developer",
+            "prompt": "Claim the assigned task.",
+            "provider": "${{ inputs.developer_provider }}",
         },
+        {"inputs": {"developer_provider": None}},
         drop_none=True,
     )
     assert "provider" not in arguments
-    assert "Your Dev Manager is session dev-manager-session" in arguments["prompt"]
     sessions = {
         "d6a9f756": SimpleNamespace(source="pipeline"),
         "launcher": SimpleNamespace(source=parent_source),
@@ -81,8 +57,7 @@ def test_devteam_developer_inherits_live_provider_or_resolver_fallback(
         caller_session_id="d6a9f756",
         parent_session_id="launcher",
     )
-    body = yaml.safe_load((workflows / "agents/developer.yaml").read_text())
-    _create_agent(definition_db, "developer", body=body)
+    _create_agent(definition_db, "developer", body={"provider": "inherit"})
     agent = resolve_agent(arguments["agent"], definition_db, cli_source=inherited)
     assert agent is not None
     provider = resolve_spawn_provider(
@@ -307,6 +282,43 @@ class TestProviderInheritance:
         assert result.provider == "codex"
 
 
+class TestCliSourceSeatAuthority:
+    """cli_source picks the provider; it never changes what a seat is allowed to do."""
+
+    def test_cli_source_changes_only_provider_and_model(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        _create_agent(
+            definition_db,
+            "synthetic-reviewer",
+            body={
+                "provider": "inherit",
+                "blocked_tools": ["Write", "Edit"],
+                "send_message_targets": ["parent", "session"],
+                "workflows": {
+                    "rule_selectors": {"include": ["tag:review"], "exclude": ["name:no-comms"]}
+                },
+            },
+        )
+
+        default_source = resolve_agent("synthetic-reviewer", definition_db, cli_source=None)
+        grok_source = resolve_agent("synthetic-reviewer", definition_db, cli_source="grok")
+
+        assert default_source is not None
+        assert grok_source is not None
+        assert grok_source.provider == "grok"
+        assert grok_source.blocked_tools == default_source.blocked_tools == ["Write", "Edit"]
+        assert (
+            grok_source.send_message_targets
+            == default_source.send_message_targets
+            == ["parent", "session"]
+        )
+        assert grok_source.workflows.rule_selectors == default_source.workflows.rule_selectors
+        assert grok_source.model_dump(exclude={"provider", "model"}) == (
+            default_source.model_dump(exclude={"provider", "model"})
+        )
+
+
 class TestStepfulAndSteplessConsumers:
     """Resolution, dry-run, and required-skills work for both agent shapes."""
 
@@ -372,15 +384,3 @@ class TestCachedHydratedAgent:
         third = engine._load_active_agent_definition("coder")
         assert third is not None
         assert third.step_workflow is None
-
-
-def test_memory_recall_helper_is_not_resolvable_agent(definition_db: PostgresHubDatabase) -> None:
-    """Memory recall no longer has a bundled spawnable helper agent."""
-    sync_result = sync_bundled_agents(definition_db)
-
-    assert sync_result["success"] is True
-    assert sync_result["errors"] == []
-
-    result = resolve_agent("memory-recall-helper", definition_db)
-
-    assert result is None

@@ -199,9 +199,10 @@ managed definition drift; subsequent same-seat activation reports the new pin.
 
 ## Seats
 
-Standing seats share the same typed definition shape. The current bundled
-catalogue is pinned by
-[`test_seat_definitions.py`](../../tests/workflows/test_seat_definitions.py):
+Standing seats share the same typed definition shape. Every bundled definition
+must parse as a valid `AgentDefinitionBody`, which
+[`test_bundled_agent_definition_validity.py`](../../tests/agents/test_bundled_agent_definition_validity.py)
+checks. The current bundled catalogue is:
 
 | Definition | Responsibility |
 | --- | --- |
@@ -659,4 +660,4 @@ provides the concrete worktree or clone context.
 - [Pipelines](./pipelines.md) for deterministic automation
 - [Orchestration](./orchestration.md) for agent work, isolation and the spawn cap
 
-_Last verified: 2026-10-10_
+_Last verified: 2026-10-27_

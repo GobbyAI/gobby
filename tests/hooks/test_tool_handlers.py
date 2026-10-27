@@ -1447,6 +1447,60 @@ class TestToolHandlerEdgeCases:
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
+    @pytest.mark.parametrize(
+        ("command", "after_command"),
+        [
+            ("rm owned.py", "delete"),
+            ("python3 -c \"open('owned.py', 'w').write('x')\"", "keep"),
+        ],
+        ids=["rm", "python-write"],
+    )
+    def test_shell_write_of_a_claimed_tracked_file_is_attributed_to_the_claimant(
+        self,
+        mock_dependencies: dict[str, Any],
+        temp_db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        command: str,
+        after_command: str,
+    ) -> None:
+        """A shell rm or python write of a tracked path lands in the claimed task's ledger."""
+        self._land_file(tmp_path, "owned.py")
+        machine_id = insert_isolated_machine(temp_db)
+        patch_local_machine_id(monkeypatch, machine_id)
+        project = LocalProjectManager(temp_db).create(name="shell-write")
+        session = SessionManager(temp_db).register(
+            external_id="shell-write-session",
+            machine_id=machine_id,
+            source="claude",
+            project_id=project.id,
+        )
+        write_project_marker(tmp_path, project_id=project.id, name=project.name)
+        manager = SessionVariableManager(temp_db)
+        assert manager.select_task_claim(session.id, "task-123", "#123")
+        mock_dependencies["session_manager"].db = temp_db
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": command, "cwd": str(tmp_path)},
+                "project_path": str(tmp_path),
+            },
+            metadata={"_platform_session_id": session.id},
+        )
+        event.cwd = str(tmp_path)
+        event.project_id = project.id
+        normalize_tool_fields(event.data)
+        assert event.data.get("canonical_repo_mutation") is True
+        if after_command == "delete":
+            (tmp_path / "owned.py").unlink()
+
+        handlers._record_successful_file_mutation(event, session.id, is_canonical_edit=True)
+
+        after = manager.get_variables(session.id)
+        assert after["task_edited_file_checkouts"] == {"task-123": {str(tmp_path): ["owned.py"]}}
+
 
 class TestSkillToolInterception:
     """Tests for Skill tool call interception in handle_before_tool."""

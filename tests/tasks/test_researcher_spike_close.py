@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.sync import sync_bundled_agents
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -24,6 +23,7 @@ from gobby.tasks.step_records import (
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.agent_definitions import seed_seat
 from tests.tasks.test_close_invariants import _set_close_policy, git
 from tests.tasks.test_step_records import _Seats
 
@@ -37,7 +37,8 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
     project_id = sample_git_project["id"]
     repo = Path(sample_git_project["repo_path"])
     _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
-    sync_bundled_agents(temp_db)
+    seed_seat(temp_db, "researcher", task_step_writes=["implementation", "closing"])
+    seed_seat(temp_db, "research-reviewer", task_step_writes=["review"])
     sessions = SessionManager(temp_db)
     session = sessions.register(
         external_id="researcher-spike-close",

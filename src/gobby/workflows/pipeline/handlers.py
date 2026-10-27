@@ -117,6 +117,9 @@ async def execute_mcp_step(
         or (result.get("error") is not None and result.get("success") is not True)
     ):
         error_msg = result.get("error") or "Unknown MCP tool error"
+        if mcp_config.on_refused == "record" and result.get("code") == "forbidden":
+            # A recorded refusal ends this step with its reason, so the run goes on.
+            return {"refused": {"code": "forbidden", "error": error_msg}}
         error_type = (
             PipelineStepRefusal
             if result.get("error_code") == "runbook_seat_refused"

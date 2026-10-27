@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -24,17 +25,23 @@ from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, nativ
 from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
 from gobby.terminals.frame_client import decode_frame
 from gobby.terminals.host_client import (
+    MAX_CONTROL_LINE,
+    CommitTransportError,
     HostBatchTarget,
+    HostClient,
     HostCommandError,
     HostDecodeError,
+    HostEpochChangedError,
     HostUnavailableError,
+    decode_control_line,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow, frames_socket_path
+from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
 from gobby.terminals.input_grants import sync_host_input_grant
 from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
+    HostManagerControl,
     NativeBatchFailure,
     NativeBatchOperation,
     NativeTerminalRuntime,
@@ -1154,6 +1161,166 @@ async def _prepared_ledger_spawn(
     prepared.acknowledge_persist()
     prepared.acknowledge_observer()
     return runtime, prepared
+
+
+class _HostControlSocket:
+    """Control socket writer whose host answers each request the way the host does.
+
+    ``silent_commit`` drops the connection once a commit's bytes have left, so the
+    host may have received the commit and no caller may resend it.
+    """
+
+    def __init__(
+        self, reader: asyncio.StreamReader, *, host_epoch: str, silent_commit: bool = False
+    ) -> None:
+        self._reader = reader
+        self._host_epoch = host_epoch
+        self._silent_commit = silent_commit
+        self.methods: list[str] = []
+
+    def write(self, data: bytes) -> None:
+        request = decode_control_line(data)
+        method = str(request["method"])
+        self.methods.append(method)
+        if method == "spawn_commit" and self._silent_commit:
+            self._reader.feed_eof()
+            return
+        reply: dict[str, Any] = {"id": request["id"], "ok": True}
+        if method == "ping":
+            reply.update(host_epoch=self._host_epoch, host_pid=42, version="test")
+        self._reader.feed_data(encode_control_line(reply))
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self._reader.feed_eof()
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+async def _closed_control_client() -> HostClient:
+    """A real control client that is closed before any commit is written."""
+    client = HostClient(
+        asyncio.StreamReader(),
+        _HostControlSocket(asyncio.StreamReader(), host_epoch="epoch-1"),
+    )
+    await client.close()
+    return client
+
+
+def _dial_control_socket(
+    monkeypatch: pytest.MonkeyPatch, reader: asyncio.StreamReader, socket: _HostControlSocket
+) -> list[str]:
+    """Route the reconnect's dial to ``socket``; return the paths it dialed."""
+    dialed: list[str] = []
+
+    async def open_connection(
+        *, path: str, limit: int
+    ) -> tuple[asyncio.StreamReader, _HostControlSocket]:
+        assert limit == MAX_CONTROL_LINE + 1
+        dialed.append(path)
+        return reader, socket
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", open_connection)
+    return dialed
+
+
+def _committable_spawn(
+    client: HostClient, socket_dir: Path
+) -> tuple[NativeTerminalRuntime, PreparedSpawn]:
+    """A spawn after persist and observer bind, whose control wrapper dials ``socket_dir``."""
+    manager = SimpleNamespace(_client=client, host_epoch="epoch-1", socket_dir=socket_dir)
+    runtime = NativeTerminalRuntime(HostManagerControl(manager), frame_host_epoch="epoch-1")
+    prepared = PreparedSpawn(
+        terminal_id=uuid4(),
+        spawn_key="sk-commit",
+        locator=AttachLocator(
+            backend="native", frame_host_epoch="epoch-1", host_terminal_id="ht-1"
+        ),
+        process=None,
+        host_terminal_id="ht-1",
+        persist_acknowledged=True,
+        observer_bound=True,
+    )
+    return runtime, prepared
+
+
+@pytest.mark.asyncio
+async def test_commit_on_a_closed_control_client_redials_its_epoch_and_commits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A socket closed before the commit was written is redialed; the next commit lands."""
+    client = await _closed_control_client()
+    reader = asyncio.StreamReader(limit=MAX_CONTROL_LINE + 1)
+    socket = _HostControlSocket(reader, host_epoch="epoch-1")
+    dialed = _dial_control_socket(monkeypatch, reader, socket)
+    runtime, prepared = _committable_spawn(client, tmp_path)
+
+    with pytest.raises(CommitTransportError) as unsent:
+        await runtime.commit_spawn(prepared)
+    handle = await runtime.commit_spawn(prepared)
+
+    assert unsent.value.request_written is False
+    assert handle.terminal_id == prepared.terminal_id
+    assert dialed == [str(control_socket_path(tmp_path))]
+    assert socket.methods == ["ping", "spawn_commit"]
+
+
+@pytest.mark.asyncio
+async def test_commit_on_a_closed_control_client_refuses_a_host_on_another_epoch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A redial that finds another host epoch fails typed and sends no commit."""
+    client = await _closed_control_client()
+    reader = asyncio.StreamReader(limit=MAX_CONTROL_LINE + 1)
+    socket = _HostControlSocket(reader, host_epoch="epoch-2")
+    _dial_control_socket(monkeypatch, reader, socket)
+    runtime, prepared = _committable_spawn(client, tmp_path)
+
+    with pytest.raises(HostEpochChangedError):
+        await runtime.commit_spawn(prepared)
+
+    assert socket.methods == ["ping"]
+
+
+@pytest.mark.asyncio
+async def test_commit_the_host_may_have_received_is_never_resent_or_redialed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A commit whose bytes left before the connection dropped is never resent."""
+    reader = asyncio.StreamReader()
+    socket = _HostControlSocket(reader, host_epoch="epoch-1", silent_commit=True)
+    client = HostClient(reader, socket)
+    dialed = _dial_control_socket(monkeypatch, asyncio.StreamReader(), socket)
+    runtime, prepared = _committable_spawn(client, tmp_path)
+
+    with pytest.raises(CommitTransportError) as sent:
+        await runtime.commit_spawn(prepared)
+
+    assert sent.value.request_written is True
+    assert dialed == []
+    assert socket.methods == ["spawn_commit"]
+
+
+@pytest.mark.asyncio
+async def test_commit_whose_connection_cannot_be_restored_stays_not_sent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When the redial itself fails, the commit is still reported as not sent."""
+    client = await _closed_control_client()
+
+    async def refuse(*, path: str, limit: int) -> tuple[asyncio.StreamReader, _HostControlSocket]:
+        raise OSError(f"connection refused: {path}")
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", refuse)
+    runtime, prepared = _committable_spawn(client, tmp_path)
+
+    with pytest.raises(CommitTransportError) as unsent:
+        await runtime.commit_spawn(prepared)
+
+    assert unsent.value.request_written is False
 
 
 @pytest.mark.asyncio

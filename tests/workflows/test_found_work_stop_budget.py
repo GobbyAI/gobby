@@ -14,6 +14,7 @@ import builtins
 import io
 import json
 import os
+import time
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -46,6 +47,10 @@ ONE_MIB = 1024 * 1024
 APPEND_SLACK_BYTES = 4096
 # One backward-read chunk. The cap tests allow one extra chunk past the 1 MiB cap.
 BACKWARD_CHUNK_BYTES = 64 * 1024
+# Generous wall-clock bound on one stop, in seconds. The byte cap is the tight bound; this one
+# catches a stall after the read, which a byte count cannot see. It sits far above a normal
+# stop so a loaded machine does not flake.
+STOP_DEADLINE_SECONDS = 5.0
 
 
 class _ReadSpy:
@@ -495,4 +500,41 @@ async def test_replaced_transcript_with_a_longer_body_fails_the_tail_hash(
     assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == (LATEST_RED,)
     assert 0 < read_spy.bytes_read < size // 2, (
         f"stop after replacement read {read_spy.bytes_read} bytes of a {size}-byte transcript"
+    )
+
+
+async def test_stop_past_a_multi_mebibyte_transcript_reads_only_the_latest_turn(
+    tmp_path: Path, in_process_pool: None, read_spy: _ReadSpy
+) -> None:
+    """Megabytes of earlier turns cost the stop only the latest turn and one backward chunk.
+
+    The stop also finishes within STOP_DEADLINE_SECONDS, timed around the call alone.
+    """
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, _warm_records(WARM_TURNS, prefix="warm"))
+    read_spy.watched.add(transcript.resolve())
+    session = _session("claude", transcript)
+    variables: dict[str, Any] = {}
+    assert await _stop_failures(_analyzer(session), session, tmp_path, variables) == ()
+
+    _append(transcript, _warm_records(BULK_TURNS, prefix="bulk", first_at=3 * WARM_TURNS))
+    latest_bytes = _append_latest_red(transcript, at=3 * (WARM_TURNS + BULK_TURNS) + 10)
+    size = transcript.stat().st_size
+    assert size > 2 * ONE_MIB, size
+    assert latest_bytes < BACKWARD_CHUNK_BYTES, latest_bytes
+    read_spy.reset()
+    analyzer = _analyzer(session)
+
+    started = time.perf_counter()
+    failures = await _stop_failures(analyzer, session, tmp_path, variables)
+    elapsed = time.perf_counter() - started
+    assert failures == (LATEST_RED,)
+    # One backward chunk, whatever the transcript's size: the cost never scales with the file.
+    assert read_spy.bytes_read <= BACKWARD_CHUNK_BYTES + APPEND_SLACK_BYTES, (
+        f"stop read {read_spy.bytes_read} bytes of a {size}-byte transcript; "
+        f"the latest turn is {latest_bytes} bytes"
+    )
+    assert elapsed < STOP_DEADLINE_SECONDS, (
+        f"stop took {elapsed:.2f}s on a {size}-byte transcript; "
+        f"the deadline is {STOP_DEADLINE_SECONDS}s"
     )

@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.sessions._commits import register_commits_tools
 from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
 from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
 from gobby.mcp_proxy.tools.sessions._messages import register_message_tools
+from gobby.mcp_proxy.tools.sessions._readonly_query import register_readonly_query_tools
 from gobby.mcp_proxy.tools.sessions._registration import register_registration_tools
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tools
@@ -99,6 +100,10 @@ def create_session_messages_registry(
     # --- Operator claim hold (directed seat parking) ---
     if session_manager is not None and db is not None:
         register_claim_hold_tools(registry, session_manager, db)
+
+    # --- Read-only daemon DB query (scoped to Assistant and Orchestrator by rule) ---
+    if db is not None:
+        register_readonly_query_tools(registry, db)
 
     # --- Transcript Archive Tools ---
     if session_manager is not None:

@@ -7,12 +7,14 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
 import pytest
+import yaml
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
@@ -33,6 +35,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.storage.workspace_layout import LayoutNode
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import PreparedSpawn, TerminalSpawnRequest
@@ -49,6 +52,10 @@ from gobby.utils.session_context import (
     session_context_for_test,
     set_request_principal,
 )
+from gobby.workflows.definitions import PipelineDefinition
+from gobby.workflows.pipeline.handlers import execute_mcp_step
+from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.templates import TemplateEngine
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
@@ -286,6 +293,339 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
     assert unconfigured is not None
     with _principal(None):
         assert await _code(unconfigured, "read_pane", pane=first_ref) == "terminal_failed"
+
+
+def _pane_count(node: LayoutNode) -> int:
+    return 1 if node["kind"] == "pane" else sum(_pane_count(child) for child in node["children"])
+
+
+def _row_sizes(node: LayoutNode) -> list[int]:
+    """Panes per row of a tiled tab: rows stack vertically and each row runs horizontally.
+
+    A split holds exactly two children, so a stack of rows nests: flatten the nesting.
+    """
+    if node["kind"] == "pane":
+        return [1]
+    if node["axis"] == "horizontal":
+        return [_pane_count(node)]
+    return [size for child in node["children"] for size in _row_sizes(child)]
+
+
+# gclient's Arrange > Tiled: ceil(sqrt N) rows filled left to right, so five panes sit 2-2-1.
+@pytest.mark.parametrize(
+    ("panes", "expected_rows"),
+    [(1, [1]), (2, [1, 1]), (3, [2, 1]), (4, [2, 2]), (5, [2, 2, 1]), (6, [2, 2, 2])],
+)
+async def test_rebalance_tab_tiled_arranges_panes_like_gclient(
+    stack: _Stack, panes: int, expected_rows: list[int]
+) -> None:
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(registry, "create_tab", workspace=home, project_id=stack.project_id)
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        first_ref = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        for _ in range(panes - 1):
+            await _ok(registry, "split_pane", pane=first_ref, axis="horizontal")
+        assert len(stack.workspaces.list_panes(created["id"])) == panes
+        tiled = await _ok(
+            registry, "rebalance_tab", tab=tab_ref, columns=80, rows=100, layout="tiled"
+        )
+    assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
+
+
+async def test_rebalance_tab_names_a_tab_by_title_within_its_workspace(stack: _Stack) -> None:
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25128",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        first_ref = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        for _ in range(2):
+            await _ok(registry, "split_pane", pane=first_ref, axis="horizontal")
+        tiled = await _ok(
+            registry,
+            "rebalance_tab",
+            tab="Dev Team - #25128",
+            workspace=home,
+            rows=100,
+            layout="tiled",
+        )
+    assert tiled["tab"]["id"] == layout["tabs"][0]["id"]
+    assert _row_sizes(tiled["tab"]["layout"]) == [2, 1]
+
+
+async def test_rebalance_tab_reports_the_seats_it_tiled_and_skipped(stack: _Stack) -> None:
+    """A seat with a pane is tiled; a paneless seat is skipped with its reason."""
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25189",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        await _ok(registry, "split_pane", pane=pane, axis="horizontal")
+        seats = [{"name": "code-reviewer", "pane": pane}, {"name": "developer", "pane": None}]
+        arranged = await _ok(
+            registry,
+            "rebalance_tab",
+            tab="Dev Team - #25189",
+            workspace=home,
+            rows=100,
+            layout="tiled",
+            seats=seats,
+        )
+    assert arranged["tiled"] == ["code-reviewer"]
+    assert arranged["skipped"] == [{"seat": "developer", "reason": "pane_missing"}]
+
+
+async def test_rebalance_tab_refuses_a_seat_with_no_name_before_the_layout_write(
+    stack: _Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seat entry with no name is refused as invalid_ref; the tab layout is left as it was."""
+    rebalance_calls: list[str] = []
+    real_rebalance = WorkspaceOps.tab_rebalance
+
+    async def counted_rebalance(self: WorkspaceOps, *args: Any, **kwargs: Any) -> Any:
+        rebalance_calls.append("tab_rebalance")
+        return await real_rebalance(self, *args, **kwargs)
+
+    monkeypatch.setattr(WorkspaceOps, "tab_rebalance", counted_rebalance)
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25189",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        await _ok(registry, "split_pane", pane=pane, axis="horizontal")
+        before = _row_sizes(stack.workspaces.list_tabs(created["id"])[0].layout)
+        code = await _code(
+            registry,
+            "rebalance_tab",
+            tab="Dev Team - #25189",
+            workspace=home,
+            rows=100,
+            layout="tiled",
+            seats=[{"pane": None}],
+        )
+    assert code == "invalid_ref"
+    assert rebalance_calls == []
+    assert _row_sizes(stack.workspaces.list_tabs(created["id"])[0].layout) == before
+
+
+class _PipelineProxy:
+    """The pipeline's tool proxy, forwarding each MCP step to the internal registry."""
+
+    def __init__(self, registry: InternalToolRegistry) -> None:
+        self._registry = registry
+
+    async def get_tool_schema(self, server: str, tool: str, **_: Any) -> None:
+        """Pipeline dispatch prefetches schemas; the internal registry needs none."""
+
+    async def call_tool(
+        self, server: str, tool: str, arguments: dict[str, Any], **_: Any
+    ) -> dict[str, Any]:
+        return dict(await self._registry.call(tool, arguments))
+
+
+async def test_devteam_arrange_step_is_not_forbidden_for_an_operator_launch(stack: _Stack) -> None:
+    """A background pipeline run keeps the principal of the request that launched it.
+
+    An operator launch carries no token, so its principal is None. With that principal and
+    the pipeline's session context, the devteam arrange step reaches rebalance_tab through
+    execute_mcp_step and tiles its tab instead of being refused as forbidden.
+    """
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id="devteam-arrange",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    with _principal(None), session_context_for_test(session.id):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="devteam", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25186",
+        )
+        first_ref = f"{home}:{layout['tabs'][0]['ref']}:{layout['panes'][0]['ref']}"
+        await _ok(registry, "split_pane", pane=first_ref, axis="horizontal")
+        arrange = SimpleNamespace(
+            id="arrange",
+            mcp=SimpleNamespace(
+                server="gobby-workspaces",
+                tool="rebalance_tab",
+                arguments={
+                    "workspace": home,
+                    "tab": "Dev Team - #25186",
+                    "rows": 100,
+                    "layout": "tiled",
+                },
+            ),
+        )
+        tiled = await execute_mcp_step(
+            arrange,
+            {"session_id": session.id, "project_id": stack.project_id},
+            lambda: _PipelineProxy(registry),
+        )
+    assert _row_sizes(tiled["tab"]["layout"]) == [1, 1]
+
+
+async def test_devteam_arrange_refuses_a_pipeline_run_with_no_request_principal(
+    stack: _Stack,
+) -> None:
+    """A restart-resumed or cron run has a session context but no request principal.
+
+    current_actor grants it nothing, so its layout write is refused as forbidden.
+    """
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id="devteam-anonymous-run",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    with session_context_for_test(session.id):
+        refused = await _code(registry, "rebalance_tab", tab="Dev Team - #25189", rows=100)
+    assert refused == "forbidden"
+
+
+TEAM_PLANNING = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
+)
+
+
+@pytest.mark.parametrize(
+    ("seats", "expected_rows"),
+    [
+        (("plan-writer",), [1, 1]),
+        (("plan-adversary",), [1, 1]),
+        (("plan-enhancer",), [1, 1]),
+        (("plan-writer", "plan-adversary"), [2, 1]),
+        (("plan-writer", "plan-adversary", "plan-enhancer"), [2, 2]),
+    ],
+)
+async def test_team_planning_arrange_tiles_the_tab_a_seat_pane_joins(
+    stack: _Stack, seats: tuple[str, ...], expected_rows: list[int]
+) -> None:
+    """A seat_pane in a tab with another title: arrange tiles the tab the seats joined."""
+    definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
+    arrange = next(step for step in definition.steps if step.id == "arrange")
+    assert arrange.mcp is not None and arrange.mcp.arguments is not None
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id=f"team-planning-arrange-{'-'.join(seats)}",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    with _principal(None), session_context_for_test(session.id):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="planning", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Build Lane",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        seat_pane = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        for _ in seats:
+            # Each seat's placement splits the supplied seat_pane, so every seat joins Build Lane.
+            await _ok(registry, "split_pane", pane=seat_pane, axis="horizontal")
+        context = {
+            "inputs": {
+                "workspace": home,
+                "task": "#25186",
+                "seat_pane": seat_pane,
+                "seats": ",".join(seats),
+            },
+            "steps": {
+                "guard": {"output": {"launch": list(seats), "tab_title": "Team Planning - #25186"}},
+                **{seat: {"output": {"tab_ref": tab_ref, "pane_ref": seat_pane}} for seat in seats},
+            },
+        }
+        arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+            arrange.mcp.arguments, context, drop_none=True
+        )
+        step = SimpleNamespace(
+            id="arrange",
+            mcp=SimpleNamespace(
+                server="gobby-workspaces", tool="rebalance_tab", arguments=arguments
+            ),
+        )
+        tiled = await execute_mcp_step(
+            step,
+            {"session_id": session.id, "project_id": stack.project_id},
+            lambda: _PipelineProxy(registry),
+        )
+    assert _pane_count(tiled["tab"]["layout"]) == 1 + len(seats)
+    assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
+
+
+@pytest.mark.parametrize("seats", [("plan-writer",), ("plan-writer", "plan-adversary")])
+def test_team_planning_arrange_finds_its_tab_by_title_when_a_seat_pane_vanished(
+    seats: tuple[str, ...],
+) -> None:
+    """A restart-resumed team whose adopted seat pane is gone has no tab_ref to tile by.
+
+    Arrange then names the team tab by its workspace and title, as devteam's arrange does.
+    """
+    definition = PipelineDefinition.model_validate(yaml.safe_load(TEAM_PLANNING.read_text()))
+    arrange = next(step for step in definition.steps if step.id == "arrange")
+    assert arrange.mcp is not None and arrange.mcp.arguments is not None
+    context = {
+        "inputs": {"workspace": "node:planning", "task": "#25186", "seats": ",".join(seats)},
+        "steps": {
+            "guard": {"output": {"launch": list(seats), "tab_title": "Team Planning - #25186"}},
+            **{seat: {"output": {"tab_ref": None, "pane_ref": None}} for seat in seats},
+        },
+    }
+    arguments = StepRenderer(TemplateEngine()).render_mcp_arguments(
+        arrange.mcp.arguments, context, drop_none=True
+    )
+    assert arguments.get("workspace") == "node:planning", arguments
+    assert arguments.get("tab") == "Team Planning - #25186", arguments
+    assert arguments.get("seats") == [{"name": seat, "pane": None} for seat in seats], arguments
 
 
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:
