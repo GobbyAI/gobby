@@ -25,6 +25,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import yaml
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.agents.runner import AgentRunner
@@ -1360,6 +1361,10 @@ async def linked_developer(
     )
     _git(repo, *commit, "unlinked base")
     unlinked_sha = _git(repo, "rev-parse", "HEAD")
+    candidate = repo / "src" / "gobby" / "candidate.py"
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text("VALUE = 1\n")
+    _git(repo, "add", "--", "src/gobby/candidate.py")
     _git(repo, *commit, "linked candidate")
     sha = _git(repo, "rev-parse", "HEAD")
     short_sha = _git(repo, "rev-parse", "--short", "HEAD")
@@ -1395,6 +1400,125 @@ async def linked_developer(
     assert run.step == "submit"
     await run.send(f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT=tree COMMIT={sha} NOTE=ready")
     return run, task, sha, unlinked_sha
+
+
+_TEST_ONLY_RED = {"tests/workflows/test_red_only.py": "def test_red_only():\n    assert False\n"}
+_PRODUCTION_FIX = {"src/gobby/red_fix.py": "VALUE = 1\n"}
+_BUNDLED_DEVELOPER = (
+    Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
+)
+
+
+def _commit_files(repo: Path, message: str, files: dict[str, str]) -> str:
+    for relative, text in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    _git(repo, "add", "--", *files)
+    _git(
+        repo,
+        "-c",
+        "user.name=Gobby Tests",
+        "-c",
+        "user.email=gobby-tests@example.com",
+        "commit",
+        "--no-gpg-sign",
+        "-q",
+        "-m",
+        message,
+    )
+    return _git(repo, "rev-parse", "HEAD")
+
+
+async def _claimed_developer(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SeatRun, Task, Path]:
+    checkout = install_isolated_checkout_project(
+        temp_db,
+        tmp_path / "repo",
+        name="seat-link-kind",
+        machine_id=AUTHORITY_MACHINE_ID,
+        monkeypatch=monkeypatch,
+    )
+    repo = Path(checkout.root_path)
+    _git(repo, "init", "-q", "-b", "main")
+    _commit_files(repo, "unlinked base", {"README.md": "base\n"})
+    _git(repo, "checkout", "-q", "-b", "seat-work")
+    definition = yaml.safe_load(_BUNDLED_DEVELOPER.read_text())
+    run = SeatRun(temp_db, "developer", project_id=checkout.project.id, definition=definition)
+    await run.load(*run.vars["required_skills"])
+    task = run.task(owner=SESSION_ID)
+    await run.call(
+        "gobby-tasks",
+        "claim_task",
+        {"task_id": task.id},
+        {"result": {"task_id": task.id, "ref": f"#{task.seq_num}"}},
+    )
+    await run.call("gobby-tasks", "get_task", {"task_id": task.id}, {"result": {"id": task.id}})
+    assert run.step == "implement"
+    return run, task, repo
+
+
+def _registry(run: SeatRun, temp_db: HubDatabase) -> InternalToolRegistry:
+    return create_commit_registry(
+        task_manager=LocalTaskManager(temp_db),
+        project_manager=LocalProjectManager(temp_db),
+        session_manager=run.sessions,
+    )
+
+
+async def _link(run: SeatRun, temp_db: HubDatabase, task: Task, repo: Path, sha: str) -> None:
+    arguments = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
+    registry = _registry(run, temp_db)
+    with session_context_for_test(SESSION_ID):
+        output = cast(dict[str, Any], await registry.call("link_commit", arguments))
+    assert "error" not in output, output
+    await run.call("gobby-tasks", "link_commit", arguments, output)
+
+
+async def _unlink(run: SeatRun, temp_db: HubDatabase, task_ref: str, repo: Path, sha: str) -> None:
+    arguments = {
+        "task_id": task_ref,
+        "commit_sha": sha,
+        "reason": "superseded",
+        "project_path": str(repo),
+    }
+    registry = _registry(run, temp_db)
+    with session_context_for_test(SESSION_ID):
+        output = cast(dict[str, Any], await registry.call("unlink_commit", arguments))
+    assert "error" not in output, output
+    await run.call("gobby-tasks", "unlink_commit", arguments, output)
+
+
+async def test_developer_linked_test_only_red_commit_stays_in_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_linked_production_commit_moves_to_submit(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
+
+
+async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
 
 
 async def test_developer_bounce_requires_incoming_assigned_reviewer(
