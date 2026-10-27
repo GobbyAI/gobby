@@ -56,8 +56,7 @@ how the system behaves so you can work with it instead of being surprised by it.
       description.
    Operational friction is never a deferral reason. Needing a daemon restart or
    cutover means announcing it with a `global` `send_message` (every live session
-   on this machine, across projects) and waiting for a quiet window with no live
-   spawned worker or close validator; a crate change means rebuild + install via new inode
+   on this machine, across projects) as a heads-up; a crate change means rebuild + install via new inode
    (Architecture Facts below). Coordination is part of the fix. Never end a
    turn asking "should I fix this?" — and never go silent about a finding
    either; silence is worse than asking. Enhancement ideas with nothing broken
