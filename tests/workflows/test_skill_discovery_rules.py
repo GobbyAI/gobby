@@ -421,6 +421,18 @@ class TestRequireSeatReadingGates:
         "gobby:references/synthetic/seat-c.md",
     )
     BOOTSTRAP_TOOLS = ("mcp__gobby-skills__get_skill", "mcp__gobby-skills__get_skill_file")
+    # Recovery tools a seat keeps while its required reading is unloaded.
+    RECOVERY_TOOLS = (
+        "mcp__gobby__get_tool_schema",
+        "mcp__gobby__get_variable",
+        "mcp__gobby-results__get_tool_result",
+        "mcp__gobby-sessions__get_handoff",
+        "mcp__gobby-sessions__set_handoff",
+        "mcp__gobby-memory__get_memory",
+        "mcp__gobby-agents__send_message",
+        "mcp__gobby-agents__wait_for_coordination",
+    )
+    ADMITTED_WHILE_UNLOADED = (*BOOTSTRAP_TOOLS, *RECOVERY_TOOLS)
 
     @staticmethod
     def _tool_event(tool_name: str) -> HookEvent:
@@ -499,8 +511,8 @@ class TestRequireSeatReadingGates:
         self._assert_blocked_naming(rearmed, self.PROCEDURE)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", BOOTSTRAP_TOOLS)
-    async def test_seat_procedure_admits_bootstrap_skill_tools_while_unloaded(
+    @pytest.mark.parametrize("tool_name", ADMITTED_WHILE_UNLOADED)
+    async def test_seat_procedure_admits_recovery_and_skill_tools_while_unloaded(
         self, db: HubDatabase, tool_name: str
     ) -> None:
         _sync_bundled(db)
@@ -508,7 +520,8 @@ class TestRequireSeatReadingGates:
 
         response = await self._evaluate(db, variables, tool_name)
 
-        assert response.decision == "allow"
+        # Other rules may still answer a tool; this gate must not block on the unloaded procedure.
+        assert self._path(self.PROCEDURE) not in (response.reason or "")
 
     @pytest.mark.asyncio
     async def test_seat_references_hold_tools_until_every_listed_reference_loads(
@@ -535,8 +548,8 @@ class TestRequireSeatReadingGates:
         self._assert_blocked_naming(rearmed, ref_a)
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("tool_name", BOOTSTRAP_TOOLS)
-    async def test_seat_references_admit_bootstrap_skill_tools_while_unloaded(
+    @pytest.mark.parametrize("tool_name", ADMITTED_WHILE_UNLOADED)
+    async def test_seat_references_admit_recovery_and_skill_tools_while_unloaded(
         self, db: HubDatabase, tool_name: str
     ) -> None:
         _sync_bundled(db)
@@ -544,7 +557,8 @@ class TestRequireSeatReadingGates:
 
         response = await self._evaluate(db, variables, tool_name)
 
-        assert response.decision == "allow"
+        # Other rules may still answer a tool; this gate must not block on an unloaded reference.
+        assert not any(self._path(ref) in (response.reason or "") for ref in self.REFERENCES)
 
 
 # --- once-per-session skill hub listing ---
