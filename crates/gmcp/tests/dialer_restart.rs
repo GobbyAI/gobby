@@ -1,10 +1,10 @@
-//! A surviving session's pooled keep-alive connection across a daemon restart.
+//! A surviving session's first call across a daemon restart.
 //!
-//! ureq pools the connection a successful request used. Once the daemon process
-//! exits, the first request that pulls that socket from the pool must not report
-//! DAEMON_UNAVAILABLE while a new daemon already answers on the same port, a
-//! daemon that stays down must still be reported promptly, and a non-idempotent
-//! call that reached the daemon must never be replayed.
+//! The daemon keeps connections alive, but the dialer must never send a request on
+//! a socket that may have outlived its daemon process. The first call after a new
+//! daemon answers on the same port must not report DAEMON_UNAVAILABLE, even inside
+//! the preflight cache window; a daemon that stays down must still be reported
+//! promptly, and a non-idempotent call that reached the daemon must never be replayed.
 
 use gobby_mcp::daemon::{Dialer, RequestOptions};
 use serde_json::{Value, json};
@@ -255,10 +255,16 @@ fn is_read_timeout(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
 }
 
-/// Two direct requests pool a keep-alive connection, the daemon exits the given
-/// way, a new daemon binds the same port, and the session's first preflighted
-/// call's result and the paths the new daemon served are returned for the caller to check.
-fn first_call_after_restart(exit: Exit) -> anyhow::Result<(serde_json::Value, Vec<String>)> {
+/// Two warm-up requests on a keep-alive daemon, which exits the given way while a
+/// new daemon binds the same port; then the session's first preflighted call.
+/// Returns that call's result, the paths the new daemon served, and whether the two
+/// warm-up requests shared a connection. A preflighted warm-up leaves the preflight
+/// cached, so the restart lands inside the 5 s window and the call skips health.
+fn first_call_after_restart(
+    exit: Exit,
+    warm: fn() -> RequestOptions<'static>,
+) -> anyhow::Result<(serde_json::Value, Vec<String>, bool)> {
+    let preflighted_warmup = warm().preflight;
     let mut outcome = None;
     isolated(|root| {
         let address = free_address()?;
@@ -267,40 +273,35 @@ fn first_call_after_restart(exit: Exit) -> anyhow::Result<(serde_json::Value, Ve
             Some(format!("http://{address}")),
             || -> anyhow::Result<()> {
                 let dialer = Dialer::with_context(root, Default::default())?;
-                let before = KeepAliveDaemon::bind(
-                    address,
-                    exit,
-                    vec![
-                        Reply::Json(200, json!({"n":1})),
-                        Reply::Json(200, json!({"n":2})),
-                    ],
-                )?;
-                assert_eq!(
-                    dialer.request("GET", "/one", None, direct()),
-                    json!({"n":1})
-                );
-                assert_eq!(
-                    dialer.request("GET", "/two", None, direct()),
-                    json!({"n":2})
-                );
+                let mut replies = vec![
+                    Reply::Json(200, json!({"n":1})),
+                    Reply::Json(200, json!({"n":2})),
+                ];
+                if preflighted_warmup {
+                    replies.insert(0, Reply::Json(200, json!({"status":"healthy"})));
+                }
+                let before = KeepAliveDaemon::bind(address, exit, replies)?;
+                assert_eq!(dialer.request("GET", "/one", None, warm()), json!({"n":1}));
+                assert_eq!(dialer.request("GET", "/two", None, warm()), json!({"n":2}));
                 let served = before.served();
-                assert_eq!(before.paths(), ["/one", "/two"]);
-                assert_eq!(
-                    served[0].connection, served[1].connection,
-                    "the second request must reuse the pooled keep-alive connection: {served:?}"
-                );
+                let warm_paths: Vec<String> = served
+                    .iter()
+                    .filter(|s| s.path != "/api/health")
+                    .map(|s| s.path.clone())
+                    .collect();
+                assert_eq!(warm_paths, ["/one", "/two"]);
+                let shared = served
+                    .windows(2)
+                    .any(|pair| pair[0].connection == pair[1].connection);
                 before.exit();
 
-                let after = KeepAliveDaemon::bind(
-                    address,
-                    exit,
-                    vec![
-                        Reply::Json(200, json!({"status":"healthy"})),
-                        Reply::Json(200, json!({"restarted":true})),
-                    ],
-                )?;
+                let mut replies = vec![Reply::Json(200, json!({"restarted":true}))];
+                if !preflighted_warmup {
+                    replies.insert(0, Reply::Json(200, json!({"status":"healthy"})));
+                }
+                let after = KeepAliveDaemon::bind(address, exit, replies)?;
                 let result = dialer.request("POST", TOOL_PATH, Some(&json!({})), preflighted());
-                outcome = Some((result, after.paths()));
+                outcome = Some((result, after.paths(), shared));
                 Ok(())
             },
         )
@@ -310,17 +311,29 @@ fn first_call_after_restart(exit: Exit) -> anyhow::Result<(serde_json::Value, Ve
 
 #[test]
 fn first_call_after_graceful_restart_succeeds_on_fresh_connection() -> anyhow::Result<()> {
-    let (result, paths) = first_call_after_restart(Exit::Close)?;
+    let (result, paths, shared) = first_call_after_restart(Exit::Close, direct)?;
     assert_eq!(result, json!({"restarted":true}), "{result}");
     assert_eq!(paths, ["/api/health", TOOL_PATH]);
+    assert!(!shared, "no request may reuse a connection");
     Ok(())
 }
 
 #[test]
 fn first_call_after_reset_restart_succeeds_on_fresh_connection() -> anyhow::Result<()> {
-    let (result, paths) = first_call_after_restart(Exit::Reset)?;
+    let (result, paths, shared) = first_call_after_restart(Exit::Reset, direct)?;
     assert_eq!(result, json!({"restarted":true}), "{result}");
     assert_eq!(paths, ["/api/health", TOOL_PATH]);
+    assert!(!shared, "no request may reuse a connection");
+    Ok(())
+}
+
+#[test]
+fn first_call_inside_the_preflight_cache_window_succeeds_after_reset_restart() -> anyhow::Result<()>
+{
+    let (result, paths, shared) = first_call_after_restart(Exit::Reset, preflighted)?;
+    assert_eq!(result, json!({"restarted":true}), "{result}");
+    assert_eq!(paths, [TOOL_PATH], "the cached preflight skips health");
+    assert!(!shared, "no request may reuse a connection");
     Ok(())
 }
 

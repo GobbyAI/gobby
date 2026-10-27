@@ -59,36 +59,21 @@ impl Default for RequestOptions<'_> {
 }
 
 impl Dialer {
-    /// Probe the current endpoint without authentication or starting anything.
+    /// Probe the current endpoint without authentication, retries, or starting anything.
     pub fn probe_health(&self) -> anyhow::Result<HealthProbe> {
         let base = daemon_url()?;
-        Ok(match self.get_health(base.trim_end_matches('/')) {
+        let answer = self
+            .agent
+            .get(&format!("{}/api/health", base.trim_end_matches('/')))
+            .timeout(Duration::from_secs(2))
+            .call();
+        Ok(match answer {
             Ok(response) if response.status() == 200 => HealthProbe::Healthy,
-            Ok(response) => HealthProbe::Answered(response.status()),
-            Err(_) => HealthProbe::Unreachable,
-        })
-    }
-
-    /// GET the health endpoint, retrying once when the pooled keep-alive connection to a
-    /// previous daemon process is dead. ureq 2 reports the reset from its pool liveness
-    /// peek, before sending anything, instead of discarding the stream; the dead stream
-    /// has already left the pool, so the retry dials fresh.
-    fn get_health(&self, base: &str) -> Result<ureq::Response, Box<ureq::Transport>> {
-        let mut retried = false;
-        loop {
-            let answer = self
-                .agent
-                .get(&format!("{base}/api/health"))
-                .timeout(Duration::from_secs(2))
-                .call();
-            match answer {
-                Ok(response) | Err(ureq::Error::Status(_, response)) => return Ok(response),
-                Err(ureq::Error::Transport(error)) if !retried && is_connection_closed(&error) => {
-                    retried = true;
-                }
-                Err(ureq::Error::Transport(error)) => return Err(Box::new(error)),
+            Ok(response) | Err(ureq::Error::Status(_, response)) => {
+                HealthProbe::Answered(response.status())
             }
-        }
+            Err(ureq::Error::Transport(_)) => HealthProbe::Unreachable,
+        })
     }
 
     pub fn new() -> anyhow::Result<Self> {
@@ -104,7 +89,13 @@ impl Dialer {
             has_tmux_pane: terminal
                 .get("tmux_pane")
                 .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())),
-            agent: ureq::AgentBuilder::new().redirects(0).build(),
+            // No idle pool: a kept-alive socket can outlive its daemon process, and a
+            // request sent on it after a restart fails (ureq 2's pool liveness peek even
+            // surfaces the reset as an error). Loopback connects are cheap.
+            agent: ureq::AgentBuilder::new()
+                .redirects(0)
+                .max_idle_connections(0)
+                .build(),
             tool_timeouts: Mutex::new(None),
             state: Mutex::new(CachedState {
                 auth: auth_headers()?,
@@ -194,11 +185,16 @@ impl Dialer {
                 .as_ref()
                 .is_some_and(|(url, when)| url == &base && when.elapsed() < Duration::from_secs(5));
             if !recent {
-                match self.get_health(&base) {
+                let response = self
+                    .agent
+                    .get(&format!("{base}/api/health"))
+                    .timeout(Duration::from_secs(2))
+                    .call();
+                match response {
                     Ok(response) if response.status() == 200 => {
                         self.cached()?.last_preflight = Some((base.clone(), Instant::now()));
                     }
-                    Ok(response) if response.status() == 503 => {
+                    Err(ureq::Error::Status(503, response)) => {
                         let text = response.into_string()?;
                         if let Some(detail) = backend_unavailable(&text) {
                             return Ok(unavailable(&base, &detail));
@@ -209,7 +205,7 @@ impl Dialer {
                         ));
                     }
                     // Busy read timeouts are tolerated but never cached as success.
-                    Err(error) if is_timeout(error.as_ref()) => {}
+                    Err(ureq::Error::Transport(error)) if is_timeout(&error) => {}
                     _ => {
                         return Ok(unavailable(
                             &base,
@@ -401,26 +397,13 @@ fn request_timeout(path: &str, timeout: Duration) -> Value {
 }
 
 fn is_timeout(error: &(dyn Error + 'static)) -> bool {
-    has_io_kind(error, &[io::ErrorKind::TimedOut, io::ErrorKind::WouldBlock])
-}
-
-fn is_connection_closed(error: &(dyn Error + 'static)) -> bool {
-    has_io_kind(
-        error,
-        &[
-            io::ErrorKind::ConnectionReset,
-            io::ErrorKind::ConnectionAborted,
-            io::ErrorKind::BrokenPipe,
-            io::ErrorKind::UnexpectedEof,
-        ],
-    )
-}
-
-fn has_io_kind(error: &(dyn Error + 'static), kinds: &[io::ErrorKind]) -> bool {
     let mut current = Some(error);
     while let Some(error) = current {
         if let Some(error) = error.downcast_ref::<io::Error>()
-            && kinds.contains(&error.kind())
+            && matches!(
+                error.kind(),
+                io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+            )
         {
             return true;
         }
