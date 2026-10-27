@@ -1404,6 +1404,9 @@ async def linked_developer(
 
 _TEST_ONLY_RED = {"tests/workflows/test_red_only.py": "def test_red_only():\n    assert False\n"}
 _PRODUCTION_FIX = {"src/gobby/red_fix.py": "VALUE = 1\n"}
+_TEST_ONLY_REPAIR = {
+    "tests/workflows/test_repair_only.py": "def test_repair_only():\n    assert True\n"
+}
 _BUNDLED_DEVELOPER = (
     Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents/developer.yaml"
 )
@@ -1467,8 +1470,18 @@ def _registry(run: SeatRun, temp_db: HubDatabase) -> InternalToolRegistry:
     )
 
 
-async def _link(run: SeatRun, temp_db: HubDatabase, task: Task, repo: Path, sha: str) -> None:
-    arguments = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
+async def _link(
+    run: SeatRun,
+    temp_db: HubDatabase,
+    task: Task,
+    repo: Path,
+    sha: str,
+    *,
+    candidate: bool = False,
+) -> None:
+    arguments: dict[str, Any] = {"task_id": task.id, "commit_sha": sha, "project_path": str(repo)}
+    if candidate:
+        arguments["candidate"] = True
     registry = _registry(run, temp_db)
     with session_context_for_test(SESSION_ID):
         output = cast(dict[str, Any], await registry.call("link_commit", arguments))
@@ -1519,6 +1532,36 @@ async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     _git(repo, "checkout", "-q", "main")
     await _unlink(run, temp_db, task.id, repo, sha)
     assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_unlinking_the_candidate_beside_red_returns_to_implement(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    red = _commit_files(repo, f"[gobby-#{task.seq_num}] test: red", _TEST_ONLY_RED)
+    await _link(run, temp_db, task, repo, red)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    # The main checkout's branch is the integration branch; the candidate must not be on it.
+    _git(repo, "checkout", "-q", "main")
+    await _unlink(run, temp_db, task.id, repo, sha)
+    assert (run.step, run.vars["implementation_complete"]) == ("implement", False)
+
+
+async def test_developer_declared_test_only_repair_after_bounce_returns_to_submit(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    SessionTaskManager(run.db).link_task(PEER_ID, task.id, "reviewing")
+    await run.incoming(f"EVENT=CANDIDATE_VERDICT TASK={task.id} SHA={sha} VERDICT=BOUNCE", PEER_ID)
+    assert run.step == "implement"
+    repair = _commit_files(repo, f"[gobby-#{task.seq_num}] test: repair", _TEST_ONLY_REPAIR)
+    await _link(run, temp_db, task, repo, repair, candidate=True)
+    assert (run.step, run.vars["bounced"]) == ("submit", False)
 
 
 async def test_developer_bounce_requires_incoming_assigned_reviewer(
