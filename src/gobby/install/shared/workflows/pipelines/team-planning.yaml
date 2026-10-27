@@ -159,3 +159,16 @@ steps:
           if inputs.seat_pane or 'plan-writer' in inputs.seats.split(',')
           or 'plan-adversary' in inputs.seats.split(',')
           else {'tab': {'workspace': inputs.workspace, 'title': 'Team Planning'}} }}
+
+  # Tiles the Team Planning tab once the launched seats have joined it.
+  - id: arrange
+    condition: "${{ len(steps.guard.output.launch) > 0 }}"
+    mcp:
+      server: gobby-workspaces
+      tool: rebalance_tab
+      arguments:
+        workspace: "${{ inputs.workspace }}"
+        tab: Team Planning
+        # Tiled ratios do not depend on the viewport height; rows only has to fit the tiers.
+        rows: 100
+        layout: tiled

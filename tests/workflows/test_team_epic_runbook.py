@@ -268,3 +268,46 @@ def test_devteam_tab_stays_tiled_after_any_seat_launch(launch: list[str]) -> Non
     arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
     assert arguments.get("layout") == "tiled", arguments
     assert "Dev Team - #25128" in str(arguments.get("tab")), arguments
+
+
+def _pipeline(name: str) -> PipelineDefinition:
+    return PipelineDefinition.model_validate(
+        yaml.safe_load((SHARED / f"workflows/pipelines/{name}.yaml").read_text())
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "tab"),
+    [("support", "Support"), ("team-planning", "Team Planning")],
+)
+@pytest.mark.parametrize("launch", [["seat"], []], ids=["seats-launched", "nothing-launched"])
+def test_shared_tab_runbooks_tile_their_tab_after_the_last_seat(
+    name: str, tab: str, launch: list[str]
+) -> None:
+    pipeline = _pipeline(name)
+    arrange = [
+        step for step in pipeline.steps if step.mcp is not None and step.mcp.tool == "rebalance_tab"
+    ]
+    assert len(arrange) == 1, arrange
+    order = [step.id for step in pipeline.steps]
+    seats = [
+        step.id
+        for step in pipeline.steps
+        if step.mcp is not None and step.mcp.tool == "spawn_agent"
+    ]
+    assert order.index(arrange[0].id) > max(order.index(seat) for seat in seats)
+    context = {
+        "inputs": {"workspace": "pilot-workspace"},
+        "steps": {"guard": {"output": {"workspace_id": WORKSPACE, "launch": launch}}},
+        "_string_inputs": frozenset({"workspace"}),
+    }
+    step = arrange[0]
+    assert RENDERER.should_run_step(step, context) is bool(launch)
+    assert step.mcp is not None and step.mcp.arguments is not None
+    arguments = RENDERER.render_mcp_arguments(step.mcp.arguments, context, drop_none=True)
+    assert arguments == {
+        "workspace": "pilot-workspace",
+        "tab": tab,
+        "rows": 100,
+        "layout": "tiled",
+    }, arguments

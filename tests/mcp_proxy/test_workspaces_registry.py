@@ -294,12 +294,15 @@ def _pane_count(node: LayoutNode) -> int:
 
 
 def _row_sizes(node: LayoutNode) -> list[int]:
-    """Panes per row of a tiled tab: rows stack vertically and each row runs horizontally."""
+    """Panes per row of a tiled tab: rows stack vertically and each row runs horizontally.
+
+    A split holds exactly two children, so a stack of rows nests: flatten the nesting.
+    """
     if node["kind"] == "pane":
         return [1]
     if node["axis"] == "horizontal":
         return [_pane_count(node)]
-    return [_pane_count(row) for row in node["children"]]
+    return [size for child in node["children"] for size in _row_sizes(child)]
 
 
 # gclient's Arrange > Tiled: ceil(sqrt N) rows filled left to right, so five panes sit 2-2-1.
@@ -326,6 +329,36 @@ async def test_rebalance_tab_tiled_arranges_panes_like_gclient(
             registry, "rebalance_tab", tab=tab_ref, columns=80, rows=100, layout="tiled"
         )
     assert _row_sizes(tiled["tab"]["layout"]) == expected_rows
+
+
+async def test_rebalance_tab_names_a_tab_by_title_within_its_workspace(stack: _Stack) -> None:
+    registry = _registry(stack)
+    with _principal(None):
+        [local] = [row for row in (await _ok(registry, "list_nodes"))["nodes"] if row["local"]]
+        node = str(local["ref"])
+        created = (await _ok(registry, "create_workspace", name="agents", node=node))["workspace"]
+        home = f"{node}:{created['ref']}"
+        layout = await _ok(
+            registry,
+            "create_tab",
+            workspace=home,
+            project_id=stack.project_id,
+            title="Dev Team - #25128",
+        )
+        tab_ref = f"{home}:{layout['tabs'][0]['ref']}"
+        first_ref = f"{tab_ref}:{layout['panes'][0]['ref']}"
+        for _ in range(2):
+            await _ok(registry, "split_pane", pane=first_ref, axis="horizontal")
+        tiled = await _ok(
+            registry,
+            "rebalance_tab",
+            tab="Dev Team - #25128",
+            workspace=home,
+            rows=100,
+            layout="tiled",
+        )
+    assert tiled["tab"]["id"] == layout["tabs"][0]["id"]
+    assert _row_sizes(tiled["tab"]["layout"]) == [2, 1]
 
 
 async def test_read_and_wait_address_panes_by_ref(stack: _Stack) -> None:
