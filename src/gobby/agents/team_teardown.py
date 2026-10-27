@@ -132,13 +132,14 @@ def _with_members(db: HubDatabase, bindings: list[TeamBinding]) -> list[_DueTeam
 def _due_leaves(db: HubDatabase, cutoff: datetime) -> list[_DueLeaf]:
     """Sub-trees of epic leaves that closed before ``cutoff``, each paired with its epic's team.
 
-    A sub-tree is cut from its epic's team branch, so the epic's admission on this machine
-    names it. The epic may still be open: a leaf can close while its epic works on.
+    A sub-tree is cut from its team's branch, so an admission on this machine names that branch,
+    and the team's task is an ancestor of the leaf at any depth. The team may still be open: a
+    leaf can close while its epic works on.
     """
     rows = db.fetchall(
         """
 SELECT w.id::text AS worktree_id, w.worktree_path, w.branch_name, w.base_branch,
-       t.id::text AS task_id, t.parent_task_id::text AS epic_id
+       t.id::text AS task_id
 FROM worktrees w
 JOIN tasks t ON t.id = w.task_id
 WHERE t.closed_at <= %s AND t.parent_task_id IS NOT NULL AND w.machine_id = %s
@@ -148,20 +149,26 @@ ORDER BY w.id
     )
     if not rows:
         return []
+    ancestors = {row["task_id"]: _ancestor_ids(db, row["task_id"]) for row in rows}
     admissions = db.fetchall(
         "SELECT se.* FROM step_executions se "
         "WHERE se.step_id = %s AND se.output_json #>> '{team,team_id}' = se.execution_id::text "
         "AND se.output_json #>> '{team,task_id}' = ANY(%s)",
-        (ADMISSION_STEP, sorted({row["epic_id"] for row in rows})),
+        (ADMISSION_STEP, sorted({task for tasks in ancestors.values() for task in tasks})),
     )
     bindings = [_binding(_recorded(StepExecution.from_row(row))) for row in admissions]
-    teams = {
-        (team.binding.task_id, team.binding.branch): team
-        for team in _with_members(db, [b for b in bindings if b])
-    }
+    teams = _with_members(db, [b for b in bindings if b])
     due: list[_DueLeaf] = []
     for row in rows:
-        team = teams.get((row["epic_id"], row["base_branch"]))
+        team = next(
+            (
+                team
+                for team in teams
+                if team.binding.task_id in ancestors[row["task_id"]]
+                and team.binding.branch == row["base_branch"]
+            ),
+            None,
+        )
         if team is None:
             continue
         binding = replace(
@@ -176,12 +183,29 @@ ORDER BY w.id
     return due
 
 
+def _ancestor_ids(db: HubDatabase, task_id: str) -> set[str]:
+    """Every ancestor of a task, at any depth."""
+    rows = db.fetchall(
+        """
+WITH RECURSIVE up(id) AS (
+    SELECT parent_task_id FROM tasks WHERE id = %s
+    UNION
+    SELECT t.parent_task_id FROM tasks t JOIN up ON t.id = up.id
+)
+SELECT id::text AS id FROM up WHERE id IS NOT NULL
+""",
+        (task_id,),
+    )
+    return {row["id"] for row in rows}
+
+
 async def _tear_down(
     db: HubDatabase, team: _DueTeam, terminate: TeamRunTerminator, delete: TeamTreeDeleter
 ) -> int:
     folder = await asyncio.to_thread(release_epic_workspace, db, team.binding)
-    live = await asyncio.to_thread(_live_runs, db, team)
-    dispatched = await asyncio.to_thread(_dispatched_runs, db, live, team.binding.worktree_path)
+    seats = await asyncio.to_thread(_team_seats, db, team)
+    live = [run for run in seats if run.status in ACTIVE_AGENT_RUN_STATUSES]
+    dispatched = await asyncio.to_thread(_dispatched_runs, db, seats, team.binding.worktree_path)
     ended, refusal = await _end_seats(terminate, [*live, *dispatched])
     if refusal is not None:
         label = f"team-{team.binding.team_id}"
@@ -197,6 +221,11 @@ async def _tear_down(
     if team.binding.worktree_id is None:  # a treeless team has no tree to delete
         await asyncio.to_thread(_record, db, team.binding, {"outcome": "cleaned"})
         return len(ended) + 1
+    if await asyncio.to_thread(_sub_trees_remain, db, team):
+        logger.info(
+            "Team %s keeps its tree until its leaf sub-trees are gone", team.binding.team_id
+        )
+        return sum(ended)
     if await asyncio.to_thread(_occupied, db, dispatched):
         logger.info("Team %s keeps its tree while a dispatched seat exits", team.binding.team_id)
         return sum(ended)
@@ -222,8 +251,8 @@ async def _tear_down_leaf(
     The epic is still open, so no teardown outcome goes on its admission. A retained
     sub-tree stays due, and its finding is found again on the next pass, not filed twice.
     """
-    live = await asyncio.to_thread(_live_runs, db, leaf.team)
-    dispatched = await asyncio.to_thread(_dispatched_runs, db, live, leaf.binding.worktree_path)
+    seats = await asyncio.to_thread(_team_seats, db, leaf.team)
+    dispatched = await asyncio.to_thread(_dispatched_runs, db, seats, leaf.binding.worktree_path)
     ended, refusal = await _end_seats(terminate, dispatched)
     label = f"leaf-{leaf.binding.worktree_id}"
     if refusal is not None:
@@ -265,23 +294,39 @@ async def _delete_tree(
     return result
 
 
-def _live_runs(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
-    """Running and pending runs launched by any of the team's runbooks."""
+def _team_seats(db: HubDatabase, team: _DueTeam) -> list[AgentRun]:
+    """Every run the team's runbooks launched, ended or not.
+
+    An ended seat still anchors the seats it dispatched, so those are found after it ends.
+    """
     executions = LocalPipelineExecutionManager(db, team.binding.project_id)
     runs = LocalAgentRunManager(db)
-    live: list[AgentRun] = []
+    seats: list[AgentRun] = []
     for execution_id in team.executions:
         execution = executions.get_execution(execution_id)
         if execution is not None and execution.session_id is not None:
-            live.extend(runs.list_by_parent(execution.session_id))
-    return live
+            seats.extend(runs.list_all_by_parent(execution.session_id))
+    return seats
+
+
+def _sub_trees_remain(db: HubDatabase, team: _DueTeam) -> bool:
+    """Whether a leaf sub-tree cut from the team's branch still exists on this machine.
+
+    The team's tree is the merge target of those sub-trees, so it stays until they are gone.
+    """
+    row = db.fetchone(
+        "SELECT 1 FROM worktrees "
+        "WHERE project_id = %s AND base_branch = %s AND machine_id = %s LIMIT 1",
+        (team.binding.project_id, team.binding.branch, require_machine_id()),
+    )
+    return row is not None
 
 
 def _dispatched_runs(db: HubDatabase, seats: list[AgentRun], tree: str | None) -> list[AgentRun]:
     """Active runs a team seat dispatched into ``tree``, such as a Dev Manager's developer.
 
-    A dispatched seat is a child of the seat that dispatched it, not of the runbook, so
-    ``_live_runs`` never sees it.
+    A dispatched seat is a child of the seat that dispatched it, not of the runbook. That seat
+    may have ended already, so ``seats`` holds ended runs too, as ``_team_seats`` returns them.
     """
     if tree is None or not seats:
         return []
@@ -327,7 +372,7 @@ def _expire_seats(db: HubDatabase, team: _DueTeam) -> None:
     """Expire every team seat's session a stop or cancel left live, and retire its resume.
 
     This covers runs already terminal before teardown (a daemon-stop parked seat),
-    which ``_live_runs`` never sees. The parked resume is marked consumed by the
+    which no lookup of live seats ever sees. The parked resume is marked consumed by the
     teardown, so recovery skips it while other expired parked children stay resumable.
     """
     executions = LocalPipelineExecutionManager(db, team.binding.project_id)
