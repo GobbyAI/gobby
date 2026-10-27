@@ -590,6 +590,14 @@ class WakeDispatcher:
                 if reconciled is not None:
                     session = reconciled
             if getattr(session, "status", None) == "active":
+                # A Claude turn that ended at an empty prompt leaves its row active. The
+                # deferred retry pauses such a row the same way; a direct wake takes it now.
+                if (
+                    getattr(session, "source", None) == "claude"
+                    and await self._pause_idle_prompt(session_id) == "paused"
+                ):
+                    session = await self._run_db(self._session_manager.get, session_id)
+            if getattr(session, "status", None) == "active":
                 return {
                     "session_id": session_id,
                     "delivered": False,
