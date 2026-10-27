@@ -171,7 +171,7 @@ def _write_operator_key(home: Path, key: str) -> None:
 
 def _rule_blocks(command: str) -> bool:
     rules = yaml.safe_load(RULE_FILE.read_text(encoding="utf-8"))["rules"]
-    context = {"tool_input": {"command": command}}
+    context = {"tool_input": {"command": command}, "variables": {}}
     evaluator = SafeExpressionEvaluator(context, build_condition_helpers(context=context))
     for rule in rules.values():
         if rule.get("when") and not evaluator.evaluate(rule["when"]):

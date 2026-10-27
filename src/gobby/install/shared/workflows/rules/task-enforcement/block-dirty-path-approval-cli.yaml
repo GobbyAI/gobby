@@ -2,10 +2,11 @@ tags: [task-enforcement, enforcement, shared-worktree, gobby, default]
 
 rules:
   block-dirty-path-approval-cli:
-    description: "Block agent use of `gobby sessions approve-dirty-paths`; approving unowned dirt is the operator's decision."
+    description: "Block `gobby sessions approve-dirty-paths` for every seat except the Orchestrator, which approves unowned dirt for the fleet."
     event: before_tool
     enabled: true
     priority: 30
+    when: "variables.get('_agent_type') != 'orchestrator'"
     effects:
       - type: block
         tools: [Bash]
@@ -17,17 +18,18 @@ rules:
         # also blocks: the subcommand can then be assembled at run time, so the
         # literal name never appears.
         # `gobby sessions list` is exempt when its arguments hold no command
-        # substitution or separator: list takes no operator-only subcommand, so a
-        # variable in its arguments cannot reach approve-dirty-paths. Quoted data
-        # is not an invocation, so a refusal relaying the command to the user stays
+        # substitution or separator: list takes no Orchestrator-only subcommand, so
+        # a variable in its arguments cannot reach approve-dirty-paths. Quoted data
+        # is not an invocation, so a refusal relaying the command to Triage stays
         # sendable. Managed executions are also denied the session tables at the
         # database, so this rule is not the only boundary.
         mask_quoted: true
         command_pattern: "(?<![\\w.-])sessions(?![\\w-])(?:\\s+-[\\w-]+)*\\s+approve-dirty-paths(?![\\w-])|^(?!\\s*(?:uv\\s+run\\s+)?gobby\\s+sessions\\s+list(?![\\w-])(?:[^;&|\\n`$]|\\$(?!\\())*$)(?=[\\s\\S]*(?<![\\w./-])sessions(?![\\w-]))(?=[\\s\\S]*[$`])"
         reason: |
-          Approving unowned dirty paths is operator-only. Relay the exact
-          `gobby sessions approve-dirty-paths ...` command from the refusal to
-          the user, who runs it in their own shell, then retry.
+          Only the Orchestrator approves unowned dirty paths. Send Triage the
+          exact `gobby sessions approve-dirty-paths ...` command from the
+          refusal with your task and the paths; the Orchestrator runs it. Then
+          retry.
 
   block-gobby-command-word-expansion:
     description: "Refuse protected brace spellings and dynamic gobby command words with a bounded token scan."
@@ -39,12 +41,13 @@ rules:
       - type: block
         tools: [Bash]
         reason: |
-          Approving unowned dirty paths is operator-only. Unquoted braces or
-          substitutions in gobby command words cannot authorize the approval.
-          Use literal command words, or relay the exact approval command to the operator.
+          Only the Orchestrator approves unowned dirty paths, with literal command
+          words. Unquoted braces or substitutions in gobby command words cannot
+          authorize the approval. Use literal command words, or send the exact
+          approval command to Triage for the Orchestrator.
 
   block-gobby-cli-expansion:
-    description: "Block agent shell commands that name the operator-only approval subcommand inside a substitution, or build a gobby sessions subcommand from a variable or substitution."
+    description: "Block agent shell commands that name the Orchestrator-only approval subcommand inside a substitution, or build a gobby sessions subcommand from a variable or substitution."
     event: before_tool
     enabled: true
     priority: 30
@@ -62,6 +65,6 @@ rules:
         mask_quoted: false
         command_pattern: "(?:\\$\\(|`)[^;&|\\n]*?(?<![\\w./-])approve-dirty-paths(?![\\w-])|(?<![\\w./-])gobby(?![\\w-])[^;&|\\n'\"]*?(?<![\\w./-])['\"]?s['\"\\\\]*e['\"\\\\]*s['\"\\\\]*s['\"\\\\]*i['\"\\\\]*o['\"\\\\]*n['\"\\\\]*s['\"\\\\]*\\s+['\"]*[^\\s;&|]*[$`]"
         reason: |
-          The operator-only approval subcommand is named inside a substitution, or a
+          The Orchestrator-only approval subcommand is named inside a substitution, or a
           gobby sessions subcommand is built from a variable or substitution. Use the
           gobby MCP tools, or pass the literal subcommand name.

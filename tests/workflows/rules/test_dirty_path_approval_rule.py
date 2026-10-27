@@ -171,7 +171,7 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
         )
     }
 
-    assert "operator" in direct[1]
+    assert "Orchestrator" in direct[1]
     assert decisions == {
         **dict.fromkeys(INVOCATIONS, "block"),
         **dict.fromkeys(ALLOWED, "allow"),
@@ -181,6 +181,36 @@ async def test_dirty_path_approval_rules_match_criterion_4_scope(
         "gobby sessions list --project $PROJECT": "allow",
         "uv run gobby sessions list --project $PROJECT": "allow",
     }
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "expected"),
+    [("orchestrator", "allow"), ("dev-manager", "block"), ("triage", "block")],
+)
+async def test_only_the_orchestrator_runs_the_literal_approval(
+    temp_db: HubDatabase, agent_type: str, expected: str
+) -> None:
+    sync_bundled_rules(temp_db, get_bundled_rules_path())
+    temp_db.execute(
+        "DELETE FROM rule_definitions WHERE name NOT IN (%s, %s, %s)",
+        (RULE_NAME, EXPANSION_RULE, BOUNDED_RULE),
+    )
+    engine = RuleEngine(temp_db)
+    variables = {"is_spawned_agent": True, "_agent_type": agent_type}
+
+    literal = await engine.evaluate(
+        _bash_event("uv run gobby sessions approve-dirty-paths s7 --checkout /repo a.txt"),
+        session_id=SESSION_ID,
+        variables=dict(variables),
+    )
+    assembled = await engine.evaluate(
+        _bash_event("a=approve-dirty-; b=paths; gobby sessions $a$b s7 a.txt"),
+        session_id=SESSION_ID,
+        variables=dict(variables),
+    )
+
+    assert literal.decision == expected, literal.reason
+    assert assembled.decision == "block"
 
 
 BRACE_REFUSED = (
@@ -428,7 +458,7 @@ commands = [
 ]
 for command in commands:
     for rule in rules.values():
-        context = {'tool_input': {'command': command}}
+        context = {'tool_input': {'command': command}, 'variables': {}}
         evaluator = SafeExpressionEvaluator(context, allowed_funcs=helpers)
         condition = not rule.get('when') or evaluator.evaluate(rule['when'])
         for effect in rule['effects']:
@@ -440,7 +470,7 @@ for command in commands:
 command = commands[0] + '; gobby tasks {list,}'
 blocked = False
 for rule in rules.values():
-    context = {'tool_input': {'command': command}}
+    context = {'tool_input': {'command': command}, 'variables': {}}
     evaluator = SafeExpressionEvaluator(context, allowed_funcs=helpers)
     condition = not rule.get('when') or evaluator.evaluate(rule['when'])
     for effect in rule['effects']:

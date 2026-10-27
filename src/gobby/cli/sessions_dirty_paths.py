@@ -40,8 +40,8 @@ def _refusal_detail(response: httpx.Response) -> str:
 def approve_dirty_paths(session_ref: str, checkout_root: str, paths: tuple[str, ...]) -> None:
     """Let SESSION_REF write exactly PATHS, dirty with no live owner, in one checkout.
 
-    Operator only; the rule block-dirty-path-approval-cli refuses it to every agent
-    session. The daemon accepts the approval only from the bootstrap operator API
+    Operator and Orchestrator only; the rule block-dirty-path-approval-cli refuses it
+    to every other agent session. The daemon accepts the approval only from the bootstrap operator API
     key, so run `gobby auth login` first. SESSION_REF is a session UUID or
     <project>#N. Each path stays approved only while its content matches what it is
     now. A new approval replaces the session's earlier one for the checkout.

@@ -33,9 +33,9 @@ repository file leaves it unowned even when your own session made the change,
 so `block-cross-session-foreign-dirty-edit` locks you out of later edits.
 A before/after dirty diff cannot prove who wrote the file.
 
-If locked out, ask the operator through Triage/Assistant to revert the change or
-run the refusal's `gobby sessions approve-dirty-paths` command in their own shell.
-Then redo the intended change with Edit/Write. Agents cannot approve dirty paths.
+If locked out, send Triage the refusal's `gobby sessions approve-dirty-paths`
+command with your task and the paths; the Orchestrator runs it. Then redo the
+intended change with Edit/Write. Only the Orchestrator approves dirty paths.
 
 ## Findings and final validation
 
