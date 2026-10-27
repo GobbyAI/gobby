@@ -212,6 +212,80 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
     }
 
 
+DEVTEAM_SEATS = ["dev-manager", "test-writer", "developer", "code-reviewer"]
+LAYOUT_REFUSED = {
+    "success": False,
+    "error": "Workspace tools act only for a session or the operator's local token",
+    "code": "forbidden",
+}
+
+
+class DevteamProxy(RunbookAgentsProxy):
+    """Stub devteam proxy: the guard launches every seat and the layout write is refused."""
+
+    async def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str | None,
+        enforce_workflow: bool,
+    ) -> dict[str, Any]:
+        self.calls.append({"tool": f"{server}:{tool}", "arguments": arguments})
+        if tool == "check_runbook_seats":
+            return {
+                "success": True,
+                "launch": list(DEVTEAM_SEATS),
+                "live": {},
+                "tab_exists": False,
+                "workspace_id": "ws-1",
+                "tab_title": "Dev Team - #25189",
+            }
+        if tool == "admit_team":
+            return {
+                "success": True,
+                "task_id": arguments["task"],
+                "branch": "task-branch",
+                "project_path": "/tmp/devteam",
+                "team": {"team_id": "team-1"},
+            }
+        if server == "gobby-workspaces":
+            return dict(LAYOUT_REFUSED)
+        index = len(self.calls)
+        return {"success": True, "run_id": f"run-{index}", "child_session_id": f"child-{index}"}
+
+
+async def test_devteam_run_completes_when_its_arrange_layout_is_refused(
+    temp_db: HubDatabase,
+) -> None:
+    """A restart-resumed devteam run has no request principal, so rebalance_tab refuses it.
+
+    The refusal ends the arrange step, not the run: the seats launch and the refusal is recorded.
+    """
+    sync_bundled_pipelines(temp_db)
+    pipeline = await PipelineLoader(temp_db).load_pipeline("devteam")
+    assert pipeline is not None
+    inputs = {name: spec.get("default") for name, spec in pipeline.inputs.items()}
+    inputs.update(
+        task="task-1",
+        workspace="devteam",
+        report_to="report-session",
+        reviewer_agent="code-reviewer",
+    )
+
+    proxy = DevteamProxy()
+    execution = await _executor(temp_db, proxy).execute(pipeline, inputs, PROJECT_ID)
+
+    assert execution.status == ExecutionStatus.COMPLETED
+    assert [spawn["agent"] for spawn in proxy.spawns()] == DEVTEAM_SEATS
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    [arrange] = [
+        step for step in manager.get_steps_for_execution(execution.id) if step.step_id == "arrange"
+    ]
+    assert "forbidden" in f"{arrange.output_json or ''}{arrange.error or ''}"
+
+
 def _assert_seats_parented(
     temp_db: HubDatabase, proxy: RunbookAgentsProxy, execution_id: str, parent_id: str
 ) -> None:

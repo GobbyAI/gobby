@@ -431,6 +431,25 @@ async def test_devteam_arrange_step_is_not_forbidden_for_an_operator_launch(stac
     assert _row_sizes(tiled["tab"]["layout"]) == [1, 1]
 
 
+async def test_devteam_arrange_refuses_a_pipeline_run_with_no_request_principal(
+    stack: _Stack,
+) -> None:
+    """A restart-resumed or cron run has a session context but no request principal.
+
+    current_actor grants it nothing, so its layout write is refused as forbidden.
+    """
+    registry = _registry(stack)
+    session = stack.sessions.register(
+        external_id="devteam-anonymous-run",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=stack.project_id,
+    )
+    with session_context_for_test(session.id):
+        refused = await _code(registry, "rebalance_tab", tab="Dev Team - #25189", rows=100)
+    assert refused == "forbidden"
+
+
 TEAM_PLANNING = (
     Path(__file__).resolve().parents[2]
     / "src/gobby/install/shared/workflows/pipelines/team-planning.yaml"
