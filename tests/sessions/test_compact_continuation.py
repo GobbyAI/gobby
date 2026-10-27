@@ -60,6 +60,7 @@ from gobby.terminals.native_runtime import (
 )
 from gobby.terminals.pane_io import DrainResult, RuntimePaneIO, SubmitResult, TmuxPaneIO
 from gobby.terminals.runtime import Delivered, SnapshotMode
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -2273,7 +2274,7 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux(
         terminal_context={"gobby_terminal_id": "term-1", "tmux_pane": None, "tmux_session": None},
     )
     prompt = "Continue the task."
-    terminal = SimpleNamespace(id="term-1", backend="native")
+    terminal = SimpleNamespace(id="term-1", backend="native", machine_id=require_machine_id())
     writes: list[tuple[object, ...]] = []
 
     class NativeRuntime:
@@ -2287,7 +2288,8 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux(
 
     runtime = NativeRuntime()
     terminal_manager = SimpleNamespace(
-        get_live_for_session=lambda session_id: terminal if session_id == SESSION_ID else None
+        db=MagicMock(),
+        get_live_for_session=lambda session_id: terminal if session_id == SESSION_ID else None,
     )
     registry = SimpleNamespace(resolve=lambda backend: runtime if backend == "native" else None)
 
@@ -2323,6 +2325,7 @@ def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
     terminal = SimpleNamespace(
         backend="native",
         id=terminal_id,
+        machine_id=require_machine_id(),
         state="live",
         project_id="proj-1",
         agent_run_id=None,
