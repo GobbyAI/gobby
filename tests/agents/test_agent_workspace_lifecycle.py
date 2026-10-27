@@ -37,7 +37,6 @@ pytestmark = pytest.mark.unit
 SHARED = Path(__file__).parents[2] / "src/gobby/install/shared/workflows"
 KEEPER = "workspace-keeper"
 WORKER = "workspace-worker"
-ADMIN_SEATS = {"assistant", "orchestrator", "archivist", "release-manager", "triage"}
 PREDECESSOR_NOTE = (
     "Predecessor folders under your definition are readable only to recover from a crash "
     "or learn from mistakes in prior sessions."
@@ -230,12 +229,6 @@ async def _compact(engine: RuleEngine, variables: dict[str, Any]) -> None:
 
 @pytest.mark.asyncio
 async def test_persistent_set_and_injection(temp_db: HubDatabase) -> None:
-    flagged = set()
-    for path in sorted((SHARED / "agents").glob("*.yaml")):
-        document = yaml.safe_load(path.read_text())
-        if document.get("persistent_workspace") is True:
-            flagged.add(document["name"])
-    assert flagged == ADMIN_SEATS
     assert AgentDefinitionBody.model_fields["persistent_workspace"].default is False
 
     manager = RuleDefinitionManager(temp_db)

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 pytestmark = pytest.mark.unit
 
@@ -78,3 +79,21 @@ def test_missing_saved_result_keeps_the_pointer(tmp_path: Path) -> None:
     pointer = _pointer(tmp_path / _BOUND_RESULT)
 
     assert _post_tool_output(pointer) == pointer
+
+
+def test_recovered_close_task_result_satisfies_close_hook_condition(tmp_path: Path) -> None:
+    # Synthetic copy of a seat's close_task success condition, for a recovered result.
+    when = (
+        "tool_output.get('closed') is True "
+        "or (tool_output.get('result') or {}).get('closed') is True"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "vars": {"assigned_task_id": "#1"},
+            "tool_input": _CLOSE_ARGUMENTS,
+            "tool_output": _post_tool_output(_pointer(_saved(tmp_path, _BOUND_RESULT))),
+        },
+        {},
+    )
+
+    assert evaluator.evaluate(when) is True

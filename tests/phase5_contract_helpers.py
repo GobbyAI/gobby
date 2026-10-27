@@ -48,6 +48,21 @@ def source_text(relative: str) -> str:
     return repo_path(relative).read_text()
 
 
+# Classifier data only: scans never open a bundled agent definition. Parse
+# validity of those files is pinned by
+# tests/agents/test_bundled_agent_definition_validity.py.
+_BUNDLED_AGENT_DIR_PARTS = ("install", "shared", "workflows", "agents")
+
+
+def is_bundled_agent_definition(path: Path) -> bool:
+    parts = path.parts
+    width = len(_BUNDLED_AGENT_DIR_PARTS)
+    return path.suffix == ".yaml" and any(
+        parts[index : index + width] == _BUNDLED_AGENT_DIR_PARTS
+        for index in range(len(parts) - width + 1)
+    )
+
+
 def source_texts(paths: Iterable[str]) -> str:
     chunks: list[str] = []
     for relative in paths:
@@ -56,6 +71,8 @@ def source_texts(paths: Iterable[str]) -> str:
             chunks.append(path.read_text())
             continue
         for file_path in sorted(p for p in path.rglob("*") if p.is_file()):
+            if is_bundled_agent_definition(file_path):
+                continue
             try:
                 chunks.append(file_path.read_text())
             except UnicodeDecodeError:

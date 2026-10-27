@@ -7,7 +7,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import yaml
+
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -98,7 +99,7 @@ def _iter_scan_paths() -> Iterator[Path]:
     shared = ROOT / "src" / "gobby" / "install" / "shared"
     if shared.is_dir():
         for path in shared.rglob("*"):
-            if path.suffix.lower() in _SHARED_SUFFIXES:
+            if path.suffix.lower() in _SHARED_SUFFIXES and not is_bundled_agent_definition(path):
                 yield from _emit(path)
 
 

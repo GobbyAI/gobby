@@ -123,6 +123,35 @@ class TestBuildSessionPersonaChanges:
         }
         assert active_skills is None
 
+    def test_persona_and_spawned_prompt_split_guidance_from_lifecycle(
+        self, db: HubDatabase
+    ) -> None:
+        from gobby.mcp_proxy.tools.apply_persona import build_session_persona_context
+
+        agent = make_agent_definition(
+            name="technical-writer",
+            surfaces=["spawn", "persona"],
+            prompts={
+                "persona": "You give interactive technical-writing guidance to the operator.",
+                "agent": (
+                    "Work on assigned_task_id. Finish with submit_for_review, then end_agent_run."
+                ),
+            },
+        )
+
+        persona, _ = build_session_persona_context(agent, db, cli_source="codex")
+        assert persona is not None
+        assert "interactive technical-writing guidance" in persona
+        assert "assigned_task_id" not in persona
+        assert "end_agent_run" not in persona
+        assert "submit_for_review" not in persona
+
+        spawned = agent.prompt_for("agent")
+        assert spawned is not None
+        assert "assigned_task_id" in spawned
+        assert "end_agent_run" in spawned
+        assert "interactive technical-writing guidance" not in spawned
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # apply_persona_impl

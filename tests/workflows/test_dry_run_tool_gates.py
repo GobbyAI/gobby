@@ -18,7 +18,6 @@ import yaml
 from gobby.mcp_proxy.manager import MCPClientManager, MCPServerConfig
 from gobby.mcp_proxy.tools.workflows import workflow_mcp_inventory
 from gobby.workflows.definitions import (
-    AgentDefinitionBody,
     AgentStepWorkflowBody,
     WorkflowDefinition,
     WorkflowStep,
@@ -264,7 +263,6 @@ class TestBundledTemplateDriftCanary:
             check_step_tool_gates(step, result)
         errors = [i for i in result.items if i.level == "error"]
         assert not errors, [i.message for i in errors]
-
 
 
 @pytest.mark.asyncio

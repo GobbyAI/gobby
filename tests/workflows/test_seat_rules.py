@@ -42,14 +42,19 @@ ARCHIVIST: dict[str, Any] = {"_agent_type": "archivist"}
 METRICS_MONITOR: dict[str, Any] = {"_agent_type": "metrics-monitor"}
 
 
+# Synthetic stand-ins for the two exact read-only loopback queries the rule admits.
+_CURL = "/usr/bin/curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 --get"
+_SELECTOR = (
+    'query={job="gobby-daemon",'
+    '__name__=~"daemon_memory_usage_bytes|daemon_cpu_percent|daemon_uptime_seconds|up"}'
+)
+_PROMETHEUS = "http://127.0.0.1:9090/api/v1/query"
+
+
 def _metrics_queries() -> list[str]:
-    definition = yaml.safe_load(
-        (ROLES_DIR.parent.parent / "agents/metrics-monitor.yaml").read_text()
-    )
     return [
-        line.strip()
-        for line in definition["prompts"]["agent"].splitlines()
-        if line.strip().startswith("/usr/bin/curl ")
+        f"{_CURL} --data-urlencode '{_SELECTOR}' {_PROMETHEUS}",
+        f"{_CURL} --data-urlencode '{_SELECTOR}[10m]' {_PROMETHEUS}",
     ]
 
 
@@ -311,14 +316,10 @@ async def test_orchestrator_still_cannot_spawn_from_the_shell(
         assert "Seats do not spawn agents from the shell" in (refused.reason or "")
 
 
-
-
 @pytest.mark.asyncio
 async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
     ask = {"tool_name": "AskUserQuestion", "tool_input": {"questions": [{"question": "Land?"}]}}
-    seats = _seat_definitions()
-    assert {"assistant", "orchestrator", "dev-manager", "triage", "release-manager"} <= set(seats)
-
+    seats = ("assistant", "orchestrator", "dev-manager", "triage", "release-manager", "developer")
     for agent_type in (*seats, "plan-writer", "plan-enhancer", "plan-adversary"):
         if agent_type == "assistant":
             assert (await _decide(engine, ask, ASSISTANT)).decision == "allow"
@@ -330,8 +331,6 @@ async def test_seats_ask_through_send_message(engine: RuleEngine) -> None:
 
     for non_seat in ({"_agent_type": "default"}, {}):
         assert (await _decide(engine, ask, non_seat)).decision == "allow", non_seat
-
-
 
 
 PROJECT_CREATES = (

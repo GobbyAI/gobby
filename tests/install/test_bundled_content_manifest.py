@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from gobby.install.manifest import build_bundled_content_manifest
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 
 def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
@@ -31,7 +32,9 @@ def test_manifest_membership_matches_wheel(tmp_path: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if source.is_symlink():
             destination.symlink_to(os.readlink(source))
-        elif source.is_file():
+        elif source.is_file() and not is_bundled_agent_definition(source):
+            # Agent definitions stay out of the build copy: parse validity is pinned by
+            # tests/agents/test_bundled_agent_definition_validity.py.
             shutil.copy2(source, destination)
     build_environment = {
         **os.environ,

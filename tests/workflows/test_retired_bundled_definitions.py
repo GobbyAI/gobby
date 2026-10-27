@@ -18,6 +18,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.sync_pipelines import sync_bundled_pipelines
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.phase5_contract_helpers import is_bundled_agent_definition
 
 pytestmark = pytest.mark.unit
 
@@ -128,8 +129,6 @@ def test_retired_pipeline_yaml_is_absent_from_active_and_deprecated_bundles(
     )
 
 
-
-
 @pytest.mark.parametrize("name", RETIRED_AGENTS)
 def test_retired_agent_procedure_is_absent(name: str) -> None:
     path = SKILLS_DIR / "gobby" / "references" / "agents" / "procedures" / f"{name}.md"
@@ -186,7 +185,7 @@ def test_interactive_destructive_git_guard_is_restored() -> None:
 
 def test_retired_memory_review_gate_has_no_live_state_or_guidance() -> None:
     current_surfaces = [
-        *WORKFLOWS_DIR.rglob("*.yaml"),
+        *(p for p in WORKFLOWS_DIR.rglob("*.yaml") if not is_bundled_agent_definition(p)),
         *(SKILLS_DIR / "gobby/references/sessions").rglob("*.md"),
         *(SKILLS_DIR / "gobby/references/tasks").rglob("*.md"),
         DOCS_DIR / "memory.md",

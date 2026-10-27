@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import yaml
 
 from gobby.agents.isolation import IsolationContext
 from gobby.config.app import DaemonConfig
@@ -37,27 +36,58 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
     ],
     ids=["definition-defaults", "launch-overrides"],
 )
-async def test_support_runbook_uses_definition_defaults_for_null_inputs(
+async def test_release_manager_step_renders_definition_defaults_for_null_inputs(
     model: str | None, effort: str | None, expected_model: str, expected_effort: str
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-    workflows = Path(__file__).resolve().parents[3] / "src/gobby/install/shared/workflows"
-    # Bundled definitions name no model, so the definition defaults come from the test.
+    # Synthetic seat and pipeline step shaped like the release-manager step of a support
+    # runbook. The seat names no model, so the definition defaults come from the test.
     agent_body = AgentDefinitionBody.model_validate(
-        yaml.safe_load((workflows / "agents/release-manager.yaml").read_text())
+        {
+            "name": "release-manager",
+            "surfaces": ["spawn"],
+            "prompts": {"agent": "Manage releases"},
+            "workflows": {"rule_selectors": {"include": [], "exclude": []}},
+        }
     ).model_copy(update={"model": "claude-sonnet-5-5", "reasoning_effort": "medium"})
     definition = PipelineDefinition.model_validate(
-        yaml.safe_load((workflows / "pipelines/support.yaml").read_text())
+        {
+            "name": "release-support",
+            "inputs": {
+                "project_path": {"default": None},
+                "release_manager_provider": {"default": None},
+                "release_manager_model": {"default": None},
+                "release_manager_reasoning_effort": {"default": None},
+            },
+            "steps": [
+                {
+                    "id": "release-manager",
+                    "condition": "${{ 'release-manager' in steps.guard.output.launch }}",
+                    "mcp": {
+                        "server": "gobby-agents",
+                        "tool": "spawn_agent",
+                        "arguments": {
+                            "agent": "release-manager",
+                            "provider": "${{ inputs.release_manager_provider }}",
+                            "model": "${{ inputs.release_manager_model }}",
+                            "reasoning_effort": "${{ inputs.release_manager_reasoning_effort }}",
+                            "execution_mode": "interactive",
+                            "checkout_mode": "none",
+                            "project_path": "${{ inputs.project_path }}",
+                            "reserved_run_id": "${{ invocation_id }}",
+                            "prompt": "Manage releases",
+                        },
+                    },
+                }
+            ],
+        }
     )
     inputs = {name: spec.get("default") for name, spec in definition.inputs.items()}
     for field in ("provider", "model", "reasoning_effort"):
         assert inputs[f"release_manager_{field}"] is None
     inputs.update(
-        seats="release-manager",
-        workspace="pilot-workspace",
         project_path="/repo",
-        report_to="pilot-coordinator",
         release_manager_provider="claude" if model is not None else None,
         release_manager_model=model,
         release_manager_reasoning_effort=effort,

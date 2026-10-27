@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-import yaml
 
 from gobby.workflows.agent_models import AgentStepWorkflowBody
-from gobby.workflows.definitions import AgentDefinitionBody, WorkflowDefinition, WorkflowStep
+from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 from gobby.workflows.dry_run import evaluate_agent_definition
 from gobby.workflows.handler_route_lint import check_handler_routes
 from tests.fixtures.agent_definitions import make_agent_definition
