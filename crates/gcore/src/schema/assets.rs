@@ -427,7 +427,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 482,
         filename: "482_query_readonly_role.sql",
-        checksum: "9f16d4e995cb3dc0833152504d22cb75f29b9a87f624849fd799322e1c19ed66",
+        checksum: "008a0667fa4ca5fe08b4f1c40845edca39a45fdd13330a72f82804c90ca6c227",
         sql: include_str!("../../assets/schema/migrations/482_query_readonly_role.sql"),
     },
 ];

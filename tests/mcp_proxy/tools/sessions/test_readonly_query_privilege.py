@@ -328,3 +328,27 @@ async def test_function_outside_pg_catalog_is_refused(
 
     assert result["success"] is False
     assert result["error_code"] == "query_refused"
+
+
+async def test_validation_argv_is_withheld_from_the_query_role(
+    registry: InternalToolRegistry,
+) -> None:
+    """validation_run_records.argv can carry command tokens, so the query role gets no SELECT.
+
+    The id read is a positive control: the denial is column-level, not table-level.
+    """
+    privilege = await _run(
+        registry,
+        sql=(
+            "SELECT has_column_privilege('gobby_query_readonly', "
+            "'validation_run_records', 'argv', 'SELECT')::text AS v"
+        ),
+    )
+    control = await _run(registry, sql="SELECT id::text AS v FROM validation_run_records")
+    denied = await _run(registry, sql="SELECT argv::text AS v FROM validation_run_records")
+
+    assert privilege["success"] is True
+    assert privilege["rows"] == [{"v": "false"}]
+    assert control["success"] is True
+    assert denied["success"] is False
+    assert "permission denied" in denied["error"]

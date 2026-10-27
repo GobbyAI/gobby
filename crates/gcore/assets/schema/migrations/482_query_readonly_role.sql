@@ -45,7 +45,8 @@ BEGIN
                ('mcp_servers', 'args'),
                ('clones', 'remote_url'),
                ('comms_channels', 'config_json'),
-               ('comms_attachments', 'platform_url')
+               ('comms_attachments', 'platform_url'),
+               ('validation_run_records', 'argv')
            );
         IF granted_columns IS NOT NULL THEN
             EXECUTE format(
