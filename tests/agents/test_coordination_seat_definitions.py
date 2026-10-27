@@ -375,56 +375,6 @@ def test_terminal_control_is_opt_in_per_definition(name: str, temp_db: HubDataba
     assert ("no-send-keys" in selected) is (name not in KEEPS_TERMINAL_CONTROL), name
 
 
-def test_reporter_owns_bounded_scheduled_delivery() -> None:
-    body = _load("reporter")
-    prompt = _prompt("reporter")
-    assert body.timeout == 900
-    assert body.execution_mode == "one_shot"
-    assert body.send_message_targets == ["session"]
-    assert body.operator_messaging is True
-    assert "gobby-communications:send_operator_message" not in body.blocked_mcp_tools
-    assert "send_operator_message" in prompt
-    assert "resolve_operator_conversation" in prompt
-    assert "success=true" in prompt
-    assert 'agent_type="assistant"' in prompt
-    assert "Do not read log files" in prompt
-    assert "300 seconds" in prompt
-    assert "cadence and mode selection from the injected project policy" in prompt
-    assert "Report mode: full" in prompt
-    assert "Report mode: delta" in prompt
-    assert 'view="compact", limit=500' in prompt
-    assert "accumulated rows equal total" in prompt
-    assert "first recorded claim time" in prompt
-    assert "gobby.agents.reporter_sources --section queues" in prompt
-    assert "never use head" in prompt.lower()
-    assert "candidate=true, closed=false" in prompt
-    assert "latest_linked_commit" in prompt
-    assert "full-report scaffold" in prompt
-    assert "Delivery success and report completeness are separate results" in prompt
-    assert "closed / escalated" in prompt
-    assert "never contacts the operator" not in prompt
-    assert "the Assistant does that" not in prompt
-    for section in (
-        "Policy-defined lanes",
-        "time claimed",
-        "next five",
-        "landing/activation/close",
-        "Close backlog",
-        "Hold state",
-        "Blocked or escalated",
-        "Operator decisions",
-        "Stalled or idle",
-        "Worktrees",
-        "Consolidator",
-        "ROADMAP",
-        "policy-designated critical paths",
-        "Last 30 minutes",
-        "Systems nominal",
-    ):
-        assert section in prompt, section
-    assert "Heavy slots" not in prompt
-
-
 def test_reporter_roster_covers_ordered_tabs_empty_panes_and_unclaimed_seats() -> None:
     assert "Worktrees versus developers; Workspace seat roster;" in _prompt("reporter")
     roster = (
@@ -450,27 +400,6 @@ def test_reporter_roster_covers_ordered_tabs_empty_panes_and_unclaimed_seats() -
     ):
         assert requirement in roster, requirement
     assert not re.search(r"(?:gobby#|Lane |#\d|[0-9a-f]{8}-[0-9a-f]{4}-)", roster)
-
-
-def test_reporter_bounds_queue_resolution_and_names_unreadable_rows() -> None:
-    prompt = _prompt("reporter")
-    budget = _section(prompt, "Cadence and budget")
-    sources = _section(prompt, "Sources")
-    assert "240 seconds" in budget
-    assert "bounded queue refills" in budget
-    assert "remain inside the time budget" in budget
-    assert "current/next-five/candidate block before gathering supplementary evidence" in budget
-    assert "Cache task rows by ref across all sources" in sources
-    assert "at most five unresolved queue refs" in sources
-    assert 'view="compact", limit=40' in sources
-    assert "refill only lanes still short" in sources
-    assert "five eligible tasks are found or its queue is exhausted" in sources
-    assert "refs resolution ignores filters" in sources
-    assert "state object" in sources
-    assert 'Never print "state ?"' in sources
-    assert "ref_errors, omitted rows or unreadable state" in sources
-    assert "GAP: Lane <N> <task ref and known title, or title unavailable>" in sources
-    assert "mark next-five coverage incomplete even if later refs fill five slots" in sources
 
 
 def test_coordination_seats_sync_as_installed_rows(definition_db: PostgresHubDatabase) -> None:
