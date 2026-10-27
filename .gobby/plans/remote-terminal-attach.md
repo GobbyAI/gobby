@@ -758,6 +758,18 @@ Targets:
   `tests/e2e/composer_proof_admission.py::load_admission`. Rejected:
   depending on #24604 and extending `tests/e2e/test_hub_node_live.py`, which
   would couple 5.2 to #24604's blocked scope.
+- Admission (the existing gate, unchanged): the module repeats
+  `tests/e2e/test_composer_live_proof.py`'s `pytestmark` skip and the checks of
+  its autouse `composer_admission` fixture, calling `load_admission` and
+  `tests/e2e/composer_proof.py::require_private_root`. An admitted run needs the
+  same separate PD admission as the composer proof: an owner-private (0600, not
+  a symlink) file in the existing `Admission` shape, with `reviewed_commit` and
+  `reviewed_tree` equal to the clean checkout's `HEAD` and `HEAD^{tree}`,
+  `issued_at` at most 300 s before the run, the exclusion message id and complete
+  exclusion map, all five native binary specs (gcode, gdaemon, ghook, gterm,
+  gclient), both `claude` and `codex` provider specs (the schema requires both
+  although this proof starts only Claude), the support tools, an owner-private
+  `artifact_dir`, and `worktree_test_notice_id` when run from a linked worktree.
 - Chosen approach: one test module with a hub and a node from those fixtures and
   one real Claude run on the node. Every typed marker goes into the composer
   without submitting and is then cleared, so the composer draft is preserved. A WS client authenticated as the owner drives the hub:
@@ -783,7 +795,11 @@ Targets:
   terminal's marker, and a typed second marker echoes on screen. The WS cases
   above stay for exact error assertions. `_TERMINAL_E2E_BINARIES` maps the new
   module to gterm and gclient so the run header reports their provenance.
-- Planned verification: `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_remote_terminal_attach_live.py -v`.
+- Planned verification (admitted run): `GOBBY_TEST_PROTECT=1 GOBBY_COMPOSER_PROOF_EXECUTION=PD_AUTHORIZED_ISOLATED_EXECUTION GOBBY_COMPOSER_PROOF_ADMISSION=<admission file> uv run pytest tests/e2e/test_remote_terminal_attach_live.py -v -rs --junitxml=<artifact_dir>/remote-terminal-attach.xml`.
+  5.2 counts as delivered only when that run executes all five tests with five
+  passed and none skipped. A run without the grant skips every test and proves
+  nothing. The JUnit report in the admission's `artifact_dir` is the recorded
+  evidence of the admitted run.
 
 **Acceptance:**
 
@@ -815,7 +831,9 @@ election sends the elected geometry to the node (2.2.7, 3.3.3–3.3.5, 5.2.5).
 RT-F3: gclient attaches the owning machine's default workspace before opening an
 unplaced remote terminal (4.1.5–4.1.6). Per the Orchestrator's ruling, 5.2 now
 uses one real Claude run behind the composer-proof admission gate in place of a
-fake provider.
+fake provider. RT-F4: 5.2 spells out the admitted invocation with both gate
+variables and the admission prerequisites, and counts only a run with five
+passed and none skipped.
 
 ## V2 Verification
 `kind: verification`
