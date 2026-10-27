@@ -22,7 +22,7 @@ from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._readonly_query import SQL_FROM_TEXT_FUNCTIONS
 from gobby.storage.hub.protocol import HubDatabase
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("query_readonly_gdaemon")]
 
 TOOL = "query_readonly"
 SENTINEL = "credential-sentinel-25195-value"

@@ -11,7 +11,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.storage.hub.protocol import HubDatabase
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("query_readonly_gdaemon")]
 
 TOOL = "query_readonly"
 PROBE_SEQUENCE = "query_readonly_probe_seq"
