@@ -348,6 +348,34 @@ async def test_cleanup_preserves_unsafe_trees(
     assert session_status(db, stranger) == "active"
 
 
+async def test_seat_that_cannot_end_is_a_reported_failure_and_keeps_its_tree(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seat that cannot be ended is a typed, reported teardown failure; its tree stays."""
+    db = world.case.db
+
+    async def cannot_end(**_kwargs: Any) -> dict[str, Any]:
+        return {"success": False}
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", cannot_end)
+    team = await admitted_team(world, "Seat refuses to end")
+    sha = land(world, team, "stuck.py")
+    closed = close(world, team, sha)
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE)
+
+    record = teardown(world, team)
+    assert record.get("outcome") == "refused"
+    assert isinstance(record.get("code"), str) and record["code"]
+    (finding,) = finding_tasks(world, team)
+    assert record["finding"] == finding.id
+    assert finding.is_escalated
+    assert FINDING_LABEL in (finding.labels or [])
+    assert Path(team.binding.worktree_path).is_dir()
+    assert LocalWorktreeManager(db).get(team.binding.worktree_id) is not None
+    assert branch_exists(world, team.binding.branch)
+
+
 async def test_teardown_deletes_the_tree_a_parked_seat_stopped_occupying(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
