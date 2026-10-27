@@ -819,13 +819,14 @@ def test_format_ref_preserves_full_uuid_fallback() -> None:
     assert format_ref(None, task_id) == task_id
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git(repo: Path, *args: str, env: Mapping[str, str] | None = None) -> str:
     result = subprocess.run(
         ["git", *args],
         cwd=repo,
         check=True,
         capture_output=True,
         text=True,
+        env={**os.environ, **env} if env else None,
     )
     return result.stdout.strip()
 
@@ -1082,6 +1083,82 @@ async def test_dirty_foreign_edit_blocks_with_recovery_guidance(
     assert "gobby-agents:send_message" in response.reason
     assert "Ask each owner" in response.reason
     assert "approve-dirty-paths" not in response.reason
+
+
+def _record_claimant_edit(h: GuardHarness, path: str, *, edited_at: float | None = None) -> None:
+    """Record a Gobby edit of ``path`` by the claimant, as the edit hook does after the write."""
+    SessionVariableManager(h.db).record_edited_files(
+        h.current_session.id, [path], checkout_root=str(h.repo), edited_at=edited_at
+    )
+
+
+@pytest.mark.asyncio
+async def test_same_second_gobby_edit_after_commit_stays_owned(guard_harness: GuardHarness) -> None:
+    """A Gobby edit in the commit's own second is still the claimant's dirt (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    _commit_files(h.repo, "claimant work", {"orphan.txt": "team's own earlier edit\n"})
+    committed_at = float(_git(h.repo, "log", "-1", "--format=%ct"))
+    (h.repo / "orphan.txt").write_text("claimant's same-second edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt", edited_at=committed_at + 0.4)
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "allow", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_backdated_committer_date_has_no_effect(guard_harness: GuardHarness) -> None:
+    """A commit dated before a Gobby edit does not carry a later outside write (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("team's own edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    _git(h.repo, "add", "--", "orphan.txt")
+    _git(
+        h.repo,
+        "commit",
+        "-q",
+        "-m",
+        "claimant work",
+        env={"GIT_COMMITTER_DATE": "2001-01-01T00:00:00Z"},
+    )
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_outside_edit_of_uncommitted_gobby_edit_needs_approval(
+    guard_harness: GuardHarness,
+) -> None:
+    """An outside write over the claimant's uncommitted edit needs approval (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("claimant's uncommitted edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
+
+
+@pytest.mark.asyncio
+async def test_claimant_edit_committed_then_changed_outside_gobby_needs_approval(
+    guard_harness: GuardHarness,
+) -> None:
+    """A committed claimant edit does not carry a later write made outside Gobby (#25161)."""
+    h = guard_harness
+    (h.repo / "orphan.txt").write_text("team's own earlier edit\n", encoding="utf-8")
+    _record_claimant_edit(h, "orphan.txt")
+    _commit_files(h.repo, "claimant work", {"orphan.txt": "team's own earlier edit\n"})
+    (h.repo / "orphan.txt").write_text("changed outside Gobby\n", encoding="utf-8")
+
+    decision = await h.handler._evaluate_rules(h.edit_event("orphan.txt"))
+
+    assert decision.decision == "block", decision.reason
 
 
 def _predecessor_holding(h: GuardHarness, task: Task, path: str, *, live: bool) -> Session:
