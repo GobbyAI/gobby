@@ -695,7 +695,6 @@ NON_CLOSERS = (
     "debugger",
     "design-reviewer",
     "recovery-steward",
-    "consolidator",
     "tech-writer",
     "epic-reviewer",
     "expansion-qa",
@@ -755,6 +754,32 @@ def test_only_dev_managers_and_the_orchestrator_are_granted_close_task() -> None
     granted = {
         path.stem: _close_task_names(yaml.safe_load(path.read_text()))
         for path in sorted(AGENTS_DIR.glob("*.yaml"))
-        if path.stem not in ("dev-manager", "orchestrator")
+        if path.stem not in ("dev-manager", "orchestrator", "consolidator")
     }
     assert {stem: names for stem, names in granted.items() if names} == {}
+
+
+@pytest.mark.parametrize(
+    "reason,allowed", [("moot", True), ("superseded", True), ("done", False), ("wont_do", False)]
+)
+@pytest.mark.asyncio
+async def test_consolidator_rule_allows_only_fold_and_retirement_closes(
+    engine: RuleEngine, reason: str, allowed: bool
+) -> None:
+    call = _proxy_call(
+        "gobby-tasks",
+        "close_task",
+        {
+            "task_id": "#25235",
+            "reason": reason,
+            "superseded_by": "#25223",
+        },
+    )
+    result = await _decide(engine, call, {"_agent_type": "consolidator"})
+    assert result.decision == ("allow" if allowed else "block")
+
+
+def test_consolidator_definition_grants_approved_fold_tools() -> None:
+    definition = yaml.safe_load((AGENTS_DIR / "consolidator.yaml").read_text())
+    assert "name:block-update-task" in definition["workflows"]["rule_selectors"].get("exclude", [])
+    assert _close_task_names(definition)

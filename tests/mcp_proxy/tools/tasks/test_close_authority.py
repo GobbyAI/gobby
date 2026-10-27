@@ -1,8 +1,9 @@
-"""Close authority: a Dev Manager closes with done; no-work reasons are Orchestrator-only."""
+"""Seat close authority and Consolidator fold protections."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,8 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._crud import create_crud_registry
+from gobby.mcp_proxy.tools.tasks._lifecycle import create_lifecycle_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import LocalProjectCheckoutManager
@@ -180,3 +183,167 @@ async def test_orchestrator_no_work_close_records_its_reason_and_caller(
     closed = closing.manager.get_task(closing.task.id)
     assert closed.closed_reason == "moot"
     assert closed.closed_in_session_id == orchestrator
+
+
+@pytest.mark.parametrize("reason", ("moot", "superseded"))
+@pytest.mark.asyncio
+async def test_consolidator_closes_unclaimed_task_without_commit(
+    closing: Closing, monkeypatch: pytest.MonkeyPatch, reason: str
+) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    close = create_lifecycle_registry(closing.context).get_tool("close_task")
+    assert close is not None
+    with session_context_for_test(seat):
+        result = await close(
+            task_id=closing.task.id,
+            reason=reason,
+            superseded_by="#25223" if reason == "superseded" else None,
+            changes_summary="Orchestrator directed approved proposal 3.",
+        )
+    assert result.get("success") is True, result
+    task = closing.manager.get_task(closing.task.id)
+    assert task.closed_at is not None
+    assert task.closed_reason == reason
+    assert task.closed_in_session_id == seat
+    assert not task.commits
+
+
+@pytest.mark.parametrize("reason", ("done", "wont_do"))
+@pytest.mark.asyncio
+async def test_consolidator_cannot_use_other_close_reasons(closing: Closing, reason: str) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    evaluation = await _evaluate(closing, seat, reason)
+    assert evaluation.error is not None
+    assert not evaluation.ready
+    assert closing.manager.get_task(closing.task.id).closed_at is None
+
+
+@pytest.mark.asyncio
+async def test_consolidator_superseded_requires_survivor(closing: Closing) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    with session_context_for_test(seat):
+        evaluation = await lifecycle._evaluate_close(
+            closing.context,
+            task_id=closing.task.id,
+            reason="superseded",
+            superseded_by=None,
+            commit_sha=None,
+            project_path=None,
+        )
+    assert evaluation.error == "superseded_by_required"
+    assert not evaluation.ready
+
+
+@pytest.mark.asyncio
+async def test_consolidator_no_work_close_preserves_child_gate(
+    closing: Closing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    closing.manager.create_task(
+        closing.project_id,
+        "Unfinished child",
+        parent_task_id=closing.task.id,
+        category="code",
+        validation_criteria="Still open.",
+    )
+    monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    evaluation = await _evaluate(closing, seat, "moot")
+    assert evaluation.error is None
+    assert _statuses(evaluation)[1] == "failed"
+    assert not evaluation.ready
+
+
+@pytest.mark.asyncio
+async def test_consolidator_no_work_close_preserves_cleanliness_gate(
+    closing: Closing, sample_git_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    repo = Path(sample_git_project["repo_path"])
+    (repo / "unfinished.py").write_text("unfinished = True\n")
+    SessionVariableManager(closing.db).merge_variables(
+        seat,
+        {
+            "task_edited_files": {closing.task.id: ["unfinished.py"]},
+            "task_edited_file_checkouts": {closing.task.id: {str(repo): ["unfinished.py"]}},
+        },
+    )
+    evaluation = await _evaluate(closing, seat, "moot")
+    assert evaluation.error is None
+    assert _statuses(evaluation)[3] == "failed"
+    assert not evaluation.ready
+    assert closing.manager.get_task(closing.task.id).closed_at is None
+
+
+@pytest.mark.parametrize("protection", ("foreign_claim", "deferred-by-josh", "22978", "22225"))
+@pytest.mark.parametrize("operation", ("update_task", "close_task"))
+@pytest.mark.asyncio
+async def test_consolidator_cannot_mutate_protected_tasks(
+    closing: Closing, protection: str, operation: str
+) -> None:
+    if protection != "foreign_claim":
+        closing.manager.release_task_claim(closing.task.id)
+    if protection == "deferred-by-josh":
+        closing.manager.update_task(closing.task.id, labels=["deferred-by-josh"])
+    elif protection in ("22978", "22225"):
+        root = closing.manager.create_task(
+            closing.project_id,
+            "Protected root",
+            task_type="epic",
+            category="code",
+            validation_criteria="Protected operator subtree.",
+        )
+        # Set the operator root identity only in this isolated test database.
+        with closing.db.transaction() as conn:
+            conn.execute(
+                "UPDATE tasks SET seq_num = %s, path_cache = %s WHERE id = %s",
+                (int(protection), protection, root.id),
+            )
+        parent = closing.manager.create_task(
+            closing.project_id,
+            "Intermediate epic",
+            task_type="epic",
+            category="code",
+            parent_task_id=root.id,
+            validation_criteria="Nested protection.",
+        )
+        closing.manager.update_task(closing.task.id, parent_task_id=parent.id)
+    before = closing.manager.get_task(closing.task.id)
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    with session_context_for_test(seat):
+        if operation == "update_task":
+            update = create_crud_registry(closing.context).get_tool("update_task")
+            assert update is not None
+            result = update(
+                task_id=closing.task.id, validation_criteria="Unauthorized replacement."
+            )
+            assert result.get("error"), result
+        else:
+            evaluation = await _evaluate(closing, seat, "moot")
+            assert evaluation.error is not None
+            assert not evaluation.ready
+    after = closing.manager.get_task(closing.task.id)
+    assert after.validation_criteria == before.validation_criteria
+    assert after.closed_at is None
+    assert after.claimed_by_session_id == before.claimed_by_session_id
+
+
+def test_consolidator_updates_unprotected_survivor(closing: Closing) -> None:
+    closing.manager.release_task_claim(closing.task.id)
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    update = create_crud_registry(closing.context).get_tool("update_task")
+    assert update is not None
+    with session_context_for_test(seat):
+        result = update(
+            task_id=closing.task.id, validation_criteria="Original and folded criteria."
+        )
+    assert not result.get("error"), result
+    assert closing.manager.get_task(closing.task.id).validation_criteria == (
+        "Original and folded criteria."
+    )
