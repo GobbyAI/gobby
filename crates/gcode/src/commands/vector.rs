@@ -4,7 +4,7 @@ use crate::index_lock::{self, IndexLockPolicy, ProjectFileLockSet};
 use crate::output::{self, Format};
 use crate::projection::{
     self,
-    sync::{ProjectionStatus, ProjectionSyncError, ProjectionSyncReport},
+    sync::{ProjectionStatus, ProjectionSyncError, ProjectionSyncReport, pinned},
 };
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
@@ -61,6 +61,9 @@ pub fn sync_file(
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     let Some(attempt) = db::mark_vector_sync_attempted(&mut conn, &ctx.project_id, &file_path)?
     else {
+        if let Some(pin) = pinned::begin_vector_attempt(&mut conn, &ctx.project_id, &file_path)? {
+            return sync_pinned_vector_file(ctx, &mut conn, &file_path, &pin, format, &locks);
+        }
         if allow_missing_indexed_file {
             return print_skipped_missing_indexed_file(ctx, &file_path, format, &locks);
         }
@@ -90,6 +93,31 @@ pub fn sync_file(
     }
     let report = ProjectionSyncReport::ok(1, output.symbols);
     print_file_lifecycle_output(&output, report, format, &locks)
+}
+
+fn sync_pinned_vector_file(
+    ctx: &Context,
+    conn: &mut postgres::Client,
+    file_path: &str,
+    pin: &pinned::PinAttempt,
+    format: Format,
+    locks: &ProjectFileLockSet,
+) -> anyhow::Result<()> {
+    let mut lifecycle = lifecycle_from_context(ctx)?;
+    let Some(output) =
+        pinned::sync_vector_attempt(conn, &ctx.project_id, &mut lifecycle, file_path, pin)?
+    else {
+        return print_skipped_sync_file(
+            ctx,
+            file_path,
+            format,
+            locks,
+            SyncFileSkip::Superseded,
+            None,
+        );
+    };
+    let report = ProjectionSyncReport::ok(1, output.symbols);
+    print_file_lifecycle_output(&output, report, format, locks)
 }
 
 enum SyncFileSkip {
