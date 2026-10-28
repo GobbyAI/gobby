@@ -130,6 +130,10 @@ The Orchestrator launches `team-planning` with `task`, `workspace`, `project_pat
 `seats` and `report_to=<Triage ref>`. The Plan Writer opens the `Team Planning - #<task>`
 tab, the Plan Adversary and Plan Enhancer split beside it, and `seat_pane` adds
 seats to an existing pane.
+When `task` has no open planning child, the runbook creates one under it, and the
+Plan Writer claims that child before writing `.gobby/plans/task-<seq>.md`. Each seat's
+prompt names the task, the plan path and its teammates' session refs. Once the seats
+launch, the runbook also sends the Plan Writer the Adversary and Enhancer refs.
 The Writer's enhancer edits, unresolved disagreements and stamped plan reach
 the Orchestrator through Triage's digest.
 

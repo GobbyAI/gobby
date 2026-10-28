@@ -4,7 +4,7 @@ description: |
   passes it, reaches consensus with the writer over send_message, and stamps
   the M1 task manifest on consensus. Never edits the plan narrative.
 
-version: "2.0"
+version: "2.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -145,6 +145,7 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+        - "gobby-agents:send_message"
       blocked_mcp_tools:
         - "gobby-plans:derive_plan_handoff_manifest"
         - "gobby-plans:apply_plan_handoff_manifest"

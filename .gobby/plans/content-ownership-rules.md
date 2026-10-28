@@ -9,50 +9,62 @@ Plan artifact: `.gobby/plans/content-ownership-rules.md`
 
 This plan specifies #22644 (Replace edit attribution with four content-based
 ownership rules for close gates and edit hooks), under epic #22949 (Lane 7,
-planning and research). It replaces the edit-attribution layer with Josh's
-four ownership rules (§Ownership Contract) and retires every mechanism the
-task names (§Retired Mechanisms).
+planning and research). Its implementation leaves sit under epic #23561. It
+enforces Josh's four ownership rules (§Ownership Contract).
 
-**The problem.** Attribution today means "a successful tool call named this
-path", never "this call changed the file's bytes". Two observed failures follow
-from that:
-- **#22642 (plan-authoring task).** gobby#14054 was blocked at close by gate 9
-  (uncommitted_task_edits) and then gate 10 (test-types audit) on
-  `tests/e2e/test_terminal_client_stack.py`, a file it never changed. The path
-  was already staged in the shared main checkout before the claim. A git index
-  command whose tool input named the path flipped it from staged to unstaged,
-  and the recorder (`src/gobby/hooks/event_handlers/_tool.py::ToolEventHandlerMixin._record_successful_file_mutation`)
-  logged that as an edit. `release_task_paths` then refused to release it.
-- **#23363 (Evidence stall fix), land 7.** The Merge Manager's landing-merge
-  commit in the main checkout was blocked by
-  `block-cross-session-foreign-staged-commit`, because the six merged paths
-  were attributed to the live owner (15011/#23363). The owner's
-  `release_task_paths` refused, since the uncommitted content was the merge.
-  Neither side could proceed. Land SHAs: base `b3a65779db`, MERGE_HEAD
-  `7094fc272b`. The workaround (merge --abort, release while clean, re-stage)
-  landed as `a6d5aeb17b`.
+**Refresh (#25261, 2026-10-28).** Josh approved the V1 plan on 2026-10-05.
+Sections 1.1 to 1.3 have landed (#23562, #23563 and #23564 are closed). Two
+later changes overtook the open sections 1.4 to 1.8 (#23565 to #23569):
+- The v4 close rewrite (epic #23561) replaced the close checklist with data
+  invariants and step records in `src/gobby/tasks/close_invariants.py`. V1's
+  gate 9 is now gate 3, `uncommitted_task_edits`. Gate 12, the transcript
+  evidence it read, `_lifecycle_validation.py`, `_close_evaluation_support.py`,
+  `_close_gate_helpers.py` and `_stage_review.py` are gone.
+- Content-hash ownership (#24402, #24426, #24590, #25161) made per-task
+  content records the ownership authority (§Content-Hash Contract). Josh's
+  ruling of 2026-10-26 sets its premise: "There shouldn't be orphans unless
+  the file is modified outside of gobby".
+
+This refresh re-targets 1.4 to 1.8 against both models. It records the
+rulings #25261 asks for in the Decision Record: the #23565 storage layout
+(Decision 8), and keep or retire for #23566 (Decision 20), #23567
+(Decision 21) and #23569 (Decision 2). Decision 22 re-targets #23568.
+
+**What remains broken at `b42c2172d9`:**
+- Gate 3 reads only the attribution owner's session variables
+  (`_close_context.capture_attribution`). Uncommitted work that a previous
+  session recorded for the task never blocks the close. #24402's foreign-owner
+  exclusion also subtracts a live predecessor's dirt for the same task (1.7).
+- Rule 2 refuses a claimant's commit of a live predecessor's dirt for the
+  claimed task, although rule 3 already treats that predecessor as the
+  claimant's past self. Once gate 3 requires that commit, the two would
+  deadlock (1.8).
+- The recorder records every path a successful write call names, whatever
+  happened to its bytes. It records nothing for a failed call that changed
+  bytes (1.5).
+- Mixed shell commands publish too few write paths. `cp a b && git restore --
+  c` publishes `[b]` and `rm e && echo x > d` publishes `[d]`, so rule 3 never
+  checks `c` or `e` before the command discards or deletes another session's
+  dirt (1.5).
+- Nothing enforces rule 4 (1.6).
+- The ledger still writes three variables that v4 left without readers, and
+  five accessors serve no live caller (1.4).
 
 **When the leaves close:**
-- A session owns a path only when one of its write-kind tool calls changed
-  that path's bytes. A call that names a path without changing it records
-  nothing (the #22642 regression).
-- A session may not mutate a path that is dirty and not its own (rule 3). The
-  refusal names each live owner's session ref and task ref.
-- A commit may not capture another live session's dirty paths (rule 2). A
-  landing merge passes for every path the merge brings in.
+- Gate 3 checks the attribution owner's live task pairs plus every pair any
+  session recorded for the task whose current content the task still owns,
+  each against its own checkout. #24402's exclusion of later foreign dirt
+  still holds for paths the task no longer owns (1.7).
+- A claimant may commit dirt whose live holder works a task the claimant now
+  claims (rule 2), as rule 3 already lets it edit that dirt (1.8).
+- A write-kind call records a path only when the call changed its bytes,
+  whether the call succeeded or failed (1.5).
+- A shell command publishes the union of its write-kind segments' targets, so
+  rule 3 and the recorder judge every path the command writes (1.5).
 - A write into another Gobby-managed project is refused (rule 4), except
   through a registered worktree of that project bound to a task the session
-  claims.
-- Gate 9 (rule 1) checks only the task's live pairs, the attribution
-  owner's plus any untransferred predecessor pairs, per checkout, and names
-  no foreign owner. Close ends the task's live tags in every session holding
-  one.
-- One ledger carries ownership: `session_dirty_files` holds the live pairs,
-  each tagged with the one task it is live for, and `task_edited_files` is
-  the append-only per-task history. The edit-time, checkout-mirror,
-  history and baseline variables are gone, along with `release_task_paths`,
-  `inspect_task_path_ownership`, `capture_baseline_dirty_files` and the
-  claim-time scope check.
+  claims (1.6).
+- The ledger keeps only state that something reads (1.4).
 
 ## Ownership Contract
 `kind: framing`
@@ -77,80 +89,98 @@ bullets, and all four are binding here:
 
 | Rule | Hook event | Enforcing rule template | Section |
 | --- | --- | --- | --- |
-| 1 | `close_task` gate 9 (`uncommitted_task_edits`) | none (close checklist) | 1.7 |
-| 2 | `before_tool` | `block-cross-session-foreign-staged-commit` (priority 25) | 1.3 |
-| 3 | `before_tool` | `block-cross-session-foreign-dirty-edit` (priority 26) | 1.3 |
+| 1 | `close_task` gate 3 (`uncommitted_task_edits`) | none (close invariant) | 1.7 |
+| 2 | `before_tool` | `block-cross-session-foreign-staged-commit` (priority 25) | 1.3, 1.8 |
+| 3 | `before_tool` | `block-cross-session-foreign-dirty-edit` (priority 26) | 1.3, 1.5 |
 | 4 | `before_tool` | `block-cross-project-write` (priority 24, new) | 1.6 |
 
 ## Content-Hash Contract
 `kind: framing`
 
-This section answers #22644 criterion 2. It implements the definition's
-"hash the named path before and after the mutating call" option with a
-sha256 of the path's bytes, held in memory only for the duration of the call
-(Decision 5).
+This section answers #22644 criterion 2. Two content mechanisms work
+together. The first is delivered; 1.5 builds the second.
+
+- **Ownership records (delivered by #24402 to #25161).** Every recorded edit
+  stores, under the task it is attributed to, the path's fingerprint in
+  `task_edited_checkout_hashes` and the edit time in
+  `task_edited_checkout_times`. Both are keyed
+  `{task_id: {checkout_root: {rel: value}}}`. The fingerprint is
+  `workflows/checkout_fingerprint.py::file_fingerprint`: git's blob hash of
+  the bytes (a symlink's target text), None for an absent path, and `OSError`
+  for a directory. The records survive close (`remove_claimed_task` leaves
+  them). `dirty_edit_grants.checkout_path_owners` reads every session's
+  records for a checkout. A record counts while the path's current
+  fingerprint equals it, and the newest counting record names the owning
+  task. A path written outside Gobby after its last record has no owner.
+  Bash calls in a registered linked worktree record the paths whose
+  fingerprints changed across the call (`worktree_shell_attribution`), and a
+  Bash call that rewrites a path a claimed task owns re-records it
+  (`SessionVariableManager.snapshot_claimed_shell_edits` and
+  `adopt_claimed_shell_edits`).
+- **Mutation test for named write paths (1.5, Decision 5).** The bullets
+  below specify it.
 
 - **Which tools.** Every tool call that normalization classifies as
-  `canonical_tool_kind == "write"`, over the write paths `resolve_edit_pair`
-  maps to a pair (Decision 6): Write,
-  Edit, MultiEdit, NotebookEdit, apply_patch, and shell segments that name
-  their write targets (redirection, `cp`/`mv` destinations, `git checkout --`
-  and `git restore` with a worktree effect, inline Python writes). The paths
-  are `canonical_write_file_paths` when that key is present, else
-  `canonical_file_paths` (Decision 11). In a compound shell command only the
-  write-kind segments' targets count. Execute-kind calls and segments, including
-  `git add` and `git restore --staged` without `--worktree`/`-W`
-  (Decision 7), record nothing and are not checked by rule 3.
-- **Path resolution.** The before-tool snapshot, the recorder, rule 3 and
-  rule 4 resolve a write path the same way. A relative path joins the
-  effective tool cwd, `task_claim_state.effective_tool_cwd(event.cwd,
-  event.data)`: the tool input's `workdir`, else its `cwd`, joined to
-  `event.cwd` when relative, else `event.cwd`. Symlinks are then resolved,
+  `canonical_tool_kind == "write"`, over the write paths that
+  `resolve_edit_pair` maps to a pair (Decision 6): Write, Edit, MultiEdit,
+  NotebookEdit, apply_patch, and shell segments that name their write targets
+  (redirection, `cp`/`mv` destinations, `rm` operands, `git checkout --` and
+  `git restore` with a worktree effect, inline Python writes). The paths are
+  `canonical_write_file_paths` when that key is present, else
+  `canonical_file_paths` (Decision 11). After 1.5, a compound shell command's
+  `canonical_write_file_paths` holds every write-kind segment's targets.
+  Execute-kind calls and segments, including `git add` and `git restore
+  --staged` without `--worktree`/`-W` (Decision 7), record nothing and are not
+  checked by rule 3.
+- **Path resolution (delivered in 1.3).** The before-tool snapshot, the
+  recorder, rule 3 and rule 4 resolve a write path the same way. A relative
+  path joins the effective tool cwd, `task_claim_state.effective_tool_cwd(
+  event.cwd, event.data)`: the tool input's `workdir`, else its `cwd`, joined
+  to `event.cwd` when relative, else `event.cwd`. Symlinks are then resolved,
   and the checkout root is the innermost `.gobby/project.json` root above the
   resolved target, whether the input was relative or absolute. So
   `../other-worktree/p.py` and a relative symlink that leaves the cwd's
   checkout reach the checkout that holds the real file. With no `event.cwd`
-  and no absolute `workdir` or `cwd` in the tool input, a relative path has
-  no pair at any of the four sites; absolute paths resolve unchanged. This narrows today's rule 3, which
-  read such a path against `project_path` although the recorder could never
-  record it. Adapters copy `event.cwd` from the provider payload.
+  and no absolute `workdir` or `cwd` in the tool input, a relative path has no
+  pair at any of the four sites; absolute paths resolve unchanged.
 - **Where the pre-call identity is taken.** At `before_tool`,
-  `ToolEventHandlerMixin.handle_before_tool` stores the sha256 of each write
-  path's bytes, or None when the path is absent. Entries live in the
-  daemon-wide in-memory store `pre_write_digests.PRE_WRITE_DIGESTS`, keyed by
-  `(session_id, request_id, realpath)`. `request_id` is the event's
-  correlation id, which `hooks/events.py::correlate_hook_lifecycle` fills
-  from `tool_use_id`, `toolCallId`, `tool_call_id` and the other provider
-  keys, so overlapping calls on one path keep separate baselines. When an
-  adapter supplies no id, `request_id` is "", and a later `before_tool` on
-  the same session and path overwrites the entry. Separately, rule 3 runs one pathspec-limited `git status
-  --porcelain=v1 --untracked-files=all -- <path>` per write path the session
-  does not already own, to refuse a path dirty before first touch.
+  `ToolEventHandlerMixin.handle_before_tool` stores the `file_fingerprint` of
+  each resolved write path. Entries live in the daemon-wide in-memory store
+  `pre_write_digests.PRE_WRITE_DIGESTS`, keyed by `(session_id, request_id,
+  realpath)`. `request_id` is the event's correlation id, which
+  `hooks/events.py::correlate_hook_lifecycle` fills from `tool_use_id`,
+  `toolCallId`, `tool_call_id` and the other provider keys, so overlapping
+  calls on one path keep separate baselines. When an adapter supplies no id,
+  `request_id` is "", and a later `before_tool` on the same session and path
+  overwrites the entry. Separately, rule 3 runs one pathspec-limited `git
+  status --porcelain=v1 --untracked-files=all -- <path>` per write path the
+  session does not already own, to refuse a path dirty before first touch.
 - **Where the post-call comparison runs.** At `after_tool`, for every
   write-kind call whether it succeeded or failed, the recorder takes each
-  path's entry and re-hashes the path. Different bytes, including a created
-  or deleted file, mean mutation, so the pair is recorded. Equal bytes record
-  nothing, even for a path the session already owns or a merge-set path. A
-  pair recorded while clean, because the same call committed it, stays in
-  `task_edited_files`; reconciliation releases its live pair.
+  path's entry and fingerprints the path again. A different fingerprint,
+  including a created or deleted file, means mutation, so the pair is
+  recorded. An equal fingerprint records nothing, even for a path the session
+  already owns or a merge-set path. A pair recorded while clean, because the
+  same call committed it, keeps its task records; reconciliation drops it
+  from the session's dirty set.
 - **No entry: bounded fallback.** A path has no entry after a daemon restart
   during the call, a `before_tool` event that never reached the daemon, an
   id-less overlapping call whose entry the other call took, or an entry older
-  than one hour. For those paths and for directories, which have no byte
-  hash, the post-call pathspec status decides: dirty records the pair, clean
-  records nothing. This status is no proof of mutation. In these branches
-  only, a no-op on an already-dirty path is recorded (the F2 shape), and a
-  write committed by the same call is missed (the F3 shape). The policy
+  than one hour. For those paths and for directories, which have no
+  fingerprint, the post-call pathspec status decides: dirty records the pair,
+  clean records nothing. This status is no proof of mutation. In these
+  branches only, a no-op on an already-dirty path is recorded (the F2 shape),
+  and a write committed by the same call is missed (the F3 shape). The policy
   chooses to record when in doubt, so rule 1 never misses dirt the session
   may have made; a false record costs a commit of the session's own paths,
   which rule 2 allows.
-- **Hash read failure.** Each path is observed on its own. A path whose
-  before-call hash raises `OSError` stores no entry. A path whose after-call
-  hash raises `OSError` (for example, the call made it unreadable) takes the
-  no-entry fallback. Either way the other paths of the call are still
-  hashed and compared. Failures that are not observation failures, such as
-  the ledger write, still reach `handle_after_tool`'s outer catch, which logs
-  them.
+- **Fingerprint read failure.** Each path is observed on its own. A path
+  whose before-call fingerprint raises `OSError` stores no entry. A path
+  whose after-call fingerprint raises `OSError` (for example, the call made
+  it unreadable) takes the no-entry fallback. Either way the other paths of
+  the call are still fingerprinted and compared. Failures that are not
+  observation failures, such as the ledger write, still reach
+  `handle_after_tool`'s catch, which logs them.
 - **Entry lifetime.** `after_tool` removes the entries it reads. A session's
   remaining entries are dropped at its `session_end`, and any entry older
   than one hour is dropped whenever a new one is stored, so entries whose
@@ -160,9 +190,8 @@ sha256 of the path's bytes, held in memory only for the duration of the call
   file the session does not own is dirty at first touch, so rule 3 refuses
   the write.
 - **Ignored paths.** Git reports nothing for them, so rule 3 never refuses
-  them. A changed ignored path is recorded, as the recorder does today, and
-  gate 9 never blocks on it because git reports it clean. Rule 1 covers
-  git-tracked files only.
+  them. A changed ignored path is recorded, and gate 3 never blocks on it
+  because git reports it clean. Rule 1 covers git-tracked files only.
 - **Paths outside any checkout.** `resolve_edit_pair` returns no pair when no
   `.gobby/project.json` root contains the path (Decision 13), so the path is
   neither checked by rule 3 nor recorded. Rule 4 still applies to every
@@ -173,52 +202,55 @@ sha256 of the path's bytes, held in memory only for the duration of the call
   the session's claimed tasks (Decision 9), does not waive rules 1 to 3:
   `resolve_edit_pair` returns that worktree's pair, so rule 3 checks the first
   touch, the recorder records a change under the worktree's real root, and
-  gate 9 checks the pair.
-- **Git status unavailable.** At `before_tool`, rule 3 refuses as unverified
-  (today's text, kept). At `after_tool` the hash comparison needs no git. In
-  the no-entry fallback, a failed status records the pair, and ledger
+  gate 3 checks the pair.
+- **Git status unavailable.** At `before_tool`, rule 3 refuses as
+  unverified. At `after_tool` the fingerprint comparison needs no git. In the
+  no-entry fallback, a failed status records the pair, and ledger
   reconciliation releases it once git reports it clean.
 - **Accepted race.** Another process can change the path between the two
-  hashes, and the recorder then records that change. Overlapping calls by one
-  session on one path each compare against their own baseline, so the later
-  call also records a change the earlier one made; both records belong to
-  the same session. Two simultaneous clean first touches by different
+  fingerprints, and the recorder then records that change. Overlapping calls
+  by one session on one path each compare against their own baseline, so the
+  later call also records a change the earlier one made; both records belong
+  to the same session. Two simultaneous clean first touches by different
   sessions both record.
 
 ## Decision Record
 `kind: framing`
 
+Decisions 1, 3, 7, 9 and 11 to 19 shipped with 1.1 to 1.3, except where a
+refreshed decision says otherwise. Decisions 2, 5, 6, 8, 10, 15 and 16 were
+rewritten, and 20 to 22 added, by the #25261 refresh (2026-10-28). The
+refreshed rulings take effect with the Adversary's stamp and Josh's approval
+through the Assistant (#25261 criterion 3).
+
 1. **R1, rule 2 scope (Orchestrator gobby#14972, 2026-10-05 13:03 CT). This
    interprets Josh's verbatim rule 2; Josh approved it on 2026-10-05 at
    15:54 CT (Telegram, relayed by the Orchestrator).** Rule 2
    blocks a commit only when a committed path is dirty and is held in another
-   live session's `session_dirty_files`. Paths no live session mutated commit
+   live session's dirty ledger. Paths no live session mutated commit
    freely. A merge commit is exempt only for the paths the merge brings in,
    `git diff --name-only --no-renames HEAD MERGE_HEAD`; `--no-renames` lists
    both sides of a rename. Every other staged path in a merge commit still
    follows rule 2. #23363 land 7 passes: its six paths are exactly the
    files that differ between HEAD `b3a65779db` and MERGE_HEAD `7094fc272b`.
-2. **R2, transfer at claim (Orchestrator).** At claim, the task's live pairs
-   (pairs tagged with the task, Decision 8) move from ended or
-   no-longer-claiming predecessor sessions into the claimant's ledger, still
-   tagged with the task. A predecessor's pair tagged with another task never
-   moves, even when the predecessor's history names the claimed task.
-   Ownership never duplicates across two live sessions. Predecessors are the
-   sessions whose `session_dirty_files` holds a pair tagged with the task,
-   found by one jsonb query over `session_variables` (`task_tag_holders`,
-   1.4). The tag is therefore the recovery authority, and the best-effort
-   `session_tasks` link, which a claim survives losing, plays no part
-   (CO-A3-F10). Rejected: making every claim source write its link durably,
-   which needs a change at each claim source and leaves the tag
-   unauthoritative.
-   Each move is one hub transaction under a new `SessionVariablePairMutation`
-   lock that takes both rows' session-variable advisory keys in session-id
-   order. Eligibility is rechecked inside it, a failure is reported in the
-   claim result, and a later `already_claimed` claim retries it (Orchestrator,
-   2026-10-05: enhancer E3 accepted, option (a); a two-step move was rejected
-   because a failure between the steps leaves two live holders). Until the
-   retry succeeds, gate 9 refuses the close while an untransferred pair is
-   dirty (1.7), so the claim's success never waives rule 1.
+2. **#23569 ruling: claim transfer is retired, and #23569 is kept for rule 2's
+   claimed-task exclusion (refresh, 2026-10-28).** V1 moved a predecessor's
+   live pairs into the claimant's ledger under a pair lock. Content ownership
+   made the move unnecessary: `checkout_path_owners` names the task as a
+   path's owner from any session's records, so ownership follows the task
+   without moving rows. Rule 3 already exempts a holder whose task the
+   session now claims (`commit_guard.foreign_dirty_edit_conflict`, "past
+   self"). Retired with the transfer, none of them ever built:
+   `SessionVariablePairMutation`, `transfer_task_pairs`,
+   `_transfer_task_dirty_pairs`, `untransferred_task_pairs`,
+   `pair_transfer_errors`, `releases_task_ownership`, `task_tag_holders` and
+   `end_task_tags`. One gap remains, so #23569 is kept with a new scope.
+   Rule 2 (`foreign_staged_commit_conflict`) still refuses a claimant's
+   commit of dirt a live holder keeps for the claimed task. Once 1.7 makes
+   gate 3 require that commit, the claimant could neither commit nor close
+   while the predecessor lives, for example a seat that escalated the task
+   and waits. 1.8 gives rule 2 rule 3's past-self exclusion. Rejected:
+   retiring #23569 outright, which leaves that deadlock.
 3. **R3, retirements (Orchestrator).** Retire `_claim_scope_conflicts`,
    `inspect_task_path_ownership` and `release_task_paths`. Every rule 2 and
    rule 3 refusal names the owning session ref and task ref.
@@ -226,56 +258,75 @@ sha256 of the path's bytes, held in memory only for the duration of the call
    carries edited-file content) until the Rust multi-machine port. This plan
    has no foreign-origin sections and no prerequisite on #23277. Node-side
    ownership belongs to the Rust port.
-5. **Mutation detection hashes the named path before and after the call
-   (Orchestrator, 2026-10-05: replacement accepted).** At `before_tool` the
-   handler stores the sha256 of each write path's bytes in memory; at
-   `after_tool` the recorder re-hashes it, and only different bytes record.
-   This follows Josh's definition literally. The first draft's rule (rule 3's
-   clean first touch proves the HEAD blob, then a post-call pathspec status
-   decides) was replaced after the Adversary showed three misses: a write in
-   a call that then fails, a no-op write to an already-dirty path (owned
-   under another task, or in the merge set) and a write committed by the same
-   call. The objections that first rejected stored hashes no longer apply.
-   Entries are keyed by session, the event's normalized `request_id` (from
-   `correlate_hook_lifecycle`; "" when the adapter supplies none) and path,
-   so no adapter reads its own call id. A call with no entry, after a daemon
-   restart for example, falls back to the post-call status rule, so no
-   durable store is needed. That fallback and directories keep the old rule's
-   F2 and F3 shapes, bounded as the Content-Hash Contract states.
-6. **Write-kind calls only (accepted).** The recorder and rule 3 apply only to
-   `canonical_tool_kind == "write"`, over the write paths that
-   `resolve_edit_pair` maps to a pair. Today's rule 3 checks
-   `canonical_repo_mutation` alone, so it also inspects `git add` paths; that
-   ends. `canonical_repo_mutation` is no longer their gate. Normalization has
-   no claim state, so it is false for a sanctioned worktree of another project
-   (Decision 9). It is also false for a separate clone of this project (same
-   `.gobby/project.json` id, different git repository), which rules 1 to 3
-   now cover too, because `resolve_edit_pair` keys on the project id.
+5. **Mutation detection fingerprints the named path before and after the
+   call (Orchestrator, 2026-10-05: replacement accepted; refreshed).** At
+   `before_tool` the handler stores each write path's fingerprint in memory;
+   at `after_tool` the recorder fingerprints it again, and only a different
+   fingerprint records. This follows Josh's definition literally. The first
+   draft's rule (rule 3's clean first touch proves the HEAD blob, then a
+   post-call pathspec status decides) was replaced after the Adversary showed
+   three misses: a write in a call that then fails, a no-op write to an
+   already-dirty path (owned under another task, or in the merge set) and a
+   write committed by the same call. Entries are keyed by session, the
+   event's normalized `request_id` (from `correlate_hook_lifecycle`; "" when
+   the adapter supplies none) and path, so no adapter reads its own call id.
+   A call with no entry, after a daemon restart for example, falls back to
+   the post-call status rule, so no durable store is needed. That fallback
+   and directories keep the old rule's F2 and F3 shapes, bounded as the
+   Content-Hash Contract states. The refresh replaces V1's sha256 with
+   `checkout_fingerprint.file_fingerprint`, which the ownership records
+   already store, so a recorded hash and the mutation test agree. Rejected in
+   the refresh: keeping the snapshot in session variables, as
+   `claimed_shell_snapshots` does, which adds a row write to every write-kind
+   `before_tool`; the status fallback already covers a restart.
+6. **Write-kind calls only (accepted; refreshed).** The recorder and rule 3
+   apply only to `canonical_tool_kind == "write"`, over the write paths that
+   `resolve_edit_pair` maps to a pair. Rule 3 already dropped its
+   `canonical_repo_mutation` gate (1.3). The recorder still requires it
+   (`_tool.py` `is_canonical_edit`), and 1.5 drops it there. Normalization has
+   no claim state, so `canonical_repo_mutation` is false for a sanctioned
+   worktree of another project (Decision 9). It is also false for a separate
+   clone of this project (same `.gobby/project.json` id, different git
+   repository), which rules 1 to 3 cover too, because `resolve_edit_pair`
+   keys on the project id.
 7. **`git restore --staged` is execute-kind (accepted).** Without
-   `--worktree`/`-W` it changes only the index. It is reclassified from
-   `"write"` to `"execute"`, like `git add`. This is the #22642 command.
-8. **One ledger, live set and history kept apart (accepted; live tag by
-   Orchestrator ruling on CO-A3-F9, 2026-10-05).**
-   `session_dirty_files: {checkout_root: {rel: task_id | null}}` is live
-   ownership. Each live pair carries the one task it is live for, or null.
-   `task_edited_files: {task_id: {checkout_root: [rel]}}` is the append-only
-   per-task history, for audit and gate 12; it never makes a pair live. A
-   task's live pairs are the session's pairs tagged with that task. A
-   mutation recorded while task B is active tags the pair B, replacing any
-   earlier tag, so the pair is live for B only. The tag ends when
-   reconciliation drops the pair, when the pair transfers to a claimant
-   (Decision 2), when the session mutates it for another task, or when the
-   task closes. At close, `_cleanup_closed_claim` sets the task's tags to
-   null in every session that holds one, found by `task_tag_holders`, so a
-   clean untransferred predecessor pair never stays live for a closed task. A nulled pair stays in its session's live set, and
-   history is untouched. A claim released without closing (live-session
-   recovery, a spawn handoff, a claim observer) keeps the tag, so the next
-   claimant can take the pair.
-   Rejected: a release marker on history rows, which reconciliation,
-   re-mutation and close would each have to flip; the tag ends with the pair
-   that reconciliation already drops. Every other attribution variable is
-   deleted. Legacy branches are deleted outright under AGENTS.md rule 10 (no
-   backward compatibility): a stored value of the old shape reads as empty.
+   `--worktree`/`-W` it changes only the index. It is classified
+   `"execute"`, like `git add`
+   (`hooks/_normalization_git.py::classify_git_mutation`). This is the #22642
+   command.
+8. **#23565 ruling: the storage layout (refresh, 2026-10-28).** The ledger
+   keeps these variables, and only these, for edits:
+   - Ownership authority: `task_edited_checkout_hashes` and
+     `task_edited_checkout_times`, `{task_id: {checkout_root: {rel: value}}}`
+     in every session's variables. They survive close and drive
+     `checkout_path_owners` (§Content-Hash Contract).
+   - Live session dirt: `session_dirty_file_checkouts`
+     `{checkout_root: [rel]}`, with `session_dirty_files` as its flat union,
+     which `has_dirty_files` reads. Reconciliation and rule 3's stale-holder
+     release drop pairs from both.
+   - Live task interval: `task_edited_file_checkouts`
+     `{task_id: {checkout_root: [rel]}}`, where a later task's edit of a pair
+     takes it (`transfer_live_checkout_paths`), and `task_live_edit_starts`.
+     `remove_claimed_task` drops a finished task's entries.
+   - Session edit lists: `session_edited_files` and `task_edited_files`
+     `{task_id: [rel]}`. They list what the session edited and carry no
+     ownership. They serve the readers that ask whether a task has edits:
+     `target_task_has_edits`, `has_target_task_dirty_files`,
+     `outstanding_monolith_paths`, agent run completion and step records.
+   - Retired by 1.4: `task_edited_file_checkouts_history`,
+     `task_edited_file_checkouts_history_started_at` and
+     `task_edited_file_times`. Their readers were gate 12, the claim window
+     and five accessors that have served no live caller since v4.
+   A path stored without a checkout reads as nothing (AGENTS.md rule 10), so
+   1.4 deletes the two readers that compare `task_edited_files` with checkout
+   pairs. Rejected: V1's tagged `session_dirty_files: {root: {rel: task |
+   null}}` with an append-only nested `task_edited_files`, which would rebuild
+   per-task ownership under a second key beside the content records and drop
+   the hashes Josh's 2026-10-26 ruling relies on. Rejected: folding the flat
+   lists into the checkout maps, which rewrites fixtures in about 40 test
+   files while no reader of the flat lists misbehaves;
+   `release_session_dirty_files` keeps `session_dirty_files` equal to the
+   union of the checkout lists.
 9. **Rule 4 compares project ids (accepted).** The project id of the path's
    `.gobby/project.json` root must equal the session's project id. The single
    exception is a registered worktree of the other project whose `task_id` is
@@ -284,20 +335,21 @@ sha256 of the path's bytes, held in memory only for the duration of the call
    `task_claim_state.sanctioned_worktree_root` serves both rule 4 and
    `resolve_edit_pair`, so the worktree's pairs are checked, recorded and
    gated like any own-project pair.
-10. **W1, accessor meaning.** `task_edited_file_set`,
-    `task_edited_file_set_for_checkout` and `target_task_has_edits` return the
-    task's live pairs (the session pairs tagged with the task), which is their
-    effective meaning today: `reconcile_edit_ledgers` drops clean pairs from
-    the per-task live ledger, and `remove_claimed_task` drops a closed task's
-    rows. `task_edited_checkout_paths` returns every recorded pair (gate 12
-    evidence). Their callers therefore stay unchanged.
+10. **W1, accessor meaning (refreshed).** `task_edited_file_set`,
+    `task_edited_file_set_for_checkout`, `task_live_checkout_files` and
+    `target_task_has_edits` keep their meanings and callers.
+    `task_edited_checkout_paths` returns the task's live checkout pairs
+    (`task_edited_file_checkouts`) once 1.4 drops the history union. Its two
+    callers, `_claim_release._uncommitted_refusal` and
+    `_close_context.capture_attribution`, thereby stop judging pairs that a
+    later task took.
 11. **W2, write paths.** Rules 3 and 4 and the recorder read
     `canonical_write_file_paths` when the key is present, else
     `canonical_file_paths`. A dirty `cp` source is therefore not refused.
     For a shell command, `canonical_write_file_paths` is the union of the
     write targets of its write-kind segments: a segment's explicit write paths
     (the `cp` destination), else its paths. Execute-kind segments (`git add`,
-    index-only `git restore`) contribute none (1.5).
+    index-only `git restore`) contribute none. 1.5 delivers the union.
 12. **W3, merges and rule 3 (Orchestrator, 2026-10-05: accepted). This
     interprets Josh's verbatim rule 3; Josh approved it with Decision 1 on
     2026-10-05 at 15:54 CT (Telegram, relayed by the Orchestrator).** While
@@ -310,146 +362,120 @@ sha256 of the path's bytes, held in memory only for the duration of the call
     outside the merge set. Rejected alternative: conflict resolution only
     through shell commands that name no path.
 13. **Paths outside every Gobby checkout are ignored.** `resolve_edit_pair`
-    drops today's cwd fallback (`find_project_root(search_start) or cwd_path`):
-    with no `.gobby/project.json` root there is no pair. Such a path is in no
-    Gobby-managed repo, so rules 1 to 3 cannot apply to it, and git status at
-    a non-repository cwd could only fail. The root is found from the resolved
-    target, never from the cwd (§Content-Hash Contract, Path resolution).
+    has no cwd fallback: with no `.gobby/project.json` root there is no pair.
+    Such a path is in no Gobby-managed repo, so rules 1 to 3 cannot apply to
+    it, and git status at a non-repository cwd could only fail. The root is
+    found from the resolved target, never from the cwd (§Content-Hash
+    Contract, Path resolution).
 14. **W4, stale holders.** At rule 3's clean first touch, the pair is released
-    from every other live holder's `session_dirty_files`. Otherwise a holder
-    whose ledger was not reconciled after its commit would duplicate ownership,
-    and its gate 9 would block on another session's edit.
-15. **W5, owners.** Owners are all live sessions (status in
-    `LIVE_SESSION_STATUS_ORDER`) whose `session_dirty_files` holds the path
-    under that checkout root, not only sessions with a claimed open task. The
-    lookup has no project filter, because a sanctioned worktree's holders
+    from every other live holder's dirty ledger. Otherwise a holder whose
+    ledger was not reconciled after its commit would duplicate ownership.
+15. **W5, owners (refreshed).** Owners are all live sessions (status in
+    `LIVE_SESSION_STATUS_ORDER`) whose `session_dirty_file_checkouts` holds the
+    path under that checkout root, not only sessions with a claimed open task.
+    The lookup has no project filter, because a sanctioned worktree's holders
     belong to another project (Decision 9) and ledger keys are already
-    realpath roots.
-    The task ref is the pair's live tag when the holder still claims that
-    task, else "no claimed task".
-16. **W6, task ledger lifetime.** `task_edited_files` is append-only for the
-    session's life: `remove_claimed_task` no longer drops it, because a closed
-    task's pairs must keep excluding those paths from a later task's gate 12
-    evidence (the job the history ledger did). The existing exemption stays:
-    a task that closed before the evidence window excludes only its live
-    pairs. `_cleanup_closed_claim` clears
-    `had_edits` when no task still in `claimed_tasks` has live pairs.
-    History serves audit and gate 12 only and never revives a live
-    association (Orchestrator ruling on CO-A3-F9). Every other reader,
-    `outstanding_monolith_paths`, transfer, the close guard and rules 2 and 3
-    among them, reads live tags.
+    realpath roots. The task ref is the holder's claimed task or the task
+    whose live interval holds the pair (`ForeignPathOwner.owner_task_id`,
+    `ledger_task_id`).
+16. **Edit history retired with gate 12 (refresh, 2026-10-28).** V1 kept an
+    append-only per-task history to exclude other tasks' paths from gate 12's
+    evidence. v4 deleted gate 12 and the transcript evidence, so the history
+    variables have no purpose, and 1.4 retires them. The content records
+    (Decision 8) are the only per-task record that outlives a pair's live
+    interval, and they serve ownership.
 17. **The rule 2 user-directed exception needs no mechanism.** An ended owner
     is not live, a live owner acts on the user's direction, and the user's own
     terminal commits bypass agent hooks.
 18. **Refusal events.** Rules 2, 3 and 4 block at `before_tool` through rule
     templates whose `block` effect carries the computed reason. Rule 1 stays a
-    close-checklist gate.
+    close invariant (gate 3).
 19. **Rejected: a claim-time scope check.** `_claim_scope_conflicts` refused a
     claim whose declared or attributed paths another session owned. Rule 3
     already refuses the first write to such a path with the owner named, so
     the check duplicates it and blocks claims that would never touch the path.
+20. **#23566 ruling: kept and re-targeted (refresh, 2026-10-28).** Four
+    defects remain. A no-op write records its path. A failed call that changed
+    bytes records nothing. Mixed shell commands under-report their write
+    paths. The recorder's `canonical_repo_mutation` condition keeps a write
+    into a sanctioned worktree of another project unrecorded. A no-op write
+    also moves a pair's live interval and newest content record to the
+    writing task, so task A's uncommitted edit escapes A's gate 3 once task B
+    rewrote the same bytes. Delivered elsewhere and dropped from 1.5: the
+    index-only `git restore` classification (Decision 7) and rule 3's
+    write-kind gate. 1.5 keeps Decision 5's mechanism and drops V1's
+    `_normalization_canonical.py` split, because write paths now merge in
+    `hooks/_normalization_metadata.py::_merge_shell_segment_metadata` (507
+    lines). Rejected: retiring #23566 because worktree Bash calls already
+    record by fingerprint. Structured edits and main-checkout Bash calls still
+    record by name.
+21. **#23567 ruling: kept (refresh, 2026-10-28).** Nothing enforces rule 4.
+    `hooks/_path_scope.py::_is_project_managed_path` is false for another
+    project's checkout, so `canonical_repo_mutation` is false there, and no
+    rule template judges the write. 1.6 keeps V1's design. The rule 3 wiring
+    precondition it removed is already gone, and the size splits of
+    `workflows/hooks.py` (909 lines) and `workflows/engine/core.py` (953)
+    remain.
+22. **#23568: gate 3 reads the task's content-owned pairs in every session
+    (refresh, 2026-10-28).** Gate 3's attributed set is the attribution
+    owner's live task pairs plus every pair any session recorded for the task
+    in `task_edited_checkout_hashes` whose current content the task owns
+    (`checkout_path_owners`). #24402's exclusion of paths a later live session
+    dirtied still applies, except to paths whose content the closing task
+    owns. A recorded pair under a root whose directory is gone is dropped from
+    the cross-session set, because nothing there can be committed (precedent:
+    the Orchestrator's ruling on CR7 LOW-2, 2026-10-05). The owner's own pairs
+    keep `tasks/attributed_roots.py::is_ignorable_attributed_root`, which
+    stays fail-closed for a registered root. Rejected: V1's
+    untransferred-pair inventory, retired with the transfer (Decision 2).
 
 ## Retired Mechanisms
 `kind: framing`
 
-This section answers #22644 criteria 1 and 4. Each bullet names the retired
-mechanism, its replacement, and the tests deleted or changed.
+This section answers #22644 criteria 1 and 4.
 
-- **`release_task_paths`** (`_lifecycle_paths.py`, whole module, with
-  `inspect_task_path_ownership`, `_claimed_session_worktree_path` and
-  `_lifecycle_checkout_root`).
-  - Replacement: no release tool. Reconciliation releases clean pairs, rule
-    3's clean first touch releases stale holders (Decision 14), and claim
-    transfers a predecessor's live pairs (Decision 2).
-  - Delete `tests/mcp_proxy/tools/test_release_task_paths.py` (1.1).
-  - Delete `test_lifecycle_checkout_root_loads_the_session_once` and
-    `test_inspect_task_path_ownership_returns_checkout_unresolved` in
-    `tests/mcp_proxy/tools/tasks/test_checkout_unresolved_envelopes.py` (1.1).
-  - Change the tool-name lists in
-    `tests/mcp_proxy/tools/test_read_only_classification.py` and
-    `tests/workflows/test_task_enforcement_rules.py` (1.1).
-  - Change `tests/workflows/test_commit_guard.py` (release advice in the rule 2
-    text, 1.3) and `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py`
-    (release advice in the gate 9 text, 1.7).
-- **`task_edited_file_times`** and the replay check
-  `ToolEventHandlerMixin._paths_landed_before_edit`.
-  - Replacement: the content check. A replayed envelope whose content already
-    landed finds the path clean, so nothing is recorded (§Content-Hash
-    Contract).
+**Delivered.** 1.1 (#23562) retired `release_task_paths`,
+`inspect_task_path_ownership`, the claim-time scope check and
+`_task_attribution_sessions`. 1.2 (#23563) retired
+`capture_baseline_dirty_files` and `baseline_dirty_files`. 1.3 (#23564)
+moved rules 2 and 3 to live session ownership, and no
+`release_task_edited_files` remains. At `b42c2172d9`, none of those names
+appears in `src/`, `docs/guides` or `docs/reference-audit`, except the stale
+comment at `src/gobby/workflows/hooks.py:422`, which 1.6 fixes.
+
+**Retired by the open sections:**
+- **`task_edited_file_checkouts_history`,
+  `task_edited_file_checkouts_history_started_at` and
+  `task_edited_file_times`** (1.4), with the accessors
+  `task_edited_checkout_history_paths`, `other_task_edited_checkout_paths`,
+  `task_checkout_paths_in_window`, `task_edited_file_set_with_history` and
+  `task_edited_file_times`.
+  - Replacement: none. Gate 12 and the claim window that read them are gone,
+    and the content records carry ownership (Decision 8).
   - Change `tests/workflows/test_task_claim_state.py`,
     `tests/workflows/test_session_variable_manager.py`,
-    `tests/hooks/test_tool_handlers.py` (`edited_at`) and
-    `tests/agents/test_terminal_timeout_checkpoint.py` (1.4).
-- **`task_edited_file_checkouts`**, its `_history` and `_history_started_at`
-  variants, and `session_dirty_file_checkouts`.
-  - Replacement: the task-tagged nested `session_dirty_files` replaces the
-    per-task live map `task_edited_file_checkouts` and
-    `session_dirty_file_checkouts`, and the nested append-only
-    `task_edited_files` replaces the history variants (Decision 8).
-  - Change `tests/workflows/test_session_variable_manager.py`,
-    `tests/workflows/test_task_claim_state.py`,
-    `tests/workflows/test_code_review_scope.py`,
-    `tests/workflows/test_hooks.py`, `tests/workflows/test_workflow_hooks.py`,
-    `tests/storage/tasks/test_claim_transfer_state.py`,
-    `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py`,
-    `tests/mcp_proxy/tools/tasks/test_escalation_coordinator.py`,
-    `tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py` and
-    `tests/agents/test_terminal_timeout_checkpoint.py` (1.4); change
-    `tests/workflows/test_commit_guard.py` (1.3) and
-    `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`
-    (1.7).
-- **`capture_baseline_dirty_files`** and the `baseline_dirty_files` variable.
-  - Replacement: rule 3's first-touch pathspec status. No session-start
-    baseline exists.
-  - Delete `tests/mcp_proxy/tools/sessions/test_capture_baseline.py` and the
-    `TestSessionCaptureBaselineDirtyFiles` class in
-    `tests/mcp_proxy/tools/test_internal_action_tools.py` (1.2).
-  - Change `tests/hooks/test_session_activation_reconciliation.py` and
-    `tests/mcp_proxy/services/test_direct_tool_session_activation.py` (1.2).
-  - Drop the inert `baseline_dirty_files` fixture key or label from
-    `tests/hooks/test_stop_handoff_pending.py`,
-    `tests/hooks/test_hook_manager.py`,
-    `tests/workflows/test_database_deadline_retry.py`,
-    `tests/workflows/test_hook_evaluation_serialization.py`,
-    `tests/workflows/test_hook_evaluation_timeout.py`,
-    `tests/workflows/test_proxy_hooks.py`,
-    `tests/workflows/test_skill_loaded_call_tool_path.py`,
-    `tests/workflows/test_turn_interrupt_stop_gates.py` and
-    `tests/workflows/test_hooks.py` (1.2), and from
-    `tests/workflows/test_commit_guard.py` (1.3) and
-    `tests/workflows/test_session_variable_manager.py` (1.4).
-- **Foreign-owner inspection in gate 9**
-  (`_lifecycle_validation.py::validate_uncommitted_task_edits` calling
-  `foreign_owned_dirty_paths`, and
-  `_lifecycle_close_finalization.py::_linked_commit_clean_proof_paths`).
-  - Replacement: gate 9 checks only the task's live pairs, the attribution
-    owner's plus any untransferred predecessor pairs, per checkout root
-    (1.7). Dirt live for another task or for no task never blocks the
-    close, because it is not the task's to commit, and rule 3 already kept
-    the owner from writing another session's dirt.
-  - Change `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py`,
-    `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`
-    and `tests/mcp_proxy/tools/tasks/test_close_attribution.py` (1.7).
-- **Claim-time scope check** (`_claim_scope_conflicts` and its helpers), and
-  its link-based session discovery `_task_attribution_sessions`.
-  - Replacement: rule 3 (Decision 19). Sessions holding a task's pairs are
-    found by their tags through `task_tag_holders` (Decision 2).
-  - Delete `test_claim_task_blocks_foreign_owner_of_declared_or_attributed_path`
-    and `test_claim_task_with_empty_scope_does_not_guess_conflicts` in
-    `tests/mcp_proxy/tools/test_claim_task.py`, and its scope-check patches
-    (1.1).
-- **`SessionVariableManager.release_task_edited_files`**, the removal of a
-  closed task's rows in `remove_claimed_task`, and the legacy gate 12 proofs
-  (`_legacy_task_checkout_proof`, `_legacy_closed_other_tasks`,
-  `_without_closed_task_paths`, `_same_git_checkout`).
-  - Replacement: the append-only task ledger (Decision 16). Close ends the
-    task's live tags in every linked session through `end_task_tags`
-    (Decision 8).
-  - Change `tests/workflows/test_session_variable_manager.py`,
-    `tests/workflows/test_task_claim_state.py` and
-    `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py`, and
-    replace `test_closed_task_cleanup_removes_only_its_edit_entry` in
-    `tests/mcp_proxy/tools/tasks/test_close_task_flow.py` (1.4).
+    `tests/workflows/test_commit_guard.py` and
+    `tests/agents/test_terminal_timeout_checkpoint.py`.
+- **The unscoped comparisons of `task_edited_files` with checkout pairs**
+  (1.4): `_claim_release._uncommitted_refusal`'s unscoped branch and
+  `capture_attribution`'s `raw <= recorded_paths` completeness test.
+  - Replacement: none. Every record carries its checkout root.
+  - Replace `test_unscoped_ledger_is_not_replaced_by_commit_fallback` in
+    `tests/mcp_proxy/tools/tasks/test_close_attribution.py`.
+- **Recording by name** (1.5): the recorder's success-only call and its
+  `canonical_repo_mutation` condition.
+  - Replacement: the fingerprint comparison (§Content-Hash Contract).
+  - Change `tests/hooks/test_tool_handlers.py` and
+    `tests/hooks/test_normalization_canonical_mutation_scope.py`.
+
+**Withdrawn from the plan, never built:** V1's tagged
+`session_dirty_files`, its append-only nested `task_edited_files`,
+`edit_ledger.py` with `EditLedgerMixin`, `end_task_tags`, `task_tag_holders`,
+`SessionVariablePairMutation`, `transfer_task_pairs`,
+`untransferred_task_pairs`, `releases_task_ownership`, the
+`_close_gate_helpers.py` split, the `_normalization_git_paths.py` split, and
+V1's edits to `state_manager.py` and `storage/hub/postgres_pool.py`
+(Decisions 2, 8, 16 and 20).
 
 ## Constraints
 `kind: framing`
@@ -457,45 +483,74 @@ mechanism, its replacement, and the tests deleted or changed.
 - **Isolation.** Every pytest run uses
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`
   and targets files, never the full suite. No leaf restarts the daemon. The
-  rule templates (1.3, 1.6) go live only after the Orchestrator's next daemon
-  restart syncs them (AGENTS.md rule 8).
-- **Order.** Retirements (1.1, 1.2) remove consumers first. Rules 2 and 3
-  (1.3) land before the ledger reshape (1.4) and use the existing accessors,
-  whose signatures survive 1.4. That keeps `commit_guard.py` in one section.
-- **Large files.** Each production file of 850 or more lines is targeted by
-  exactly one section, which splits it: `commit_guard.py` (956 lines, 1.3),
-  `state_manager.py` (934, 1.4), `_normalization_canonical.py` (971, 1.5),
-  `workflows/hooks.py` (852, 1.6), `workflows/engine/core.py` (948, 1.6) and
-  `_lifecycle_close.py` (910, 1.7). `found_work_gate.py` (877) and
-  `tasks/transcript_evidence.py` (991) are never targeted; their calls keep
-  working because the accessors and owner helpers keep their signatures.
-- **Sweep evidence.** Consumer sweeps used `rg` over `src/gobby`, `tests/` and
-  `docs/` because `gcode grep` truncates multi-file sweeps. Run from `0.5.0` at
-  `a78a5e9982`:
-  - `rg -l "release_task_paths|inspect_task_path_ownership|capture_baseline_dirty_files|baseline_dirty_files|task_edited_file_times|task_edited_file_checkouts" docs/ src/gobby/install/`
-    found the six live docs this plan targets; `docs/reviews`, `docs/design`
-    and `docs/plans/completed` are historical and stay unchanged.
-  - `rg -c` over `tests/` for the retired names found the 30 test files
-    listed in §Retired Mechanisms.
-  - `rg -n task_edited_files src/gobby` found the raw readers this plan
-    targets; `tasks/transcript_evidence.py` receives sets as parameters and
-    never reads the variable.
-- **No new persisted state beyond the two ledgers.** The ownership state
-  kept in session variables is `session_dirty_files` and `task_edited_files`
-  only; there is no session baseline. The pre-write sha256 digests
-  (Decision 5) live only in the daemon's memory, in `PRE_WRITE_DIGESTS`, for
-  at most one hour, and are no session variable.
+  rule template of 1.6 goes live only after the Orchestrator's next daemon
+  restart syncs it (AGENTS.md rule 8).
+- **Order.** 1.4 precedes 1.7, because both edit
+  `_close_context.py::capture_attribution`. 1.8 precedes 1.7, so gate 3 never
+  requires a commit that rule 2 refuses, and both edit `dirty_edit_grants.py`.
+  1.5 precedes 1.6, whose end-to-end acceptance needs the recorder to record a
+  sanctioned worktree write. 1.8 follows 1.4, because both edit
+  `tests/workflows/test_commit_guard.py`. 1.4 follows 1.3
+  (`task_claim_state.py`), 1.5 follows 1.3 (`_tool.py`), and 1.8 follows 1.3
+  (`commit_guard.py`).
+- **Large files.** Each targeted production file of 850 or more lines is
+  split by its one section: `workflows/commit_guard.py` (863 lines, 1.8),
+  `workflows/hooks.py` (909, 1.6) and `workflows/engine/core.py` (953, 1.6).
+  `workflows/state_manager.py` (879), `hooks/_normalization_canonical.py`
+  (875) and `storage/hub/postgres_pool.py` are no longer targeted. Every
+  other target is under 850 lines: `_tool.py` 762, `session_activation.py`
+  671, `task_claim_state.py` 670, `worktree_checkpoint.py` 594,
+  `worktree_shell_attribution.py` 532, `_normalization_metadata.py` 507,
+  `_claim_release.py` 352, `session_edit_ledger.py` 313, `_session_end.py`
+  266, `dirty_edit_grants.py` 233 and `_close_context.py` 131.
+- **Sweep evidence (#25261 criterion 1).** Facts were verified read-only on
+  `0.5.0` at `b42c2172d9`.
+  - Every Target and `Consumers unchanged` path of 1.4 to 1.8 exists at that
+    commit, except the new files these sections create:
+    `src/gobby/hooks/pre_write_digests.py`,
+    `src/gobby/workflows/ownership_eval_context.py`,
+    `src/gobby/workflows/engine/eval_context_defaults.py`,
+    `src/gobby/workflows/git_operation_paths.py`,
+    `src/gobby/install/shared/workflows/rules/task-enforcement/block-cross-project-write.yaml`,
+    `tests/hooks/test_pre_write_digests.py`,
+    `tests/workflows/test_ownership_eval_context.py` and
+    `tests/workflows/test_git_operation_paths.py`. Every exact
+    `path::symbol` Target of 1.4 to 1.8 resolves in `gcode outline` of its
+    file. 1.1 to 1.3 keep their delivered text; their `operation: delete`
+    targets are gone because those leaves deleted them, and the two
+    `git_utils.py` symbols 1.2 deleted are now one `git_utils.py::*` Target.
+  - No Target, acceptance item or `Consumers unchanged` entry of 1.4 to 1.8
+    names `_close_evaluation_support.py`, `_lifecycle_validation.py`,
+    `_close_gate_helpers.py`, `_stage_review.py`, `_lifecycle_paths.py`,
+    `edit_ledger.py`, gate 12 or transcript evidence.
+  - `gcode grep -l` over `tests/` found the four test files that name the
+    variables and accessors 1.4 retires, and about 40 that use the surviving
+    flat `session_dirty_files` and `task_edited_files` (Decision 8).
+  - `uv run python` with
+    `gobby.hooks.normalization.normalize_tool_fields` reproduced the
+    write-path union defect: `cp a.txt b.txt && git restore -- c.txt`
+    publishes write paths `['b.txt']`, `git add x.txt && git restore --
+    y.txt` publishes none, and `rm e.txt && echo x > d.txt` and `mv a.txt
+    b.txt && echo x > d.txt` publish `['d.txt']`.
+- **No new persisted state.** The open sections add no session variable. The
+  pre-write fingerprints (Decision 5) live only in the daemon's memory, in
+  `PRE_WRITE_DIGESTS`, for at most one hour.
 
 ## P1: Content-based ownership
 `kind: framing`
 
 **Goal**: ownership follows bytes. A session owns exactly the paths it
 changed, no session overwrites another's dirt, commits carry only their
-author's dirt or a merge's paths, writes stay inside the session's project,
-and close checks only the uncommitted work live for the task it closes.
+author's dirt, their claimed task's dirt or a merge's paths, writes stay
+inside the session's project, and close checks every uncommitted change the
+closing task still owns.
 
 ### 1.1 Retire release_task_paths, inspect_task_path_ownership and the claim scope check [category: code]
 `kind: deliverable`
+
+**Status:** delivered by #23562 (closed). The text is kept as
+delivered, plus a Consumers unchanged entry for a test added since;
+its gate 9 is v4's gate 3, `uncommitted_task_edits`.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_paths.py::*` — operation: delete — scope-reason: retires release_task_paths, inspect_task_path_ownership and their private helpers with the module
@@ -557,6 +612,7 @@ Targets:
 Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_factory.py` — no-edit-reason: calls create_lifecycle_registry with an unchanged signature
 - `tests/storage/tasks/test_closed_candidate_repair.py` — no-edit-reason: builds the registry and calls no retired tool
+- `tests/mcp_proxy/tools/tasks/test_close_authority.py` — no-edit-reason: builds the registry to call close_task, which keeps its name
 - `.gobby/plans/research/security-boundaries-22103/probe_control_plane.py` — no-edit-reason: prints only the sorted server keys of TASK_MUTATION_TOOLS_BY_SERVER, and removing release_task_paths leaves every server key in place
 
 **Focused verification (planned):** run the five test files above plus
@@ -572,13 +628,18 @@ isolation prefix.
 ### 1.2 Retire capture_baseline_dirty_files and baseline_dirty_files [category: code]
 `kind: deliverable`
 
+**Status:** delivered by #23563 (closed). The text is kept as
+delivered, except that the two `git_utils.py` symbol Targets it deleted
+are now one `git_utils.py::*` Target, plus a Consumers unchanged entry
+for a test added since; its gate 9 is v4's gate 3,
+`uncommitted_task_edits`.
+
 Targets:
 - `src/gobby/mcp_proxy/tools/sessions/_actions.py::*` — operation: delete — scope-reason: the module only registers capture_baseline_dirty_files
 - `src/gobby/mcp_proxy/tools/sessions/_factory.py::create_session_messages_registry`
 - `src/gobby/hooks/session_activation.py::_missing_baseline_keys`
 - `src/gobby/hooks/session_activation.py::_baseline_updates`
-- `src/gobby/workflows/git_utils.py::GIT_STATUS_UNAVAILABLE_MARKER`
-- `src/gobby/workflows/git_utils.py::get_dirty_files_async`
+- `src/gobby/workflows/git_utils.py::*` — scope-reason: deletes GIT_STATUS_UNAVAILABLE_MARKER and get_dirty_files_async
 - `docs/guides/variables.md`
 - `docs/guides/sessions.md`
 - `docs/reference-audit/sessions.json::*` — scope-reason: drops the retired tool row
@@ -641,6 +702,7 @@ Consumers unchanged:
 - `tests/sessions/test_handoff.py` — no-edit-reason: exercises handoff tools only
 - `tests/sessions/test_handoff_found_work.py` — no-edit-reason: exercises handoff tools only
 - `tests/sessions/test_machine_scoped_consumers.py` — no-edit-reason: exercises machine-scoped session tools only
+- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py` — no-edit-reason: builds the registry to call a registration tool only
 
 **Focused verification (planned):** run the listed test files with the
 isolation prefix.
@@ -653,6 +715,9 @@ isolation prefix.
 
 ### 1.3 Rules 2 and 3 judge live session ownership [category: code] (depends: 1.1)
 `kind: deliverable`
+
+**Status:** delivered by #23564 (closed). The text is kept as
+delivered; its gate 9 is v4's gate 3, `uncommitted_task_edits`.
 
 Targets:
 - `src/gobby/workflows/commit_guard.py::*` — scope-reason: rewrites the owner lookup, both guards and their formatters, and moves the commit-parsing half out
@@ -870,439 +935,292 @@ isolation prefix.
 - 1.3.8 - `parse_git_commit_invocations` and `resolve_commit_inspect_cwd` import from `git_commit_parsing` and keep their behavior. test: `tests/workflows/test_git_commit_parsing.py::test_parse_git_commit_invocations_handles_chdir_and_nested_shells`.
 - 1.3.9 - With the cwd in the main checkout, `resolve_edit_pair` maps `../<worktree>/p.py` and a relative symlink in the main checkout that points into the worktree to the worktree's pair, and maps a relative path to None when the cwd is None. test: `tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_finds_root_from_resolved_target`.
 - 1.3.10 - `effective_tool_cwd` returns an absolute `workdir`, joins a relative `workdir` or `cwd` to `event.cwd`, returns `event.cwd` without either, and returns None for a relative `workdir` without `event.cwd`. Rule 3 judges a relative write path at that cwd: with `event.cwd` in the main checkout and `workdir` in a second checkout of the project, a write to `p.py` is refused when the second checkout's `p.py` is dirty and unowned, and allowed when only the main checkout's `p.py` is. test: `tests/workflows/test_commit_guard.py::test_rule3_resolves_relative_paths_at_tool_workdir`.
-### 1.4 One ownership ledger [category: code] (depends: 1.2, 1.3)
+
+### 1.4 Retire the ledger state v4 left without readers [category: code] (depends: 1.3)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/workflows/state_manager.py::*` — scope-reason: the ledger mutators move out and change shape
-- `src/gobby/workflows/edit_ledger.py`
-- `src/gobby/workflows/task_claim_state.py::*` — scope-reason: every ledger accessor reads the nested shape
-- `src/gobby/workflows/ledger_reconcile.py::*` — scope-reason: reconciliation and the dirty-set accessors read the nested shape
-- `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml::*` — scope-reason: deletes two retired variables and updates the task_edited_files description
-- `src/gobby/workflows/monolith_guard.py::outstanding_monolith_paths`
-- `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: drops edited_at and deletes _paths_landed_before_edit
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::derive_close_transcript_evidence`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::_legacy_task_checkout_proof`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::_legacy_closed_other_tasks`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::_without_closed_task_paths`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::_same_git_checkout`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::_cleanup_closed_claim`
+- `src/gobby/workflows/session_edit_ledger.py::SessionEditLedger.record_edited_files`
+- `src/gobby/workflows/task_claim_state.py::*` — scope-reason: deletes five accessors, narrows task_edited_checkout_paths to live pairs, drops the ledger-name parameter of _task_edited_file_checkouts, the edit-time key of remove_claimed_task and the stale gate list of release_claimed_task's docstring
+- `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::_uncommitted_refusal`
+- `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
 - `src/gobby/agents/worktree_checkpoint.py::_authorized_task_paths`
-- `src/gobby/agents/task_recovery.py::TaskRecoveryHandler._clear_claim_session_variables`
-- `tests/workflows/test_session_variable_manager.py::*` — scope-reason: ledger mutator tests use the nested shape
-- `tests/workflows/test_task_claim_state.py::*` — scope-reason: accessor tests use the nested shape and lose the times and history cases
-- `tests/workflows/test_monolith_guard.py::*` — scope-reason: adds the per-root and live-pair projection tests
-- `tests/workflows/test_code_review_scope.py::*` — scope-reason: fixtures use the nested session_dirty_files
-- `tests/workflows/test_hooks.py::*` — scope-reason: fixtures use the nested session_dirty_files
-- `tests/workflows/test_workflow_hooks.py::*` — scope-reason: fixtures use the nested session_dirty_files
-- `tests/storage/tasks/test_claim_transfer_state.py::*` — scope-reason: fixtures use the nested session_dirty_files
-- `tests/hooks/test_tool_handlers.py::*` — scope-reason: drops edited_at and the replay tests
-- `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::*` — scope-reason: gate 12 fixtures use the nested task ledger and lose the legacy cases
-- `tests/mcp_proxy/tools/tasks/test_escalation_coordinator.py::*` — scope-reason: fixtures use the nested task ledger
-- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: replaces the closed-task cleanup test, which pins the deleted ledger removal
-- `tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py::*` — scope-reason: fixtures use the nested task ledger and lose the legacy branch
-- `tests/agents/test_terminal_timeout_checkpoint.py::*` — scope-reason: fixtures use the nested task ledger
-
-**Granularity:** one section with more than six production files and more
-than six acceptance items, by design.
-It has one lifecycle owner, the ledger shape, and every listed file reads the
-retired shape directly; any subset leaves readers of a shape that no longer
-exists.
-
-Split `state_manager.py` (934 lines): move the ledger mutators
-(`record_edited_file`, `record_edited_files`, `release_session_dirty_files`
-and the module helper `_session_dirty_file_checkouts`) into the new
-`src/gobby/workflows/edit_ledger.py` as `EditLedgerMixin`, which
-`SessionVariableManager` inherits, and add `end_task_tags` there; delete
-`release_task_edited_files`.
+- `src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml::*` — scope-reason: deletes the task_edited_file_times default only
+- `tests/workflows/test_session_variable_manager.py::*` — scope-reason: record tests read task_edited_checkout_times instead of the retired variables
+- `tests/workflows/test_task_claim_state.py::*` — scope-reason: deletes the edit-time accessor tests and adds the live-pair and removal tests
+- `tests/workflows/test_commit_guard.py::*` — scope-reason: drops the inert history key from three fixtures
+- `tests/agents/test_terminal_timeout_checkpoint.py::*` — scope-reason: drops the task_edited_file_times assertions
+- `tests/mcp_proxy/tools/tasks/test_close_attribution.py::*` — scope-reason: replaces the unscoped-ledger completeness test
+- `tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py::*` — scope-reason: adds the moved-pair release test
+- `tests/workflows/test_session_defaults.py::*` — scope-reason: adds the retired-default test
 
 **Research context:**
-- Today's variables: `session_dirty_files` (flat list) plus
-  `session_dirty_file_checkouts`; `task_edited_files {task: [rel]}` plus
-  `task_edited_file_checkouts`, `task_edited_file_times`,
-  `task_edited_file_checkouts_history` and
-  `task_edited_file_checkouts_history_started_at`.
-- `state_manager.py`: `record_edited_files(session_id, repo_relative_paths, *,
-  checkout_root=None, edited_at=None)` (lines 603-719) records into the
-  session ledger, `session_edited_files` and the active task
-  (`task_claim_state.active_task_id_for_edit`). `release_session_dirty_files`
-  (lines 721-775) drops clean paths. `release_task_edited_files` (lines
-  777-889) served `release_task_paths` and the rule 2 stale release; both
-  callers are gone after 1.1 and 1.3. Mutations go through
-  `SessionVariableManager._mutate_variables`.
-- `task_claim_state.py` accessors: `task_edited_file_set`,
-  `task_edited_file_set_for_checkout`, `task_edited_checkout_paths`,
-  `task_edited_checkout_history_paths`, `other_task_edited_checkout_paths`,
-  `task_edited_file_times`, `target_task_has_edits`, and `remove_claimed_task`
-  (lines 118-134), which drops the task's ledger rows today.
-- `ledger_reconcile.py`: `session_dirty_file_set`,
-  `session_dirty_file_set_for_checkout`, `_task_ledger_paths`,
-  `reconcile_edit_ledgers` (lines 116-178), and the constants
-  `SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE` and `_TASK_LEDGER_VARIABLES`.
-- Callers that keep working through the W1 accessors (Decision 10):
-  `workflows/hooks.py` (`has_dirty_files`, `has_target_task_dirty_files`),
-  `agents/run_completion.py::_agent_run_task_dirty_scope`,
-  `storage/tasks/_live_session_recovery.py::recover_expired_live_session_claims`,
-  `mcp_proxy/tools/tasks/_stage_review.py::submit_for_review`,
-  `workflows/code_review_scope.py::inspect_commit_review_scope`,
-  `sessions/handoff_summary.py::_load_session_file_paths` (reads the flat
-  `session_edited_files`, unchanged), `tasks/transcript_evidence.py` (takes
-  sets as parameters) and the rule `require-commit-before-status`.
-- `monolith_guard.py::outstanding_monolith_paths` reads raw
-  `task_edited_files` values as flat lists and projects each against the
-  project root. `safe_evaluator.py::_outstanding_monolith_paths` (line 794)
-  exposes it to the three rules of
-  `monolith-enforcement/require-same-session-decomposition.yaml`, which block
-  commits, task transitions and turn end while it is non-empty. Today the
-  task ledger loses clean pairs and closed tasks, so it reports only live
-  work; once the ledger is append-only (Decision 16) it would also report
-  released history. Only gate 12 reads recorded pairs
-  (`task_edited_checkout_paths`, `other_task_edited_checkout_paths`).
-- `_tool.py::_record_successful_file_mutation` passes `edited_at`, and
-  `_paths_landed_before_edit` (lines 388-417) skips a replayed envelope whose
-  content already landed, using edit times.
-- Gate 12 (`_close_evaluation_support.py::derive_close_transcript_evidence`,
-  lines 203-377) unions `task_edited_checkout_paths` with
-  `task_edited_checkout_history_paths`. When both are empty and no history
-  stamp exists it calls `_legacy_task_checkout_proof`, which alone calls
-  `_same_git_checkout`, and it filters by `_legacy_closed_other_tasks` and
-  `_without_closed_task_paths`. `other_task_edited_checkout_paths` and
-  `_closed_before_window_task_ids` stay.
-- `task_claim_state.py::other_task_edited_checkout_paths(variables, task_id,
-  historical_exempt_task_ids)` returns every other task's live pairs and
-  skips history pairs only for exempt tasks; gate 12 passes
-  `_closed_before_window_task_ids`.
-  `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::test_close_excludes_other_task_edit_in_same_checkout`
-  is parametrized over `closed_before_window` cases.
-- `_lifecycle_close_finalization.py::_cleanup_closed_claim` calls
-  `remove_claimed_task`, then clears `had_edits` when `commit_shas and not
-  updates["task_edited_files"]` (line 528). It reads and merges the
-  variables of `evaluation.edit_session_id`, the attribution owner
-  (`get_claimed_session_id(task) or resolved_session_id`,
-  `_lifecycle_close.py` lines 264 and 438), which differs from the closer
-  `evaluation.resolved_session_id` when one session closes another's task.
-  `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_removes_only_its_edit_entry`
-  pins the removal of the closed task's `task_edited_files` row.
-- `session_tasks` links cannot find every session holding a task's tags.
-  `claim_task` catches a `link_task(..., "claimed")` failure (lines 356-360)
-  and still merges `claimed_tasks`, and `create_task(claim=true)`
-  (`_crud.py`) catches both of its links the same way, so an unlinked session
-  can tag pairs. `session_variables.variables` is `jsonb`
-  (`crates/gcore/assets/schema/baseline.sql` line 3446, primary key
-  `session_id`), so the tags themselves can be queried.
-- `worktree_checkpoint.py::_authorized_task_paths` keeps a pre-#21897 legacy
-  branch reading `legacy_variables.get("task_edited_files")` (line 514).
-- `task_recovery.py::TaskRecoveryHandler._clear_claim_session_variables`'
-  docstring names `task_edited_file_checkouts` (line 457).
+- `session_edit_ledger.py::SessionEditLedger.record_edited_files(session_id,
+  repo_relative_paths, *, checkout_root=None, edited_at=None,
+  started_at=None, attribute_to_task=True)` (lines 55-240) writes, for an
+  attributed edit, `task_edited_files`, `task_edited_file_times` (lines
+  164-175), `task_edited_checkout_times` (lines 176-194, the newest stamp
+  wins), `task_edited_checkout_hashes` (`record_task_content_hashes`),
+  `task_edited_file_checkouts`, `task_edited_file_checkouts_history` and
+  `task_edited_file_checkouts_history_started_at` (lines 198-214). Both
+  callers pass `checkout_root`: `_tool.py` line 667 and
+  `worktree_shell_attribution.py` line 408.
+- `task_claim_state.py`: `task_edited_checkout_paths` (lines 506-520) unions
+  the live map with the history map. `task_edited_checkout_history_paths`,
+  `task_checkout_paths_in_window`, `other_task_edited_checkout_paths` and
+  `task_edited_file_set_with_history` have no caller outside the module, and
+  `task_edited_file_times` (lines 593-605) is called only by
+  `task_checkout_paths_in_window`. `_task_edited_file_checkouts(variables,
+  ledger_name="task_edited_file_checkouts")` (line 173) takes the ledger
+  name only for the history readers. `remove_claimed_task` (lines 276-293)
+  pops the task from `task_edited_files`, `task_edited_file_checkouts`,
+  `task_edited_file_times` and `task_live_edit_starts`.
+  `release_claimed_task`'s docstring (line 254) names close "gates 7, 9, 10
+  and 12", which v4 renumbered or deleted.
+- `transfer_live_checkout_paths` (lines 472-503) moves a pair's live interval
+  to the editing task but leaves `task_edited_files` untouched, so a task's
+  flat list can name a path whose live pair a later task took.
+- `_claim_release.py::_uncommitted_refusal` (lines 49-88) checks the holder's
+  `task_edited_checkout_paths` per root, then adds `task_edited_file_set`
+  paths missing from those pairs at the holder's workspace (lines 58-65).
+  Once history is gone, that branch would refuse a release over a path a
+  later task took.
+- `_close_context.py::capture_attribution` (lines 64-131) sets `complete = raw
+  <= recorded_paths` (lines 80-83), with `raw` the flat task list and
+  `recorded_paths` from `task_edited_checkout_paths`. Without history, a path
+  a later task took would make `complete` false, and gate 3 would fail with
+  "Git could not inspect all task-attributed files." `complete` also turns
+  false on `DirtyEditOwnershipInspectionError` (line 126), which stays.
+  `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_unscoped_ledger_is_not_replaced_by_commit_fallback`
+  pins the unscoped case as incomplete.
+- `worktree_checkpoint.py::_authorized_task_paths` reads
+  `task_edited_file_times` only as one of three ledgers whose absence of the
+  task marks a pre-#21897 cleared child (lines 520-527).
+- The defaults YAML declares `task_edited_file_times` (lines 37-39).
+- `gcode grep -l` over `tests/` finds the retired names only in
+  `test_task_claim_state.py`, `test_session_variable_manager.py`,
+  `test_commit_guard.py` (history keys in three fixtures, lines 1283, 1336
+  and 1371) and `test_terminal_timeout_checkpoint.py` (lines 249 and 319).
 
 **Implementation:**
-- `session_dirty_files` becomes `{checkout_root: {rel: task_id | null}}`, the
-  live set with each pair's one live task, and `task_edited_files` becomes
-  the append-only history `{task_id: {checkout_root: [rel]}}`. A value of
-  any other shape, including the flat list and a `{root: [rel]}` map, reads
-  as empty (Decision 8).
-- `EditLedgerMixin.record_edited_files(session_id, rels, *, checkout_root:
-  str) -> bool`: `checkout_root` is required and `edited_at` is gone. It sets
-  each pair in `session_dirty_files` to the active task (null without one),
-  replacing any earlier tag, appends the pair to the active task's
-  `task_edited_files` row, and adds it to `session_edited_files`.
-  `release_session_dirty_files(session_id, rels, *, checkout_root: str)`
-  drops pairs, tags included, from `session_dirty_files` only.
-  `end_task_tags(session_id, task_id) -> int` sets every `session_dirty_files`
-  pair tagged with the task to null and returns the count. It runs under
-  `_mutate_variables` like the other mutators, so a concurrent record on the
-  same row is never overwritten, and it never touches `task_edited_files`.
-  `task_tag_holders(task_id) -> list[str]` returns the session ids whose
-  `session_dirty_files` holds a pair tagged with the task, from one read:
-  `SELECT session_id FROM session_variables WHERE jsonb_path_exists(variables,
-  '$.session_dirty_files.*.* ? (@ == $task)', jsonb_build_object('task',
-  %s::text))`. A null tag, another task's tag and an old-shape value never
-  match. No index serves the wildcard path, so the read scans
-  `session_variables`; only claim transfer, gate 9 and close cleanup run it.
-  A query error propagates to the caller.
-- In `task_claim_state.py`, add `task_live_checkout_paths(variables, task_id)
-  -> frozenset[tuple[str, str]]`: the `session_dirty_files` pairs tagged with
-  the task. History never contributes (Decision 16).
-  `task_edited_file_set`, `task_edited_file_set_for_checkout` and
-  `target_task_has_edits` derive from it; `task_edited_checkout_paths` returns
-  every recorded pair. `other_task_edited_checkout_paths` keeps
-  `historical_exempt_task_ids`: for each other task it returns the task's
-  live pairs, plus its recorded pairs when the task is not exempt.
-  `derive_close_transcript_evidence` keeps passing
-  `_closed_before_window_task_ids`. A task closed before the window therefore
-  stops suppressing a later edit to the same pair once its live tag ends,
-  while live or overlapping other-task pairs still suppress it. A later
-  mutation of that pair for another task retags it, so the closed task's
-  history never reads as live.
-  Delete `task_edited_checkout_history_paths`,
-  `task_edited_file_times` and `_task_edited_file_checkouts`.
-  `remove_claimed_task` no longer touches `task_edited_files` (Decision 16).
-- In `ledger_reconcile.py`, both dirty-set accessors read the nested shape;
-  `reconcile_edit_ledgers` releases pairs git reports clean and every pair
-  under a root that no longer exists. Delete `_task_ledger_paths`,
-  `SESSION_DIRTY_FILE_CHECKOUTS_VARIABLE` and `_TASK_LEDGER_VARIABLES`.
-- In the defaults YAML, delete `task_edited_file_checkouts` and
-  `task_edited_file_times`, and describe `task_edited_files` as the
-  append-only history `{task_id: {checkout_root: [relative paths]}}`.
-- `outstanding_monolith_paths` keeps its signature and returns nothing
-  without a project root. It projects the session's live task pairs, the
-  `session_dirty_files` pairs with a non-null tag, each against its own root
-  (Decision 16). A recorded
-  pair that is no longer live is not projected, so another session's later
-  growth of that file never blocks this session. An over-budget file the
-  session owns stays live, because `require-monolith-resolution-before-commit`
-  refuses the commit that would clean it.
-- `_tool.py`: stop passing `edited_at`; delete `_paths_landed_before_edit`
-  and its call. Until 1.5 lands, a replayed landed path is recorded, found
-  clean by reconciliation and released, so gate 9 never sees it.
-- Gate 12: `task_checkout_paths = task_edited_checkout_paths(variables,
-  task_id)`; delete the history union, the `history_started_at` branch and the
-  four legacy helpers.
-- `_cleanup_closed_claim`: after merging `remove_claimed_task` into
-  `evaluation.edit_session_id` (the attribution owner, which may differ from
-  the closer `resolved_session_id`), call `end_task_tags(session_id, task_id)`
-  for every session `task_tag_holders(task_id)` returns. That covers the
-  owner, a predecessor whose clean pair was never transferred (gate 9 lets
-  that close pass, 1.7) whether or not it has a `session_tasks` link, and a
-  pair under a deleted root, which `untransferred_task_pairs` skips.
-  The nulled pairs stay in each session's `session_dirty_files`, so session
-  ownership holds until reconciliation finds them clean, and every
-  `task_edited_files` row stays. The closer's own ledger changes only when
-  the closer holds a tag. Then clear the owner's `had_edits` when no task
-  left in its `claimed_tasks` has live pairs. Other claim releases leave
-  tags unchanged (Decision 8). The close has already committed, so a
-  cleanup error is logged, as today; any tag it leaves sits on a pair gate
-  9 found clean.
-- Delete the legacy branch of `_authorized_task_paths`; fix the
-  `task_recovery` docstring.
+- `record_edited_files` stops writing `task_edited_file_times`,
+  `task_edited_file_checkouts_history` and
+  `task_edited_file_checkouts_history_started_at`. Its signature and every
+  other key are unchanged; `edited_at` still feeds
+  `task_edited_checkout_times`.
+- In `task_claim_state.py`, delete `task_edited_checkout_history_paths`,
+  `other_task_edited_checkout_paths`, `task_checkout_paths_in_window`,
+  `task_edited_file_set_with_history` and `task_edited_file_times`.
+  `task_edited_checkout_paths` returns the pairs of
+  `task_edited_file_checkouts` only. `_task_edited_file_checkouts` drops its
+  `ledger_name` parameter. `remove_claimed_task` stops handling
+  `task_edited_file_times`. `release_claimed_task`'s docstring says it keeps
+  what close gate 3 and claim release read.
+- `_uncommitted_refusal` checks the `task_edited_checkout_paths` pairs only;
+  delete the unscoped branch and its `checkout_unresolved` refusal.
+- `capture_attribution` deletes `recorded_paths` and the completeness test.
+  `complete` starts true, and only an ownership inspection failure clears it.
+  `raw` still gates the linked-commit fallback.
+- `_authorized_task_paths` checks `task_edited_files` and
+  `task_edited_file_checkouts` for the cleared-child case.
+- The defaults YAML drops `task_edited_file_times`.
 
 Consumers unchanged:
-- `src/gobby/agents/run_completion.py` — no-edit-reason: reads task_edited_file_set, whose live-pair meaning is unchanged (Decision 10)
-- `src/gobby/storage/tasks/_live_session_recovery.py` — no-edit-reason: reads the live-pair accessors only
-- `src/gobby/mcp_proxy/tools/tasks/_stage_review.py` — no-edit-reason: reads task_edited_file_set only
-- `src/gobby/sessions/handoff_summary.py` — no-edit-reason: reads the unchanged flat session_edited_files
-- `src/gobby/tasks/transcript_evidence.py` — no-edit-reason: receives path sets as parameters and never reads the variables
-- `src/gobby/workflows/found_work_gate.py` — no-edit-reason: calls foreign_owned_dirty_paths, whose signature 1.3 keeps
-- `src/gobby/sync/integrity.py` — no-edit-reason: calls active_owned_dirty_paths, whose signature 1.3 keeps
-- `src/gobby/workflows/safe_evaluator.py` — no-edit-reason: calls outstanding_monolith_paths, whose signature is unchanged
-- `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: drives derive_close_transcript_evidence without ledger history fixtures
-- `tests/tasks/test_close_transcript_sync.py` — no-edit-reason: drives derive_close_transcript_evidence without ledger history fixtures
-- `tests/tasks/test_transcript_exclusions.py` — no-edit-reason: drives derive_close_transcript_evidence without ledger history fixtures
-- `tests/agents/test_task_recovery.py` — no-edit-reason: the recovery change is a docstring only
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py` — no-edit-reason: passes attribution.clean_checkouts and attribution.complete unchanged
+- `src/gobby/tasks/close_invariants.py` — no-edit-reason: receives attribution_complete as a boolean whose cause narrows without a signature change
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: merges remove_claimed_task's result, which only loses a retired key
+- `src/gobby/storage/tasks/_live_session_recovery.py` — no-edit-reason: merges remove_claimed_task's result, which only loses a retired key
+- `src/gobby/mcp_proxy/tools/spawn_agent/_execution.py` — no-edit-reason: merges remove_claimed_task's result, which only loses a retired key
+- `src/gobby/workflows/observers.py` — no-edit-reason: merges remove_claimed_task's result, which only loses a retired key
+- `src/gobby/workflows/monolith_guard.py` — no-edit-reason: reads the surviving task_edited_files lists
+- `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
+- `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
+- `tests/mcp_proxy/tools/test_agent_worktree_checkpoint.py` — no-edit-reason: patches _authorized_task_paths with a fixed path set
 
-**Focused verification (planned):** run every listed test file plus
-`tests/workflows/test_commit_guard.py` and
-`tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py` with
-the isolation prefix.
+**Focused verification (planned):** run the seven listed test files plus
+`tests/tasks/test_close_invariants.py` with the isolation prefix.
 
 **Acceptance:**
 
-- 1.4.1 - `record_edited_files` sets `session_dirty_files[root][rel]` to the active task (null without one, replacing an earlier tag), appends the pair to `task_edited_files[active][root]` and `session_edited_files`, and requires `checkout_root`. test: `tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_nested_ledgers`.
-- 1.4.2 - `task_edited_file_set` and `target_task_has_edits` report only pairs tagged with the task, while `task_edited_checkout_paths` reports every recorded pair after reconciliation releases one. F9 sequence: session S records p under task A, commits it and reconciliation releases it, then records p under task B; A then has no live pair and B has p, although A's history still names p. test: `tests/workflows/test_task_claim_state.py::test_live_and_recorded_task_pairs_differ_after_release`.
-- 1.4.3 - `remove_claimed_task` returns no `task_edited_files` or `session_dirty_files` update, so a claim released without closing keeps the task's history and its live tags. test: `tests/workflows/test_task_claim_state.py::test_remove_claimed_task_keeps_task_ledger`.
-- 1.4.4 - `reconcile_edit_ledgers` releases clean pairs and every pair under a checkout root that no longer exists, and never edits `task_edited_files`. test: `tests/workflows/test_session_variable_manager.py::test_reconcile_releases_clean_and_missing_root_pairs`.
-- 1.4.5 - Gate 12 credits the task's own recorded pairs without the history variables. Another task's live pairs always exclude its paths from this task's evidence, and its recorded but not live pairs exclude them unless that task is in `_closed_before_window_task_ids`. The parametrized cases are: closed before the window and released (credited), closed before the window and still live (excluded), closed before the window with its released pair re-mutated by this task, which retags it (credited), and an overlapping task (excluded). The legacy cases are deleted. test: `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::test_close_excludes_other_task_edit_in_same_checkout`.
-- 1.4.6 - `outstanding_monolith_paths` projects a worktree pair against its own root, so an over-budget file in a task worktree is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_projects_each_pair_against_its_root`.
-- 1.4.7 - Old-shape values (`session_dirty_files` as a list or as `{root: [rel]}`, `task_edited_files` with list values) read as empty, and no retired variable name remains in `src/`. test: `tests/workflows/test_task_claim_state.py::test_old_shape_ledger_values_read_as_empty`.
-- 1.4.8 - `outstanding_monolith_paths` reports only live pairs: a pair whose task closed and whose live pair was released is not reported after the file grows past the ceiling while another session owns it, while an over-budget pair live for one of the session's tasks is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_ignores_released_history`.
-- 1.4.9 - `end_task_tags(session_id, task_id)` sets only the pairs tagged with the task to null, keeps them in `session_dirty_files`, leaves pairs tagged with another task and every `task_edited_files` row unchanged, and returns the count; afterwards `task_live_checkout_paths` for the task is empty. test: `tests/workflows/test_session_variable_manager.py::test_end_task_tags_nulls_only_that_tasks_pairs`.
-- 1.4.10 - Closer C closes a task whose attribution owner O is another session, while predecessor P, which no longer claims the task and has no `session_tasks` link to it, holds a clean untransferred pair tagged with it. `_cleanup_closed_claim` merges `remove_claimed_task` into O only, calls `end_task_tags` for O and P (the holders `task_tag_holders` returns) and never for C, and clears O's `had_edits` only when no task left in O's `claimed_tasks` has live pairs. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_ends_task_tags_in_tag_holders`, which replaces `test_closed_task_cleanup_removes_only_its_edit_entry`.
-- 1.4.11 - `task_tag_holders(task_id)` returns exactly the sessions with a `session_dirty_files` pair tagged with the task, including one with no `session_tasks` row, and never one whose matching pairs are null-tagged, tagged with another task, or stored in an old shape. test: `tests/workflows/test_session_variable_manager.py::test_task_tag_holders_finds_unlinked_holders`.
+- 1.4.1 - `record_edited_files` writes `task_edited_checkout_times`, `task_edited_checkout_hashes`, `task_edited_file_checkouts` and `task_edited_files` for the attributed task and writes none of `task_edited_file_times`, `task_edited_file_checkouts_history` and `task_edited_file_checkouts_history_started_at`; a replayed record with an older `edited_at` never lowers a pair's `task_edited_checkout_times` stamp. test: `tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_no_retired_ledgers`.
+- 1.4.2 - After task B's edit of a pair takes its live interval from task A in the same session, `task_edited_checkout_paths(variables, A)` omits the pair and `task_edited_checkout_paths(variables, B)` holds it. test: `tests/workflows/test_task_claim_state.py::test_task_edited_checkout_paths_returns_live_pairs_only`.
+- 1.4.3 - `release_task_claim` releases the holder's claim on task A when the only dirty path A edited was later taken by the holder's task B, and still refuses with `task_has_uncommitted_changes` while a live pair of A is dirty. test: `tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py::test_claim_release_ignores_pairs_a_later_task_took`.
+- 1.4.4 - `capture_attribution`, given a `task_edited_files` path with no checkout pair and a linked commit, reports `complete`, skips the linked-commit fallback and returns no checkouts. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_attribution_complete_ignores_unscoped_task_paths`, which replaces `test_unscoped_ledger_is_not_replaced_by_commit_fallback`.
+- 1.4.5 - `task_claim_state` defines none of `task_edited_checkout_history_paths`, `other_task_edited_checkout_paths`, `task_checkout_paths_in_window`, `task_edited_file_set_with_history` and `task_edited_file_times`, and `remove_claimed_task` returns no `task_edited_file_times` key. test: `tests/workflows/test_task_claim_state.py::test_v4_orphaned_ledger_accessors_are_gone`.
+- 1.4.6 - The bundled session variable defaults declare no `task_edited_file_times`. test: `tests/workflows/test_session_defaults.py::test_defaults_declare_no_retired_edit_ledgers`.
 
-### 1.5 The recorder records only content-changing writes [category: code] (depends: 1.4)
+### 1.5 The recorder records only content-changing writes [category: code] (depends: 1.3)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: the before-tool hash snapshot, the failed-call path and the recorder's content check
+- `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: the before-tool snapshot, the outcome-independent recorder call, is_canonical_edit without canonical_repo_mutation, and the recorder's fingerprint comparison under its new name _record_file_mutation
 - `src/gobby/hooks/pre_write_digests.py`
-- `src/gobby/hooks/event_handlers/_session_end.py::*` — scope-reason: handle_session_end clears the ending session's pre-write digests
-- `src/gobby/hooks/_normalization_canonical.py::_classify_shell_segment_without_redirection`
-- `src/gobby/hooks/_normalization_canonical.py::_merge_shell_segment_metadata`
-- `src/gobby/hooks/_normalization_git_paths.py`
+- `src/gobby/hooks/event_handlers/_session_end.py::SessionEndMixin.handle_session_end`
+- `src/gobby/workflows/worktree_shell_attribution.py::structured_edit_paths`
+- `src/gobby/hooks/_normalization_metadata.py::_merge_shell_segment_metadata`
 - `tests/hooks/test_pre_write_digests.py`
-- `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the content-check and #22642 regression tests
-- `tests/hooks/test_normalization.py::*` — scope-reason: restore --staged becomes execute-kind
-- `tests/hooks/test_normalization_canonical_mutation_scope.py::*` — scope-reason: test_read_only_probe_loop_is_not_an_in_project_mutation restates the recorder gate, which drops canonical_repo_mutation; it must assert that the probe loop records nothing through the hash comparison
+- `tests/hooks/test_tool_handlers.py::*` — scope-reason: adds the content-check, failed-call and #22642 regression tests and renames two recorder calls
+- `tests/hooks/test_normalization.py::*` — scope-reason: adds the mixed-segment write-path union test
+- `tests/hooks/test_normalization_canonical_mutation_scope.py::*` — scope-reason: test_read_only_probe_loop_is_not_an_in_project_mutation restates the recorder gate, which drops canonical_repo_mutation
 
-**Granularity:** one section with more than six acceptance items, by design. The recorder is one lifecycle owner: the
-before-tool snapshot, the store and its session-end cleanup, and the
-after-tool comparison verify only together, and the write paths they hash are
-the ones the normalization change publishes. The #22642 regression needs both
-halves. The normalization split is forced by the size lint.
-
-Split `_normalization_canonical.py` (971 lines): move the `git add`, `git
-checkout` and `git restore` branches of
-`_classify_shell_segment_without_redirection` (lines 644-682) into the new
-`src/gobby/hooks/_normalization_git_paths.py` as
-`classify_git_path_segment(parts, git_subcommand_index, cwd) ->
-_ShellSegmentMetadata | None`, called from the original function.
+**Granularity:** one section with more than six acceptance items, by design.
+The recorder is one lifecycle owner: the before-tool snapshot, the store and
+its session-end cleanup, and the after-tool comparison verify only together,
+and the paths they fingerprint are the ones the normalization change
+publishes. The #22642 regression needs both halves.
 
 **Research context:**
-- `_tool.py::ToolEventHandlerMixin._record_successful_file_mutation` (sync,
-  lines 291-386) records every path a successful edit-tool call names. It runs
-  for an `EDIT_TOOLS` name or when `is_canonical_edit` holds
-  (`canonical_tool_kind == "write"` and `canonical_repo_mutation` true, line
-  271). After
-  1.3 it resolves pairs with `task_claim_state.resolve_edit_pair`; after 1.4 it
-  calls `record_edited_files(session_id, rels, checkout_root=root)`.
-- `_tool.py::ToolEventHandlerMixin.handle_after_tool` (lines 223-289) calls
-  the recorder only when `not is_failure and is_edit`, so a write-kind call
-  that changes bytes and then fails records nothing today. One `try/except`
-  around the recorder logs and allows, so an error on one path today skips
-  the call's remaining paths. The recorder loop (from line 319) resolves each
-  path against `event.cwd`, never the tool's `workdir`.
-- `_tool.py::ToolEventHandlerMixin.handle_before_tool` (lines 54-109) reads
-  `event.data` (which carries the canonical keys) and
-  `_platform_session_id`, and returns `allow` at its end.
-- `_session_end.py::SessionEndMixin.handle_session_end` resolves the
-  platform session id from `_platform_session_id` or the external id.
-- `hooks/events.py::correlate_hook_lifecycle` sets `event.request_id` from
-  the first of `request_id`, `requestId`, `interaction_id`, `item_id`,
-  `tool_call_id`, `toolCallId`, `tool_use_id` and `toolUseId` (and their
-  case variants) in `event.data`. The Claude Code, Grok, Droid and Codex
-  lifecycle adapters call it; Codex's `call_id` is not in the list, so a
-  Codex tool event may carry no id.
-- `task_dirty_state.py::task_dirty_paths(paths, cwd)` is the sync pathspec
-  status (None when git fails; untracked dirty; ignored absent).
-- `ledger_reconcile.py::session_dirty_file_set_for_checkout(variables, root)`
-  gives the session's own pairs.
-- The git branches today (`_normalization_canonical.py:644-682`): `git add`
-  returns `_ShellSegmentMetadata("execute", paths=..., repo_mutation=True)`.
-  `git checkout` and `git restore` return `"write"` with `repo_mutation=True`;
-  `restore` without `--` takes its pathspecs from
-  `_normalization_operands.py::_git_restore_positional_args_after`.
-  `_ShellSegmentMetadata` lives in `_normalization_segments.py`.
-- `_normalization_canonical.py::_merge_shell_segment_metadata` publishes as
-  `write_paths` only the explicit `item.write_paths` of each segment, while
-  `paths` (the write-kind `canonical_file_paths`) holds every repo-mutation
-  segment's paths. `git restore`, `rm` and `mv` supply `paths` without
-  `write_paths`; `cp` supplies both. So `cp a b && git restore -- c` publishes
-  write paths `[b]` and drops `c`, and `git add x && git restore -- y` has no
-  write-path key, so the W2 fallback names the index-only `x` too.
-- `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_pathspecs_without_separator_are_write_paths`
-  pins `git restore --staged src/gobby/x.py` and `git restore --staged --
-  notes.md` as write-kind; both become execute-kind. `git restore -s HEAD~1
-  --worktree a.md b.md` stays write-kind. The test is renamed
-  `test_git_restore_index_only_pathspecs_are_execute_kind` so its name
-  matches the new assertion.
+- `_tool.py::ToolEventHandlerMixin.handle_after_tool` (lines 360-467) sets
+  `is_canonical_edit` to `canonical_tool_kind == "write"` and
+  `canonical_repo_mutation` (lines 411-414) and calls
+  `_record_successful_file_mutation` only when `not is_failure and is_edit`
+  (line 422). The worktree shell recording (`_record_worktree_shell_writes`,
+  line 420) and claimed-shell adoption (`_adopt_shell_writes`, line 434)
+  already run for failed calls. Lines 405-408 normalize a Bash call that
+  arrives without canonical keys.
+- `_record_successful_file_mutation` (lines 579-676) takes its paths from
+  `worktree_shell_attribution.structured_edit_paths`, resolves pairs with
+  `resolve_edit_pair` at `effective_tool_cwd(event.cwd, event.data)`, drops
+  overlapped worktree paths and replayed landed paths
+  (`_paths_landed_before_edit`), and calls `record_edited_files` per root.
+  Nothing compares bytes, so every named path records.
+  `tests/hooks/test_tool_handlers.py` calls it by name at lines 1186 and
+  1499.
+- `structured_edit_paths` (lines 121-130) returns
+  `canonical_edit_file_paths`, else `canonical_file_paths`, for a canonical
+  edit, else the tool input's file path. Edit paths come only from
+  repo-mutation segments, so a Bash write into another project's sanctioned
+  worktree publishes none. `begin_structured_edit_calls` (lines 451-502)
+  also calls it, for structured tools only.
+- Rule 3 reads `commit_guard._write_paths` (lines 419-426):
+  `canonical_write_file_paths`, else `canonical_file_paths`.
+- `_normalization_metadata.py::_merge_shell_segment_metadata` (lines 252-507)
+  adds only each segment's explicit `item.write_paths` to the write paths
+  (lines 438-440). `git restore`, `rm` and `mv` segments supply paths without
+  explicit write paths. `_normalization_canonical.py` line 520 calls it.
+- `ToolEventHandlerMixin.handle_before_tool` (lines 106-173) reads
+  `event.data` and `_platform_session_id` and returns `allow` at its end.
+- `SessionEndMixin.handle_session_end` (`_session_end.py` lines 28-266)
+  resolves the platform session id.
+- `hooks/events.py::correlate_hook_lifecycle` (line 169) sets
+  `event.request_id`; the Claude Code, Codex, Droid, Grok, AGY and web chat
+  adapters call it.
+- `workflows/checkout_fingerprint.py::file_fingerprint` and
+  `path_fingerprints` (31 lines) give git blob hashes, None for an absent
+  path, and `OSError` for a directory.
+- `workflows/task_dirty_state.py::task_dirty_paths(paths, cwd)` is the sync
+  pathspec status: None when git fails, untracked dirty, ignored absent.
 - The #22642 case: `git restore --staged tests/e2e/test_terminal_client_stack.py`
   in a checkout where that path was staged before the claim; the path flipped
-  from staged to unstaged and was recorded as an edit.
+  from staged to unstaged and was recorded as an edit. The classification is
+  fixed (Decision 7); no recorder test pins the regression.
 
 **Implementation:**
-- `classify_git_path_segment` holds the moved branches unchanged, except
-  `git restore` with `--staged`/`-S` and without `--worktree`/`-W` returns
-  `"execute"` with its paths and `repo_mutation=True`, like `git add`
-  (Decision 7).
-- `_merge_shell_segment_metadata` builds `write_paths` as the union of the
-  write targets of write-kind segments: a segment's explicit `write_paths`
-  when it has them (keeping W2's `cp` destination-only behavior), else its
-  resolved mutation paths, including loop-bound ones. Execute-kind segments,
-  `git add` and index-only `git restore` among them, contribute none. The
-  function's other outputs are unchanged.
+- `_merge_shell_segment_metadata` keeps adding every segment's explicit
+  `write_paths`, and adds each write-kind segment's resolvable paths,
+  loop-bound ones included, when that segment has no explicit write paths.
+  Execute-kind segments without explicit write paths add none. Unresolved
+  paths stay excluded, and the function's other outputs are unchanged.
+- `structured_edit_paths` returns, for a canonical edit,
+  `canonical_write_file_paths` when present, else `canonical_edit_file_paths`,
+  else `canonical_file_paths`; the tool-input fallback is unchanged.
 - New `hooks/pre_write_digests.py`, class `PreWriteDigests`. It holds
-  `dict[tuple[str, str, str], tuple[str | None, float]]` (key `(session_id,
-  request_id or "", realpath)`, value `(sha256 hex or None,
-  time.monotonic())`) behind a `threading.Lock`. Its API:
-  - `file_digest(path) -> str | None | Literal["dir"]` streams sha256 over the
-    bytes, returning None when the path is absent and `"dir"` for a
-    directory.
-  - `snapshot(session_id, request_id, paths)` stores a digest for each path
-    except directories, and first drops every entry older than 3600 seconds.
-    A path whose `file_digest` raises `OSError` is logged and gets no entry;
-    the other paths are still stored.
+  `dict[tuple[str, str, str], tuple[str | None, float]]`, keyed
+  `(session_id, request_id or "", realpath)` with value `(fingerprint,
+  time.monotonic())`, behind a `threading.Lock`. Its API:
+  - `snapshot(session_id, request_id, paths)` first drops every entry older
+    than 3600 seconds, then stores `file_fingerprint` for each path. A path
+    whose fingerprint raises `OSError`, directories included, is logged at
+    debug and gets no entry; the other paths are still stored.
   - `take(session_id, request_id, path) -> tuple[str | None] | None` pops the
-    entry and returns a one-tuple holding the stored digest, or None when
-    there is no entry.
+    entry and returns a one-tuple holding the stored fingerprint, or None
+    when there is no entry.
   - `clear_session(session_id)` drops all of that session's entries.
-- Both hooks pass `event.request_id`, which `correlate_hook_lifecycle` has
-  already filled.
-- The module holds one daemon-wide instance, `PRE_WRITE_DIGESTS =
-  PreWriteDigests()`, which `_tool.py` and `_session_end.py` import. The
-  daemon runs one hook handler, so no constructor wiring is needed.
+  The module holds one daemon-wide instance, `PRE_WRITE_DIGESTS`, which
+  `_tool.py` and `_session_end.py` import.
 - `handle_before_tool`: when the session id is known and the call is
-  write-kind (`canonical_tool_kind == "write"` or an `EDIT_TOOLS` name),
-  resolve the W2 write paths at `task_claim_state.effective_tool_cwd(event.cwd,
-  event.data)` with symlinks resolved (§Content-Hash Contract, Path
-  resolution) and call `snapshot` just before the final `allow`. Snapshot
-  errors are logged and never block.
-- `handle_after_tool` runs the recorder for every write-kind call, including
-  failed ones; the outcome no longer gates it.
-- The recorder records only when `canonical_tool_kind == "write"` (or an
-  `EDIT_TOOLS` name), over the W2 write paths (Decision 11) that
-  `resolve_edit_pair` maps to a pair (Decision 6) at
-  `effective_tool_cwd(event.cwd, event.data)`. `is_canonical_edit` in
-  `_tool.py` drops its `canonical_repo_mutation` condition, so a write into a
-  sanctioned worktree of another project reaches the recorder. For each
-  resolved pair (Decision 5):
-  - With an entry from `take`, record the pair when `file_digest` now differs
-    from the stored digest. Equal digests record nothing, including for a path
-    the session already owns, so a no-op under another active task never
-    retags the pair or enters that task's history. The comparison does not consult git, so a path
-    committed by the same call is still recorded.
-  - With no entry, or a directory, batch the pair per root into one
-    `task_dirty_paths(rels, root)`: dirty records the pair, clean records
-    nothing, and None records it (§Content-Hash Contract).
-  - Each pair's `file_digest` call catches `OSError`, logs it, and sends that
-    pair to the status batch; the loop continues with the next pair
-    (§Content-Hash Contract, Hash read failure).
-- `SessionEndMixin.handle_session_end` calls
-  `PRE_WRITE_DIGESTS.clear_session(session_id)` once the session id is
-  resolved.
-- `_mark_session_had_edits_if_claimed` runs only when at least one pair was
-  recorded. `_notify_code_index` keeps its current trigger.
+  write-kind (an `EDIT_TOOLS` name or `canonical_tool_kind == "write"`, after
+  normalizing a Bash call that lacks canonical keys), resolve the
+  `structured_edit_paths` paths with `resolve_edit_pair` at
+  `effective_tool_cwd(event.cwd, event.data)` and call `snapshot` with
+  `event.request_id` before the final `allow`. Snapshot errors are logged and
+  never block.
+- `is_canonical_edit` becomes `canonical_tool_kind == "write"`.
+  `handle_after_tool` calls the recorder for every write-kind call, failed
+  ones included. The recorder is renamed `_record_file_mutation`.
+- For each resolved pair (Decision 5), the recorder records the pair when
+  `take` returns an entry whose fingerprint differs from the current one, and
+  records nothing on equal fingerprints, including for a path the session
+  already owns. Pairs with no entry, or whose current fingerprint raises
+  `OSError`, are batched per root into one `task_dirty_paths(rels, root)`:
+  dirty records, clean records nothing, None records. The overlap and replay
+  filters then apply as today. `_mark_session_had_edits_if_claimed` runs only
+  when a pair was recorded.
+- `handle_session_end` calls `PRE_WRITE_DIGESTS.clear_session(session_id)`
+  once the session id is resolved.
 
+Consumers unchanged:
+- `src/gobby/hooks/_normalization_canonical.py` — no-edit-reason: calls _merge_shell_segment_metadata with an unchanged signature
+- `tests/servers/routes/mcp_endpoints/test_execution_session_end_cleanup.py` — no-edit-reason: drives handle_session_end, whose added in-memory cleanup touches no stored state
+- `tests/workflows/test_session_end_cleanup.py` — no-edit-reason: drives handle_session_end, whose added in-memory cleanup touches no stored state
+- `tests/workflows/test_step_snapshot_semantics.py` — no-edit-reason: drives handle_session_end, whose added in-memory cleanup touches no stored state
 
 **Focused verification (planned):** run `tests/hooks/test_tool_handlers.py`,
-`tests/hooks/test_pre_write_digests.py` and `tests/hooks/test_normalization.py`
-with the isolation prefix.
+`tests/hooks/test_pre_write_digests.py`, `tests/hooks/test_normalization.py`,
+`tests/hooks/test_normalization_canonical_mutation_scope.py` and
+`tests/workflows/test_commit_guard.py` with the isolation prefix.
 
 **Acceptance:**
 
 - 1.5.1 - #22642 regression: in a temporary git checkout where a tracked file is staged, a Bash `git restore --staged <path>` call records no pair in `session_dirty_files`, `task_edited_files` or `session_edited_files`. test: `tests/hooks/test_tool_handlers.py::test_git_restore_staged_records_no_attribution`.
 - 1.5.2 - A Write or Edit that leaves a clean path's bytes unchanged records nothing, and one that changes them records the pair. test: `tests/hooks/test_tool_handlers.py::test_recorder_records_only_content_changes`.
-- 1.5.3 - A Write creating a new untracked file records it. A path the session owns under task A, rewritten with the same bytes while task B is active, records nothing in B's ledger, while a real change records it for B. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths`.
-- 1.5.4 - `git restore --staged` and `git restore -S` without `--worktree`/`-W` normalize to execute-kind; `git restore --staged --worktree` and `git restore -W` stay write-kind. test: `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_index_only_pathspecs_are_execute_kind`.
-- 1.5.5 - Mixed shell segments publish `canonical_write_file_paths` as the union of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b && echo x > d` and `rm e && echo x > d` include `d` with the `mv` or `rm` paths, and `git add x && git restore -- y` and `git restore --staged x && echo z > y` give `[y]` only. test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
-- 1.5.6 - In a temporary git checkout, a Bash `git add <foreign path> && git restore -- <own path>` call, where `<own path>` is already in the session's ledger and the restore changes it, records `<own path>` and nothing for the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
-- 1.5.7 - A failed Bash call `echo changed > <path> && false` records the pair, and a failed call that leaves the bytes unchanged records nothing. test: `tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes`.
-- 1.5.8 - With MERGE_HEAD present, a same-bytes Write to a dirty merge-set path held by another session records nothing for the writer. test: `tests/hooks/test_tool_handlers.py::test_merge_set_noop_write_records_nothing`.
-- 1.5.9 - A Bash call that writes a clean tracked path and commits it (`echo x > <path> && git commit -qam m`) records the pair in `task_edited_files`, and `reconcile_edit_ledgers` then releases its clean live pair. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
-- 1.5.10 - With no stored entry, the status rule decides (dirty records, clean records nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
-- 1.5.11 - Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path with distinct request ids keep separate baselines. With no request id, the second `before` overwrites the first, and the second `after` takes the status fallback. test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
-- 1.5.12 - `handle_session_end` drops the session's entries and keeps other sessions' entries, and `snapshot` drops entries older than one hour. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
-- 1.5.13 - A Bash write to the relative path `p.py` with `event.cwd` in the main checkout and `workdir` in a second checkout of the project hashes and records the second checkout's pair and records nothing for the main checkout's `p.py`. test: `tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir`.
-- 1.5.14 - A Bash call that changes two paths and makes the first unreadable (`chmod 000`) records both pairs, the first through the status fallback, and an unreadable path at `before_tool` stores no entry while the call's other paths keep theirs. test: `tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others`.
+- 1.5.3 - A Write creating a new untracked file records it. A path the session owns under task A, rewritten with the same bytes while task B is active, records nothing for B: A keeps the live interval and the newest content record. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths`.
+- 1.5.4 - Mixed shell segments publish `canonical_write_file_paths` as the union of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b && echo x > d` gives `[a, b, d]`, `rm e && echo x > d` gives `[e, d]`, and `git add x && git restore -- y` and `git restore --staged x && echo z > y` give `[y]` only. test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
+- 1.5.5 - In a temporary git checkout, a Bash `git add <foreign path> && git restore -- <own path>` call, where `<own path>` is in the session's ledger and the restore changes it, records `<own path>` and nothing for the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
+- 1.5.6 - A failed Bash call `echo changed > <path> && false` records the pair, and a failed call that leaves the bytes unchanged records nothing. test: `tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes`.
+- 1.5.7 - With MERGE_HEAD present, a same-bytes Write to a dirty merge-set path held by another session records nothing for the writer. test: `tests/hooks/test_tool_handlers.py::test_merge_set_noop_write_records_nothing`.
+- 1.5.8 - A Bash call that writes a clean tracked path and commits it (`echo x > <path> && git commit -qam m`) records the pair for the task, and reconciliation then drops it from the session's dirty set. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
+- 1.5.9 - With no stored entry, the status rule decides (dirty records, clean records nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
+- 1.5.10 - Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path with distinct request ids keep separate baselines. With no request id, the second `before` overwrites the first, and the second `take` finds no entry. test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
+- 1.5.11 - `handle_session_end` drops the session's entries and keeps other sessions' entries, and `snapshot` drops entries older than one hour. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
+- 1.5.12 - A Bash write to the relative path `p.py` with `event.cwd` in the main checkout and `workdir` in a second checkout of the project fingerprints and records the second checkout's pair and records nothing for the main checkout's `p.py`. test: `tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir`.
+- 1.5.13 - A Bash call that changes two paths and makes the first unreadable (`chmod 000`) records both pairs, the first through the status fallback, and an unreadable path at `before_tool` stores no entry while the call's other paths keep theirs. test: `tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others`.
+- 1.5.14 - The read-only probe loop `for i in 1 2 3; do curl -s -o /dev/null ...; done` reaches the recorder as a write-kind call and records nothing, because `/dev/null` resolves to no pair. test: `tests/hooks/test_normalization_canonical_mutation_scope.py::test_read_only_probe_loop_is_not_an_in_project_mutation`.
 
-### 1.6 Rule 4 refuses writes into another Gobby project [category: code] (depends: 1.3, 1.5, 1.7)
+### 1.6 Rule 4 refuses writes into another Gobby project [category: code] (depends: 1.3, 1.5)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/workflows/hooks.py::WorkflowHookHandler._evaluate_rules`
+- `src/gobby/workflows/hooks.py::*` — scope-reason: moves the ownership eval-context wiring out of WorkflowHookHandler._evaluate_rules and fixes the stale comment at line 422
 - `src/gobby/workflows/ownership_eval_context.py`
-- `src/gobby/workflows/engine/core.py::*` — scope-reason: moves the eval_context default block out of RuleEngine.evaluate
+- `src/gobby/workflows/engine/core.py::*` — scope-reason: moves the eval_context.setdefault block out of RuleEngine.evaluate, whose signature is unchanged
 - `src/gobby/workflows/engine/eval_context_defaults.py`
 - `src/gobby/install/shared/workflows/rules/task-enforcement/block-cross-project-write.yaml`
 - `tests/workflows/test_ownership_eval_context.py`
 - `tests/workflows/test_task_enforcement_rules.py::*` — scope-reason: adds the rule 4 template test
 
-Split `src/gobby/workflows/hooks.py` (852 lines): move the ownership eval-context wiring
-in `WorkflowHookHandler._evaluate_rules` (lines 517-582: the rule 2 and 3
-calls, the review-scope keys and the landing-merge key) into the new
-`src/gobby/workflows/ownership_eval_context.py` as
-`build_ownership_eval_context`, which also computes rule 4.
+Split `src/gobby/workflows/hooks.py` (909 lines): move the ownership
+eval-context wiring in `WorkflowHookHandler._evaluate_rules` (lines 550-621:
+the eval-context seed, the rule 2 and 3 calls, the review-scope keys and the
+landing-merge key) into the new `src/gobby/workflows/ownership_eval_context.py`
+as `build_ownership_eval_context`, which also computes rule 4.
 
-Split `src/gobby/workflows/engine/core.py` (948 lines): move the `eval_context.setdefault`
-block of `RuleEngine.evaluate` (lines 318-332) into the new
-`src/gobby/workflows/engine/eval_context_defaults.py` as
+Split `src/gobby/workflows/engine/core.py` (953 lines): move the
+`eval_context.setdefault` block of `RuleEngine.evaluate` (lines 318-331)
+into the new `src/gobby/workflows/engine/eval_context_defaults.py` as
 `apply_eval_context_defaults(eval_context, *, blocking_deadline)`, adding
 `cross_project_write_conflict` with default "".
 
 **Research context:**
-- Nothing enforces rule 4 today. `_path_scope.py::_is_project_managed_path`
-  returns `project_root is None`, so `canonical_repo_mutation` is False for a
-  write into another repo; rule 4 therefore gates on `canonical_tool_kind ==
-  "write"` and its paths, never on `canonical_repo_mutation`.
+- Nothing enforces rule 4. `_path_scope.py::_is_project_managed_path` is
+  false for a path in another repository, so `canonical_repo_mutation` is
+  false for such a write; rule 4 gates on `canonical_tool_kind == "write"`
+  and its paths, never on `canonical_repo_mutation`.
+- `_evaluate_rules` (lines 273-801) calls `foreign_staged_commit_conflict`
+  for every `before_tool` with a session, project id and project path, and
+  `foreign_dirty_edit_conflict` when `canonical_tool_kind == "write"` and
+  canonical paths exist (lines 555-589). Both imports are local to that
+  block.
 - An undefined name in a rule `when:` raises inside
   `TemplatingMixin._evaluate_condition`, and a `block` effect then fails
   closed, so the new key needs a default for every `RuleEngine.evaluate`
@@ -1310,24 +1228,18 @@ block of `RuleEngine.evaluate` (lines 318-332) into the new
 - `utils/project_context.py::find_project_root(cwd)` resolves and walks up to
   `.gobby/project.json`; `get_project_context(root)` returns `id`, `name` and
   `project_path`.
+- `task_claim_state.sanctioned_worktree_root(db, variables, root,
+  root_project_id)` (delivered in 1.3) is the registered-worktree predicate,
+  and `resolve_edit_pair` returns pairs under a sanctioned root. After 1.5 the
+  recorder records them, and gate 3 checks them per root.
 - `storage/worktrees.py::LocalWorktreeManager.list_worktrees(project_id=...,
-  task_id=...)` returns `Worktree` rows with `worktree_path`, `project_id` (the
-  target project) and `task_id`. `get_by_path` matches the stored string
-  exactly, while `find_project_root` returns a resolved path, and macOS `/tmp`
-  resolves to `/private/tmp`, so compare realpaths.
+  task_id=...)` returns `Worktree` rows; compare realpaths, because macOS
+  `/tmp` resolves to `/private/tmp`.
 - Memory a524ed54: cross-repo work uses `gobby-worktrees.create_worktree`
   with the target `project_path`, a writable `worktree_path` and the task id,
   and commits there.
-- The session's claimed tasks are the keys of the `claimed_tasks` variable.
-  After 1.3, `task_claim_state.sanctioned_worktree_root(db, variables, root,
-  root_project_id)` is the registered-worktree predicate, and
-  `resolve_edit_pair` already returns pairs under a sanctioned root. After
-  1.5 the recorder records them, and after 1.7 gate 9 checks them per root.
-- `_evaluate_rules` calls `foreign_dirty_edit_conflict` only when
-  `canonical_repo_mutation` is true and canonical paths exist (`hooks.py`
-  line 545), so today rule 3 never sees a sanctioned worktree write.
-- `hooks.py:408` says "Mirrors the baseline_dirty_files pattern below"; that
-  pattern is gone after 1.2.
+- `hooks.py:422` says "Mirrors the baseline_dirty_files pattern below"; that
+  pattern is gone since 1.2.
 - Rule template shape (from `block-cross-session-foreign-staged-commit.yaml`):
   `tags`, then `rules.<name>` with `description`, `event: before_tool`,
   `enabled: true`, `priority`, `when: <key>` and `effects: [{type: block,
@@ -1335,11 +1247,9 @@ block of `RuleEngine.evaluate` (lines 318-332) into the new
 
 **Implementation:**
 - `build_ownership_eval_context(db, event, event_data, variables, *,
-  session_id, project_path) -> dict[str, Any]` returns the keys the moved block
-  set today plus `cross_project_write_conflict`. `_evaluate_rules` calls it.
-  It calls `foreign_dirty_edit_conflict` for every write-kind `before_tool`
-  event, without today's `canonical_repo_mutation` precondition; rule 3
-  resolves its own pairs (Decision 6).
+  session_id, project_path) -> dict[str, Any]` returns the keys the moved
+  block sets today plus `cross_project_write_conflict`. `_evaluate_rules`
+  calls it.
 - `cross_project_write_conflict(db, event_data, variables, *, project_id,
   cwd) -> str`, for `before_tool` with `canonical_tool_kind == "write"`:
   1. Resolve each W2 write path (Decision 11) as §Content-Hash Contract, Path
@@ -1362,7 +1272,7 @@ block of `RuleEngine.evaluate` (lines 318-332) into the new
   description "Rule 4: block writes into another Gobby-managed project",
   `event: before_tool`, `priority: 24`, `when: cross_project_write_conflict`,
   block reason `"{{ cross_project_write_conflict }}"`.
-- Fix the `hooks.py:408` comment to describe the variable-defaults lazy init
+- Fix the `hooks.py:422` comment to describe the variable-defaults lazy init
   on its own.
 
 Consumers unchanged:
@@ -1386,272 +1296,151 @@ isolation prefix.
 **Acceptance:**
 
 - 1.6.1 - A Write whose path lies in a checkout of a different registered project returns the rule 4 text naming both projects, while writes into the session's own main checkout, its task worktree and a path under no `.gobby/project.json` root are allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_refuses_other_project_and_allows_own_and_unmanaged`.
-- 1.6.2 - End to end through a registered worktree of another project bound to a claimed task, reached through a symlinked temp path: rule 4 allows writes there, yet rule 3 refuses a write to a dirty path the session does not own; a clean path's write passes, the recorder records the pair under the worktree's real root, and gate 9 blocks the close until that pair is committed. test: `tests/workflows/test_ownership_eval_context.py::test_sanctioned_worktree_write_obeys_rules_1_to_3`.
+- 1.6.2 - End to end through a registered worktree of another project bound to a claimed task, reached through a symlinked temp path: rule 4 allows writes there, yet rule 3 refuses a write to a dirty path the session does not own; a clean path's write passes, the recorder records the pair under the worktree's real root, and `capture_attribution` attributes that pair to the task under that root, so gate 3 inspects it. test: `tests/workflows/test_ownership_eval_context.py::test_sanctioned_worktree_write_obeys_rules_1_to_3`.
 - 1.6.3 - `RuleEngine.evaluate` with an eval_context lacking `cross_project_write_conflict` evaluates the rule as not matching instead of failing closed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_default_key_keeps_unwired_callers_open`.
 - 1.6.4 - The bundled `block-cross-project-write` template loads with event `before_tool`, priority 24 and a block effect carrying the key. test: `tests/workflows/test_task_enforcement_rules.py::test_block_cross_project_write_template_shape`.
 - 1.6.5 - Rule 4 judges the file the tool names: with `event.cwd` in the session's checkout, a write to `p.py` with `workdir` in another project's checkout, a write to `../<other project>/p.py`, and a write through a relative symlink in the session's checkout that points into the other project are each refused, while the same relative write with `workdir` in the session's own task worktree is allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_resolves_workdir_relative_and_symlinked_paths`.
 
-### 1.7 Rule 1: gate 9 checks the task's live pairs per checkout [category: code] (depends: 1.4, 1.8)
+### 1.7 Rule 1: gate 3 checks the task's uncommitted work in every session [category: code] (depends: 1.4, 1.8)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_validation.py::evaluate_task_clean_proof`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_validation.py::apply_task_cleanliness_gate`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_validation.py::validate_uncommitted_task_edits`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::CloseAttributionSnapshot`
-- `src/gobby/mcp_proxy/tools/tasks/_close_evaluation_support.py::CloseEvaluationFingerprint.capture`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::capture_attribution`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::commit_close`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py::_linked_commit_clean_proof_paths`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::_evaluate_close`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::_acceptance_root_diagnostic`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::_is_deliberate_close`
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py::_apply_escalated_close_gate`
-- `src/gobby/mcp_proxy/tools/tasks/_close_gate_helpers.py`
-- `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py::*` — scope-reason: the gate 9 message changes
-- `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: gate 9 reads live and untransferred pairs per checkout
-- `tests/mcp_proxy/tools/tasks/test_close_attribution.py::*` — scope-reason: attribution carries live pairs
-- `tests/mcp_proxy/tools/tasks/test_close_candidate.py::*` — scope-reason: snapshot fixtures use live_pairs
-- `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: snapshot fixtures use live_pairs
-
-**Granularity:** one section. Gate 9 is one lifecycle owner: the snapshot
-fields, the proof, the gate and the commit-close recheck change together, and
-the helper move is forced by the size lint. It follows 1.8 because it reads
-`untransferred_task_pairs`.
-
-Split `_lifecycle_close.py` (910 lines): move `_acceptance_root_diagnostic`,
-`_is_deliberate_close` and `_apply_escalated_close_gate` (lines 96-152, used
-only inside the file) into the new
-`src/gobby/mcp_proxy/tools/tasks/_close_gate_helpers.py`.
+- `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
+- `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: adds task_recorded_pairs beside claimed_task_ledger_paths
+- `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: adds the cross-session gate 3 tests
+- `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs test
 
 **Research context:**
-- `_lifecycle_close.py::_evaluate_close` calls `apply_task_cleanliness_gate(ctx,
-  evaluation, edited_paths=attribution.clean_proof_paths, owner_session_id,
-  project_id, repo_path)` (lines 529-536).
-- `_lifecycle_validation.py::evaluate_task_clean_proof(ctx, *, edited_paths,
-  repo_path)` returns `TaskCleanProof(status, dirty_paths, reason)` from one
-  `task_dirty_paths_async(paths, repo_path)`; it is also called by
-  `_lifecycle_close_finalization.commit_close` (line 357, with
-  `fresh_attribution.clean_proof_paths`).
-- `apply_task_cleanliness_gate` passes dirty paths to
-  `validate_uncommitted_task_edits`, which calls `foreign_owned_dirty_paths`
-  (line 191) to annotate owners and fails with "Task-attributed files still
-  have uncommitted changes: ... Commit them, or ask the owner to commit or
-  release_task_paths, and retry." (line 220).
-  `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py::test_uncommitted_task_edits_names_dirty_paths`
-  pins that text.
-- `_close_evaluation_support.py::CloseAttributionSnapshot` carries
-  `clean_proof_paths`, which feeds `CloseEvaluationFingerprint.capture`.
-- `_lifecycle_close_finalization.py::capture_attribution` derives live paths
-  from the flat `task_edited_file_set` against `repo_path` only. When that set
-  is empty it falls back to linked-commit paths, filtered by
-  `_linked_commit_clean_proof_paths`, the second foreign-owner lookup.
-- After 1.4, `task_claim_state.task_live_checkout_paths(variables, task_id)`
-  returns the task's live `(root, rel)` pairs.
-- After 1.8, a claim whose pair transfer failed still succeeds, and the
-  predecessor keeps the task's live pairs until a `claim_task` retry moves
-  them. `_lifecycle_claim.untransferred_task_pairs(ctx, *, task_id,
-  claimant_session_id)` returns those pairs by predecessor ref, read-only,
-  or None when the tag-holder inventory cannot be read.
-  `capture_attribution` (line 135) reads only the claimant's variables, so
-  without them gate 9 would pass over the predecessor's dirt.
-- `_evaluate_close` turns only `KeyError`, `TypeError` and `ValueError` from
-  `_capture_attribution` into the gate 2 `session_variable_lookup_failed`
-  failure; any other exception escapes the evaluation.
-- Reconciliation (`hooks.py` lines 613-620) runs only after the session's
-  own git activity, so an owner's live pair can outlive a deleted checkout
-  root; after 1.4 reconciliation releases such pairs when it runs. Git
-  status under a missing root fails, which would make the proof unavailable
-  with no way to commit the pair.
+- `_lifecycle_close.py::_evaluate_close` (lines 57-218) sets the attribution
+  owner to `get_claimed_session_id(task) or session_id`, calls
+  `_close_context.capture_attribution`, and passes
+  `attributed_checkouts=attribution.clean_checkouts` and
+  `attribution_complete=attribution.complete` to
+  `tasks/close_invariants.py::evaluate_close_invariants`. Gate 3 runs
+  `task_dirty_paths_async` per checkout (lines 98-119): a dirty path fails it
+  with "Commit task-attributed changes before closing." and
+  `dirty_checkouts`, and an unavailable checkout or an incomplete
+  attribution fails it with "Git could not inspect all task-attributed
+  files."
+- `capture_attribution` (lines 64-131) reads only the owner's variables:
+  `task_live_checkout_files(variables, task.id)` gives the owner's live pairs
+  by root. Per root it skips `is_ignorable_attributed_root` roots, keeps
+  `committable_task_paths_async`, and subtracts, from the paths outside the
+  owner's dirty set, those another live session holds dirty
+  (`foreign_owned_dirty_paths_async(..., release_clean=False)`, the #24402
+  exclusion, lines 106-129). So a previous session's uncommitted work for
+  the task is never checked, and a live predecessor's dirt for the task is
+  subtracted.
+- `_lifecycle_close_finalization.py::_cleanup_closed_claim` (lines 176-207)
+  merges `remove_claimed_task` into the owner only. Content records survive in
+  every session.
+- `dirty_edit_grants.py`: `claimed_task_ledger_paths(db, *, task_ids,
+  checkout_root)` (lines 73-94) reads every session row whose
+  `task_edited_checkout_hashes` holds one of the tasks (jsonb `?|`), for one
+  root. `checkout_path_owners(db, *, checkout_root, paths)` (lines 97-137)
+  maps each path to the task whose newest record matches its current
+  fingerprint, across every session.
+- `tasks/attributed_roots.py::is_ignorable_attributed_root` treats a git
+  checkout as inspectable and a missing registered root as fail-closed.
 
 **Implementation:**
-- `CloseAttributionSnapshot.clean_proof_paths` becomes `live_pairs:
-  frozenset[tuple[str, str]]`, from
-  `task_live_checkout_paths(owner_variables, task_id)` without pairs whose
-  root directory no longer exists, which are dropped as reconciliation
-  releases them and as `untransferred_task_pairs` skips them (Orchestrator
-  ruling on CR7 LOW-2, 2026-10-05), and the snapshot
-  gains `untransferred_pairs: frozenset[tuple[str, str, str]] | None`
-  (predecessor ref, root, rel), from `untransferred_task_pairs(ctx,
-  task_id=task_id, claimant_session_id=owner_session_id)`. The fingerprint
-  captures both. None fails closed: gate 9 reports
-  `task_clean_proof_unavailable`, as for a git status failure, and the close
-  is refused until the inventory reads.
-- `capture_attribution` drops the linked-commit fallback for gate 9 and deletes
-  `_linked_commit_clean_proof_paths`. Committed paths are clean, so the
-  fallback never proved anything gate 9 needs.
-- `evaluate_task_clean_proof(ctx, *, live_pairs)` groups the pairs by root and
-  runs `task_dirty_paths_async(rels, root)` per root. Any None means
-  `unavailable`. Dirty results are reported as `<root>/<rel>`.
-- `apply_task_cleanliness_gate(ctx, evaluation, *, live_pairs,
-  untransferred_pairs)` and `validate_uncommitted_task_edits(dirty_paths,
-  untransferred_dirty)` drop `owner_session_id`, `project_id`, `repo_path`
-  and the owner lookup. One `evaluate_task_clean_proof` runs over the live
-  pairs and the untransferred pairs together. The live pairs are the
-  attribution owner's (`evaluation.edit_session_id`), which is not the
-  closer when one session closes another's claimed task, so neither text
-  calls them the closer's. The failure text for a dirty live pair is: "Files
-  created or mutated for the task are uncommitted: <root>/<rel>, ... Commit
-  them and retry." For a dirty untransferred pair it is: "Files a previous
-  session created or mutated for the task were not transferred to the task's
-  claimant: <root>/<rel> (session <ref>), ... Call claim_task again from the
-  claimant to transfer them, commit them, and retry." Both texts appear when
-  both apply. Clean untransferred pairs pass, and the close then ends their
-  tag (1.4, `_cleanup_closed_claim`).
-- `commit_close` and `_evaluate_close` pass both fields.
-- Move the three helpers to `_close_gate_helpers.py` and import them back.
+- Add `dirty_edit_grants.task_recorded_pairs(db, *, task_id) ->
+  dict[str, set[str]]`: one query for the session rows whose
+  `task_edited_checkout_hashes` holds the task (jsonb `?`), returning every
+  normalized checkout root and path recorded for it, in any session.
+- In `capture_attribution`, after reading the owner's live pairs:
+  1. Read `task_recorded_pairs(db, task_id=task.id)` and drop roots whose
+     directory no longer exists (Decision 22).
+  2. For every root among the owner's live pairs and the recorded pairs, call
+     `checkout_path_owners` once over that root's paths, and let the
+     task-owned set be the paths it maps to the closing task.
+  3. Add each root's task-owned recorded paths to the attributed paths of
+     that root.
+  4. Run the linked-commit fallback only when the owner has no task paths
+     and the cross-session read added none.
+  5. Pass `foreign_owned_dirty_paths_async` only the committed paths outside
+     the task-owned set, so a path whose content the closing task owns is
+     never subtracted.
+  Any exception from `task_recorded_pairs` or `checkout_path_owners` is
+  logged and clears `complete`, so gate 3 fails closed instead of passing
+  over records it could not read.
+- Gate 3's code and texts are unchanged.
 
 Consumers unchanged:
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_tool.py` — no-edit-reason: calls _evaluate_close with an unchanged signature
-- `tests/tasks/test_close_checklist.py` — no-edit-reason: drives _evaluate_close without snapshot fixtures
-- `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: drives the fingerprint without snapshot fixtures
+- `src/gobby/tasks/close_invariants.py` — no-edit-reason: receives the enlarged attributed checkouts through its existing parameter
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py` — no-edit-reason: calls capture_attribution with an unchanged signature
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: commit_close re-evaluates through _evaluate_close, which calls capture_attribution unchanged
+- `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
+- `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
 
-**Focused verification (planned):** run the five listed test files plus
-`tests/tasks/test_close_checklist.py` with the isolation prefix.
+**Focused verification (planned):** run
+`tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`,
+`tests/mcp_proxy/tools/tasks/test_close_attribution.py`,
+`tests/workflows/test_dirty_edit_grants.py` and
+`tests/tasks/test_close_invariants.py` with the isolation prefix.
 
 **Acceptance:**
 
-- 1.7.1 - Gate 9 fails with "Files created or mutated for the task are uncommitted: <root>/<rel> ... Commit them and retry." for a live pair, with no owner lookup and no `release_task_paths` advice. test: `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py::test_uncommitted_task_edits_names_dirty_paths`.
-- 1.7.2 - Gate 9 checks pairs in a task worktree and in the main checkout against their own roots, and passes when the task's live pairs are clean even though another session's dirty path shares a relative name. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_checks_live_pairs_per_checkout_root`.
-- 1.7.3 - The #22642 shape closes: a session whose only touch was `git restore --staged` on a pre-staged path has no live pairs, so gate 9 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_passes_when_index_only_touch_recorded_nothing`.
-- 1.7.4 - Git status failure for any existing root reports `task_clean_proof_unavailable`, while an owner's live pair under a deleted checkout root is dropped from `live_pairs` and never makes the proof unavailable, and `CloseEvaluationFingerprint.capture` changes when the live pairs change. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_live_pairs_feed_fingerprint_and_unavailable_proof`.
-- 1.7.5 - CO-A3-F10 sequence: the ended predecessor has no `session_tasks` link to the task (its claim link failed) and holds a dirty pair tagged with it. After a claim whose pair transfer failed, gate 9 refuses the close with the untransferred-pair text naming that pair; a `claim_task` retry whose transfer fails again leaves the same refusal; a retry that succeeds takes the `already_claimed` return and moves the pair, the next close fails with the live-pair text, and the close passes once the pair is committed. A live predecessor that still claims the task, a clean untransferred pair, and a pair under a deleted checkout root never block. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_refuses_close_until_failed_transfer_is_retried`.
-- 1.7.6 - When `task_tag_holders` raises, `untransferred_task_pairs` returns None and gate 9 fails with `task_clean_proof_unavailable`, so the close is refused; the next close after the inventory reads evaluates normally. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_fails_closed_when_tag_holder_inventory_fails`.
+- 1.7.1 - An ended predecessor session recorded `p` for task T and left it dirty, and the owner has no record of `p`; gate 3 for T fails with "Commit task-attributed changes before closing." and lists `p` under its checkout, and passes once `p` is committed. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_blocks_on_ended_predecessor_dirt_for_the_task`.
+- 1.7.2 - A live predecessor that released T still holds T's dirty `p`; gate 3 fails on `p` instead of subtracting it as foreign. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_live_predecessor_dirt_for_the_task`.
+- 1.7.3 - #24402 holds: after T committed `p`, a live session dirtied `p` for task U with a recorded edit, and another live session dirtied `q` with no task record; gate 3 for T passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_ignores_later_foreign_dirt_on_committed_paths`.
+- 1.7.4 - A predecessor's record of `p` for T whose current content task U's later recorded edit owns adds nothing to T's attributed paths. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_skips_recorded_pairs_another_task_now_owns`.
+- 1.7.5 - A recorded pair under a deleted checkout root is dropped and never makes gate 3 unavailable, while a failing `task_recorded_pairs` read fails gate 3 with "Git could not inspect all task-attributed files." test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_drops_deleted_roots_and_fails_closed_on_unread_records`.
+- 1.7.6 - `task_recorded_pairs` returns every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
 
-### 1.8 Claim transfers a predecessor's live pairs [category: code] (depends: 1.1, 1.4)
+### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_claim.py::*` — scope-reason: adds the transfer helper and its calls after a successful claim and on the already-claimed return
-- `src/gobby/workflows/edit_ledger.py`
-- `src/gobby/workflows/task_claim_state.py::*` — scope-reason: adds the releases_task_ownership predicate shared by the transfer and the close check
-- `src/gobby/storage/hub/protocol.py::*` — scope-reason: adds the SessionVariablePairMutation lock target and its __all__ entry
-- `src/gobby/storage/hub/postgres_pool.py::*` — scope-reason: imports the new lock target and adds its advisory_lock_keys branch
-- `tests/mcp_proxy/tools/test_claim_task.py::*` — scope-reason: adds the transfer tests
-- `tests/workflows/test_session_variable_manager.py::*` — scope-reason: adds the transfer transaction tests
-- `tests/storage/test_manager_surface_parity.py::*` — scope-reason: adds the pair lock key test
+- `src/gobby/workflows/commit_guard.py::*` — scope-reason: rule 2 skips holders working a task the session claims, and _operation_paths moves out
+- `src/gobby/workflows/git_operation_paths.py`
+- `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: renames _claimed_task_ids to the public claimed_task_ids and updates its two callers
+- `tests/workflows/test_commit_guard.py::*` — scope-reason: adds the rule 2 claimed-task tests
+- `tests/workflows/test_git_operation_paths.py`
+
+Split `src/gobby/workflows/commit_guard.py` (863 lines): move `_operation_paths`
+(lines 429-485, with its nested `git` and `git_ok` helpers) unchanged into the
+new `src/gobby/workflows/git_operation_paths.py` as `operation_paths`, and
+import it in both rules.
 
 **Research context:**
-- `_lifecycle_claim.py::register_claim_task.claim_task` links the session
-  (`link_task(..., "claimed")`, line 358, best-effort: a failure is caught
-  and logged) and merges `add_claimed_task` (task_claim_state, sets
-  `claimed_tasks[task] = ref` and `active_task_id`) into the claimant's
-  variables (line 383).
-- After 1.4, `SessionVariableManager.task_tag_holders(task_id)` returns
-  every session holding a pair tagged with the task, link or no link; 1.1
-  deletes the link-based `_task_attribution_sessions`.
-- A session is live when its status is in
-  `storage/sessions/_constants.py::LIVE_SESSION_STATUS_ORDER`.
-- After 1.4, `task_claim_state.task_live_checkout_paths(variables, task_id)`
-  gives a session's live pairs for the task, and
-  `SessionVariableManager.release_session_dirty_files(session_id, rels, *,
-  checkout_root)` drops pairs from `session_dirty_files`. Both ledgers live in
-  `edit_ledger.py` (`EditLedgerMixin`).
-- `SessionVariableManager._mutate_variables` serializes one row through
-  `db.transaction_immediate(SessionVariableMutation(session_id=...))`, an
-  advisory transaction lock, and reads the row with a plain `SELECT`.
-  `storage/hub/postgres_pool.py::_acquire_lock` raises
-  `LockAcquisitionOrderError` unless each nested lock has a strictly greater
-  `PRIORITY`, and `SessionVariableMutation.PRIORITY` is 950, so one
-  transaction cannot take two `SessionVariableMutation` locks. A
-  `SELECT ... FOR UPDATE` does not exclude `_mutate_variables`, whose plain
-  read does not block. `advisory_lock_keys` maps `SessionVariableMutation` to
-  its fallback key `"<module>.<qualname>:<repr>"`. The payload codec is
-  `state_manager._decode_variables_payload` and `_encode_variables_payload`.
-  No Rust crate writes `session_variables`.
-- `_lifecycle_claim.py::register_claim_task.claim_task` returns
-  `already_claimed: True` early (line 249) when
-  `tasks/state_semantics.py::get_claimed_session_id(task)` is the caller, so a
-  retry never reaches the code after the merge.
-- `tests/workflows/test_session_variable_manager.py` runs on the real test
-  hub (`db` fixture over `temp_db`) and already holds threaded concurrency
-  tests (`test_claim_set_variable_values_serializes_concurrent_claims`).
-  `tests/storage/test_manager_surface_parity.py` tests `advisory_lock_keys`.
-- The close path reads the owner's variables with
-  `ctx.session_var_manager.get_variables`
-  (`_lifecycle_close_finalization.py::capture_attribution`), and task tools
-  read a session row with `ctx.session_manager.get(session_id)`
-  (`_close_evaluation_support.py` line 251).
+- Rule 2, `commit_guard.foreign_staged_commit_conflict` (lines 121-275),
+  collects candidates per checkout, drops the session's own dirty paths
+  (`_current_owned_paths`, lines 614-621) and the in-progress operation's
+  paths (`_operation_paths`, merge, cherry-pick, revert or rebase), scopes the
+  live holders (`scope_foreign_owners`), dirty-checks them while releasing
+  clean stale holders (`_dirty_owned_paths_releasing_clean`), and adds every
+  dirty path's holders to the conflicts (line 261). No holder is exempt for
+  its task.
+- Rule 3, `foreign_dirty_edit_conflict` (lines 278-398), reads `own_tasks`
+  from `dirty_edit_grants.claimed_task_carriers` and drops holders whose
+  `owner_task_id or ledger_task_id` is in `own_tasks` (lines 365-370), "a
+  holder working a task this session now claims is this session's past
+  self".
+- `dirty_edit_grants._claimed_task_ids(db, session_id)` (lines 65-70) reads
+  the tasks whose `claimed_by_session_id` is the session; only
+  `claimed_task_carriers` and `claimed_task_owned_paths` call it.
+- No test references `_operation_paths`; rule 3's merge tests exercise it
+  (`tests/workflows/test_commit_guard.py::test_rule3_exempts_merge_set_paths_during_merge`).
 
 **Implementation:**
-- Add `SessionVariablePairMutation(first_session_id, second_session_id)` to
-  `storage/hub/protocol.py` (frozen dataclass, `PRIORITY` 950, listed in
-  `__all__`). Its `advisory_lock_keys` branch returns
-  `advisory_lock_keys(SessionVariableMutation(session_id=sid))` for each id
-  in sorted order. The keys are the exact single-row keys, so every
-  `_mutate_variables` call on either row waits for the pair, and two pair
-  transactions always lock in the same order.
-- Add `task_claim_state.releases_task_ownership(variables, task_id, *, live:
-  bool) -> bool`: true when the session is not live or its `claimed_tasks`
-  no longer holds the task. It is the one predecessor eligibility rule for
-  the transfer and for `untransferred_task_pairs`.
-- Add `EditLedgerMixin.transfer_task_pairs(task_id, *, from_session_id,
-  to_session_id) -> int`. One `self.db.transaction_immediate(
-  SessionVariablePairMutation(...))` transaction does all of the following;
-  the codec is imported inside the method, because `state_manager` imports
-  `edit_ledger`:
-  1. Read both variable rows, the predecessor's `sessions.status`, and the
-     task row.
-  2. Recheck eligibility under the lock: `get_claimed_session_id` of the task
-     row is `to_session_id`, the claimant's `claimed_tasks` holds the task,
-     and `releases_task_ownership(predecessor variables, task_id, live=...)`
-     holds. If any check fails, return 0 with nothing written.
-  3. Take the predecessor's pairs tagged with the task
-     (`task_live_checkout_paths`); pairs tagged with any other task stay.
-     Set each in the claimant's `session_dirty_files` with the task's tag,
-     append it to the claimant's `task_edited_files[task_id]`, and remove it,
-     tag included, from the predecessor's `session_dirty_files`. Leave the claimant's
-     `session_edited_files` (it did not edit them) and the predecessor's
-     `task_edited_files` (gate 12, Decision 16) unchanged.
-  4. Write both changed rows and return the number of pairs moved.
-  Any exception rolls back both rows.
-- Add `_transfer_task_dirty_pairs(ctx, *, task_id, claimant_session_id) ->
-  list[str]`. It calls `transfer_task_pairs` for each session
-  `ctx.session_var_manager.task_tag_holders(task_id)` returns other than the
-  claimant, and returns one `"<session ref>: <error>"` entry per failed
-  transfer, or one `"tag holders: <error>"` entry when the holder query
-  fails. A completed transfer leaves the predecessor no live pairs, so a
-  repeat is a no-op.
-- Add `untransferred_task_pairs(ctx, *, task_id, claimant_session_id) ->
-  dict[str, frozenset[tuple[str, str]]] | None`, read-only, for gate 9
-  (1.7). For each session `task_tag_holders(task_id)` returns other than the
-  claimant, it reads the status with `ctx.session_manager.get` (live when
-  the status is in `LIVE_SESSION_STATUS_ORDER`) and the variables with
-  `ctx.session_var_manager.get_variables`. When `releases_task_ownership`
-  holds, it keeps the session's `task_live_checkout_paths(variables,
-  task_id)` whose root directory still exists, keyed by the session's ref. A
-  live predecessor that still claims the task contributes nothing, and a
-  pair under a deleted checkout can never be committed or reconciled by its
-  ended holder, so it is dropped. Any exception from the holder query or a
-  holder's status or variables read is logged and returns None, which gate
-  9 treats as unavailable (1.7).
-- `claim_task` calls `_transfer_task_dirty_pairs` after the claimant's
-  variables merge. Before the `already_claimed` early return, it calls
-  `_transfer_task_dirty_pairs` again, which retries any
-  transfer that failed earlier. A non-empty list goes into the result as
-  `pair_transfer_errors`. The claim itself still succeeds. While errors
-  remain, the `already_claimed` message says to call `claim_task` again to
-  retry the transfer, instead of "do not call claim_task again". Until the
-  retry succeeds, gate 9 refuses the close while any untransferred pair is
-  dirty (1.7), so a failed transfer never lets the task close over the
-  predecessor's uncommitted work.
-- A live predecessor that still claims the task keeps its pairs (Decision 2).
-  An ended predecessor is never named as an owner, because owners are live
-  sessions only (Decision 15).
+- Rename `_claimed_task_ids` to `claimed_task_ids` and update its two
+  callers.
+- In `foreign_staged_commit_conflict`, read `claimed_task_ids(db,
+  session_id)` once per call (in a thread) and add a dirty path's holder to
+  the conflicts only when its `owner_task_id or ledger_task_id` is not among
+  them. Candidate collection, the stale-holder release and the rule 2 text
+  are unchanged.
+- Move `_operation_paths` to `git_operation_paths.operation_paths` unchanged.
 
-**Focused verification (planned):** run `tests/mcp_proxy/tools/test_claim_task.py`,
-`tests/workflows/test_session_variable_manager.py` and
-`tests/storage/test_manager_surface_parity.py` with the isolation prefix.
+**Focused verification (planned):** run `tests/workflows/test_commit_guard.py`,
+`tests/workflows/test_git_operation_paths.py` and
+`tests/workflows/test_dirty_edit_grants.py` with the isolation prefix.
 
 **Acceptance:**
 
-- 1.8.1 - Claiming a task whose ended predecessor holds live pairs for it moves those pairs into the claimant's `session_dirty_files` and `task_edited_files[task]` and removes them from the predecessor's `session_dirty_files`, keeping the predecessor's task ledger. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_ended_predecessor_live_pairs`.
-- 1.8.2 - A live predecessor that still claims the task keeps its pairs, and a live predecessor that released the claim hands them over, so no pair is held by two live sessions. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfer_never_duplicates_live_ownership`.
-- 1.8.3 - `transfer_task_pairs` moves the pairs in one transaction and leaves the claimant's `session_edited_files` unchanged. A failure injected after the claimant's row is written and before the predecessor's row is written rolls both rows back, leaving exactly one live holder, and a second call completes the move. test: `tests/workflows/test_session_variable_manager.py::test_transfer_task_pairs_rolls_back_on_failure`.
-- 1.8.4 - While one thread holds a `SessionVariablePairMutation` transaction open, another thread's `_mutate_variables` on either row waits until it commits and then sees the transferred ledger. test: `tests/workflows/test_session_variable_manager.py::test_single_row_mutation_waits_on_pair_lock`.
-- 1.8.5 - `advisory_lock_keys(SessionVariablePairMutation(b, a))` equals the `SessionVariableMutation` keys of `a` then `b`, and taking a `SessionVariableMutation` lock after the pair lock raises `LockAcquisitionOrderError`. test: `tests/storage/test_manager_surface_parity.py::test_session_variable_pair_lock_keys_match_single_row_keys_in_sorted_order`.
-- 1.8.6 - The predecessor has no `session_tasks` link to the task (its claim link failed). When a claim's transfer fails, the result carries `pair_transfer_errors` and its message invites a retry; a later `claim_task` by the same session takes the `already_claimed` return, finds the predecessor by its tag, completes the transfer, and reports no `pair_transfer_errors`. test: `tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer`.
-- 1.8.7 - F9 regression: session S mutates p under task A and q under A, releases A without closing (both stay tagged A), then mutates p for task B (p retags to B); in a variant, S commits p under A, reconciliation releases it, and S mutates p again for B. When another session claims A, only q transfers, p stays with S tagged B, `untransferred_task_pairs` for A never names p, and A's close is not blocked by p while S's close of B still is. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_only_pairs_live_for_the_claimed_task`.
+- 1.8.1 - Session C claims task T, and live session P, which no longer claims T, holds dirty `p` whose live interval is T's; rule 2 lets C commit `p`, while a dirty path P holds for task U, which C does not claim, is refused with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_commit_of_claimed_task_dirt_held_by_live_predecessor`.
+- 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns the merge set while `MERGE_HEAD` exists and an empty set when no operation is in progress. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1759,14 +1548,31 @@ Targets:
   commit (16:00 CT, relayed by the Orchestrator). The Adversary re-derives
   M1 through the handoff-manifest route; routing stays eight backend code
   leaves with TDD.
+- 2026-10-28: Refresh under #25261 by the Plan Writer (gobby#18327) against
+  `0.5.0` at `b42c2172d9`; no `src/` or `tests/` file changed through
+  `beb0966eff`. 1.1 to 1.3 are delivered (#23562, #23563 and #23564) and
+  keep their text. The v4 close rewrite renamed gate 9 to gate 3 and deleted
+  gate 12 with its transcript evidence, and content-hash ownership (#24402 to
+  #25161) made the per-task content records the ownership authority, so 1.4
+  to 1.8 were re-targeted under their IDs. 1.4 retires the ledger state v4
+  left without readers (Decision 8, the #23565 layout). 1.5 keeps the
+  fingerprint recorder and adds the write-path union fix (Decision 20,
+  #23566 kept). 1.6 keeps rule 4 (Decision 21, #23567 kept). 1.7 makes gate
+  3 check the task's content-owned pairs from every session (Decision 22,
+  #23568). 1.8 retires the claim transfer and gives rule 2 rule 3's
+  claimed-task exclusion (Decision 2, #23569 kept with a new scope).
+  Decisions 5, 6, 10, 15 and 16 were refreshed. The stale
+  `## M1 Task Manifest` was withdrawn unedited, so the Adversary re-derives
+  it (memory f5577ae0).
 
 ## V2: Verification
 `kind: verification`
 
 After every leaf has landed:
 
-1. Run the focused suites of 1.1 to 1.8 together against the test hub.
-2. `rg -n "release_task_paths|inspect_task_path_ownership|capture_baseline_dirty_files|baseline_dirty_files|task_edited_file_times|task_edited_file_checkouts|session_dirty_file_checkouts|release_task_edited_files" src/ docs/guides docs/reference-audit`
+1. Run the focused suites of 1.4 to 1.8 together against the test hub with
+   the isolation prefix.
+2. `rg -n "release_task_paths|inspect_task_path_ownership|release_task_edited_files|baseline_dirty_files|task_edited_file_times|task_edited_file_checkouts_history|task_edited_checkout_history_paths|other_task_edited_checkout_paths|task_checkout_paths_in_window|task_edited_file_set_with_history" src/ docs/guides docs/reference-audit`
    prints nothing.
 3. After the Orchestrator's daemon restart syncs the templates, the installed
    rows `block-cross-session-foreign-dirty-edit`,
@@ -1774,409 +1580,7 @@ After every leaf has landed:
    are enabled with priorities 26, 25 and 24.
 4. In a scratch checkout of this project, a session's `git restore --staged`
    on a pre-staged path records nothing, and a later `close_task` passes gate
-   9 (#22642 shape, live).
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Retire release_task_paths, inspect_task_path_ownership and the claim scope
-    check
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: The `gobby-tasks` registry built by `create_lifecycle_registry`
-    exposes neither `release_task_paths` nor `inspect_task_path_ownership`. test:
-    `tests/mcp_proxy/tools/test_read_only_classification.py::test_task_registry_omits_retired_path_tools`.
-
-    1.1.2: `claim_task` succeeds for a task whose declared affected files are dirty
-    and held by another live session, and returns no scope-conflict error. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_task_ignores_foreign_dirty_declared_paths`.
-
-    1.1.3: `TASK_MUTATION_TOOLS_BY_SERVER` no longer names `release_task_paths`, and
-    the enforcement tool lists hold neither retired name. test: `tests/workflows/test_task_enforcement_rules.py::test_retired_path_tools_absent_from_enforcement_lists`.'
-  labels:
-  - covers:content-ownership-rules:1.1:1.1.1
-  - covers:content-ownership-rules:1.1:1.1.2
-  - covers:content-ownership-rules:1.1:1.1.3
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Retire capture_baseline_dirty_files and baseline_dirty_files
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.2.1: The sessions registry built by `create_session_messages_registry`
-    has no `capture_baseline_dirty_files` tool. test: `tests/mcp_proxy/tools/test_internal_action_tools.py::test_sessions_registry_omits_capture_baseline_dirty_files`.
-
-    1.2.2: Session activation on a fresh session writes no `baseline_dirty_files`
-    variable and does not report it missing. test: `tests/hooks/test_session_activation_reconciliation.py::test_activation_seeds_no_baseline_dirty_files`.
-
-    1.2.3: `rg -n "baseline_dirty_files|capture_baseline_dirty_files|GIT_STATUS_UNAVAILABLE_MARKER"
-    src/ docs/guides docs/reference-audit -g ''!src/gobby/workflows/hooks.py''` prints
-    nothing. `hooks.py` is excluded because its line 408 comment is fixed in 1.6,
-    which runs after 1.2; V2 step 2 sweeps the whole tree. test: `tests/hooks/test_session_activation_reconciliation.py::test_baseline_dirty_tracking_invariant_still_seeds_edit_ledgers`.'
-  labels:
-  - covers:content-ownership-rules:1.2:1.2.1
-  - covers:content-ownership-rules:1.2:1.2.2
-  - covers:content-ownership-rules:1.2:1.2.3
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Rules 2 and 3 judge live session ownership
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.3.1: Rule 3 refuses a Write to a path that is dirty and
-    absent from the session''s ledger, naming the holding live session''s ref and
-    its claimed task ref; with no live holder the line says "no live session owns
-    it". test: `tests/workflows/test_commit_guard.py::test_rule3_refuses_dirty_first_touch_naming_owner`.
-
-    1.3.2: Rule 3 allows a write to a path in the session''s own ledger without running
-    git, and allows a clean path while releasing it from another live holder''s `session_dirty_files`.
-    test: `tests/workflows/test_commit_guard.py::test_rule3_allows_owned_and_clean_paths_and_releases_stale_holder`.
-
-    1.3.3: Rule 3 ignores execute-kind calls (`git add`, `git restore --staged`),
-    uses the `cp` destination and not its dirty source, and refuses as unverified
-    when git status fails. test: `tests/workflows/test_commit_guard.py::test_rule3_checks_write_paths_of_write_kind_calls_only`.
-
-    1.3.4: With MERGE_HEAD present, rule 3 allows writes to merge-set paths, including
-    both names of a rename, and still refuses a dirty path outside the merge set;
-    once MERGE_HEAD is gone, a dirty unowned former merge-set path is refused again.
-    test: `tests/workflows/test_commit_guard.py::test_rule3_exempts_merge_set_paths_during_merge`.
-
-    1.3.5: #23363 land 7 regression: a merge commit whose merge-set paths are dirty
-    and held by another live session passes rule 2, while a non-merge path staged
-    in the same commit and held by another live session is refused with the rule 2
-    text. test: `tests/workflows/test_commit_guard.py::test_rule2_landing_merge_passes_for_merge_set_paths`.
-
-    1.3.6: Rule 2 allows the session''s own dirty paths and unowned dirty paths, and
-    refuses another live session''s dirty path with no `release_task_paths` advice
-    in the text. test: `tests/workflows/test_commit_guard.py::test_rule2_blocks_only_other_live_sessions_dirty_paths`.
-
-    1.3.7: `resolve_edit_pair` returns `(root, rel)` for relative and absolute paths
-    in any checkout of the session''s project and, through `sanctioned_worktree_root`,
-    in another project''s registered worktree bound to a claimed task (reached through
-    a symlinked temp path); it returns None for any other path of another project
-    and for a path under no `.gobby/project.json` root. test: `tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_keys_on_project_root`.
-
-    1.3.8: `parse_git_commit_invocations` and `resolve_commit_inspect_cwd` import
-    from `git_commit_parsing` and keep their behavior. test: `tests/workflows/test_git_commit_parsing.py::test_parse_git_commit_invocations_handles_chdir_and_nested_shells`.
-
-    1.3.9: With the cwd in the main checkout, `resolve_edit_pair` maps `../<worktree>/p.py`
-    and a relative symlink in the main checkout that points into the worktree to the
-    worktree''s pair, and maps a relative path to None when the cwd is None. test:
-    `tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_finds_root_from_resolved_target`.
-
-    1.3.10: `effective_tool_cwd` returns an absolute `workdir`, joins a relative `workdir`
-    or `cwd` to `event.cwd`, returns `event.cwd` without either, and returns None
-    for a relative `workdir` without `event.cwd`. Rule 3 judges a relative write path
-    at that cwd: with `event.cwd` in the main checkout and `workdir` in a second checkout
-    of the project, a write to `p.py` is refused when the second checkout''s `p.py`
-    is dirty and unowned, and allowed when only the main checkout''s `p.py` is. test:
-    `tests/workflows/test_commit_guard.py::test_rule3_resolves_relative_paths_at_tool_workdir`.'
-  labels:
-  - covers:content-ownership-rules:1.3:1.3.1
-  - covers:content-ownership-rules:1.3:1.3.2
-  - covers:content-ownership-rules:1.3:1.3.3
-  - covers:content-ownership-rules:1.3:1.3.4
-  - covers:content-ownership-rules:1.3:1.3.5
-  - covers:content-ownership-rules:1.3:1.3.6
-  - covers:content-ownership-rules:1.3:1.3.7
-  - covers:content-ownership-rules:1.3:1.3.8
-  - covers:content-ownership-rules:1.3:1.3.9
-  - covers:content-ownership-rules:1.3:1.3.10
-  tdd: true
-  source_section: '1.3'
-  implementation_domain: backend
-- title: One ownership ledger
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  - '1.3'
-  validation_criteria: '1.4.1: `record_edited_files` sets `session_dirty_files[root][rel]`
-    to the active task (null without one, replacing an earlier tag), appends the pair
-    to `task_edited_files[active][root]` and `session_edited_files`, and requires
-    `checkout_root`. test: `tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_nested_ledgers`.
-
-    1.4.2: `task_edited_file_set` and `target_task_has_edits` report only pairs tagged
-    with the task, while `task_edited_checkout_paths` reports every recorded pair
-    after reconciliation releases one. F9 sequence: session S records p under task
-    A, commits it and reconciliation releases it, then records p under task B; A then
-    has no live pair and B has p, although A''s history still names p. test: `tests/workflows/test_task_claim_state.py::test_live_and_recorded_task_pairs_differ_after_release`.
-
-    1.4.3: `remove_claimed_task` returns no `task_edited_files` or `session_dirty_files`
-    update, so a claim released without closing keeps the task''s history and its
-    live tags. test: `tests/workflows/test_task_claim_state.py::test_remove_claimed_task_keeps_task_ledger`.
-
-    1.4.4: `reconcile_edit_ledgers` releases clean pairs and every pair under a checkout
-    root that no longer exists, and never edits `task_edited_files`. test: `tests/workflows/test_session_variable_manager.py::test_reconcile_releases_clean_and_missing_root_pairs`.
-
-    1.4.5: Gate 12 credits the task''s own recorded pairs without the history variables.
-    Another task''s live pairs always exclude its paths from this task''s evidence,
-    and its recorded but not live pairs exclude them unless that task is in `_closed_before_window_task_ids`.
-    The parametrized cases are: closed before the window and released (credited),
-    closed before the window and still live (excluded), closed before the window with
-    its released pair re-mutated by this task, which retags it (credited), and an
-    overlapping task (excluded). The legacy cases are deleted. test: `tests/mcp_proxy/tools/tasks/test_close_evidence_sessions.py::test_close_excludes_other_task_edit_in_same_checkout`.
-
-    1.4.6: `outstanding_monolith_paths` projects a worktree pair against its own root,
-    so an over-budget file in a task worktree is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_projects_each_pair_against_its_root`.
-
-    1.4.7: Old-shape values (`session_dirty_files` as a list or as `{root: [rel]}`,
-    `task_edited_files` with list values) read as empty, and no retired variable name
-    remains in `src/`. test: `tests/workflows/test_task_claim_state.py::test_old_shape_ledger_values_read_as_empty`.
-
-    1.4.8: `outstanding_monolith_paths` reports only live pairs: a pair whose task
-    closed and whose live pair was released is not reported after the file grows past
-    the ceiling while another session owns it, while an over-budget pair live for
-    one of the session''s tasks is reported. test: `tests/workflows/test_monolith_guard.py::test_outstanding_monolith_paths_ignores_released_history`.
-
-    1.4.9: `end_task_tags(session_id, task_id)` sets only the pairs tagged with the
-    task to null, keeps them in `session_dirty_files`, leaves pairs tagged with another
-    task and every `task_edited_files` row unchanged, and returns the count; afterwards
-    `task_live_checkout_paths` for the task is empty. test: `tests/workflows/test_session_variable_manager.py::test_end_task_tags_nulls_only_that_tasks_pairs`.
-
-    1.4.10: Closer C closes a task whose attribution owner O is another session, while
-    predecessor P, which no longer claims the task and has no `session_tasks` link
-    to it, holds a clean untransferred pair tagged with it. `_cleanup_closed_claim`
-    merges `remove_claimed_task` into O only, calls `end_task_tags` for O and P (the
-    holders `task_tag_holders` returns) and never for C, and clears O''s `had_edits`
-    only when no task left in O''s `claimed_tasks` has live pairs. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_closed_task_cleanup_ends_task_tags_in_tag_holders`,
-    which replaces `test_closed_task_cleanup_removes_only_its_edit_entry`.
-
-    1.4.11: `task_tag_holders(task_id)` returns exactly the sessions with a `session_dirty_files`
-    pair tagged with the task, including one with no `session_tasks` row, and never
-    one whose matching pairs are null-tagged, tagged with another task, or stored
-    in an old shape. test: `tests/workflows/test_session_variable_manager.py::test_task_tag_holders_finds_unlinked_holders`.'
-  labels:
-  - covers:content-ownership-rules:1.4:1.4.1
-  - covers:content-ownership-rules:1.4:1.4.2
-  - covers:content-ownership-rules:1.4:1.4.3
-  - covers:content-ownership-rules:1.4:1.4.4
-  - covers:content-ownership-rules:1.4:1.4.5
-  - covers:content-ownership-rules:1.4:1.4.6
-  - covers:content-ownership-rules:1.4:1.4.7
-  - covers:content-ownership-rules:1.4:1.4.8
-  - covers:content-ownership-rules:1.4:1.4.9
-  - covers:content-ownership-rules:1.4:1.4.10
-  - covers:content-ownership-rules:1.4:1.4.11
-  tdd: true
-  source_section: '1.4'
-  implementation_domain: backend
-- title: The recorder records only content-changing writes
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  validation_criteria: '1.5.1: #22642 regression: in a temporary git checkout where
-    a tracked file is staged, a Bash `git restore --staged <path>` call records no
-    pair in `session_dirty_files`, `task_edited_files` or `session_edited_files`.
-    test: `tests/hooks/test_tool_handlers.py::test_git_restore_staged_records_no_attribution`.
-
-    1.5.2: A Write or Edit that leaves a clean path''s bytes unchanged records nothing,
-    and one that changes them records the pair. test: `tests/hooks/test_tool_handlers.py::test_recorder_records_only_content_changes`.
-
-    1.5.3: A Write creating a new untracked file records it. A path the session owns
-    under task A, rewritten with the same bytes while task B is active, records nothing
-    in B''s ledger, while a real change records it for B. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths`.
-
-    1.5.4: `git restore --staged` and `git restore -S` without `--worktree`/`-W` normalize
-    to execute-kind; `git restore --staged --worktree` and `git restore -W` stay write-kind.
-    test: `tests/hooks/test_normalization.py::TestExternalNavigationScope.test_git_restore_index_only_pathspecs_are_execute_kind`.
-
-    1.5.5: Mixed shell segments publish `canonical_write_file_paths` as the union
-    of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b &&
-    echo x > d` and `rm e && echo x > d` include `d` with the `mv` or `rm` paths,
-    and `git add x && git restore -- y` and `git restore --staged x && echo z > y`
-    give `[y]` only. test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
-
-    1.5.6: In a temporary git checkout, a Bash `git add <foreign path> && git restore
-    -- <own path>` call, where `<own path>` is already in the session''s ledger and
-    the restore changes it, records `<own path>` and nothing for the `git add` path.
-    test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
-
-    1.5.7: A failed Bash call `echo changed > <path> && false` records the pair, and
-    a failed call that leaves the bytes unchanged records nothing. test: `tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes`.
-
-    1.5.8: With MERGE_HEAD present, a same-bytes Write to a dirty merge-set path held
-    by another session records nothing for the writer. test: `tests/hooks/test_tool_handlers.py::test_merge_set_noop_write_records_nothing`.
-
-    1.5.9: A Bash call that writes a clean tracked path and commits it (`echo x >
-    <path> && git commit -qam m`) records the pair in `task_edited_files`, and `reconcile_edit_ledgers`
-    then releases its clean live pair. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
-
-    1.5.10: With no stored entry, the status rule decides (dirty records, clean records
-    nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
-
-    1.5.11: Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path
-    with distinct request ids keep separate baselines. With no request id, the second
-    `before` overwrites the first, and the second `after` takes the status fallback.
-    test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
-
-    1.5.12: `handle_session_end` drops the session''s entries and keeps other sessions''
-    entries, and `snapshot` drops entries older than one hour. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
-
-    1.5.13: A Bash write to the relative path `p.py` with `event.cwd` in the main
-    checkout and `workdir` in a second checkout of the project hashes and records
-    the second checkout''s pair and records nothing for the main checkout''s `p.py`.
-    test: `tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir`.
-
-    1.5.14: A Bash call that changes two paths and makes the first unreadable (`chmod
-    000`) records both pairs, the first through the status fallback, and an unreadable
-    path at `before_tool` stores no entry while the call''s other paths keep theirs.
-    test: `tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others`.'
-  labels:
-  - covers:content-ownership-rules:1.5:1.5.1
-  - covers:content-ownership-rules:1.5:1.5.2
-  - covers:content-ownership-rules:1.5:1.5.3
-  - covers:content-ownership-rules:1.5:1.5.4
-  - covers:content-ownership-rules:1.5:1.5.5
-  - covers:content-ownership-rules:1.5:1.5.6
-  - covers:content-ownership-rules:1.5:1.5.7
-  - covers:content-ownership-rules:1.5:1.5.8
-  - covers:content-ownership-rules:1.5:1.5.9
-  - covers:content-ownership-rules:1.5:1.5.10
-  - covers:content-ownership-rules:1.5:1.5.11
-  - covers:content-ownership-rules:1.5:1.5.12
-  - covers:content-ownership-rules:1.5:1.5.13
-  - covers:content-ownership-rules:1.5:1.5.14
-  tdd: true
-  source_section: '1.5'
-  implementation_domain: backend
-- title: Rule 4 refuses writes into another Gobby project
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.3'
-  - '1.5'
-  - '1.7'
-  validation_criteria: '1.6.1: A Write whose path lies in a checkout of a different
-    registered project returns the rule 4 text naming both projects, while writes
-    into the session''s own main checkout, its task worktree and a path under no `.gobby/project.json`
-    root are allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_refuses_other_project_and_allows_own_and_unmanaged`.
-
-    1.6.2: End to end through a registered worktree of another project bound to a
-    claimed task, reached through a symlinked temp path: rule 4 allows writes there,
-    yet rule 3 refuses a write to a dirty path the session does not own; a clean path''s
-    write passes, the recorder records the pair under the worktree''s real root, and
-    gate 9 blocks the close until that pair is committed. test: `tests/workflows/test_ownership_eval_context.py::test_sanctioned_worktree_write_obeys_rules_1_to_3`.
-
-    1.6.3: `RuleEngine.evaluate` with an eval_context lacking `cross_project_write_conflict`
-    evaluates the rule as not matching instead of failing closed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_default_key_keeps_unwired_callers_open`.
-
-    1.6.4: The bundled `block-cross-project-write` template loads with event `before_tool`,
-    priority 24 and a block effect carrying the key. test: `tests/workflows/test_task_enforcement_rules.py::test_block_cross_project_write_template_shape`.
-
-    1.6.5: Rule 4 judges the file the tool names: with `event.cwd` in the session''s
-    checkout, a write to `p.py` with `workdir` in another project''s checkout, a write
-    to `../<other project>/p.py`, and a write through a relative symlink in the session''s
-    checkout that points into the other project are each refused, while the same relative
-    write with `workdir` in the session''s own task worktree is allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_resolves_workdir_relative_and_symlinked_paths`.'
-  labels:
-  - covers:content-ownership-rules:1.6:1.6.1
-  - covers:content-ownership-rules:1.6:1.6.2
-  - covers:content-ownership-rules:1.6:1.6.3
-  - covers:content-ownership-rules:1.6:1.6.4
-  - covers:content-ownership-rules:1.6:1.6.5
-  tdd: true
-  source_section: '1.6'
-  implementation_domain: backend
-- title: 'Rule 1: gate 9 checks the task''s live pairs per checkout'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  - '1.8'
-  validation_criteria: '1.7.1: Gate 9 fails with "Files created or mutated for the
-    task are uncommitted: <root>/<rel> ... Commit them and retry." for a live pair,
-    with no owner lookup and no `release_task_paths` advice. test: `tests/mcp_proxy/tools/tasks/test_mcp_close_checklist.py::test_uncommitted_task_edits_names_dirty_paths`.
-
-    1.7.2: Gate 9 checks pairs in a task worktree and in the main checkout against
-    their own roots, and passes when the task''s live pairs are clean even though
-    another session''s dirty path shares a relative name. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_checks_live_pairs_per_checkout_root`.
-
-    1.7.3: The #22642 shape closes: a session whose only touch was `git restore --staged`
-    on a pre-staged path has no live pairs, so gate 9 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_passes_when_index_only_touch_recorded_nothing`.
-
-    1.7.4: Git status failure for any existing root reports `task_clean_proof_unavailable`,
-    while an owner''s live pair under a deleted checkout root is dropped from `live_pairs`
-    and never makes the proof unavailable, and `CloseEvaluationFingerprint.capture`
-    changes when the live pairs change. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_live_pairs_feed_fingerprint_and_unavailable_proof`.
-
-    1.7.5: CO-A3-F10 sequence: the ended predecessor has no `session_tasks` link to
-    the task (its claim link failed) and holds a dirty pair tagged with it. After
-    a claim whose pair transfer failed, gate 9 refuses the close with the untransferred-pair
-    text naming that pair; a `claim_task` retry whose transfer fails again leaves
-    the same refusal; a retry that succeeds takes the `already_claimed` return and
-    moves the pair, the next close fails with the live-pair text, and the close passes
-    once the pair is committed. A live predecessor that still claims the task, a clean
-    untransferred pair, and a pair under a deleted checkout root never block. test:
-    `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_refuses_close_until_failed_transfer_is_retried`.
-
-    1.7.6: When `task_tag_holders` raises, `untransferred_task_pairs` returns None
-    and gate 9 fails with `task_clean_proof_unavailable`, so the close is refused;
-    the next close after the inventory reads evaluates normally. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate9_fails_closed_when_tag_holder_inventory_fails`.'
-  labels:
-  - covers:content-ownership-rules:1.7:1.7.1
-  - covers:content-ownership-rules:1.7:1.7.2
-  - covers:content-ownership-rules:1.7:1.7.3
-  - covers:content-ownership-rules:1.7:1.7.4
-  - covers:content-ownership-rules:1.7:1.7.5
-  - covers:content-ownership-rules:1.7:1.7.6
-  tdd: true
-  source_section: '1.7'
-  implementation_domain: backend
-- title: Claim transfers a predecessor's live pairs
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.4'
-  validation_criteria: '1.8.1: Claiming a task whose ended predecessor holds live
-    pairs for it moves those pairs into the claimant''s `session_dirty_files` and
-    `task_edited_files[task]` and removes them from the predecessor''s `session_dirty_files`,
-    keeping the predecessor''s task ledger. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_ended_predecessor_live_pairs`.
-
-    1.8.2: A live predecessor that still claims the task keeps its pairs, and a live
-    predecessor that released the claim hands them over, so no pair is held by two
-    live sessions. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfer_never_duplicates_live_ownership`.
-
-    1.8.3: `transfer_task_pairs` moves the pairs in one transaction and leaves the
-    claimant''s `session_edited_files` unchanged. A failure injected after the claimant''s
-    row is written and before the predecessor''s row is written rolls both rows back,
-    leaving exactly one live holder, and a second call completes the move. test: `tests/workflows/test_session_variable_manager.py::test_transfer_task_pairs_rolls_back_on_failure`.
-
-    1.8.4: While one thread holds a `SessionVariablePairMutation` transaction open,
-    another thread''s `_mutate_variables` on either row waits until it commits and
-    then sees the transferred ledger. test: `tests/workflows/test_session_variable_manager.py::test_single_row_mutation_waits_on_pair_lock`.
-
-    1.8.5: `advisory_lock_keys(SessionVariablePairMutation(b, a))` equals the `SessionVariableMutation`
-    keys of `a` then `b`, and taking a `SessionVariableMutation` lock after the pair
-    lock raises `LockAcquisitionOrderError`. test: `tests/storage/test_manager_surface_parity.py::test_session_variable_pair_lock_keys_match_single_row_keys_in_sorted_order`.
-
-    1.8.6: The predecessor has no `session_tasks` link to the task (its claim link
-    failed). When a claim''s transfer fails, the result carries `pair_transfer_errors`
-    and its message invites a retry; a later `claim_task` by the same session takes
-    the `already_claimed` return, finds the predecessor by its tag, completes the
-    transfer, and reports no `pair_transfer_errors`. test: `tests/mcp_proxy/tools/test_claim_task.py::test_already_claimed_retry_completes_failed_pair_transfer`.
-
-    1.8.7: F9 regression: session S mutates p under task A and q under A, releases
-    A without closing (both stay tagged A), then mutates p for task B (p retags to
-    B); in a variant, S commits p under A, reconciliation releases it, and S mutates
-    p again for B. When another session claims A, only q transfers, p stays with S
-    tagged B, `untransferred_task_pairs` for A never names p, and A''s close is not
-    blocked by p while S''s close of B still is. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_transfers_only_pairs_live_for_the_claimed_task`.'
-  labels:
-  - covers:content-ownership-rules:1.8:1.8.1
-  - covers:content-ownership-rules:1.8:1.8.2
-  - covers:content-ownership-rules:1.8:1.8.3
-  - covers:content-ownership-rules:1.8:1.8.4
-  - covers:content-ownership-rules:1.8:1.8.5
-  - covers:content-ownership-rules:1.8:1.8.6
-  - covers:content-ownership-rules:1.8:1.8.7
-  tdd: true
-  source_section: '1.8'
-  implementation_domain: backend
-```
+   3 (#22642 shape, live).
+5. In a scratch checkout, session A records a dirty path for task T and
+   releases T; session B claims T, `close_task` fails gate 3 on that path, B
+   commits it past rule 2, and `close_task` then passes gate 3.

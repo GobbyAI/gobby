@@ -5,14 +5,13 @@ import re
 import threading
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.hub.protocol import TaskSeqAllocation, Transaction
+from gobby.storage.hub.protocol import SessionVariableMutation, TaskSeqAllocation, Transaction
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions import _field_update as session_field_update
@@ -28,12 +27,6 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000010"
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
-
-
-@dataclass(frozen=True)
-class _CounterLock:
-    PRIORITY: ClassVar[int] = 950
-    name: str
 
 
 def test_post_phase5_audit_report_frontmatter_and_rows(repo_root: Path) -> None:
@@ -178,7 +171,7 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
 
         def worker() -> None:
             try:
-                with postgres_db.transaction_immediate(_CounterLock(table)) as txn:
+                with postgres_db.transaction_immediate(SessionVariableMutation(table)) as txn:
                     row = txn.execute(f'SELECT value FROM "{table}" WHERE id = %s', (1,)).fetchone()
                     assert row is not None
                     next_value = int(row["value"]) + 1

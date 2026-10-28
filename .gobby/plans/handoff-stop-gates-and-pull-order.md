@@ -6,360 +6,147 @@ Plan artifact: `.gobby/plans/handoff-stop-gates-and-pull-order.md`
 ## Overview
 `kind: framing`
 
-Four defects in rule enforcement and test gating, reported by the repository owner.
+The repository owner reported four defects in rule enforcement and test gating. Three
+are delivered on 0.5.0. This revision, made under #23669 on 2026-10-28, cuts the plan
+down to the one that is left.
 
-A session that stages a handoff has no legal move. `set_handoff` returns, the
-`before_tool` gate `block-tools-after-handoff-compact` orders the agent to stop
-calling tools and end its turn so the queued `/compact` or `/clear` runs, and the
-`turn_end` gate `require-task-close` refuses that turn end because a task is still
-claimed. Only a context compact clears it. The owner's rule: `set_handoff` always
-allows a stop, and the gates re-arm at the next session start while a task is
-claimed. `require-epic-tree-close` is retired at the same time.
+Delivered:
 
-Nothing enforces pulling the handoff before loading skills. The continuation prompt
-from `build_handoff_continue_prompt` is typed into the pane and is already first,
-but the `turn_start` it creates fires sixteen rule files of which only three defer
-on `handoff_pull_pending`, and no gate stops an agent from loading a skill on its
-own before calling `get_handoff`.
+1. A session that staged a handoff could not end its turn. `block-tools-after-handoff-compact`
+   told it to stop so the queued compact could run, and `require-task-close` refused the
+   stop while a task was claimed. #22638 fixed this. The turn-end block gates now stand
+   down while a handoff is staged and re-arm at the next session start.
+2. Nothing made an agent pull its handoff before loading skills or doing work. #24421
+   fixed this with the `require-handoff-pull-before-tool` gate and pull guards on the
+   turn-start injectors the plan named. One turn-start skill directive added outside
+   that list, the plan-mode reference load, still fires ahead of the pull. That residue
+   is deliverable 2.3.
+3. The `auto-task` rule group and `require-epic-tree-close` were dead weight on the
+   `task_tree_complete` helper. #24421 retired all of them.
 
-The `auto-task` rule group is dead. Nothing in the daemon writes `auto_task_ref`,
-stage-manifest dispatch through `gobby build` replaced it, and no bundled agent
-selects its tag. It shares `task_tree_complete` with `require-epic-tree-close`, so
-retiring both frees the helper.
+Remaining:
 
-One test runs two full `uv build` invocations on every local pytest run. Bundled
-content tamper detection is a production concern served by `verify_bundled_integrity`
-at runtime, not by a local test.
+- The plan-mode skill directive must wait for the pull (2.3).
+- One test, `test_manifest_membership_matches_wheel`, runs two full `uv build`
+   invocations on every local pytest run. Bundled-content tamper detection is a
+   production concern, served at runtime by `verify_bundled_integrity`; it does not need
+   a local test. CI must keep proving that the generated manifest matches the packaged
+   tree.
+
+The per-item evidence is in
+`.gobby/plans/research/handoff-stop-gates-staleness-2026-10.md`.
+
+## Delivered Scope
+`kind: framing`
+
+These sections of the 2026-09-20 plan (`4b8f14d09c`) are delivered, and each is closed
+by a task that ended `done`. They are recorded here as evidence and are not expanded.
+
+| Original section | Delivered by | Current evidence |
+| --- | --- | --- |
+| 1.1 Suppress turn-end block gates while a handoff is staged | #22638: `52dca8c848`, `055288e643` | `stage_handoff_attempt` writes `_handoff_turn_end_pending` (`src/gobby/sessions/handoff.py:417`). `EvaluationMixin._run_rule_loop_pass` suppresses turn-end block gates under the pseudo-rule `pending-handoff-delivery` (`src/gobby/workflows/engine/evaluation.py:540`). `rearm-close-gates-on-session-start` clears the marker with no `when` clause. Tests: `tests/workflows/test_stop_gates_rules.py` at `:588` and `:605`, and `tests/hooks/test_stop_handoff_pending.py` at `:265` and `:280`. |
+| 1.2 Retire require-epic-tree-close | #24421: `5f328172bc`, `69aa85a125` | The template is deleted, the installed row is gone, and `test_retired_templates_do_not_reappear_on_sync` pins its absence (`tests/workflows/test_handoff_pull_gate.py:136`). |
+| 2.1 Defer turn-start injections while a pull is pending | #24421: `5f328172bc`; #23854: `dea47c35a4` | Memory surfacing, the remaining plan-reviewer lesson injector, and the brevity and restraint reminders all carry `not variables.get('handoff_pull_pending')`. #23854 deleted the other three lesson injectors. Test: `test_pending_handoff_pull_suppresses_turn_start_reminders` (`tests/workflows/test_reminder_cadence_rules.py:78`). Seat Guidance, Agent Workspace and the proxy-retry notice stay unguarded by operator ruling (see Constraints). The plan-mode skill directive is the open residue, deliverable 2.3. |
+| 2.2 Block tools until the handoff pull runs | #24421: `5f328172bc` | `context-handoff/require-handoff-pull-before-tool.yaml` is a priority-1 before_tool gate written as an inline `when`. The proposed `handoff_conditions.py` helper module was never needed. Tests: `tests/workflows/test_handoff_pull_gate.py` at `:74` and `:88`. |
+| 3.1 Delete the auto-task rules and the tree-completeness helper | #24421: `5f328172bc` | The `auto-task/` directory, `task_tree_complete`, `_is_tree_complete` and the `auto_task_ref` read in `RuleEngine.evaluate` are gone; the installed `auto-task` group has 0 rows. `condition_helpers.py` is now 773 lines and needs no split. `engine/core.py` is 953 lines and was not split. That is not needed: this plan no longer edits it, and it is under the 1,000-line ceiling. |
+
+The installed DB agrees as of 2026-10-28: `stop-gates` has 8 enabled rows and no epic
+gate, `context-handoff` has 16 enabled rows including the pull gate, and `auto-task` has
+none. The rules reference at `src/gobby/install/shared/workflows/rules/AGENTS.md` lists
+the same counts.
 
 ## Constraints
 `kind: framing`
 
-- Stop-gate suppression must stay daemon-owned. The settled invariant is that only
-  daemon-owned state may suppress stop attempts and task close gates; an agent-set
-  variable must never do it. The marker is therefore written inside
-  `stage_handoff_attempt`, atomic with the attempt, so a `set_handoff` that returns
-  `interrupt_unconfirmed` without staging suppresses nothing.
-- Do not route the suppression through `force_allow_stop`. `RuleEngine.evaluate`
-  deliberately refuses that override while `task_claimed` is true so claimed work
-  cannot escape closure; that refusal stays exactly as it is.
-- Do not clear `set_handoff_pending` on the re-arm. `_consume_candidate` pops it when
-  `get_handoff` runs, and clearing it early breaks the pull.
-- A handoff gate must leave its own prerequisites callable. A gate that blocks
-  `set_handoff` while another gate holds `set_handoff` for its prerequisite deadlocks
-  the session, and only a context compact clears it. The new `before_tool` gate
-  allows `get_handoff`, the pending memory recall, and coordination messaging.
-  `get_tool_schema` and `list_tools` need no clause: `is_unblockable_discovery_tool`
-  already exempts them from every `before_tool` block.
-- The epic auto-closer is out of scope and must keep working.
-  `_close_eligible_ancestors` walks parents in SQL with its own hold-label,
-  claimed-ancestor and parent-criteria guards. It never calls a condition helper, so
-  deleting `task_tree_complete` cannot reach it.
-- Retiring bundled rules needs no DB work. `sync_bundled_rules` skips `deprecated/`
-  and soft-deletes installed bundled rows whose templates disappeared.
-- Rule templates and engine code ship together. The daemon serving this checkout must
-  be restarted after the merge for either half to be live; announce it with a
-  `global` `send_message` and wait for a quiet window.
-- Keep the `if task_manager:` block in `build_condition_helpers`.
-  `all_tasks_have_label`, `task_needs_human_review`, `task_state_in` and
-  `task_type_in` still need the manager, so the `LocalTaskManager` threading into
-  `RuleEngine.__init__` stays.
-- Rejected: adding `and not variables.get(...)` to each stop gate's `when`. The owner
-  specified that `set_handoff` always allows a stop, which is an engine-level
-  property; per-rule conditions would have to be repeated on every future turn-end
-  gate and would silently miss one.
-- Rejected: injecting the pull directive as a `session_start` rule. Session-start
-  context does not resume an agent; the typed continuation prompt is what does, and
-  it already arrives first.
+- Resume-turn context requirement (Orchestrator ruling on PA-01, 2026-10-28, Option 1):
+  until the handoff is pulled, the resume turn carries no memory index, no review
+  lessons and no skill-load directives. Three one-shot injections are allowed resume-turn
+  context and named as exemptions: Seat Guidance (`roles/inject-seat-common.yaml`), Agent
+  Workspace (`roles/inject-agent-workspace.yaml`), and the proxy-retry notice
+  (`retry-gobby-tools-after-proxy-connects` in
+  `memory-lifecycle/layered-memory-guidance.yaml`). They carry identity and recovery
+  context, and the seat guidance itself requires `get_handoff` during holds. No
+  turn_start follows the pull until the next prompt, so a guard would leave an autonomous
+  seat without its policy and workspace path for the whole resumed turn. This replaces
+  the original goal wording "no injected payload"; the Orchestrator flags the change to
+  Josh with the stamped plan.
+- 2.3 edits a bundled rule template, which reaches the installed rule table only at
+  daemon start. It is live after a merge and an ordinary daemon restart announced with a
+  `global` `send_message`. It needs no cutover, binary install or quiet window. 4.1
+  touches only tests, the CI workflow and the pre-push script, and needs no restart.
+- CI coverage must not drop. Today the CI `test` job runs the parity test, ungated, on
+  both Python matrix entries. After this change the same job must still run it on both.
+- Follow the repository's established opt-in shape. Use a module-level `pytestmark`
+  combining a category marker with a `skipif` on a `GOBBY_RUN_*` variable, evaluated
+  before fixture setup. Record the gate in three places: the CI job environment, a
+  pre-push selection branch, and the pre-push opt-in registry test.
+- Rejected: representing the delivered sections as `kind: deferred`. A typed deferral
+  needs a `deferred-from:<plan-id>:<section-id>` label on its task. #22638 and #24421
+  were not created from this plan and carry no such label. The obligations they met are
+  finished and need no owner. The #22643 directive asks for delivered parts to be marked
+  as delivered with commit evidence, which the framing table above does.
+- Rejected under the same ruling: guarding the three exempt injections, either strictly
+  (they land at the next prompt) or with re-delivery after a successful `get_handoff`
+  (about three more after_tool rules). The first strips seat policy from the resumed
+  turn; the second adds mechanism for context the pull gate already makes harmless.
+- Rejected: moving the parity test into the CI `build` job to reuse its wheel. The test
+  builds an sdist and wheel from a copy of the tracked tree on purpose. Reusing another
+  job's wheel would mean rewriting the test, and it would drop the sdist-to-wheel path the
+  test exists to check.
 
-## Granularity
+## P2: The plan-mode skill directive waits for the pull
 `kind: framing`
 
-Six deliverables across four phases. Two independently testable state machines are
-in scope and are deliberately kept apart: the turn-end suppression and re-arm cycle
-in P1, and the handoff-pull deferral and block cycle in P2. They share no variable,
-no event and no test module. P3 is a pure retirement whose only coupling to P1 is the
-shared helper, expressed as a dependency. P4 touches no runtime code. The rules
-`AGENTS.md` table is a shared Target across 1.2, 2.2 and 3.1, so those three are
-chained even though their symbol scopes differ.
+**Goal**: no skill-load directive reaches the resume turn before the handoff is pulled.
 
-## P1: Stop gates stand down for a staged handoff
-`kind: framing`
-
-**Goal**: `set_handoff` always allows the turn to end, and the gates re-arm on the
-next session start while a task is still claimed.
-
-### 1.1 Suppress turn-end block gates while a handoff is staged [category: code]
+### 2.3 Guard the plan-mode skill directive on a pending pull [category: config]
 `kind: deliverable`
 
 Targets:
-- `src/gobby/sessions/handoff.py::stage_handoff_attempt`
-- `src/gobby/workflows/engine/evaluation.py::EvaluationMixin._run_rule_loop`
-- `src/gobby/workflows/engine/evaluation.py::EvaluationMixin._assemble_response`
-- `src/gobby/workflows/reserved_variables.py::RESERVED_WORKFLOW_VARIABLES`
-- `src/gobby/install/shared/workflows/rules/stop-gates/rearm-close-gates-on-session-start.yaml`
-- `tests/workflows/test_stop_gates_rules.py::*` — scope-reason: adds the staged-handoff and re-arm cases to the bundled stop-gate suite
+- `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml::*` — scope-reason: adds the pending-pull clause to the single rule's when
+- `tests/workflows/test_plan_mode_rules.py::*` — scope-reason: adds one pending-pull case to TestHandlePlanModeEntry and the guard assertion to its when-shape test
 
-Research context. `stage_handoff_attempt` already builds a `marker_updates` dict and
-writes `set_handoff_pending` for every attempt plus `handoff_pull_pending` on the
-compact path only. The new marker goes beside them so it lands on both the clear and
-compact paths inside the same transaction.
+Research context. `handle-plan-mode-entry` is a turn_start rule at priority 10, scoped to
+`agent_scope: [default]`, with `when: "variables.get('plan_mode') and not
+variables.get('plan_skill_directive_delivered')"`. Its effects are a `load_skill`
+directive for `gobby:references/plan/overview.md` and `set_variable
+plan_skill_directive_delivered: true`, both `delivery: on_receipt`.
 
-The engine precedent is `turn_interrupt_initiated`, handled in
-`EvaluationMixin._run_rule_loop` and surfaced in `_assemble_response`, which drops
-every turn-end block gate while leaving non-block effects live and audit-logs the
-decision as the pseudo-rule `interrupt-initiated-turn`. Mirror that shape and name
-the pseudo-rule for the staged handoff.
+How it reaches the resume turn: `context-handoff/preserve-context-on-compact.yaml` and
+`plan-mode/reset-plan-mode-on-session-start.yaml` both reset
+`plan_skill_directive_delivered` to false at the compact boundary. The session-start rule
+also clears `plan_mode`, but turn-start plan-mode resolution (`resolve_plan_mode` in
+`src/gobby/workflows/observer_plan_mode.py`) runs before rule evaluation. It sets
+`plan_mode` again whenever the provider still reports plan mode on the typed continuation
+prompt, and the directive then fires ahead of `get_handoff`. The pull gate refuses the
+skill load itself, but the original requirement excludes skill-load directives from the
+resume turn by name.
 
-`RESERVED_WORKFLOW_VARIABLES` stops an agent forging the marker through MCP
-`set_variable`. Bundled rules can still write it: `is_internal_rule` exempts
-installed rows carrying the `gobby` tag and no `user` tag, checked in `EffectsMixin`
-before the reserved-name refusal.
+Change: put `not variables.get('handoff_pull_pending') and` before the existing clause.
+The guard needs no clean-up. `handoff_pull_pending` is popped inside the `get_handoff`
+transaction, so the directive fires once at the next turn_start, and
+`plan_skill_directive_delivered` stays false until then. Waiting is harmless: plan mode is
+interactive, so the next turn is a user prompt, and plan-artifact writes are already gated
+on loading a plan reference by the skill-discovery group.
 
-The re-arm rule is modelled on
-`context-handoff/clear-pending-context-reset-on-start.yaml`: `event: session_start`,
-one `set_variable` effect. It carries no `when` restriction. Every other reset rule
-narrows to the clear and compact sources, but a stop gate must re-arm on every
-boundary, and an unconditional reset cannot strand a session in a state where it
-stops freely forever.
+Tests. `TestHandlePlanModeEntry.test_fires_on_turn_start_with_plan_mode_guard` checks the
+`when` text; add an assertion that it contains `handoff_pull_pending`.
+`TestHandlePlanModeEntry.test_skill_directive_fires_once_for_default_agent` is the model
+for the new case. It syncs bundled rules, builds a `BEFORE_AGENT` `HookEvent` with
+`variables = {"_agent_type": "default", "plan_mode": True}`, evaluates through
+`RuleEngine`, and checks
+`skill_fetch_directive("gobby:references/plan/overview.md") in first.context`. The new
+case does the same with `handoff_pull_pending: True` added. It asserts no directive and
+`plan_skill_directive_delivered` not set. It then pops `handoff_pull_pending`, evaluates
+again, and asserts the directive arrives once.
 
-A one-shot manual-compact bypass already exists and strips the turn-end trigger for a
-single turn end after a manual `pre_compact`. It does not solve this: it arms at
-PreCompact, which happens after the turn end the gate blocks.
-
-`RuleEngine.evaluate` is not a Target here and must not be edited. Its
-`force_allow_stop` branch deliberately refuses to allow a stop while a task is
-claimed, and the new suppression is a separate path that leaves that refusal intact.
-Acceptance 1.1.7 re-verifies it through the existing test.
-
-**Acceptance:**
-
-- 1.1.1 - `stage_handoff_attempt` writes the suppression marker into `marker_updates` on both the clear and compact paths. symbol: `stage_handoff_attempt`. file: `src/gobby/sessions/handoff.py`.
-- 1.1.2 - A staged handoff drops every turn-end block gate while non-block effects still run, audit-logged as a named pseudo-rule. symbol: `EvaluationMixin._run_rule_loop`. file: `src/gobby/workflows/engine/evaluation.py`.
-- 1.1.3 - The marker name is refused for agent writes and accepted for bundled-rule writes. symbol: `RESERVED_WORKFLOW_VARIABLES`. file: `src/gobby/workflows/reserved_variables.py`.
-- 1.1.4 - A session-start rule clears the marker with no `when` restriction. file: `src/gobby/install/shared/workflows/rules/stop-gates/rearm-close-gates-on-session-start.yaml`.
-- 1.1.5 - A staged handoff allows the turn end while a task is claimed. test: `tests/workflows/test_stop_gates_rules.py::test_staged_handoff_allows_turn_end_with_claimed_task`.
-- 1.1.6 - The following session start re-arms the gate and a claimed task blocks again, with the pull marker intact. test: `tests/workflows/test_stop_gates_rules.py::test_session_start_rearms_close_gate_and_preserves_pull_marker`.
-- 1.1.7 - `force_allow_stop` still refuses to allow a stop while a task is claimed. test: `tests/workflows/test_stop_gates_rules.py::TestForceAllowStopWithTaskClaimed::test_force_allow_suppressed_when_task_claimed`.
-
-### 1.2 Retire require-epic-tree-close [category: code] (depends: 1.1)
-`kind: deliverable`
-
-Targets:
-- `src/gobby/install/shared/workflows/rules/stop-gates/require-epic-tree-close.yaml::*` — scope-reason: whole-file retirement; the rule moves under stop-gates/deprecated/, which sync excludes
-- `src/gobby/install/shared/workflows/rules/AGENTS.md`
-- `tests/workflows/test_stop_gates_rules.py::*` — scope-reason: drops the retired rule from the bundled rule-name set and the two parametrized gate lists
-- `tests/workflows/test_turn_interrupt_stop_gates.py::*` — scope-reason: drops the retired rule from the gate-name set the interrupt suite sweeps
-- `tests/workflows/test_rule_engine_task_helper_wiring.py::test_require_epic_tree_close_uses_real_task_manager`
-- `tests/workflows/test_rule_engine_task_helper_wiring.py::test_require_epic_tree_close_rejects_live_session_label`
-- `tests/workflows/test_rule_engine_task_helper_wiring.py::test_unresolved_dependency_yields_claim_gates_and_rearms_after_close`
-
-Research context. The rule is a turn-end gate at priority 51 that blocks when
-`task_tree_complete` reports the claimed tree incomplete. Leaf closure already runs a
-thirteen-gate checklist and ancestors auto-close when their last child closes, so the
-gate re-asserts at turn end what task closure already enforces.
-
-Moving the YAML under `deprecated/` is enough. `sync_bundled_rules` skips that
-directory and soft-deletes the orphaned installed row on the next sync, so there is
-no DB work and no migration.
-
-Test references are a rule-name set, two parametrize lists, and an aggregate-reason
-assertion in the stop-gates suite, plus a gate-name set in the interrupt suite. Two
-wiring tests exist only for this rule and are deleted whole. The third,
-`test_unresolved_dependency_yields_claim_gates_and_rearms_after_close`, asserts both
-gate names appear in one aggregated block reason; it keeps the `require-task-close`
-assertion and drops the other.
-
-The `stop-gates` row in the rules reference keeps its count of 6: this retirement
-removes one rule and 1.1 adds the re-arm rule, so only the purpose text changes.
-`test_rule_reference_counts_match_yaml` parses that table but is parametrized only
-over `task-enforcement` and `worker-safety`, so it cannot catch a stale count here.
+Planned check, not yet run: `tests/workflows/test_plan_mode_rules.py` passes against the
+isolated test hub.
 
 **Acceptance:**
 
-- 1.2.1 - No enabled bundled rule named require-epic-tree-close remains under the synced rules tree. file: `src/gobby/install/shared/workflows/rules/stop-gates/require-epic-tree-close.yaml`.
-- 1.2.2 - The stop-gates row records 6 rules with the retired gate absent from its purpose text. file: `src/gobby/install/shared/workflows/rules/AGENTS.md`.
-- 1.2.3 - The bundled stop-gate suite passes with the rule absent from its name set and both parametrized lists. test: `tests/workflows/test_stop_gates_rules.py::TestStopAttemptsPlumbing::test_stop_attempts_increments_even_when_force_allowed`.
-- 1.2.4 - The interrupt suite passes with the retired gate absent from its gate-name set. test: `tests/workflows/test_turn_interrupt_stop_gates.py::test_interrupt_initiated_turn_suppresses_turn_end_block_effects`.
-- 1.2.5 - The dependency re-arm test asserts only require-task-close in the aggregated reason. test: `tests/workflows/test_rule_engine_task_helper_wiring.py::test_unresolved_dependency_yields_claim_gates_and_rearms_after_close`.
-
-## P2: The handoff pull precedes context and skills
-`kind: framing`
-
-**Goal**: the resume turn carries no injected payload until the handoff is pulled,
-and no tool but the pull itself is callable until then.
-
-### 2.1 Defer turn-start injections while a pull is pending [category: config]
-`kind: deliverable`
-
-Targets:
-- `src/gobby/install/shared/workflows/rules/memory-lifecycle/surface-memories-on-turn-start.yaml::*` — scope-reason: adds the pending-pull guard to the turn-start memory surfacing rule
-- `src/gobby/install/shared/workflows/rules/review-learning/inject-planner-lessons.yaml::*` — scope-reason: adds the pending-pull guard to the lesson injection rule
-- `src/gobby/install/shared/workflows/rules/review-learning/inject-plan-reviewer-lessons.yaml::*` — scope-reason: adds the pending-pull guard to the lesson injection rule
-- `src/gobby/install/shared/workflows/rules/review-learning/inject-plan-enhancer-lessons.yaml::*` — scope-reason: adds the pending-pull guard to the lesson injection rule
-- `src/gobby/install/shared/workflows/rules/review-learning/inject-qa-reviewer-lessons.yaml::*` — scope-reason: adds the pending-pull guard to the lesson injection rule
-- `src/gobby/install/shared/workflows/rules/brevity/reinforce-brevity.yaml::*` — scope-reason: adds the guard to the turn-start reminder rules only, not the opt-out phrase handler
-- `src/gobby/install/shared/workflows/rules/restraint/require-restraint-skill.yaml::*` — scope-reason: adds the guard to the turn-start reminder rule only, not the opt-out phrase handler
-- `tests/workflows/test_reminder_cadence_rules.py::*` — scope-reason: the cadence suite asserts per-turn reminder injection and must cover a pending pull
-
-Research context. The typed continuation prompt is an ordinary submission, so
-`_resolve_rule_events` resolves it to the turn-start trigger. Sixteen rule files fire
-there. `bootstrap-default-agent-core-skills` at priority 9,
-`list-skill-hubs-once-per-session` at 15 and `nudge-compact-on-context-pressure` at 30
-already carry the pending-pull guard. Every other injecting rule does not, so memory
-hits, review lessons and the reminder one-liners all land on the resume turn ahead of
-the pull.
-
-`handoff_pull_pending` is set by `stage_handoff_attempt` on the compact path and
-merged onto the successor by `_bind_clear_successor` on the clear path, then popped
-inside the `get_handoff` transaction by `_finish_successor_pull`. The guard clause is
-therefore already correct and self-clearing; this deliverable only widens its reach.
-
-Leave the bookkeeping rules alone. `increment-parent-turn-seq`, `reset-subagent-flag`
-and `reset-code-index-navigation` only set variables and must keep running on the
-resume turn or the turn counters drift.
-
-`auto-task/inject-autonomous-mode.yaml` also injects on turn start. It is deleted in
-3.1 and gets no guard.
-
-**Acceptance:**
-
-- 2.1.1 - Turn-start memory surfacing does not fire while a handoff pull is pending. file: `src/gobby/install/shared/workflows/rules/memory-lifecycle/surface-memories-on-turn-start.yaml`.
-- 2.1.2 - No review-learning lesson injection fires while a handoff pull is pending. file: `src/gobby/install/shared/workflows/rules/review-learning/inject-planner-lessons.yaml`.
-- 2.1.3 - The brevity and restraint turn-start reminders do not fire while a handoff pull is pending, and the opt-out phrase handlers still do. file: `src/gobby/install/shared/workflows/rules/brevity/reinforce-brevity.yaml`.
-- 2.1.4 - The bookkeeping turn-start rules still run on a resume turn with a pending pull. behavior: "turn counters advance on the resume turn" in `src/gobby/install/shared/workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml`.
-- 2.1.5 - The reminder cadence suite proves a pending pull injects nothing and the following turn resumes the cadence. test: `tests/workflows/test_reminder_cadence_rules.py::test_pending_handoff_pull_suppresses_turn_start_reminders`.
-
-### 2.2 Block tools until the handoff pull runs [category: code] (depends: 1.2)
-`kind: deliverable`
-
-Targets:
-- `src/gobby/workflows/handoff_conditions.py`
-- `src/gobby/workflows/safe_evaluator.py::build_condition_helpers`
-- `src/gobby/install/shared/workflows/rules/context-handoff/require-handoff-pull-before-tool.yaml`
-- `src/gobby/install/shared/workflows/rules/AGENTS.md`
-- `tests/workflows/test_block_tools_after_handoff_compact.py::HANDOFF_PREREQUISITE_EVENTS`
-- `tests/workflows/test_handoff_pull_gate.py`
-- `src/gobby/workflows/enforcement/blocking.py::*` — scope-reason: consumer re-verification only; ARGUMENTLESS_PROXY_TOOLS and is_unblockable_discovery_tool must keep exempting the pull and schema discovery, no edit expected
-
-Research context. Deferring Gobby's own injections in 2.1 does not stop an agent
-loading a skill on its own initiative, which is the reported failure. The gate was
-already specified in `.gobby/plans/handoff-tool.md` as
-`require-handoff-pull-before-tool`, a before-tool rule at priority 10 with helpers in
-a new `handoff_conditions.py`; neither the module nor the rule was ever built.
-
-The exemption list is the load-bearing part. Both existing before-tool handoff gates
-in `block-tools-after-handoff-compact.yaml` permit an identical prerequisite set, and
-they must: a gate permitting only its own target tool deadlocks when another gate
-holds that tool for a prerequisite of its own. Allow `gobby-sessions:get_handoff`,
-the pending memory recall, and `gobby-agents` coordination messaging. Schema discovery
-needs no YAML clause because `is_unblockable_discovery_tool` exempts `get_tool_schema`
-and `list_tools` from every before-tool block, and `get_handoff` is in
-`ARGUMENTLESS_PROXY_TOOLS` so the successor can call it as its literal first tool with
-no schema round-trip.
-
-`HANDOFF_PREREQUISITE_EVENTS` is the shared table the two existing gates are
-parametrized over. Extending it to cover the new gate is what stops a future
-prerequisite being added to one allowlist and forgotten in another.
-
-The `context-handoff` group row in the rules reference goes from 14 rules to 15.
-
-**Acceptance:**
-
-- 2.2.1 - A new condition-helper module exposes the pending-pull and pull-call predicates and they are registered for rule conditions. symbol: `build_condition_helpers`. file: `src/gobby/workflows/safe_evaluator.py`.
-- 2.2.2 - A before-tool gate blocks ordinary tools while a handoff pull is pending. file: `src/gobby/install/shared/workflows/rules/context-handoff/require-handoff-pull-before-tool.yaml`.
-- 2.2.3 - The gate permits get_handoff, the pending memory recall and coordination messaging, proven over the shared prerequisite table. test: `tests/workflows/test_handoff_pull_gate.py::test_pull_gate_allows_handoff_prerequisite_tools`.
-- 2.2.4 - An agent-initiated skill load is blocked until the pull runs and allowed afterwards. test: `tests/workflows/test_handoff_pull_gate.py::test_pull_gate_blocks_skill_load_until_pull`.
-- 2.2.5 - The context-handoff row records 15 rules. file: `src/gobby/install/shared/workflows/rules/AGENTS.md`.
-
-## P3: Retire the auto-task group
-`kind: framing`
-
-**Goal**: no bundled rule, condition helper, or test depends on `auto_task_ref`.
-
-### 3.1 Delete the auto-task rules and the tree-completeness helper [category: refactor] (depends: 2.2, 2.1)
-`kind: deliverable`
-
-Targets:
-- `src/gobby/install/shared/workflows/rules/auto-task/inject-autonomous-mode.yaml::*` — scope-reason: whole-file deletion; the group is retired outright, not preserved under deprecated/
-- `src/gobby/install/shared/workflows/rules/auto-task/guide-task-continuation.yaml::*` — scope-reason: whole-file deletion; the group is retired outright
-- `src/gobby/install/shared/workflows/rules/auto-task/notify-task-tree-complete.yaml::*` — scope-reason: whole-file deletion; the group is retired outright
-- `src/gobby/install/shared/workflows/rules/context-handoff/preserve-context-on-compact.yaml::*` — scope-reason: drops the autonomous-mode reminder reset, dead once the injecting rule is gone
-- `src/gobby/install/shared/workflows/rules/AGENTS.md`
-- `src/gobby/workflows/condition_helpers.py::task_tree_complete`
-- `src/gobby/workflows/condition_helpers.py::_is_tree_complete`
-- `src/gobby/workflows/condition_helpers_shell.py`
-- `src/gobby/workflows/safe_evaluator.py::build_condition_helpers`
-- `src/gobby/workflows/engine/core.py::RuleEngine.evaluate`
-- `src/gobby/workflows/engine/core_overrides.py`
-- `tests/workflows/test_auto_task_rules.py::*` — scope-reason: whole-file deletion; every test in it covers a retired rule
-- `tests/workflows/test_condition_helpers.py::*` — scope-reason: drops the tree-completeness cases and their import
-- `tests/workflows/test_reminder_cadence_rules.py::*` — scope-reason: deletes the autonomous-mode cadence case whose rule is retired here
-- `tests/workflows/test_safe_evaluator.py::*` — scope-reason: drops the retired helper from the registered-helper expectations
-
-Research context. `auto_task_ref` has no writer anywhere in the daemon. The only
-setter on record is an agent calling `set_variable` by hand in a research transcript,
-and stage-manifest dispatch through `gobby build` superseded the mechanism. No bundled
-agent selects the group tag; the group's only reference outside its own directory is
-the rules reference table row.
-
-`task_tree_complete` has exactly three callers: the two auto-task rules and
-`require-epic-tree-close`, retired in 1.2. Its private recursive helper
-`_is_tree_complete` is called only from `task_tree_complete` and itself. Both go.
-`_normalize_task_ids` and `_get_task` stay: `all_tasks_have_label`, `task_state_in`
-and `task_type_in` still use them.
-
-In `build_condition_helpers` remove the import, the live binding and the no-manager
-fallback for the retired helper only. The `if task_manager:` block itself stays for
-the four remaining task helpers, so the `LocalTaskManager` threading into
-`RuleEngine.__init__` is unchanged. `dry_run_validation` derives its helper-name set
-by calling `build_condition_helpers()` and needs no edit.
-
-`RuleEngine.evaluate` copies `auto_task_ref` into a span attribute; that read goes.
-`preserve-context-on-compact.yaml` resets `autonomous_mode_reminder_turn`, which only
-the retired injecting rule ever read.
-
-Two targeted files sit near the 1,000-line production ceiling and are decomposed
-inside this deliverable, not deferred. `condition_helpers.py` is 988 lines; the
-retirement removes about sixty, which is not enough. Move the shell-command group to
-the new sibling `condition_helpers_shell.py`: `is_validation_command`,
-`wrapped_validation_command`, `is_gobby_build_command`, `shell_command_invokes_gcode`,
-`shell_command_runs_ocr_review`, `shell_command_consumes_code_review`,
-`_strip_shell_command_prefixes`, `_git_subcommand`, `_segment_invokes_gobby_build`,
-`_strip_env_assignments`, `_strip_uv_run_options`, `_python_module_tokens` and
-`_executable_name`, with the imports they need. `condition_helpers.py` re-exports them
-so `build_condition_helpers` and every rule condition resolve unchanged.
-
-`core.py` is 899 lines and `RuleEngine.evaluate` alone spans 540 of them. Move
-the hardcoded override block to the new sibling `core_overrides.py`: the
-`force_allow_stop` branch with its refusal under a claimed task, and the
-`tool_block_pending` and `edit_write_pending` branches, as functions taking the
-evaluation context and returning an optional response. `evaluate` calls them in the
-same order, before any rule-level block, so the documented turn-end assembly order is
-preserved exactly.
-
-The epic auto-closer is untouched. `_close_eligible_ancestors` in
-`storage/tasks/_stage_utils.py` walks parents in SQL and checks for zero open children
-with its own hold-label, claimed-ancestor and parent-criteria guards.
-
-Sweep the remaining tests that mention the group or its variable and change only what
-depends on the retired rules. Most use the strings as sample data for model,
-definition and query tests and need no edit; confirm that in
-`tests/workflows/test_rule_models.py`, `tests/workflows/test_definitions.py` and
-`tests/mcp_proxy/tools/workflows/test_query.py`.
-
-**Acceptance:**
-
-- 3.1.1 - No bundled rule template references auto_task_ref and the auto-task directory is gone. file: `src/gobby/install/shared/workflows/rules/auto-task/inject-autonomous-mode.yaml`.
-- 3.1.2 - The rules reference table has no auto-task row. file: `src/gobby/install/shared/workflows/rules/AGENTS.md`.
-- 3.1.3 - The condition helpers module defines neither the tree-completeness helper nor its private recursion. symbol: `task_tree_complete`. file: `src/gobby/workflows/condition_helpers.py`.
-- 3.1.4 - `build_condition_helpers` registers no tree-completeness helper and still registers the four remaining task helpers under a task manager. symbol: `build_condition_helpers`. file: `src/gobby/workflows/safe_evaluator.py`.
-- 3.1.5 - `RuleEngine.evaluate` performs no auto_task_ref read. symbol: `RuleEngine.evaluate`. file: `src/gobby/workflows/engine/core.py`.
-- 3.1.6 - The compact preservation rule no longer resets the autonomous-mode reminder marker. file: `src/gobby/install/shared/workflows/rules/context-handoff/preserve-context-on-compact.yaml`.
-- 3.1.7 - The safe-evaluator suite passes with the retired helper absent from the registered set. test: `tests/workflows/test_safe_evaluator.py::test_condition_helpers_without_task_manager_return_false`.
-- 3.1.8 - The reminder cadence suite passes with the autonomous-mode case removed. test: `tests/workflows/test_reminder_cadence_rules.py::TestReminderCadence::test_ten_turn_session_caps_brevity_and_restraint_reminders`.
-- 3.1.9 - The shell-command condition helpers live in a sibling module, are re-exported, and `condition_helpers.py` is under 850 lines. file: `src/gobby/workflows/condition_helpers_shell.py`.
-- 3.1.10 - The hardcoded turn-end overrides live in a sibling module, run in their original order ahead of any rule-level block, and `engine/core.py` is under 850 lines. file: `src/gobby/workflows/engine/core_overrides.py`.
-- 3.1.11 - The override extraction preserves the documented precedence and the claimed-task refusal. test: `tests/workflows/test_rule_engine.py::TestOverrideCollectsMcpCalls::test_force_allow_trumps_rule_evaluated_block`.
+- 2.3.1 - The plan-mode entry rule's when starts with `not variables.get('handoff_pull_pending')` and keeps the plan-mode and directive-delivered clauses. file: `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml`.
+- 2.3.2 - With a pull pending, a plan-mode turn start delivers no plan-reference directive and leaves the delivered flag unset; after the pull marker clears, the next turn start delivers it once. test: `tests/workflows/test_plan_mode_rules.py::TestHandlePlanModeEntry::test_skill_directive_waits_for_pending_handoff_pull`.
 
 ## P4: Gate the wheel-manifest parity test to CI
 `kind: framing`
@@ -371,68 +158,111 @@ the generated manifest matches the packaged tree.
 `kind: deliverable`
 
 Targets:
-- `tests/install/test_bundled_content_manifest.py::test_manifest_membership_matches_wheel`
+- `tests/install/test_bundled_content_manifest.py::*` — scope-reason: adds the module-level pytestmark opt-in gate beside the module's only test, which stays unchanged
 - `.github/workflows/ci.yml`
-- `pre-push-test.sh::*` — scope-reason: adds one opt-in deselect branch to the pytest selection arguments
+- `pre-push-test.sh::*` — scope-reason: the top-level pytest selection block gains the manifest opt-in branch and loses the dead build-canary branch; no shell function changes
 - `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`
+- `tests/ci/test_postgres_test_stack.py::test_ci_test_job_builds_and_runs_local_postgres_test_container`
 
-Research context. The test copies every tracked file into a temp tree, runs
-`uv build --sdist` and `uv build --wheel` with 300-second timeouts each, unzips the
-wheel and compares the generated manifest to a freshly built one. Two full package
-builds on every local run, with no marker and no guard.
+Research context. `test_manifest_membership_matches_wheel`, at line 14 of
+`tests/install/test_bundled_content_manifest.py`, is the only test in its module. It
+copies every tracked file outside `.gobby/` into a temp tree. It runs
+`uv build --sdist` and then `uv build --wheel` from that sdist, each with
+`timeout=300`, unzips the wheel, and compares the packaged
+`bundled_content_manifest.json` with `build_bundled_content_manifest` over the packaged
+`shared/` tree. The module has no `pytestmark`, no marker and no guard. It already
+imports `os`, but not `pytest`.
 
-The repository has no CI marker and no test reads a CI environment variable. The
-established opt-in is a module-level `pytestmark` list combining a category marker
-with a skipif on a `GOBBY_RUN_*` variable, evaluated before fixture setup.
-`tests/packaging/test_installed_wheel_ui_smoke.py` is the canonical example; seven
-other modules follow the same shape.
+The opt-in convention. The repository has no CI marker and no test reads a CI
+environment variable. The established gate is a module-level `pytestmark` list, which
+pytest applies before fixture setup. `tests/packaging/test_installed_wheel_ui_smoke.py`
+lines 22-28 are the canonical example: `pytest.mark.integration` plus a
+`pytest.mark.skipif(os.environ.get("GOBBY_RUN_WHEEL_UI_SMOKE") != "1", reason="set
+GOBBY_RUN_WHEEL_UI_SMOKE=1 to run installed-wheel UI smoke")`. The marker set in
+`pyproject.toml` has `integration`, and `addopts` deselects no marker, so adding the
+marker changes no default selection.
 
-Each such gate is recorded in three places: the variable is exported in the test job
-environment of the CI workflow, a deselect branch is added to the pre-push selection
-arguments, and `test_pre_push_excludes_live_opt_in_tests_by_default` asserts the
-literal variable name and deselect target appear in that script. The registry test
-does not fail on its own when a gate is added, which is exactly why it must be
-updated deliberately.
+Chosen literals:
+- variable `GOBBY_RUN_WHEEL_MANIFEST_PARITY`, set to `"1"` to run;
+- marker `pytest.mark.integration`;
+- skip reason `set GOBBY_RUN_WHEEL_MANIFEST_PARITY=1 to run the sdist-to-wheel manifest parity build`.
 
-Nothing else needs gating and nothing else should be. The Rust schema-catalog test
-compiles only under the postgres feature, off by default, and runs solely from an
-explicit feature-enabled CI step. The definition-hash unit tests in
-`tests/workflows/test_template_hashes.py`, `tests/sync/test_integrity.py` and
-`tests/test_build_backend.py` are unit-marked, run against temporary directories, and
-assert on no committed file. Rules, skills, agents and variables have no committed
-hashes file at all: `TemplateHashCache` hashes them in memory at startup purely to
-detect DB drift. Production tamper detection runs through `verify_bundled_integrity`
-and the startup refusal `dirty_bundled_content_refusal`, neither of which depends on
-a test.
+The skip reason must not go into `PYTEST_FORBIDDEN_SKIP_REASONS` in `pre-push-test.sh`,
+and it matches no entry there. That list is for skips that must never happen.
+
+CI. The `test` job in `.github/workflows/ci.yml` (lines 243-257, approximate) sets job
+`env` with the six `GOBBY_POSTGRES_TEST_*` variables and `GOBBY_TEST_PROTECT: "1"`, and
+runs the whole suite through `uv run pytest --cov=gobby ...`. Add
+`GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"` to that job `env`. The parity test then keeps
+running on both matrix entries, as it does today. In `tests/ci/test_postgres_test_stack.py`,
+`test_ci_test_job_builds_and_runs_local_postgres_test_container` loads that job's `env`
+and asserts `_job_env(env)` equals the Postgres mapping. `_job_env` filters to the six
+Postgres names, so a new variable leaves that assertion intact. Add one assertion to the
+test that `env["GOBBY_RUN_WHEEL_MANIFEST_PARITY"] == "1"`. Without it, nothing stops a
+later edit from quietly dropping CI parity coverage.
+
+Pre-push. The `pre-push-test.sh` selection block (lines 54-85, approximate) builds
+`PYTEST_SELECTION_ARGS`. A whole-module gate uses `--ignore=<module path>`, following the
+`GOBBY_RUN_WHEEL_UI_SMOKE` branch. A single-test gate uses `--deselect=<node id>`. Add a
+branch that applies `--ignore=tests/install/test_bundled_content_manifest.py` unless
+`GOBBY_RUN_WHEEL_MANIFEST_PARITY` is `1`, placed beside the wheel UI smoke branch.
+
+Found work folded in. The same block has an `if [ "${GOBBY_RUN_BUILD_CANARY:-}" != "1" ]`
+branch that deselects `test_real_small_gobby_build_canary`. The module behind that node
+id was deleted by `d8dd689d8d` (#23850, closed 2026-10-21), so the branch deselects
+nothing. `test_pre_push_excludes_live_opt_in_tests_by_default` (line 506) still asserts
+the `GOBBY_RUN_BUILD_CANARY` literal and that node id at lines 519-522. Remove the shell
+branch and both assertions. #23850 is closed and no session owns this.
+
+Registry test. `test_pre_push_excludes_live_opt_in_tests_by_default` reads the script
+text and asserts each opt-in variable name and its selection target are present. It does
+not fail by itself when a gate is added, so update it on purpose. Add assertions for
+`GOBBY_RUN_WHEEL_MANIFEST_PARITY` and for
+`PYTEST_SELECTION_ARGS+=(--ignore=tests/install/test_bundled_content_manifest.py)`.
+
+Nothing else needs gating. The definition-hash unit tests (`tests/workflows/test_template_hashes.py`,
+`tests/sync/test_integrity.py`, `tests/test_build_backend.py`) are unit-marked, run
+against temporary directories, and assert on no committed file. Production tamper
+detection runs through `verify_bundled_integrity` and the startup refusal
+`dirty_bundled_content_refusal`, and depends on no test.
+
+Planned checks, none run yet: the module reports one skip without the variable and one
+pass with it set; `tests/ci/test_postgres_test_stack.py` passes; `bash -n pre-push-test.sh`
+is clean.
 
 **Acceptance:**
 
-- 4.1.1 - The module carries a pytestmark list with a category marker and an opt-in skipif, and the test is skipped without the variable. test: `tests/install/test_bundled_content_manifest.py::test_manifest_membership_matches_wheel`.
-- 4.1.2 - The CI test job exports the opt-in variable alongside the test-protection flag. file: `.github/workflows/ci.yml`.
-- 4.1.3 - The pre-push script deselects the test unless the variable is set. file: `pre-push-test.sh`.
-- 4.1.4 - The opt-in registry test names the new variable and its deselect target. test: `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`.
+- 4.1.1 - The module carries a `pytestmark` list of `pytest.mark.integration` and a skipif on `GOBBY_RUN_WHEEL_MANIFEST_PARITY`, so the test is skipped without the variable and runs with it set to 1. test: `tests/install/test_bundled_content_manifest.py::test_manifest_membership_matches_wheel`.
+- 4.1.2 - The CI test job env exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and the CI-contract test asserts it. test: `tests/ci/test_postgres_test_stack.py::test_ci_test_job_builds_and_runs_local_postgres_test_container`.
+- 4.1.3 - The pre-push selection block ignores the manifest module unless `GOBBY_RUN_WHEEL_MANIFEST_PARITY` is 1. file: `pre-push-test.sh`.
+- 4.1.4 - The opt-in registry test asserts the new variable and its ignore target. test: `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`.
+- 4.1.5 - No `GOBBY_RUN_BUILD_CANARY` branch or build-canary deselect remains in the pre-push script, and the registry test no longer asserts either. file: `pre-push-test.sh`.
 
 ## E1 End-to-end verification
 `kind: verification`
 
-Scoped suites against the isolated test hub, covering every touched module:
-`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_stop_gates_rules.py tests/workflows/test_turn_interrupt_stop_gates.py tests/workflows/test_rule_engine_task_helper_wiring.py tests/workflows/test_block_tools_after_handoff_compact.py tests/workflows/test_handoff_pull_gate.py tests/workflows/test_condition_helpers.py tests/workflows/test_safe_evaluator.py tests/workflows/test_reminder_cadence_rules.py tests/sessions/ tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py -q`.
-Then `uv run ruff format src/`, `uv run ruff check src/ tests/`, `uv run mypy src/`,
-and `bash -n pre-push-test.sh`.
+All commands run against the isolated test hub, from the implementing checkout:
 
-Gating proof: the manifest test reports skipped without the opt-in variable and runs
-green with it set.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_plan_mode_rules.py tests/workflows/test_handoff_pull_gate.py tests/workflows/test_reminder_cadence_rules.py -q`
+  passes.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_bundled_content_manifest.py -rs -q`
+  reports 1 skipped, with the reason naming `GOBBY_RUN_WHEEL_MANIFEST_PARITY`, and starts
+  no `uv build`.
+- The same command with `GOBBY_RUN_WHEEL_MANIFEST_PARITY=1` reports 1 passed. It builds
+  an sdist and a wheel, so expect several minutes.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/ci/test_postgres_test_stack.py -q`
+  passes.
+- `bash -n pre-push-test.sh` is clean, and
+  `gcode grep -F "GOBBY_RUN_BUILD_CANARY" pre-push-test.sh tests/ci -m 5` returns no hits.
+- `uv run ruff format --check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
+  and `uv run ruff check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
+  are clean.
+- `uv run gobby test-types audit tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py --baseline .gobby/test-types-baseline.json --fail-on-new`
+  reports no new findings.
 
-Live, from the main checkout after a merge and an announced daemon restart. Claim a
-task, call set_handoff with clear_session false and end the turn: the turn end is
-allowed with no require-task-close block and the compact lands. On resume the typed
-continuation prompt arrives with no memory index, no review lessons and no skill-load
-directives, and any tool call other than get_handoff is refused, including a skill
-load the agent initiates itself. After the pull, the task is still claimed and
-attempting to stop blocks on require-task-close again. The workflows surface lists no
-installed row for require-epic-tree-close or any auto-task rule, and lists the two new
-rules enabled. Closing the last open child of an epic still auto-closes the ancestor.
-The daemon log carries the suppression pseudo-rule line for the staged turn end.
+Live check for 2.3, from the main checkout after the merge and an announced daemon
+restart: `gobby-workflows:get_rule(name="handle-plan-mode-entry")` shows the
+pending-pull clause in the installed `when`. 4.1 needs no live check.
 
 ## Task Mapping
 `kind: framing`

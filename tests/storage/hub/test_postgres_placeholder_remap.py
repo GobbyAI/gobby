@@ -9,7 +9,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
 from types import ModuleType, SimpleNamespace, UnionType
-from typing import ClassVar
 from uuid import UUID
 
 import pytest
@@ -223,20 +222,9 @@ def test_nested_native_transaction_callbacks_run_on_their_own_commit(
 async def test_interleaved_transactions_own_callbacks_and_lock_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
+
     module = _postgres_module()
-
-    @dataclass(frozen=True)
-    class Lock:
-        PRIORITY: ClassVar[int]
-        name: str
-
-    @dataclass(frozen=True)
-    class OuterLock(Lock):
-        PRIORITY: ClassVar[int] = 20
-
-    @dataclass(frozen=True)
-    class IndependentLock(Lock):
-        PRIORITY: ClassVar[int] = 10
 
     class Connection:
         info = _OPEN_TRANSACTION_INFO
@@ -261,7 +249,7 @@ async def test_interleaved_transactions_own_callbacks_and_lock_order(
     callbacks_run: list[str] = []
 
     async def first_transaction() -> None:
-        with database.transaction_immediate(OuterLock("outer")):
+        with database.transaction_immediate(ExpansionApplyMutation("outer")):
             database.after_commit(lambda: callbacks_run.append("first"))
             first_entered.set()
             await second_committed.wait()
@@ -269,7 +257,7 @@ async def test_interleaved_transactions_own_callbacks_and_lock_order(
 
     async def second_transaction() -> None:
         await first_entered.wait()
-        with database.transaction_immediate(IndependentLock("independent")):
+        with database.transaction_immediate(TaskSeqAllocation("independent")):
             database.after_commit(lambda: callbacks_run.append("second"))
         second_committed.set()
 

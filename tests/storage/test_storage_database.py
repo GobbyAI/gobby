@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass
-from typing import ClassVar
 
 import pytest
 from psycopg.errors import UniqueViolation
@@ -151,15 +149,7 @@ class TestHubDatabase:
         self,
         temp_db: HubDatabase,
     ) -> None:
-        @dataclass(frozen=True)
-        class OuterLock:
-            PRIORITY: ClassVar[int] = 20
-            name: str = "outer"
-
-        @dataclass(frozen=True)
-        class IndependentLock:
-            PRIORITY: ClassVar[int] = 10
-            name: str = "independent"
+        from gobby.storage.hub.protocol import ExpansionApplyMutation, TaskSeqAllocation
 
         first_entered = asyncio.Event()
         second_committed = asyncio.Event()
@@ -167,7 +157,7 @@ class TestHubDatabase:
 
         async def dry_run_like_transaction() -> None:
             with pytest.raises(RuntimeError, match="roll back dry run"):
-                with temp_db.transaction_immediate(OuterLock()) as txn:
+                with temp_db.transaction_immediate(ExpansionApplyMutation("outer")) as txn:
                     txn.after_commit(lambda: callbacks_run.append("dry-run"))
                     first_entered.set()
                     await second_committed.wait()
@@ -176,7 +166,7 @@ class TestHubDatabase:
 
         async def committed_transaction() -> None:
             await first_entered.wait()
-            with temp_db.transaction_immediate(IndependentLock()) as txn:
+            with temp_db.transaction_immediate(TaskSeqAllocation("independent")) as txn:
                 txn.after_commit(lambda: callbacks_run.append("committed"))
             second_committed.set()
 

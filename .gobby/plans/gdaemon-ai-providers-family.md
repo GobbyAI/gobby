@@ -1671,7 +1671,7 @@ and aborted, `start_switch`, `advance_phase`, `record_switch_error`,
 `abort_switch`, `complete_aborted_switch` and `build_physical_names`. The
 journal keys `ai.embeddings.switch_run` and `ai.embeddings.completed_switch`
 live in `config_store` through the internal lifecycle API. Every journal
-mutation takes `pg_advisory_xact_lock(hashtext('gobby.storage.config_mutations.EmbeddingSwitchJournalMutation:EmbeddingSwitchJournalMutation()'))`,
+mutation takes `pg_advisory_xact_lock(hashtext('embedding_switch_journal_mutation'))`,
 the key `src/gobby/storage/hub/postgres_pool.py::advisory_lock_keys` derives
 for `EmbeddingSwitchJournalMutation`, so Python's configuration writers and
 the native switch serialize, and the runtime family's secret delete and value

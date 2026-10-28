@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.commit_graph import CommitGraph
+from gobby.tasks.commit_order import link_by_history
 from gobby.tasks.diff_manifest import ManifestItem, ManifestParser
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
@@ -924,14 +925,15 @@ async def auto_link_commits_async(
                 continue
             try:
                 await assert_auto_link_commit_available(task_manager, task, commit_sha, cwd)
-                task_manager.link_commit(task.id, commit_sha)
+                existing_commits = link_by_history(
+                    task_manager, task.id, commit_sha, existing_commits, history
+                )
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, task_ref, error)
                 result.skipped += 1
                 continue
             result.linked_tasks.setdefault(task_ref, []).append(commit_sha)
             result.total_linked += 1
-            existing_commits.append(commit_sha)
         return result
 
     result = AutoLinkResult()
@@ -968,7 +970,7 @@ async def auto_link_commits_async(
             try:
                 # Link the commit using UUID
                 await assert_auto_link_commit_available(task_manager, task, commit_sha, cwd)
-                task_manager.link_commit(task.id, commit_sha)
+                link_by_history(task_manager, task.id, commit_sha, existing_commits, history)
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, tid, error)
                 result.skipped += 1

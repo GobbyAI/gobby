@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import platform
 import socket
-from dataclasses import dataclass
-from typing import ClassVar
 
 import click
 
@@ -15,17 +13,10 @@ from gobby.identity import (
     normalize_user_name,
     validate_password,
 )
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, IdentityBootstrapMutation
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.users import LocalUserManager, User, UserIdentityStateError
 from gobby.utils.machine_id import require_machine_id
-
-
-@dataclass(frozen=True)
-class IdentityBootstrapMutation:
-    """Serialize the one-time initial identity bootstrap."""
-
-    PRIORITY: ClassVar[int] = 100
 
 
 class InstallIdentityError(RuntimeError):
