@@ -17,6 +17,10 @@ inputs:
     type: string
     required: true
     description: "Provider both seats launch"
+  model:
+    type: string
+    default: "claude-sonnet-5"
+    description: "Model both seats launch; a spawn without one is refused"
   seat_a_title:
     type: string
     required: true
@@ -48,6 +52,7 @@ steps:
       arguments:
         agent: "${{ inputs.seat_a_agent }}"
         provider: "${{ inputs.provider }}"
+        model: "${{ inputs.model }}"
         prompt: "${{ inputs.seat_a_prompt }}"
         placement:
           tab:
@@ -61,6 +66,7 @@ steps:
       arguments:
         agent: "${{ inputs.seat_b_agent }}"
         provider: "${{ inputs.provider }}"
+        model: "${{ inputs.model }}"
         prompt: "${{ inputs.seat_b_prompt }}"
         placement:
           split:

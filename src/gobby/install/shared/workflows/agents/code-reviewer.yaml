@@ -36,7 +36,7 @@ prompts:
     - Send anything that needs its own task to Triage with the failing command, diagnostics, paths and impact.
 
     ## Sandbox
-    The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write temp files under $TMPDIR, never a literal /tmp path. For stall diagnosis run bare `ps -axo pid,ppid,etime,comm`, which resolves to the sandbox-safe shim; never list command arguments or environment.
+    The sandbox denies writes to /tmp, ps argument listing, and an explicit /bin/ps path. Write scratch files under your agent workspace folder (named in your Agent Workspace section), never under /tmp, $TMPDIR or a provider scratchpad. For stall diagnosis run bare `ps -axo pid,ppid,etime,comm`, which resolves to the sandbox-safe shim; never list command arguments or environment.
 
     ## Continuity
     Continuity: compact in place after each verdict. Once the unit's last line is sent, or under context pressure mid-review, hand off with `gobby-sessions:set_handoff` without `clear_session`. The session compacts and continues.

@@ -3,14 +3,21 @@ tags: [roles, seat, enforcement, gobby, default]
 # Josh, 2026-10-27 (#25226): only the Dev Manager and the Orchestrator close tasks. Every
 # other seat, spawned agent and persona overlay is refused; the operator's own unseated
 # terminal stays open. A preview only computes the gates, so every seat may send one.
+# A researcher may close its own research spike as done (#25238); the MCP close checks the rest.
+# Josh, 2026-10-27 (#25235): the Consolidator applies Orchestrator-directed folds, so it
+# may close only as moot or superseded; the close-authority guard refuses the rest.
 rules:
   seat-no-task-close:
-    description: "Only the Dev Manager and the Orchestrator close tasks; every other seat and persona overlay is refused, and close_task preview stays open"
+    description: "Only the Dev Manager, the Orchestrator, a researcher closing its own spike as done, and the Consolidator closing only as moot or superseded close tasks; every other seat and persona overlay is refused, and close_task preview stays open"
     event: before_tool
     enabled: true
     priority: 10
     when: >
       variables.get('_agent_type') not in ['dev-manager', 'orchestrator']
+      and not (variables.get('_agent_type') == 'researcher'
+        and ((tool_input.get('arguments') or tool_input) or {}).get('reason') in [None, '', 'done'])
+      and not (variables.get('_agent_type') == 'consolidator'
+        and ((tool_input.get('arguments') or tool_input) or {}).get('reason') in ['moot', 'superseded'])
       and (variables.get('is_spawned_agent') or variables.get('_persona_name')
         or (variables.get('_agent_type') or 'default') != 'default')
       and not ((tool_input.get('arguments') or tool_input) or {}).get('preview')
@@ -18,7 +25,9 @@ rules:
       - type: block
         mcp_tools: ["gobby-tasks:close_task"]
         reason: >-
-          Only the Dev Manager and the Orchestrator close tasks. Your seat hands its work
-          to the Dev Manager: send a CANDIDATE with the linked commit and the tests you
-          ran, or a DISPOSITION for a task with no work. Check gates first with
-          close_task(preview=true).
+          Only the Dev Manager and the Orchestrator close tasks. A researcher closes only
+          its own research spike, as done, after the Orchestrator's review of its report SHA.
+          The Consolidator closes a task only as moot or superseded, when the Orchestrator
+          directs an approved fold or retirement. Your seat hands its work to the Dev Manager:
+          send a CANDIDATE with the linked commit and the tests you ran, or a DISPOSITION for a
+          task with no work. Check gates first with close_task(preview=true).

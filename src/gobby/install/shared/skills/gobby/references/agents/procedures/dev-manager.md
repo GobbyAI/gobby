@@ -24,7 +24,8 @@ Each task's reviewer comes from its category. Find the row that matches, and lau
 | code, config, refactor, test | `code-reviewer` |
 | docs, subject is code behavior | `code-reviewer` |
 | docs, any other subject | `docs-reviewer` |
-| research | `research-reviewer` |
+| research, a researcher's report spike | none: the Orchestrator reviews the report SHA |
+| research, other | `research-reviewer` |
 
 A docs task's subject is code behavior when checking it requires reading source. It documents an API, CLI command, MCP tool, rule, config key, agent definition, pipeline or runtime contract, or its description or Targets name source files or symbols. Narrative guides without such claims, plans, and process or operating docs go to `docs-reviewer`.
 
