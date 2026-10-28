@@ -621,7 +621,7 @@ def _row(db: HubDatabase, sql: str, key: str) -> dict[str, Any] | None:
 def _run(db: HubDatabase, run_id: str) -> dict[str, Any] | None:
     return _row(
         db,
-        "SELECT id, status, started_at, terminal_id, agent_name, parent_session_id "
+        "SELECT id, status, error, started_at, terminal_id, agent_name, parent_session_id "
         "FROM agent_runs WHERE id = %s",
         run_id,
     )
@@ -1311,7 +1311,7 @@ def _steward_run(live: Live, execution_id: str) -> dict[str, Any]:
         return run
 
     return _until(
-        started,
+        _steward_watch(live, run_id, started),
         240,
         f"the {STEWARD_SEAT} run to start",
         lambda: _diagnosis(live, _steps(_execution(live, execution_id))),
@@ -1332,6 +1332,31 @@ def _reply_waits(db: HubDatabase, owner: str) -> list[dict[str, Any]]:
 def _registered_waits(db: HubDatabase, owner: str, count: int) -> list[dict[str, Any]] | None:
     waits = _reply_waits(db, owner)
     return waits if len(waits) >= count else None
+
+
+def _steward_watch[T](
+    live: Live, run_id: str, probe: Callable[[], T | None]
+) -> Callable[[], T | None]:
+    """Wrap ``probe`` so a steward run that ends before the probe holds fails at once.
+
+    A seat whose Codex exits during startup goes terminal within seconds; waiting out the
+    probe's timeout would bury that under an unrelated wait failure. The run's error and the
+    daemon logs go into the failure message.
+    """
+
+    def watched() -> T | None:
+        value = probe()
+        if value:
+            return value
+        run = _run(live.db, run_id)
+        if run is not None and run["status"] not in ACTIVE_RUNS:
+            raise AssertionError(
+                f"the {STEWARD_SEAT} run ended as {run['status']} before the probe held: "
+                f"{_diagnosis(live, run)}"
+            )
+        return None
+
+    return watched
 
 
 def _timed_out_waits(db: HubDatabase, owner: str, index: int) -> list[dict[str, Any]] | None:
@@ -1356,9 +1381,13 @@ def _evidence_dir(tmp_path: Path) -> Path:
     return Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
 
 
+def _rollouts(home: Path) -> list[Path]:
+    return sorted((home / ".codex" / "sessions").glob("**/rollout-*.jsonl"))
+
+
 def _codex_rollout(home: Path) -> Path:
     """The steward's Codex rollout: the only one in the isolated home, reached through ~/.codex."""
-    matches = sorted((home / ".codex" / "sessions").glob("**/rollout-*.jsonl"))
+    matches = _rollouts(home)
     assert len(matches) == 1, matches
     return matches[0]
 
@@ -1377,8 +1406,19 @@ def _codex_calls(rollout: Path) -> list[str]:
 
 
 def _preserve_rollout(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:
-    """Copy the steward's rollout into the evidence directory and count its tool calls."""
-    rollout = _codex_rollout(home)
+    """Copy the steward's rollout into the evidence directory and count its tool calls.
+
+    A seat that exits before Codex writes a rollout has nothing to copy. The record says so
+    instead of raising, so teardown cannot replace the seat's own failure.
+    """
+    matches = _rollouts(home)
+    if len(matches) != 1:
+        return {
+            "missing": True,
+            "searched": str(home / ".codex" / "sessions"),
+            "matches": len(matches),
+        }
+    rollout = matches[0]
     calls = _codex_calls(rollout)
     copy = evidence_dir / f"{test_name}.codex-rollout.jsonl"
     copy.parent.mkdir(parents=True, exist_ok=True)
@@ -1417,10 +1457,14 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
     run = _steward_run(live, execution)
     assert run["agent_name"] == STEWARD_SEAT, run
     live.evidence["recovery_steward"] = {"execution": execution, "run": str(run["id"])}
+    run_id = str(run["id"])
 
     explain = partial(_patrol_state, live, owner)
     waits = _until(
-        partial(_registered_waits, live.db, owner, 1), 900, "the first reply wait", explain
+        _steward_watch(live, run_id, partial(_registered_waits, live.db, owner, 1)),
+        900,
+        "the first reply wait",
+        explain,
     )
     first = waits[0]
     assert first["condition_key"] == "[null,null]", first
@@ -1430,7 +1474,7 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
 
     for index in range(STEWARD_TIMEOUT_PATROLS):
         waits = _until(
-            partial(_timed_out_waits, live.db, owner, index),
+            _steward_watch(live, run_id, partial(_timed_out_waits, live.db, owner, index)),
             STEWARD_CADENCE_SECONDS + 300,
             f"reply wait {index + 1} to time out and be delivered",
             explain,
@@ -1440,7 +1484,7 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
         gap = (timed["delivered_at"] - timed["created_at"]).total_seconds()
         assert abs(gap - STEWARD_CADENCE_SECONDS) <= STEWARD_TOLERANCE_SECONDS, timed
         waits = _until(
-            partial(_registered_waits, live.db, owner, index + 2),
+            _steward_watch(live, run_id, partial(_registered_waits, live.db, owner, index + 2)),
             600,
             f"the steward's patrol {index + 2} to re-arm its wait",
             explain,
