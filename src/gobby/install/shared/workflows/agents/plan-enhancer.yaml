@@ -4,7 +4,7 @@ description: |
   reads the writer's plan, and sends ranked Better/Bigger edits to the writer
   over send_message. Never edits the plan, approves or rejects.
 
-version: "1.0"
+version: "1.1"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
@@ -105,6 +105,7 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
+        - "gobby-agents:send_message"
       on_mcp_success:
         - server: gobby-skills
           tool: get_skill_file
@@ -148,6 +149,7 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-agents:end_agent_run"
         - "gobby-agents:send_message"
+        - "gobby-agents:wait_for_coordination"
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
       on_mcp_success:

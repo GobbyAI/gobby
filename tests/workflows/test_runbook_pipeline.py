@@ -79,7 +79,8 @@ class RunbookAgentsProxy:
                 "workspace_id": "ws-1",
                 "tab_title": TAB_TITLE,
             }
-        if tool == "rebalance_tab":
+        # Non-spawn tools (rebalance, task lookups, messages) succeed without a spawn payload.
+        if tool != "spawn_agent":
             return {"success": True}
         if arguments["agent"] in self.fail_agents:
             return {"success": False, "error": "spawn refused"}
@@ -165,7 +166,15 @@ async def test_runbook_syncs_bundled_and_tagged(temp_db: HubDatabase) -> None:
         "plan_enhancer_reasoning_effort",
     }
     steps = {step.id: step for step in pipeline.steps}
-    assert list(steps) == ["guard", *SEATS, "arrange"]
+    assert list(steps) == [
+        "guard",
+        "target",
+        "planning-children",
+        "planning-child",
+        *SEATS,
+        "notify-writer",
+        "arrange",
+    ]
     guard = steps["guard"].mcp
     assert guard is not None
     assert (guard.server, guard.tool) == ("gobby-agents", "check_runbook_seats")
@@ -190,12 +199,14 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
     assert guard["requested"] == SEATS_INPUT
     assert [seat["agent"] for seat in guard["catalogue"]] == list(SEATS)
     writer, adversary, enhancer = full.spawns()
+    # Fake pane and run ids follow call position: guard, target, planning-children and
+    # planning-child precede the writer's spawn, which is call five.
     assert writer["placement"] == {"tab": {"workspace": "ws-1", "title": TAB_TITLE}}
     assert adversary["placement"] == {
-        "split": {"pane": "pane-2", "axis": "right", "title": "Plan Adversary"}
+        "split": {"pane": "pane-5", "axis": "right", "title": "Plan Adversary"}
     }
     assert enhancer["placement"] == {
-        "split": {"pane": "pane-2", "axis": "right", "title": "Plan Enhancer"}
+        "split": {"pane": "pane-5", "axis": "right", "title": "Plan Enhancer"}
     }
     for spawn, agent in zip((writer, adversary, enhancer), SEATS, strict=True):
         assert spawn["reserved_run_id"] == step_invocation_id(deployed.id, agent)
@@ -209,7 +220,7 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
         for step in manager.get_steps_for_execution(_latest_execution_id(temp_db))
     }
     assert steps["plan-writer"].status == StepStatus.COMPLETED
-    assert json.loads(steps["plan-writer"].output_json or "null")["run_id"] == "run-2"
+    assert json.loads(steps["plan-writer"].output_json or "null")["run_id"] == "run-5"
     assert steps["plan-adversary"].status == StepStatus.FAILED
 
     relaunch = RunbookAgentsProxy()
@@ -471,9 +482,11 @@ async def test_restart_reruns_on_same_child(
     finished = manager.get_execution(execution_id)
     assert finished is not None
     assert finished.status == ExecutionStatus.COMPLETED
-    # The arrange step tiles the tab once the resumed seats have launched.
+    # The writer's adversary/enhancer notice runs once the resumed seats have launched; the
+    # arrange step tiles the tab after that. Planning-child steps completed before the restart.
     assert [call["tool"] for call in after.calls] == [
         *["gobby-agents:spawn_agent"] * len(resumed_agents),
+        "gobby-agents:send_message",
         "gobby-workspaces:rebalance_tab",
     ]
     assert [spawn["agent"] for spawn in after.spawns()] == resumed_agents
@@ -483,7 +496,10 @@ async def test_restart_reruns_on_same_child(
     writer = {step.step_id: step for step in manager.get_steps_for_execution(execution_id)}[
         "plan-writer"
     ]
-    expected_writer_run = "run-1" if interrupt_agent == "plan-writer" else "run-2"
+    # Run ids follow call position. A writer interrupted at its spawn reruns as the resumed run's
+    # first call; otherwise it keeps the first attempt's run, which is call five behind the
+    # guard, target, planning-children and planning-child steps.
+    expected_writer_run = "run-1" if interrupt_agent == "plan-writer" else "run-5"
     assert json.loads(writer.output_json or "null")["run_id"] == expected_writer_run
 
 

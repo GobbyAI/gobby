@@ -127,9 +127,10 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 TaskToolErrorCode.TASK_CLOSED,
             )
 
-        # A descendant of an active epic team is claimed by that team's seats only.
+        # A descendant of an active epic team is claimed by that team's seats only. A planning
+        # child is exempt, so the plan writer seat the team-planning runbook launches can claim it.
         epic_team = epic_team_above(ctx.task_manager.db, resolved_id)
-        if epic_team is not None:
+        if epic_team is not None and task.category != "planning":
             seat = seat_team(ctx.task_manager.db, resolved_session_id)
             if seat is None or seat.team_id != epic_team.team_id:
                 return task_error(

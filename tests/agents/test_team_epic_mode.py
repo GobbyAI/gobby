@@ -53,7 +53,12 @@ def tree_id_of(binding: TeamBinding) -> str:
 
 
 def new_task(
-    world: TeamWorld, title: str, *, parent: Task | None = None, epic: bool = False
+    world: TeamWorld,
+    title: str,
+    *,
+    parent: Task | None = None,
+    epic: bool = False,
+    category: str | None = None,
 ) -> Task:
     """An unclaimed task, so no outside claim stands in the way of admission."""
     return LocalTaskManager(world.case.db).create_task(
@@ -62,6 +67,7 @@ def new_task(
         parent_task_id=None if parent is None else parent.id,
         created_in_session_id=world.case.creator,
         task_type="epic" if epic else "task",
+        category=category,
         validation_criteria=None if epic else "The leaf works.",
     )
 
@@ -193,6 +199,32 @@ async def test_descendant_claims_scoped_to_team(world: TeamWorld) -> None:
     unrelated = new_task(world, "Unrelated task")
     reply = await claim(outsider, unrelated)
     assert reply.get("success") is True, reply
+
+
+@pytest.mark.asyncio
+async def test_planning_child_of_epic_is_claimable_by_non_team_session(world: TeamWorld) -> None:
+    """A planning-category child under a live epic team is claimable by a plan writer seat."""
+    tasks = LocalTaskManager(world.case.db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    await world.admit(world.child(epic), epic)
+    # The runbook creates the planning child after the team is live, under the team's leaf.
+    planning = new_task(world, "Plan the leaf", parent=leaf, category="planning")
+    writer = world.case.session("plan-writer", parent=world.case.creator)
+
+    async def claim(session_id: str, task: Task) -> dict[str, Any]:
+        with session_context_for_test(session_id):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": task.id}))
+
+    reply = await claim(writer, planning)
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(planning.id).claimed_by_session_id == writer
+
+    # Code leaves under the same epic keep the team-only claim scope.
+    reply = await claim(writer, leaf)
+    assert reply.get("success") is not True, reply
+    assert tasks.get_task(leaf.id).claimed_by_session_id is None
 
 
 @pytest.mark.asyncio

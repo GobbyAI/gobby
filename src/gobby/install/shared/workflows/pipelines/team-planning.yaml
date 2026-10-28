@@ -1,6 +1,6 @@
 name: team-planning
 type: pipeline
-version: "1.0"
+version: "1.1"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
   'Team Planning - #<task>' tab in the shared checkout. Each seat runs its own agent definition, and
@@ -13,6 +13,8 @@ description: |
   plan writer splits from seat_pane when one is supplied and otherwise opens its own tab.
   Relaunch missing seats with a fresh run that names them in `seats`; a failed runbook
   execution is never resumed. Supply seat_pane to add seats to an existing tab across runs.
+  Planning child: the run reuses the task's open planning child or creates one, and the plan
+  writer claims it before writing the plan file.
 tags: [runbook]
 resume_on_restart: true
 
@@ -101,6 +103,35 @@ steps:
             title: Plan Enhancer
             agent: plan-enhancer
 
+  - id: target
+    mcp:
+      server: gobby-tasks
+      tool: get_task
+      arguments:
+        task_id: "${{ inputs.task }}"
+
+  # The plan writer's planning task is the open planning child of the run's task. The run reuses
+  # one when it exists and creates one otherwise; the plan writer claims it before writing.
+  - id: planning-children
+    condition: "${{ 'plan-writer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-tasks
+      tool: list_tasks
+      arguments:
+        parent_task_id: "${{ inputs.task }}"
+        closed: false
+
+  - id: planning-child
+    condition: "${{ 'plan-writer' in inputs.seats.split(',') and not [t for t in steps['planning-children'].output.get('tasks', []) if t.get('category') == 'planning'] }}"
+    mcp:
+      server: gobby-tasks
+      tool: create_task
+      arguments:
+        title: "${{ 'Plan ' + (steps['target'].output.get('title') or inputs.task) }}"
+        parent_task_id: "${{ inputs.task }}"
+        category: planning
+        validation_criteria: "The plan file is decision-complete, passes gobby plans validate, and carries its consensus and manifest stamps."
+
   - id: plan-writer
     condition: "${{ 'plan-writer' in inputs.seats.split(',') }}"
     mcp:
@@ -115,7 +146,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan writer seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan writer seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ '.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md' }}, and your planning task is ${{ steps['planning-child'].output.get('ref') if 'planning-child' in steps and steps['planning-child'].output else ((steps['planning-children'].output.get('tasks', []) if 'planning-children' in steps and steps['planning-children'].output else []) | selectattr('category', 'equalto', 'planning') | first | default({})).get('ref') }}. Claim that planning task with claim_task before you write the plan file. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane,
           'axis': 'right', 'title': 'Plan Writer'}}
@@ -138,7 +169,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan adversary seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan adversary seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ '.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md' }}. ${{ ('Your Plan Writer is session ' ~ steps['plan-writer'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-writer'].output.get('child_session_id') ~ '\").') if 'plan-writer' in inputs.seats.split(',') else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref),
           'axis': 'right', 'title': 'Plan Adversary'}}
@@ -161,7 +192,7 @@ steps:
         checkout_mode: none
         project_path: "${{ inputs.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the plan enhancer seat. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the plan enhancer seat for task ${{ inputs.task }} (${{ steps['target'].output.get('title') or inputs.task }}). Your plan file is ${{ '.gobby/plans/task-' + (inputs.task | replace('#', '')) + '.md' }}. ${{ ('Your Plan Writer is session ' ~ steps['plan-writer'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-writer'].output.get('child_session_id') ~ '\").') if 'plan-writer' in inputs.seats.split(',') else '' }} ${{ ('Your Plan Adversary is session ' ~ steps['plan-adversary'].output.get('child_session_id') ~ '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' ~ steps['plan-adversary'].output.get('child_session_id') ~ '\").') if 'plan-adversary' in inputs.seats.split(',') else '' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). With no assigned work, wait_for_coordination(owner_session=\"${{ inputs.report_to }}\", reply=true). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'pane': inputs.seat_pane or (steps['plan-writer'].output.pane_ref
           if 'plan-writer' in inputs.seats.split(',') else steps['plan-adversary'].output.pane_ref),
@@ -171,6 +202,17 @@ steps:
           else {'split': {'workspace': inputs.workspace, 'tab_title': steps.guard.output.tab_title,
           'axis': 'right', 'title': 'Plan Enhancer'}} if steps.guard.output.tab_exists
           else {'tab': {'workspace': inputs.workspace, 'title': steps.guard.output.tab_title}} }}
+
+  # The plan writer learns the later seats' session refs without operator relay.
+  - id: notify-writer
+    condition: "${{ 'plan-writer' in inputs.seats.split(',') and ('plan-adversary' in inputs.seats.split(',') or 'plan-enhancer' in inputs.seats.split(',')) }}"
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ steps['plan-writer'].output.get('child_session_id') }}"
+        content: "Your teammates for task ${{ inputs.task }} are live. ${{ ('Plan Adversary: session ' ~ steps['plan-adversary'].output.get('child_session_id') ~ '.') if 'plan-adversary' in inputs.seats.split(',') else '' }} ${{ ('Plan Enhancer: session ' ~ steps['plan-enhancer'].output.get('child_session_id') ~ '.') if 'plan-enhancer' in inputs.seats.split(',') else '' }} Send them your edits and findings with gobby-agents:send_message(target=\"session\", target_id=<their session>)."
 
   # Tiles the tab the launched seats joined, by the tab_ref their placement returned. A supplied
   # seat_pane can sit in a tab with any title, so the tab is named by ref, not by title. When no
