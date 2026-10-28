@@ -33,6 +33,7 @@ from gobby.storage.managed_credential_types import (
     REVOCATION_POLL_SECONDS,
     CredentialAuthorizationError,
     CredentialIssuanceError,
+    CredentialRotationLostRaceError,
     GrantRevocationSink,
     InteractiveCredential,
     MaintenanceCredential,
@@ -449,7 +450,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             expires_at=normalized_expiry,
         )
         if credential is None:
-            raise CredentialIssuanceError("managed credential rotation lost binding race")
+            raise CredentialRotationLostRaceError("managed credential rotation lost binding race")
         return credential
 
     def reuse_current_during_drain(

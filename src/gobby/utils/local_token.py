@@ -232,6 +232,39 @@ def classify_agent_api_token(
     (including missing integer ``iat``/``exp`` claims), and ``capability_expired``
     a verified capability at or past its expiry.
     """
+    claims = _verify_capability_claims(token, signing_key)
+    if isinstance(claims, AgentApiTokenClaims) and time.time() >= claims.exp:
+        logger.warning(
+            "Managed capability rejected code=capability_expired iat=%d exp=%d now=%d",
+            claims.iat,
+            claims.exp,
+            int(time.time()),
+        )
+        return "capability_expired"
+    return claims
+
+
+def verify_expired_agent_api_token(
+    token: str,
+    signing_key: bytes | None,
+) -> AgentApiTokenClaims | None:
+    """Claims of a verified capability at or past its expiry, or None otherwise.
+
+    Only the handshake's renewal seam reads this. A signature that verifies and an
+    expiry that has passed establish the claims' provenance; the caller must still
+    bind them to a live run before trusting them.
+    """
+    claims = _verify_capability_claims(token, signing_key)
+    if isinstance(claims, AgentApiTokenClaims) and time.time() >= claims.exp:
+        return claims
+    return None
+
+
+def _verify_capability_claims(
+    token: str,
+    signing_key: bytes | None,
+) -> AgentApiTokenClaims | AgentApiTokenRejection:
+    """Verify a capability's signature and claims, ignoring its expiry."""
     parts = token.split(".", maxsplit=2)
     if len(parts) != 3 or parts[0] != _AGENT_TOKEN_VERSION:
         return "invalid_token"
@@ -270,15 +303,6 @@ def classify_agent_api_token(
     assert isinstance(machine_id, str)
     assert isinstance(iat, int)
     assert isinstance(exp, int)
-    now = time.time()
-    if now >= exp:
-        logger.warning(
-            "Managed capability rejected code=capability_expired iat=%d exp=%d now=%d",
-            iat,
-            exp,
-            int(now),
-        )
-        return "capability_expired"
     kind = raw.get("kind")
     if kind is not None and (not isinstance(kind, str) or not kind):
         return "capability_invalid"
