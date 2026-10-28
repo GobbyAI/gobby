@@ -36,6 +36,7 @@ import pytest
 import tests.e2e.conftest as e2e_fixtures
 from gobby.agents.sync import sync_bundled_agents
 from gobby.agents.trust import seed_cli_trust
+from gobby.cli.installers.codex import install_codex
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.definitions import AgentDefinitionManager, PipelineDefinitionManager
 from gobby.storage.definitions._shared import decode_json_object
@@ -1306,6 +1307,34 @@ def _link_codex_auth(home: Path) -> None:
     (home / ".codex").symlink_to(providers / "codex", target_is_directory=True)
 
 
+def _install_codex_hooks(home: Path, project: Path) -> dict[str, Any]:
+    """Install Gobby's Codex hooks into the isolated home with production's installer.
+
+    The installer names the ghook it resolves first: the home's bin, where the rig staged it.
+    Its writes land in the isolated home and a scratch project only.
+    """
+    project.mkdir(exist_ok=True)
+    overrides = {"HOME": str(home), "GOBBY_HOME": str(home), NATIVE_BIN_DIR_ENV: str(home / "bin")}
+    with mock.patch.dict(os.environ, overrides):
+        result = install_codex(project)
+    assert result["success"], result
+    return {key: result[key] for key in ("success", "hooks_installed", "config_updated")}
+
+
+def _hook_registered(db: HubDatabase, evidence: dict[str, Any]) -> dict[str, str]:
+    """The steward's child session once a Codex hook has replaced its Gobby id as external_id.
+
+    A pre-created child carries its Gobby id as external_id until SessionStart registers the
+    provider's id, so an unchanged external_id means no hook reached the daemon.
+    """
+    session = _steward_session(db, evidence)
+    assert session is not None, "the steward's run bound no child session"
+    row = _row(db, "SELECT id, external_id FROM sessions WHERE id = %s", session)
+    assert row is not None, session
+    assert row["external_id"] and str(row["external_id"]) != str(row["id"]), row
+    return {"id": str(row["id"]), "external_id": str(row["external_id"])}
+
+
 def _trust_codex_checkout(home: Path, checkout: Path) -> dict[str, Any]:
     """Seed the steward checkout's codex trust through production's seeder, in the isolated home.
 
@@ -1432,17 +1461,20 @@ def _grant_files(home: Path) -> list[str]:
     return sorted(path.relative_to(home).as_posix() for path in home.rglob("grant.json"))
 
 
-def _stage_gmcp(home: Path, native_bin: Path) -> dict[str, str]:
-    """Copy the installed gmcp into the home's bin, where the steward's gobby MCP entry points.
+def _stage_home_bin(home: Path, native_bin: Path, names: tuple[str, ...]) -> dict[str, str]:
+    """Copy installed native binaries into the home's bin, where the steward's config points.
 
-    The entry's command is ``<GOBBY_HOME>/bin/gmcp``. Returns the staged copy's hash, recorded
-    with the other native binaries.
+    gmcp is the steward's gobby MCP command, and ghook is the hook command the Codex install
+    writes. Returns each staged copy's hash, recorded with the other native binaries.
     """
-    name = native_bin_name("gmcp")
-    staged = home / "bin" / name
-    staged.parent.mkdir(exist_ok=True)
-    shutil.copy2(native_bin / name, staged)
-    return {"gmcp": sha256_file(staged)}
+    staged_dir = home / "bin"
+    staged_dir.mkdir(exist_ok=True)
+    hashes: dict[str, str] = {}
+    for name in names:
+        staged = staged_dir / native_bin_name(name)
+        shutil.copy2(native_bin / native_bin_name(name), staged)
+        hashes[name] = sha256_file(staged)
+    return hashes
 
 
 @pytest.fixture
@@ -1498,7 +1530,7 @@ def steward_rig(
         binaries = {
             name: sha256_file(native_bin / native_bin_name(name)) for name in ("gdaemon", "gterm")
         }
-        binaries.update(_stage_gmcp(home, native_bin))
+        binaries.update(_stage_home_bin(home, native_bin, ("gmcp", "ghook")))
         with fixture_host(native_bin / native_bin_name("gterm"), socket_dir, env) as host:
             yield Rig(barrier, {}, {}, path, host, srt, binaries)
 
@@ -1584,6 +1616,7 @@ def steward_live(
     )
     try:
         _link_codex_auth(home)
+        state.evidence["codex_hooks"] = _install_codex_hooks(home, tmp_path / "codex-project")
         state.evidence["codex_trust"] = _trust_codex_checkout(home, checkout)
         # Before any seat spawns: the config Codex reads, as the rig seeded it.
         before = _snapshot_codex_config(home, evidence_dir, request.node.name, "before")
@@ -1936,6 +1969,8 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
     armed = (first["expires_at"] - first["created_at"]).total_seconds()
     assert abs(armed - STEWARD_CADENCE_SECONDS) <= 2, first
     waiter = first["waiter_session_id"]
+    # Minute one: the child must have a Codex hook registration, or the daemon kills it at 600s.
+    live.evidence["recovery_steward"]["child"] = _hook_registered(live.db, live.evidence)
 
     for index in range(STEWARD_TIMEOUT_PATROLS):
         waits = _until(

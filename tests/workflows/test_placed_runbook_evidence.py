@@ -20,10 +20,12 @@ from tests.workflows.test_placed_runbook_live import (
     Live,
     _grant_files,
     _has_terminal_text,
+    _hook_registered,
+    _install_codex_hooks,
     _kept,
     _LiveOutputPoller,
     _preserve_steward_screen,
-    _stage_gmcp,
+    _stage_home_bin,
     _steward_session,
     _with_codex_debug_log,
 )
@@ -192,6 +194,19 @@ class _FakeHub:
         return self.row
 
 
+class _RunHub:
+    """Answers the steward run's child binding, and the child's session row."""
+
+    def __init__(self, child: str, *, external_id: str) -> None:
+        self.child = child
+        self.external_id = external_id
+
+    def fetchone(self, sql: str, params: tuple[Any, ...]) -> dict[str, Any]:
+        if "agent_runs" in sql:
+            return {"child_session_id": self.child}
+        return {"id": self.child, "external_id": self.external_id}
+
+
 def test_the_steward_session_is_known_once_its_run_binds_a_child() -> None:
     evidence = {"recovery_steward": {"run": "run-9"}}
     unbound = cast(HubDatabase, _FakeHub({"child_session_id": None}))
@@ -209,28 +224,62 @@ def test_grant_files_are_listed_by_path_and_their_contents_are_not_read(tmp_path
     assert _grant_files(tmp_path) == ["runs/a/grant.json"]
 
 
-def test_gmcp_is_staged_into_the_home_bin_and_its_hash_is_recorded(tmp_path: Path) -> None:
+def _installed(native: Path, name: str, content: bytes) -> None:
+    native.mkdir(exist_ok=True)
+    binary = native / native_bin_name(name)
+    binary.write_bytes(content)
+    binary.chmod(0o755)
+
+
+def test_gmcp_and_ghook_are_staged_into_the_home_bin_with_their_hashes(tmp_path: Path) -> None:
     native = tmp_path / "native"
-    native.mkdir()
-    installed = native / native_bin_name("gmcp")
-    installed.write_bytes(b"gmcp-build")
-    installed.chmod(0o755)
+    _installed(native, "gmcp", b"gmcp-build")
+    _installed(native, "ghook", b"ghook-build")
     home = tmp_path / "home"
     home.mkdir()
 
-    recorded = _stage_gmcp(home, native)
+    recorded = _stage_home_bin(home, native, ("gmcp", "ghook"))
 
-    staged = home / "bin" / native_bin_name("gmcp")
-    assert staged.read_bytes() == b"gmcp-build"
-    assert os.access(staged, os.X_OK)
-    assert recorded == {"gmcp": hashlib.sha256(b"gmcp-build").hexdigest()}
+    for name, content in (("gmcp", b"gmcp-build"), ("ghook", b"ghook-build")):
+        staged = home / "bin" / native_bin_name(name)
+        assert staged.read_bytes() == content
+        assert os.access(staged, os.X_OK)
+        assert recorded[name] == hashlib.sha256(content).hexdigest()
 
 
-def test_staging_refuses_a_native_set_without_gmcp(tmp_path: Path) -> None:
+def test_staging_refuses_a_native_set_missing_one_of_the_binaries(tmp_path: Path) -> None:
     native = tmp_path / "native"
-    native.mkdir()
+    _installed(native, "gmcp", b"gmcp-build")
     home = tmp_path / "home"
     home.mkdir()
 
     with pytest.raises(FileNotFoundError):
-        _stage_gmcp(home, native)
+        _stage_home_bin(home, native, ("gmcp", "ghook"))
+
+
+def test_codex_hooks_install_into_the_home_and_name_the_staged_ghook(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    _installed(home / "bin", "ghook", b"ghook-build")
+
+    installed = _install_codex_hooks(home, tmp_path / "project")
+
+    assert installed["success"] is True
+    hooks = (home / ".codex" / "hooks.json").read_text(encoding="utf-8")
+    assert str(home / "bin" / native_bin_name("ghook")) in hooks
+    assert "SessionStart" in hooks
+
+
+def test_the_steward_child_counts_as_registered_only_once_its_external_id_changes() -> None:
+    evidence = {"recovery_steward": {"run": "run-9"}}
+    registered = cast(HubDatabase, _RunHub("child-9", external_id="codex-thread-9"))
+    unregistered = cast(HubDatabase, _RunHub("child-9", external_id="child-9"))
+
+    assert _hook_registered(registered, evidence) == {
+        "id": "child-9",
+        "external_id": "codex-thread-9",
+    }
+    with pytest.raises(AssertionError):
+        _hook_registered(unregistered, evidence)
+    with pytest.raises(AssertionError):
+        _hook_registered(registered, {})
