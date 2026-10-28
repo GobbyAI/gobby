@@ -146,6 +146,8 @@ STEWARD_TIMEOUT_PATROLS = 2
 CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 # Codex state kept for diagnosis of a seat that dies at startup. The auth file is never listed.
 CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
+# Pages of a run's stored capture kept as evidence; the bound stops a runaway offset loop.
+_CAPTURE_PAGE_LIMIT = 200
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1463,31 +1465,39 @@ def steward_live(
         cleanup: dict[str, Any] = {}
         state.evidence["cleanup"] = cleanup
         try:
+            # Each copy is kept on its own: one failed copy is recorded and the rest still run.
             # Captured before teardown closes the steward terminal and removes its run state.
-            state.evidence["steward_screen"] = _preserve_steward_screen(
-                state, evidence_dir, request.node.name
+            state.evidence["steward_screen"] = _kept(
+                lambda: _preserve_steward_screen(state, evidence_dir, request.node.name)
             )
-            state.evidence["srt_network"] = _preserve_srt_network(
-                home, evidence_dir, request.node.name
+            state.evidence["srt_network"] = _kept(
+                lambda: _preserve_srt_network(home, evidence_dir, request.node.name)
             )
-            state.evidence["codex_state"] = _preserve_codex_state(
-                home, evidence_dir, request.node.name
+            state.evidence["codex_state"] = _kept(
+                lambda: _preserve_codex_state(home, evidence_dir, request.node.name)
             )
             # Copied before teardown, so a failed run keeps its transcript as well.
-            state.evidence["codex_rollout"] = _preserve_rollout(
-                home, evidence_dir, request.node.name
+            state.evidence["codex_rollout"] = _kept(
+                lambda: _preserve_rollout(home, evidence_dir, request.node.name)
             )
-            state.evidence["daemon_logs"] = _preserve_logs(home, evidence_dir, request.node.name)
-            state.evidence["codex_log"] = _preserve_tree(
-                home / "providers" / "codex" / "log",
-                evidence_dir / f"{request.node.name}.codex-log",
+            state.evidence["daemon_logs"] = _kept(
+                lambda: _preserve_logs(home, evidence_dir, request.node.name)
+            )
+            state.evidence["codex_log"] = _kept(
+                lambda: _preserve_tree(
+                    home / "providers" / "codex" / "log",
+                    evidence_dir / f"{request.node.name}.codex-log",
+                )
             )
             # After the run: whatever Codex left in the config it read.
-            after = _snapshot_codex_config(home, evidence_dir, request.node.name, "after")
+            after = _kept(
+                lambda: _snapshot_codex_config(home, evidence_dir, request.node.name, "after")
+            )
             codex_config = state.evidence.setdefault("codex_config", {})
             codex_config["after"] = after
             before_sha = codex_config.get("before", {}).get("sha256")
-            codex_config["changed"] = before_sha != after.get("sha256")
+            if "sha256" in after:
+                codex_config["changed"] = before_sha != after["sha256"]
         finally:
             try:
                 _cleanup(state, cleanup)
@@ -1618,20 +1628,51 @@ def _preserve_logs(home: Path, evidence_dir: Path, test_name: str) -> str | None
     return _preserve_tree(home / "logs", evidence_dir / f"{test_name}.logs")
 
 
-def _preserve_steward_screen(live: Live, evidence_dir: Path, test_name: str) -> dict[str, Any]:
-    """Save the steward terminal's last screen and run record before teardown closes them.
+def _kept(produce: Callable[[], Any]) -> Any:
+    """Teardown evidence: a failed copy is recorded in place, so the next copy still runs."""
+    try:
+        return produce()
+    except Exception as exc:  # the failure is the evidence; teardown keeps copying
+        return {"error": f"{type(exc).__name__}: {exc}"}
 
-    A daemon refusal is recorded instead of raised, so the copies after it still run.
+
+def _read(live: Live, tool: str, **arguments: Any) -> Any:
+    """A daemon read as the daemon answered it, text or structured; a refusal is recorded."""
+    try:
+        return live.mcp.call_tool("gobby-agents", tool, arguments)
+    except Exception as exc:  # recorded in place, so the other reads still run
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _capture_pages(live: Live, run: str) -> list[Any]:
+    """Every page of the run's stored terminal capture, following the daemon's offsets."""
+    pages: list[Any] = []
+    offset = 0
+    for _ in range(_CAPTURE_PAGE_LIMIT):
+        page = _read(live, "get_agent_capture", run_id=run, offset=offset)
+        pages.append(page)
+        body = page.get("result") if isinstance(page, dict) else None
+        next_offset = body.get("next_offset") if isinstance(body, dict) else None
+        if not isinstance(next_offset, int):
+            break
+        offset = next_offset
+    return pages
+
+
+def _preserve_steward_screen(live: Live, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Save the steward's terminal read, run result and stored capture before teardown closes them.
+
+    The live read can come back as text once the terminal has exited, so every read is kept
+    as the daemon answered it. The stored capture is read by run id, page by page.
     """
     run = live.evidence.get("recovery_steward", {}).get("run")
     if run is None:
         return {"missing": "the steward run was never registered"}
-    record: dict[str, Any] = {}
-    for tool in ("get_agent_live_output", "get_agent_result"):
-        try:
-            record[tool] = _tool(live, "gobby-agents", tool, run_id=str(run))
-        except httpx.HTTPError as exc:
-            record[tool] = {"error": str(exc)}
+    record = {
+        "get_agent_live_output": _read(live, "get_agent_live_output", run_id=str(run)),
+        "get_agent_result": _read(live, "get_agent_result", run_id=str(run)),
+        "capture": _capture_pages(live, str(run)),
+    }
     copy = evidence_dir / f"{test_name}.steward-screen.json"
     copy.parent.mkdir(parents=True, exist_ok=True)
     copy.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
