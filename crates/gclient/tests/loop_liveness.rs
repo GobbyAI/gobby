@@ -1537,14 +1537,14 @@ async fn removal_with_an_attach_in_flight_does_not_resurrect_the_opened_pane() {
     );
     result.expect("stale attach completion must not panic or stop the loop");
     assert!(
-        workspace.pane_for_terminal("terminal-late").is_none(),
-        "the stale attach must not resurrect the removed live pane"
-    );
-    assert!(
         websocket_requests(&mock, "terminal_take_control")
             .iter()
             .all(|request| request["terminal_id"] != "terminal-late"),
         "the removed pane must never acquire control"
+    );
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_none(),
+        "the stale attach must not resurrect the removed live pane"
     );
     mock.shutdown().await;
 }
