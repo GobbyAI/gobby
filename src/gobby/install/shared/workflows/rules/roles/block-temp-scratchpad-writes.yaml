@@ -1,0 +1,22 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+# Temp and provider-scratchpad writes (#25218). Every agent writes under its assigned
+# workspace folder or its task worktree, never under /tmp, $TMPDIR, /private/var/folders
+# or a provider scratchpad. The check keys on the write target, not on the agent type.
+rules:
+  block-temp-scratchpad-writes:
+    description: "No agent writes to /tmp, $TMPDIR, /private/var/folders or a provider scratchpad"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and temp_scratchpad_write(event.data, tool_input)
+      and not write_paths_within(event.data, tool_input, agent_workspace_write_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          Writes to /tmp, $TMPDIR, /private/var/folders and provider scratchpads are not
+          allowed for any agent. Write into your agent workspace folder (named in your
+          Agent Workspace section) or, for a task seat, its task worktree. Name the target
+          with a literal path inside one of them.

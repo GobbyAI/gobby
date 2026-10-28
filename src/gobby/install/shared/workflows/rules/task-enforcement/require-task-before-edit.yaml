@@ -43,4 +43,7 @@ rules:
           them literally. A shell variable or substitution in the operand
           (`mkdir -p "$SP"`, `mkdir -p "$(dirname "$SOCK")"`) leaves no path to
           classify, and unknown scope counts as a repository write on purpose. If
-          this command only touches your scratchpad, use the literal path and retry.
+          this command only touches your agent workspace folder (named in your Agent
+          Workspace section), use the literal path and retry. Temp roots and provider
+          scratchpads skip the claim here but are blocked for every agent by
+          block-temp-scratchpad-writes.

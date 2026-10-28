@@ -89,6 +89,8 @@ REDIRECT_RULES = frozenset(
 
 TRUE_RESTRICTION_RULES = frozenset(
     {
+        "agent-workspace-read-scope",
+        "agent-workspace-write-scope",
         "archivist-write-scope",
         "assistant-write-scope",
         "block-autonomous-clear-session",
@@ -102,6 +104,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "block-gobby-command-word-expansion",
         "block-landing-override",
         "block-spawned-agent-create-task",
+        "block-temp-scratchpad-writes",
         "block-tools-after-handoff-compact",
         "block-unresolved-scope-shell-write",
         "block-web-chat-send-keys",
@@ -151,6 +154,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-uv-add",
         "no-wget-upload",
         "no-yarn-add",
+        "query-readonly-seat-scope",
         "require-handoff-at-context-limit",
         "researcher-write-scope",
         "retry-terminal-handoff-after-delivery-failure",
