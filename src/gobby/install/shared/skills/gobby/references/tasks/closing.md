@@ -88,15 +88,6 @@ commit. `land_commit` lands that commit only for the task's Dev Manager or the
 root Orchestrator, never for the reviewer, and records a daemon-attested landing
 receipt on the task. Nothing else records a close receipt.
 
-A live release window holds every landing: `land_commit` refuses with
-`release_window_active` and does not escalate, so retry after the window ends.
-An unreadable `<git common dir>/gobby/release-window.json` refuses landings with
-`release_window_unreadable` until an operator deletes that file. The same codes
-refuse new work: `admit_team` for a team with no record, and a spawn that would
-create a fresh worktree or clone. An admitted team keeps working: its admission
-re-runs, replacement seats join its tree, an interrupted admission recovers its
-tree, and spawns that reuse a tree proceed.
-
 The Orchestrator owns every restart and activation. It activates with
 `gobby restart` after a global notice and runs no release batches.
 

@@ -2,7 +2,7 @@
 
 The team record is the admitting runbook execution: its ``admit`` step output carries the
 binding, and ``team_id`` is that execution's id. Admission runs under
-``MainCheckoutLanding`` so team admission, landing and the release lease serialize. It
+``MainCheckoutLanding`` so team admission and landing serialize. It
 records the team before it creates the tree, so a re-run of a step that died mid-launch
 adopts its own tree. A retry of the admitting execution returns the same team; a
 replacement execution names the team it joins with ``team_id`` and must match its task.
@@ -19,7 +19,6 @@ import json
 import logging
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field, fields
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +33,6 @@ from gobby.agents.team_scope import (
     tree_is_live,
 )
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
-from gobby.releases.window import ReleaseWindowRefused, require_admissions_open
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -149,8 +147,6 @@ async def admit_team(
         if own is not None:
             return await _readmit(db, caller, own, target, team_id, reviewer_agent)
         if team_id is None:
-            # Only a team with no record is new; recorded and joined teams keep working.
-            await _admissions_open(db, caller.project_id)
             return await _create(db, caller, target, reviewer_agent)
         if fresh_reviewer:
             await asyncio.to_thread(
@@ -517,13 +513,6 @@ async def _create(
     except (GcodeGatewayError, OSError) as exc:
         logger.warning("Failed to pin team code index for %s: %s", binding.worktree_path, exc)
     return binding
-
-
-async def _admissions_open(db: HubDatabase, project_id: str) -> None:
-    try:
-        await require_admissions_open(db, project_id, datetime.now(UTC))
-    except ReleaseWindowRefused as exc:
-        raise TeamAdmissionRefused(exc.code, str(exc)) from exc
 
 
 def _admission_mode(db: HubDatabase, task: Task) -> str:

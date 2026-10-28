@@ -299,15 +299,15 @@ def run_cutover(
     # that the old process exited. Never replace its binaries before that proof.
     if not stop_daemon():
         raise CutoverError("refusing to promote: daemon stop failed; installed binaries unchanged")
-    from gobby.releases.window import agent_activation_refusal
+    from gobby.releases.activation import agent_activation_refusal
 
-    lease_refusal: str | None = None
+    activation_refusal: str | None = None
     try:
         _require_unchanged_sources(root, sources)
-        # A release batch's lease can lapse while the daemon stops. Nothing is promoted
-        # yet, so the unchanged daemon starts again and the cutover is refused.
-        lease_refusal = agent_activation_refusal()
-        if lease_refusal is None:
+        # The activation check runs again after the stop. Nothing is promoted yet, so a
+        # refusal leaves the unchanged daemon to start again and the cutover is refused.
+        activation_refusal = agent_activation_refusal()
+        if activation_refusal is None:
             promote_workspace_binary_set(
                 artifacts,
                 bin_dir=bin_dir,
@@ -323,13 +323,15 @@ def run_cutover(
     except Exception as exc:
         # After confirmed shutdown, every failed phase needs operator recovery
         # guidance, including startup errors and identity decoding failures.
-        refused = f"refusing to promote: {lease_refusal}; " if lease_refusal else ""
+        refused = f"refusing to promote: {activation_refusal}; " if activation_refusal else ""
         raise CutoverError(
             f"{refused}{exc}. The daemon is stopped. After resolving this failure, run "
             "`gobby start`."
         ) from exc
-    if lease_refusal is not None:
-        raise CutoverError(f"refusing to promote: {lease_refusal}; restarted the unchanged daemon")
+    if activation_refusal is not None:
+        raise CutoverError(
+            f"refusing to promote: {activation_refusal}; restarted the unchanged daemon"
+        )
     if isinstance(build.client, str):
         return build.client
     try:
@@ -384,7 +386,7 @@ def _require_unchanged_sources(root: Path, sources: dict[str, str]) -> None:
 @click.pass_context
 def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) -> None:
     """Build and activate all schema-aware native binaries as one set."""
-    from gobby.releases.window import agent_activation_refusal
+    from gobby.releases.activation import agent_activation_refusal
 
     if refusal := agent_activation_refusal():
         raise click.ClickException(f"Refusing to cut over: {refusal}")

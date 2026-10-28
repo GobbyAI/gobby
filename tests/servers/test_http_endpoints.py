@@ -148,7 +148,7 @@ class TestAdminEndpoints:
 
     def test_shutdown_creates_background_task(self, basic_http_server: HTTPServer) -> None:
         """Test shutdown endpoint creates background task."""
-        # A verified front-door operator: the release window fence admits it.
+        # A verified front-door operator: the activation guard admits it.
         client = TestClient(basic_http_server.app, headers=TEST_FRONT_DOOR_IDENTITY)
 
         response = client.post("/api/admin/shutdown")

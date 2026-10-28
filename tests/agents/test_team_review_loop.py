@@ -363,7 +363,11 @@ def launch(run: Session, context: dict[str, Any]) -> dict[str, dict[str, Any]]:
             continue
         rendered[step.id] = arguments
         if step.id in launched:
-            seat = {"child_session_id": f"seat-{step.id}", "pane_ref": f"0:0:1:{len(rendered)}"}
+            seat = {
+                "child_session_id": f"seat-{step.id}",
+                "run_id": step_invocation_id(execution_id(run), step.id),
+                "pane_ref": f"0:0:1:{len(rendered)}",
+            }
             context["steps"][step.id] = {"output": seat}
     return rendered
 
@@ -675,7 +679,7 @@ async def test_review_escalation_sequence(world: TeamWorld) -> None:
     # arrange step tiles that tab last, once every seat has launched.
     initial = launch(team.runbook, await admitted(world, team.runbook, {"task": task_id}))
     seats = ["dev-manager", "test-writer", "developer", "code-reviewer"]
-    assert list(initial) == ["guard", "admit", *seats, "arrange"]
+    assert list(initial) == ["guard", "admit", *seats, "roster", "arrange"]
     assert identity(initial["code-reviewer"]) == SOL
     assert initial["dev-manager"]["placement"] == {
         "tab": {"workspace": WORKSPACE, "title": f"Dev Team - #{team.task.seq_num}"}
@@ -997,7 +1001,8 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
 
     Contract: ``EVENT=CANDIDATE TASK=#N RUN=run WT=tree DISPOSITION=moot NOTE=...`` stands in
     for ``COMMIT=<sha>`` and routes the reviewer to review. The reviewer records an approved
-    review with disposition moot, and the Dev Manager's closing record lets close_task succeed.
+    review with disposition moot. The Dev Manager's closing record cannot close it; the
+    Orchestrator closes the no-work disposition.
     """
     team = await team_in_moot_review(world)
     db, task_id = world.case.db, team.task.id
@@ -1037,7 +1042,15 @@ async def test_moot_task_reviewer_records_disposition_and_closes(world: TeamWorl
 
     submit_moot(db, team.manager, task_id, "closing", 1)
     task_tools = create_task_registry(LocalTaskManager(db))
+    # Only the Orchestrator closes a no-work disposition; the Dev Manager's closing record is refused.
     with session_context_for_test(team.manager):
+        refused = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
+    assert refused.get("error") == "no_work_close_orchestrator_only", refused
+    assert refused.get("closed") is False, refused
+    assert LocalTaskManager(db).get_task(task_id).closed_reason is None
+    orchestrator = world.case.session("orchestrator")
+    SessionVariableManager(db).set_variable(orchestrator, "_agent_type", "orchestrator")
+    with session_context_for_test(orchestrator):
         closed = await task_tools.call("close_task", {"task_id": task_id, "reason": "moot"})
     assert closed.get("closed") is True, closed
     assert LocalTaskManager(db).get_task(task_id).closed_reason == "moot"

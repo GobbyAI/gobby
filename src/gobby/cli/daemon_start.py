@@ -338,7 +338,7 @@ def _launch_direct_runner(
 def start(ctx: click.Context, verbose: bool) -> None:
     """Start the Gobby daemon."""
     from gobby.cli.runtime import get_cli_runtime
-    from gobby.releases.window import agent_activation_refusal
+    from gobby.releases.activation import agent_activation_refusal
     from gobby.runner_pid_file import (
         PidFileClaim,
         adopt_inherited_claim,

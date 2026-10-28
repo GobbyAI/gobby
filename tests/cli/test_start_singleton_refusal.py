@@ -64,7 +64,7 @@ def test_full_restart_start_half_refuses_a_daemon_still_holding_the_claim(
     pid_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#24946: restart (and cutover, through the same start) never starts a second daemon."""
-    monkeypatch.setattr("gobby.releases.window.agent_activation_refusal", lambda: None)
+    monkeypatch.setattr("gobby.releases.activation.agent_activation_refusal", lambda: None)
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda ctx: None)
     monkeypatch.setattr(
         "gobby.cli.daemon_lifecycle.restart_start_refusal", lambda runtime, **_: None

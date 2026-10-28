@@ -109,7 +109,7 @@ async def test_restart_probe_reaps_slow_gdaemon_before_finishing(
 
 
 class OperatorAuth:
-    """An operator caller: no managed principal, so the release window fence passes."""
+    """An operator caller: no managed principal, so the activation guard passes."""
 
     def request_principal(self, _request: object) -> None:
         return None

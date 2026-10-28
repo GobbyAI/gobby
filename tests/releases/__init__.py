@@ -1,1 +1,1 @@
-"""Tests for release-window coordination."""
+"""Tests for the release seat contract and the activation guard."""

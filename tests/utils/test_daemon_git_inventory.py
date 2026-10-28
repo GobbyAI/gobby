@@ -328,11 +328,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commands pass; the daemon's bin freshness loop promotes release archives
     # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
     ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
-    # Offline release core has no production caller after removal of the seat CLI.
-    # Stop, start, restart and cutover commands run agent_activation_refusal
-    # (test_cli_only_git_boundaries_are_reached_only_from_cli below).
-    ("src/gobby/releases/batch.py", "_git"),
-    ("src/gobby/releases/window.py", "sync_git_common_dir"),
     # Canonical shell normalization runs off the loop: HookManager and the rule
     # engine offload it, chat _fire_lifecycle and Codex approvals use
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py
@@ -497,14 +492,7 @@ def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
         "src/gobby/cli/cutover.py",
         "src/gobby/install/bin_release_identity.py",
     }
-    # The seat batch CLI is retired; the core has no production caller.
-    # sync_git_common_dir's other caller, agent_activation_refusal, runs only
-    # from the stop, start, restart and cutover commands.
-    assert _modules_referencing("run_batch") == set()
-    assert _modules_referencing("sync_git_common_dir") == {
-        "src/gobby/releases/batch.py",
-        "src/gobby/releases/window.py",
-    }
+    # agent_activation_refusal runs only from the stop, start, restart and cutover commands.
     assert _modules_referencing("agent_activation_refusal") == {
         "src/gobby/cli/cutover.py",
         "src/gobby/cli/daemon_lifecycle.py",

@@ -105,15 +105,6 @@ ends the team: the daemon stops its seats and removes its worktree.
 A replacement execution for a running team passes `team_id`, the admitting
 execution id, with the same task.
 
-### During a release
-
-While a release window is live, `admit_team` refuses a new team with
-`release_window_active`, and a landing returns the same blocker without
-escalating. Relaunch the team, or land again, after the window ends. Teams
-admitted before the window keep working: their seats join the team tree, and a
-replacement execution with `team_id` rejoins it. Unreadable window state refuses
-both with `release_window_unreadable`.
-
 ### Fresh reviewer
 
 After the second rejection the Dev Manager reports

@@ -150,11 +150,6 @@ async def test_isolation_paths_share_spawn_timing_map(
     git.create_worktree = AsyncMock(return_value=SimpleNamespace(success=True))
     git.create_clone = AsyncMock(return_value=SimpleNamespace(success=True))
     sync = AsyncMock(return_value=SimpleNamespace(base_commit_sha=None))
-    # tests/releases/test_release_window.py covers the fresh-tree window check on a real repo.
-    monkeypatch.setattr(
-        "gobby.mcp_proxy.tools.spawn_agent._isolation_prepare.require_tree_admissions_open",
-        AsyncMock(return_value=None),
-    )
     handler: IsolationHandler
     if kind == "worktree":
         monkeypatch.setattr("gobby.agents.isolation_worktree.repair_isolation_environment", repair)

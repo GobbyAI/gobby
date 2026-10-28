@@ -200,9 +200,9 @@ async def test_main_checkout_without_a_branch_refuses_the_unlink_of_a_landed_com
     repo, landed, unlanded = integration_repo
     _git(repo, *head_command)
     monkeypatch.setattr(
-        "gobby.releases.window.require_root", lambda db, project_id, machine_id: str(repo)
+        "gobby.releases.activation.require_root", lambda db, project_id, machine_id: str(repo)
     )
-    monkeypatch.setattr("gobby.releases.window.require_machine_id", lambda: "machine-1")
+    monkeypatch.setattr("gobby.releases.activation.require_machine_id", lambda: "machine-1")
     manager = LocalTaskManager(temp_db)
     task = manager.create_task(
         sample_project["id"], "Superseded candidate", category="research", validation_criteria="x"

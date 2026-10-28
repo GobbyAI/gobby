@@ -1339,18 +1339,6 @@
       "result": "352 passed (#23546). set_landing_freeze needs a calling session and a reason to set the freeze. It stores the state with the setting or clearing session at <git-common-dir>/gobby/landing-freeze.json and is gated as a task mutation. A missing freeze file reads as off; an unreadable one reads as on."
     },
     {
-      "id": "release-window",
-      "kind": "isolated-tests",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/releases/test_release_window.py tests/tasks/test_land_commit.py -q",
-      "result": "80 passed (#24797). Only a release-manager session acquires, renews or ends the window, which lives at <git-common-dir>/gobby/release-window.json. Acquisition serializes with land_commit and new-team admission under the landing lock and pins the integration tip. A live or unreadable window refuses landings without escalation, new team admission and spawns that would create a fresh worktree or clone; an admitted team's re-run, replacement seats, interrupted-admission recovery and tree-reusing spawns keep working. The lease expires 10 minutes after acquire or the last renew; a stale token or generation cannot renew or end it."
-    },
-    {
-      "id": "release-batch",
-      "kind": "isolated-tests",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/releases/test_release_batch.py -q -p no:cacheprovider --tb=line",
-      "result": "11 passed (#24797). gobby release batch refuses before the first renewal, leaving the window as it was, unless the caller owns the live window, the main checkout HEAD is the pinned candidate and a baseline (the last succeeded batch or --base-sha) is an ancestor of it. It then renews the lease while it runs the checks the diff selects, activates by cutover or restart, and smokes the daemon. Records land under <git-common-dir>/gobby/release-batches/. Either outcome releases the window if the batch still owns it. A success becomes the next baseline; a failure keeps the old baseline and files one regression task per candidate."
-    },
-    {
       "id": "source-contract",
       "kind": "source-inspection",
       "command": "gcode outline/symbol-at on task registries; AST function inventory",

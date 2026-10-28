@@ -87,7 +87,7 @@ class TestAdminRoutes:
         server._running = True
         server.port = 60887
         server.test_mode = False
-        # An operator caller: no managed principal, so the release window fence passes.
+        # An operator caller: no managed principal, so the activation guard passes.
         server.auth_service.request_principal.return_value = None
 
         # Mock Daemon

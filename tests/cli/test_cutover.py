@@ -1111,15 +1111,17 @@ def test_post_stop_failure_reports_stopped_daemon_and_recovery(
     started.assert_not_called()
 
 
-def test_post_stop_lease_refusal_restarts_the_unchanged_daemon(
+def test_post_stop_activation_refusal_restarts_the_unchanged_daemon(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A release lease that lapses during the stop refuses promotion and restores service."""
+    """An activation refusal that appears during the stop refuses promotion and restores service."""
     events: list[str] = []
     _stub_cutover_pipeline(monkeypatch, tmp_path, events)
     monkeypatch.setattr(
-        "gobby.releases.window.agent_activation_refusal",
-        lambda: "release_window_stale: the lease expired" if "stop" in events else None,
+        "gobby.releases.activation.agent_activation_refusal",
+        lambda: "spawned_agent_refused: the run appeared during the stop"
+        if "stop" in events
+        else None,
     )
 
     def stop() -> bool:
@@ -1139,5 +1141,5 @@ def test_post_stop_lease_refusal_restarts_the_unchanged_daemon(
         )
 
     assert events == ["stop", "start"]
-    assert "release_window_stale" in str(error.value)
+    assert "spawned_agent_refused" in str(error.value)
     assert "The daemon is stopped" not in str(error.value)

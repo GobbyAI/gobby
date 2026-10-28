@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 import time
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -16,7 +15,6 @@ from gobby.sessions.handoff_shutdown import (
 )
 from gobby.shutdown_intent import ShutdownIntent, shutdown_marker_details
 from gobby.telemetry.instruments import inc_counter
-from gobby.utils.local_token import RELEASE_TOKEN_HEADER
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.spawn import run_cancellable_probe
 
@@ -99,7 +97,7 @@ def _restart_start_refusal() -> str | None:
 
 
 async def _managed_activation_refusal(server: "HTTPServer", request: Request) -> str | None:
-    """Refuse a managed caller that does not present its live release window token.
+    """Refuse a managed caller from stopping, starting, restarting or cutting over the daemon.
 
     Operators, the web UI and break-glass callers have no managed principal and pass.
     """
@@ -108,14 +106,9 @@ async def _managed_activation_refusal(server: "HTTPServer", request: Request) ->
         return None
     if principal is False:
         return "the managed credential was rejected"
-    from gobby.releases.window import route_activation_refusal
-
-    return await route_activation_refusal(
-        server.services.database,
-        session_id=principal.session_id,
-        project_id=principal.project_id,
-        token=request.headers.get(RELEASE_TOKEN_HEADER, "").strip(),
-        now=datetime.now(UTC),
+    return (
+        "managed_activation_refused: managed callers may not stop, start, restart or cut over "
+        "the daemon; the Orchestrator owns activation"
     )
 
 
