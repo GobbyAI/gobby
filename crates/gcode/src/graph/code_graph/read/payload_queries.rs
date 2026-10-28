@@ -237,6 +237,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn projection_payload_queries_filter_versions_before_limits() {
+        let paths = vec!["src/lib.rs".to_string()];
+        let queries = [
+            ("overview files", project_overview_files_query("child", 1)),
+            (
+                "overview imports",
+                project_overview_imports_query("child", &paths, 1),
+            ),
+            (
+                "overview definitions",
+                project_overview_defines_query("child", &paths, 1),
+            ),
+            (
+                "overview calls",
+                project_overview_calls_query("child", &paths, 1),
+            ),
+            ("file symbols", file_symbols_query("child", "src/lib.rs")),
+            ("file calls", file_calls_query("child", "src/lib.rs")),
+            ("neighbors", symbol_neighbors_query("child", "symbol", 1)),
+            ("blast center", blast_radius_center_query("child", "symbol")),
+            (
+                "blast calls",
+                blast_radius_file_call_query("child", "src/lib.rs", 2, 1),
+            ),
+            (
+                "blast imports",
+                blast_radius_file_import_query("child", "src/lib.rs", 2, 1),
+            ),
+        ];
+        for (surface, (query, _)) in queries {
+            // A path can retain several content versions. Filtering the returned
+            // rows after LIMIT can both leak old versions and hide admitted ones.
+            for branch in query.split("UNION ALL") {
+                let filter = branch
+                    .find("$admitted_versions")
+                    .unwrap_or_else(|| panic!("{surface}: query must constrain admitted versions"));
+                let output = branch.find("RETURN").expect("query returns rows");
+                assert!(filter < output, "{surface}: filter must precede output");
+                assert!(
+                    branch[..output].contains("content_hash"),
+                    "{surface}: path alone is insufficient"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn file_calls_query_anchors_both_directions_on_the_file_path_index() {
         let (query, _) = file_calls_query("project-1", "src/lib.rs");
 

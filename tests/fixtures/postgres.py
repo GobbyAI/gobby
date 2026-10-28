@@ -368,7 +368,7 @@ def _capture_canonical_seed(
 
 
 def _delete_order(conn: psycopg.Connection[Any], tables: set[str]) -> list[str]:
-    """Order tables child-first for immediate RESTRICT/NO ACTION foreign keys."""
+    """Order children before immediate deletes, including cascades into referenced rows."""
     blockers: dict[str, set[str]] = {table: set() for table in tables}
     parents_by_child: dict[str, set[str]] = {table: set() for table in tables}
     foreign_keys = conn.execute(
@@ -380,7 +380,8 @@ def _delete_order(conn: psycopg.Connection[Any], tables: set[str]) -> list[str]:
         JOIN pg_class AS parent ON parent.oid = fk.confrelid
         JOIN pg_namespace AS parent_schema ON parent_schema.oid = parent.relnamespace
         WHERE fk.contype = 'f'
-          AND (fk.confdeltype = 'r' OR (fk.confdeltype = 'a' AND NOT fk.condeferrable))
+          AND (fk.confdeltype IN ('r', 'c')
+               OR (fk.confdeltype = 'a' AND NOT fk.condeferrable))
           AND child_schema.nspname = current_schema()
           AND parent_schema.nspname = current_schema()
         """

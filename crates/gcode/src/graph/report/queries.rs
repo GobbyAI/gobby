@@ -156,6 +156,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn report_queries_filter_admitted_versions_before_aggregation() {
+        let queries = [
+            ("nodes", report_node_counts_query("child")),
+            ("edges", report_code_edge_counts_query("child")),
+            ("hotspots", report_hotspots_query("child", "symbol", 1)),
+            (
+                "incoming calls",
+                report_incoming_call_hotspots_query("child", 1),
+            ),
+            ("bridges", report_bridge_edges_query("child")),
+            (
+                "external targets",
+                report_target_frequencies_query("child", "external", 1),
+            ),
+            (
+                "unresolved targets",
+                report_target_frequencies_query("child", "unresolved", 1),
+            ),
+        ];
+        for (surface, (query, _)) in queries {
+            for branch in query.split("UNION ALL") {
+                let filter = branch.find("$admitted_versions").unwrap_or_else(|| {
+                    panic!("{surface}: aggregate must constrain admitted versions")
+                });
+                let aggregate = branch
+                    .find("count(")
+                    .unwrap_or_else(|| branch.find("RETURN").expect("output"));
+                assert!(
+                    filter < aggregate,
+                    "{surface}: filter must precede aggregation"
+                );
+                assert!(
+                    branch[..aggregate].contains("content_hash"),
+                    "{surface}: path alone is insufficient"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn hotspots_query_uses_label_scoped_seed_and_typed_edges() {
         let (query, params) = report_hotspots_query("proj-1", "symbol", 6);
 

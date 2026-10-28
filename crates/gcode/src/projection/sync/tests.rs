@@ -351,6 +351,149 @@ mod serial_db {
 
     const FILE: &str = "src/lib.rs";
 
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    fn projection_reads_respect_pin_versions() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        let database_url = crate::test_env::postgres_test_database_url("pin projection reads");
+        let mut conn = db::connect_readwrite(&database_url).expect("connect");
+        let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
+            pinned_fixture(&mut conn, &database_url);
+        let symbol_id = Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0);
+        // The PostgreSQL/BM25 lane remains available before projection recovery.
+        let facts = crate::codewiki_facts::CodewikiFacts::from_context(ctx.clone());
+        let text = facts.search("run", 10).expect("read pinned text facts");
+        assert_eq!(
+            text.iter()
+                .map(|hit| hit.symbol.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![symbol_id.as_str()]
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind semantic service");
+        let address = listener.local_addr().expect("address");
+        let url = format!("http://{address}");
+        ctx.qdrant = Some(QdrantConfig {
+            url: Some(url.clone()),
+            api_key: None,
+        });
+        ctx.embedding = Some(EmbeddingConfig {
+            api_base: format!("{url}/v1"),
+            model: "embed-small".into(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 5,
+        });
+        ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+        let stop = Arc::new(AtomicBool::new(false));
+        let namespace = Arc::new(AtomicUsize::new(0));
+        let server = {
+            let stop = Arc::clone(&stop);
+            let namespace = Arc::clone(&namespace);
+            let symbol_id = symbol_id.clone();
+            let source_collection = code_symbols::collection_name(
+                crate::config::CODE_SYMBOL_COLLECTION_PREFIX,
+                &source,
+            )
+            .expect("source collection");
+            thread::spawn(move || {
+                while let Ok((mut stream, _)) = listener.accept() {
+                    if stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let request = read_http_request(&mut stream);
+                    let line = request.lines().next().expect("request line");
+                    let body = if line.contains("/collections/") {
+                        let is_source = line.contains(&source_collection);
+                        let admitted = is_source == (namespace.load(Ordering::SeqCst) == 0);
+                        json!({"result": if admitted { vec![json!({"id":symbol_id, "score":0.9})] } else { vec![] }})
+                    } else {
+                        json!({"data":[{"index":0,"embedding":[0.1,0.2,0.3]}]})
+                    };
+                    respond(&mut stream, body);
+                }
+            })
+        };
+        let mut observed = Vec::new();
+        for (hash, projected, backend, expected) in [
+            ("hash-h", false, 0, true),  // live source namespace
+            ("hash-h", false, 1, false), // stray child rows are not recovered rows
+            ("hash-k", true, 1, true),   // completed child projection
+            ("hash-k", true, 0, false),  // source moved; old source projection is excluded
+            ("hash-k", false, 0, false),
+            ("hash-k", false, 1, false), // late/discarded upsert remains unadmitted
+        ] {
+            seed_version(&mut conn, &source, hash, hash == "hash-h");
+            conn.execute(
+                "UPDATE code_overlay_pins SET vector_projected = $2 WHERE overlay_project_id = $1",
+                &[
+                    &db::id_param(&ctx.project_id).expect("child UUID"),
+                    &projected,
+                ],
+            )
+            .expect("set recovery state");
+            namespace.store(backend, Ordering::SeqCst);
+            let hits = code_symbols::semantic_search(&ctx, "run", 10);
+            observed.push(((hash, projected, backend), hits, expected));
+        }
+        // Simulate rows left by a late child upsert after each invalidating event.
+        namespace.store(1, Ordering::SeqCst);
+        let overlay_uuid = db::id_param(&ctx.project_id).expect("child UUID");
+        for change in ["repin", "owned", "tombstone", "purge"] {
+            conn.execute(
+                "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+                &[&overlay_uuid],
+            )
+            .expect("clear child shadow");
+            conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-h', vector_projected = false WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("restore pin");
+            match change {
+                "repin" => {
+                    conn.execute("UPDATE code_overlay_pins SET content_hash = 'hash-k' WHERE overlay_project_id = $1", &[&overlay_uuid]).expect("repin");
+                }
+                "purge" => {
+                    conn.execute(
+                        "DELETE FROM code_overlay_pins WHERE overlay_project_id = $1",
+                        &[&overlay_uuid],
+                    )
+                    .expect("purge");
+                }
+                _ => {
+                    seed_version(&mut conn, &ctx.project_id, "child-version", false);
+                    if change == "tombstone" {
+                        conn.execute("UPDATE code_indexed_files SET language = '__gcode_deleted__' WHERE project_id = $1", &[&overlay_uuid]).expect("tombstone");
+                    }
+                }
+            }
+            observed.push((
+                (change, false, 1),
+                code_symbols::semantic_search(&ctx, "run", 10),
+                false,
+            ));
+        }
+        stop.store(true, Ordering::SeqCst);
+        drop(TcpStream::connect(address).expect("wake semantic server"));
+        server.join().expect("semantic service");
+        for (state, hits, expected) in observed {
+            let expected_hits = if expected {
+                vec![symbol_id.clone()]
+            } else {
+                vec![]
+            };
+            assert_eq!(
+                hits.into_iter().map(|(id, _)| id).collect::<Vec<_>>(),
+                expected_hits,
+                "selector/projected/backend={state:?}"
+            );
+        }
+    }
+
     fn pinned_fixture(
         conn: &mut postgres::Client,
         database_url: &str,
@@ -479,7 +622,7 @@ mod serial_db {
             body["points"][0]["id"],
             Symbol::make_id(&source, FILE, "hash-h", "run", "function", 0)
         );
-        assert_eq!(body["points"][0]["payload"]["file_content_hash"], "hash-h");
+        assert_eq!(body["points"][0]["payload"]["file_path"], FILE);
         let mut check = db::connect_readwrite(&database_url).expect("check connection");
         let projected: bool = check
             .query_one(
