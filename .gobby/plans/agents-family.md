@@ -603,7 +603,7 @@ and `checkpoint_agent_worktree`; and the four CLI rows `gobby agents spawn`,
 `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py::spawn_agent_impl`;
 remote spawn builds its frame with
 `src/gobby/hub/spawn_payload.py::build_spawn_payload`; termination runs
-through `src/gobby/agents/agent_cancellation.py::terminate_agent_run` and,
+through `src/gobby/mcp_proxy/tools/agent_cancellation.py::terminate_agent_run` and,
 for a remote run, `src/gobby/hub/remote_cancel.py::cancel`. Existing
 fixtures live in `tests/servers/routes/test_agent_spawn_routes.py`,
 `tests/mcp_proxy/tools/spawn_agent/`,
@@ -623,6 +623,14 @@ delivery. Remote termination vectors seed the reported pane store
 (`src/gobby/hub/remote_pane.py::RemotePaneStore`) with a tail and record the
 captured tail and the entry's stopped flag.
 
+Capture-barrier vectors record the stop's preconditions
+(`src/gobby/agents/capture.py::capture_then_kill_async`): a storage failure
+on the termination intent or the capture write returns
+`CAPTURE_PERSIST_FAILED`, and a capture-slot write by another terminator
+between the intent and the capture returns `CAPTURE_CONFLICT`; neither
+stops the terminal. A stop interrupted after the capture persists is
+retried to one terminal outcome and one parent delivery.
+
 **Acceptance:**
 
 - 0.3.1 - The group inventory equals the exact 19-key predicate, every key
@@ -638,8 +646,12 @@ captured tail and the entry's stopped flag.
 - 0.3.4 - Local and remote spawn, cancel and stop record every hub-flow code
   and the resulting run and mailbox state.
   test: `tests/contracts/test_agents_parity_corpus_launch.py::test_local_and_remote_lifecycle_vectors`.
+- 0.3.5 - The capture-barrier vectors record no terminal stop for a
+  persistence failure or a capture conflict, and one terminal outcome and
+  one parent delivery for a retried interrupted stop.
+  test: `tests/contracts/test_agents_parity_corpus_launch.py::test_capture_barrier_vectors`.
 
-Planned verification: the four named tests with the protected Python prefix,
+Planned verification: the five named tests with the protected Python prefix,
 fake provider executables and the isolated terminal host.
 
 ### 0.4 Messaging, coordination and seats corpus and the family partition [category: test] (depends: 0.3)
@@ -674,7 +686,10 @@ Vectors cover every target kind (`session`, `parent`, `agent`, `project`,
 (`message_recipient_not_allowed`), queued delivery to interrupted and
 waiting sessions, terminal-injected and web-chat wakes recorded through
 doubles, wakes to a node terminal under each reported composer state, and
-coordination wait timeout, reply and cancel. This leaf also adds the
+coordination waits under each condition: a keyed `coordination_release`, an
+owner status set (including a status already matched at registration) and a
+reply. They also cover timeout, owner end, cancel, a duplicate registration
+that returns the active wait, and each registration refusal. This leaf also adds the
 partition check: the four group predicates are disjoint and their union is
 exactly the 120 ported keys.
 
@@ -1396,13 +1411,26 @@ persist through
 `src/gobby/storage/coordination_waits.py::CoordinationWaitManager`;
 `wait_for_agent` (`agents_query_tools.py`) waits on a run's terminal state.
 Keep owner-session, reply, timeout and cancel semantics and the
-coordination holds `tests/events/test_coordination_holds.py` pins; waits are
-event-driven through the mailbox and run updates.
+coordination holds `tests/events/test_coordination_holds.py` pins.
+
+Registration reproduces `CoordinationWaitManager.register`'s transaction:
+exactly one of `coordination_key`, `statuses` or `reply`; the key length,
+canonical status, timeout and self-owner refusals; a `SELECT ... FOR UPDATE`
+on the owner session that fences message and status producers; reuse of the
+active wait with the same `condition_key`; and `resolve_coordination_wait`
+in the same transaction, so a status already matched resolves at
+registration. Cancel reproduces `CoordinationWaitManager.cancel`.
+Resolution stays in the schema: the `coordination_message_committed` and
+`coordination_owner_changed` triggers resolve waits when a message or an
+owner status commits, from either runtime, and the
+`coordination_wait_changed` trigger notifies `gobby_coordination_wait`.
 
 **Acceptance:**
 
-- 5.3.1 - Coordination waits match 0.4's recorded reply, timeout and
-  cancel outcomes and rows.
+- 5.3.1 - Coordination waits match 0.4's recorded rows and outcomes for a
+  keyed release, a status set (including one matched at registration), a
+  reply, timeout, owner end and cancel, a duplicate registration and each
+  registration refusal.
   test: `crates/gagents/tests/coordination.rs::coordination_waits_match_corpus`.
 - 5.3.2 - Agent waits match 0.4's recorded completion, failure and timeout
   outcomes. test: `crates/gagents/tests/coordination.rs::agent_waits_match_corpus`.
@@ -1427,7 +1455,7 @@ Targets:
 `src/gobby/servers/routes/agents.py`, and `kill_agent`, `stop_agent` and
 `end_agent_run` (`agents_lifecycle_tools.py`) and `unregister_agent`
 (`agents_query_tools.py`), run through
-`src/gobby/agents/agent_cancellation.py::terminate_agent_run` and, for a
+`src/gobby/mcp_proxy/tools/agent_cancellation.py::terminate_agent_run` and, for a
 remote run, `src/gobby/hub/remote_cancel.py::cancel` with `not_stopped`.
 Keep the documented `kill` default difference (Debt not to port), terminal
 delivery of the result or handoff to the parent through 5.1, and
@@ -1441,6 +1469,16 @@ stopped through the hub terminal host, and another machine's run receives
 stopped through 2.0's `POST`, as `RemoteTerminalRuntime.terminate` does, and
 skips that step with a warning when the route is refused or unreachable.
 
+The capture barrier is durable SQL in
+`src/gobby/storage/agents/_termination.py`: `record_termination_intent`
+updates only a `pending` or `running` run, `replace_capture_slot`
+compare-and-sets on `capture_id` and `capture_revision` with the marker
+check, and the terminal transition compare-and-sets on status. The
+`_capture_lock` in `capture.py` is process-local, so between a Python
+terminator and a native one these predicates are the only fence. 6.1
+reproduces them on the same columns and stops the terminal only after the
+capture persists, as `capture_then_kill_async` does.
+
 **Acceptance:**
 
 - 6.1.1 - `HTTP POST /api/agents/runs/{run_id}/cancel` matches Python's
@@ -1453,6 +1491,13 @@ skips that step with a warning when the route is refused or unreachable.
   `agent.cancel` for another machine and then marks the reported entry
   stopped through 2.0's route; the run's capture holds the stored tail.
   test: `crates/gdaemon/tests/agent_effects.rs::cancel_routes_local_and_remote`.
+- 6.1.4 - The termination service reproduces 0.3's capture-barrier vectors:
+  a persistence failure or a capture conflict stops nothing. A competing
+  terminator's capture-slot write, applied to the row between the native
+  intent and the native capture, leaves the competitor's capture and stops
+  nothing. A retried interrupted stop reaches one terminal outcome and one
+  parent delivery.
+  test: `crates/gagents/tests/termination.rs::capture_barrier_matches_corpus`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test termination`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test agent_effects`.
