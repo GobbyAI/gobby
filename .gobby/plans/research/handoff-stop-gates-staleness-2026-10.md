@@ -91,8 +91,8 @@ enforcement is now the separate `require-handoff-pull-before-tool`.
 ## Every acceptance item
 
 37 items: 27 done, 5 done by a different test or mechanism, 1 with no remaining
-obligation, and 4 still needed. The revised 4.1 adds one obligation for the dead canary
-branch found in this pass.
+obligation, and 4 still needed. The revised 4.1 adds two obligations found in this pass:
+the dead canary branch (4.1.5) and release-branch CI coverage (4.1.6).
 
 | Item | Status | Evidence |
 | --- | --- | --- |
@@ -142,6 +142,16 @@ branch found in this pass.
   `tests/ci/test_postgres_test_stack.py:519-522` still asserts the dead branch. #23850 is
   closed and nobody owns this, so it goes into the revised 4.1 because it touches the same
   two files.
+- **Release-branch parity path.** Found by the Orchestrator's review of the stamped plan
+  (ORCH-REV-HSG-1, 2026-10-28). `.github/workflows/postgres-pgsearch-smoke.yml`
+  (`Release Branch CI`) runs on version branches, `release/**` and `v*` tags. Its
+  `release-branch-ci` job runs `./pre-push-test.sh` at `:155`, so the parity test runs
+  there today, ungated. The job env at `:23-31` has no manifest opt-in. `ci.yml:5-8`
+  triggers only on `main`, `0.4.9`, `0.5.0` and tags, so `release/**` and later version
+  branches would lose parity coverage under the pre-push `--ignore`. The revised 4.1 sets
+  the variable in that job env and asserts it in
+  `tests/ci/test_release_branch_prerequisites.py:71`
+  `test_release_workflow_provisions_pre_push_tools_and_falkor` (4.1.6).
 
 ## Dispositions for the revised plan
 
@@ -159,7 +169,7 @@ branch found in this pass.
   and `reset-plan-mode-on-session-start` reset `plan_skill_directive_delivered`, so the
   directive re-fires ahead of the pull whenever turn-start resolution reports plan mode
   again. It is still needed as the revised plan's deliverable 2.3.
-- **Clean window.** 4.1 touches only tests, the CI workflow and the pre-push script. 2.3
+- **Clean window.** 4.1 touches only tests, two CI workflows and the pre-push script. 2.3
   edits one bundled rule template, so it needs an ordinary announced daemon restart after
   the merge, with no cutover and no binary install. The `clean-window` rationale in
   #22643's description no longer applies; that label is the Orchestrator's to edit.
