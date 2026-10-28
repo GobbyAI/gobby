@@ -668,6 +668,7 @@ Targets:
 - `crates/gmemory/src/search/results.rs`
 - `crates/gmemory/src/search/access.rs`
 - `crates/gcore/src/qdrant.rs::*` — scope-reason: add one point-retrieval function that returns stored vectors by id, beside the existing search
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: pass the memory route's resolved backend into the memory family push at both cfg-gated serve entry points
 - `crates/gmemory/src/http/mod.rs`
 - `crates/gmemory/src/http/search.rs`
 - `crates/gmemory/tests/search.rs`
@@ -695,6 +696,20 @@ route handler is `search_memories` in `create_memory_router`. A missing
 vector store or embedder falls back to keyword search exactly as Python does.
 This leaf adds the `memory.http-search` redaction entry.
 
+Compare isolation follows the terminals family's precedent,
+`terminal_route_latch`: the memory family push receives the `memory` route's
+resolved backend from `bootstrap.front_door.routes` (the family default when
+absent), which gdaemon reads once at startup. The front door's compare
+dispatch runs the native router on a copied `GET` with no shadow marker, so
+under `Compare` every native search is the shadow leg. `update_surfaced_stats`
+takes a caller-owned transaction; the search handler opens exactly one for
+its surfaced writes and always rolls it back, on error paths too, and no
+separate committing transaction exists for those writes. Under `Native` the
+same transaction commits, as Python's writes do. Python's debounce reads
+`last_surfaced_at`, so no in-process state needs isolating. 8.2 passes the
+`gobby-memory` server's backend to the tool family the same way for
+`search_memories`.
+
 **Acceptance:**
 
 - 1.3.1 - `HTTP GET /api/memories/search` matches ranking, scores,
@@ -711,6 +726,10 @@ This leaf adds the `memory.http-search` redaction entry.
 - 1.3.5 - An injected unexpected fault returns safe detail under
   `memory.http-search.internal-error-redaction`.
   test: `crates/gmemory/tests/search.rs::unexpected_search_error_is_safe_and_waived`.
+- 1.3.6 - With the family built for `Compare`, search returns its result and
+  every surfaced-stat write rolls back, including after an error injected
+  mid-update; built for `Native`, the writes commit with Python's debounce.
+  test: `crates/gmemory/tests/search.rs::compare_backend_rolls_back_surfaced_stats`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test search`
 against run-unique test-stack collections and the embedding stub;
@@ -857,7 +876,21 @@ reconciliation (`reconcile_stores` and
 `secondary_reconciliation.reconcile_active_snapshot`) later writes the
 vector, graph and crossref state and clears the flag only once they
 converge. An unexpected fault before commit writes nothing and returns safe
-detail. Handlers are
+detail.
+
+Projection for one memory is serialized with Python's own protocol, so native
+and the still-live Python writers cannot overwrite each other. Every
+post-commit projection and reconciliation of a memory holds the session-level
+`pg_advisory_lock` on Python's per-memory key (the UUID's low 64 bits read as
+a signed integer, as `memories_crud.py::_memory_lock_key` computes it) across
+its I/O without an idle transaction, as
+`secondary_reconciliation.memory_row_session` does. Before any I/O it re-reads
+the row `FOR SHARE` and stops when the row no longer matches the scheduled
+snapshot (`_load_active_snapshot`). It clears `vector_needs_reindex` only
+through the conditional update that matches content, project, global flag,
+memory type and a live row. Create keeps Python's transaction-scoped advisory
+locks over the superseded and final ids. Python runs every post-commit write
+through `_reconcile_active_snapshot`, and native does the same. Handlers are
 `create_memory`, `update_memory`, `delete_memory`, `restore_memory`,
 `promote_memory`, `demote_memory` and `move_memory` in
 `src/gobby/servers/routes/memory.py::create_memory_router`, with request
@@ -906,6 +939,12 @@ separate deliverables.
   until a successor lease serves, after which the next write projects
   normally and the earlier row keeps its flag for 2.3's repair.
   test: `crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor`.
+- 2.2.12 - With projection I/O paused, an update, delete or move of the same
+  memory by native and, separately, by a Python writer leaves the paused
+  stale projection unable to overwrite the newer vector or scope, resurrect a
+  deleted point or clear the newer flag; the final state is the newest
+  row's projection or its durable repair intent.
+  test: `crates/gmemory/tests/writes.rs::stale_projection_loses_to_newer_writes`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test writes`
 against the isolated database, run-unique collections and graphs, the
@@ -973,6 +1012,11 @@ successor lease keeps serving.
   and clears each flag only once that row converges; a repair failure leaves
   the flags set and serving continues.
   test: `crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire`.
+- 2.3.7 - A reconciliation paused after its snapshot check, then raced by a
+  native or Python update, delete or move, neither clears the newer row's
+  flag nor writes a stale vector, graph or crossref state; the newer row
+  stays flagged until its own reconciliation converges.
+  test: `crates/gmemory/tests/maintenance.rs::stale_reconciliation_keeps_newer_repair_intent`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test maintenance`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core -E 'test(qdrant)'`.
@@ -1114,6 +1158,8 @@ scikit-learn run and committed with the test.
 `kind: deliverable`
 
 Targets:
+- `crates/gcore/src/embedding_generation.rs`
+- `crates/gcore/src/embedding_generation/seam.rs`
 - `crates/gmemory/src/lib.rs`
 - `crates/gmemory/src/rebuild_seam.rs`
 - `crates/gmemory/tests/rebuild_seam.rs`
@@ -1130,9 +1176,24 @@ or deletes the point for a tombstone. The switch, not this seam, owns the
 ledger read, watermark and replay
 (`src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner.build` and
 `::_replay_projection_changes`). Producers keep appending ledger rows and
-dual-writing through 2.2. Export the two functions from `gobby_memory` for
-`gobby_ai`'s switch; the embedder argument is the switch's target embedding
-binding.
+dual-writing through 2.2.
+
+Composition (Orchestrator ruling on MEM-ADV-01, option A): gmemory depends on
+gai (2.4), so gai must never depend on gmemory. This leaf adds
+`crates/gcore/src/embedding_generation/seam.rs`, declared from
+`crates/gcore/src/embedding_generation.rs`, with
+`pub trait CollectionRebuildSeam: Send + Sync` carrying
+`rebuild(physical_name, &EmbeddingConfig)` and
+`project_change(source_id, physical_name, &EmbeddingConfig)`; the embedder is
+gcore's existing `config::EmbeddingConfig`, the switch's target binding.
+gmemory exports `MemoriesRebuildSeam`, built from the hub pool, implementing
+it for the `memories` kind, and #25071 implements the same trait for tool
+embeddings. The AI plan's 7.4 runner holds one `Arc<dyn
+CollectionRebuildSeam>` per kind, its test stubs implement the same trait,
+and its 7.6 composes the real seams in gdaemon's serve path; the Orchestrator
+records those AI 7.4 and 7.6 amendments as it did Decision 4's. The crate
+graph stays acyclic: gai and gmemory depend on gcore, gmemory depends on gai,
+and gdaemon depends on all three.
 
 **Acceptance:**
 
@@ -1146,6 +1207,10 @@ binding.
 - 3.1.3 - Native create, update and delete during an armed switch append
   change rows and dual-write to the named physical target.
   test: `crates/gmemory/tests/rebuild_seam.rs::producers_dual_write_while_armed`.
+- 3.1.4 - `rebuild` and `project_change` called through an
+  `Arc<dyn CollectionRebuildSeam>` reach the real `MemoriesRebuildSeam`, and
+  `cargo tree -p gobby-ai --edges normal` lists no `gobby-memory`.
+  test: `crates/gmemory/tests/rebuild_seam.rs::seam_trait_object_reaches_memories_and_stays_acyclic`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test rebuild_seam`
 against run-unique physical collections and the embedding stub.
@@ -1575,6 +1640,10 @@ key on `("gobby-review-learning", "recall_review_lessons_for_files")` and
 `{"success": False, "error": str(exc)}` catch becomes the safe adapter result;
 this leaf adds the six review-learning redaction entries.
 
+**Granularity:** Six public-tool items and a catalog item describe one
+descriptor and one adapter over 5.1's already-tested service. Splitting by
+tool would create per-tool wrappers, not independent outcomes.
+
 **Acceptance:**
 
 - 6.3.1 - `MCP gobby-review-learning:list_check_keys` matches results.
@@ -1789,7 +1858,7 @@ composing the landed #25046 and #25068 seams with isolated credential state;
 
 Targets:
 - `crates/gmemory/src/lib.rs`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: register the two memory tool families with the shared gateway at both cfg-gated serve entry points
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: register the two memory tool families with the shared gateway at both cfg-gated serve entry points, passing the gobby-memory server's resolved backend
 - `crates/gdaemon/Cargo.toml`
 - `crates/gcode/Cargo.toml`
 - `crates/ghook/Cargo.toml`
@@ -1863,7 +1932,9 @@ ledger evidence.
   `GET /api/memories/search` both implementations compute a result, the
   native surfaced-statistics mutation is discarded with its isolated
   transaction, and Python's surfaced counter and debounce effect happens
-  exactly once.
+  exactly once. This runs through the real front-door router against a
+  Python stub: native shadow counters roll back even when the native leg
+  errors, and in `Native` the native counters persist.
   test: `crates/gdaemon/tests/memory_cutover.rs::memory_cutover_is_scoped_and_single_effect`.
 - 8.2.2 - With the Python backend unavailable, all 25 HTTP rows and 32 tools
   run natively for every admitted caller class on hub and standalone, rule
