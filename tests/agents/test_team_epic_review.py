@@ -18,7 +18,7 @@ from gobby.agents.team_lifecycle import (
     managed_task_team,
     seat_team,
 )
-from gobby.agents.team_review import sync_epic_review
+from gobby.agents.team_review import seat_team_held, sync_epic_review
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -114,11 +114,6 @@ class EpicTeam:
         sha = git_in(tree_of(self.binding), "rev-parse", "HEAD")
         link(self.db, self.epic, sha)
         return sha
-
-    async def spawn_developer(self, leaf: Task) -> dict[str, Any]:
-        return await self.world.direct_spawn(
-            self.manager, agent="developer", task_id=leaf.id, checkout_mode="worktree"
-        )
 
 
 @pytest.fixture
@@ -343,6 +338,143 @@ async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_epic_hold", [False, True])
+async def test_pod_admission_respects_only_explicit_epic_hold(
+    world: TeamWorld, explicit_epic_hold: bool
+) -> None:
+    epic = new_task(world, "Held epic", epic=True)
+    leaf = new_task(world, "Ready leaf", parent=epic)
+    sibling = new_task(world, "Stuck sibling", parent=epic)
+    team = await epic_team(world, epic)
+    tasks = LocalTaskManager(team.db)
+    tasks.escalate_task(epic.id if explicit_epic_hold else sibling.id, "Operator hold")
+    run = world.child(leaf, parent=team.manager)
+    if explicit_epic_hold:
+        with pytest.raises(TeamAdmissionRefused) as refused:
+            await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+        assert refused.value.code == "team_held"
+        tasks.de_escalate_task(epic.id, reason="Operator released hold")
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    assert pod.parent_team_id == team.binding.team_id
+    assert not sync_epic_review(team.db, team.binding.team_id).held
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depends_on_unstarted", [False, True])
+async def test_ready_epic_tip_checks_merged_leaves_and_their_dependencies(
+    world: TeamWorld, depends_on_unstarted: bool
+) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    epic = new_task(world, "Partial epic delivery", epic=True)
+    first = new_task(world, "Merged first", parent=epic)
+    second = new_task(world, "Merged second", parent=epic)
+    unstarted = new_task(world, "Unstarted sibling", parent=epic)
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
+    for leaf in (first, second):
+        tasks.claim_task(leaf.id, developer, force=True)
+        sha = team.commit(leaf, f"merged_{leaf.seq_num}.py")
+        submit(team.db, developer, leaf, "implementation", "approved", 1, sha)
+        submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+    if depends_on_unstarted:
+        TaskDependencyManager(team.db).add_dependency(second.id, unstarted.id, "blocks")
+    team.link_tip()
+    state = sync_epic_review(team.db, team.binding.team_id)
+    assert state.held is False
+    assert state.epic_tip_ready is not depends_on_unstarted
+    assert set(state.holds) == ({second.id, unstarted.id} if depends_on_unstarted else set())
+
+    tasks.escalate_task(unstarted.id, "Leaf needs operator decision")
+    state = sync_epic_review(team.db, team.binding.team_id)
+    assert not state.held
+    assert tasks.get_task(epic.id).escalated_at is None
+    assert state.epic_tip_ready is not depends_on_unstarted
+    assert unstarted.id in state.holds
+    assert not seat_team_held(team.db, team.binding)
+
+
+@pytest.mark.asyncio
+async def test_ready_tip_uses_included_approval_and_requires_git_evidence(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    epic = new_task(world, "Included approvals", epic=True)
+    leaf = new_task(world, "Leaf with later work", parent=epic)
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
+    tasks.claim_task(leaf.id, developer, force=True)
+    included = team.commit(leaf, "included.py")
+    submit(team.db, developer, leaf, "implementation", "approved", 1, included)
+    submit(team.db, reviewer, leaf, "review", "approved", 1, included)
+    team.link_tip()
+    later = team.commit(leaf, "later.py")
+    submit(team.db, developer, leaf, "implementation", "approved", 2, later)
+    submit(team.db, reviewer, leaf, "review", "rejected", 2, later)
+    assert sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
+
+    team.link_tip()
+    assert not sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
+    submit(team.db, reviewer, leaf, "review", "approved", 3, later)
+    assert sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
+
+    monkeypatch.setattr("gobby.agents.team_review.run_git_command", lambda *args, **kwargs: None)
+    assert not sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
+
+
+@pytest.mark.asyncio
+async def test_tip_dependency_holds_propagate_without_holding_siblings(world: TeamWorld) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    epic = new_task(world, "Transitive prerequisites", epic=True)
+    first = new_task(world, "First", parent=epic)
+    second = new_task(world, "Second", parent=epic)
+    missing = new_task(world, "Missing prerequisite", parent=epic)
+    sibling = new_task(world, "Independent sibling", parent=epic)
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
+    for leaf in (first, second, sibling):
+        tasks.claim_task(leaf.id, developer, force=True)
+        sha = team.commit(leaf, f"leaf_{leaf.seq_num}.py")
+        submit(team.db, developer, leaf, "implementation", "approved", 1, sha)
+        submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+    dependencies = TaskDependencyManager(team.db)
+    dependencies.add_dependency(second.id, first.id, "blocks")
+    dependencies.add_dependency(first.id, missing.id, "blocks")
+    team.link_tip()
+    state = sync_epic_review(team.db, team.binding.team_id)
+    assert not state.held
+    assert not state.epic_tip_ready
+    assert set(state.holds) == {first.id, second.id, missing.id}
+    assert sibling.id not in state.holds
+
+
+@pytest.mark.asyncio
+async def test_pod_rejection_two_admits_fresh_reviewer(world: TeamWorld) -> None:
+    epic = new_task(world, "Pod reviewer recovery", epic=True)
+    leaf = new_task(world, "Pod leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    leaf_team = EpicTeam(world, leaf, run, pod, team.manager)
+    developer = leaf_team.seat("developer", "implementation")
+    reviewer = leaf_team.seat("code-reviewer", "review")
+    tasks = LocalTaskManager(team.db)
+    tasks.claim_task(leaf.id, developer, force=True)
+    reject_rounds(leaf_team, leaf, developer, reviewer, 2)
+    moved = await hand_off(create_task_registry(tasks), team, leaf, developer, reviewer)
+    assert moved.get("success") is True, moved
+    fresh = world.child(leaf)
+    admitted = await world.admit(
+        fresh, leaf, pod.team_id, fresh_reviewer=True, exclude_reviewers=[reviewer]
+    )
+    assert admitted == pod
+    assert admitted.parent_team_id == team.binding.team_id
+    assert admitted.worktree_id != team.binding.worktree_id
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "agent,grant",
     [
@@ -533,6 +665,8 @@ async def test_pod_lands_and_closes_against_epic_branch(
     sha = leaf_team.commit(leaf, "pod_feature.py")
     submit(team.db, developer, leaf, "implementation", "approved", 1, sha)
     submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+    grant_step_writes(team.db, team.manager, world.case.project_id, "dev-manager", ("closing",))
+    submit(team.db, team.manager, leaf, "closing", "approved", 1, sha)
     main_tip = git_in(world.case.repo, "rev-parse", "HEAD")
     target = await task_landing_target(team.db, leaf)
     assert target == (tree_of(team.binding), team.binding.branch)
@@ -559,7 +693,6 @@ async def test_pod_lands_and_closes_against_epic_branch(
 
     from gobby.agents.team_teardown import TEARDOWN_GRACE
     from gobby.mcp_proxy.tools import agent_cancellation
-    from tests.agents.test_team_teardown_epic_leaf import close_leaf
     from tests.fixtures.team_teardown_case import (
         Terminations,
         closed_at,
@@ -600,7 +733,12 @@ async def test_pod_lands_and_closes_against_epic_branch(
     assert rebound is not None and rebound.status == "active"
     terminations = Terminations(team.db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
-    closed = close_leaf(world, leaf, sha)
+    with session_context_for_test(team.manager):
+        closed_result = await create_task_registry(LocalTaskManager(team.db)).call(
+            "close_task", {"task_id": leaf.id, "commit_sha": sha, "reason": "done"}
+        )
+    assert closed_result.get("closed") is True, closed_result
+    closed = LocalTaskManager(team.db).get_task(leaf.id)
     await teardown_pass(team.db, daemon(team.db), closed_at(closed) + TEARDOWN_GRACE)
     assert set(terminations.ended()) == {developer, reviewer, writer.id}
     resumed_after = runs.get(resumed.id)
@@ -609,6 +747,9 @@ async def test_pod_lands_and_closes_against_epic_branch(
     assert tree_of(team.binding).is_dir()
     assert session_status(team.db, primary.id) == "active"
     assert session_status(team.db, team.manager) == "active"
+    new_task(world, "Unstarted next pod", parent=epic)
+    team.link_tip()
+    assert sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
 
 
 @pytest.mark.asyncio
@@ -628,7 +769,7 @@ async def test_hand_off_refuses_task_outside_epic_team(world: TeamWorld) -> None
 
 
 @pytest.mark.asyncio
-async def test_third_rejection_holds_epic(world: TeamWorld) -> None:
+async def test_third_rejection_holds_only_its_leaf(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     epic = new_task(world, TITLE, epic=True)
     leaf, waiting = new_task(world, "Code leaf", parent=epic), new_task(world, "Next", parent=epic)
@@ -639,44 +780,32 @@ async def test_third_rejection_holds_epic(world: TeamWorld) -> None:
     reject_rounds(team, leaf, developer, reviewer, 3)
     assert tasks.get_task(leaf.id).escalated_at is not None
 
-    # The team escalates its epic once, through the claim-releasing escalation.
+    # Exhausting a leaf's rounds never escalates its epic or stops unrelated pods.
     state = sync_epic_review(team.db, team.binding.team_id)
-    assert state.held and leaf.id in state.holds
-    held_epic = tasks.get_task(epic.id)
-    assert held_epic.escalated_at is not None
-    assert held_epic.claimed_by_session_id is None
-    assert leaf.id in (held_epic.escalation_reason or "")
-    again = sync_epic_review(team.db, team.binding.team_id)
-    assert again.held
-    assert tasks.get_task(epic.id).escalated_at == held_epic.escalated_at
+    assert (state.held, state.holds) == (False, (leaf.id,))
+    assert tasks.get_task(epic.id).escalated_at is None
+    assert not seat_team_held(team.db, team.binding)
+    run = world.child(waiting, parent=team.manager)
+    pod = await world.admit(run, waiting, parent_team_id=team.binding.team_id)
+    assert pod.task_id == waiting.id
 
-    # While held, the manager dispatches nothing.
-    before = len(world.launches)
-    refused = await team.spawn_developer(waiting)
-    assert refused.get("success") is not True, refused
-    assert len(world.launches) == before
-
-    # Triage's audited reset starts a new epoch; de-escalation and re-claim lift the hold.
+    # Triage's audited reset starts a new epoch and releases only the leaf's hold.
     epoch = tasks.get_task(leaf.id).review_epoch
     tasks.de_escalate_task(leaf.id, reason="Triage audited reset")
     assert tasks.get_task(leaf.id).review_epoch == epoch + 1
-    tasks.de_escalate_task(epic.id, reason="Triage audited reset")
     lifted = sync_epic_review(team.db, team.binding.team_id)
     assert (lifted.held, lifted.holds) == (False, ())
-    allowed = await team.spawn_developer(waiting)
-    assert allowed.get("success") is True, allowed
 
 
 @pytest.mark.asyncio
-async def test_held_team_refuses_a_new_review_round_on_another_leaf(world: TeamWorld) -> None:
+async def test_explicit_epic_hold_refuses_new_review_rounds(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     epic = new_task(world, TITLE, epic=True)
-    leaf, waiting = new_task(world, "Code leaf", parent=epic), new_task(world, "Next", parent=epic)
+    waiting = new_task(world, "Next", parent=epic)
     team = await epic_team(world, epic)
     developer = team.seat("developer", "implementation")
     reviewer = team.seat("code-reviewer", "review")
-    tasks.claim_task(leaf.id, developer, force=True)
-    reject_rounds(team, leaf, developer, reviewer, 3)
+    tasks.escalate_task(epic.id, "Operator holds the entire epic")
     assert sync_epic_review(team.db, team.binding.team_id).held
 
     # In-flight implementation on another leaf still completes; its new review round does not.
@@ -693,7 +822,6 @@ async def test_held_team_refuses_a_new_review_round_on_another_leaf(world: TeamW
         submit(team.db, reviewer, waiting, "review", "approved", 1, sha)
 
     # Lifting the hold accepts the same round.
-    tasks.de_escalate_task(leaf.id, reason="Triage audited reset")
     tasks.de_escalate_task(epic.id, reason="Triage audited reset")
     assert not sync_epic_review(team.db, team.binding.team_id).held
     submit(team.db, reviewer, waiting, "review", "approved", 1, sha)
@@ -702,7 +830,7 @@ async def test_held_team_refuses_a_new_review_round_on_another_leaf(world: TeamW
 
 
 @pytest.mark.asyncio
-async def test_blocked_leaf_holds_epic(world: TeamWorld) -> None:
+async def test_blocked_leaf_allows_ready_sibling_tip(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     epic = new_task(world, TITLE, epic=True)
     leaf, ready = (
@@ -713,14 +841,18 @@ async def test_blocked_leaf_holds_epic(world: TeamWorld) -> None:
     TaskDependencyManager(world.case.db).add_dependency(leaf.id, outside.id, "blocks")
     team = await epic_team(world, epic)
     developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
     tasks.claim_task(ready.id, developer, force=True)
     sha = team.commit(ready, "ready.py")
     submit(team.db, developer, ready, "implementation", "approved", 1, sha)
+    submit(team.db, reviewer, ready, "review", "approved", 1, sha)
+    team.link_tip()
 
-    # The outside blocker holds the epic without escalating it.
+    # The outside blocker holds its dependent; the approved sibling tip remains ready.
     state = sync_epic_review(team.db, team.binding.team_id)
-    assert (state.held, state.holds) == (True, (leaf.id,))
-    assert not state.epic_tip_ready
+    assert not state.held
+    assert set(state.holds) == {leaf.id, outside.id}
+    assert state.epic_tip_ready
     current = tasks.get_task(epic.id)
     assert (current.escalated_at, current.claimed_by_session_id) == (None, None)
 
