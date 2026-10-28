@@ -70,8 +70,9 @@ class TeamBinding:
     project_id: str
     branch: str
     base_branch: str
-    worktree_id: str
-    worktree_path: str
+    # None for a treeless team, whose admission records an explicit null for its tree.
+    worktree_id: str | None
+    worktree_path: str | None
     # One entry per reviewer definition the team binds; None until its seat exists.
     reviewers: dict[str, str | None] = field(default_factory=dict)
     # One entry per implementation domain: the live primary that works the team tree.
@@ -192,7 +193,8 @@ def check_team_spawn(db: HubDatabase, caller: Session, target: SeatTarget) -> No
             "team_tree_mismatch", f"team {binding.team_id} works in tree {binding.worktree_id}"
         )
     if target.project_path is not None and (
-        Path(target.project_path).resolve() != Path(binding.worktree_path).resolve()
+        binding.worktree_path is None
+        or Path(target.project_path).resolve() != Path(binding.worktree_path).resolve()
     ):
         raise TeamAdmissionRefused(
             "team_tree_mismatch", f"team {binding.team_id} works in {binding.worktree_path}"
@@ -279,6 +281,9 @@ def _binding(record: dict[str, Any] | None) -> TeamBinding | None:
         if item.name == "mode":
             # Records admitted before epic mode carry no mode: they are single-task teams.
             values[item.name] = value if isinstance(value, str) and value else SINGLE_MODE
+            continue
+        if item.name in ("worktree_id", "worktree_path") and item.name in record and value is None:
+            values[item.name] = None
             continue
         if not isinstance(value, str) or not value:
             return None
@@ -513,9 +518,9 @@ async def _create(
     await asyncio.to_thread(_record, caller, asdict(binding))
     # Seats join this tree without the isolation preflight that normally pins it.
     try:
-        await GcodeGateway().pin_project(Path(binding.worktree_path))
+        await GcodeGateway().pin_project(Path(made.cwd))
     except (GcodeGatewayError, OSError) as exc:
-        logger.warning("Failed to pin team code index for %s: %s", binding.worktree_path, exc)
+        logger.warning("Failed to pin team code index for %s: %s", made.cwd, exc)
     return binding
 
 
@@ -535,6 +540,8 @@ def _admission_mode(db: HubDatabase, task: Task) -> str:
 
 async def _verify_tree(db: HubDatabase, binding: TeamBinding) -> None:
     """The team's tree still exists on its recorded branch."""
+    if binding.worktree_id is None or binding.worktree_path is None:
+        raise TeamAdmissionRefused("team_tree_missing", f"team {binding.team_id} has no tree")
     tree = await asyncio.to_thread(LocalWorktreeManager(db).get, binding.worktree_id)
     if tree is None or not tree_is_live(tree) or tree.branch_name != binding.branch:
         raise TeamAdmissionRefused(
