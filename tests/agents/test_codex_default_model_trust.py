@@ -1,14 +1,19 @@
 """Keep first-run acknowledgements aligned with the repository's launch defaults."""
 
+import json
+import shutil
 import tomllib
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
+from zipfile import ZipFile
 
 import psycopg
 import pytest
 import yaml
+from setuptools import Distribution
 
 from gobby.agents.trust import (
     active_codex_launch_models,
@@ -18,6 +23,56 @@ from gobby.agents.trust import (
 from gobby.storage.definitions.rules import RuleDefinitionManager
 
 pytestmark = pytest.mark.unit
+
+
+def _packaged_defaults_path() -> Path:
+    return Path(str(files("gobby").joinpath("data/codex_launch_defaults.json")))
+
+
+def test_packaged_launch_defaults_match_project_policy() -> None:
+    root = Path(__file__).resolve().parents[2]
+    document = yaml.safe_load(
+        (root / ".gobby/workflows/rules/project-operating-policy.yaml").read_text()
+    )
+    policy = next(
+        effect["value"]
+        for effect in document["rules"]["project-operating-policy"]["effects"]
+        if effect.get("variable") == "project_policy"
+    )
+    path = _packaged_defaults_path()
+    assert path.is_file(), "Launch defaults must ship independently of the source checkout"
+    assert json.loads(path.read_text()) == {
+        key: policy[key] for key in ("launch_defaults", "role_launch_defaults")
+    }
+
+
+def test_launch_defaults_are_in_built_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Build a small wheel with the repository's actual package-data configuration."""
+    root = Path(__file__).resolve().parents[2]
+    config = tomllib.loads((root / "pyproject.toml").read_text())
+    source = _packaged_defaults_path()
+    assert source.is_file(), "Launch defaults package data is missing"
+    package = tmp_path / "src/gobby"
+    (package / "data").mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    shutil.copyfile(source, package / "data" / source.name)
+    monkeypatch.chdir(tmp_path)
+    distribution = Distribution(
+        {
+            "name": "gobby-data-check",
+            "version": "0.0.0",
+            "packages": ["gobby"],
+            "package_dir": {"": "src"},
+            "package_data": config["tool"]["setuptools"]["package-data"],
+        }
+    )
+    distribution.run_command("bdist_wheel")
+    wheels = list((tmp_path / "dist").glob("*.whl"))
+    assert len(wheels) == 1
+    with ZipFile(wheels[0]) as wheel:
+        assert wheel.read("gobby/data/codex_launch_defaults.json") == source.read_bytes()
 
 
 def _codex_models(defaults: dict[str, Any]) -> set[str]:
@@ -84,18 +139,29 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
     monkeypatch.delenv("CODEX_HOME", raising=False)
     gobby_home = tmp_path / "gobby"
     gobby_home.mkdir()
+    monkeypatch.setattr("gobby.agents.trust.__file__", str(tmp_path / "site-packages/trust.py"))
 
     with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
         result = seed_gobby_home_trust("codex", gobby_home=gobby_home)
 
     assert result["success"] is True
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
-    assert config["tui"]["model_availability_nux"] == {
-        "gpt-5.6-sol": 4,
-        "gpt-6-luna": 4,
-        "gpt-6.1-sol": 4,
-        "gpt-6.1-terra": 4,
-    }
+    assert config["tui"]["model_availability_nux"] == dict.fromkeys(
+        _codex_models(json.loads(_packaged_defaults_path().read_text())), 4
+    )
+
+
+def test_new_bundled_agent_model_is_seeded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    agents = tmp_path / "bundled_agents"
+    agents.mkdir()
+    (agents / "future.yaml").write_text("provider: codex\nmodel: gpt-future-seat\n")
+    monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: agents)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
+        result = seed_gobby_home_trust("codex", gobby_home=tmp_path / "gobby")
+    assert result["success"] is True
+    config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
+    assert config["tui"]["model_availability_nux"]["gpt-future-seat"] == 4
 
 
 def test_active_policy_codex_model_is_seeded(
