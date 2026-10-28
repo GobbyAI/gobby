@@ -1621,6 +1621,24 @@ import it in both rules.
   Decisions 5, 6, 10, 15 and 16 were refreshed. The stale
   `## M1 Task Manifest` was withdrawn unedited, so the Adversary re-derives
   it (memory f5577ae0).
+- 2026-10-28: V1 consensus on the #25261 refresh. The Plan Enhancer
+  (gobby#18345) proposed CO-E4-01 (V2 step 5 runs Decision 2's deadlock case
+  through `escalate_task` and `de_escalate_task`) and CO-E4-02 (V2 step 1 is
+  one exact pytest command). The Orchestrator accepted both through Triage
+  (gobby#17480), and they landed in `5f4c40c6b9`. The Plan Adversary
+  (gobby#18336) raised CO-A4-F1 (nit: `PreWriteDigests.take` ignored the
+  one-hour expiry), fixed in `0987242205`. It also raised CO-A4-F2
+  (blocking: a pair recorded without a content fingerprint, an unreadable
+  file or a directory, escaped 1.7's discovery after a handoff, including a
+  stale hash once the file was readable again). `0987242205` and
+  `ac23717515` fixed it with fallback-pair discovery from the task's live
+  interval, the directory ruling in Decision 22, and dropping the task's
+  stale hash when a recorded write cannot fingerprint a path. The Adversary
+  confirmed consensus on `ac237175152ccefc84f61420c83f72e9c50369f9` with no
+  remaining findings and a clean project-aware validation. Routing stays
+  eight backend code leaves with TDD and task type feature. Josh's approval
+  through the Assistant precedes work on #23565 to #23569 (#25261
+  criterion 3).
 
 ## V2: Verification
 `kind: verification`
