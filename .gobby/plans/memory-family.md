@@ -43,7 +43,10 @@ templates under `src/gobby/install/shared/workflows/rules/memory-lifecycle/`
 and `.../review-learning/` call `surface_memories` and the review-learning
 recall tools, and `src/gobby/workflows/engine/delivery_formatting.py`,
 `mcp_injections.py` and `injection_tracking.py` format and track delivery.
-This family owns the tools those rules call, not the delivery. The AI family
+This family owns the tools those rules call, not the delivery. The delivery
+formatter and the hooks MCP dispatcher's review-lesson formatter still import
+the Python memory and review-learning code, so 8.6 names them as pieces of
+#21567 and #24151 and depends on both. The AI family
 (#21587, `.gobby/plans/gdaemon-ai-providers-family.md`) owns `/api/embeddings`,
 `/api/llm`, the embedding switch and the `gobby embeddings` CLI; this plan
 consumes its text-generation service (#25097). The Qdrant CLI and
@@ -2455,19 +2458,16 @@ leave a proxy selection pointing at nothing.
   router, the agent capability matrix has no memory row, and import and
   patch-string sweeps find no reference to a deleted route module.
   test: `tests/servers/test_memory_python_retired.py::test_python_memory_routes_are_retired`.
-- 8.5.3 - With the default selection, all 25 HTTP rows and 32 tools run
-  natively with the Python memory routes absent.
-  test: `tests/e2e/test_memory_native.py::test_memory_rows_work_without_python_backend`.
-- 8.5.4 - The gdaemon manifest, lock and pin agree at the required patch
+- 8.5.3 - The gdaemon manifest, lock and pin agree at the required patch
   increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
-- 8.5.5 - The contract states that the family is native-only, how a
+- 8.5.4 - The contract states that the family is native-only, how a
   retired selection is refused, and the rollback procedure.
   behavior: "memory native-only selection" in `docs/contracts/memory-native.md`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test native_only`;
 `cargo check -p gobby-daemon`; the retirement test and
 `tests/servers/test_auth_service.py` with the protected Python prefix; the
-isolated e2e test; the targeted version-pin check; scoped Ruff and mypy with
+targeted version-pin check; scoped Ruff and mypy with
 a changed-test type audit; an admitted release build and
 Orchestrator-directed cutover.
 
