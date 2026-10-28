@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import subprocess
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,21 +14,16 @@ import httpx
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.native_bin import native_bin_name
 from tests.workflows.test_placed_runbook_live import (
     CODEX_RUST_LOG,
-    STEWARD_CODEX_FLAGS,
-    STEWARD_LAUNCH_RECORD,
     Live,
-    _codex_argv_wrapper,
     _grant_files,
     _has_terminal_text,
     _kept,
-    _launch_record,
-    _link_codex_auth,
     _LiveOutputPoller,
-    _prepare_launch_record_dir,
     _preserve_steward_screen,
-    _settled_screen,
+    _stage_gmcp,
     _steward_session,
     _with_codex_debug_log,
 )
@@ -207,73 +202,6 @@ def test_the_steward_session_is_known_once_its_run_binds_a_child() -> None:
     assert _steward_session(bound, {}) is None
 
 
-def test_the_steward_wrapper_records_what_codex_inherits_and_runs_codex_with_the_flags_last(
-    tmp_path: Path,
-) -> None:
-    fake = tmp_path / "codex"
-    fake.write_text('#!/bin/sh\necho "codex $*"\n', encoding="utf-8")
-    fake.chmod(0o755)
-    record = tmp_path / "log" / STEWARD_LAUNCH_RECORD
-    record.parent.mkdir()
-    wrapper = tmp_path / "wrapper"
-    wrapper.write_text(
-        _codex_argv_wrapper(str(fake), STEWARD_CODEX_FLAGS, record), encoding="utf-8"
-    )
-    wrapper.chmod(0o755)
-    env = {
-        "PATH": os.environ["PATH"],
-        "GOBBY_HOME": "/home/steward",
-        "GOBBY_AGENT_API_TOKEN": "secret-value",
-        "TMPDIR": "/scratch",
-    }
-    seat_argv = ["-c", 'mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN="secret-value"', "a prompt a=b"]
-
-    result = subprocess.run(
-        [str(wrapper), *seat_argv], env=env, capture_output=True, text=True, check=True
-    )
-
-    assert result.stdout.strip().splitlines()[-1] == (
-        'codex -c mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN="secret-value" '
-        "a prompt a=b -c mcp_servers.gobby.required=false"
-    )
-    text = record.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    assert "arg mcp_servers.gobby.env.GOBBY_AGENT_API_TOKEN" in lines
-    assert "arg mcp_servers.gobby.required" in lines
-    assert "env GOBBY_AGENT_API_TOKEN" in lines
-    assert "value GOBBY_HOME=/home/steward" in lines
-    assert "value TMPDIR=/scratch" in lines
-    assert "value GOBBY_MACHINE_ID=" in lines
-    assert "secret-value" not in text
-    assert not any("prompt" in line for line in lines)
-
-
-def test_the_steward_launch_record_names_the_spawn_overrides_it_did_not_inherit(
-    tmp_path: Path,
-) -> None:
-    log = tmp_path / "providers" / "codex" / "log"
-    log.mkdir(parents=True)
-    (log / STEWARD_LAUNCH_RECORD).write_text(
-        "arg mcp_servers.gobby.required\nenv GOBBY_HOME\nvalue GOBBY_HOME=/home/steward\n",
-        encoding="utf-8",
-    )
-
-    record = _launch_record(tmp_path)
-
-    assert record["overrides"] == ["mcp_servers.gobby.required"]
-    assert record["env_names"] == ["GOBBY_HOME"]
-    assert record["values"] == {"GOBBY_HOME": "/home/steward"}
-    missing = record["production_overrides_missing"]
-    assert "mcp_servers.gobby.env.GOBBY_HOME" in missing
-    assert "shell_environment_policy.set.GOBBY_HOME" in missing
-
-
-def test_a_steward_without_a_launch_record_says_so(tmp_path: Path) -> None:
-    assert _launch_record(tmp_path) == {
-        "missing": str(tmp_path / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD)
-    }
-
-
 def test_grant_files_are_listed_by_path_and_their_contents_are_not_read(tmp_path: Path) -> None:
     (tmp_path / "runs" / "a").mkdir(parents=True)
     (tmp_path / "runs" / "a" / "grant.json").write_text('{"token": "x"}', encoding="utf-8")
@@ -281,46 +209,28 @@ def test_grant_files_are_listed_by_path_and_their_contents_are_not_read(tmp_path
     assert _grant_files(tmp_path) == ["runs/a/grant.json"]
 
 
-def test_the_steward_screen_settles_only_once_the_composer_shows_and_stops_changing() -> None:
-    mcp = _ScriptedMCP(
-        {
-            "capture_output": [
-                _capture("› Working 1s"),
-                _capture("› Working 2s"),
-                _capture("› ready"),
-                _capture("› ready"),
-                _capture("done"),
-                _capture("done"),
-            ]
-        }
-    )
-    live = cast(Live, SimpleNamespace(mcp=mcp))
-
-    assert _settled_screen(live, "child-9", pause=0) is None
-    assert _settled_screen(live, "child-9", pause=0) == "› ready"
-    assert _settled_screen(live, "child-9", pause=0) is None
-
-
-def test_the_launch_record_dir_is_made_after_the_auth_link_and_the_link_still_holds(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # A placeholder source, so no operator login is read or copied.
-    source = tmp_path / "codex-source"
-    source.mkdir(mode=0o700)
-    (source / "auth.json").write_text("{}", encoding="utf-8")
-    (source / "auth.json").chmod(0o600)
-    monkeypatch.setenv("CODEX_HOME", str(source))
+def test_gmcp_is_staged_into_the_home_bin_and_its_hash_is_recorded(tmp_path: Path) -> None:
+    native = tmp_path / "native"
+    native.mkdir()
+    installed = native / native_bin_name("gmcp")
+    installed.write_bytes(b"gmcp-build")
+    installed.chmod(0o755)
     home = tmp_path / "home"
-    home.mkdir(mode=0o700)
+    home.mkdir()
 
-    _link_codex_auth(home)
-    record = _prepare_launch_record_dir(home)
+    recorded = _stage_gmcp(home, native)
 
-    assert record == home / "providers" / "codex" / "log" / STEWARD_LAUNCH_RECORD
-    assert record.parent.is_dir()
-    assert (home / "providers" / "codex" / "auth.json").is_symlink()
-    assert (home / ".codex").is_symlink()
-    assert (home / "providers").stat().st_mode & 0o777 == 0o700
-    # Before the link, providers does not exist: the record dir must fail rather than make it.
+    staged = home / "bin" / native_bin_name("gmcp")
+    assert staged.read_bytes() == b"gmcp-build"
+    assert os.access(staged, os.X_OK)
+    assert recorded == {"gmcp": hashlib.sha256(b"gmcp-build").hexdigest()}
+
+
+def test_staging_refuses_a_native_set_without_gmcp(tmp_path: Path) -> None:
+    native = tmp_path / "native"
+    native.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+
     with pytest.raises(FileNotFoundError):
-        _prepare_launch_record_dir(tmp_path / "unlinked")
+        _stage_gmcp(home, native)
