@@ -83,7 +83,7 @@ rules:
                 "security_reviewer_model": "gpt-6.1-sol",
                 "security_reviewer_reasoning_effort": "xhigh",
                 "recovery_steward_provider": "codex",
-                "recovery_steward_model": "gpt-6.1-luna",
+                "recovery_steward_model": "gpt-6.1-sol",
                 "recovery_steward_reasoning_effort": "medium",
                 "consolidator_provider": "claude",
                 "consolidator_model": "claude-opus-5-5",
