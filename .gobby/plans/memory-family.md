@@ -61,14 +61,20 @@ per-memory extraction and purge functions a future native loop calls. The
 nightly dream schedule is bound by the cron plan's #25024, which binds the
 service 4.3 names.
 
-**Cross-plan contention.** `crates/gdaemon/src/main.rs::Command` and `::main`
-are also targeted by `.gobby/plans/gdaemon-skills-family.md` 5.1 and
-`.gobby/plans/gdaemon-ai-providers-family.md` 7.5; 7.1 here edits them. The
-landings serialize and the later one rebases. `crates/gcore/src/qdrant.rs`
+**Cross-plan contention.** 7.1 here edits `crates/gdaemon/src/main.rs::Command`
+and `::main`. Six other plans also target `crates/gdaemon/src/main.rs`:
+`.gobby/plans/gdaemon-skills-family.md` 5.1 (and 2.6),
+`.gobby/plans/gdaemon-ai-providers-family.md` 7.5,
+`.gobby/plans/agents-family.md` 10.1 (and 10.2, 10.3),
+`.gobby/plans/node-install-enrollment.md` 2.1 and 4.3,
+`.gobby/plans/gdaemon-cron-family.md` 3.3 and
+`.gobby/plans/gdaemon-projects-files-docs-family.md` 3.4 and 5.3. The
+landings serialize and each later one rebases. `crates/gcore/src/qdrant.rs`
 gains two read functions in 1.3 and 2.3; the AI plan's #25112 adds alias
 operations to the same module, and the later landing rebases.
-`crates/gai/src/lib.rs` gains one re-export in 2.4 after #25097 lands
-(Decision 6).
+`crates/gai/src/lib.rs` gains the re-export of #25097's service in 2.4 only
+when it is absent; the sessions plan's 4.1 adds the same re-export when
+memory has not (Decision 6).
 
 ## Decision Record
 `kind: framing`
@@ -104,19 +110,23 @@ operations to the same module, and the later landing rebases.
    before approval for the recorded fallback: gcore's Leiden
    (`crates/gcore/src/graph_analytics.rs`) over a k-nearest-neighbour graph of
    entity embeddings, with no noise class, under an exact waiver.
-3. **Memory's session-variable writes (Orchestrator MEM-D2, option A).**
-   `get_memory` appends to `accessed_memory_ids` (bounded at 1000, each
-   record carrying the claimed task id), and `review_task_memories` writes
-   `_memory_task_review_records` (bounded at 50) and
-   `_memory_review_stop_delivered`. No native `session_variables` writer
-   exists; `.gobby/plans/rust-rule-evaluation.md` D1.2 assigns the general
-   native commit to sessions #21562, which is unplanned. Leaf 6.1 owns a
-   narrow native writer for exactly those three keys. It is key-scoped, runs
-   under `SessionVariableMutation`'s explicit advisory key from #25262 (the
-   Orchestrator confirmed the edge), and matches
-   `src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`.
-   The sessions family absorbs it when that family lands; its plan records
-   this seam.
+3. **Memory's session-variable writes (Orchestrator MEM-D2, option A, as
+   corrected by ORCH-REV-MEM-2).** `get_memory` appends to
+   `accessed_memory_ids` (bounded at 1000, each record carrying the claimed
+   task id), and `review_task_memories` writes `_memory_task_review_records`
+   (bounded at 50) and `_memory_review_stop_delivered`. The sessions plan
+   (`.gobby/plans/sessions-family.md`, #21562, planned under #25253) owns the
+   native `session_variables` writer. Its 2.4 exports a key-scoped variable
+   read and mutation API under `SessionVariableMutation`'s explicit advisory
+   key from #25262. It also absorbs the bounded-list upsert of
+   `src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`
+   that an earlier draft of this plan placed in
+   `crates/gmemory/src/session_vars.rs`; that plan's Writer records the
+   absorption. gmemory writes no `session_variables` row and takes no lock
+   itself. Leaf 6.1 keeps only memory's knowledge of the three keys (names,
+   bounds and record identities) and calls that API, so it depends on
+   #21562. It keeps its #25262 edge because its tests assert that a Python
+   writer and a native writer of one session serialize on that key.
 4. **Native embedding serving lease (Orchestrator MEM-D3, option A; amends
    the approved AI plan, flagged for Josh).** AI 7.4 states that the native
    daemon holds no serving lease and writes no collection. That stops being
@@ -134,7 +144,7 @@ operations to the same module, and the later landing rebases.
    staying fenced. gdaemon holds one lease with instance id
    `UUIDv5(machine_id, "gdaemon")`, distinct from Python's and stable across
    restarts. #25071's native tool-embeddings writer reuses the module. The
-   Orchestrator records AI 7.4's premise as amended.
+   AI plan's 7.4 records the amended premise (commit 23d0c055b8).
 5. **Placement.** The family composes only where the hub pool exists, as
    `crates/gdaemon/src/serve.rs::run` composes `gobby_runtime::RuntimeFamily`
    inside `if let Some(pool) = &pool`: hub and standalone. A node composes
@@ -161,12 +171,40 @@ operations to the same module, and the later landing rebases.
    `ReviewLearningPatternMutation` keeps its explicit key
    `review_learning_pattern:{project_id}:{pattern_key}`
    (`src/gobby/storage/hub/postgres_pool.py::advisory_lock_keys`).
-8. **Cross-family reads.** The tasks (#21560) and sessions (#21562) families
-   are unported. Native memory reads their rows directly through the shared
-   pool, read-only: `surface_memories` reads the session's `project_id` and
-   `last_assistant_content`; `get_memory` reads the claimed task id;
-   `review_task_memories` reads task and session rows. Its only writes outside
-   memory tables are Decision 3's three session-variable keys.
+8. **Cross-family reads (ORCH-REV-MEM-1, ROADMAP decision 16).** Native
+   memory reaches tasks and sessions data only through the owning crates'
+   public APIs, never their tables. 5.1, the first consumer, adds path
+   dependencies on `gobby-tasks` (#21560, `.gobby/plans/tasks-family.md`) and
+   `gobby-sessions` (#21562, `.gobby/plans/sessions-family.md`). Both depend
+   on gcore and neither depends on gmemory, so the crate graph stays acyclic.
+   The calls are:
+   - Session lookup. The review-learning scope resolvers (5.1) and
+     `surface_memories`, `get_memory` and `review_task_memories` (6.2) resolve
+     the caller's session, its `project_id` and its `last_assistant_content`
+     through sessions 1.1's store and `resolve_session_ref`, as
+     `src/gobby/mcp_proxy/tools/memory_session.py::resolve_session` does.
+   - Claimed task. `get_memory` takes the caller's newest open claimed task
+     through tasks 1.2's listing with a `claimed_by_session_id` filter, as
+     `memory_session.py::resolve_claimed_task_id` calls
+     `LocalTaskManager.list_tasks`.
+   - Review task. `review_task_memories` resolves its task through tasks
+     1.1's `resolve_read`, as `memory_review.py::_resolve_task` does, and
+     decides operator review through tasks 2.1's `is_operator_coordinator`.
+   - Session lineage. `review_task_memories` checks that the closing session
+     descends from the caller through a gsessions export porting
+     `src/gobby/storage/sessions/_lineage_discovery.py::_LineageDiscoveryMixin.is_ancestor`.
+     The sessions plan does not name that export yet, so the Orchestrator
+     routes it to that plan's Writer.
+   - Retirement listing. Class recall (5.1) lists tasks by project, closed
+     state and label through tasks 1.2's listing, as
+     `src/gobby/review_learning/class_recall.py::RetirementTaskManager` does.
+   - Session variables. Decision 3.
+
+   5.1 and 6.2 depend on #21560 and #21562; 6.1 depends on #21562. The
+   owning leaves are tasks 1.1, 1.2 and 2.1 and sessions 1.1 and 2.4, and
+   the Orchestrator may narrow these epic edges to those leaves' tasks at
+   expansion. Memory's only writes outside memory tables are Decision 3's
+   three keys, through the sessions API.
 9. **CLI architecture.** Python's record commands build
    `MemoryManager(db, config.memory)` in process with no vector store,
    embedder or graph (`src/gobby/cli/memory/__init__.py::get_memory_manager`),
@@ -180,7 +218,10 @@ operations to the same module, and the later landing rebases.
     parents the seam's phase sub-epic under #25070. #25116's existing edge
     on #25070 then waits on the seam leaf. The Orchestrator removes #25070's
     `needs-planning` label after expansion. #25024 is blocked on the epic;
-    it binds `MemoryDreamService` from 4.3.
+    it binds `MemoryDreamService` from 4.3. #25071 reuses 2.1's lease module
+    and implements 3.1's `CollectionRebuildSeam`, so at expansion the
+    Orchestrator adds `#25071` blocked-by edges on the tasks expanded from
+    2.1 and 3.1 (ORCH-REV-MEM-4).
 11. **Debt-first review (memory 9066f1eb).** The disposition list below
     decides every surfaced debt item. Two candidates proved not to be debt.
     The CLI's in-process manager writes no vectors (Decision 9), so it
@@ -1247,13 +1288,13 @@ Targets:
 - `crates/gmemory/tests/rebuild_seam.rs`
 
 **Research context:** #25070's contract, as the AI plan's 7.4 consumes it.
-`rebuild(collection_kind = memories, physical_name, embedder)` fills the named
-physical collection with one vector per live memory from the target
+For the `memories` kind, `rebuild(physical_name, &EmbeddingConfig)` fills the
+named physical collection with one vector per live memory from the target
 embedder, under the per-project write fence, as Python does with
 `LocalMemoryManager.list_memories(100)` pages and `VectorStore.batch_upsert`
 into `memories@<run_id>` (`src/gobby/memory/collection_names.py`).
-`project_change(collection_kind = memories, source_id, physical_name,
-embedder)` re-reads the source memory authoritatively and upserts its point,
+`project_change(source_id, physical_name, &EmbeddingConfig)` re-reads the
+source memory authoritatively and upserts its point,
 or deletes the point for a tombstone. The switch, not this seam, owns the
 ledger read, watermark and replay
 (`src/gobby/ai/embedding_switch_runner.py::EmbeddingSwitchRunner.build` and
@@ -1272,10 +1313,11 @@ gmemory exports `MemoriesRebuildSeam`, built from the hub pool, implementing
 it for the `memories` kind, and #25071 implements the same trait for tool
 embeddings. The AI plan's 7.4 runner holds one `Arc<dyn
 CollectionRebuildSeam>` per kind, its test stubs implement the same trait,
-and its 7.6 composes the real seams in gdaemon's serve path; the Orchestrator
-records those AI 7.4 and 7.6 amendments as it did Decision 4's. The crate
-graph stays acyclic: gai and gmemory depend on gcore, gmemory depends on gai,
-and gdaemon depends on all three.
+and its 7.6 composes the real seams in `crates/gdaemon/src/serve.rs`; the AI
+plan records those 7.4 and 7.6 amendments (commit 23d0c055b8). The crate
+graph stays acyclic: gai, gmemory, gtasks and gsessions depend on gcore,
+gmemory depends on gai, gtasks and gsessions (Decision 8), none of them
+depends on gmemory, and gdaemon depends on all of them.
 
 **Acceptance:**
 
