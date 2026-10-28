@@ -117,6 +117,10 @@ gobby#17480:
   check. Respond depends on #24573, which gives native terminal rows a runtime
   snapshot, and on #24580, which makes the terminal family native so Rust becomes
   the write owner.
+- **Q8, ledger retention after removal.** Leaf 4.1 keeps a stale `delegated`
+  ledger row the way recorded drops are kept, and passes the retained keys to
+  `load_waivers`. A stale `proxied` row still fails. This plan owns the rule;
+  other family plans bind 4.1 or its landed proof as a cross-plan edge.
 - **Crate seam.** Pane detection, the node registry and the broadcast broker all
   live in gdaemon, so gagents cannot depend on gdaemon without a Cargo cycle.
   Instead, gagents defines one injected trait, `AttentionHost`, and gdaemon
@@ -153,7 +157,10 @@ gobby#17480:
 
   After 4.3 there is no Python owner left to fall back to. Rolling back means
   reinstalling the prior coherent release. Setting the family back to
-  `proxy`/`compare` is not a supported rollback.
+  `proxy`/`compare` is not a supported rollback. Because an explicit
+  `front_door.routes.attention` entry overrides the default in both directions,
+  the takeover restart and any rollback reinstall both require that key to be
+  absent (4.3's cutover preflight).
 - macOS and Linux only. Windows is #25249. This plan has no latency gates.
 
 ## Pre-expansion capability bindings
@@ -560,6 +567,12 @@ use #24970's validation class.
 Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test internal`
 and `cargo nextest run -p gobby-daemon --test attention_internal`.
 
+**Granularity:** Publication, service construction and the guarded loopback
+routes are one outcome. The routes apply changes through the same constructed
+service that publishes them, so one end-to-end test proves all three. Splitting
+them would land either a publisher that no writer reaches or a route whose
+changes reach no broker, and neither half would have a consumer to verify it.
+
 **Acceptance:**
 - 2.3.1 - Applied transitions and metadata changes publish 1.1's exact event messages through the native broker, in seq order. test: `crates/gdaemon/tests/attention_internal.rs::events_reach_the_native_broker_in_seq_order`.
 - 2.3.2 - The loopback routes apply transitions and metadata changes and return the documented bodies. Invalid bodies get the shared validation error. test: `crates/gagents/tests/internal.rs::internal_routes_apply_and_validate`.
@@ -808,6 +821,15 @@ The e2e test starts an isolated daemon and replays the attention corpus against
 the native family. Readiness needs at least one ordinary Passed case per route.
 A report that is entirely Skipped fails.
 
+The same e2e then restarts the isolated daemon against the same database and
+asserts:
+- the roster reports a new epoch, with seq starting over under it;
+- the roster still returns the durable rows the replay left;
+- the first post-restart event carries the new epoch. A roster read after it,
+  which is the reconciliation that `web/src/hooks/useSessionAttention.ts`
+  performs on an epoch change, returns that epoch and includes the event's
+  change.
+
 Planned: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test compare`
 and isolated pytest of `tests/e2e/test_attention_family.py`.
 
@@ -815,7 +837,8 @@ and isolated pytest of `tests/e2e/test_attention_family.py`.
 - 3.5.1 - Roster comparison normalizes only the cursor, clock fields and generated ids, and reports any other difference unless it cites a waiver. test: `crates/gagents/tests/compare.rs::roster_compare_normalizes_cursor_only`.
 - 3.5.2 - In compare mode, mutations reach Python only and are never applied twice. test: `crates/gagents/tests/compare.rs::compare_mutations_call_python_only`.
 - 3.5.3 - Native replay of the four routes passes with ordinary Passed cases per route, and asserts the cited waivers. test: `tests/e2e/test_attention_family.py::test_native_attention_corpus_matches`.
-- 3.5.4 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 3.5.4 - After an isolated daemon restart on the same database, the roster reports a new epoch with seq starting over and keeps the durable rows, and the first post-restart event reconciles through an epoch-change roster read. test: `tests/e2e/test_attention_family.py::test_restart_resets_cursor_and_keeps_rows`.
+- 3.5.5 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
 ## P4: Native takeover and Python retirement
 `kind: framing`
@@ -838,7 +861,9 @@ three attention waivers.
 Retain a stale surface whose recorded status is `delegated`, exactly as drops are
 retained. Pass the retained keys to `load_waivers` as part of its `surfaces`. A
 stale `proxied` row still fails. This is a shared-tool rule that every family's
-deletion leaf needs, so it changes no family-specific behaviour.
+deletion leaf needs, so it changes no family-specific behaviour. The Orchestrator
+ruled on 2026-10-28 (Q8) that this plan owns the rule, and other family plans
+bind 4.1 or its landed proof as a cross-plan edge.
 
 Planned: `DATABASE_URL=... GOBBY_TEST_PROTECT=1 uv run pytest tests/test_parity_ledger.py`.
 
@@ -1019,6 +1044,16 @@ consumer the sweep finds.
 
 **Rollback.** After this leaf, rollback requires the prior coherent release.
 
+**Cutover preflight.** `crates/gdaemon/src/front_door/routes.rs::RouteTable::new`
+gives an explicit `front_door.routes.attention` entry precedence over
+`default_backend`. A leftover `proxy` or `compare` entry would send requests to
+the deleted Python handlers. A leftover `native` entry would survive a rollback
+and override the prior release's `proxy` default. So the cutover that activates
+this leaf, and any rollback reinstall, first confirms that the live
+`~/.gobby/bootstrap.yaml` has no `attention` key under `front_door.routes`. If
+the key is present, the cutover stops before the restart. This is a
+configuration check only: it adds no backend and no fallback.
+
 Planned:
 - focused isolated pytest of every target test file;
 - `tests/e2e/test_attention_family.py`;
@@ -1059,7 +1094,9 @@ Targets:
 - the reducer CAS order and its crash repair;
 - the decision-16 roster exception;
 - the respond error contract;
-- the post-takeover rollback boundary.
+- the post-takeover rollback boundary;
+- 4.3's cutover preflight, which requires `front_door.routes.attention` to be
+  absent before both the takeover restart and a rollback reinstall.
 
 It also gives #21571 the service contract for CLI `gobby nodes` and
 `gobby nodes list` over the existing native `/api/machines`
@@ -1071,7 +1108,7 @@ Planned: `uv run pytest tests/test_parity_ledger.py` (isolated) and a docs
 review.
 
 **Acceptance:**
-- 4.4.1 - The service contract documents the routes, events, cursor, writer list, reducer repair, roster exception, respond errors and rollback boundary. file: `docs/contracts/attention-services.md`.
+- 4.4.1 - The service contract documents the routes, events, cursor, writer list, reducer repair, roster exception, respond errors, rollback boundary and the route-override cutover preflight. file: `docs/contracts/attention-services.md`.
 - 4.4.2 - CLI gobby nodes and gobby nodes list stay proxied, with #21571 owner notes citing the contract. file: `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.
 
 ## E1 Verification
@@ -1087,7 +1124,10 @@ Implementation checks are all planned, none run:
 - the isolated Python oracle, client and reducer tests;
 - package-scoped `cargo nextest` suites for gobby-agents, gobby-daemon and
   gobby-terminals;
-- isolated e2e corpus replay;
+- isolated e2e corpus replay, plus 3.5's same-database restart test
+  `tests/e2e/test_attention_family.py::test_restart_resets_cursor_and_keeps_rows`;
+- 4.3's cutover preflight, confirming `front_door.routes.attention` is absent
+  from the live bootstrap before the takeover restart;
 - the version-pin test on every Rust leaf;
 - Ruff, mypy src and the scoped test-types audit on 4.3.
 
