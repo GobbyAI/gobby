@@ -128,10 +128,11 @@ Python test and docs. No daemon route, schema or config key changes.
    from `--project NAME|ID` or the current directory's `.gobby/project.json`
    and is sent both as `X-Gobby-Project-Id` and as the tools' `project`
    argument. An unregistered id then fails loudly instead of listing every
-   project. Writes (`create`, `update`, `close`, `reopen` and the rest) require
-   Rust client commands owned by S2.4 #21560 (Tasks family), using its write
-   path #21561. They remain uncarried until that owner proves CLI parity,
-   which must precede the S3.2 switch.
+   project. Writes (`create`, `update`, `close`, `reopen` and the rest) are
+   Rust client commands this task carries over the same route, against the
+   verb-to-public-API map in S2.4 #21560's tasks-family 5.5 (Orchestrator
+   ruling Q12, 2026-10-28). They remain uncarried until this task proves CLI
+   parity, which must precede the S3.2 switch.
 8. **`config` uses `/api/config/values`, the service the MCP config tools
    use.** `set` reads the revision, then sends a compare-and-set `PATCH`. On a
    409 `revision_conflict` it re-reads and retries once, as the Python
@@ -644,8 +645,9 @@ and `--limit` to `VALUE_FLAGS`, and `--all-projects` and `--closed` to
   unchanged.
 - `list` shows open tasks by default (`closed: false`) and closed tasks only
   with `--closed` (`closed: true` selects rows with `closed_at` set). A mixed
-  open and closed listing is additional Rust CLI parity owned by #21560,
-  outside this read-only slice; it must be carried before S3.2.
+  open and closed listing is additional Rust CLI parity this task carries
+  with the tasks write verbs, outside this read-only slice; it must be carried
+  before S3.2.
 - The row and card shapes come from `src/gobby/mcp_proxy/tools/tasks/_formatters.py:71-162`
   (`6ac386355be2a12b`): `state` nests `current_stage` and `is_closed`, and
   `task_summary_payload` carries `parent_task_id` and `dependencies`.
@@ -1009,7 +1011,7 @@ command = [
       "stages update",
   ] },
   { path = "sync", disposition = "keep", carrier = "gclient sync", carried = false, ref = "#21591", reason = "Install and setup route family." },
-  { path = "tasks", disposition = "keep", carrier = "gclient tasks", carried = false, ref = "#21560", reason = "Task writes and maintenance; S2.4 tasks family.", members = [
+  { path = "tasks", disposition = "keep", carrier = "gclient tasks", carried = false, ref = "#21571", reason = "Task writes and maintenance over the public MCP tool route; services and verb map from S2.4 #21560 (tasks-family 5.5).", members = [
       "tasks advance", "tasks backup", "tasks clean", "tasks close", "tasks commit auto",
       "tasks commit link", "tasks commit list", "tasks commit unlink", "tasks compact analyze",
       "tasks compact apply", "tasks compact stats", "tasks create", "tasks de-escalate",
