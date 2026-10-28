@@ -1400,6 +1400,7 @@ async fn an_unresolved_terminal_open_failure_is_logged_with_elapsed_time() {
 #[tokio::test]
 async fn a_read_that_outlives_its_pane_never_installs_or_attaches_the_terminal() {
     let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
     let (mut workspace, tab_id, first) = on_demand_workspace(&mock).await;
     let (backend, draws, frames) = DrawRecorder::new(96, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1470,6 +1471,7 @@ async fn a_read_that_outlives_its_pane_never_installs_or_attaches_the_terminal()
 #[tokio::test]
 async fn removal_with_an_attach_in_flight_does_not_resurrect_the_opened_pane() {
     let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
     let (mut workspace, tab_id, first) = on_demand_workspace(&mock).await;
     let (backend, draws, frames) = DrawRecorder::new(96, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal");
