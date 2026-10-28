@@ -228,8 +228,8 @@ pub(crate) fn symbol_callee_edges_query(
     let ids = typed_query::id_list_literal(symbol_ids);
     (
         format!(
-            "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
-             WHERE source.id IN [{ids}] \
+            "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target:CodeSymbol {{project: $project}}) \
+             WHERE source.id IN [{ids}] AND {CALL_EDGE_VERSION_FILTER} \
              RETURN DISTINCT source.id AS source_id, target.id AS target_id \
              ORDER BY source.id, target.id"
         ),
@@ -258,18 +258,14 @@ pub(crate) fn symbol_path_steps_query(
 pub(crate) fn get_imports_query(
     project_id: &str,
     file_path: &str,
-    content_hash: &str,
 ) -> (String, HashMap<String, String>) {
     (
         "MATCH (f:CodeFile {path: $path, project: $project})\
-         -[:IMPORTS {content_hash: $content_hash}]->(m:CodeModule) \
+         -[r:IMPORTS]->(m:CodeModule) \
+         WHERE $path + '|' + r.content_hash IN $admitted_versions \
          RETURN m.name AS id, m.name AS module_name"
             .to_string(),
-        typed_query::string_params(&[
-            ("project", project_id),
-            ("path", file_path),
-            ("content_hash", content_hash),
-        ]),
+        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
     )
 }
 
@@ -464,47 +460,68 @@ mod tests {
     #[test]
     fn relationship_edge_queries_filter_admitted_versions_before_aggregation() {
         let ids = vec!["symbol-1".to_string()];
+        let call_filter = "r.file + '|' + r.content_hash IN $admitted_versions";
+        let import_filter = "$path + '|' + r.content_hash IN $admitted_versions";
         let queries = [
             (
                 "callers",
                 find_callers_query("project-1", "symbol-1", 0, 10).0,
+                call_filter,
             ),
             (
                 "callees",
                 find_callees_query("project-1", "symbol-1", 0, 10).0,
+                call_filter,
             ),
             (
                 "usages",
                 find_usages_query("project-1", "symbol-1", 0, 10).0,
+                call_filter,
             ),
             (
                 "caller ids",
                 find_caller_ids_query("project-1", "symbol-1", 10).0,
+                call_filter,
             ),
             (
                 "usage ids",
                 find_usage_ids_query("project-1", "symbol-1", 10).0,
+                call_filter,
             ),
             (
                 "callers batch",
                 find_callers_batch_query("project-1", &ids, 10).0,
+                call_filter,
             ),
             (
                 "caller ids batch",
                 find_caller_ids_batch_query("project-1", &ids, 10).0,
+                call_filter,
             ),
             (
                 "callees batch",
                 find_callees_batch_query("project-1", &ids, 10).0,
+                call_filter,
             ),
             (
                 "callee ids batch",
                 find_callee_ids_batch_query("project-1", &ids, 10).0,
+                call_filter,
+            ),
+            (
+                "callee edges",
+                symbol_callee_edges_query("project-1", &ids).0,
+                call_filter,
+            ),
+            (
+                "imports",
+                get_imports_query("project-1", "src/lib.rs").0,
+                import_filter,
             ),
         ];
-        for (surface, query) in queries {
+        for (surface, query, predicate) in queries {
             let filter = query
-                .find("r.file + '|' + r.content_hash IN $admitted_versions")
+                .find(predicate)
                 .unwrap_or_else(|| panic!("{surface}: edges must be version-filtered: {query}"));
             let boundary = ["collect(", "min(", "RETURN"]
                 .iter()

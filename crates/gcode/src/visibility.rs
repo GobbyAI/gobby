@@ -107,7 +107,8 @@ pub(super) fn machine_state_condition(
 
 /// Content hash the local machine's file-state selects for `file_path`, or
 /// `None` when the machine is unresolvable, the file is untracked here, or the
-/// active version is a tombstone.
+/// active version is a tombstone. Test oracle only: reads bind admitted versions.
+#[cfg(test)]
 pub(crate) fn local_active_content_hash(
     conn: &mut Client,
     project_id: &str,

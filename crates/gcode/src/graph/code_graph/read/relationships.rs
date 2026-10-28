@@ -6,7 +6,9 @@ use crate::db;
 use crate::graph::typed_query;
 use crate::models::{GraphPathStep, GraphResult};
 use crate::visibility;
-use crate::visibility::graph_versions::{admitted_graph_versions, with_admitted_versions};
+use crate::visibility::graph_versions::{
+    AdmittedGraphVersions, admitted_graph_versions, with_admitted_versions,
+};
 
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{row_string_owned, row_usize};
@@ -388,15 +390,7 @@ pub fn find_callee_ids_batch(
 
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
     with_optional_core_graph(ctx, Vec::new, |client| {
-        // IMPORTS edges are tagged per content version; only the local
-        // machine's active version of the file may contribute edges.
-        let mut conn = db::connect_readonly(&ctx.database_url)?;
-        let Some(content_hash) =
-            visibility::local_active_content_hash(&mut conn, &ctx.project_id, file_path)?
-        else {
-            return Ok(Vec::new());
-        };
-        let (query, params) = get_imports_query(&ctx.project_id, file_path, &content_hash);
+        let (query, params) = admitted_query(ctx, get_imports_query(&ctx.project_id, file_path))?;
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })
@@ -432,12 +426,16 @@ pub fn resolve_external_call_target(
 fn symbol_callee_edges(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     symbol_ids: &[String],
 ) -> anyhow::Result<Vec<(String, String)>> {
     if symbol_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let (query, params) = symbol_callee_edges_query(project_id, symbol_ids);
+    let (query, params) = with_admitted_versions(
+        symbol_callee_edges_query(project_id, symbol_ids),
+        admitted,
+    );
     let rows = client.query(&query, Some(params))?;
     Ok(rows
         .iter()
@@ -518,12 +516,13 @@ pub fn shortest_symbol_path(
             return symbol_path_steps(client, &ctx.project_id, &[from_id.to_string()]);
         }
 
+        let admitted = admitted_graph_versions(ctx)?;
         let mut visited = HashSet::from([from_id.to_string()]);
         let mut parents = HashMap::new();
         let mut frontier = vec![from_id.to_string()];
 
         for _ in 0..max_depth {
-            let edges = symbol_callee_edges(client, &ctx.project_id, &frontier)?;
+            let edges = symbol_callee_edges(client, &ctx.project_id, &admitted, &frontier)?;
             // Routes must not pass through content versions that are not
             // active on this machine; drop invisible targets before they can
             // enter the frontier or the parent map.
