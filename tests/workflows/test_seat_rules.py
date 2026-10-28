@@ -668,3 +668,93 @@ async def test_persona_name_alone_matches_no_seat_rule(harness: _ProxyHarness) -
         ("gobby-agents", "spawn_agent", dict(ENHANCER_CALL)),
     ):
         assert await harness.call(persona, server, tool, arguments) is None, tool
+
+
+# Every seat, spawned agent and persona that may not close tasks. Josh's ruling for #25226:
+# only the Dev Manager and the Orchestrator close, so the Assistant and personas are refused too.
+NON_CLOSERS = (
+    "assistant",
+    "comms-agent",
+    "triage-agent",
+    "developer",
+    "code-reviewer",
+    "docs-reviewer",
+    "research-reviewer",
+    "researcher",
+    "archivist",
+    "log-monitor",
+    "metrics-monitor",
+    "plan-writer",
+    "plan-enhancer",
+    "plan-adversary",
+    "test-writer",
+    "triage",
+    "release-manager",
+    "reporter",
+    "security-reviewer",
+    "debugger",
+    "design-reviewer",
+    "recovery-steward",
+    "consolidator",
+    "tech-writer",
+    "epic-reviewer",
+    "expansion-qa",
+    "feedback-reviewer",
+    "memory-curator",
+)
+AGENTS_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents"
+CLOSE_TASK_NAMES = frozenset({"close_task", "gobby-tasks:close_task"})
+
+
+@pytest.mark.asyncio
+async def test_only_dev_managers_and_the_orchestrator_close_tasks(engine: RuleEngine) -> None:
+    close = _proxy_call("gobby-tasks", "close_task", {"task_id": "#25226", "reason": "moot"})
+    for agent_type in NON_CLOSERS:
+        blocked = await _decide(engine, close, {"_agent_type": agent_type})
+        assert blocked.decision == "block", agent_type
+        assert "Dev Manager" in (blocked.reason or ""), agent_type
+        assert "Orchestrator" in (blocked.reason or ""), agent_type
+
+    for closer in (
+        {"_agent_type": "dev-manager"},
+        {"_agent_type": "orchestrator"},
+        {"_agent_type": "default"},
+        {},
+    ):
+        assert (await _decide(engine, close, closer)).decision == "allow", closer
+
+
+@pytest.mark.asyncio
+async def test_preview_stays_open_to_every_seat(engine: RuleEngine) -> None:
+    preview = _proxy_call(
+        "gobby-tasks", "close_task", {"task_id": "#25226", "reason": "moot", "preview": True}
+    )
+    for agent_type in NON_CLOSERS:
+        allowed = await _decide(engine, preview, {"_agent_type": agent_type})
+        assert allowed.decision == "allow", (agent_type, allowed.reason)
+
+
+@pytest.mark.asyncio
+async def test_persona_overlays_cannot_close_tasks(engine: RuleEngine) -> None:
+    close = _proxy_call("gobby-tasks", "close_task", {"task_id": "#25226", "reason": "moot"})
+    for persona in ("comms-agent", "plan-writer"):
+        blocked = await _decide(engine, close, {"_persona_name": persona})
+        assert blocked.decision == "block", persona
+
+
+def _close_task_names(node: object) -> list[str]:
+    if isinstance(node, dict):
+        return [name for value in node.values() for name in _close_task_names(value)]
+    if isinstance(node, list):
+        return [name for item in node for name in _close_task_names(item)]
+    return [node] if isinstance(node, str) and node in CLOSE_TASK_NAMES else []
+
+
+def test_only_dev_managers_and_the_orchestrator_are_granted_close_task() -> None:
+    # Grant lists and workflow steps name the tool as an exact string; prose is not a grant.
+    granted = {
+        path.stem: _close_task_names(yaml.safe_load(path.read_text()))
+        for path in sorted(AGENTS_DIR.glob("*.yaml"))
+        if path.stem not in ("dev-manager", "orchestrator")
+    }
+    assert {stem: names for stem, names in granted.items() if names} == {}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock
@@ -223,3 +224,33 @@ def test_malformed_coordination_reports_event_grammar(event: str) -> None:
 
     with pytest.raises(CandidateMessageError, match=re.escape(_COORDINATION_GRAMMAR[event])):
         candidate_event(MagicMock(), message)
+
+
+TECH_WRITER_DEFINITION = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/tech-writer.yaml"
+)
+
+
+def test_tech_writer_prescribed_candidate_envelope_parses() -> None:
+    """The envelopes the tech-writer is told to send pass the receiver's parser.
+
+    send_message refuses a line without RUN or WT before delivery, so a prescription
+    that omits them strands the writer at handoff.
+    """
+    prescriptions = [
+        line[line.index("EVENT=CANDIDATE ") :]
+        for line in TECH_WRITER_DEFINITION.read_text().splitlines()
+        if "EVENT=CANDIDATE TASK=" in line
+    ]
+    assert len(prescriptions) >= 2
+    for prescription in prescriptions:
+        envelope = prescription.partition(" NOTE=")[0]
+        # A placeholder with a space splits into two tokens; each value must be one token.
+        assert not re.search(r"<[^>]*\s[^>]*>", envelope)
+        concrete = re.sub(r"[<>]", "", envelope.replace("<40-hex-sha>", "0" * 40))
+        fields = _parse(f"{concrete} NOTE=changes")
+        assert fields is not None
+        assert fields["EVENT"] == "CANDIDATE"
+        assert fields["RUN"] and fields["WT"]
+        assert fields["COMMIT"] == "0" * 40

@@ -83,7 +83,6 @@ step_workflow:
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:claim_task"
-        - "gobby-tasks:close_task"
         - "gobby-tasks:create_task"
         - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:delete_task"
@@ -117,7 +116,6 @@ step_workflow:
       allowed_tools: "all"
       blocked_mcp_tools:
         - "gobby-tasks:claim_task"
-        - "gobby-tasks:close_task"
         - "gobby-tasks:create_task"
         - "gobby-tasks:de_escalate_task"
         - "gobby-tasks:delete_task"

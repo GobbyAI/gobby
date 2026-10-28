@@ -35,7 +35,7 @@ prompts:
       Record approved `gobby-tasks:record_implementation_step` and `gobby-tasks:record_closing_step`
       records for that SHA. Send Triage the spike's task and SHA: the Orchestrator launches a DevTeam
       bound to the spike with `reviewer_agent=research-reviewer`, and that reviewer records the spike's approved review.
-      Close the spike with `gobby-tasks:close_task` only after that approval; close is refused until the review is recorded.
+      You never close the spike: the Dev Manager of the DevTeam that reviews it closes it with done after it lands, or the Orchestrator when no Dev Manager seat exists.
       These grants cover research reports; never implement code or write review or test records.
 
     ## Messages
@@ -136,5 +136,4 @@ step_workflow:
         - "gobby-tasks:link_commit"
         - "gobby-tasks:record_implementation_step"
         - "gobby-tasks:record_closing_step"
-        - "gobby-tasks:close_task"
       transitions: []

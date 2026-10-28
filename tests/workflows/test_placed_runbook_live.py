@@ -131,6 +131,7 @@ STEWARD_PROVIDER, STEWARD_MODEL, STEWARD_EFFORT = "codex", "gpt-6.1-luna", "medi
 STEWARD_CADENCE_SECONDS = 600
 STEWARD_TOLERANCE_SECONDS = 60
 STEWARD_TIMEOUT_PATROLS = 2
+CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1260,6 +1261,7 @@ def steward_live(
         "srt": steward_rig.srt,
         "native_sha256": steward_rig.binaries,
         "checkout": str(checkout),
+        "home": str(home),
         "coordinator": str(coordinator["id"]),
         # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
         "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
@@ -1283,14 +1285,20 @@ def steward_live(
     finally:
         cleanup: dict[str, Any] = {}
         state.evidence["cleanup"] = cleanup
+        evidence_dir = _evidence_dir(tmp_path)
         try:
-            _cleanup(state, cleanup)
+            # Copied before teardown, so a failed run keeps its transcript as well.
+            state.evidence["codex_rollout"] = _preserve_rollout(
+                home, evidence_dir, request.node.name
+            )
         finally:
-            state.evidence["codex_auth"]["unlinked"] = _unlink_codex_auth(home)
-            evidence_dir = Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
-            write_evidence(evidence_dir, request.node.name, state.evidence)
-            client.close()
-            mcp.close()
+            try:
+                _cleanup(state, cleanup)
+            finally:
+                state.evidence["codex_auth"]["unlinked"] = _unlink_codex_auth(home)
+                write_evidence(evidence_dir, request.node.name, state.evidence)
+                client.close()
+                mcp.close()
 
 
 def _steward_run(live: Live, execution_id: str) -> dict[str, Any]:
@@ -1342,6 +1350,46 @@ def _patrol_state(live: Live, owner: str) -> str:
         {key: str(value) for key, value in wait.items()} for wait in _reply_waits(live.db, owner)
     ]
     return _diagnosis(live, {"waits": waits})
+
+
+def _evidence_dir(tmp_path: Path) -> Path:
+    return Path(os.environ.get("GOBBY_E2E_EVIDENCE_DIR") or tmp_path / "evidence")
+
+
+def _codex_rollout(home: Path) -> Path:
+    """The steward's Codex rollout: the only one in the isolated home, reached through ~/.codex."""
+    matches = sorted((home / ".codex" / "sessions").glob("**/rollout-*.jsonl"))
+    assert len(matches) == 1, matches
+    return matches[0]
+
+
+def _codex_calls(rollout: Path) -> list[str]:
+    """Each tool call in the rollout as JSON; Codex records every call as a response item."""
+    calls: list[str] = []
+    for line in rollout.read_text().splitlines():
+        event = json.loads(line)
+        payload = event.get("payload")
+        if event.get("type") != "response_item" or not isinstance(payload, dict):
+            continue
+        if str(payload.get("type", "")).endswith("_call"):
+            calls.append(json.dumps(payload, sort_keys=True))
+    return calls
+
+
+def _preserve_rollout(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Copy the steward's rollout into the evidence directory and count its tool calls."""
+    rollout = _codex_rollout(home)
+    calls = _codex_calls(rollout)
+    copy = evidence_dir / f"{test_name}.codex-rollout.jsonl"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(rollout, copy)
+    schedulers = [name for name in CLAUDE_ONLY_SCHEDULERS if any(name in c for c in calls)]
+    return {
+        "copy": str(copy),
+        "calls": len(calls),
+        "wait_for_coordination": sum("wait_for_coordination" in call for call in calls),
+        "claude_only_schedulers": schedulers,
+    }
 
 
 def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) -> None:
@@ -1416,3 +1464,7 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
     live.evidence["recovery_steward"]["waits"] = [
         {key: str(value) for key, value in wait.items()} for wait in waits
     ]
+    calls = _codex_calls(_codex_rollout(Path(str(live.evidence["home"]))))
+    wait_calls = [call for call in calls if "wait_for_coordination" in call]
+    assert len(wait_calls) >= STEWARD_TIMEOUT_PATROLS + 1, len(wait_calls)
+    assert [name for name in CLAUDE_ONLY_SCHEDULERS if any(name in c for c in calls)] == []
