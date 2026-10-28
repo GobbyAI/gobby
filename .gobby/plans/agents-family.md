@@ -66,8 +66,11 @@ registries (Decision 4). The 32 CLI rows move to native `gdaemon agents`,
 groups forward to them one subcommand per verb (Decision 5). Activation order
 is `checkouts` (11.1), which publishes its own ledger rows, then `agents`
 (11.2), which also moves the hub pane steps; 11.3 records the remaining
-ledger result. One time-boxed Python route, 2.0, lets native code read the
-hub's in-memory reported pane store until #25269 ports it (Decision 10).
+ledger result. Two time-boxed loopback Python routes in 2.0 let native code
+read the hub's in-memory reported pane store until #25269 ports it, and hand
+native terminal transitions to Python's completion registry until D1 ports
+completion delivery (Decisions 10 and 15). 11.2 also moves coordination-wait
+delivery from Python to gdaemon (Decision 9).
 
 **Re-homed and excluded rows.** Three rows that name #21564 belong to other
 owners. The Orchestrator's AF-Q1 ruling (2026-10-28) moves `WS message
@@ -199,18 +202,29 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
    sessions through the seam #21592 supplies. A terminal on another machine
    takes a live wake only when its reported composer is empty, as
    `WakeDispatcher._composer_blocks_wake` decides; the native decision reads
-   that composer state through 2.0's route. Python's dispatcher keeps
+   that composer state through 2.0's pane route. Python's dispatcher keeps
    serving Python callers. Both read the same durable session and mailbox
-   state, so eligibility agrees.
+   state, so eligibility agrees. Coordination-wait delivery moves to gdaemon
+   (D-AF-6, Orchestrator ruling relayed by Triage on 2026-10-28): 5.3's
+   worker listens on `gobby_coordination_wait` and wakes waiters through this
+   decision, and 11.2 stops starting Python's
+   `src/gobby/events/coordination_waits.py::CoordinationWaitService` in the
+   same shipping commit, so one owner delivers each wait. Registration and
+   resolution stay in the shared rows and schema triggers, so a wait that
+   Python's proxied `wait_for_coordination` registers is delivered natively
+   too.
 10. Python modules stay as the proxy backend. Route and tool modules, storage
     managers and the remote-routing helpers in `src/gobby/hub/` are unchanged
     until global Python removal, as in the AI providers plan. Only 2.0 (the
-    reported pane route), 10.4 (CLI forwarding) and 11.2 (pane-step
-    scheduling and the idle path's local attention sync) edit Python. No
-    Target names a Python production file of 850 lines or more except 11.2's
-    typed `delete-lines` proof. 2.0 is a named, time-boxed exception (D-AF-5,
-    Orchestrator ruling relayed by Triage on 2026-10-28): it retires when the
-    node-runs port (#25269) gives the native side its own reported pane store.
+    loopback bridge routes), 10.4 (CLI forwarding) and 11.2 (pane-step
+    scheduling, the idle path's local attention sync and the start of
+    Python's coordination-wait service) edit Python. No Target names a Python
+    production file of 850 lines or more except 11.2's typed `delete-lines`
+    proof. 2.0's two routes are named, time-boxed exceptions (Orchestrator
+    rulings relayed by Triage on 2026-10-28): the pane route (D-AF-5) retires
+    when the node-runs port (#25269) gives the native side its own reported
+    pane store, and the delivery route (D-AF-7) retires with native completion
+    delivery (D1).
 11. Admission. No `/api/agents` or `/api/source-control` route appears in
     `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX` or
     `src/gobby/servers/grant_auth.py::_GRANT_ROUTES`, so every HTTP row
@@ -251,7 +265,25 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
     Python. No family claims the two prefixes, and 11.3 records the four rows
     as owned here and still `proxied`. #25269 (Plan the node-runs native
     port, under #21542) owns the reconciler, remote idle and store port and
-    the retirement of 2.0's route.
+    the retirement of 2.0's pane route.
+15. Agent completion delivery (D-AF-7, Orchestrator ruling relayed by Triage
+    on 2026-10-28). `wait_for_agent`, pipelines and durable subscribers wait
+    in Python's in-process
+    `src/gobby/events/completion_registry.py::CompletionEventRegistry`, and no
+    notify channel covers `agent_runs`. Python's own terminal producers (the
+    idle check, the stale sweeps and remote run outcomes) stay through this
+    plan (Decisions 8 and 14), so the registry stays the completion owner.
+    Every native terminal transition ends with gdaemon posting the run id to
+    2.0's delivery route after the commit, and Python runs
+    `src/gobby/agents/terminal_delivery.py::deliver_existing_terminal_run` on
+    its own loop, as its own producers do. A refused or unreachable route logs
+    a warning; the durable subscriber rows stay, and Python's startup
+    recovery
+    (`src/gobby/runner_lifecycle_agents.py::_cleanup_terminal_agent_completion_subscribers`)
+    redelivers them for the hub machine's runs. `wait_for_agent` stays
+    proxied after #21570's flip; its native port and native completion
+    delivery are deferred to D1, owned under #21564 beside the run-lifecycle
+    rows. No schema change.
 
 ## Debt not to port
 `kind: framing`
@@ -843,14 +875,14 @@ Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --te
 ## P2: Agent runs and live output
 `kind: framing`
 
-### 2.0 Loopback reported-pane route [category: code]
+### 2.0 Loopback bridge routes for the pane store and completion delivery [category: code]
 `kind: deliverable`
 
 Targets:
-- `src/gobby/servers/routes/remote_pane_bridge.py`
+- `src/gobby/servers/routes/loopback_bridge.py`
 - `src/gobby/servers/_app_routes.py::register_routes`
-- `tests/servers/routes/test_remote_pane_bridge.py`
-- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: add the two private reported-pane route records and retain every other record
+- `tests/servers/routes/test_loopback_bridge.py`
+- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: add the three private loopback bridge route records and retain every other record
 - `docs/contracts/parity-ledger.md`
 
 Consumers unchanged:
@@ -864,11 +896,22 @@ stopped or pane-less entry; `remote_composer_state` returns the entry's
 composer state, or `unknown` in those cases; and
 `RemoteTerminalRuntime.terminate` calls
 `src/gobby/hub/remote_pane.py::RemotePaneStore.mark_stopped` after a
-successful remote cancel. Add one router module at `/_gobby/remote-pane`.
+successful remote cancel. Add one router module. At `/_gobby/remote-pane`,
 `GET` with the query parameters `terminal_id` and `machine_id` returns
-`{"tail": ..., "composer": ...}`, computed by those two helpers. `POST`
+`{"tail": ..., "composer": ...}`, computed by those two helpers, and `POST`
 with a JSON body of `terminal_id` and `machine_id` calls `mark_stopped`
-and returns 204. Admission copies the native WS bridge's pair proof
+and returns 204.
+
+Decision 15 (D-AF-7) adds `POST /_gobby/agent-run-delivery` to the same
+module. Its JSON body carries `run_id`. It calls
+`src/gobby/agents/terminal_delivery.py::deliver_existing_terminal_run` with
+the app's database, run manager, `completion_registry` and `run_db` from
+`server.services`, the call that `cancel_agent_run` in
+`src/gobby/servers/routes/agents.py` makes after its own commit, and returns
+`{"delivered": ...}`. A missing or non-terminal run returns `false`, and its
+subscribers stay.
+
+Admission for all three methods copies the native WS bridge's pair proof
 (`src/gobby/servers/websocket/native_bridge.py::mount_native_bridge`): the
 peer must be loopback (`src/gobby/config/bootstrap.py::is_loopback_host`)
 and `X-Gobby-Front-Door` must equal
