@@ -230,6 +230,7 @@ def _is_bound_dev_manager(db: HubDatabase, caller_session_id: str, epic_id: str)
         run is not None
         and run.task_id == epic_id
         and definition is not None
+        and definition[0].name != "researcher"
         and "closing" in definition[0].task_step_writes
     )
 
