@@ -1687,6 +1687,66 @@ async def test_developer_submit_admits_quoted_git_text_in_read_only_commands(
     assert await run.admits_native("Bash", {"command": quoted})
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git merge feature",
+        "git rebase main",
+        "git cherry-pick HEAD~1",
+        "git revert HEAD",
+        "git am patch.mbox",
+        "git pull",
+        "git reset --hard HEAD~1",
+        "git stash push",
+        "git checkout -- src/gobby/red_fix.py",
+        "git switch main",
+        "git restore src/gobby/red_fix.py",
+        "git clean -fd",
+        "git apply fix.diff",
+        "git update-ref refs/heads/main HEAD~1",
+        'git -C "/work/repo copy" merge main',
+        'git --git-dir="/work/repo copy/.git" reset --hard',
+        'cd "/work/repo copy" && git rebase main',
+    ],
+)
+async def test_developer_submit_denies_history_and_worktree_moves(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    _create_bundled_role_rule(run, "developer-submit-commit-scope")
+    run.session_vars["current_step"] = run.step
+
+    assert not await run.admits_native("Bash", {"command": command})
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git merge --abort",
+        "git rebase --abort",
+        "git am --abort",
+        "git merge-tree --write-tree main HEAD",
+        "git status --short",
+        "git diff HEAD -- src/gobby/red_fix.py",
+        "git log --oneline -3",
+    ],
+)
+async def test_developer_submit_admits_unwinds_and_read_only_git(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    _create_bundled_role_rule(run, "developer-submit-commit-scope")
+    run.session_vars["current_step"] = run.step
+
+    assert await run.admits_native("Bash", {"command": command})
+
+
 async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

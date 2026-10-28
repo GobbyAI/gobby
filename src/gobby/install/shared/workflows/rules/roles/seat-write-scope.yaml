@@ -75,7 +75,7 @@ rules:
           to your Dev Manager.
 
   developer-submit-commit-scope:
-    description: "A Developer in submit commits nothing: its candidate stays frozen until the reviewer verdict"
+    description: "A Developer in submit records or moves no commit: its candidate stays frozen until the reviewer verdict"
     event: before_tool
     enabled: true
     priority: 15
@@ -88,7 +88,7 @@ rules:
         mask_quoted: true
         # mask_quoted blanks quoted contents but keeps the quotes, so an option value is
         # matched as one shell word: a bare token or a quoted span.
-        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|-c\\s+(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--git-dir(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--work-tree(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--namespace(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--exec-path(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+commit\\b"
+        command_pattern: "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:sudo\\s+|command\\s+|do\\s+|then\\s+|else\\s+)*(?:[^\\s;&|]*/)?git(?:\\s+(?:-C\\s+(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|-c\\s+(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--git-dir(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--work-tree(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--namespace(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--exec-path(?:=|\\s+)(?:[^\\s\"']|\"[^\"]*\"|'[^']*')+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+(?:(?:commit|pull|reset|checkout|switch|update-ref|restore|clean|stash|apply|update-index|read-tree|checkout-index)(?![\\w-])|(?:merge|rebase|cherry-pick|revert|am)(?![\\w-])(?!(?:\\s+-\\S+)*\\s+--(?:abort|quit)(?![\\w-])))"
         reason: |
-          In submit a Developer commits nothing: the candidate is frozen until the
+          In submit a Developer records or moves no commit: the candidate is frozen until the
           reviewer verdict. Report a needed change to your Dev Manager.
