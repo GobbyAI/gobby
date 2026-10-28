@@ -7,7 +7,10 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.tasks._authorization import consolidator_update_error
+from gobby.mcp_proxy.tools.tasks._authorization import (
+    consolidator_parent_error,
+    consolidator_update_error,
+)
 from gobby.mcp_proxy.tools.tasks._claim_activity import confirm_claiming_session_activity
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
@@ -614,6 +617,12 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 except (TaskNotFoundError, ValueError) as e:
                     logger.warning("Invalid parent_task_id '%s': %s", parent_task_id, e)
                     return {"error": f"Invalid parent_task_id '{parent_task_id}': {e}"}
+                new_parent = ctx.task_manager.get_task(resolved_parent)
+                parent_error = (
+                    consolidator_parent_error(ctx.task_manager, new_parent) if new_parent else None
+                )
+                if parent_error:
+                    return {"error": parent_error}
             else:
                 kwargs["parent_task_id"] = None
         if category is not None:

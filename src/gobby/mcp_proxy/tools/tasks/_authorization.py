@@ -151,34 +151,43 @@ def session_agent_type(db: "HubDatabase", session_id: str) -> str | None:
     return role.get("_agent_type")
 
 
-def _in_operator_subtree(task_manager: "LocalTaskManager", task: "Task") -> bool:
-    """True when the task or one of its ancestors is an operator subtree root."""
+def _ancestry(task_manager: "LocalTaskManager", task: "Task") -> list["Task"]:
+    """The task followed by each ancestor up to the root; cycle-safe."""
+    chain: list[Task] = []
     seen: set[str] = set()
     node: Task | None = task
     while node is not None and node.id not in seen:
-        if node.seq_num in OPERATOR_SUBTREE_SEQ_NUMS:
-            return True
+        chain.append(node)
         seen.add(node.id)
         node = task_manager.get_task(node.parent_task_id) if node.parent_task_id else None
-    return False
+    return chain
+
+
+def _task_ref(task: "Task") -> str:
+    return f"#{task.seq_num}" if task.seq_num else task.id
 
 
 def consolidator_protection(
     task_manager: "LocalTaskManager", task: "Task", caller_session_id: str
 ) -> str | None:
-    """Why the Consolidator may not edit or close ``task``; None when it may.
+    """Why the Consolidator may not edit, close or move under ``task``; None when it may.
 
     Josh, 2026-10-27: the Consolidator leaves alone tasks another session claims,
     tasks labeled deferred-by-josh, and the #22978 and #22225 operator subtrees.
+    Each protection holds on ancestors too: closing the last child can auto-close
+    its parent epic, and a reparent vacates or fills one.
     """
-    ref = f"#{task.seq_num}" if task.seq_num else task.id
-    owner = get_claimed_session_id(task)
-    if owner and owner != caller_session_id:
-        return f"task {ref} is claimed by session '{owner}'"
-    if "deferred-by-josh" in (task.labels or []):
-        return f"task {ref} is labeled deferred-by-josh"
-    if _in_operator_subtree(task_manager, task):
-        return f"task {ref} sits under an operator subtree (#22978 or #22225)"
+    chain = _ancestry(task_manager, task)
+    for node in chain:
+        ref = _task_ref(node)
+        where = f"task {ref}" if node.id == task.id else f"ancestor task {ref}"
+        owner = get_claimed_session_id(node)
+        if owner and owner != caller_session_id:
+            return f"{where} is claimed by session '{owner}'"
+        if "deferred-by-josh" in (node.labels or []):
+            return f"{where} is labeled deferred-by-josh"
+    if any(node.seq_num in OPERATOR_SUBTREE_SEQ_NUMS for node in chain):
+        return f"task {_task_ref(task)} sits under an operator subtree (#22978 or #22225)"
     return None
 
 
@@ -200,10 +209,29 @@ def consolidator_close_refusal(
     return None
 
 
-def consolidator_update_error(task_manager: "LocalTaskManager", task: "Task") -> str | None:
-    """Refusal text when the calling session is a Consolidator and may not edit ``task``."""
+def _consolidator_caller(db: "HubDatabase") -> str | None:
+    """The calling session id when that session is a Consolidator, else None."""
     caller = get_current_session_id()
-    if not caller or session_agent_type(task_manager.db, caller) != CONSOLIDATOR_ROLE:
+    if not caller or session_agent_type(db, caller) != CONSOLIDATOR_ROLE:
+        return None
+    return caller
+
+
+def consolidator_update_error(task_manager: "LocalTaskManager", task: "Task") -> str | None:
+    """Refusal text when the calling Consolidator may not edit ``task``."""
+    caller = _consolidator_caller(task_manager.db)
+    if caller is None:
         return None
     protected = consolidator_protection(task_manager, task, caller)
     return f"The Consolidator may not update this task: {protected}." if protected else None
+
+
+def consolidator_parent_error(task_manager: "LocalTaskManager", parent: "Task") -> str | None:
+    """Refusal text when the calling Consolidator may not move a task under ``parent``."""
+    caller = _consolidator_caller(task_manager.db)
+    if caller is None:
+        return None
+    protected = consolidator_protection(task_manager, parent, caller)
+    if not protected:
+        return None
+    return f"The Consolidator may not move a task under this parent: {protected}."

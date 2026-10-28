@@ -347,3 +347,87 @@ def test_consolidator_updates_unprotected_survivor(closing: Closing) -> None:
     assert closing.manager.get_task(closing.task.id).validation_criteria == (
         "Original and folded criteria."
     )
+
+
+def _protected_epic(closing: Closing, protection: str, developer: str) -> str:
+    """An epic guarded by a deferred-by-josh label or a claim by the developer."""
+    epic = closing.manager.create_task(
+        closing.project_id,
+        "Protected epic",
+        task_type="epic",
+        category="code",
+        validation_criteria="Protected ancestor.",
+    )
+    if protection == "deferred-by-josh":
+        closing.manager.update_task(epic.id, labels=["deferred-by-josh"])
+    else:
+        closing.manager.claim_task(epic.id, developer)
+    return epic.id
+
+
+@pytest.mark.parametrize("protection", ("deferred-by-josh", "foreign_claim"))
+@pytest.mark.parametrize("operation", ("update_task", "close_task"))
+@pytest.mark.asyncio
+async def test_consolidator_cannot_mutate_under_protected_ancestor(
+    closing: Closing, monkeypatch: pytest.MonkeyPatch, protection: str, operation: str
+) -> None:
+    developer = closing.task.claimed_by_session_id
+    assert developer is not None
+    closing.manager.release_task_claim(closing.task.id)
+    epic_id = _protected_epic(closing, protection, developer)
+    closing.manager.update_task(closing.task.id, parent_task_id=epic_id)
+    monkeypatch.setattr(lifecycle, "step_requirements", AsyncMock(return_value=MISSING_STEPS))
+    before = closing.manager.get_task(closing.task.id)
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    with session_context_for_test(seat):
+        if operation == "update_task":
+            update = create_crud_registry(closing.context).get_tool("update_task")
+            assert update is not None
+            result = update(
+                task_id=closing.task.id, validation_criteria="Unauthorized replacement."
+            )
+            assert result.get("error"), result
+        else:
+            close = create_lifecycle_registry(closing.context).get_tool("close_task")
+            assert close is not None
+            result = await close(
+                task_id=closing.task.id,
+                reason="moot",
+                changes_summary="Orchestrator directed approved proposal 3.",
+            )
+            assert not result.get("success"), result
+    after = closing.manager.get_task(closing.task.id)
+    assert after.validation_criteria == before.validation_criteria
+    assert after.closed_at is None
+    assert closing.manager.get_task(epic_id).closed_at is None
+
+
+@pytest.mark.parametrize("protection", ("deferred-by-josh", "foreign_claim"))
+@pytest.mark.parametrize("direction", ("into", "out_of"))
+@pytest.mark.asyncio
+async def test_consolidator_cannot_reparent_across_protected_parent(
+    closing: Closing, protection: str, direction: str
+) -> None:
+    developer = closing.task.claimed_by_session_id
+    assert developer is not None
+    closing.manager.release_task_claim(closing.task.id)
+    protected_id = _protected_epic(closing, protection, developer)
+    if direction == "into":
+        destination_id = protected_id
+    else:
+        closing.manager.update_task(closing.task.id, parent_task_id=protected_id)
+        destination_id = closing.manager.create_task(
+            closing.project_id,
+            "Free epic",
+            task_type="epic",
+            category="code",
+            validation_criteria="Unprotected parent.",
+        ).id
+    before = closing.manager.get_task(closing.task.id)
+    seat = _seat(closing.db, closing.project_id, "consolidator")
+    update = create_crud_registry(closing.context).get_tool("update_task")
+    assert update is not None
+    with session_context_for_test(seat):
+        result = update(task_id=closing.task.id, parent_task_id=destination_id)
+    assert result.get("error"), result
+    assert closing.manager.get_task(closing.task.id).parent_task_id == before.parent_task_id
