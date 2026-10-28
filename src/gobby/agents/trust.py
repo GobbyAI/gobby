@@ -23,6 +23,7 @@ import threading
 import tomllib
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from functools import cache
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -367,18 +368,23 @@ def codex_model_ids_in_policy(defaults: Any) -> set[str]:
         if isinstance(value, Mapping):
             models |= codex_model_ids_in_policy(value)
         elif (key == "model" or str(key).endswith("_model")) and isinstance(value, str):
+            value = value.strip()
+            if not value or value == "inherit":
+                continue
             provider = defaults.get(str(key).removesuffix("model") + "provider")
             if provider == "codex" or (provider in (None, "inherit") and value.startswith("gpt-")):
                 models.add(value)
     return models
 
 
-def packaged_codex_launch_models() -> set[str]:
-    """Derive install seeds from shipped launch data and bundled agent definitions.
+@cache
+def packaged_codex_launch_models() -> frozenset[str]:
+    """Read the static package seed baseline once per process.
 
-    The launch data snapshots the project's launch defaults for first-install
-    seeding only. It is outside the rule templates and never syncs into the DB.
-    Runtime policy continues to come from the active project rule.
+    Install and workspace seeding reuse this baseline. Spawn and resume union
+    it with the DB-active project policy, which is read live on each call.
+    The packaged launch snapshot is outside the rule templates and never syncs
+    into the DB. Package upgrades take effect when the process restarts.
     """
     from gobby.agents.sync import get_bundled_agents_path
 
@@ -395,7 +401,7 @@ def packaged_codex_launch_models() -> set[str]:
             logger.warning("Could not read bundled agent defaults from %s", path, exc_info=True)
             continue
         models.update(codex_model_ids_in_policy(definition))
-    return models
+    return frozenset(models)
 
 
 def active_codex_launch_models(db: HubDatabase | None, project_id: str | None) -> tuple[str, ...]:

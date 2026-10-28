@@ -3,11 +3,12 @@
 import json
 import shutil
 import tomllib
+from collections.abc import Iterator
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from zipfile import ZipFile
 
 import psycopg
@@ -17,6 +18,8 @@ from setuptools import Distribution
 
 from gobby.agents.trust import (
     active_codex_launch_models,
+    codex_model_ids_in_policy,
+    packaged_codex_launch_models,
     pre_approve_directory,
     seed_gobby_home_trust,
 )
@@ -25,8 +28,32 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def isolate_packaged_model_cache() -> Iterator[None]:
+    packaged_codex_launch_models.cache_clear()
+    yield
+    packaged_codex_launch_models.cache_clear()
+
+
 def _packaged_defaults_path() -> Path:
     return Path(str(files("gobby").joinpath("data/codex_launch_defaults.json")))
+
+
+@pytest.mark.parametrize("model", ["inherit", "", "   "])
+def test_codex_launch_defaults_exclude_non_model_values(model: str) -> None:
+    assert codex_model_ids_in_policy({"provider": "codex", "model": model}) == set()
+    assert codex_model_ids_in_policy({"reviewer_provider": "codex", "reviewer_model": model}) == set()
+
+
+def test_packaged_models_are_parsed_once_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    parse = MagicMock(wraps=yaml.safe_load)
+    monkeypatch.setattr("gobby.agents.trust.yaml.safe_load", parse)
+    first = packaged_codex_launch_models()
+    cold_reads = parse.call_count
+    second = packaged_codex_launch_models()
+    assert first == second
+    assert cold_reads > 0
+    assert parse.call_count == cold_reads
 
 
 def test_packaged_launch_defaults_match_project_policy() -> None:
@@ -82,6 +109,9 @@ def _codex_models(defaults: dict[str, Any]) -> set[str]:
         if isinstance(value, dict):
             models.update(_codex_models(value))
         elif (key == "model" or key.endswith("_model")) and isinstance(value, str):
+            value = value.strip()
+            if not value or value == "inherit":
+                continue
             provider_key = key.removesuffix("model") + "provider"
             provider = defaults.get(provider_key)
             if provider == "codex" or (provider in (None, "inherit") and value.startswith("gpt-")):
@@ -140,15 +170,25 @@ def test_packaged_codex_models_seed_without_checkout_or_policy_row(
     monkeypatch.delenv("CODEX_HOME", raising=False)
     gobby_home = tmp_path / "gobby"
     gobby_home.mkdir()
-    monkeypatch.setattr("gobby.agents.trust.__file__", str(tmp_path / "site-packages/trust.py"))
+    # Reproduce installed package resources without any adjacent checkout policy.
+    installed = tmp_path / "site-packages/gobby"
+    (installed / "data").mkdir(parents=True)
+    shutil.copyfile(_packaged_defaults_path(), installed / "data/codex_launch_defaults.json")
+    agents = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
+    installed_agents = installed / "install/shared/workflows/agents"
+    shutil.copytree(agents, installed_agents)
+    resource_root = MagicMock(return_value=installed)
+    monkeypatch.setattr("gobby.agents.trust.files", resource_root)
+    monkeypatch.setattr("gobby.agents.sync.get_bundled_agents_path", lambda: installed_agents)
+    monkeypatch.chdir(tmp_path)
 
     with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
         result = seed_gobby_home_trust("codex", gobby_home=gobby_home)
 
     assert result["success"] is True
+    resource_root.assert_called_once_with("gobby")
     config = tomllib.loads((tmp_path / ".codex/config.toml").read_text())
     models = _codex_models(json.loads(_packaged_defaults_path().read_text()))
-    agents = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/agents"
     for path in agents.glob("*.yaml"):
         models.update(_codex_models(yaml.safe_load(path.read_text())))
     assert config["tui"]["model_availability_nux"] == dict.fromkeys(models, 4)
