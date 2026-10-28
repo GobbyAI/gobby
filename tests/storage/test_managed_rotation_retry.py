@@ -131,10 +131,12 @@ def test_first_handshake_rotation_retries_and_renews_launch_token(
         store.db.close()
 
 
+@pytest.mark.parametrize("binding_state", ["due", "expired", "revoked"])
 def test_sweep_renews_seat_after_outage_outlasts_in_request_retry(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    binding_state: str,
 ) -> None:
     """A saturated pool past the in-request window must heal on a later lifecycle sweep."""
     fixture = authorization_fixture
@@ -192,6 +194,16 @@ def test_sweep_renews_seat_after_outage_outlasts_in_request_retry(
                 "INTERVAL '46 minutes' WHERE managed_execution_id = %s AND revoked_at IS NULL",
                 (fixture.agent_run_id,),
             )
+            if binding_state == "expired":
+                admin.execute(
+                    f"UPDATE {AUTH_SCHEMA}.principal_bindings SET "
+                    "issued_at = NOW() - INTERVAL '70 minutes', "
+                    "expires_at = NOW() - INTERVAL '10 minutes' "
+                    "WHERE managed_execution_id = %s AND revoked_at IS NULL",
+                    (fixture.agent_run_id,),
+                )
+            elif binding_state == "revoked":
+                manager.revoke(fixture.agent_run_id, reason="test-outage-drain")
         rotated = manager.rotate_due()
 
         assert [credential.credential_generation for credential in rotated] == [
