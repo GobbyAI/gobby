@@ -1307,7 +1307,9 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
         runtimes=(runtime,),
     )
 
-    result = await _spawn(h, _tab(h), timeout=0.05)
+    # The budget times out the held launch. It also bounds the placement read, which spikes
+    # to 40-210ms on the shared hub under full-file load; 50ms made that read the flake.
+    result = await _spawn(h, _tab(h), timeout=1.0)
 
     assert result["success"] is False
     [terminal_id] = _terminal_states(h)
@@ -1393,7 +1395,9 @@ async def test_placed_timeout_bounds_resource_wait_and_releases_dispatch(
             _spawn(h, _tab(h), timeout=0.05, task_id=task.id, task_manager=tasks)
         )
         try:
-            done, _ = await asyncio.wait({spawn}, timeout=1.0)
+            # The refusal lands at the 0.05s budget; the ceiling covers its post-refusal writes,
+            # which slow under full-file load. A 30s placement default would still miss it.
+            done, _ = await asyncio.wait({spawn}, timeout=5.0)
         finally:
             gate.set()
             if resource == "workspace_lock":

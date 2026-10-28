@@ -157,7 +157,7 @@ async def run_placed_spawn(
     reserver = placed.reserver
     try:
         if placed.replaces_tab is not None:
-            await reserver.close_empty_tab(placed.replaces_tab)
+            await reserver.close_empty_tab(placed.replaces_tab, timeout=placed.wait_seconds)
         reserved = await reserver.reserve(
             placed.resolved, worktree_id=worktree_id, timeout=placed.wait_seconds
         )
@@ -177,7 +177,7 @@ async def run_placed_spawn(
         nonlocal launch_terminal_id, bind_error
         launch_terminal_id = terminal_id
         try:
-            await reserver.bind(reserved, terminal_id)
+            await reserver.bind(reserved, terminal_id, timeout=placed.wait_seconds)
         except AgentPlacementError as exc:
             bind_error = exc.code
             if exc.code == "busy":
