@@ -39,6 +39,13 @@ _CLAUDE_COMPATIBLE_CLIS = frozenset({"claude"})
 _TRUST_STORE_LOCKS: dict[str, threading.Lock] = {}
 _TRUST_STORE_LOCKS_LOCK = threading.Lock()
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+# (table, key, value) entries that Codex writes to config.toml on its first interactive
+# launch. Seeding them before launch is meant to leave that launch nothing to rewrite;
+# the live steward run is the check.
+_CODEX_FIRST_RUN_TUI: tuple[tuple[str, str, Any], ...] = (
+    ("tui", "screen_reader_detection_done", True),
+    ("tui.model_availability_nux", "gpt-6.1-sol", 1),
+)
 
 type PathValue = str | os.PathLike[str]
 type TrustEntryStatus = Literal["created", "updated", "existing", "skipped", "error"]
@@ -266,7 +273,7 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
 
 
 def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
-    """Seed Codex [projects] trust entries in ~/.codex/config.toml."""
+    """Seed Codex [projects] trust and first-run [tui] keys in ~/.codex/config.toml."""
     codex_home = Path.home() / ".codex"
     codex_home.mkdir(parents=True, exist_ok=True)
     config_path = codex_home / "config.toml"
@@ -281,38 +288,79 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
             result.add_entry(store="codex_projects", target=path, status="existing")
             continue
         pending.append((path, "created" if entry is None else "updated"))
+    tui_pending = _codex_first_run_tui_pending(parsed)
 
-    if not pending:
+    if not pending and not tui_pending:
         return
 
-    content = _prune_stale_codex_projects(content, projects, keep_paths=set(paths))
-    direct_append = all(status == "created" for _, status in pending) and not re.search(
-        r"(?m)^\s*projects\s*=", content
+    if pending:
+        content = _prune_stale_codex_projects(content, projects, keep_paths=set(paths))
+    direct_append = (
+        all(status == "created" for _, status in pending)
+        and not re.search(r"(?m)^\s*projects\s*=", content)
+        and ("tui" not in parsed or not tui_pending)
     )
     if direct_append:
         for path, status in pending:
             content = _append_codex_trust_entry(content, path)
             result.add_entry(store="codex_projects", target=path, status=status)
+        if tui_pending:
+            content = _append_codex_tui_block(content, tui_pending)
         tomllib.loads(content)
         _atomic_write_text(config_path, content)
         result.add_file_written(config_path)
         return
 
     config = _load_toml_config(content)
-    mutable_projects = config.get("projects")
-    if not isinstance(mutable_projects, Table):
-        mutable_projects = tomlkit.table()
-        config["projects"] = mutable_projects
+    if pending:
+        mutable_projects = config.get("projects")
+        if not isinstance(mutable_projects, Table):
+            # An inline ``projects = {...}`` keeps its entries when it becomes a table.
+            replacement = tomlkit.table()
+            if isinstance(mutable_projects, Mapping):
+                replacement.update(mutable_projects)
+            mutable_projects = replacement
+            config["projects"] = mutable_projects
 
-    for path, status in pending:
-        entry = mutable_projects.get(path)
-        project_config = entry if isinstance(entry, Table) else tomlkit.table()
-        project_config["trust_level"] = "trusted"
-        mutable_projects[path] = project_config
-        result.add_entry(store="codex_projects", target=path, status=status)
+        for path, status in pending:
+            entry = mutable_projects.get(path)
+            project_config = entry if isinstance(entry, Table) else tomlkit.table()
+            project_config["trust_level"] = "trusted"
+            mutable_projects[path] = project_config
+            result.add_entry(store="codex_projects", target=path, status=status)
 
+    _set_codex_tui_entries(config, tui_pending)
     _atomic_write_text(config_path, tomlkit.dumps(config))
     result.add_file_written(config_path)
+
+
+def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, str, Any]]:
+    """Return the first-run ``[tui]`` entries that ``parsed`` lacks.
+
+    A key that is present keeps its value, even one Codex later changed: the value
+    records the operator's own prompt history, so the seed never rewrites it.
+    """
+    pending: list[tuple[str, str, Any]] = []
+    for table, key, value in _CODEX_FIRST_RUN_TUI:
+        section: Any = parsed
+        for part in table.split("."):
+            section = section.get(part) if isinstance(section, Mapping) else None
+        if not (isinstance(section, Mapping) and key in section):
+            pending.append((table, key, value))
+    return pending
+
+
+def _append_codex_tui_block(content: str, pending: list[tuple[str, str, Any]]) -> str:
+    blocks: list[str] = []
+    for table in dict.fromkeys(table for table, _, _ in pending):
+        entries = "".join(
+            f"{json.dumps(key)} = {json.dumps(value)}\n"
+            for entry_table, key, value in pending
+            if entry_table == table
+        )
+        blocks.append(f"[{table}]\n{entries}")
+    prefix = f"{content.rstrip()}\n\n" if content.strip() else ""
+    return prefix + "\n".join(blocks)
 
 
 def ensure_codex_project_trust(config: TOMLDocument, directory: PathValue) -> None:
@@ -320,7 +368,8 @@ def ensure_codex_project_trust(config: TOMLDocument, directory: PathValue) -> No
 
     The document-level counterpart of ``_seed_codex_trust``: the caller writes the
     config, so trust rides in that write instead of a second text write. Like the
-    text path, stale generated projects are pruned only when a path is pending.
+    text path, stale generated projects are pruned only when a path is pending, and
+    the first-run [tui] keys ride in the same write.
     """
     paths = _trust_path_strings(directory)
     raw_projects = config.get("projects")
@@ -330,22 +379,37 @@ def ensure_codex_project_trust(config: TOMLDocument, directory: PathValue) -> No
         entry = existing.get(path)
         if not (isinstance(entry, Mapping) and entry.get("trust_level") == "trusted"):
             pending.append(path)
-    if not pending:
+    tui_pending = _codex_first_run_tui_pending(config)
+    if not pending and not tui_pending:
         return
 
-    projects = raw_projects if isinstance(raw_projects, Table) else tomlkit.table()
-    if projects is not raw_projects:
-        # An inline ``projects = {...}`` keeps its entries when it becomes a table.
-        projects.update(existing)
-        config["projects"] = projects
-    for path in list(projects):
-        if path not in paths and is_stale_generated_path(path):
-            del projects[path]
-    for path in pending:
-        entry = projects.get(path)
-        project_config = entry if isinstance(entry, Table) else tomlkit.table()
-        project_config["trust_level"] = "trusted"
-        projects[path] = project_config
+    if pending:
+        projects = raw_projects if isinstance(raw_projects, Table) else tomlkit.table()
+        if projects is not raw_projects:
+            # An inline ``projects = {...}`` keeps its entries when it becomes a table.
+            projects.update(existing)
+            config["projects"] = projects
+        for path in list(projects):
+            if path not in paths and is_stale_generated_path(path):
+                del projects[path]
+        for path in pending:
+            entry = projects.get(path)
+            project_config = entry if isinstance(entry, Table) else tomlkit.table()
+            project_config["trust_level"] = "trusted"
+            projects[path] = project_config
+    _set_codex_tui_entries(config, tui_pending)
+
+
+def _set_codex_tui_entries(config: Any, pending: list[tuple[str, str, Any]]) -> None:
+    for table, key, value in pending:
+        section: Any = config
+        for part in table.split("."):
+            child = section.get(part)
+            if child is None:
+                child = tomlkit.table()
+                section[part] = child
+            section = child
+        section[key] = value
 
 
 def _append_codex_trust_entry(content: str, path: str) -> str:
