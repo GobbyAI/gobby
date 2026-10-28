@@ -2601,3 +2601,1190 @@ deferral:
   passes. The adversary derives `## M1 Task Manifest` from the commit that
   adds this entry. Consensus is not implementation approval; operator
   approval precedes expansion.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Definitions and runs characterization corpus
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: '0.1.1: The group inventory equals the exact 35-key predicate
+    over `sessions-agents.json`, every key has a success case and a representative
+    failure case, and a key outside the group is rejected. test: `tests/contracts/test_agents_parity_corpus_definitions_runs.py::test_inventory_matches_group_predicate`.
+
+    0.1.2: Running the collector twice against reset isolated state gives the same
+    normalized fixtures, ordering, outputs and recorded effects. test: `tests/contracts/test_agents_parity_corpus_definitions_runs.py::test_collection_is_reproducible`.
+
+    0.1.3: Each of the 15 HTTP rows records the full admission matrix. test: `tests/contracts/test_agents_parity_corpus_definitions_runs.py::test_http_admission_matrix`.
+
+    0.1.4: Skipped-only reports, unwaived `Skipped`, stale or missing waiver decisions
+    and an injected unrelated regression fail readiness. test: `tests/contracts/test_agents_parity_corpus_definitions_runs.py::test_readiness_rejects_skips_and_unmatched_diffs`.'
+  labels:
+  - covers:agents-family:0.1:0.1.1
+  - covers:agents-family:0.1:0.1.2
+  - covers:agents-family:0.1:0.1.3
+  - covers:agents-family:0.1:0.1.4
+  tdd: false
+  source_section: '0.1'
+  assigned_agent: developer
+- title: Checkouts characterization corpus
+  category: test
+  task_type: chore
+  depends_on:
+  - '0.1'
+  validation_criteria: '0.2.1: The group inventory equals the exact 57-key predicate
+    over `git-workspaces.json`, every key has a success and a failure case, and a
+    `/api/source-control/branches`, `/diff` or `/status` key is rejected. test: `tests/contracts/test_agents_parity_corpus_checkouts.py::test_inventory_matches_group_predicate`.
+
+    0.2.2: Collection is reproducible against reset repositories and state, including
+    recorded git and node-frame effects. test: `tests/contracts/test_agents_parity_corpus_checkouts.py::test_collection_is_reproducible`.
+
+    0.2.3: Each of the nine HTTP rows records the full admission matrix. test: `tests/contracts/test_agents_parity_corpus_checkouts.py::test_http_admission_matrix`.
+
+    0.2.4: Owned, foreign-machine, unknown-machine and ambiguous references record
+    Python''s ownership refusals and node routing codes for every mutating tool. test:
+    `tests/contracts/test_agents_parity_corpus_checkouts.py::test_machine_ownership_vectors`.
+
+    0.2.5: The five clone CLI route cases resolve to exact-surface test waivers with
+    native assertions while other cases on those surfaces stay `Passed`. test: `tests/contracts/test_agents_parity_corpus_checkouts.py::test_clone_cli_waivers_are_behavior_scoped`.'
+  labels:
+  - covers:agents-family:0.2:0.2.1
+  - covers:agents-family:0.2:0.2.2
+  - covers:agents-family:0.2:0.2.3
+  - covers:agents-family:0.2:0.2.4
+  - covers:agents-family:0.2:0.2.5
+  tdd: false
+  source_section: '0.2'
+  assigned_agent: developer
+- title: Launch and termination characterization corpus
+  category: test
+  task_type: chore
+  depends_on:
+  - '0.2'
+  validation_criteria: '0.3.1: The group inventory equals the exact 19-key predicate,
+    every key has a success and a failure case, and an out-of-group key such as `POST
+    /api/nodes/report` is rejected. test: `tests/contracts/test_agents_parity_corpus_launch.py::test_inventory_matches_group_predicate`.
+
+    0.3.2: Collection is reproducible, including recorded provider argv, terminal
+    writes, node frames, run rows and captured remote tails. test: `tests/contracts/test_agents_parity_corpus_launch.py::test_collection_is_reproducible`.
+
+    0.3.3: Each of the six agents HTTP rows records the full admission matrix. test:
+    `tests/contracts/test_agents_parity_corpus_launch.py::test_http_admission_matrix`.
+
+    0.3.4: Local and remote spawn, cancel and stop record every hub-flow code and
+    the resulting run and mailbox state. test: `tests/contracts/test_agents_parity_corpus_launch.py::test_local_and_remote_lifecycle_vectors`.
+
+    0.3.5: The capture-barrier vectors record no terminal stop for a persistence failure
+    or a capture conflict, and one terminal outcome and one parent delivery for a
+    retried interrupted stop. test: `tests/contracts/test_agents_parity_corpus_launch.py::test_capture_barrier_vectors`.'
+  labels:
+  - covers:agents-family:0.3:0.3.1
+  - covers:agents-family:0.3:0.3.2
+  - covers:agents-family:0.3:0.3.3
+  - covers:agents-family:0.3:0.3.4
+  - covers:agents-family:0.3:0.3.5
+  tdd: false
+  source_section: '0.3'
+  assigned_agent: developer
+- title: Messaging, coordination and seats corpus and the family partition
+  category: test
+  task_type: chore
+  depends_on:
+  - '0.3'
+  validation_criteria: '0.4.1: The group inventory equals the exact nine-key predicate,
+    every key has a success and a failure case, and an out-of-group key is rejected.
+    test: `tests/contracts/test_agents_parity_corpus_messaging.py::test_inventory_matches_group_predicate`.
+
+    0.4.2: Collection is reproducible, including mailbox rows, wake records and coordination-wait
+    rows. test: `tests/contracts/test_agents_parity_corpus_messaging.py::test_collection_is_reproducible`.
+
+    0.4.3: The four groups are disjoint and cover exactly the 120 ported keys: the
+    ones that name #21564, excluding by exact key the re-homed WS, attention and nodes
+    CLI rows and the four node report and run-outcome rows, which stay outside every
+    group. test: `tests/contracts/test_agents_parity_corpus_messaging.py::test_groups_partition_the_family`.'
+  labels:
+  - covers:agents-family:0.4:0.4.1
+  - covers:agents-family:0.4:0.4.2
+  - covers:agents-family:0.4:0.4.3
+  tdd: false
+  source_section: '0.4'
+  assigned_agent: developer
+- title: Crate, two route families, admission, effects seam and definition reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.4'
+  validation_criteria: '1.1.1: `HTTP GET /api/agents/definitions` matches Python''s
+    listing, scope precedence, filters and deleted-row handling. test: `crates/gagents/tests/definitions.rs::list_definitions_matches_python`.
+
+    1.1.2: `HTTP GET /api/agents/definitions/{name}` matches Python''s resolved definition
+    and 404. test: `crates/gagents/tests/definitions.rs::get_definition_matches_python`.
+
+    1.1.3: `HTTP GET /api/agents/definitions/{name}/export` matches Python''s YAML
+    body, headers and file name. test: `crates/gagents/tests/definitions.rs::export_definition_matches_python`.
+
+    1.1.4: Each family claims only its implemented rows, the longest prefix keeps
+    #21584''s `/api/source-control` routes off `checkouts`, absent configuration keeps
+    both on Proxy, a node composes neither, and every claim fails closed until admission
+    is bound. test: `crates/gagents/tests/definitions.rs::families_are_scoped_and_fail_closed`.'
+  labels:
+  - covers:agents-family:1.1:1.1.1
+  - covers:agents-family:1.1:1.1.2
+  - covers:agents-family:1.1:1.1.3
+  - covers:agents-family:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Definition writes
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `HTTP POST /api/agents/definitions` matches Python''s
+    creation, validation and collision errors. test: `crates/gagents/tests/definition_writes.rs::create_definition_matches_python`.
+
+    1.2.2: `HTTP PUT /api/agents/definitions/{definition_id}` matches Python''s update
+    and refusals. test: `crates/gagents/tests/definition_writes.rs::update_definition_matches_python`.
+
+    1.2.3: `HTTP DELETE /api/agents/definitions/{definition_id}` matches Python''s
+    soft delete and missing-row error. test: `crates/gagents/tests/definition_writes.rs::delete_definition_matches_python`.
+
+    1.2.4: `HTTP POST /api/agents/definitions/{definition_id}/restore` matches Python''s
+    restore and conflicts. test: `crates/gagents/tests/definition_writes.rs::restore_definition_matches_python`.
+
+    1.2.5: `HTTP POST /api/agents/definitions/import/{name}` matches Python''s bundled
+    import and unknown-name error. test: `crates/gagents/tests/definition_writes.rs::import_definition_matches_python`.
+
+    1.2.6: `HTTP PATCH /api/agents/definitions/{definition_id}/rules` matches Python''s
+    rule merge. test: `crates/gagents/tests/definition_writes.rs::patch_rules_matches_python`.
+
+    1.2.7: `HTTP PATCH /api/agents/definitions/{definition_id}/rule-selectors` matches
+    Python''s selector merge. test: `crates/gagents/tests/definition_writes.rs::patch_rule_selectors_matches_python`.
+
+    1.2.8: `HTTP PATCH /api/agents/definitions/{definition_id}/variables` matches
+    Python''s variable merge. test: `crates/gagents/tests/definition_writes.rs::patch_variables_matches_python`.'
+  labels:
+  - covers:agents-family:1.2:1.2.1
+  - covers:agents-family:1.2:1.2.2
+  - covers:agents-family:1.2:1.2.3
+  - covers:agents-family:1.2:1.2.4
+  - covers:agents-family:1.2:1.2.5
+  - covers:agents-family:1.2:1.2.6
+  - covers:agents-family:1.2:1.2.7
+  - covers:agents-family:1.2:1.2.8
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Loopback bridge routes for the pane store and completion delivery
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.0.1: A loopback request with the pair secret reads the tail
+    and composer state that the two helpers return for a live, stopped, pane-less
+    and missing entry. test: `tests/servers/routes/test_loopback_bridge.py::test_read_matches_remote_runtime`.
+
+    2.0.2: A loopback request with the pair secret marks the entry stopped, and later
+    reads return the empty tail and `unknown`. test: `tests/servers/routes/test_loopback_bridge.py::test_mark_stopped_matches_remote_runtime`.
+
+    2.0.3: A non-loopback peer, a missing or wrong secret, and a daemon without a
+    secret each get 403 from all three methods and leave the store and the run''s
+    subscribers untouched. test: `tests/servers/routes/test_loopback_bridge.py::test_refuses_without_pair_proof`.
+
+    2.0.4: The ledger lists the three methods as `proxied` with their retirement notes.
+    test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    2.0.5: For a terminal run on this machine or another one, a delivery request with
+    the pair secret wakes its in-memory waiter and its durable subscribers once, removes
+    the acknowledged subscriber rows as Python''s own producers do, and answers `pending:
+    0`; a missing or non-terminal run gets 409 and keeps its subscribers. test: `tests/servers/routes/test_loopback_bridge.py::test_agent_run_delivery_matches_python_producers`.
+
+    2.0.6: When the first wake is not acknowledged, the request answers `pending:
+    1` and keeps that row, and a second request wakes the session and answers `pending:
+    0`. A request while restart recovery is pending, and a request whose reread fails,
+    each get 503. test: `tests/servers/routes/test_loopback_bridge.py::test_agent_run_delivery_reports_pending_rows`.'
+  labels:
+  - covers:agents-family:2.0:2.0.1
+  - covers:agents-family:2.0:2.0.2
+  - covers:agents-family:2.0:2.0.3
+  - covers:agents-family:2.0:2.0.4
+  - covers:agents-family:2.0:2.0.5
+  - covers:agents-family:2.0:2.0.6
+  tdd: true
+  source_section: '2.0'
+  implementation_domain: backend
+- title: Run reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: `HTTP GET /api/agents/running` matches Python''s running-run
+    list and filters. test: `crates/gagents/tests/runs.rs::list_running_matches_python`.
+
+    2.1.2: `HTTP GET /api/agents/runs` matches Python''s run list, filters and limits.
+    test: `crates/gagents/tests/runs.rs::list_runs_matches_python`.
+
+    2.1.3: `HTTP GET /api/agents/runs/{run_id}` matches Python''s run detail and missing-run
+    error. test: `crates/gagents/tests/runs.rs::run_detail_matches_python`.
+
+    2.1.4: `HTTP GET /api/agents/runs/{run_id}/name` matches Python''s name resolution.
+    test: `crates/gagents/tests/runs.rs::run_name_matches_python`.
+
+    2.1.5: The run read services return 0.1''s recorded results for the five MCP read
+    tools. test: `crates/gagents/tests/runs.rs::run_read_services_match_corpus`.'
+  labels:
+  - covers:agents-family:2.1:2.1.1
+  - covers:agents-family:2.1:2.1.2
+  - covers:agents-family:2.1:2.1.3
+  - covers:agents-family:2.1:2.1.4
+  - covers:agents-family:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Live output and gdaemon's machine effects
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.0'
+  validation_criteria: '2.2.1: The capture service returns 0.1''s recorded capture
+    pages for local and remote runs. test: `crates/gagents/tests/run_output.rs::capture_matches_corpus`.
+
+    2.2.2: The live-output service returns 0.1''s recorded output, offsets and limits
+    for local runs and for remote runs whose tail comes from the reported store. test:
+    `crates/gagents/tests/run_output.rs::live_output_matches_corpus`.
+
+    2.2.3: The wait-for-output service matches 0.1''s matched, timed-out and ended-run
+    outcomes. test: `crates/gagents/tests/run_output.rs::wait_for_output_matches_corpus`.
+
+    2.2.4: gdaemon''s effects read a hub-local pane through the host `snapshot` request
+    and a remote pane''s tail and composer through 2.0''s pane route with the pair
+    secret, read a refused or unreachable route as a missing entry, and return the
+    `unavailable` class for unimplemented effects. test: `crates/gdaemon/tests/agent_effects.rs::pane_read_local_and_remote`.
+
+    2.2.5: The effects reach the composition only on hub and standalone with a pool;
+    a node composes none. test: `crates/gdaemon/tests/agent_effects.rs::effects_compose_only_with_pool`.'
+  labels:
+  - covers:agents-family:2.2:2.2.1
+  - covers:agents-family:2.2:2.2.2
+  - covers:agents-family:2.2:2.2.3
+  - covers:agents-family:2.2:2.2.4
+  - covers:agents-family:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Worktree records and machine ownership
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '3.1.1: The ten worktree record services return 0.2''s recorded
+    rows and errors. test: `crates/gagents/tests/worktree_records.rs::record_services_match_corpus`.
+
+    3.1.2: Owned, foreign-machine, unknown-machine and ambiguous references give Python''s
+    refusals and routing codes, mapped through #24970''s classes. test: `crates/gagents/tests/worktree_records.rs::machine_ownership_matches_python`.'
+  labels:
+  - covers:agents-family:3.1:3.1.1
+  - covers:agents-family:3.1:3.1.2
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Worktree git effects and remote checkout frames
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: The seven worktree git services reproduce 0.2''s recorded
+    rows, branches, directories and refs in temporary repositories with a local bare
+    remote. test: `crates/gagents/tests/worktree_git.rs::git_services_match_corpus`.
+
+    3.2.2: Get, merge and delete of a row owned by another machine send 0.2''s recorded
+    frames and map every routing code. test: `crates/gagents/tests/worktree_git.rs::remote_rows_use_node_frames`.
+
+    3.2.3: gdaemon''s effects send `workspace.merge`, `workspace.remove`, `checkout.status`
+    and `checkout.read` through the registry command sender and return the node''s
+    result or routing code. test: `crates/gdaemon/tests/agent_effects.rs::checkout_frames_use_command_sender`.'
+  labels:
+  - covers:agents-family:3.2:3.2.1
+  - covers:agents-family:3.2:3.2.2
+  - covers:agents-family:3.2:3.2.3
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Clone records
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: The seven clone record services return 0.2''s recorded
+    rows and errors. test: `crates/gagents/tests/clone_records.rs::record_services_match_corpus`.
+
+    3.3.2: Clone references give the same ownership refusals and routing codes as
+    worktree references. test: `crates/gagents/tests/clone_records.rs::machine_ownership_matches_python`.'
+  labels:
+  - covers:agents-family:3.3:3.3.1
+  - covers:agents-family:3.3:3.3.2
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Clone git effects
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.3'
+  validation_criteria: '3.4.1: The six clone git services reproduce 0.2''s recorded
+    rows and clone directories in temporary repositories with a local bare remote.
+    test: `crates/gagents/tests/clone_git.rs::git_services_match_corpus`.
+
+    3.4.2: Operations on a clone owned by another machine send 0.2''s recorded frames
+    and map every routing code. test: `crates/gagents/tests/clone_git.rs::remote_rows_use_node_frames`.'
+  labels:
+  - covers:agents-family:3.4:3.4.1
+  - covers:agents-family:3.4:3.4.2
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Source-control worktree and clone routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.4'
+  validation_criteria: '3.5.1: `HTTP GET /api/source-control/worktrees` matches Python''s
+    list and filters. test: `crates/gagents/tests/checkout_routes.rs::list_worktrees_matches_python`.
+
+    3.5.2: `HTTP POST /api/source-control/worktrees` matches Python''s creation, machine
+    authorization and errors. test: `crates/gagents/tests/checkout_routes.rs::create_worktree_matches_python`.
+
+    3.5.3: `HTTP GET /api/source-control/worktrees/stats` matches Python''s counts.
+    test: `crates/gagents/tests/checkout_routes.rs::worktree_stats_matches_python`.
+
+    3.5.4: `HTTP DELETE /api/source-control/worktrees/{worktree_id}` matches Python''s
+    local and node removal. test: `crates/gagents/tests/checkout_routes.rs::delete_worktree_matches_python`.
+
+    3.5.5: `HTTP POST /api/source-control/worktrees/cleanup` matches Python''s stale
+    cleanup. test: `crates/gagents/tests/checkout_routes.rs::cleanup_worktrees_matches_python`.
+
+    3.5.6: `HTTP POST /api/source-control/worktrees/{worktree_id}/sync` matches Python''s
+    sync and conflicts. test: `crates/gagents/tests/checkout_routes.rs::sync_worktree_matches_python`.
+
+    3.5.7: `HTTP GET /api/source-control/clones` matches Python''s list. test: `crates/gagents/tests/checkout_routes.rs::list_clones_matches_python`.
+
+    3.5.8: `HTTP DELETE /api/source-control/clones/{clone_id}` matches Python''s removal.
+    test: `crates/gagents/tests/checkout_routes.rs::delete_clone_matches_python`.
+
+    3.5.9: `HTTP POST /api/source-control/clones/{clone_id}/sync` matches Python''s
+    sync. test: `crates/gagents/tests/checkout_routes.rs::sync_clone_matches_python`.'
+  labels:
+  - covers:agents-family:3.5:3.5.1
+  - covers:agents-family:3.5:3.5.2
+  - covers:agents-family:3.5:3.5.3
+  - covers:agents-family:3.5:3.5.4
+  - covers:agents-family:3.5:3.5.5
+  - covers:agents-family:3.5:3.5.6
+  - covers:agents-family:3.5:3.5.7
+  - covers:agents-family:3.5:3.5.8
+  - covers:agents-family:3.5:3.5.9
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: Hub-local launch over a shared run-state store
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.5'
+  validation_criteria: '4.1.1: Node launch keeps its argv, environment, sandbox wrapping
+    and run-state records through the store trait. test: `crates/gdaemon/tests/hub_launch.rs::node_launch_unchanged_through_store_trait`.
+
+    4.1.2: A hub-local launch reproduces 0.3''s recorded provider argv, environment
+    keys, working directory, sandbox wrapping and `agent_runs` row for each provider.
+    test: `crates/gdaemon/tests/hub_launch.rs::hub_local_launch_matches_corpus`.
+
+    4.1.3: The spawn effect launches a hub-local run in process and sends `agent.spawn`
+    for another machine with every hub-flow code. test: `crates/gdaemon/tests/agent_effects.rs::spawn_routes_local_and_remote`.'
+  labels:
+  - covers:agents-family:4.1:4.1.1
+  - covers:agents-family:4.1:4.1.2
+  - covers:agents-family:4.1:4.1.3
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Spawn admission, launch defaults and prompt preview
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: `HTTP GET /api/agents/launch-defaults` matches Python''s
+    defaults. test: `crates/gagents/tests/spawn_admission.rs::launch_defaults_matches_python`.
+
+    4.2.2: `HTTP POST /api/agents/spawn/prompt-preview` matches Python''s rendered
+    prompt and errors. test: `crates/gagents/tests/spawn_admission.rs::prompt_preview_matches_python`.
+
+    4.2.3: The admission services return 0.3''s recorded verdicts for depth, machine
+    cap, definitions and the `terminal_backend` refusal. test: `crates/gagents/tests/spawn_admission.rs::admission_services_match_corpus`.'
+  labels:
+  - covers:agents-family:4.2:4.2.1
+  - covers:agents-family:4.2:4.2.2
+  - covers:agents-family:4.2:4.2.3
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Spawn execution
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: `HTTP POST /api/agents/spawn` matches Python''s local
+    and remote spawn results and errors. test: `crates/gagents/tests/spawn_execute.rs::spawn_route_matches_python`.
+
+    4.3.2: `HTTP POST /api/agents/spawn/batch` matches Python''s batch results and
+    partial failures. test: `crates/gagents/tests/spawn_execute.rs::spawn_batch_matches_python`.
+
+    4.3.3: The spawn service reproduces 0.3''s isolation, run rows, remote frames
+    and the `spawn_in_doubt` and `remote_loopback_endpoint` outcomes. test: `crates/gagents/tests/spawn_execute.rs::spawn_service_matches_corpus`.'
+  labels:
+  - covers:agents-family:4.3:4.3.1
+  - covers:agents-family:4.3:4.3.2
+  - covers:agents-family:4.3:4.3.3
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Apply agent definition and persona
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '4.4.1: The apply-definition service returns 0.1''s recorded
+    results and session effects. test: `crates/gagents/tests/spawn_apply.rs::apply_definition_matches_corpus`.
+
+    4.4.2: The apply-persona service returns 0.1''s recorded results and session effects.
+    test: `crates/gagents/tests/spawn_apply.rs::apply_persona_matches_corpus`.'
+  labels:
+  - covers:agents-family:4.4:4.4.1
+  - covers:agents-family:4.4:4.4.2
+  tdd: true
+  source_section: '4.4'
+  implementation_domain: backend
+- title: Inter-session mailbox
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.4'
+  validation_criteria: '5.1.1: The send service reproduces 0.4''s recorded rows, recipients
+    and refusals for every target kind. test: `crates/gagents/tests/mailbox.rs::send_matches_corpus`.
+
+    5.1.2: The message read services return 0.4''s recorded messages and errors. test:
+    `crates/gagents/tests/mailbox.rs::message_reads_match_corpus`.'
+  labels:
+  - covers:agents-family:5.1:5.1.1
+  - covers:agents-family:5.1:5.1.2
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Native wake decisions and terminal delivery
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: Wake decisions match 0.4''s recorded outcome for each
+    session state and `wake` value, and for a node terminal under each reported composer
+    state. test: `crates/gagents/tests/wake.rs::wake_decisions_match_corpus`.
+
+    5.2.2: Web-chat wakes go through the seam trait and nowhere else. test: `crates/gagents/tests/wake.rs::web_chat_wakes_use_seam`.
+
+    5.2.3: The terminal-write effect writes a hub-local terminal through the native
+    write path and sends `terminal.write` for another machine. test: `crates/gdaemon/tests/agent_effects.rs::terminal_write_routes_local_and_remote`.'
+  labels:
+  - covers:agents-family:5.2:5.2.1
+  - covers:agents-family:5.2:5.2.2
+  - covers:agents-family:5.2:5.2.3
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Coordination waits and their delivery worker
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.2'
+  validation_criteria: '5.3.1: Coordination waits match 0.4''s recorded rows and outcomes
+    for a keyed release, a status set (including one matched at registration), a reply,
+    timeout, owner end and cancel, a duplicate registration and each registration
+    refusal. test: `crates/gagents/tests/coordination.rs::coordination_waits_match_corpus`.
+
+    5.3.2: The delivery worker wakes each terminal wait once: one notified after it
+    listens, one completed while it was disconnected or stopped, one whose deadline
+    resolves it to `timeout`, and one whose first wake fails and is retried. It skips
+    delivered rows and waits whose waiter is on another machine. test: `crates/gagents/tests/coordination.rs::delivery_worker_matches_python_service`.
+
+    5.3.3: A wait registered natively, or by Python''s `CoordinationWaitManager.register`
+    statements, and released by a native mailbox send wakes its waiter exactly once.
+    test: `crates/gagents/tests/coordination.rs::mixed_registration_delivers_once`.
+
+    5.3.4: `Pool::listen` yields notifications committed after it listens and ends
+    when its connection closes. test: `crates/gcore/src/postgres_pool/tests.rs::listen_yields_committed_notifications`.'
+  labels:
+  - covers:agents-family:5.3:5.3.1
+  - covers:agents-family:5.3:5.3.2
+  - covers:agents-family:5.3:5.3.3
+  - covers:agents-family:5.3:5.3.4
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: Termination
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.3'
+  validation_criteria: '6.1.1: `HTTP POST /api/agents/runs/{run_id}/cancel` matches
+    Python''s local and remote cancel results and errors. test: `crates/gagents/tests/termination.rs::cancel_route_matches_python`.
+
+    6.1.2: The kill, stop, end and unregister services reproduce 0.3''s run rows,
+    parent deliveries and `not_stopped` outcomes. test: `crates/gagents/tests/termination.rs::termination_services_match_corpus`.
+
+    6.1.3: The cancel effect stops a hub-local run in process, sends `agent.cancel`
+    for another machine and then marks the reported entry stopped through 2.0''s pane
+    route; the run''s capture holds the stored tail. test: `crates/gdaemon/tests/agent_effects.rs::cancel_routes_local_and_remote`.
+
+    6.1.4: The termination service reproduces 0.3''s capture-barrier vectors: a persistence
+    failure or a capture conflict stops nothing. A competing terminator''s capture-slot
+    write, applied to the row between the native intent and the native capture, leaves
+    the competitor''s capture and stops nothing. A retried interrupted stop reaches
+    one terminal outcome and one parent delivery. test: `crates/gagents/tests/termination.rs::capture_barrier_matches_corpus`.
+
+    6.1.5: Each native terminal transition (cancel, kill, stop, end, unregister and
+    cleanup) calls `deliver_completion` once after its commit and its parent delivery,
+    including when the parent delivery fails. test: `crates/gagents/tests/termination.rs::terminal_transitions_hand_off_completion`.
+
+    6.1.6: gdaemon''s `deliver_completion` posts the run id to 2.0''s delivery route
+    with the pair secret and keeps it until the route answers `pending: 0` or 409.
+    An unreachable route, a 503 and `pending: 1` each lead to another post 5 seconds
+    later with no restart, the committed transition stays in place, and another machine''s
+    run is kept the same way. test: `crates/gdaemon/tests/agent_effects.rs::deliver_completion_retries_until_acknowledged`.
+
+    6.1.7: A hub-local run''s observed exit commits its terminal row, then delivers
+    to the parent and calls `deliver_completion` once. test: `crates/gdaemon/tests/hub_launch.rs::exit_observation_hands_off_completion`.'
+  labels:
+  - covers:agents-family:6.1:6.1.1
+  - covers:agents-family:6.1:6.1.2
+  - covers:agents-family:6.1:6.1.3
+  - covers:agents-family:6.1:6.1.4
+  - covers:agents-family:6.1:6.1.5
+  - covers:agents-family:6.1:6.1.6
+  - covers:agents-family:6.1:6.1.7
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Cleanup and worktree checkpoints
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: `HTTP POST /api/agents/cleanup` matches Python''s cleanup
+    counts and run rows. test: `crates/gagents/tests/cleanup.rs::cleanup_route_matches_python`.
+
+    6.2.2: The stale-helper and checkpoint services reproduce 0.3''s run rows and
+    repository effects. test: `crates/gagents/tests/cleanup.rs::cleanup_services_match_corpus`.'
+  labels:
+  - covers:agents-family:6.2:6.2.1
+  - covers:agents-family:6.2:6.2.2
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Seats, team admission and admin cold start
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '7.1.1: The team admission service reproduces 0.4''s recorded
+    seats and refusals. test: `crates/gagents/tests/seats.rs::admit_team_matches_corpus`.
+
+    7.1.2: The seat check service returns 0.4''s recorded seat states. test: `crates/gagents/tests/seats.rs::check_runbook_seats_matches_corpus`.
+
+    7.1.3: The admin cold-start service reproduces 0.4''s recorded spawns and results.
+    test: `crates/gagents/tests/seats.rs::cold_start_admin_matches_corpus`.'
+  labels:
+  - covers:agents-family:7.1:7.1.1
+  - covers:agents-family:7.1:7.1.2
+  - covers:agents-family:7.1:7.1.3
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Native hub pane monitor
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '8.1.1: The node pass keeps its reads, writes, reports and
+    terminate posts through the generalized source and sink. test: `crates/gdaemon/tests/hub_pane_monitor.rs::node_pass_unchanged_through_generalization`.
+
+    8.1.2: For a hub-local run, each of the eight steps takes the action Python''s
+    step takes for the same pane fixture: the key sequence written, the attention
+    transition, or the termination and its reason. test: `crates/gdaemon/tests/hub_pane_monitor.rs::hub_steps_match_python`.
+
+    8.1.3: The hub pass skips runs on other machines and never runs the idle step.
+    test: `crates/gdaemon/tests/hub_pane_monitor.rs::hub_pass_skips_remote_runs_and_idle`.'
+  labels:
+  - covers:agents-family:8.1:8.1.1
+  - covers:agents-family:8.1:8.1.2
+  - covers:agents-family:8.1:8.1.3
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: gobby-agents descriptor and tool adapters
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '9.1.1: `MCP gobby-agents:admit_team` matches Python. test:
+    `crates/gagents/tests/mcp_agents.rs::admit_team_matches_python`.
+
+    9.1.2: `MCP gobby-agents:apply_agent_definition` matches Python. test: `crates/gagents/tests/mcp_agents.rs::apply_agent_definition_matches_python`.
+
+    9.1.3: `MCP gobby-agents:apply_persona` matches Python. test: `crates/gagents/tests/mcp_agents.rs::apply_persona_matches_python`.
+
+    9.1.4: `MCP gobby-agents:can_spawn_agent` matches Python. test: `crates/gagents/tests/mcp_agents.rs::can_spawn_agent_matches_python`.
+
+    9.1.5: `MCP gobby-agents:cancel_coordination_wait` matches Python. test: `crates/gagents/tests/mcp_agents.rs::cancel_coordination_wait_matches_python`.
+
+    9.1.6: `MCP gobby-agents:cancel_stale_helpers` matches Python. test: `crates/gagents/tests/mcp_agents.rs::cancel_stale_helpers_matches_python`.
+
+    9.1.7: `MCP gobby-agents:check_runbook_seats` matches Python. test: `crates/gagents/tests/mcp_agents.rs::check_runbook_seats_matches_python`.
+
+    9.1.8: `MCP gobby-agents:checkpoint_agent_worktree` matches Python. test: `crates/gagents/tests/mcp_agents.rs::checkpoint_agent_worktree_matches_python`.
+
+    9.1.9: `MCP gobby-agents:cold_start_admin` matches Python. test: `crates/gagents/tests/mcp_agents.rs::cold_start_admin_matches_python`.
+
+    9.1.10: `MCP gobby-agents:end_agent_run` matches Python. test: `crates/gagents/tests/mcp_agents.rs::end_agent_run_matches_python`.
+
+    9.1.11: `MCP gobby-agents:evaluate_spawn` matches Python. test: `crates/gagents/tests/mcp_agents.rs::evaluate_spawn_matches_python`.
+
+    9.1.12: `MCP gobby-agents:get_agent_capture` matches Python for local and remote
+    runs. test: `crates/gagents/tests/mcp_agents.rs::get_agent_capture_matches_python`.
+
+    9.1.13: `MCP gobby-agents:get_agent_live_output` matches Python for local and
+    remote runs. test: `crates/gagents/tests/mcp_agents.rs::get_agent_live_output_matches_python`.
+
+    9.1.14: `MCP gobby-agents:get_agent_result` matches Python. test: `crates/gagents/tests/mcp_agents.rs::get_agent_result_matches_python`.
+
+    9.1.15: `MCP gobby-agents:get_inter_session_message` matches Python. test: `crates/gagents/tests/mcp_agents.rs::get_inter_session_message_matches_python`.
+
+    9.1.16: `MCP gobby-agents:get_inter_session_messages` matches Python. test: `crates/gagents/tests/mcp_agents.rs::get_inter_session_messages_matches_python`.
+
+    9.1.17: `MCP gobby-agents:get_running_agent` matches Python. test: `crates/gagents/tests/mcp_agents.rs::get_running_agent_matches_python`.
+
+    9.1.18: `MCP gobby-agents:kill_agent` matches Python, including its `stop` default.
+    test: `crates/gagents/tests/mcp_agents.rs::kill_agent_matches_python`.
+
+    9.1.19: `MCP gobby-agents:list_agent_runs` matches Python. test: `crates/gagents/tests/mcp_agents.rs::list_agent_runs_matches_python`.
+
+    9.1.20: `MCP gobby-agents:list_running_agents` matches Python. test: `crates/gagents/tests/mcp_agents.rs::list_running_agents_matches_python`.
+
+    9.1.21: `MCP gobby-agents:running_agent_stats` matches Python. test: `crates/gagents/tests/mcp_agents.rs::running_agent_stats_matches_python`.
+
+    9.1.22: `MCP gobby-agents:send_message` matches Python for every target kind.
+    test: `crates/gagents/tests/mcp_agents.rs::send_message_matches_python`.
+
+    9.1.23: `MCP gobby-agents:spawn_agent` matches Python for local and remote spawns.
+    test: `crates/gagents/tests/mcp_agents.rs::spawn_agent_matches_python`.
+
+    9.1.24: `MCP gobby-agents:stop_agent` matches Python. test: `crates/gagents/tests/mcp_agents.rs::stop_agent_matches_python`.
+
+    9.1.25: `MCP gobby-agents:unregister_agent` matches Python. test: `crates/gagents/tests/mcp_agents.rs::unregister_agent_matches_python`.
+
+    9.1.26: `MCP gobby-agents:wait_for_agent`''s catalog entry and schema match Python,
+    and its handler returns the `unavailable` class until D1. test: `crates/gagents/tests/mcp_agents.rs::wait_for_agent_schema_matches_python`.
+
+    9.1.27: `MCP gobby-agents:wait_for_coordination` matches Python. test: `crates/gagents/tests/mcp_agents.rs::wait_for_coordination_matches_python`.
+
+    9.1.28: `MCP gobby-agents:wait_for_output` matches Python. test: `crates/gagents/tests/mcp_agents.rs::wait_for_output_matches_python`.
+
+    9.1.29: The tool inventory, descriptions, schemas, definition hashes and mutation
+    classes match the frozen Python contract, and malformed arguments reach no service.
+    test: `crates/gagents/tests/mcp_agents.rs::catalog_and_validation_match_python`.'
+  labels:
+  - covers:agents-family:9.1:9.1.1
+  - covers:agents-family:9.1:9.1.2
+  - covers:agents-family:9.1:9.1.3
+  - covers:agents-family:9.1:9.1.4
+  - covers:agents-family:9.1:9.1.5
+  - covers:agents-family:9.1:9.1.6
+  - covers:agents-family:9.1:9.1.7
+  - covers:agents-family:9.1:9.1.8
+  - covers:agents-family:9.1:9.1.9
+  - covers:agents-family:9.1:9.1.10
+  - covers:agents-family:9.1:9.1.11
+  - covers:agents-family:9.1:9.1.12
+  - covers:agents-family:9.1:9.1.13
+  - covers:agents-family:9.1:9.1.14
+  - covers:agents-family:9.1:9.1.15
+  - covers:agents-family:9.1:9.1.16
+  - covers:agents-family:9.1:9.1.17
+  - covers:agents-family:9.1:9.1.18
+  - covers:agents-family:9.1:9.1.19
+  - covers:agents-family:9.1:9.1.20
+  - covers:agents-family:9.1:9.1.21
+  - covers:agents-family:9.1:9.1.22
+  - covers:agents-family:9.1:9.1.23
+  - covers:agents-family:9.1:9.1.24
+  - covers:agents-family:9.1:9.1.25
+  - covers:agents-family:9.1:9.1.26
+  - covers:agents-family:9.1:9.1.27
+  - covers:agents-family:9.1:9.1.28
+  - covers:agents-family:9.1:9.1.29
+  tdd: true
+  source_section: '9.1'
+  implementation_domain: backend
+- title: gobby-worktrees descriptor and tool adapters
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.1'
+  validation_criteria: '9.2.1: `MCP gobby-worktrees:abandon_worktree` matches Python.
+    test: `crates/gagents/tests/mcp_worktrees.rs::abandon_worktree_matches_python`.
+
+    9.2.2: `MCP gobby-worktrees:claim_worktree` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::claim_worktree_matches_python`.
+
+    9.2.3: `MCP gobby-worktrees:cleanup_stale_worktrees` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::cleanup_stale_worktrees_matches_python`.
+
+    9.2.4: `MCP gobby-worktrees:create_worktree` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::create_worktree_matches_python`.
+
+    9.2.5: `MCP gobby-worktrees:delete_worktree` matches Python for local and remote
+    rows. test: `crates/gagents/tests/mcp_worktrees.rs::delete_worktree_matches_python`.
+
+    9.2.6: `MCP gobby-worktrees:detect_stale_worktrees` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::detect_stale_worktrees_matches_python`.
+
+    9.2.7: `MCP gobby-worktrees:get_worktree` matches Python for local and remote
+    rows. test: `crates/gagents/tests/mcp_worktrees.rs::get_worktree_matches_python`.
+
+    9.2.8: `MCP gobby-worktrees:get_worktree_by_task` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::get_worktree_by_task_matches_python`.
+
+    9.2.9: `MCP gobby-worktrees:get_worktree_stats` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::get_worktree_stats_matches_python`.
+
+    9.2.10: `MCP gobby-worktrees:link_task_to_worktree` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::link_task_to_worktree_matches_python`.
+
+    9.2.11: `MCP gobby-worktrees:list_worktrees` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::list_worktrees_matches_python`.
+
+    9.2.12: `MCP gobby-worktrees:mark_worktree_merged` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::mark_worktree_merged_matches_python`.
+
+    9.2.13: `MCP gobby-worktrees:merge_worktree` matches Python for local and remote
+    rows. test: `crates/gagents/tests/mcp_worktrees.rs::merge_worktree_matches_python`.
+
+    9.2.14: `MCP gobby-worktrees:push_branch` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::push_branch_matches_python`.
+
+    9.2.15: `MCP gobby-worktrees:reactivate_worktree` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::reactivate_worktree_matches_python`.
+
+    9.2.16: `MCP gobby-worktrees:release_worktree` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::release_worktree_matches_python`.
+
+    9.2.17: `MCP gobby-worktrees:sync_worktree` matches Python. test: `crates/gagents/tests/mcp_worktrees.rs::sync_worktree_matches_python`.
+
+    9.2.18: The tool inventory, descriptions, schemas, definition hashes and mutation
+    classes match the frozen Python contract, and malformed arguments reach no service.
+    test: `crates/gagents/tests/mcp_worktrees.rs::catalog_and_validation_match_python`.'
+  labels:
+  - covers:agents-family:9.2:9.2.1
+  - covers:agents-family:9.2:9.2.2
+  - covers:agents-family:9.2:9.2.3
+  - covers:agents-family:9.2:9.2.4
+  - covers:agents-family:9.2:9.2.5
+  - covers:agents-family:9.2:9.2.6
+  - covers:agents-family:9.2:9.2.7
+  - covers:agents-family:9.2:9.2.8
+  - covers:agents-family:9.2:9.2.9
+  - covers:agents-family:9.2:9.2.10
+  - covers:agents-family:9.2:9.2.11
+  - covers:agents-family:9.2:9.2.12
+  - covers:agents-family:9.2:9.2.13
+  - covers:agents-family:9.2:9.2.14
+  - covers:agents-family:9.2:9.2.15
+  - covers:agents-family:9.2:9.2.16
+  - covers:agents-family:9.2:9.2.17
+  - covers:agents-family:9.2:9.2.18
+  tdd: true
+  source_section: '9.2'
+  implementation_domain: backend
+- title: gobby-clones descriptor and tool adapters
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.2'
+  validation_criteria: '9.3.1: `MCP gobby-clones:claim_clone` matches Python. test:
+    `crates/gagents/tests/mcp_clones.rs::claim_clone_matches_python`.
+
+    9.3.2: `MCP gobby-clones:cleanup_stale_clones` matches Python. test: `crates/gagents/tests/mcp_clones.rs::cleanup_stale_clones_matches_python`.
+
+    9.3.3: `MCP gobby-clones:create_clone` matches Python. test: `crates/gagents/tests/mcp_clones.rs::create_clone_matches_python`.
+
+    9.3.4: `MCP gobby-clones:delete_clone` matches Python for local and remote clones.
+    test: `crates/gagents/tests/mcp_clones.rs::delete_clone_matches_python`.
+
+    9.3.5: `MCP gobby-clones:detect_stale_clones` matches Python. test: `crates/gagents/tests/mcp_clones.rs::detect_stale_clones_matches_python`.
+
+    9.3.6: `MCP gobby-clones:get_clone` matches Python. test: `crates/gagents/tests/mcp_clones.rs::get_clone_matches_python`.
+
+    9.3.7: `MCP gobby-clones:get_clone_by_task` matches Python. test: `crates/gagents/tests/mcp_clones.rs::get_clone_by_task_matches_python`.
+
+    9.3.8: `MCP gobby-clones:get_clone_stats` matches Python. test: `crates/gagents/tests/mcp_clones.rs::get_clone_stats_matches_python`.
+
+    9.3.9: `MCP gobby-clones:link_task_to_clone` matches Python. test: `crates/gagents/tests/mcp_clones.rs::link_task_to_clone_matches_python`.
+
+    9.3.10: `MCP gobby-clones:list_clones` matches Python. test: `crates/gagents/tests/mcp_clones.rs::list_clones_matches_python`.
+
+    9.3.11: `MCP gobby-clones:merge_clone` matches Python. test: `crates/gagents/tests/mcp_clones.rs::merge_clone_matches_python`.
+
+    9.3.12: `MCP gobby-clones:release_clone` matches Python. test: `crates/gagents/tests/mcp_clones.rs::release_clone_matches_python`.
+
+    9.3.13: `MCP gobby-clones:sync_clone` matches Python. test: `crates/gagents/tests/mcp_clones.rs::sync_clone_matches_python`.
+
+    9.3.14: The tool inventory, descriptions, schemas, definition hashes and mutation
+    classes match the frozen Python contract, and malformed arguments reach no service.
+    test: `crates/gagents/tests/mcp_clones.rs::catalog_and_validation_match_python`.'
+  labels:
+  - covers:agents-family:9.3:9.3.1
+  - covers:agents-family:9.3:9.3.2
+  - covers:agents-family:9.3:9.3.3
+  - covers:agents-family:9.3:9.3.4
+  - covers:agents-family:9.3:9.3.5
+  - covers:agents-family:9.3:9.3.6
+  - covers:agents-family:9.3:9.3.7
+  - covers:agents-family:9.3:9.3.8
+  - covers:agents-family:9.3:9.3.9
+  - covers:agents-family:9.3:9.3.10
+  - covers:agents-family:9.3:9.3.11
+  - covers:agents-family:9.3:9.3.12
+  - covers:agents-family:9.3:9.3.13
+  - covers:agents-family:9.3:9.3.14
+  tdd: true
+  source_section: '9.3'
+  implementation_domain: backend
+- title: Native agents command tree
+  category: code
+  task_type: feature
+  depends_on:
+  - '9.3'
+  validation_criteria: '10.1.1: `CLI gobby agents` matches Python''s group usage and
+    exit code. test: `crates/gagents/tests/cli_agents.rs::agents_group_matches_python`.
+
+    10.1.2: `CLI gobby agents check` matches Python. test: `crates/gagents/tests/cli_agents.rs::check_matches_python`.
+
+    10.1.3: `CLI gobby agents cleanup` matches Python. test: `crates/gagents/tests/cli_agents.rs::cleanup_matches_python`.
+
+    10.1.4: `CLI gobby agents kill` matches Python, including the `--stop` default.
+    test: `crates/gagents/tests/cli_agents.rs::kill_matches_python`.
+
+    10.1.5: `CLI gobby agents list` matches Python. test: `crates/gagents/tests/cli_agents.rs::list_matches_python`.
+
+    10.1.6: `CLI gobby agents runs` matches Python''s group usage. test: `crates/gagents/tests/cli_agents.rs::runs_group_matches_python`.
+
+    10.1.7: `CLI gobby agents runs list` matches Python. test: `crates/gagents/tests/cli_agents.rs::runs_list_matches_python`.
+
+    10.1.8: `CLI gobby agents runs show` matches Python. test: `crates/gagents/tests/cli_agents.rs::runs_show_matches_python`.
+
+    10.1.9: `CLI gobby agents show` matches Python. test: `crates/gagents/tests/cli_agents.rs::show_matches_python`.
+
+    10.1.10: `CLI gobby agents spawn` matches Python, including the `terminal_backend`
+    refusal. test: `crates/gagents/tests/cli_agents.rs::spawn_matches_python`.
+
+    10.1.11: `CLI gobby agents stats` matches Python. test: `crates/gagents/tests/cli_agents.rs::stats_matches_python`.
+
+    10.1.12: `CLI gobby agents status` matches Python. test: `crates/gagents/tests/cli_agents.rs::status_matches_python`.
+
+    10.1.13: `CLI gobby agents steps` matches Python. test: `crates/gagents/tests/cli_agents.rs::steps_matches_python`.
+
+    10.1.14: `CLI gobby agents stop` matches Python. test: `crates/gagents/tests/cli_agents.rs::stop_matches_python`.'
+  labels:
+  - covers:agents-family:10.1:10.1.1
+  - covers:agents-family:10.1:10.1.2
+  - covers:agents-family:10.1:10.1.3
+  - covers:agents-family:10.1:10.1.4
+  - covers:agents-family:10.1:10.1.5
+  - covers:agents-family:10.1:10.1.6
+  - covers:agents-family:10.1:10.1.7
+  - covers:agents-family:10.1:10.1.8
+  - covers:agents-family:10.1:10.1.9
+  - covers:agents-family:10.1:10.1.10
+  - covers:agents-family:10.1:10.1.11
+  - covers:agents-family:10.1:10.1.12
+  - covers:agents-family:10.1:10.1.13
+  - covers:agents-family:10.1:10.1.14
+  tdd: true
+  source_section: '10.1'
+  implementation_domain: backend
+- title: Native worktrees command tree
+  category: code
+  task_type: feature
+  depends_on:
+  - '10.1'
+  validation_criteria: '10.2.1: `CLI gobby worktrees` matches Python''s group usage
+    and exit code. test: `crates/gagents/tests/cli_worktrees.rs::worktrees_group_matches_python`.
+
+    10.2.2: `CLI gobby worktrees claim` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::claim_matches_python`.
+
+    10.2.3: `CLI gobby worktrees cleanup` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::cleanup_matches_python`.
+
+    10.2.4: `CLI gobby worktrees create` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::create_matches_python`.
+
+    10.2.5: `CLI gobby worktrees delete` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::delete_matches_python`.
+
+    10.2.6: `CLI gobby worktrees list` matches Python''s direct read. test: `crates/gagents/tests/cli_worktrees.rs::list_matches_python`.
+
+    10.2.7: `CLI gobby worktrees release` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::release_matches_python`.
+
+    10.2.8: `CLI gobby worktrees show` matches Python''s direct read. test: `crates/gagents/tests/cli_worktrees.rs::show_matches_python`.
+
+    10.2.9: `CLI gobby worktrees stale` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::stale_matches_python`.
+
+    10.2.10: `CLI gobby worktrees stats` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::stats_matches_python`.
+
+    10.2.11: `CLI gobby worktrees sync` matches Python. test: `crates/gagents/tests/cli_worktrees.rs::sync_matches_python`.'
+  labels:
+  - covers:agents-family:10.2:10.2.1
+  - covers:agents-family:10.2:10.2.2
+  - covers:agents-family:10.2:10.2.3
+  - covers:agents-family:10.2:10.2.4
+  - covers:agents-family:10.2:10.2.5
+  - covers:agents-family:10.2:10.2.6
+  - covers:agents-family:10.2:10.2.7
+  - covers:agents-family:10.2:10.2.8
+  - covers:agents-family:10.2:10.2.9
+  - covers:agents-family:10.2:10.2.10
+  - covers:agents-family:10.2:10.2.11
+  tdd: true
+  source_section: '10.2'
+  implementation_domain: backend
+- title: Native clones command tree and route waivers
+  category: code
+  task_type: feature
+  depends_on:
+  - '10.2'
+  validation_criteria: '10.3.1: `CLI gobby clones` matches Python''s group usage and
+    exit code. test: `crates/gagents/tests/cli_clones.rs::clones_group_matches_python`.
+
+    10.3.2: `CLI gobby clones create` succeeds through the served route under `agents.cli-clones-create.daemon-tool-route`.
+    test: `crates/gagents/tests/cli_clones.rs::create_uses_served_route`.
+
+    10.3.3: `CLI gobby clones delete` succeeds through the served route under `agents.cli-clones-delete.daemon-tool-route`.
+    test: `crates/gagents/tests/cli_clones.rs::delete_uses_served_route`.
+
+    10.3.4: `CLI gobby clones list` matches Python. test: `crates/gagents/tests/cli_clones.rs::list_matches_python`.
+
+    10.3.5: `CLI gobby clones merge` succeeds through the served route under `agents.cli-clones-merge.daemon-tool-route`.
+    test: `crates/gagents/tests/cli_clones.rs::merge_uses_served_route`.
+
+    10.3.6: `CLI gobby clones spawn` succeeds through the served route under `agents.cli-clones-spawn.daemon-tool-route`.
+    test: `crates/gagents/tests/cli_clones.rs::spawn_uses_served_route`.
+
+    10.3.7: `CLI gobby clones sync` succeeds through the served route under `agents.cli-clones-sync.daemon-tool-route`.
+    test: `crates/gagents/tests/cli_clones.rs::sync_uses_served_route`.
+
+    10.3.8: The five waiver entries carry their exact surfaces and the decision `.gobby/plans/agents-family.md#10.3`,
+    and readiness reports each as `Waived` with passing native assertions beside ordinary
+    `Passed` cases. test: `crates/gagents/tests/cli_clones.rs::clone_route_waivers_are_exact`.'
+  labels:
+  - covers:agents-family:10.3:10.3.1
+  - covers:agents-family:10.3:10.3.2
+  - covers:agents-family:10.3:10.3.3
+  - covers:agents-family:10.3:10.3.4
+  - covers:agents-family:10.3:10.3.5
+  - covers:agents-family:10.3:10.3.6
+  - covers:agents-family:10.3:10.3.7
+  - covers:agents-family:10.3:10.3.8
+  tdd: true
+  source_section: '10.3'
+  implementation_domain: backend
+- title: Forward the public CLI groups and retire Python callbacks
+  category: code
+  task_type: feature
+  depends_on:
+  - '11.1'
+  validation_criteria: '10.4.1: Each forwarding subcommand passes literal arguments,
+    working directory and exit status to `gdaemon <group> <verb>`, and the groups
+    import no agents, worktree or clone business module. test: `tests/cli/test_agents_native_forwarding.py::test_groups_only_forward`.
+
+    10.4.2: `scripts/generate_parity_ledger.py::cli_verbs` yields exactly the 32 owned
+    `CLI gobby agents|worktrees|clones` keys. test: `tests/cli/test_agents_native_forwarding.py::test_ledger_keeps_every_cli_verb`.
+
+    10.4.3: Every retired callback expectation maps to a corpus vector and a native
+    row test, and sweeps find no reference to the deleted module. test: `tests/cli/test_agents_native_forwarding.py::test_retired_callbacks_have_native_coverage`.
+
+    10.4.4: Every public spawn ingress, including the forwarded CLI command, still
+    refuses `terminal_backend`. test: `tests/agents/test_backend_ingress.py::test_every_public_spawn_ingress_rejects_backend`.'
+  labels:
+  - covers:agents-family:10.4:10.4.1
+  - covers:agents-family:10.4:10.4.2
+  - covers:agents-family:10.4:10.4.3
+  - covers:agents-family:10.4:10.4.4
+  tdd: true
+  source_section: '10.4'
+  implementation_domain: backend
+- title: checkouts activation, admission binding and coherent release
+  category: code
+  task_type: feature
+  depends_on:
+  - '10.3'
+  validation_criteria: '11.1.1: Both families admit API keys, the local operator and
+    browser cookies through #25046 and refuse agent tokens and missing credentials
+    as Python does. test: `crates/gdaemon/tests/checkouts_cutover.rs::admission_matches_python`.
+
+    11.1.2: Proxy, compare and native states affect only the nine `checkouts` rows;
+    compare runs read rows only, effectful rows run once, and rollback to Proxy preserves
+    state. test: `crates/gdaemon/tests/checkouts_cutover.rs::checkouts_cutover_is_scoped_and_single_effect`.
+
+    11.1.3: With the Python backend unavailable, the nine rows run natively on hub
+    and standalone, and a node keeps its current backend. test: `tests/e2e/test_checkouts_native.py::test_checkouts_rows_work_without_python_backend`.
+
+    11.1.4: Readiness rejects zero-Passed, all-Skipped and unwaived-Skipped reports
+    and unknown or stale waivers. test: `crates/gdaemon/tests/checkouts_cutover.rs::waiver_readiness_gates_checkouts_activation`.
+
+    11.1.5: Shipping manifests, lock and pins agree at the required patch increment.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    11.1.6: The runbook records build and installed hashes, compared cases, the rollback
+    command, the announcement, health and native smoke evidence. behavior: "checkouts
+    activation evidence" in `docs/contracts/agents-native.md`.
+
+    11.1.7: The checkouts corpus rerun from the integration checkout matches the committed
+    fixture, or the refreshed fixture is committed with every native proof that reads
+    it passing; the integration SHA and fixture hash are recorded. behavior: "checkouts
+    corpus freshness" in `docs/contracts/agents-native.md`.
+
+    11.1.8: The nine `checkouts` HTTP rows are `delegated`, the 30 checkouts MCP rows
+    `proxied` with `Registry flip: #21570`, and every other record is unchanged. behavior:
+    "checkouts activation parity rows" in `docs/contracts/parity-ledger-status.d/git-workspaces.json`.
+
+    11.1.9: The regenerated ledger matches the shards and the public inventory. test:
+    `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.'
+  labels:
+  - covers:agents-family:11.1:11.1.1
+  - covers:agents-family:11.1:11.1.2
+  - covers:agents-family:11.1:11.1.3
+  - covers:agents-family:11.1:11.1.4
+  - covers:agents-family:11.1:11.1.5
+  - covers:agents-family:11.1:11.1.6
+  - covers:agents-family:11.1:11.1.7
+  - covers:agents-family:11.1:11.1.8
+  - covers:agents-family:11.1:11.1.9
+  tdd: true
+  source_section: '11.1'
+  implementation_domain: backend
+- title: agents activation, hub pane steps and gdaemon release
+  category: code
+  task_type: feature
+  depends_on:
+  - '10.4'
+  - '8.1'
+  validation_criteria: '11.2.1: Proxy, compare and native states affect only the 21
+    `agents` rows; compare runs read rows only, effectful rows run once, and rollback
+    to Proxy preserves state. test: `crates/gdaemon/tests/agents_cutover.rs::agents_cutover_is_scoped_and_single_effect`.
+
+    11.2.2: With the Python backend unavailable, the 21 rows run natively on hub and
+    standalone, remote pane reads fall back to a missing entry, and a node keeps its
+    current backend. test: `tests/e2e/test_agents_native.py::test_agents_rows_work_without_python_backend`.
+
+    11.2.3: The hub pane monitor starts only on hub and standalone with a pool, and
+    web-chat wakes reach #21592''s runtime. test: `crates/gdaemon/tests/agents_cutover.rs::pane_monitor_and_web_chat_wake_are_bound`.
+
+    11.2.4: `_check_loop` no longer schedules the eight pane steps and still schedules
+    the idle check and every sweep. test: `tests/agents/test_lifecycle_monitor.py::test_check_loop_leaves_pane_steps_to_native_monitor`.
+
+    11.2.5: The idle check no longer syncs attention for a local run and still syncs
+    it for a remote run. test: `tests/agents/test_attention_state.py::test_idle_check_syncs_attention_only_for_remote_runs`.
+
+    11.2.6: Readiness rejects zero-Passed, all-Skipped and unwaived-Skipped reports
+    and unknown or stale waivers. test: `crates/gdaemon/tests/agents_cutover.rs::waiver_readiness_gates_agents_activation`.
+
+    11.2.7: Shipping manifests, lock and pins agree at the required patch increment.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    11.2.8: The runbook records build and installed hashes, compared cases, the route-only
+    and full rollback sequences, the announcement, health and native smoke evidence,
+    including a hub-local run whose trust prompt the native monitor answers and a
+    remote run whose live output and capture come from the reported store. behavior:
+    "agents activation evidence" in `docs/contracts/agents-native.md`.
+
+    11.2.9: After the forward cutover and after a rehearsed full rollback, exactly
+    one owner schedules each of the eight pane steps. behavior: "pane step ownership
+    after cutover and rollback" in `docs/contracts/agents-native.md`.
+
+    11.2.10: The agents corpus groups rerun from the integration checkout match the
+    committed fixtures, or the refreshed fixtures are committed with every native
+    proof that reads them passing; the integration SHA and fixture hashes are recorded.
+    behavior: "agents corpus freshness" in `docs/contracts/agents-native.md`.
+
+    11.2.11: The coordination-wait worker starts only on hub and standalone with a
+    pool. test: `crates/gdaemon/tests/agents_cutover.rs::coordination_worker_is_bound`.
+
+    11.2.12: Python startup no longer constructs or starts `CoordinationWaitService`,
+    and shutdown still completes. test: `tests/test_runner_coordination_delivery.py::test_startup_leaves_coordination_delivery_to_gdaemon`.
+
+    11.2.13: Against the isolated daemon pair, a Python `wait_for_agent` wakes once
+    when the run ends by native cancel, by hub-local exit or by a native monitor termination,
+    whether it registered before or after the transition; when the first wake fails,
+    the durable subscriber row stays and gdaemon''s next post delivers it once with
+    both daemons still running. A Python-registered coordination wait released by
+    a native send wakes once. test: `tests/e2e/test_agents_native.py::test_python_waiters_wake_once_across_runtimes`.
+
+    11.2.14: After the forward cutover and after a rehearsed full rollback, exactly
+    one owner delivers coordination waits. behavior: "coordination delivery ownership
+    after cutover and rollback" in `docs/contracts/agents-native.md`.'
+  labels:
+  - covers:agents-family:11.2:11.2.1
+  - covers:agents-family:11.2:11.2.2
+  - covers:agents-family:11.2:11.2.3
+  - covers:agents-family:11.2:11.2.4
+  - covers:agents-family:11.2:11.2.5
+  - covers:agents-family:11.2:11.2.6
+  - covers:agents-family:11.2:11.2.7
+  - covers:agents-family:11.2:11.2.8
+  - covers:agents-family:11.2:11.2.9
+  - covers:agents-family:11.2:11.2.10
+  - covers:agents-family:11.2:11.2.11
+  - covers:agents-family:11.2:11.2.12
+  - covers:agents-family:11.2:11.2.13
+  - covers:agents-family:11.2:11.2.14
+  tdd: true
+  source_section: '11.2'
+  implementation_domain: backend
+- title: Publish the family's parity ownership
+  category: docs
+  task_type: chore
+  depends_on:
+  - '11.2'
+  validation_criteria: '11.3.1: The 35 HTTP and CLI rows are `delegated` and the 28
+    MCP rows `proxied` with `Registry flip: #21570`, and every other record is unchanged.
+    behavior: "63 agents family parity rows" in `docs/contracts/parity-ledger-status.d/sessions-agents.json`.
+
+    11.3.2: The 18 checkouts CLI rows are `delegated`, and every other record, including
+    11.1''s nine HTTP and 30 MCP records, is unchanged. behavior: "57 checkouts family
+    parity rows" in `docs/contracts/parity-ledger-status.d/git-workspaces.json`.
+
+    11.3.3: The four node rows stay `proxied` with notes citing this family''s ownership,
+    Decision 14''s condition and #25269, and every other record is unchanged. behavior:
+    "4 node report and run-outcome rows" in `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.
+
+    11.3.4: The three workspace WS notes cite #21565 alone with status unchanged.
+    behavior: "3 re-homed workspace WS rows" in `docs/contracts/parity-ledger-status.d/websocket-chat-voice-ui.json`.
+
+    11.3.5: The regenerated ledger matches the shards and the public inventory. test:
+    `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    11.3.6: The final row ownership map is recorded. behavior: "agents family row
+    ownership" in `docs/contracts/agents-native.md`.
+
+    11.3.7: The agents guide describes native operation, the hub pane steps and the
+    forwarding CLI. behavior: "native agents operation" in `docs/guides/agents.md`.
+
+    11.3.8: The worktrees guide describes native operation and the forwarding CLI.
+    behavior: "native worktrees and clones operation" in `docs/guides/worktrees.md`.'
+  labels:
+  - covers:agents-family:11.3:11.3.1
+  - covers:agents-family:11.3:11.3.2
+  - covers:agents-family:11.3:11.3.3
+  - covers:agents-family:11.3:11.3.4
+  - covers:agents-family:11.3:11.3.5
+  - covers:agents-family:11.3:11.3.6
+  - covers:agents-family:11.3:11.3.7
+  - covers:agents-family:11.3:11.3.8
+  tdd: false
+  source_section: '11.3'
+  assigned_agent: tech-writer
+```
