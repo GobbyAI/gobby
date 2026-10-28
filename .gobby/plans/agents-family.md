@@ -44,7 +44,8 @@ library crate `crates/gagents` (package `gobby-agents`, lib
 `gobby_agents`, statically linked into gdaemon), which the S2.7 hub
 attention plan (#24149) creates and this plan extends with its own modules;
 two `RouteFamily` instances; three `ToolFamily` descriptors; one
-machine-effects seam that gdaemon implements; and the existing tables. No
+machine-effects seam that gdaemon implements; one sessions read port that
+gdaemon adapts for gsessions (3.6); and the existing tables. No
 new crate, process, executable, database table or second terminal host is
 added.
 
