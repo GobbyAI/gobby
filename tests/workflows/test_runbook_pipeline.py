@@ -11,6 +11,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from gobby.mcp_proxy.tools.spawn_agent._seat_adoption import (
+    authorize_pipeline_invocation,
+    reconcile_pipeline_invocation,
+)
 from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     RUNBOOK_RESUME_REFUSED,
     _background_tasks_by_execution,
@@ -19,6 +23,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     run_pipeline,
 )
 from gobby.servers.routes.pipelines import create_pipelines_router
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager, system_session_id
@@ -485,6 +490,82 @@ async def test_restart_reruns_on_same_child(
     ]
     expected_writer_run = "run-1" if interrupt_agent == "plan-writer" else "run-2"
     assert json.loads(writer.output_json or "null")["run_id"] == expected_writer_run
+
+
+@pytest.mark.parametrize("started", [False, True], ids=["pending", "started"])
+async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, started: bool) -> None:
+    pipeline = await _team_planning(temp_db)
+    before = InterruptingProxy("plan-adversary")
+    with pytest.raises(asyncio.CancelledError):
+        await _executor(temp_db, before).execute(pipeline, RUN_INPUTS, PROJECT_ID)
+    execution_id = _latest_execution_id(temp_db)
+    interrupted = before.spawns()[-1]
+    run_id = interrupted["reserved_run_id"]
+    sessions = SessionManager(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    run = runs.create(
+        parent_session_id=before.calls[-1]["session_id"],
+        provider="claude",
+        prompt="Interrupted placed seat",
+        run_id=run_id,
+    )
+    if started:
+        assert runs.start(run.id) is not None
+
+    class ReconcileProxy(RunbookAgentsProxy):
+        async def call_tool(
+            self,
+            server: str,
+            tool: str,
+            arguments: dict[str, Any],
+            *,
+            session_id: str | None,
+            enforce_workflow: bool,
+        ) -> dict[str, Any]:
+            if server == "gobby-agents" and tool == "spawn_agent":
+                assert session_id is not None
+                caller = sessions.get(session_id)
+                assert caller is not None
+                reserved = arguments["reserved_run_id"]
+                reply = authorize_pipeline_invocation(
+                    temp_db,
+                    caller,
+                    parent_session_id=session_id,
+                    project_id=PROJECT_ID,
+                    reserved_run_id=reserved,
+                ) or reconcile_pipeline_invocation(temp_db, sessions, caller, reserved)
+                if reply is not None:
+                    replies.append(reply)
+                    return reply
+            return await super().call_tool(
+                server,
+                tool,
+                arguments,
+                session_id=session_id,
+                enforce_workflow=enforce_workflow,
+            )
+
+    replies: list[dict[str, Any]] = []
+    manager = LocalPipelineExecutionManager(temp_db, project_id=PROJECT_ID)
+    after = ReconcileProxy()
+    resumed = await resume_interrupted_pipelines(
+        PipelineLoader(temp_db), _executor(temp_db, after), manager
+    )
+    assert resumed == [execution_id]
+    await _background_tasks_by_execution[execution_id]
+    [reply] = replies
+    assert "reserved_run_id is not a step invocation" not in reply.get("error", "")
+    if started:
+        assert reply["success"] is True and reply["adopted"] is True
+        assert reply["run_id"] == run_id
+    else:
+        assert reply["success"] is False
+        assert run_id in reply["error"]
+        assert "fresh" in reply["error"].lower() and "launch" in reply["error"].lower()
+    finished = manager.get_execution(execution_id)
+    assert finished is not None
+    assert finished.status == (ExecutionStatus.COMPLETED if started else ExecutionStatus.FAILED)
+    assert all(spawn["reserved_run_id"] != run_id for spawn in after.spawns())
 
 
 def _assert_child_parent(
