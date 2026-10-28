@@ -59,9 +59,11 @@ background jobs no ledger row serves (the graph queue, dream-hidden purge,
 store reconciliation, startup scope repair, interrupted-run reconciliation
 and the empty-collection refill), which Python schedules from the sessions
 lifecycle and the runner. 8.5 makes the family native-only and deletes the
-Python routes and tools. 8.6 deletes the Python memory and review-learning
-services once every other family's Rust plan has moved its Python callers
-off them; each such caller is named in 8.6 against its owning epic. The
+Python HTTP routes and their agent capability rows. After 8.5 the Python
+tool modules serve only in-process callers that bypass the front door, so
+8.6 deletes them with the Python memory and review-learning services once
+every other family's Rust plan has moved its Python callers off them; each
+such caller is named in 8.6 against its owning epic. The
 nightly dream schedule is bound by the cron plan's #25024, which binds the
 service 4.3 names. The public `gobby memory` entry stays 8.3's literal
 argument forwarder inside the Python CLI shell, as the AI plan's 7.7 keeps
@@ -2387,6 +2389,113 @@ updated.
 Planned verification: `uv run python scripts/generate_parity_ledger.py` run
 twice with no second-run diff; `tests/test_parity_ledger.py` with the
 protected Python prefix.
+
+### 8.5 Make the memory family native-only and retire the Python routes [category: code] (depends: 8.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gmemory/src/lib.rs`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: propagate the memory family's retired-route refusal with `?` at both cfg-gated serve entry points
+- `crates/gmemory/tests/native_only.rs`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `src/gobby/servers/routes/memory.py::*` — operation: delete — scope-reason: retire the Python memory HTTP routes the native family serves
+- `src/gobby/servers/routes/memory_dream.py::*` — operation: delete — scope-reason: retire the Python dream HTTP routes the native family serves
+- `src/gobby/servers/routes/__init__.py::*` — scope-reason: drop the two memory router imports and their `__all__` entries
+- `src/gobby/servers/_app_routes.py::*` — scope-reason: drop the two memory router imports and `include_router` calls
+- `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX`
+- `tests/servers/routes/test_memory_routes.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python routes, whose rows 0.1's corpus and the native tests own
+- `tests/servers/test_memory_python_retired.py`
+- `docs/contracts/memory-native.md`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: dynamically reads the bumped gdaemon pin.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: dynamically reads unchanged native version pins.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: resolves every pin dynamically by binary name.
+- `src/gobby/code_index/gcode_versions.py` — no-edit-reason: both gcode maintenance floors derive from the unchanged gcode pin.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: the hook compatibility floor derives from the unchanged ghook pin.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: enumerates the map dynamically.
+- `src/gobby/install/distribution.py` — no-edit-reason: resolves minimum versions dynamically.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: derives expected ghook versions from the map.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gmcp.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: derives expected versions from the map.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: derives gcode expectations from the unchanged pin.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: derives ghook expectations from the unchanged pin.
+- `tests/install/test_distribution.py` — no-edit-reason: dynamically parameterizes managed version expectations.
+- `tests/install/test_version_pins.py` — no-edit-reason: already verifies each managed pin against its Cargo manifest.
+- `tests/servers/test_auth_service.py` — no-edit-reason: its out-of-matrix memory rebuild row stays refused.
+- `tests/servers/routes/test_runtime_handshake.py` — no-edit-reason: it asserts only the retained handshake row.
+
+**Research context:** After 8.4 every row is served natively, and Proxy
+and Compare remain only as a rollback to Python. This leaf removes that
+rollback. `MemoryFamily`'s default backend becomes Native. A Proxy or
+Compare selection for `front_door.routes.memory`,
+`front_door.routes.gobby-memory` or
+`front_door.routes.gobby-review-learning` returns a gmemory-local typed
+error naming the key, telling the operator to remove the entry or set it to
+`native`. The family push returns it before pushing, and serve.rs
+propagates it with `?` as it already does `terminal_route_latch`, so
+gdaemon refuses to start before any row is served. 7.3's latch then always
+carries `native`, so Python's job gates stay closed. A node runs no Python
+backend and relays through `HubRelay`, so this leaf changes nothing a node
+serves. Only gdaemon links gmemory; `src/gobby/install/bin_release_identity.py::_locked_dependencies`
+hashes only reachable lock entries, so gdaemon alone takes a 0.0.1 bump,
+with manifest, lock and pin updated, and gcode and ghook keep theirs.
+
+The two Python route modules are deleted with their registrations. A
+loopback sweep for `/api/memories` and `/memory/dream` under `src/gobby`
+found only the `cli/memory` callbacks that 8.3 retired and two
+`_AGENT_CAPABILITY_MATRIX` rows (`GET /api/memories/graph/counts` and
+`GET /api/memories/graph/rebuild/status`). Those rows authorize routes
+Python no longer has, and 8.1 owns their native admission, so they are
+removed. The Python tool modules stay registered, but no public caller
+reaches them: the gateway serves both servers natively and refuses the
+proxy. Their remaining callers are in-process and bypass the front door.
+They are the Python rule engine's `mcp_call` dispatch
+(`src/gobby/hooks/dispatchers/mcp.py::dispatch_mcp_calls` and the inline
+dispatcher in `src/gobby/hooks/factory.py`) and the Python tool proxy's
+internal-registry dispatch. 8.6 retires the modules with those callers'
+owners. Rollback after this leaf reverts its commit and reinstalls the
+preceding gdaemon; a binary rollback alone would proxy to deleted routes.
+The release follows 8.2's promotion and Orchestrator-directed cutover.
+
+**Granularity:** The refusal, the default change and the route deletions
+are one ownership switch: deleting the routes without the refusal would
+leave a proxy selection pointing at nothing.
+
+**Acceptance:**
+
+- 8.5.1 - A Proxy or Compare selection for each of the three keys refuses
+  start with an error naming the key, an absent entry resolves Native, and
+  `native` starts the family. test: `crates/gmemory/tests/native_only.rs::retired_backends_refuse_start`.
+- 8.5.2 - The Python app mounts no `/api/memories` or `/memory/dream`
+  router, the agent capability matrix has no memory row, and import and
+  patch-string sweeps find no reference to a deleted route module.
+  test: `tests/servers/test_memory_python_retired.py::test_python_memory_routes_are_retired`.
+- 8.5.3 - With the default selection, all 25 HTTP rows and 32 tools run
+  natively with the Python memory routes absent.
+  test: `tests/e2e/test_memory_native.py::test_memory_rows_work_without_python_backend`.
+- 8.5.4 - The gdaemon manifest, lock and pin agree at the required patch
+  increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 8.5.5 - The contract states that the family is native-only, how a
+  retired selection is refused, and the rollback procedure.
+  behavior: "memory native-only selection" in `docs/contracts/memory-native.md`.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test native_only`;
+`cargo check -p gobby-daemon`; the retirement test and
+`tests/servers/test_auth_service.py` with the protected Python prefix; the
+isolated e2e test; the targeted version-pin check; scoped Ruff and mypy with
+a changed-test type audit; an admitted release build and
+Orchestrator-directed cutover.
 
 ## E1 End-to-end verification
 `kind: verification`
