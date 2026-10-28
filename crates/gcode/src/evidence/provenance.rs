@@ -67,6 +67,51 @@ pub(super) fn read_bound_blobs(
         .collect()
 }
 
+/// Regular files the binding commit holds under `paths`, with their sizes in bytes.
+/// An empty `paths` lists the whole tree. Non-UTF-8 paths are skipped: the index keys files by
+/// `String`, so such a path can be neither indexed nor cited.
+pub(super) fn bound_regular_files(
+    repo_root: &Path,
+    binding: &RepositoryBinding,
+    paths: &[String],
+) -> Result<Vec<(String, usize)>> {
+    let mut args = vec![
+        "ls-tree",
+        "-r",
+        "-z",
+        "-l",
+        binding.commit_oid.as_str(),
+        "--",
+    ];
+    args.extend(paths.iter().map(String::as_str));
+    let listing = git(repo_root, &args, None)?;
+    let invalid = || EvidenceError::Git {
+        operation: "git ls-tree".into(),
+        message: "invalid Git tree entry".into(),
+    };
+    let mut files = Vec::new();
+    for record in listing
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let separator = record
+            .iter()
+            .position(|byte| *byte == b'\t')
+            .ok_or_else(invalid)?;
+        let metadata = std::str::from_utf8(&record[..separator]).map_err(|_| invalid())?;
+        let fields = metadata.split_whitespace().collect::<Vec<_>>();
+        if fields.len() != 4 || !matches!(fields[0], "100644" | "100755") || fields[1] != "blob" {
+            continue;
+        }
+        let Ok(path) = std::str::from_utf8(&record[separator + 1..]) else {
+            continue;
+        };
+        let size = fields[3].parse::<usize>().map_err(|_| invalid())?;
+        files.push((path.to_string(), size));
+    }
+    Ok(files)
+}
+
 type BlobRead = std::result::Result<Vec<u8>, String>;
 
 fn read_listed_blobs(repo_root: &Path, commit_oid: &str, paths: &[&str]) -> Vec<BlobRead> {

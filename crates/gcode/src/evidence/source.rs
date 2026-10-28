@@ -2,6 +2,7 @@
 use super::contracts::{EvidenceItem, EvidenceWarning};
 use super::{EvidenceError, EvidenceLibrary, Result};
 use crate::codewiki_facts::FileFact;
+use crate::index::MAX_FILE_SIZE;
 use std::io::Read as _;
 use std::path::{Component, Path};
 
@@ -103,6 +104,39 @@ impl EvidenceLibrary {
             .filter(|path| validate_repo_path(path).is_ok())
             .collect::<Vec<_>>();
         self.bound_blobs(&paths);
+    }
+
+    /// Regular files the binding commit holds under `paths`, with their sizes in bytes.
+    pub(super) fn bound_files(&self, paths: &[String]) -> Result<Vec<(String, usize)>> {
+        let verified = self.bound_commit.get_or_init(|| {
+            super::provenance::verify_bound_commit(&self.repository_root, &self.binding)
+        });
+        if let Err(detail) = verified {
+            return Err(EvidenceError::BindingMismatch {
+                detail: format!(
+                    "cannot list the tree at binding commit {}: {detail}",
+                    self.binding.commit_oid
+                ),
+            });
+        }
+        super::provenance::bound_regular_files(&self.repository_root, &self.binding, paths)
+    }
+
+    /// Bound files the live index lacks that the walker would have indexed as text: non-empty,
+    /// within the walker's size cap, and free of NUL bytes.
+    pub(super) fn uncovered_bound_files(&self, files: &[(String, usize)]) -> Result<Vec<String>> {
+        let candidates = files
+            .iter()
+            .filter(|(_, size)| *size > 0 && (*size as u64) <= MAX_FILE_SIZE)
+            .map(|(path, _)| path.as_str())
+            .collect::<Vec<_>>();
+        let mut uncovered = Vec::new();
+        for (&path, blob) in candidates.iter().zip(self.bound_blobs(&candidates)) {
+            if !blob?.contains(&0) {
+                uncovered.push(path.to_string());
+            }
+        }
+        Ok(uncovered)
     }
 
     /// Checks every path in a commit-bound search scope against its bound blob before the

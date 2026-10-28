@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use regex::Regex;
 
 use crate::codewiki_facts::{GrepQuery, ScopeSelector, SearchQuery, SymbolFact};
+use crate::index::languages::detect_language;
 
 use super::contracts::{Completeness, EvidenceItem, EvidenceWarning, SearchLane, SearchSelector};
 use super::read::{source_for_lines, source_for_symbol};
@@ -11,7 +12,7 @@ use super::{EvidenceError, EvidenceLibrary, QueryResult, Result};
 
 pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> Result<QueryResult> {
     validate_selector(selector)?;
-    let eligible = scoped_files(library, selector);
+    let (eligible, uncovered) = scoped_files(library, selector)?;
     library.verify_bound_scope(&eligible)?;
     let (mut items, truncated, hybrid) = match selector.lane {
         SearchLane::Symbol | SearchLane::LexicalSymbol => {
@@ -44,8 +45,16 @@ pub(super) fn execute(library: &EvidenceLibrary, selector: &SearchSelector) -> R
             false
         }
     });
-    let mut warnings = Vec::new();
-    let completeness = if truncated {
+    let mut warnings = uncovered
+        .iter()
+        .map(|path| EvidenceWarning {
+            code: "bound_path_not_indexed".to_string(),
+            message: "file is present at the bound commit but absent from the live index"
+                .to_string(),
+            path: Some(path.clone()),
+        })
+        .collect::<Vec<_>>();
+    let completeness = if truncated || !uncovered.is_empty() {
         Completeness::TruncatedIndex
     } else if items.is_empty() {
         warnings.push(EvidenceWarning {
@@ -119,19 +128,50 @@ pub(super) fn validate_selector(selector: &SearchSelector) -> Result<()> {
     Ok(())
 }
 
-fn scoped_files(library: &EvidenceLibrary, selector: &SearchSelector) -> BTreeSet<String> {
-    library
-        .files
-        .values()
-        .filter(|entry| {
-            matches_paths(&entry.path, &selector.paths)
-                && selector
-                    .language
-                    .as_ref()
-                    .is_none_or(|language| &entry.language == language)
-        })
-        .map(|entry| entry.path.clone())
-        .collect()
+/// Files the search may read, plus bound files the live index lacks that the walker would index.
+///
+/// A commit-bound search takes its scope from the bound tree: indexed files absent at the bound
+/// commit are not read, and bound files absent from the index are reported as uncovered.
+fn scoped_files(
+    library: &EvidenceLibrary,
+    selector: &SearchSelector,
+) -> Result<(BTreeSet<String>, Vec<String>)> {
+    if library.working_tree {
+        let eligible = library
+            .files
+            .values()
+            .filter(|entry| in_scope(selector, &entry.path, &entry.language))
+            .map(|entry| entry.path.clone())
+            .collect();
+        return Ok((eligible, Vec::new()));
+    }
+    let mut eligible = BTreeSet::new();
+    let mut absent = Vec::new();
+    for (path, size) in library.bound_files(&selector.paths)? {
+        if !matches_paths(&path, &selector.paths) {
+            continue;
+        }
+        if let Some(entry) = library.files.get(&path) {
+            if language_matches(selector, &entry.language) {
+                eligible.insert(path);
+            }
+        } else if language_matches(selector, detect_language(&path).unwrap_or("unknown")) {
+            absent.push((path, size));
+        }
+    }
+    let uncovered = library.uncovered_bound_files(&absent)?;
+    Ok((eligible, uncovered))
+}
+
+fn in_scope(selector: &SearchSelector, path: &str, language: &str) -> bool {
+    matches_paths(path, &selector.paths) && language_matches(selector, language)
+}
+
+fn language_matches(selector: &SearchSelector, language: &str) -> bool {
+    selector
+        .language
+        .as_deref()
+        .is_none_or(|wanted| wanted == language)
 }
 
 fn matches_paths(path: &str, selectors: &[String]) -> bool {
