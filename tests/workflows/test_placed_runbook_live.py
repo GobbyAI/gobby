@@ -146,6 +146,8 @@ STEWARD_TIMEOUT_PATROLS = 2
 CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
 # Codex state kept for diagnosis of a seat that dies at startup. The auth file is never listed.
 CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
+# Codex's debug text log, kept in the evidence log tree: a seat that dies should show its cause there.
+CODEX_RUST_LOG = "codex_core=debug,codex_tui=debug"
 # Pages of a run's stored capture kept as evidence; the bound stops a runaway offset loop.
 _CAPTURE_PAGE_LIMIT = 200
 
@@ -1323,6 +1325,11 @@ def _unlink_codex_auth(home: Path) -> dict[str, bool]:
     return {name: link.is_symlink() for name, link in links.items()}
 
 
+def _with_codex_debug_log(env: dict[str, str]) -> dict[str, str]:
+    """The terminal host's env with Codex's debug log on. The input is not changed."""
+    return {**env, "RUST_LOG": CODEX_RUST_LOG}
+
+
 @pytest.fixture
 def steward_rig(
     postgres_db: HubDatabase,
@@ -1370,7 +1377,7 @@ def steward_rig(
             ),
             source="placed-runbook-live",
         )
-        env = prepare_daemon_env(home_dir=home)
+        env = _with_codex_debug_log(prepare_daemon_env(home_dir=home))
         env.update(GOBBY_CONFIG=str(e2e_config[0]), GOBBY_HOME=str(home))
         native_bin = Path(env[NATIVE_BIN_DIR_ENV])
         binaries = {
@@ -1433,6 +1440,8 @@ def steward_live(
         "coordinator": str(coordinator["id"]),
         # Diagnostic: the CODEX_HOME the daemon and its terminal host inherit.
         "codex_home_env": os.environ.get("CODEX_HOME"),
+        # Diagnostic: the Codex debug log level the terminal host was started with.
+        "codex_rust_log": CODEX_RUST_LOG,
         # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
         "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
     }

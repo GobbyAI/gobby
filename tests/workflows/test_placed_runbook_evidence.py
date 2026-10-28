@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
 
-from tests.workflows.test_placed_runbook_live import _kept, _preserve_steward_screen
+from tests.workflows.test_placed_runbook_live import (
+    CODEX_RUST_LOG,
+    Live,
+    _kept,
+    _preserve_steward_screen,
+    _with_codex_debug_log,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -31,8 +37,9 @@ class _ScriptedMCP:
         return reply
 
 
-def _steward(mcp: _ScriptedMCP) -> SimpleNamespace:
-    return SimpleNamespace(evidence={"recovery_steward": {"run": "run-9"}}, mcp=mcp)
+def _steward(mcp: _ScriptedMCP) -> Live:
+    # A stand-in with only the fields the steward helpers read; the rest of Live is unused here.
+    return cast(Live, SimpleNamespace(evidence={"recovery_steward": {"run": "run-9"}}, mcp=mcp))
 
 
 def test_steward_screen_keeps_a_text_read_and_every_capture_page(tmp_path: Path) -> None:
@@ -89,3 +96,12 @@ def test_a_failed_copy_is_recorded_in_place_and_the_next_copy_runs() -> None:
 
     assert _kept(broken) == {"error": "AssertionError: text terminal read"}
     assert _kept(lambda: {"copy": "ok"}) == {"copy": "ok"}
+
+
+def test_the_steward_host_env_asks_codex_for_its_debug_log() -> None:
+    base = {"PATH": "/bin", "RUST_LOG": "info"}
+
+    env = _with_codex_debug_log(base)
+
+    assert env == {"PATH": "/bin", "RUST_LOG": CODEX_RUST_LOG}
+    assert base == {"PATH": "/bin", "RUST_LOG": "info"}
