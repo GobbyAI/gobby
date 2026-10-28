@@ -7,7 +7,12 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from gobby.hooks._path_scope import current_project_root, current_tool_cwd, resolve_tool_path
+from gobby.hooks._path_scope import (
+    _is_temp_path,
+    current_project_root,
+    current_tool_cwd,
+    resolve_tool_path,
+)
 from gobby.hooks.checkout_reads import CheckoutReadUnavailable
 from gobby.workflows.condition_helpers import _event_and_tool_paths, touches_docker_policy_path
 
@@ -134,10 +139,50 @@ def agent_workspace_write_violation(
     return any(_workspace_write_refused(path, root, allowed) for path in paths)
 
 
+# Provider scratchpads and per-user temp dirs live under /private/var/folders on macOS.
+_PROVIDER_TEMP_ROOT = Path("/private/var/folders")
+_TMPDIR_OPERAND = re.compile(r"\$\{?TMPDIR\b")
+
+
+def _temp_write_targets(event_data: Mapping[str, Any] | None) -> list[Path]:
+    """Resolved write targets. A command the normalizer names no write target for, such as
+    `mv`, falls back to every path it touches, so a temp end still counts (fail closed).
+    """
+    data = event_data or {}
+    raw_paths = data.get("canonical_write_file_paths")
+    if not isinstance(raw_paths, list):
+        raw_paths = data.get("canonical_file_paths") or []
+    base = current_tool_cwd(data) or current_project_root(data)
+    return [path for raw in raw_paths if (path := resolve_tool_path(raw, base)) is not None]
+
+
+def temp_scratchpad_write(event_data: Mapping[str, Any] | None, tool_input: Any) -> bool:
+    """True when a write lands in a temp root, or a shell write's target is an unresolved $TMPDIR.
+
+    Any one temp target is enough, unlike the all-paths allowlist helpers. The roots are
+    /tmp, /private/tmp, the live tempdir (resolved at call time) and /private/var/folders.
+    """
+    data = event_data or {}
+    if any(
+        _is_temp_path(path) or path.is_relative_to(_PROVIDER_TEMP_ROOT)
+        for path in _temp_write_targets(data)
+    ):
+        return True
+    # A write whose target the normalizer could not resolve marks its scope unknown; a
+    # $TMPDIR operand in such a command is the one unresolved target that is a temp write.
+    command = tool_input.get("command") if isinstance(tool_input, Mapping) else None
+    return (
+        data.get("canonical_repo_mutation_scope_unknown") is True
+        and isinstance(command, str)
+        and _TMPDIR_OPERAND.search(command) is not None
+    )
+
+
 PATH_CONDITION_HELPERS: dict[str, Callable[..., Any]] = {
     "touches_docker_policy_path": touches_docker_policy_path,
     "write_paths_within": write_paths_within,
     "write_paths_match": write_paths_match,
     "agent_workspace_write_dirs": agent_workspace_write_dirs,
     "agent_workspace_write_violation": agent_workspace_write_violation,
+    "temp_scratchpad_write": temp_scratchpad_write,
 }
