@@ -41,10 +41,12 @@ _TRUST_STORE_LOCKS_LOCK = threading.Lock()
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 # (table, key, value) entries that Codex writes to config.toml on its first interactive
 # launch. Seeding them before launch is meant to leave that launch nothing to rewrite;
-# the live steward run is the check.
+# the live steward run is the check. The NUX value is a Codex exposure count, and Codex
+# rewrites the file until the count reaches 4. The key names one catalog-announced model:
+# a future announcement adds a key that Codex rewrites once. No supported switch is known.
 _CODEX_FIRST_RUN_TUI: tuple[tuple[str, str, Any], ...] = (
     ("tui", "screen_reader_detection_done", True),
-    ("tui.model_availability_nux", "gpt-6.1-sol", 1),
+    ("tui.model_availability_nux", "gpt-6.1-sol", 4),
 )
 
 type PathValue = str | os.PathLike[str]
@@ -335,10 +337,10 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
 
 
 def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, str, Any]]:
-    """Return the first-run ``[tui]`` entries that ``parsed`` lacks.
+    """Return the first-run ``[tui]`` entries that ``parsed`` lacks or must raise.
 
-    A key that is present keeps its value, even one Codex later changed: the value
-    records the operator's own prompt history, so the seed never rewrites it.
+    A present key keeps its value, the operator's own record, except an exposure count
+    below its seed: Codex would rewrite the file again on the next launch.
     """
     pending: list[tuple[str, str, Any]] = []
     for table, key, value in _CODEX_FIRST_RUN_TUI:
@@ -347,7 +349,23 @@ def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, s
             section = section.get(part) if isinstance(section, Mapping) else None
         if not (isinstance(section, Mapping) and key in section):
             pending.append((table, key, value))
+        elif _exposure_count_below(section[key], value):
+            pending.append((table, key, value))
     return pending
+
+
+def _exposure_count_below(present: Any, seed: Any) -> bool:
+    """Return True for an integer exposure count below an integer seed.
+
+    Booleans are excluded on both sides, so a present flag never counts as a count.
+    """
+    return (
+        isinstance(seed, int)
+        and not isinstance(seed, bool)
+        and isinstance(present, int)
+        and not isinstance(present, bool)
+        and present < seed
+    )
 
 
 def _append_codex_tui_block(content: str, pending: list[tuple[str, str, Any]]) -> str:
