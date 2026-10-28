@@ -1777,6 +1777,40 @@ def test_real_codex_login_adds_no_grant(tmp_path: Path, monkeypatch: pytest.Monk
     assert sandbox_policy.provider_write_exceptions("codex") == [str(codex_home.resolve())]
 
 
+async def test_linked_codex_home_entry_is_granted_literally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Codex stats its CODEX_HOME link entry; canonical grants drop the link name."""
+    operator = tmp_path / "operator-codex"
+    operator.mkdir()
+    (operator / "auth.json").write_text("{}")
+    home = tmp_path / "home"
+    providers = home / "providers" / "codex"
+    providers.mkdir(parents=True)
+    (providers / "auth.json").symlink_to(operator / "auth.json")
+    (home / ".codex").symlink_to(providers, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    paths = await compute_sandbox_paths(
+        config=SandboxConfig(enabled=True), workspace_path=str(workspace), provider="codex"
+    )
+
+    assert str(home / ".codex") in paths.read_paths
+    assert str(home / ".codex") in paths.deny_read_paths
+
+
+def test_real_codex_home_has_no_linked_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A codex root stored as a real directory is covered by its canonical grant alone."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / ".codex").mkdir(parents=True)
+
+    assert sandbox_policy.linked_auth_home_entries("codex") == []
+
+
 class TestAgySandboxResolver:
     """AGY sandbox resolver, policy maps, and capability-gate reachability (plan 3.2)."""
 

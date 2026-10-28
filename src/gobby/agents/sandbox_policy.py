@@ -366,12 +366,15 @@ def credential_read_roots() -> list[str]:
 
 def provider_credential_read_exceptions(provider: str) -> list[str]:
     """Declared active-provider necessities; executable/package discovery is separate."""
-    return canonical_paths(
-        [
-            *_PROVIDER_AUTH_PATHS.get(provider, ()),
-            *_PROVIDER_AUTH_READ_ONLY_PATHS.get(provider, ()),
-        ]
-    )
+    return [
+        *canonical_paths(
+            [
+                *_PROVIDER_AUTH_PATHS.get(provider, ()),
+                *_PROVIDER_AUTH_READ_ONLY_PATHS.get(provider, ()),
+            ]
+        ),
+        *linked_auth_home_entries(provider),
+    ]
 
 
 def gcode_runtime_write_exceptions(workspace: Path) -> list[str]:
@@ -454,6 +457,19 @@ def _linked_auth_targets(provider: str) -> list[str]:
         for root in _PROVIDER_AUTH_PATHS.get(provider, ())
         if (link := Path(root).expanduser() / name).is_symlink()
     ]
+
+
+def linked_auth_home_entries(provider: str) -> list[str]:
+    """Literal link entries of a linked provider root, granted as the entry itself.
+
+    Canonical grants drop the link name, so the literal credential deny blocks codex's
+    stat of its linked CODEX_HOME. Only the entry is granted: everything beneath it
+    resolves to the canonical root that is already granted.
+    """
+    if provider not in _PROVIDER_LINKED_AUTH_FILES:
+        return []
+    entries = (_absolute_path(root) for root in _PROVIDER_AUTH_PATHS.get(provider, ()))
+    return [entry for entry in entries if Path(entry).is_symlink()]
 
 
 def _nearest_package_root(executable: Path) -> Path | None:
