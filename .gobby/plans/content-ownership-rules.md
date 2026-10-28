@@ -1666,9 +1666,10 @@ Targets:
 - `tests/workflows/test_git_operation_paths.py`
 
 Split `src/gobby/workflows/commit_guard.py` (863 lines): move `_operation_paths`
-(lines 429-485, with its nested `git` and `git_ok` helpers) unchanged into the
-new `src/gobby/workflows/git_operation_paths.py` as `operation_paths`, and
-import it in both rules.
+(lines 429-485, with its nested `git` and `git_ok` helpers) into the new
+`src/gobby/workflows/git_operation_paths.py` as `operation_paths`, and import
+it in both rules. The move changes one thing: the return becomes `set[str] |
+None`, None when no operation is in progress (Decision 23 keys on that state).
 
 **Research context:**
 - Rule 2, `commit_guard.foreign_staged_commit_conflict` (lines 121-275),
@@ -1748,8 +1749,8 @@ import it in both rules.
   `own_tasks`, replacing the `or` fallback (Decision 15).
 - In `foreign_staged_commit_conflict`, an invocation that records the whole
   index (`not invocation.is_path_scoped or invocation.include_staged`),
-  while no merge, cherry-pick, revert or rebase is in progress (the states
-  `operation_paths` reads), is refused when
+  while no merge, cherry-pick, revert or rebase is in progress
+  (`operation_paths` returns None), is refused when
   `_dirty_owned_paths_releasing_clean` over every holder that
   `_live_path_owners` names for the checkout returns any path. Holders the
   claimed-task exclusion skips count too, because a pathspec commit is
@@ -1760,7 +1761,13 @@ import it in both rules.
   <path>...`." Path-scoped
   invocations and an operation's conclusion keep the per-path check
   unchanged (Decision 23).
-- Move `_operation_paths` to `git_operation_paths.operation_paths` unchanged.
+- Move `_operation_paths` to `git_operation_paths.operation_paths`. It
+  returns None when no merge, cherry-pick, revert or rebase is in progress,
+  else the path set, which may be empty: a cherry-pick of an empty commit
+  stops with `CHERRY_PICK_HEAD` set, lists no path and leaves none
+  unmerged. Rule 2's candidate subtraction and rule 3's take `or set()`;
+  the whole-index exemption tests `is not None`. The body is otherwise
+  unchanged.
 
 **Focused verification (planned):** run `tests/workflows/test_commit_guard.py`,
 `tests/workflows/test_git_operation_paths.py`,
@@ -1773,8 +1780,8 @@ checkpoint's foreign-owner outcomes.
 **Acceptance:**
 
 - 1.8.1 - Session C claims task T, and live session P, which escalated T and so no longer claims it, holds dirty `p` with T's live interval and T's content record; rule 2 lets C commit `p`, while a dirty path P holds for task U, which C does not claim, is refused with the rule 2 text naming U's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_commit_of_claimed_task_dirt_held_by_live_predecessor`.
-- 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns the merge set while `MERGE_HEAD` exists and an empty set when no operation is in progress. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.
-- 1.8.3 - Fallback pairs held by a live escalated predecessor: in a temporary git checkout, live session P recorded for T, through the status fallback and so with no content record, a file `p` while it was unreadable and a directory `d` holding an untracked file, then escalated T. After C claims T and `p` is readable again, `_live_path_owners` names T, with T's `#<seq_num>` ref, as P's `owner_task_id` for both pairs while `ledger_task_id` is None. Rule 3 lets C edit `p`. C's Bash `git add p d && git commit -m m` event gets "" from `foreign_staged_commit_conflict` before the commit runs, and the commit then lands. A pair P holds for task U still refuses C's commit, naming U. test: `tests/workflows/test_commit_guard.py::test_claimant_commits_fallback_pairs_held_by_escalated_predecessor`.
+- 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns None when no operation is in progress, the merge set while `MERGE_HEAD` exists, and an empty set (not None) during a cherry-pick of an empty commit stopped with `CHERRY_PICK_HEAD` set. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_is_none_only_without_an_operation`.
+- 1.8.3 - Fallback pairs held by a live escalated predecessor: in a temporary git checkout, live session P recorded for T, through the status fallback and so with no content record, a file `p` while it was unreadable and a directory `d` holding an untracked file, then escalated T. After C claims T and `p` is readable again, `_live_path_owners` names T, with T's `#<seq_num>` ref, as P's `owner_task_id` for both pairs while `ledger_task_id` is None. Rule 3 lets C edit `p`. C's Bash `git add p d && git commit -m m -- p d` event gets "" from `foreign_staged_commit_conflict` before the commit runs, and the commit then lands. A pair P holds for task U and C names in its pathspec still refuses C's commit, naming U. test: `tests/workflows/test_commit_guard.py::test_claimant_commits_fallback_pairs_held_by_escalated_predecessor`.
 - 1.8.4 - Interval and content owners differ: live session P holds dirty `p` under T's live interval, and ended session Q's content record for U is the newest one matching `p`'s current bytes, so `_live_path_owners` gives P `owner_task_id` T and `ledger_task_id` U. Session C, which claims U, may edit `p` under rule 3 and gets "" from `foreign_staged_commit_conflict` for `git add p && git commit -m m`. Session D, which claims neither T nor U, is refused by both rules, and both texts name T's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_claimed_task_exclusion_tests_interval_and_content_owners_separately`.
 - 1.8.5 - Shared-index sweep, plan files included: in a temporary git checkout, live session P, whose `_agent_type` is `plan-writer`, recorded `.gobby/plans/other.md`; each case runs with that edit unstaged (the 2068aaf9a0 shape) and again with it staged. Session C's Bash `git add p && git commit -m m` gets the whole-index refusal naming P before the commit runs, and so do `git add -A && git commit -m m`, `git add . && git commit -m m`, `git commit -a -m m` and `git commit -i -m m -- p`. C's `git commit -m m -- p` and `git add -A && git commit -m m -- p` get "", and each commit records only `p`, while `.gobby/plans/other.md` keeps P's edit uncommitted. test: `tests/workflows/test_commit_guard.py::test_rule2_refuses_whole_index_commit_while_another_session_holds_dirt`.
 - 1.8.6 - With no other live holder in the checkout, and again once P's only pair is committed so the stale-holder release clears it, C's `git commit -m m` and `git commit -a -m m` get "". During a merge (`MERGE_HEAD` set), C's `git commit --no-edit` that concludes it passes the whole-index check, while a staged path outside the merge set that P holds dirty still refuses it with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_whole_index_commit_alone_and_merge_conclusion`.
