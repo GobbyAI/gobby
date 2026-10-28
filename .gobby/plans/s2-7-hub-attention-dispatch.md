@@ -968,8 +968,7 @@ Targets:
 - `src/gobby/sessions/turn_lifecycle.py::*` — scope-reason: drop FOR UPDATE, apply the bounded CAS and fenced status write in _apply and block_provider_failure, and repair status on duplicate replay
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: move attention client construction into the split module and delete both publisher closures
 - `src/gobby/runner_init/attention_clients.py`
-- `src/gobby/config/bootstrap.py::*` — scope-reason: add attention_route_override_refusal beside node_daemon_refusal
-- `src/gobby/cli/daemon_preflight.py::restart_start_refusal`
+- `src/gobby/cli/daemon_preflight.py::*` — scope-reason: add attention_route_override_refusal and call it from restart_start_refusal
 - `src/gobby/cli/daemon_start.py::_start_dependency_errors`
 - `src/gobby/runner_init/servers.py::*` — scope-reason: remove the configure_attention_ordering and configure_attention_metadata wiring
 - `src/gobby/servers/websocket/broadcast.py::*` — scope-reason: remove the attention ordering properties and metadata enrichment now done natively
@@ -1133,7 +1132,9 @@ the deleted Python handlers. A leftover `native` entry would survive a rollback
 and override the prior release's `proxy` default.
 
 So this leaf adds `attention_route_override_refusal(bootstrap)` to
-`src/gobby/config/bootstrap.py`, beside `node_daemon_refusal`. It returns a
+`src/gobby/cli/daemon_preflight.py`. Placing it there keeps
+`src/gobby/config/`, and with it the runtime config contract, unchanged. It
+takes the loaded `BootstrapConfig` and returns a
 refusal naming `front_door.routes.attention` as the key to remove whenever
 `bootstrap.front_door.routes` has an `attention` entry, whatever its backend.
 It lands in the same commit that makes the attention default `native`, so any
@@ -1167,7 +1168,12 @@ longer exists, Python writers publishing alongside the native store, or ledger
 rows pointing at deleted surfaces. The reducer CAS has to land with the client:
 under the old `FOR UPDATE` it deadlocks against the native store. Native behavior
 was already delivered and tested in P2 and P3. This leaf verifies the flip, the
-writers and absence.
+writers and absence. The route-override refusal lands here because it is only
+correct once the default is native.
+
+Consumers unchanged:
+- `tests/cli/test_cli_daemon.py` — no-edit-reason: its direct `_start_dependency_errors` calls and patches see no `front_door.routes.attention` entry, so their results are unchanged.
+- `tests/test_runner_pid_file.py` — no-edit-reason: it patches `_start_dependency_errors` by name, and the signature is unchanged.
 
 **Acceptance:**
 - 4.3.1 - The attention family defaults to native, and gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
