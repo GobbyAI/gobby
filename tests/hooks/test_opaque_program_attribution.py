@@ -41,7 +41,10 @@ from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
-from gobby.workflows.worktree_shell_attribution import OVERLAPS_VARIABLE
+from gobby.workflows.worktree_shell_attribution import (
+    OVERLAPS_VARIABLE,
+    begin_structured_edit_calls,
+)
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, write_project_marker
 
 pytestmark = pytest.mark.unit
@@ -282,6 +285,82 @@ def _handlers(mock_dependencies: dict[str, Any], db: HubDatabase) -> EventHandle
     return EventHandlers(
         **{**mock_dependencies, "session_manager": sessions, "session_storage": sessions}
     )
+
+
+def _native_write_event(checkout: Checkout, rel_path: str) -> HookEvent:
+    data: dict[str, Any] = {
+        "tool_name": "Write",
+        "tool_input": {"file_path": str(checkout.repo / rel_path), "content": "native\n"},
+        "project_path": str(checkout.repo),
+    }
+    normalize_tool_fields(data)
+    return replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, ""),
+        data=data,
+        request_id="toolu_native_write",
+    )
+
+
+def test_native_write_before_claim_is_adopted_only_by_its_author(
+    mock_dependencies: dict[str, Any], checkout: Checkout
+) -> None:
+    """Recovery of a slipped-through native write must preserve its writer identity."""
+    tasks = LocalTaskManager(checkout.db)
+    tasks.release_task_claim(checkout.task_id)
+    handlers = _handlers(mock_dependencies, checkout.db)
+    native = _native_write_event(checkout, "preclaim.txt")
+    # Simulate the historical gate bypass; the after-hook still knows the writer.
+    handlers.handle_before_tool(native)
+    checkout.write("preclaim.txt", "native\n")
+    handlers.handle_after_tool(replace(native, event_type=HookEventType.AFTER_TOOL))
+
+    tasks.claim_task(checkout.task_id, checkout.session_id)
+
+    assert checkout.rule_3_reason("preclaim.txt") == ""
+    assert "preclaim.txt" in checkout.task_ledger()
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    assert "preclaim.txt" in foreign.rule_3_reason("preclaim.txt")
+    assert "stale.txt" not in checkout.task_ledger()
+
+
+@pytest.mark.parametrize("foreign_finishes_first", [False, True])
+def test_native_write_keeps_ownership_during_foreign_bash(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, foreign_finishes_first: bool
+) -> None:
+    """An opaque call's snapshot cannot erase a native write's explicit writer."""
+    checkout = task_worktree
+    handlers = _handlers(mock_dependencies, checkout.db)
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    bash = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "uv run python /tmp/probe.py"),
+        session_id="foreign-external",
+        request_id="toolu_foreign",
+    )
+    native = _native_write_event(checkout, "native-new.txt")
+    assert handlers.handle_before_tool(bash).decision == "allow"
+    # The author's concurrent read-only Bash probe must not turn native authorship
+    # into ambiguous shell-diff ownership when its result arrives first.
+    probe = replace(
+        checkout.tool_event(HookEventType.BEFORE_TOOL, "git status --short"),
+        request_id="toolu_author_probe",
+    )
+    assert handlers.handle_before_tool(probe).decision == "allow"
+    # WorkflowHookHandler registers native edits before evaluating their rules.
+    begin_structured_edit_calls(SessionVariableManager(checkout.db), checkout.session_id, native)
+    assert handlers.handle_before_tool(native).decision == "allow"
+    checkout.write("native-new.txt", "native\n")
+    handlers.handle_after_tool(replace(probe, event_type=HookEventType.AFTER_TOOL))
+    native_after = replace(native, event_type=HookEventType.AFTER_TOOL)
+    bash_after = replace(bash, event_type=HookEventType.AFTER_TOOL)
+    for event in (
+        (bash_after, native_after) if foreign_finishes_first else (native_after, bash_after)
+    ):
+        handlers.handle_after_tool(event)
+
+    assert checkout.rule_3_reason("native-new.txt") == ""
+    assert "native-new.txt" in checkout.task_ledger()
+    assert "native-new.txt" not in foreign.ledger()
+    assert "native-new.txt" in foreign.rule_3_reason("native-new.txt")
 
 
 def _shell_write_refused(handlers: EventHandlers, event: HookEvent) -> bool:

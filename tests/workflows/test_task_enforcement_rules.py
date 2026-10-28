@@ -781,6 +781,44 @@ class TestNativeTrackerClaimNudge:
 class TestRequireTaskBeforeEdit:
     """Verify require-task-before-edit blocks edits without claimed task."""
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool_name", ["Write", "Edit"])
+    async def test_native_plan_write_in_main_checkout_requires_claim(
+        self, db: HubDatabase, tmp_path: Path, tool_name: str
+    ) -> None:
+        """A plan artifact in the main checkout must have a task before authorship."""
+        _sync_bundled(db)
+        db.execute("UPDATE rule_definitions SET enabled = (name = 'require-task-before-edit')")
+        checkout = tmp_path / "main"
+        (checkout / ".git").mkdir(parents=True)
+        target = checkout / ".gobby/plans/new-plan.md"
+        data: dict[str, object] = {
+            "tool_name": tool_name,
+            "tool_input": {"file_path": str(target), "content": "plan\n"},
+            "project_path": str(checkout),
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            cwd=str(checkout),
+            data=data,
+        )
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+        )
+
+        assert response.decision == "block"
+        assert "require-task-before-edit" in (response.reason or "")
+
     @pytest.mark.parametrize(
         ("command", "claimed", "blocked"),
         [
