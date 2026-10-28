@@ -71,8 +71,9 @@ def test_review_status_uses_closed_candidate_only_after_closure(
             t for t in manager.list_tasks(project_id=sample_project["id"]) if t.id == task.id
         )
     elif reader == "find":
-        actual = find_task_by_prefix(temp_db, task.id)
-        assert actual is not None
+        found = find_task_by_prefix(temp_db, task.id)
+        assert found is not None
+        actual = found
     else:
         actual = next(t for t in find_tasks_by_prefix(temp_db, task.id) if t.id == task.id)
 
