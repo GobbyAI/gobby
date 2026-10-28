@@ -17,7 +17,7 @@
 - Never gate a local landing, package or daemon restart on a review of pushed work. The LANDing reviewer resolves each post-push finding with a fix or a reasoned dismissal.
 - After every landing, confirm the merge.
 - Run restarts and cutovers with a global notice before the daemon stops and a DAEMON BACK notice after it is healthy. A landing meant to fix load activates at once, even under heavy load.
-- Landing ledger and release batches. You own every restart and activation, at any time outside Game Goblins quiet hours 04:45-06:45 CT. Keep the landing ledger of landed work and activate it through release batches. File a release-regression task when a batch fails. Seats never run `gobby release batch` or `gobby restart`.
+- Landing ledger. You own every restart and activation, at any time outside Game Goblins quiet hours 04:45-06:45 CT. Keep the landing ledger of landed work. The Orchestrator runs no release batches; activation is a restart after the global notice. Seats never run `gobby restart`.
 - Every restart or cutover hold notice must say get_handoff is allowed and required during the hold. Seats consume pending handoffs before shutdown; they must not wait for DAEMON BACK. Keep other held work paused.
 - Pipelines. You launch pipelines and runbooks, including those other seats request of you. Create or register a project only on the operator's go.
 - Pushes. Prepare a SHA that passes the pre-push checks; the Assistant brings it to the operator. Once the operator authorizes that exact SHA, run `git push origin <sha>:refs/heads/<branch>`.

@@ -20,9 +20,6 @@ from gobby.config.app import DaemonConfig
 from gobby.hub import machine_routing, remote_spawn
 from gobby.hub.machine_routing import RoutedMachine
 from gobby.hub.remote_spawn import RemoteSpawnRequest
-from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
-from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.release_tools import register_release_tools
 from gobby.mcp_proxy.tools.spawn_agent._isolation_prepare import prepare_spawn_isolation
 from gobby.mcp_proxy.tools.spawn_agent._remote_routing import spawn_remote_route
 from gobby.releases.window import (
@@ -47,7 +44,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.local_token import GOBBY_RELEASE_TOKEN_ENV
-from gobby.utils.session_context import get_current_session_id, session_context_for_test
 from gobby.worktrees.git import WorktreeGitManager
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.postgres import TEST_USER_ID
@@ -407,57 +403,6 @@ async def test_existing_team_work_continues(world: TeamWorld) -> None:
     fresh, refusal = await _fresh_tree(case, solo_task)
     assert refusal is None and fresh is not None, refusal
     assert fresh.branch_name in world.task_branches()
-
-
-async def test_release_tools_admit_only_the_release_manager(case: LandingCase) -> None:
-    common = case.repo / ".git"
-    manager = case.session("release manager")
-    grant_step_writes(case.db, manager, case.project_id, "release-manager", ())
-    outsider = case.session("developer")
-    grant_step_writes(case.db, outsider, case.project_id, "developer", ())
-    registry = InternalToolRegistry(name="test-agents", description="test")
-    register_release_tools(
-        registry,
-        AgentsRegistryContext(
-            runner=MagicMock(),
-            agent_run_manager=LocalAgentRunManager(case.db),
-            resolve_session_id=lambda ref: ref,
-            get_current_session_id=get_current_session_id,
-            get_current_agent_run_id=lambda: None,
-            get_project_context=lambda: None,
-            db=case.db,
-        ),
-    )
-
-    with session_context_for_test(outsider):
-        refused = await registry.call("acquire_release_window", {})
-    assert refused["success"] is False
-    assert refused["error_code"] == "release_window_forbidden"
-    assert read_window(common) is None
-
-    with session_context_for_test(manager):
-        acquired = await registry.call("acquire_release_window", {})
-    assert acquired["success"] is True
-    lease = acquired["window"]
-    assert lease["owner_session_id"] == manager
-    assert lease["candidate_sha"] == case.git("rev-parse", "trunk")
-    held = {"token": lease["token"], "generation": lease["generation"]}
-
-    with session_context_for_test(outsider):
-        stolen = await registry.call("end_release_window", held)
-    assert stolen["error_code"] == "release_window_forbidden"
-
-    with session_context_for_test(manager):
-        renewed = await registry.call("renew_release_window", held)
-        assert renewed["window"]["generation"] == lease["generation"] + 1
-        stale = await registry.call("end_release_window", held)
-        assert stale["success"] is False
-        assert stale["error_code"] == "release_window_stale"
-        ended = await registry.call(
-            "end_release_window", {**held, "generation": renewed["window"]["generation"]}
-        )
-    assert ended == {"success": True}
-    assert read_window(common) is None
 
 
 async def test_only_the_release_manager_lease_activates_the_daemon(case: LandingCase) -> None:

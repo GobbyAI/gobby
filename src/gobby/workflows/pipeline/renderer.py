@@ -37,19 +37,19 @@ _SENSITIVE_SEGMENTS = frozenset(
     }
 )
 
+# Database credentials the operator tooling reads. No step reads one, even when its whitelist
+# names it; the default filter excludes them too.
+_DATABASE_CREDENTIAL_NAMES = frozenset({"DATABASE_URL", "GCODE_DATABASE_URL", "GOBBY_POSTGRES_DSN"})
+
 # Specific env-var names that are always excluded.
-_SENSITIVE_NAMES = frozenset(
+_SENSITIVE_NAMES = _DATABASE_CREDENTIAL_NAMES | frozenset(
     {
-        "DATABASE_URL",
         "AWS_SECRET_ACCESS_KEY",
         "API_KEY",
         "AUTH_TOKEN",
         "OAUTH_TOKEN",
     }
 )
-
-# Hub credentials that no step may read, even when its whitelist names them.
-_NEVER_EXPOSED_NAMES = frozenset({"DATABASE_URL"})
 
 
 def _filter_env(
@@ -59,15 +59,15 @@ def _filter_env(
     """Return a copy of *env* with sensitive variables removed.
 
     If *allowed_keys* is provided only those keys are included (explicit
-    whitelist), and the hub credential in _NEVER_EXPOSED_NAMES stays excluded.
-    Otherwise sensitive names and underscore-delimited segments are excluded
-    case-insensitively.
+    whitelist), and the database credentials in _DATABASE_CREDENTIAL_NAMES stay
+    excluded. Otherwise sensitive names and underscore-delimited segments are
+    excluded case-insensitively.
     """
     if allowed_keys is not None:
         return {
             k: v
             for k, v in env.items()
-            if k in allowed_keys and k.upper() not in _NEVER_EXPOSED_NAMES
+            if k in allowed_keys and k.upper() not in _DATABASE_CREDENTIAL_NAMES
         }
     return {
         k: v

@@ -90,26 +90,15 @@ receipt on the task. Nothing else records a close receipt.
 
 A live release window holds every landing: `land_commit` refuses with
 `release_window_active` and does not escalate, so retry after the window ends.
-Only the Release Manager calls gobby-agents `acquire_release_window`,
-`renew_release_window(token, generation)` and
-`end_release_window(token, generation)`. The lease lasts 10 minutes from
-acquire or the last renew, and each renew returns the next generation. An
-unreadable `<git common dir>/gobby/release-window.json` refuses landings with
+An unreadable `<git common dir>/gobby/release-window.json` refuses landings with
 `release_window_unreadable` until an operator deletes that file. The same codes
 refuse new work: `admit_team` for a team with no record, and a spawn that would
 create a fresh worktree or clone. An admitted team keeps working: its admission
 re-runs, replacement seats join its tree, an interrupted admission recovers its
 tree, and spawns that reuse a tree proceed.
 
-The Orchestrator owns the release batch that validates and activates the window's
-pinned candidate. A batch refuses before touching the window
-unless the caller owns it, the main checkout HEAD is the pinned candidate, and
-the baseline (the last succeeded batch, else `--base-sha`) is an ancestor of
-it. It then renews the lease while it runs the checks the diff selects,
-activates by cutover or restart, and smokes the daemon. Each batch writes a
-record under `<git common dir>/gobby/release-batches/` and then ends the
-window if it still owns it. A success becomes the next baseline; a failure
-keeps the old one and files one regression task per candidate.
+The Orchestrator owns every restart and activation. It activates with
+`gobby restart` after a global notice and runs no release batches.
 
 When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
 `commit_sha` its original VALID close review accepted,

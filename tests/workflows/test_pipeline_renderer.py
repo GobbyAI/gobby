@@ -46,6 +46,41 @@ def test_filter_env_explicit_allowlist_can_include_sensitive_names() -> None:
     }
 
 
+# Every database credential name the operator tooling reads. A step never sees one, whether
+# its allowlist names it or the default filter runs.
+DATABASE_CREDENTIAL_NAMES = ("DATABASE_URL", "GCODE_DATABASE_URL", "GOBBY_POSTGRES_DSN")
+
+
+@pytest.mark.parametrize("name", DATABASE_CREDENTIAL_NAMES)
+def test_filter_env_withholds_database_credential_even_when_allowlisted(name: str) -> None:
+    secret = "postgresql://seat-must-not-see-this@example.invalid/daemon"
+    env = {name: secret, "PATH": "/usr/bin"}
+
+    assert _filter_env(env, frozenset({name, "PATH"})) == {"PATH": "/usr/bin"}
+
+
+@pytest.mark.parametrize("name", DATABASE_CREDENTIAL_NAMES)
+def test_filter_env_withholds_database_credential_by_default(name: str) -> None:
+    secret = "postgresql://seat-must-not-see-this@example.invalid/daemon"
+    env = {name: secret, "PATH": "/usr/bin"}
+
+    assert _filter_env(env) == {"PATH": "/usr/bin"}
+
+
+@pytest.mark.parametrize("name", DATABASE_CREDENTIAL_NAMES)
+def test_renderer_withholds_database_credential_from_step_environment(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    secret = "postgresql://seat-must-not-see-this@example.invalid/daemon"
+    monkeypatch.setenv(name, secret)
+    renderer = StepRenderer(allowed_env_keys=frozenset({name}))
+
+    context = renderer.build_render_context({})
+
+    assert name not in context["env"]
+    assert secret not in renderer.render_string("{{ env }}", context)
+
+
 class TestRenderMcpArgumentsDropNone:
     """Unset optional inputs must be omitted from tool arguments, never sent as null.
 

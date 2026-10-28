@@ -1,27 +1,22 @@
-"""Release lease stores: the daemon's fenced view, and the seat's daemon client.
+"""Release lease store: the hub's fenced view of the release window.
 
-``HubReleaseLease`` runs where the hub database and the release window live. The
-daemon's release tools and in-process tests use it. ``DaemonReleaseLease`` runs in the
-Release Manager's seat, which holds no database credentials: every release read and
-write crosses a daemon call that carries the seat's token and generation, and the
-daemon checks both before it answers. Regression filing goes through gobby-tasks as the
-Release Manager session.
+``HubReleaseLease`` runs where the hub database and the release window live. Regression
+filing reuses the open task for a candidate or creates one, as the Release Manager session.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from gobby.agents.recovery_state import is_reconciliation_pending
-from gobby.releases.batch import Checkout, Phase, ReleaseStoreUnavailable
+from gobby.releases.batch import Checkout, Phase
 from gobby.releases.window import (
     ReleaseWindow,
-    ReleaseWindowRefused,
     project_checkout_root,
     release_window,
     renew_window,
@@ -36,10 +31,6 @@ if TYPE_CHECKING:
 
 _RUN_PAGE = 500
 _TAIL = 2000
-_AGENTS = "gobby-agents"
-_TASKS = "gobby-tasks"
-
-DaemonCall = Callable[[str, str, str, dict[str, object]], Awaitable[tuple[int, object]]]
 
 
 def _now() -> datetime:
@@ -189,93 +180,3 @@ class HubReleaseLease:
             phase,
             diagnostic,
         )
-
-
-@dataclass
-class DaemonReleaseLease:
-    """The Release Manager seat's lease. Each call names the seat's session to the daemon.
-
-    A daemon refusal from a release tool raises ``ReleaseWindowRefused``: the lease is
-    lost. Any other unanswered or failed call raises ``ReleaseStoreUnavailable``, which
-    the batch treats as retryable.
-    """
-
-    call: DaemonCall
-    owner_session_id: str
-    token: str
-    generation: int
-    # A renewal advances the generation the next call sends; the lock keeps the two in step.
-    _fence: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
-
-    async def _answer(self, server: str, tool: str, arguments: dict[str, object]) -> dict[str, Any]:
-        status, body = await self.call(self.owner_session_id, server, tool, arguments)
-        if status == 200 and isinstance(body, dict) and body.get("success") is True:
-            # The daemon wraps a successful tool result under "result"; a refusal stays flat.
-            result = body.get("result")
-            if isinstance(result, dict):
-                return result
-            raise ReleaseStoreUnavailable(f"{server}.{tool} answered without a result")
-        if server == _AGENTS and status == 200 and isinstance(body, dict):
-            code = body.get("error_code")
-            if isinstance(code, str):
-                raise ReleaseWindowRefused(code, str(body.get("error", code)))
-        detail = body.get("error") if isinstance(body, dict) else None
-        raise ReleaseStoreUnavailable(
-            f"{server}.{tool} did not answer: HTTP {status} {detail or ''}"
-        )
-
-    def _window_arguments(self, arguments: dict[str, object]) -> dict[str, object]:
-        return {"token": self.token, "generation": self.generation, **arguments}
-
-    async def _window(self, tool: str, arguments: dict[str, object]) -> dict[str, Any]:
-        async with self._fence:
-            return await self._answer(_AGENTS, tool, self._window_arguments(arguments))
-
-    async def _run_ids(self, tool: str, arguments: dict[str, object]) -> frozenset[str]:
-        ids = (await self._window(tool, arguments)).get("run_ids")
-        if not isinstance(ids, list):
-            raise ReleaseStoreUnavailable(f"{tool} returned no run_ids")
-        return frozenset(str(run_id) for run_id in ids)
-
-    async def checkout(self) -> Checkout:
-        body = await self._window("release_batch_checkout", {})
-        return Checkout(Path(str(body["root"])), str(body["candidate_sha"]))
-
-    async def renew(self) -> None:
-        async with self._fence:
-            body = await self._answer(_AGENTS, "renew_release_window", self._window_arguments({}))
-            self.generation = int(body["window"]["generation"])
-
-    async def release(self) -> None:
-        await self._window("end_release_window", {})
-
-    async def active_runs(self) -> frozenset[str]:
-        return await self._run_ids("release_batch_active_runs", {})
-
-    async def fenced_runs(self, run_ids: frozenset[str]) -> frozenset[str]:
-        return await self._run_ids("release_batch_fenced_runs", {"run_ids": sorted(run_ids)})
-
-    async def file_regression(
-        self, candidate_sha: str, base_sha: str, phase: Phase, diagnostic: str
-    ) -> str:
-        label = _regression_label(candidate_sha)
-        listing = await self._answer(
-            _TASKS, "list_tasks", {"label": label, "closed": False, "limit": 1}
-        )
-        if tasks := listing.get("tasks"):
-            return str(tasks[0]["id"])
-        created = await self._answer(
-            _TASKS,
-            "create_task",
-            {
-                "title": f"Release regression in {candidate_sha[:12]}",
-                "description": _regression_description(candidate_sha, base_sha, phase, diagnostic),
-                "priority": 1,
-                "task_type": "bug",
-                "labels": [label],
-                "category": "code",
-                "implementation_domain": "backend",
-                "validation_criteria": _regression_criteria(candidate_sha, phase),
-            },
-        )
-        return str(created["id"])

@@ -215,7 +215,7 @@ checks. The current bundled catalogue is:
 | `security-reviewer` | Reviews candidates for security and gives LAND or BOUNCE beside the code reviewer |
 | `design-reviewer` | Reviews UI candidates against the design contract and accessibility, and gives LAND or BOUNCE |
 | `debugger` | Tests one bug hypothesis and reports CONFIRMED, REFUTED or INCONCLUSIVE with its evidence |
-| `release-manager` | Keeps the landing ledger and activates landed work in release batches under the release window |
+| `release-manager` | Rebuilds and promotes the Rust binaries whose crates changed; the Orchestrator owns every daemon restart and activation |
 | `recovery-steward` | Patrols live seats on a 10-minute reminder, resumes idle stalled composers, and alerts Triage on quiet DevTeams |
 | `researcher` | Answers bounded research requests |
 | `reporter` | Short-lived spawned run that drafts the 30-minute operator status and ends |
