@@ -453,6 +453,56 @@ including the node-origin no-file branches.
 **Verification:** planned:
 `GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_adapters_corpus.py -v`.
 
+### 1.4 Hook pipeline corpus and its Python exporter [category: test] (depends: 1.1)
+`kind: deliverable`
+
+Targets:
+- `tests/contracts/pipeline/manifest.json`
+- `tests/contracts/pipeline/README.md`
+- `tests/contracts/pipeline_corpus.py`
+- `tests/contracts/test_pipeline_corpus.py`
+
+**Research context:**
+- **Entry.** `src/gobby/hooks/hook_manager.py::HookManager` runs
+  `_handle_after_daemon_ready`. Session start validates platform session
+  metadata, resolves project context, runs the handler, then rules, then
+  blocking webhooks. Other events resolve the session
+  (`src/gobby/hooks/session_lookup.py`), gate terminal ingress
+  (`validate_managed_agent_hook`, `session_end_targets_live_cli`), activate a
+  deferred session (`activate_deferred_session`), apply Grok pending context,
+  pulse activity, record machine ingress, resolve session refs in tool input,
+  recheck the transcript, run rules (a block short-circuits), run blocking
+  webhooks, then the handler, and complete the response.
+- **Seam boundary.** `src/gobby/hooks/factory.py::HookManagerComponents` and
+  `src/gobby/hooks/event_handlers/__init__.py::EventHandlers.__init__` name every
+  collaborator: the session, session-task, task, agent-run, worktree and
+  memory managers, the message processor, session coordinator, progress
+  tracker, auto-link worker, skill manager, `call_tool`, workflow config,
+  machine id, project resolution, code-index trigger, attention store,
+  terminal manager and terminal runtime registry, plus the webhook dispatcher
+  and broadcaster.
+
+Each case carries an event, rule rows (usually none), and an ordered seam
+script for every collaborator call with its recorded result; `expect` holds
+the response and the ordered collaborator calls. A case may cite a parity
+waiver id, and the Rust replay then checks the case's `waived_expect`
+instead. `pipeline_corpus.py` records
+cases by running `HookManager.handle` with every collaborator wrapped in a
+recorder and the real rule engine on the isolated test hub, as 1.1 does.
+Required cases: one per handler entry in `EventHandlers.get_handler_map` for
+each event type it maps, session start for a new, resumed, cleared and
+compacted session, a node session missing its row, a deferred activation, a
+blocking webhook, a rule block that short-circuits the handler, and one
+failing collaborator per seam kind.
+
+**Acceptance:**
+- 1.4.1 - The manifest and every case load, and the loader rejects an unknown collaborator name. test: `tests/contracts/test_pipeline_corpus.py::test_pipeline_manifest_contract`.
+- 1.4.2 - Every handler-map entry and every required case exists. test: `tests/contracts/test_pipeline_corpus.py::test_pipeline_corpus_has_required_cases`.
+- 1.4.3 - Python's `HookManager` reproduces every case's response and collaborator calls. test: `tests/contracts/test_pipeline_corpus.py::test_python_pipeline_replays_corpus`.
+
+**Verification:** planned:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_pipeline_corpus.py -v`.
+
 ## P2: Rule engine in `gobby-workflows`
 `kind: framing`
 
@@ -1392,7 +1442,7 @@ lifecycle with one lock.
 Move the ledger into gcore, create the `hooks` family, and port request
 validation, claim and replay, receipts and the hub inbox drain. The envelope
 layer takes its execution step as an async closure, so P3 tests run without
-adapters or the pipeline; 5.13 passes the real execution.
+adapters or the pipeline; 5.12 passes the real execution.
 
 ### 3.1 Shared gcore seams: hook ledger and pre-proxy compare [category: code] (depends: 2.19)
 `kind: deliverable`
@@ -1825,7 +1875,424 @@ Targets:
 ## P5: Event pipeline and handlers
 `kind: framing`
 
-Port the `HookManager` pipeline and the event handlers over pipeline seams.
+Port the `HookManager` pipeline and the event handlers over pipeline seams,
+replaying the 1.4 corpus, then compose envelope, adapters and pipeline into
+the route's execution step.
+
+Shared rules for every P5 deliverable:
+- Every call to another family goes through a 5.1 seam; P7 implements each
+  seam over the owning family's native API.
+- A Python module over 850 lines is split into two Rust files up front.
+- Verification for every P5 deliverable:
+  `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-ingress`
+  and `cargo clippy -p gobby-ingress --all-targets -- -D warnings`.
+
+### 5.1 Pipeline seams and scripted implementations [category: code] (depends: 4.6, 1.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/seams.rs`
+- `crates/gingress/src/seams/scripted.rs`
+- `crates/gingress/src/seams/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** the collaborators 1.4 records
+(`src/gobby/hooks/factory.py::HookManagerComponents`,
+`src/gobby/hooks/event_handlers/__init__.py::EventHandlers.__init__`), grouped
+by owning family:
+- **Sessions (#21562):** session rows, lookup and status, platform session
+  binding, deferred activation, materialization, clear-run lineage, the
+  message processor and transcripts, receipts and staged effects (3.4), and
+  node session registration (Decision 8).
+- **Tasks (#21560):** task reads and writes, session-task links, commit
+  auto-link.
+- **Agents (#21564):** agent runs and their lifecycle
+  (`src/gobby/hooks/session_coordinator.py::SessionCoordinator`
+  `start_agent_run`, `complete_agent_run`, `release_session_worktrees`),
+  managed-agent validation, worktrees, progress tracking, attention metadata,
+  pending messages and reservations.
+- **Terminals (#21565):** terminal manager, runtime registry and composer
+  ledger.
+- **Skills (#21580):** router skills and skill content.
+- **MCP (#21566):** internal and external tool calls (`call_tool`).
+- **Config (#21559):** workflow config, rule switches, hook timeouts and
+  webhook endpoints.
+- **Projects (#21585):** project id from a cwd and checkout rows.
+- **Code index (#21586):** index status, session summaries
+  (`session_summary_dispatcher.py`) and the edit trigger (#24705).
+- **Broadcast:** UI event fan-out (`src/gobby/hooks/broadcaster.py`), served by
+  gdaemon's native WS transport (#21558, closed).
+
+Define one trait per group, each call returning `Result<_, SeamUnavailable>`,
+and a scripted implementation that replays a 1.4 case's collaborator script
+and fails on an unscripted call. The engine's own seams stay in
+`gobby-workflows`.
+
+**Acceptance:**
+- 5.1.1 - Every collaborator call in the 1.4 corpus maps to exactly one seam method. test: `crates/gingress/src/seams/tests.rs::every_recorded_collaborator_maps_to_a_seam`.
+- 5.1.2 - The scripted seams replay a case's script in order and fail on an unscripted or out-of-order call. test: `crates/gingress/src/seams/tests.rs::scripted_seams_enforce_the_script`.
+
+**Verification:** the shared P5 commands.
+
+### 5.2 Pipeline orchestration and project context [category: code] (depends: 5.1)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/pipeline.rs`
+- `crates/gingress/src/pipeline/ordering.rs`
+- `crates/gingress/src/pipeline/project.rs`
+- `crates/gingress/src/pipeline/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:**
+- `src/gobby/hooks/hook_manager.py::HookManager._handle_after_daemon_ready`
+  and `_complete_response` (823-line module), `hook_manager_dispatch.py`
+  (124), `hook_manager_ingress.py` (152), `rule_evaluator.py` (348, the bridge
+  to `WorkflowHookHandler`), `event_enrichment.py` (267), `session_binding.py`
+  (30: `session_binds_event`), `fifo_lock.py` (61), `effect_deadline.py` (57)
+  and `background_tasks.py` (38). The step order is 1.4's Entry list.
+- `src/gobby/hooks/project_context.py::resolve_hook_project_context` (342) and
+  `project_checkout_ingress.py` (130).
+- **Site row 6.** Project resolution for a node event reads the node's
+  checkout rows (database only); no row fails closed with the no-project
+  error.
+
+`pipeline` runs the steps in Python's order and calls 2.19's `driver` for
+rule passes. A rule block short-circuits the handler; blocking webhooks run
+after rules (5.11 supplies them).
+
+**Acceptance:**
+- 5.2.1 - The step order matches Python on every 1.4 case: session start runs handler, rules, webhooks; other events run lookup, gating, activation, rules, webhooks, handler. test: `crates/gingress/tests/pipeline_corpus.rs::pipeline_order_replays_equal`.
+- 5.2.2 - A rule block short-circuits the handler and blocking webhooks as in Python. test: `crates/gingress/src/pipeline/tests.rs::rule_block_short_circuits`.
+- 5.2.3 - Site row 6: a node event resolves its project from the node's checkout rows, and no row fails closed. test: `crates/gingress/src/pipeline/tests.rs::site_row_6_project_from_node_checkout_rows`.
+
+**Verification:** the shared P5 commands.
+
+### 5.3 Session lookup, activation, coordination and terminal context [category: code] (depends: 5.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/sessions.rs`
+- `crates/gingress/src/sessions/lookup.rs`
+- `crates/gingress/src/sessions/activation.rs`
+- `crates/gingress/src/sessions/coordinator.rs`
+- `crates/gingress/src/sessions/terminal_context.rs`
+- `crates/gingress/src/sessions/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/session_lookup.py` (748),
+`session_activation.py` (671), `session_materialize.py` (212:
+`activate_deferred_session`), `session_ref_resolution.py` (48),
+`session_types.py` (211), `codex_seat.py` (50), `session_coordinator.py`
+(761: in-process registrations, cached agent messages and lookup locks; agent
+run calls go to the Agents seam), `terminal_context.py` (488:
+`enrich_terminal_context_with_cwd`, `_is_fresh_seat_tui`) and
+`src/gobby/hooks/agent_run_ingress.py` (163: `validate_managed_agent_hook`,
+`session_end_targets_live_cli`).
+- **Site row 27.** For an event whose `machine_id` is not the hub's,
+  `enrich_terminal_context_with_cwd` returns before any process inspection
+  (hub-mode 2.2, #24272).
+
+**Granularity:** one leaf with six production files. Lookup, activation,
+coordination and terminal context resolve one session binding per event and
+share the coordinator's lookup lock.
+
+**Acceptance:**
+- 5.3.1 - Every lookup, deferred-activation, managed-agent gating and session-ref case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::session_binding_cases_replay_equal`.
+- 5.3.2 - Session lookups bind only rows owned by the event's machine. test: `crates/gingress/src/sessions/tests.rs::lookups_bind_machine_owned_rows_only`.
+- 5.3.3 - Site row 27: a foreign-machine event skips process inspection, and a local fresh-seat check is unchanged. test: `crates/gingress/src/sessions/tests.rs::site_row_27_node_event_skips_process_inspection`.
+
+**Verification:** the shared P5 commands.
+
+### 5.4 Node session registration [category: code] (depends: 5.3)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/sessions.rs`
+- `crates/gingress/src/sessions/register.rs`
+- `crates/gingress/src/sessions/tests.rs`
+- `docs/contracts/parity-waivers.json::*` — scope-reason: adds one waiver entry for this divergence
+- `docs/contracts/parity-ledger.md::*` — scope-reason: regenerated so the hooks row notes the waiver
+- `tests/contracts/pipeline/manifest.json`
+
+**Research context:**
+- **hub-mode Decision 18.** Registering a node session that the hub did not
+  pre-register is the fourth use of the key-verified foreign-machine path,
+  owned by #24151. Until then Python refuses such a session (a `/clear`
+  successor, or an operator's own CLI on the node) at registration.
+- **Identity.** The verified front-door identity names the node machine (3.2's
+  machine binding).
+- **Waivers.** `docs/contracts/parity-waivers.json` and
+  `scripts/parity_waivers.py` (#24963, closed) record behaviour-level
+  divergences that compare reports honour. An entry carries `id` (three
+  kebab segments), `surface` (an exact ledger key), `behaviour`, `decision`
+  (a task ref or plan anchor) and `replacement`; a waived corpus case cites
+  it, and `scripts/generate_parity_ledger.py` marks the row `Waived`.
+
+A node-origin session start whose session has no row, carrying a verified
+identity for that machine, registers the session for that machine through the
+Sessions seam, then continues as a new session. Without a verified identity it
+is refused as before. Record the divergence as waiver
+`hooks.node-session.register` on surface `HTTP POST /api/hooks/execute`
+with decision `#24151`. The 1.4 refusal case cites it and gains a
+`waived_expect` with the registration calls. Regenerate the ledger.
+
+**Acceptance:**
+- 5.4.1 - A verified node session start with no row registers the session under the node's machine and proceeds. test: `crates/gingress/src/sessions/tests.rs::verified_node_session_without_row_registers`.
+- 5.4.2 - Without a verified identity for that machine the start is refused, and no row is written. test: `crates/gingress/src/sessions/tests.rs::unverified_node_session_is_refused`.
+- 5.4.3 - The waiver loads, the 1.4 refusal case cites it, and the regenerated ledger matches the committed one. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+**Verification:** the shared P5 commands, and
+`GOBBY_TEST_PROTECT=1 uv run pytest tests/test_parity_ledger.py -v`.
+
+### 5.5 Session start: flow, context, profile and transcripts [category: code] (depends: 5.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/handlers.rs`
+- `crates/gingress/src/handlers/session_start.rs`
+- `crates/gingress/src/handlers/session_start/flow.rs`
+- `crates/gingress/src/handlers/session_start/context.rs`
+- `crates/gingress/src/handlers/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/event_handlers/_session_start/`:
+`__init__.py` (217), `flow.py` (795: pre-created session lookup by external
+id, terminal context and gobby session id; the STOP epoch bump through
+`envelope_dedupe.bump_stop_replay_epoch`), `context.py` (272), `profile.py`
+(109), `transcripts.py` (127), `in_place_compact.py` (42) and `types.py` (17);
+`src/gobby/hooks/event_handlers/_base.py::EventHandlersBase` (314: turn
+lifecycle helpers).
+
+Port them. Session start bumps the STOP epoch of the event's machine through
+3.1's per-machine API.
+
+**Acceptance:**
+- 5.5.1 - Every new, resumed, cleared and compacted session-start case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::session_start_flow_cases_replay_equal`.
+- 5.5.2 - Session start bumps only its own machine's STOP epoch. test: `crates/gingress/src/handlers/tests.rs::session_start_bumps_own_machine_epoch`.
+
+**Verification:** the shared P5 commands.
+
+### 5.6 Session start: handoff, materialization, agents, claims and skills [category: code] (depends: 5.5)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/handlers.rs`
+- `crates/gingress/src/handlers/session_start.rs`
+- `crates/gingress/src/handlers/session_start/handoff.rs`
+- `crates/gingress/src/handlers/session_start/materialize.rs`
+- `crates/gingress/src/handlers/session_start/agents.rs`
+- `crates/gingress/src/handlers/session_start/runtime.rs`
+- `crates/gingress/src/handlers/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/event_handlers/_session_start/`:
+`handoff.py` (514), `materialize.py` (591), `agents.py` (267), `claims.py`
+(215) and `terminal_runtime.py` (274); `src/gobby/hooks/skill_manager.py`
+(439: `HookSkillManager`, router skills read by
+`EventHandlersBase._router_skills`).
+
+**Granularity:** one leaf with six production files. Each ports one
+session-start sub-flow that `flow.rs` calls in order; the corpus replays
+them together.
+
+**Acceptance:**
+- 5.6.1 - Every handoff, materialization, agent activation, claim restore and router-skill case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::session_start_subflow_cases_replay_equal`.
+- 5.6.2 - A compact successor with no compact row logs and proceeds as Python does. test: `crates/gingress/src/handlers/tests.rs::missing_compact_row_matches_python`.
+
+**Verification:** the shared P5 commands.
+
+### 5.7 Session end, completion, auto-link and summaries [category: code] (depends: 5.6)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/handlers.rs`
+- `crates/gingress/src/handlers/session_end.rs`
+- `crates/gingress/src/handlers/responses.rs`
+- `crates/gingress/src/handlers/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/event_handlers/_session_end.py` (266),
+`_session_responses.py` (247), `src/gobby/hooks/session_completion.py` (153),
+`session_end_auto_link.py` (111: `SessionEndAutoLinkWorker`),
+`session_summary_dispatcher.py` (106) and `session_summary_wiring.py` (33).
+Summaries go through the Code index seam; auto-link through the Tasks seam.
+
+**Acceptance:**
+- 5.7.1 - Every session-end, completion, auto-link and summary-dispatch case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::session_end_cases_replay_equal`.
+- 5.7.2 - A summary or auto-link seam failure never fails the session-end response. test: `crates/gingress/src/handlers/tests.rs::session_end_side_effects_fail_open`.
+
+**Verification:** the shared P5 commands.
+
+### 5.8 Tool handlers, outcomes, error tracking and the edit trigger [category: code] (depends: 5.7)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/handlers.rs`
+- `crates/gingress/src/handlers/tool.rs`
+- `crates/gingress/src/handlers/tool/outcomes.rs`
+- `crates/gingress/src/handlers/tool/errors.rs`
+- `crates/gingress/src/handlers/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/event_handlers/_tool.py` (762:
+`ToolEventHandlerMixin`, `_notify_code_index`), `src/gobby/hooks/tool_outcomes.py`
+(503: `hook_event_tool_outcome`), `tool_error_tracker.py` (458) and
+`mcp_result.py` (13).
+- **Code-index trigger (Decision 10).** Python calls
+  `src/gobby/code_index/trigger.py::CodeIndexTrigger` from
+  `_notify_code_index`. The Rust handler calls the Code index seam's
+  `notify_file_changed(root, file)`; 7.6 implements it with
+  `gobby_codeindex::jobs::trigger::EditTrigger::notify_file_changed` through
+  `HubJobs::edit_trigger()` (#24705).
+- **Site row 16.** A node event skips the trigger; node-halves 2.11 runs gcode
+  on the node.
+
+**Acceptance:**
+- 5.8.1 - Every before-tool, after-tool, failure and error-tracking case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::tool_cases_replay_equal`.
+- 5.8.2 - A hub-local edit notifies the trigger once with the repository root and relative path. test: `crates/gingress/src/handlers/tests.rs::hub_edit_notifies_the_trigger`.
+- 5.8.3 - Site row 16: a node edit never notifies the trigger. test: `crates/gingress/src/handlers/tests.rs::site_row_16_node_edit_skips_trigger`.
+
+**Verification:** the shared P5 commands.
+
+### 5.9 Agent handlers, pending messages and Grok pending context [category: code] (depends: 5.8)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/handlers.rs`
+- `crates/gingress/src/handlers/agent.rs`
+- `crates/gingress/src/handlers/agent/messages.rs`
+- `crates/gingress/src/handlers/agent/grok_pending.rs`
+- `crates/gingress/src/handlers/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/event_handlers/_agent.py` (793),
+`src/gobby/hooks/pending_messages.py` (154), `pending_message_reservations.py`
+(88) and `grok_pending_context.py` (756). Messages and reservations go through
+the Agents seam.
+
+**Acceptance:**
+- 5.9.1 - Every before-agent, after-agent, stop and pending-message case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::agent_cases_replay_equal`.
+- 5.9.2 - A reserved pending message is delivered once and released on a failed delivery. test: `crates/gingress/src/handlers/tests.rs::pending_message_reservation_matches_python`.
+- 5.9.3 - Grok pending context is applied once to the next Grok event, as in Python. test: `crates/gingress/src/handlers/tests.rs::grok_pending_context_applies_once`.
+
+**Verification:** the shared P5 commands.
+
+### 5.10 Misc and plan handlers, turn lifecycle and terminal handoff delivery [category: code] (depends: 5.9)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/handlers.rs`
+- `crates/gingress/src/handlers/misc.rs`
+- `crates/gingress/src/handlers/turns.rs`
+- `crates/gingress/src/handlers/handoff_delivery.rs`
+- `crates/gingress/src/handlers/handoff_delivery/recovery.rs`
+- `crates/gingress/src/handlers/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/event_handlers/_misc.py` (777:
+`MiscEventHandlerMixin.handle_worktree_create`, `handle_worktree_remove`),
+`_plan.py` (64), `_session.py` (27), the turn and composer helpers in
+`_base.py`, `src/gobby/hooks/terminal_handoff_delivery.py` (903) and
+`handoff_dispatch_recovery.py` (191). Terminal calls go through the Terminals
+seam.
+- **Site row 19.** A node `WorktreeCreate` or `WorktreeRemove` answers allow
+  before any hub effect.
+
+**Acceptance:**
+- 5.10.1 - Every misc, plan, compact, notification and terminal-handoff case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::misc_and_handoff_cases_replay_equal`.
+- 5.10.2 - Turn waits, composer submits and handoff dispatch recovery match Python on the recorded cases. test: `crates/gingress/src/handlers/tests.rs::turn_lifecycle_and_recovery_match_python`.
+- 5.10.3 - Site row 19: a node worktree event allows with no hub effect. test: `crates/gingress/src/handlers/tests.rs::site_row_19_node_worktree_allows_without_effect`.
+
+**Verification:** the shared P5 commands.
+
+### 5.11 MCP and webhook dispatch and the broadcaster [category: code] (depends: 5.10)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/Cargo.toml`
+- `Cargo.lock`
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/dispatch.rs`
+- `crates/gingress/src/dispatch/mcp.rs`
+- `crates/gingress/src/dispatch/webhooks.rs`
+- `crates/gingress/src/dispatch/broadcast.rs`
+- `crates/gingress/src/dispatch/tests.rs`
+- `crates/gingress/tests/pipeline_corpus.rs`
+
+**Research context:** `src/gobby/hooks/dispatchers/mcp.py` (531),
+`dispatchers/webhook.py` (211), `src/gobby/hooks/webhooks.py` (367:
+`WebhookDispatcher`, blocking webhooks), `src/gobby/workflows/webhook.py`
+(233: `RetryConfig`, `VALID_METHODS`, `DEFAULT_RETRY_STATUS_CODES`,
+`MAX_RETRY_BACKOFF_SECONDS`) and `src/gobby/hooks/broadcaster.py` (461).
+`reqwest` 0.12 is already in `Cargo.lock` (gcore).
+
+Port them as `dispatch`. Webhook endpoints come from the Config seam; HTTP
+delivery uses `reqwest` with Python's retry rules; broadcasts go through the
+Broadcast seam.
+
+**Acceptance:**
+- 5.11.1 - Every MCP-dispatch, webhook and broadcast case in the 1.4 corpus replays equal. test: `crates/gingress/tests/pipeline_corpus.rs::dispatch_cases_replay_equal`.
+- 5.11.2 - A blocking webhook's decision applies as in Python, and retries follow `RetryConfig` on a local test server. test: `crates/gingress/src/dispatch/tests.rs::webhooks_block_and_retry_like_python`.
+
+**Verification:** the shared P5 commands.
+
+### 5.12 Route execution: adapters, timeouts, AGY preflight and hold-open [category: code] (depends: 5.11)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/execute.rs`
+- `crates/gingress/src/execute/run.rs`
+- `crates/gingress/src/execute/preflight.rs`
+- `crates/gingress/src/execute/hold_open.rs`
+- `crates/gingress/src/execute/tests.rs`
+- `crates/gingress/tests/envelope_corpus.rs`
+
+**Research context:**
+- **Python.** `src/gobby/hooks/adapter_execution.py` (457: `run_adapter_hook`,
+  `HOOK_ADAPTER_MAX_WORKERS`, `register_adapter_timeout_finalization`),
+  `startup_claim_preflight.py` (551: `preflight_agy_startup_claim_bounded`,
+  `rollback_agy_startup_claim`, `invalidate_agy_startup_claim`,
+  `_resolve_or_register_session`), `health_gate.py` (170:
+  `DaemonNotReadyError`), `agent_run_ingress.py`
+  (`AgentRunIngressRetryableError`), `src/gobby/servers/routes/mcp/hook_hold_open.py`
+  (209: `_maybe_hold_open`), `hook_responses.py` (217: `FAIL_SAFE_HOOK_TYPES`,
+  `_graceful_error_response`, `_hook_exception_response`) and
+  `src/gobby/config/hooks.py::HookTimeoutConfig`.
+- **Retry bodies.** 503 `preflight_timeout`, `ingress_backpressure` (reasons
+  `agent_run_identity_pending`, `daemon_not_ready`) and `adapter_timeout`. An
+  adapter that outlives its timeout finalizes its envelope when it completes.
+- **Failure rule.** A `CheckoutReadUnavailable` that propagates blocks a
+  critical hook with the diagnostic in its reason and degrades any other hook
+  (`_hook_exception_response`).
+- **Site row 1.** `run_adapter_hook` sets the delivery origin for every
+  delivery.
+- **Site row 25.** `_resolve_or_register_session` keeps
+  `require_local_machine_id`, so a node envelope is refused before any disk
+  walk.
+
+`execute::run` is the closure 3.3 wraps: select the adapter (4.1), translate,
+run `pipeline` with the delivery origin set, translate the response, and
+apply hold-open, timeouts and the graceful-error rules. This completes
+`POST /api/hooks/execute`.
+
+**Granularity:** one leaf with five production files and five acceptance
+items. Adapter dispatch, timeouts, preflight and hold-open are one execution
+step whose retry bodies the envelope corpus checks together.
+
+**Acceptance:**
+- 5.12.1 - Every 1.2 envelope case (the three retry kinds, both backpressure reasons, HookManager not initialized and the four DR5 mappings) and every 1.2 sequence case replays equal end to end. test: `crates/gingress/tests/envelope_corpus.rs::route_cases_replay_equal_end_to_end`.
+- 5.12.2 - An adapter that outlives its timeout answers `adapter_timeout`, then finalizes its envelope when it completes. test: `crates/gingress/src/execute/tests.rs::timed_out_adapter_finalizes_later`.
+- 5.12.3 - An unavailable checkout read blocks a critical hook with the diagnostic and degrades any other hook. test: `crates/gingress/src/execute/tests.rs::checkout_unavailable_blocks_critical_only`.
+- 5.12.4 - Site row 1: every delivery runs with its delivery origin set, hub-local or the node's machine id. test: `crates/gingress/src/execute/tests.rs::site_row_1_delivery_origin_is_set`.
+- 5.12.5 - Site row 25: an AGY startup preflight for a node envelope is refused before any disk walk. test: `crates/gingress/src/execute/tests.rs::site_row_25_node_preflight_refused`.
+
+**Verification:** the shared P5 commands.
 
 ## P6: Node and webhook routes
 `kind: framing`
