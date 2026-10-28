@@ -348,6 +348,7 @@ leaves keep their scope; this plan touches neither.
 | --- | --- | --- | --- |
 | 3.1 | #25207 (remote-terminal-attach 1.1) | blocked by | It takes contract version 5 and moves the terminal types out of `node_commands.rs`. |
 | 3.2 | #24376 (node-halves 2.7) | blocked by | It creates the node command dispatcher that 3.2 extends. |
+| 3.1 | sessions-family 3.8 (`.gobby/plans/sessions-family.md`, not yet expanded) | blocks | It takes node-commands contract version 7 and is ordered after this plan's 3.1. |
 | none | #21570 (MCP front door flip) | blocks | #21570 already waits on #21566. Before 1.0 it deletes the transitional Python forwarder (2.1, and the Python half of 2.2). It also owns registry CRUD, templates, import, sync, `recommend_tools` and MCP metrics. |
 | none | #24884 (rust-internal-mcp-servers 2.1) | relation | It already waits on #21566 and calls `Backend` directly. It owns discovery, leases, validation, offload and the error contract (2.1.2-2.1.6), plus the native cancel route and the external inventory cache (2.1.9). |
 | none | #24151 (S2.11 hub half; plan by #25256) | relation | The rules hook for proxied calls is s2-11 7.14; its MCP seam 7.7 already depends on #21566. |
@@ -532,7 +533,14 @@ Targets:
     rules and npx offline. It embeds the loopback config with `include_str!`
     and writes it to `<gobby_home>/mcp/browser-loopback.json` before launch.
   - `supervise.rs` implements `gdaemon mcp-child -- <argv>` (Decision 7), and
-    `stdio.rs` runs every server through it, using `current_exe()`:
+    `stdio.rs` runs every server through it. The wrapper binary is
+    `/proc/self/exe` on Linux and `current_exe()` elsewhere:
+    - On Linux, after a new-inode promote, `current_exe()` returns
+      `<path> (deleted)`, so a spawn through it would fail until restart.
+      `/proc/self/exe` still runs the live binary.
+    - On macOS, `current_exe()` names the path, which after a promote holds
+      the new binary. The `mcp-child -- <argv>` interface therefore stays
+      stable across versions.
     - The pool spawns the wrapper as a process-group leader. The wrapper
       runs the server in its own process group with inherited stdio.
     - The wrapper polls `getppid()` once a second. When the parent changes,
@@ -665,7 +673,7 @@ Targets:
 **Acceptance:**
 
 - 1.4.1 - `secret_in` returns the project row when one exists, falls back to the global row otherwise, and reads only the global row for a `None` project. test: `crates/gruntime/tests/secrets.rs::secret_in_reads_project_then_global`.
-- 1.4.2 - A value written by `set_in` decrypts through Python's `SecretStore.get` with the same scope, and a value Python wrote decrypts through `secret_in`; a second `set_in` upserts in place. test: `crates/gruntime/tests/secrets.rs::set_in_round_trips_with_python`.
+- 1.4.2 - A value written by `set_in` decrypts through Python's `SecretStore.get` with the same scope, run through `uv run python -c` as `crates/gdaemon/tests/lifecycle.rs` runs its Python fixture, and a value Python wrote decrypts through `secret_in`; a second `set_in` upserts in place. test: `crates/gruntime/tests/secrets.rs::set_in_round_trips_with_python`.
 - 1.4.3 - `set_in` rejects an unknown category and a name outside `SECRET_NAME_GRAMMAR`, and its errors carry no value. test: `crates/gruntime/tests/secrets.rs::set_in_validates_name_and_category`.
 - 1.4.4 - The contract documents the scope order and the single writer. behavior: "SecretStore::set_in" in `docs/contracts/mcp-multiplexer.md`.
 
@@ -932,8 +940,8 @@ separate state machine in 1.7.
 - 1.6.1 - A `requires_oauth` HTTP server receives the stored bearer, and a server with no stored token answers `authorization_required` with `gobby mcp-proxy auth <name>` (plus `--global` for the global scope). test: `crates/gdaemon/tests/mcp_client_oauth.rs::bearer_attached_or_authorization_required`.
 - 1.6.2 - A 401 with a rotated stored token retries once with it and never calls the token endpoint; without one, one refresh grant runs under the advisory lock, the new token is persisted in `OAuthState` shape, and the retry succeeds. test: `crates/gdaemon/tests/mcp_client_oauth.rs::unauthorized_reloads_then_refreshes_once`.
 - 1.6.3 - A token-endpoint `invalid_grant` clears the tokens and answers `authorization_required`; a 429 with `Retry-After` records the shared backoff, and a call during backoff answers `oauth_unavailable` without contacting the endpoint. test: `crates/gdaemon/tests/mcp_client_oauth.rs::consent_and_backoff_match_python`.
-- 1.6.4 - State Python's `MCPOAuthStorage` wrote is read by `OAuthStore`, and state `OAuthStore` wrote is read by Python, keeping `client`, `metadata` and `resource`. test: `crates/gdaemon/tests/mcp_client_oauth.rs::oauth_state_round_trips_with_python`.
-- 1.6.5 - A keepalive tick refreshes a token due within 600 seconds and skips one in backoff or without a refresh token; two concurrent refreshers spend the refresh token once. test: `crates/gdaemon/tests/mcp_client_oauth.rs::keepalive_refreshes_due_tokens_once`.
+- 1.6.4 - State Python's `MCPOAuthStorage` wrote is read by `OAuthStore`, and state `OAuthStore` wrote is read by Python through `uv run python -c`, keeping `client`, `metadata` and `resource`. test: `crates/gdaemon/tests/mcp_client_oauth.rs::oauth_state_round_trips_with_python`.
+- 1.6.5 - A keepalive tick refreshes a token due within 600 seconds and skips one in backoff or without a refresh token; two concurrent refreshers spend the refresh token once; for sample secret names, Rust's `oauth_lock_key` equals Python's `oauth_keepalive.oauth_lock_key` read through `uv run python -c`, so the two keepalives share one advisory lock until 2.1. test: `crates/gdaemon/tests/mcp_client_oauth.rs::keepalive_refreshes_due_tokens_once`.
 - 1.6.6 - No access token, refresh token or client secret appears in a captured log line, reply or error across 1.6.2 and 1.6.3. test: `crates/gdaemon/tests/mcp_client_oauth.rs::oauth_credentials_stay_out_of_logs_and_replies`.
 
 ### 1.7 OAuth login and dynamic client registration in gdaemon [category: code] (depends: 1.6)
@@ -1556,6 +1564,13 @@ Consumers unchanged:
     - Examples: 600,000 ms becomes 595,000 ms inner, 4,000 ms becomes
       2,000 ms, and 3 ms becomes 2 ms.
     - An `outer` of 1 ms or less answers `timeout` with no node send.
+    - The arithmetic lives in one pure function,
+      `mcp_client::placement::node_inner_budget(remaining_ms: u64) ->
+      Option<u64>`. It returns `None` when no node send may happen, and
+      `Backend` calls it immediately before the send.
+    - Placement's database reads run under the call's
+      `tokio::time::timeout_at` deadline, like every preparation step
+      (Decision 9).
   - On `node_timeout` or a channel error, `Backend` sends a best-effort
     `mcp.cancel` for the `call_id` and does not replay.
   - `Backend::cancel` sends `mcp.cancel` to the machine that received the
@@ -1590,8 +1605,8 @@ Consumers unchanged:
 - 3.3.2 - A call with no caller or from the hub's own machine runs on the local pool. test: `crates/gdaemon/tests/mcp_backend_placement.rs::local_and_callerless_calls_stay_local`.
 - 3.3.3 - An unknown machine, a machine without a checkout and an offline node answer `machine_not_found`, `checkout_unresolved` and `node_offline` and run nothing on the hub. test: `crates/gdaemon/tests/mcp_backend_placement.rs::routing_refusals_never_fall_back_to_hub`.
 - 3.3.4 - With two node holders of one stdio server, a disconnect for that server and a disconnect for all each reach both holders and the local pool; with one holder offline the disconnect still completes, `failed_holders` names that holder and its code, and the holder stays tracked; status merges both nodes' `mcp.status`. test: `crates/gdaemon/tests/mcp_backend_placement.rs::lifecycle_fans_out_to_every_holder`.
-- 3.3.5 - A node-placed call waits outer `min(remaining, 600000)` ms and sends inner `outer - min(5000, outer / 2)` ms, so a requested 600,000 ms becomes 595,000 inner; with delayed dispatch the caller receives the pool's typed `timeout`, not `node_timeout`; a `node_timeout` sends one `mcp.cancel` and no replay; `Backend::cancel` for a node-placed call reaches that node. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budgets_nest_and_cancel_follows_the_call`.
-- 3.3.6 - Node-placed budgets of 0, 1, 2, 4,999, 5,000, 5,001 and 10,000 ms send inner `timeout_ms` of none, none, 1, 2,500, 2,500, 2,501 and 5,000. Each "none" answers `timeout` with zero node sends. A call whose budget is spent while the test holds an exclusive lock on `secrets`, as `ChannelDb::lock_machine` does for `machines`, answers `timeout` with zero node sends on the node path and zero fixture launches on the local path. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budget_floor_and_spent_preparation_send_nothing`.
+- 3.3.5 - A node-placed call requested at 700,000 ms waits an outer 600,000 ms and sends exactly 595,000 ms inner, because preparation cannot bring the remaining budget below the cap; with delayed dispatch the caller receives the pool's typed `timeout`, not `node_timeout`; a `node_timeout` sends one `mcp.cancel` and no replay; `Backend::cancel` for a node-placed call reaches that node. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budgets_nest_and_cancel_follows_the_call`.
+- 3.3.6 - `node_inner_budget` maps 0, 1, 2, 4,999, 5,000, 5,001, 10,000, 600,000 and 700,000 ms to `None`, `None`, 1, 2,500, 2,500, 2,501, 5,000, 595,000 and 595,000. A call whose budget is spent while the test holds `LOCK TABLE <schema>.secrets IN ACCESS EXCLUSIVE MODE` in an open transaction answers `timeout` within its budget, with zero node sends on the node path and zero fixture launches on the local path. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budget_floor_and_spent_preparation_send_nothing`.
 
 ## P4: Live proof
 `kind: framing`
@@ -1602,7 +1617,7 @@ Consumers unchanged:
 Targets:
 - `tests/e2e/test_hub_node_pair.py::*` — scope-reason: add the F5 MCP proof beside the existing relay tests
 - `tests/e2e/fixtures/mcp_fixture_server.py`
-- `tests/e2e/gmcp_client.py::*` — scope-reason: send a client cancel and read progress for the proof
+- `tests/e2e/gmcp_client.py::*` — scope-reason: let gmcp_session pass GOBBY_SESSION_ID in gmcp's env, send a client cancel and read progress for the proof
 
 **Research context:**
 - Observed: `tests/e2e/test_hub_node_pair.py` starts an isolated hub and an
@@ -1629,6 +1644,20 @@ Targets:
   - The OAuth case crosses the real seam: gdaemon's typed `unauthorized`,
     1.6's reload-then-refresh in `Backend`, and the pool's reconnect with the
     new bearer. It adds no auth mechanism.
+  - Placement needs a caller on the node, so the test sets up three
+    preconditions in the isolated hub:
+    - Observed: gmcp sends `X-Gobby-Session-Id` only from `GOBBY_SESSION_ID`
+      (`crates/gmcp/src/daemon.rs`, `with_context`), and
+      `tests/e2e/gmcp_client.py::gmcp_session` passes only `GOBBY_HOME` and
+      `HOME`. Without a session the forwarder sends no caller, and the stdio
+      server runs on the hub.
+    - Observed: `pair_node` registers the node machine but no
+      `project_checkouts` row, so placement would answer
+      `checkout_unresolved`.
+    - The test seeds a `sessions` row owned by the node machine in the test
+      project. It seeds a `project_checkouts` row for the node machine and
+      that project, with a path under the node home. `gmcp_session` passes
+      that session id as `GOBBY_SESSION_ID`.
   - The test runs on macOS and Linux and has no latency assertions.
 - Planned verification:
   `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_pair.py -v -m e2e`;
