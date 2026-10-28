@@ -52,14 +52,20 @@ consumes its text-generation service (#25097). The Qdrant CLI and
 #24819 and is out of scope. The projects family owns the cross-runtime project
 write fence (#25059); every native writer here uses it.
 
-**Non-goals: background graph queue and dream-hidden purge.**
-`src/gobby/sessions/lifecycle.py::SessionLifecycleManager._kg_queue_loop` and
-`::_purge_dream_hidden_memories` stay in Python with the sessions family that
-schedules them. No ledger row serves them. Native writes keep producing
-`graph_status = 'pending'` rows that loop consumes, and 2.4 and 4.1 expose the
-per-memory extraction and purge functions a future native loop calls. The
+**No Python left (Orchestrator ruling, 2026-10-28).** The port ends with
+the family fully in Rust: no Python policy layer, loopback client, rollback
+route or direct-storage writer stays in the path. 7.3 ports the six memory
+background jobs no ledger row serves (the graph queue, dream-hidden purge,
+store reconciliation, startup scope repair, interrupted-run reconciliation
+and the empty-collection refill), which Python schedules from the sessions
+lifecycle and the runner. 8.5 makes the family native-only and deletes the
+Python routes and tools. 8.6 deletes the Python memory and review-learning
+services once every other family's Rust plan has moved its Python callers
+off them; each such caller is named in 8.6 against its owning epic. The
 nightly dream schedule is bound by the cron plan's #25024, which binds the
-service 4.3 names.
+service 4.3 names. The public `gobby memory` entry stays 8.3's literal
+argument forwarder inside the Python CLI shell, as the AI plan's 7.7 keeps
+`gobby embeddings`; it holds no memory logic.
 
 **Cross-plan contention.** 7.1 here edits `crates/gdaemon/src/main.rs::Command`
 and `::main`. Six other plans also target `crates/gdaemon/src/main.rs`:
@@ -328,7 +334,11 @@ public surfaces; parity matches their intentional contracts, not accidents.
   (`POST /memory/dream`, `memory_dream`, a background rebuild's 202 and
   `invalidate`); the change shows on the eight surfaces that report the job.
   Corpus cases for other rows use the bundled templates. Owners 2.4 and 4.3
-  for HTTP, 6.2 for MCP and 7.2 for CLI.
+  for HTTP, 6.2 for MCP and 7.2 for CLI. 7.3's graph queue job serves no
+  ledger row and needs no waiver: it records the refusal as that memory's
+  deterministic graph failure before any model call, so the memory leaves
+  the queue after `max_deterministic_attempts`, where Python would have
+  extracted it.
 
 **FIX**, with no waiver because no recorded surface outcome changes:
 
@@ -1167,16 +1177,15 @@ unsupported. `default('literal')` applies only to a variable absent from the
 merged context, and one trailing newline is dropped, as Jinja's defaults do.
 A rebuild resolves and parses all three graph templates before it marks any
 memory pending and refuses the whole job on an unsupported one (Debt not to
-port). `extract_memory_graph` parses them before its first model call; the
-sessions family (#21562) owns waiving its queue loop's matching per-memory
+port). `extract_memory_graph` parses them before its first model call, and
+7.3's queue job records that refusal as the memory's deterministic graph
 failure. Writes run inside #25059's fence, per project or under the
 global writer for global memories, as `service.py` lines 157-160 and 662-703
 do. Handlers are `rebuild_knowledge_graph` (foreground, or background with
 `background=true`), `rebuild_knowledge_graph_status` and
 `clear_knowledge_graph` in `create_memory_router`, with
 `_execute_graph_rebuild` progress callbacks recorded into 2.3's job slot.
-Expose `extract_memory_graph(memory)` for the sessions family's queue loop
-(Overview non-goal). This leaf adds the three 2.4 redaction entries and the
+Expose `extract_memory_graph(memory)` for 7.3's graph queue job. This leaf adds the three 2.4 redaction entries and the
 two 2.4 unsupported-prompt-syntax entries. The status redaction replaces an
 internal-class `error` with `Internal server error` and logs the diagnostic;
 the validation-class prompt refusal keeps its text.
@@ -1369,7 +1378,7 @@ revert_failed, revert_forfeited, interrupted, partial), `storage_journal.py`,
 fenced actions; cursor advance; reconcile after apply and revert), `plan.py`
 validation, `decisions.py`, `models.py` and `options.py`. Expose
 `purge_dream_hidden_memories` with `purge_delete_after_days` and
-`purge_review_after_days` for the sessions family's loop (Overview non-goal).
+`purge_review_after_days`, and the run-history prune, for 7.3's purge job.
 Every memory mutation goes through 2.2's write path, so ledger, fence and lease
 rules hold.
 
@@ -1830,7 +1839,7 @@ tool would create per-tool wrappers, not independent outcomes.
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test mcp_review`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core --test mcp_contract`.
 
-## P7: Native CLI commands
+## P7: Native CLI commands and background jobs
 `kind: framing`
 
 ### 7.1 Native command tree and record commands [category: code] (depends: 6.3)
@@ -1967,10 +1976,163 @@ health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test cli_daemon`
 against a local HTTP stub that replays 0.1's recorded responses.
 
+### 7.3 Native memory background jobs [category: code] (depends: 7.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gmemory/src/lib.rs`
+- `crates/gmemory/src/background.rs`
+- `crates/gmemory/tests/background.rs`
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+- `src/gobby/memory/job_ownership.py`
+- `src/gobby/sessions/lifecycle.py::SessionLifecycleManager.start`
+- `src/gobby/sessions/lifecycle.py::SessionLifecycleManager._sweep_shared_rows`
+- `src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`
+- `src/gobby/runner_init/services.py::MemoryServiceBundle.memory_manager`
+- `src/gobby/runner_init/services.py::_init_memory_stack`
+- `src/gobby/memory/dream/cron.py::reconcile_interrupted_dream_runs`
+- `src/gobby/runner_maintenance/lifecycle.py::rebuild_vector_store`
+- `tests/conftest.py::_clear_terminal_route_latch`
+- `tests/memory/test_native_job_ownership.py`
+
+Consumers unchanged:
+- `src/gobby/runner.py` — no-edit-reason: it starts the lifecycle manager and reads the memory bundle through unchanged signatures.
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: its interrupted-run reconcile call keeps the same signature and receives no IDs when gdaemon owns the jobs.
+- `src/gobby/runner_init/project_purge.py` — no-edit-reason: it reads the memory manager through the unchanged property.
+- `src/gobby/runner_lifecycle.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
+- `src/gobby/runner_lifecycle_subsystems.py` — no-edit-reason: it calls the gated `rebuild_vector_store` through the unchanged signature.
+- `src/gobby/runner_maintenance/__init__.py` — no-edit-reason: it re-exports `rebuild_vector_store` by name.
+- `src/gobby/servers/http.py` — no-edit-reason: it reads the memory manager through the unchanged property.
+- `tests/ai/test_ai_runner_lease_lifecycle.py` — no-edit-reason: the autouse fixture clears the latch, so Python keeps its jobs.
+- `tests/memory/test_dream_summaries.py` — no-edit-reason: the autouse fixture clears the latch, so the reconcile still marks runs.
+- `tests/memory/test_indexing_service.py` — no-edit-reason: the autouse fixture clears the latch, so the scope repair still starts.
+- `tests/servers/routes/test_admin.py` — no-edit-reason: it reads the memory manager through the unchanged property.
+- `tests/sessions/test_sessions_lifecycle.py` — no-edit-reason: the autouse fixture clears the latch, so the queue and purge still run.
+- `tests/test_runner_approval_timeout.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
+- `tests/test_runner_bin_freshness.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
+- `tests/test_runner_init.py` — no-edit-reason: the autouse fixture clears the latch, so memory startup is unchanged.
+- `tests/test_runner_lifecycle.py` — no-edit-reason: the autouse fixture clears the latch, so the periodic spawns are unchanged.
+- `tests/test_runner_lifecycle_periodic.py` — no-edit-reason: the autouse fixture clears the latch, so the reconcile spawn is unchanged.
+- `tests/test_runner_maintenance_startup.py` — no-edit-reason: the autouse fixture clears the latch, so the reconcile spawn is unchanged.
+- `tests/test_runner_resource_monitor.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
+- `tests/test_runner_skill_maintenance.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
+- `tests/test_runner_workflow_audit_maintenance.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
+
+**Research context:** Python runs six memory jobs outside any ledger row,
+all hub-only. `src/gobby/sessions/lifecycle.py::SessionLifecycleManager._kg_queue_loop`
+runs `_process_pending_graph_memories` every
+`knowledge_graph_queue.interval_minutes` (default 30): it takes at most
+`batch_size` pending memories
+(`src/gobby/storage/memories_graph.py::get_pending_graph_memories`),
+extracts them one at a time, and calls `mark_graph_processed` or
+`record_graph_failure`, so a memory leaves the queue after
+`max_deterministic_attempts` deterministic failures
+(`src/gobby/config/features.py::KnowledgeGraphQueueConfig`).
+`::_purge_dream_hidden_memories` runs in the shared-row sweep every
+`session_lifecycle.expire_check_interval_minutes`, whether or not dream is
+enabled: it purges delete-hidden memories past `purge_delete_after_days` and
+review-hidden ones past `purge_review_after_days`, reconciling secondary
+stores for the removed rows, then prunes dream run history past
+`memory.dream.run_retention_days`
+(`src/gobby/memory/dream/storage_runs.py::prune_runs`).
+`src/gobby/runner_maintenance_recurring.py::memory_reconcile_loop` runs the
+applied `reconcile_stores` after the shared startup delay, then every 24
+hours, retrying in five minutes after a Qdrant error or a failure. At
+startup, `src/gobby/memory/manager.py::MemoryManager.start_projection_scope_repair`
+runs the secondary scope repair once,
+`src/gobby/memory/dream/cron.py::reconcile_interrupted_dream_runs` marks every
+non-terminal dream run interrupted before the daemon serves, and
+`src/gobby/runner_lifecycle_subsystems.py::_initialize_vector_store`
+rebuilds an empty Qdrant collection from the hub's memories.
+
+`crates/gmemory/src/background.rs` ports the first five over the leaves that
+already hold their logic: 2.4's `extract_memory_graph` and the three queue
+state functions from `memories_graph.py`, 4.1's
+`purge_dream_hidden_memories` and run-history prune, 2.3's applied
+`reconcile_stores` and `ProjectionScopeRepairService.repair` port, and 4.3's
+`reconcile_interrupted_dream_runs`. The sixth needs no native code:
+`reconcile_stores` backfills every memory missing from Qdrant
+(`src/gobby/memory/services/indexing.py`, `missing = storage_ids -
+qdrant_ids`), so the first reconcile pass refills an empty collection. An
+unsupported prompt override is recorded as that memory's deterministic graph
+failure before any model call (Debt not to port).
+
+Ownership switches once at the restart boundary, from the bootstrap
+`front_door.routes.memory` selection (Cron 4.1 and sessions Decision 5
+precedent). `crates/gmemory/src/lib.rs` gains `memory_route`, which resolves
+that entry or the family default. 1.1's push function starts the jobs only
+when it resolves Native, and composes only on hub and standalone
+(Decision 5). It runs the interrupted-run reconcile and the scope repair
+before it returns, so both finish before the family claims a row. The other
+jobs run as tasks the family owns until the serve runtime stops, and every
+write passes 2.1's serving assertion and #25059's fence. `serve.rs` is
+unchanged. `RuntimeState::prepare` already latches the terminal route into
+the Python backend's environment; it latches `GOBBY_MEMORY_ROUTE` from
+`memory_route` the same way. That carries gdaemon's own default to Python,
+so 8.5's change of the default cannot desynchronize the two. Proxy and
+Compare keep Python as the owner.
+
+`src/gobby/memory/job_ownership.py::native_owns_memory_jobs` takes no
+argument and returns true when the latch reads `native`. Python skips at
+each start site: the graph queue task in `SessionLifecycleManager.start`,
+the purge in `_sweep_shared_rows`, the `memory-reconcile` spawn in
+`start_periodic_tasks`, both `start_projection_scope_repair` calls in
+`services.py`, `reconcile_interrupted_dream_runs` (it returns no IDs) and
+`rebuild_vector_store` (it logs that gdaemon owns the rebuild and returns).
+The interrupted-run gate is required, not a tidy-up: Python's backend
+finishes startup after gdaemon serves, and its reconcile would mark a live
+native run interrupted. The rebuild gate sits in the callee because
+`runner_lifecycle_subsystems.py` (863 lines) still logs that it scheduled
+the rebuild; the gated callee's log line follows it. Python's own
+lease-recovery repair (`src/gobby/runner_init/services.py::_request_memory_projection_repair`)
+stays with Python's serving lease until 8.6; reconciliation is idempotent
+under 2.3's per-memory advisory lock. `tests/conftest.py` clears the new
+latch beside the terminal one, because gdaemon exports its latches to agent
+shells.
+
+**Granularity:** Five native jobs and their Python gates form one ownership
+switch. Each job calls logic an earlier leaf already ports, so this leaf
+adds scheduling, ownership and the gates only.
+
+**Acceptance:**
+
+- 7.3.1 - The graph queue job processes at most `batch_size` pending
+  memories per interval in order, marks successes processed, records
+  failures, and removes a memory after `max_deterministic_attempts`
+  deterministic failures, matching Python's queue state; an unsupported
+  prompt override records a deterministic failure without a model call.
+  test: `crates/gmemory/tests/background.rs::graph_queue_matches_python`.
+- 7.3.2 - The purge job purges delete-hidden and review-hidden memories past
+  their grace windows whether or not dream is enabled, reconciles secondary
+  stores for removed rows, and prunes run history past
+  `run_retention_days`. test: `crates/gmemory/tests/background.rs::dream_hidden_purge_matches_python`.
+- 7.3.3 - The reconcile job runs its first applied pass after the startup
+  delay and then daily, retries in five minutes after a Qdrant error or a
+  failure, and refills an empty memories collection.
+  test: `crates/gmemory/tests/background.rs::reconcile_job_matches_python`.
+- 7.3.4 - Interrupted-run reconciliation and the scope repair run once
+  before the family claims a row, so a run admitted afterwards is never
+  marked interrupted. test: `crates/gmemory/tests/background.rs::startup_jobs_finish_before_serving`.
+- 7.3.5 - Jobs start only when the resolved memory route is Native on hub
+  and standalone; Proxy, Compare and a node start none, and
+  `memory_route` resolves the configured entry or the family default that
+  the latch carries. test: `crates/gmemory/tests/background.rs::jobs_follow_the_memory_route`.
+- 7.3.6 - With the latch set to `native`, every Python start site is a no-op
+  and a dream run that native starts during Python's startup is not marked
+  interrupted; with the latch absent or `proxy` or `compare`, Python's jobs
+  run unchanged. test: `tests/memory/test_native_job_ownership.py::test_python_jobs_follow_the_memory_latch`.
+
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test background`
+with isolated database, Qdrant, FalkorDB and model stubs;
+`cargo check -p gobby-daemon`; the Python test with the protected prefix,
+`tests/sessions/test_sessions_lifecycle.py`, `tests/test_runner_lifecycle.py`
+and `tests/test_runner_maintenance_startup.py`; scoped Ruff and mypy with a
+changed-test type audit.
+
 ## P8: Admission, activation and ledger
 `kind: framing`
 
-### 8.1 Native admission binding for memory rows [category: code] (depends: 7.2, #25046, #25068)
+### 8.1 Native admission binding for memory rows [category: code] (depends: 7.3, #25046, #25068)
 `kind: deliverable`
 
 Targets:
