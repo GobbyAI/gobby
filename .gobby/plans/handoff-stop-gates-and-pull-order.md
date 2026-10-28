@@ -58,7 +58,8 @@ the same counts.
 ## Constraints
 `kind: framing`
 
-- Resume-turn context requirement (Orchestrator ruling on PA-01, 2026-10-28, Option 1):
+- Resume-turn context requirement (Orchestrator ruling on PA-01, 2026-10-28, Option 1,
+  approved by Josh as answer A on 2026-10-28):
   until the handoff is pulled, the resume turn carries no memory index, no review
   lessons and no skill-load directives. Three one-shot injections are allowed resume-turn
   context and named as exemptions: Seat Guidance (`roles/inject-seat-common.yaml`), Agent
@@ -68,8 +69,7 @@ the same counts.
   context, and the seat guidance itself requires `get_handoff` during holds. No
   turn_start follows the pull until the next prompt, so a guard would leave an autonomous
   seat without its policy and workspace path for the whole resumed turn. This replaces
-  the original goal wording "no injected payload"; the Orchestrator flags the change to
-  Josh with the stamped plan.
+  the original goal wording "no injected payload". Josh approved the narrowing.
 - 2.3 edits a bundled rule template, which reaches the installed rule table only at
   daemon start. It is live after a merge and an ordinary daemon restart announced with a
   `global` `send_message`. It needs no cutover, binary install or quiet window. 4.1
@@ -270,3 +270,18 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## V1 Plan Changelog
+`kind: framing`
+
+- 2026-10-28: Staleness revision and council pass by Plan Writer gobby#18340 under
+  #23669. P1-P3 (1.1, 1.2, 2.1, 2.2, 3.1) were dropped to the Delivered Scope table as
+  landed through #22638 and #24421. 4.1 is kept and gains the removal of the dead
+  `GOBBY_RUN_BUILD_CANARY` branch. Plan Enhancer gobby#18354 converged with no
+  suggestions. Plan Adversary gobby#18349 raised PA-01: the original P2 goal of no
+  injected payload before the pull was unmet by the seat injectors. The Orchestrator
+  ruled Option 1 and Josh approved it as answer A: Seat Guidance, Agent Workspace and the
+  proxy-retry notice are named exemptions, and the plan-mode skill directive gets the
+  pull guard as new deliverable 2.3. The adversary's two minor corrections (E1 lint scope
+  and report routing) were applied at `6bd7de5`. Writer and adversary reached consensus
+  on this revision.

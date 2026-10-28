@@ -152,7 +152,8 @@ branch found in this pass.
   and the seat guidance itself says to call `gobby-sessions:get_handoff` even during a hold.
   The proxy-retry notice (`retry-gobby-tools-after-proxy-connects`) is exempt for the same
   reason. The Orchestrator ruled on adversary finding PA-01 on 2026-10-28 (Option 1): all
-  three are allowed resume-turn context, exempted by name.
+  three are allowed resume-turn context, exempted by name. Josh approved the ruling as
+  answer A the same day.
   `plan-mode/handle-plan-mode-entry.yaml` is different. It is a skill-load directive, and
   the original E1 excluded those from the resume turn by name. `preserve-context-on-compact`
   and `reset-plan-mode-on-session-start` reset `plan_skill_directive_delivered`, so the
