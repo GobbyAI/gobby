@@ -1703,8 +1703,8 @@ fn bound_search_with_matching_index_remains_complete() -> anyhow::Result<()> {
 }
 
 #[test]
-fn bound_search_reports_incomplete_for_bound_files_missing_from_the_live_index() -> anyhow::Result<()>
-{
+fn bound_search_reports_incomplete_for_bound_files_missing_from_the_live_index()
+-> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let mut facts = FakeFacts::for_source(&binding);
     facts.files.clear();
@@ -1714,8 +1714,13 @@ fn bound_search_reports_incomplete_for_bound_files_missing_from_the_live_index()
         for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
             let mut search = search_selector(lane, "beta");
             search.paths = paths.clone();
-            let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
-            assert_ne!(response.completeness, Completeness::CompleteEmpty, "{paths:?} {lane:?}");
+            let response =
+                library.query(request(&binding, EvidenceOperation::Search { search }))?;
+            assert_ne!(
+                response.completeness,
+                Completeness::CompleteEmpty,
+                "{paths:?} {lane:?}"
+            );
             assert!(!response.complete, "{paths:?} {lane:?}");
         }
     }
@@ -1738,10 +1743,114 @@ fn bound_search_ignores_index_files_absent_from_the_bound_commit() -> anyhow::Re
         for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
             let mut search = search_selector(lane, "beta");
             search.paths = paths.clone();
-            let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
-            assert_eq!(response.completeness, Completeness::Complete, "{paths:?} {lane:?}");
+            let response =
+                library.query(request(&binding, EvidenceOperation::Search { search }))?;
+            assert_eq!(
+                response.completeness,
+                Completeness::Complete,
+                "{paths:?} {lane:?}"
+            );
             assert_eq!(response.items.len(), 2, "{paths:?} {lane:?}");
         }
+    }
+    Ok(())
+}
+
+fn bound_search_after_path_removal(rename: bool) -> anyhow::Result<Vec<(Completeness, bool)>> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    if rename {
+        git(temporary.path(), &["mv", "src/lib.rs", "src/renamed.rs"])?;
+        facts.files[0].id = FileId::new("src/renamed.rs");
+        facts.files[0].path = "src/renamed.rs".to_string();
+        // FakeFacts search hits model the old path, which has no live content now.
+        facts.indexed_source.clear();
+    } else {
+        git(temporary.path(), &["rm", "src/lib.rs"])?;
+        facts.files.clear();
+        facts.indexed_source.clear();
+    }
+    assert_ne!(
+        commit(temporary.path(), "remove bound path")?,
+        binding.commit_oid
+    );
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    let mut outcomes = Vec::new();
+    for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
+        let mut search = search_selector(lane, "beta");
+        search.paths = vec!["src/lib.rs".to_string()];
+        let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
+        outcomes.push((response.completeness, response.complete));
+    }
+    Ok(outcomes)
+}
+
+#[test]
+fn bound_search_never_reports_complete_empty_after_path_deletion() -> anyhow::Result<()> {
+    for (completeness, complete) in bound_search_after_path_removal(false)? {
+        assert_ne!(completeness, Completeness::CompleteEmpty);
+        assert!(!complete, "deleted bound path remains uncovered");
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_search_never_reports_complete_empty_after_path_rename() -> anyhow::Result<()> {
+    for (completeness, complete) in bound_search_after_path_removal(true)? {
+        assert_ne!(completeness, Completeness::CompleteEmpty);
+        assert!(!complete, "renamed bound path remains uncovered");
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_search_warns_when_bound_path_is_not_indexed() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.files.clear();
+    facts.indexed_source.clear();
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
+        let mut search = search_selector(lane, "beta");
+        search.paths = vec!["src/lib.rs".to_string()];
+        let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
+        assert!(
+            response.warnings.iter().any(|warning| {
+                warning.code == "bound_path_not_indexed"
+                    && warning.path.as_deref() == Some("src/lib.rs")
+            }),
+            "{lane:?}: {:?}",
+            response.warnings
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_search_python_filter_excludes_unindexed_rust_paths() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    facts.files.clear();
+    facts.indexed_source.clear();
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
+        let mut search = search_selector(lane, "beta");
+        search.paths = vec!["src".to_string()];
+        search.language = Some("python".to_string());
+        let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
+        assert!(response.complete, "{lane:?}");
+        assert_eq!(
+            response.completeness,
+            Completeness::CompleteEmpty,
+            "{lane:?}"
+        );
+        assert!(response.items.is_empty(), "{lane:?}");
+        assert!(
+            !response
+                .warnings
+                .iter()
+                .any(|warning| warning.code == "bound_path_not_indexed")
+        );
     }
     Ok(())
 }
