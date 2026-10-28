@@ -40,6 +40,9 @@ from gobby.storage.tasks._lifecycle import (
     link_commit as _link_commit,
 )
 from gobby.storage.tasks._lifecycle import (
+    move_commit_to_tip as _move_commit_to_tip,
+)
+from gobby.storage.tasks._lifecycle import (
     remove_label as _remove_label,
 )
 from gobby.storage.tasks._lifecycle import (
@@ -340,6 +343,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateM
         if _link_commit(self.db, task_id, commit_sha):
             self._notify_listeners()
         return self.get_task(task_id)
+
+    def move_commit_to_tip(self, task_id: str, commit_sha: str) -> None:
+        """Move a linked commit to the task's tip, the last entry of its commits array."""
+        _move_commit_to_tip(self.db, task_id, commit_sha)
+        self._notify_listeners()
 
     def unlink_commit(self, task_id: str, commit_sha: str) -> Task:
         """Remove ``commit_sha`` from the task's commits array, failing when it is not linked."""
