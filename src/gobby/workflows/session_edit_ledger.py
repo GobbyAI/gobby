@@ -74,13 +74,13 @@ class SessionEditLedger(ABC):
         stamp = time.time() if edited_at is None else edited_at
 
         from gobby.workflows.task_claim_state import (
+            TASK_EDIT_LEDGER_KEYS,
             active_task_id_for_edit,
             assert_task_edit_paths_available,
+            attribute_paths_to_task,
             normalize_task_checkout_root,
-            record_task_content_hashes,
-            record_task_live_edit_starts,
+            record_unclaimed_edits,
             task_selected_at,
-            transfer_live_checkout_paths,
         )
 
         normalized_checkout = normalize_task_checkout_root(checkout_root)
@@ -139,90 +139,13 @@ class SessionEditLedger(ABC):
                 variables["session_dirty_file_checkouts"] = dirty_checkouts
 
             if task_id:
-                record_task_live_edit_starts(
-                    variables, task_id, normalized_paths, normalized_checkout, stamp
+                attribute_paths_to_task(
+                    variables, task_id, normalized_paths, normalized_checkout, digests, stamp
                 )
-                if normalized_checkout is not None:
-                    transfer_live_checkout_paths(
-                        variables, task_id, normalized_paths, normalized_checkout
-                    )
-                raw_task_files = variables.get("task_edited_files") or {}
-                task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
-                stored_for_task = task_files.get(task_id, [])
-                if not isinstance(stored_for_task, list):
-                    stored_for_task = [stored_for_task] if stored_for_task else []
-                files_for_task = list(dict.fromkeys(str(file) for file in stored_for_task if file))
-                files_for_task.extend(
-                    path for path in normalized_paths if path not in files_for_task
+            elif normalized_checkout is not None:
+                record_unclaimed_edits(
+                    variables, normalized_checkout, normalized_paths, digests, stamp
                 )
-                task_files = dict(task_files)
-                task_files[task_id] = files_for_task
-                variables["task_edited_files"] = task_files
-                # Epoch seconds of the newest edit per path. The claim window reads it
-                # to tell this task's own edits from older dirt. A stale replay never
-                # lowers a newer stamp.
-                raw_times = variables.get("task_edited_file_times") or {}
-                task_times = raw_times if isinstance(raw_times, dict) else {}
-                raw_task_times = task_times.get(task_id, {})
-                times_for_task = dict(raw_task_times) if isinstance(raw_task_times, dict) else {}
-                for path in normalized_paths:
-                    previous = times_for_task.get(path)
-                    times_for_task[path] = (
-                        max(float(previous), stamp) if isinstance(previous, (int, float)) else stamp
-                    )
-                task_times = dict(task_times)
-                task_times[task_id] = times_for_task
-                variables["task_edited_file_times"] = task_times
-                if normalized_checkout is not None:
-                    # Path-only times cannot distinguish edits of the same path
-                    # in different checkouts or different claims.
-                    raw_pair_times = variables.get("task_edited_checkout_times")
-                    pair_times = dict(raw_pair_times) if isinstance(raw_pair_times, dict) else {}
-                    raw_task_pairs = pair_times.get(task_id)
-                    task_pairs = dict(raw_task_pairs) if isinstance(raw_task_pairs, dict) else {}
-                    raw_root_times = task_pairs.get(normalized_checkout)
-                    root_times = dict(raw_root_times) if isinstance(raw_root_times, dict) else {}
-                    for path in normalized_paths:
-                        previous = root_times.get(path)
-                        root_times[path] = (
-                            max(float(previous), stamp)
-                            if isinstance(previous, (int, float)) and not isinstance(previous, bool)
-                            else stamp
-                        )
-                    task_pairs[normalized_checkout] = root_times
-                    pair_times[task_id] = task_pairs
-                    variables["task_edited_checkout_times"] = pair_times
-                    record_task_content_hashes(variables, task_id, normalized_checkout, digests)
-                    # Clean paths leave the live starts only. This live ledger keeps
-                    # the pair until a later claim takes the path with an edit.
-                    variables.setdefault(
-                        "task_edited_file_checkouts_history_started_at", time.time()
-                    )
-                    for ledger_name in (
-                        "task_edited_file_checkouts",
-                        "task_edited_file_checkouts_history",
-                    ):
-                        raw_checkouts = variables.get(ledger_name) or {}
-                        task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
-                        raw_task_checkouts = task_checkouts.get(task_id, {})
-                        checkouts_for_task = (
-                            raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
-                        )
-                        stored_for_checkout = checkouts_for_task.get(normalized_checkout, [])
-                        files_for_checkout = (
-                            stored_for_checkout if isinstance(stored_for_checkout, list) else []
-                        )
-                        files_for_checkout = list(
-                            dict.fromkeys(str(file) for file in files_for_checkout if file)
-                        )
-                        files_for_checkout.extend(
-                            path for path in normalized_paths if path not in files_for_checkout
-                        )
-                        checkouts_for_task = dict(checkouts_for_task)
-                        checkouts_for_task[normalized_checkout] = files_for_checkout
-                        task_checkouts = dict(task_checkouts)
-                        task_checkouts[task_id] = checkouts_for_task
-                        variables[ledger_name] = task_checkouts
             return True, True
 
         return self._mutate_variables(
@@ -234,14 +157,8 @@ class SessionEditLedger(ABC):
                 "session_edited_files",
                 "session_dirty_files",
                 "session_dirty_file_checkouts",
-                "task_edited_files",
-                "task_edited_file_times",
-                "task_edited_checkout_times",
-                "task_edited_checkout_hashes",
-                "task_live_edit_starts",
-                "task_edited_file_checkouts",
-                "task_edited_file_checkouts_history",
-                "task_edited_file_checkouts_history_started_at",
+                "session_unclaimed_edits",
+                *TASK_EDIT_LEDGER_KEYS,
             ),
         )
 

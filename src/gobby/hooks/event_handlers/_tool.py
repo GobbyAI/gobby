@@ -642,9 +642,15 @@ class ToolEventHandlerMixin(EventHandlersBase):
             edited_at = event.timestamp.timestamp()
             variables = variable_manager.get_variables(session_id)
             task_id = task_selected_at(variables, started_at) if started_at is not None else None
+            # A native write names its paths, so an overlapping shell call's diff cannot make
+            # them foreign: the author owns them, and its overlap record gives way.
+            structured = input_data.get("tool_name") != "Bash"
             for checkout_root, paths in paths_by_checkout.items():
-                # A path an overlapping call changed stays foreign, so this call does not claim it.
+                # Paths an overlapping shell call changed stay foreign; this call skips them.
                 overlapped = overlapped_worktree_paths(variables, checkout_root)
+                if structured and not overlapped.isdisjoint(paths):
+                    variable_manager.clear_overlapped_paths(session_id, checkout_root, paths)
+                    overlapped = overlapped.difference(paths)
                 paths = [path for path in paths if path not in overlapped]
                 if task_id is not None:
                     landed = self._paths_landed_before_edit(

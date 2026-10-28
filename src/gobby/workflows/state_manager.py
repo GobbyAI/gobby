@@ -490,13 +490,29 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry):
 
     def select_task_claim(self, session_id: str, task_id: str, ref: str) -> bool:
         """Select a canonically owned task while the caller retains its task row lock."""
-        from gobby.workflows.task_claim_state import add_claimed_task
+        from gobby.workflows.task_claim_state import (
+            TASK_EDIT_LEDGER_KEYS,
+            add_claimed_task,
+            adopt_unclaimed_edits,
+        )
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             variables.update(add_claimed_task(variables, task_id, ref))
+            # A write this session made before any claim becomes this task's once it selects it.
+            adopt_unclaimed_edits(variables, task_id)
             return True, True
 
-        return self._mutate_variables(session_id, mutate, keys=("claimed_tasks", "task_claimed"))
+        return self._mutate_variables(
+            session_id,
+            mutate,
+            keys=(
+                "claimed_tasks",
+                "task_claimed",
+                "session_dirty_file_checkouts",
+                "session_unclaimed_edits",
+                *TASK_EDIT_LEDGER_KEYS,
+            ),
+        )
 
     def release_task_claim(self, session_id: str, task_id: str) -> bool:
         """Release one claim under the variable lock, preserving edit attribution."""

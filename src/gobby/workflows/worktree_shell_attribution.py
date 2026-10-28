@@ -25,7 +25,7 @@ import os
 import re
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -377,6 +377,23 @@ class WorktreeShellCallRegistry(ABC):
             return None, True
 
         self._mutate_variables(session_id, settle, keys=(OVERLAPS_VARIABLE,))
+
+    def clear_overlapped_paths(self, session_id: str, root: str, paths: Collection[str]) -> None:
+        """Drop paths a native structured write named from this session's overlap record."""
+        named = set(paths)
+
+        def clear(variables: dict[str, Any]) -> tuple[None, bool]:
+            raw = variables.get(OVERLAPS_VARIABLE)
+            records = dict(raw) if isinstance(raw, dict) else {}
+            kept = sorted(path for path in records.get(root, []) if path not in named)
+            if kept:
+                records[root] = kept
+            else:
+                records.pop(root, None)
+            variables[OVERLAPS_VARIABLE] = records or None
+            return None, True
+
+        self._mutate_variables(session_id, clear, keys=(OVERLAPS_VARIABLE,))
 
 
 def attribute_settled_call(

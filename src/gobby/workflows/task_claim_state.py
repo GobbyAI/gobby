@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import os
 import posixpath
+import time
 from collections.abc import Collection
 from datetime import UTC, datetime
 from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from gobby.workflows.checkout_fingerprint import path_fingerprints
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -668,3 +671,168 @@ def record_task_content_hashes(
 def target_task_has_edits(variables: dict[str, Any], task_id: str | None) -> bool:
     """Return whether the resolved task has attributed edit paths."""
     return bool(task_id and _task_edited_files(variables).get(task_id))
+
+
+TASK_EDIT_LEDGER_KEYS = (
+    "task_edited_files",
+    "task_edited_file_times",
+    "task_edited_checkout_times",
+    "task_edited_checkout_hashes",
+    "task_live_edit_starts",
+    "task_edited_file_checkouts",
+    "task_edited_file_checkouts_history",
+    "task_edited_file_checkouts_history_started_at",
+)
+
+
+def attribute_paths_to_task(
+    variables: dict[str, Any],
+    task_id: str,
+    paths: list[str],
+    checkout: str | None,
+    digests: dict[str, str | None],
+    stamp: float,
+) -> None:
+    """Record ``paths`` as ``task_id``'s edits in ``checkout``, each with the content it left."""
+    record_task_live_edit_starts(variables, task_id, paths, checkout, stamp)
+    if checkout is not None:
+        transfer_live_checkout_paths(variables, task_id, paths, checkout)
+    raw_task_files = variables.get("task_edited_files") or {}
+    task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
+    stored_for_task = task_files.get(task_id, [])
+    if not isinstance(stored_for_task, list):
+        stored_for_task = [stored_for_task] if stored_for_task else []
+    files_for_task = list(dict.fromkeys(str(file) for file in stored_for_task if file))
+    files_for_task.extend(path for path in paths if path not in files_for_task)
+    task_files = dict(task_files)
+    task_files[task_id] = files_for_task
+    variables["task_edited_files"] = task_files
+    # Epoch seconds of the newest edit per path. The claim window reads it
+    # to tell this task's own edits from older dirt. A stale replay never
+    # lowers a newer stamp.
+    raw_times = variables.get("task_edited_file_times") or {}
+    task_times = raw_times if isinstance(raw_times, dict) else {}
+    raw_task_times = task_times.get(task_id, {})
+    times_for_task = dict(raw_task_times) if isinstance(raw_task_times, dict) else {}
+    for path in paths:
+        previous = times_for_task.get(path)
+        times_for_task[path] = (
+            max(float(previous), stamp) if isinstance(previous, (int, float)) else stamp
+        )
+    task_times = dict(task_times)
+    task_times[task_id] = times_for_task
+    variables["task_edited_file_times"] = task_times
+    if checkout is not None:
+        # Path-only times cannot distinguish edits of the same path
+        # in different checkouts or different claims.
+        raw_pair_times = variables.get("task_edited_checkout_times")
+        pair_times = dict(raw_pair_times) if isinstance(raw_pair_times, dict) else {}
+        raw_task_pairs = pair_times.get(task_id)
+        task_pairs = dict(raw_task_pairs) if isinstance(raw_task_pairs, dict) else {}
+        raw_root_times = task_pairs.get(checkout)
+        root_times = dict(raw_root_times) if isinstance(raw_root_times, dict) else {}
+        for path in paths:
+            previous = root_times.get(path)
+            root_times[path] = (
+                max(float(previous), stamp)
+                if isinstance(previous, (int, float)) and not isinstance(previous, bool)
+                else stamp
+            )
+        task_pairs[checkout] = root_times
+        pair_times[task_id] = task_pairs
+        variables["task_edited_checkout_times"] = pair_times
+        record_task_content_hashes(variables, task_id, checkout, digests)
+        # Clean paths leave the live starts only. This live ledger keeps
+        # the pair until a later claim takes the path with an edit.
+        variables.setdefault("task_edited_file_checkouts_history_started_at", time.time())
+        for ledger_name in (
+            "task_edited_file_checkouts",
+            "task_edited_file_checkouts_history",
+        ):
+            raw_checkouts = variables.get(ledger_name) or {}
+            task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
+            raw_task_checkouts = task_checkouts.get(task_id, {})
+            checkouts_for_task = raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
+            stored_for_checkout = checkouts_for_task.get(checkout, [])
+            files_for_checkout = (
+                stored_for_checkout if isinstance(stored_for_checkout, list) else []
+            )
+            files_for_checkout = list(
+                dict.fromkeys(str(file) for file in files_for_checkout if file)
+            )
+            files_for_checkout.extend(path for path in paths if path not in files_for_checkout)
+            checkouts_for_task = dict(checkouts_for_task)
+            checkouts_for_task[checkout] = files_for_checkout
+            task_checkouts = dict(task_checkouts)
+            task_checkouts[task_id] = checkouts_for_task
+            variables[ledger_name] = task_checkouts
+
+
+def record_unclaimed_edits(
+    variables: dict[str, Any],
+    checkout: str,
+    paths: list[str],
+    digests: dict[str, str | None],
+    stamp: float,
+) -> None:
+    """Hold a write made before any claim, with the content it left, until a claim adopts it."""
+    root = normalize_task_checkout_root(checkout)
+    if root is None or not paths:
+        return
+    raw = variables.get("session_unclaimed_edits")
+    all_records = dict(raw) if isinstance(raw, dict) else {}
+    raw_root = all_records.get(root)
+    root_records = dict(raw_root) if isinstance(raw_root, dict) else {}
+    for path in paths:
+        root_records[path] = {"digest": digests.get(path), "edited_at": stamp}
+    all_records[root] = root_records
+    variables["session_unclaimed_edits"] = all_records
+
+
+def adopt_unclaimed_edits(variables: dict[str, Any], task_id: str) -> None:
+    """Give ``task_id`` the session's pre-claim writes that still hold the content they left.
+
+    A path that another session or an operator changed since the write, or that another task's
+    live attribution holds, stays out. Every pending record is settled here, so the next claim
+    starts clean.
+    """
+    raw = variables.get("session_unclaimed_edits")
+    variables["session_unclaimed_edits"] = None
+    if not isinstance(raw, dict):
+        return
+    raw_dirty = variables.get("session_dirty_file_checkouts")
+    dirty_checkouts = raw_dirty if isinstance(raw_dirty, dict) else {}
+    # Held means another task's live attribution interval, not retained checkout history.
+    raw_starts = variables.get("task_live_edit_starts")
+    live_starts = raw_starts if isinstance(raw_starts, dict) else {}
+    for root, records in raw.items():
+        if not isinstance(records, dict):
+            continue
+        still_dirty = set(dirty_checkouts.get(root) or [])
+        held = {
+            path
+            for other_id, checkouts in live_starts.items()
+            if other_id != task_id and isinstance(checkouts, dict)
+            for path in checkouts.get(root) or []
+        }
+        candidates = {
+            path: record
+            for path, record in records.items()
+            if isinstance(record, dict) and path in still_dirty and path not in held
+        }
+        current = path_fingerprints(Path(root), candidates)
+        adopted = {
+            path: record
+            for path, record in candidates.items()
+            if current.get(path) == record.get("digest")
+        }
+        if not adopted:
+            continue
+        attribute_paths_to_task(
+            variables,
+            task_id,
+            sorted(adopted),
+            root,
+            {path: record.get("digest") for path, record in adopted.items()},
+            max(float(record.get("edited_at", 0.0)) for record in adopted.values()),
+        )
