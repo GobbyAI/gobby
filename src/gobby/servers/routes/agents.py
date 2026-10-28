@@ -750,6 +750,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     ) -> dict[str, Any]:
         try:
             from gobby.storage.agents import LocalAgentRunManager
+            from gobby.storage.sessions._lineage_discovery import nearest_live_parent_ids
 
             def load_runs() -> tuple[list[dict[str, Any]], list[str]]:
                 manager = LocalAgentRunManager(server.services.database)
@@ -757,6 +758,13 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     status=status, limit=limit, project_id=project_id
                 )
                 projections = [run.to_list_dict() for run in records]
+                live_parents = nearest_live_parent_ids(
+                    server.services.database, [d.get("parent_session_id") for d in projections]
+                )
+                for projection in projections:
+                    parent_id = projection.get("parent_session_id")
+                    if parent_id is not None:
+                        projection["parent_session_id"] = live_parents[parent_id]
                 session_ids = [run.child_session_id for run in records if run.child_session_id]
                 return projections, session_ids
 
