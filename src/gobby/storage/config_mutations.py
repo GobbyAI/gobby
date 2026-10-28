@@ -10,7 +10,7 @@ import re
 from collections.abc import Collection, Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, cast
+from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
@@ -41,7 +41,7 @@ from gobby.storage.config_repository import (
     SecretBinding,
     registry_is_secret,
 )
-from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.hub.protocol import EmbeddingSwitchJournalMutation, HubDatabase, Transaction
 from gobby.storage.secret_names import normalize_secret_name
 from gobby.storage.secrets import SecretStore
 from gobby.utils.datetime import utc_now
@@ -128,13 +128,6 @@ class ConfigMutationResult:
 
     revision: int
     changed_keys: frozenset[str]
-
-
-@dataclass(frozen=True, slots=True)
-class EmbeddingSwitchJournalMutation:
-    """Serialize embedding admission with every configuration mutation."""
-
-    PRIORITY: ClassVar[int] = 800
 
 
 def embedding_mutation_context(db: Any) -> AbstractContextManager[Transaction]:

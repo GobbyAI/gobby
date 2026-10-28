@@ -36,12 +36,16 @@ from gobby.storage.hub.operation_deadline import current_database_operation_dead
 from gobby.storage.hub.pool_census import maybe_start_activity_census
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
+    AgentStepInstanceMutation,
     AgentTaskClaimMutation,
     BuildDryRunMutation,
     ChatAttachmentMutation,
     CronRunAdmission,
     Cursor,
     DispatchMutexRow,
+    EmbeddingSwitchJournalMutation,
+    ExpansionApplyMutation,
+    IdentityBootstrapMutation,
     IntegrationWorkspaceMutex,
     IsolationRegistryReconciliation,
     LockAcquisitionOrderError,
@@ -60,11 +64,13 @@ from gobby.storage.hub.protocol import (
     StageReviewApprovalMutation,
     StageReviewRejectionMutation,
     SystemSessionBootstrap,
+    TaskDependencyMutation,
     TaskLifecycleMutation,
     TaskSeqAllocation,
     TaskSubtreeCascade,
     Transaction,
     WebChatSessionBootstrap,
+    WorkflowDefinitionMutation,
 )
 from gobby.storage.hub.read_scope import record_closed_writes, written_tables
 from gobby.storage.hub.transaction_deadline import TransactionDeadline, lone_read_timeouts
@@ -523,10 +529,6 @@ class _PostgresTransaction:
             raise
 
     def _acquire_lock_target(self, lock: LockTarget) -> None:
-        if isinstance(lock, TaskSeqAllocation):
-            self._acquire_advisory_lock(f"task_seq:{lock.project_id}")
-            return
-
         for lock_key in advisory_lock_keys(lock):
             self._acquire_advisory_lock(lock_key)
 
@@ -904,9 +906,24 @@ def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
         return (f"task_lifecycle:{lock.task_id}",)
     if isinstance(lock, ChatAttachmentMutation):
         return ("chat_attachment_mutation",)
+    if isinstance(lock, TaskSeqAllocation):
+        return (f"task_seq:{lock.project_id}",)
+    if isinstance(lock, ExpansionApplyMutation):
+        return (f"expansion_apply:{lock.parent_task_id}",)
+    if isinstance(lock, TaskDependencyMutation):
+        return ("task_dependency_mutation",)
+    if isinstance(lock, SessionVariableMutation):
+        return (f"session_variable:{lock.session_id}",)
+    if isinstance(lock, WorkflowDefinitionMutation):
+        return (f"workflow_definition:{lock.definition_id}",)
+    if isinstance(lock, AgentStepInstanceMutation):
+        return (f"agent_step_instance:{lock.session_id}",)
+    if isinstance(lock, IdentityBootstrapMutation):
+        return ("identity_bootstrap_mutation",)
+    if isinstance(lock, EmbeddingSwitchJournalMutation):
+        return ("embedding_switch_journal_mutation",)
 
-    lock_type = type(lock)
-    return (f"{lock_type.__module__}.{lock_type.__qualname__}:{lock}",)
+    raise TypeError(f"No advisory lock key declared for {type(lock).__qualname__}")
 
 
 def _acquire_lock(stack: list[LockTarget], lock: LockTarget) -> None:
