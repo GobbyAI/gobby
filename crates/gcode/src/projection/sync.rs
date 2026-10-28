@@ -730,4 +730,4 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

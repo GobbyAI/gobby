@@ -100,6 +100,11 @@ fn semantic_lane(ctx: &Context, query: &str, fetch_limit: usize) -> SemanticLane
     SemanticLane::Hits(code_symbols::semantic_search(ctx, query, fetch_limit))
 }
 
+#[cfg(test)]
+pub(crate) fn semantic_lane_for_test(ctx: &Context, query: &str, limit: usize) -> SemanticLane {
+    semantic_lane(ctx, query, limit)
+}
+
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let expanded_paths = fts::expand_paths(options.paths);

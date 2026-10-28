@@ -38,6 +38,7 @@ impl Collaborator {
                         .set_read_timeout(Some(Duration::from_secs(5)))
                         .expect("request timeout");
                     let request = read_http(&mut stream);
+                    if !request.contains("HTTP/") { continue; }
                     let line = request.lines().next().expect("request line");
                     let body: Value = request
                         .split_once("\r\n\r\n")
@@ -92,7 +93,8 @@ impl Drop for Collaborator {
         self.stop.store(true, Ordering::SeqCst);
         let _ = TcpStream::connect(self.address);
         if let Some(worker) = self.worker.take() {
-            worker.join().expect("collaborator thread");
+            let outcome = worker.join();
+            if !thread::panicking() { outcome.expect("collaborator thread"); }
         }
     }
 }
