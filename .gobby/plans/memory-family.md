@@ -497,7 +497,7 @@ state, never by running the effect twice in production.
   features, `gobby-runtime` for `crates/gruntime/src/config.rs::active_state`
   and the secret store, axum, tokio, serde, serde_json, uuid, chrono, clap
   with `derive` for 7.1, and `reqwest` with `blocking` for 7.2. Only 1.1,
-  2.4, 2.5, 5.1 and 8.2 edit `crates/gmemory/Cargo.toml`; those leaves, 8.5
+  2.4, 2.5 and 5.1 edit `crates/gmemory/Cargo.toml`; those leaves, 8.2, 8.5
   and 8.6 are the only ones that edit `Cargo.lock`.
 - gcore's Qdrant, FalkorDB and embeddings clients are blocking. Async handlers
   call them through `tokio::task::spawn_blocking`.
