@@ -1596,8 +1596,10 @@ then proves linkage through an anchor its response already carries, as
   `src/gobby/storage/task_dependencies.py::TaskDependency.to_dict`. The anchor
   is the row `id`. A present row is compared in full; a missing row means a
   later delete, and the case is Skipped.
-- Task delete and comment delete name a UUID, which nothing can recreate.
-  Absence is Verified, and a row still present is a Mismatch.
+- Task delete and comment delete name a UUID. Absence is Verified. A present
+  comment is a Mismatch, because no path recreates a comment UUID. A present
+  task is Skipped, because 3.11's restore re-inserts tasks by `id`
+  (`src/gobby/sync/tasks.py` inserts with `ON CONFLICT (id) DO NOTHING`).
 - Dependency remove returns only the pair, and a later add can restore the
   same pair under a new edge `id`. Absence is Verified; a present pair is
   Skipped.
@@ -1640,7 +1642,7 @@ outcome is trustworthy compare and replay evidence for this family.
 
 **Acceptance:**
 - 4.2.1 - Read and write comparisons detect a tampered response or post-image, skip concurrent changes and never repeat a mutation. test: `crates/gtasks/tests/compare.rs::compare_is_side_effect_free_and_race_aware`.
-- 4.2.6 - A dependency add or remove, a comment add or delete, or a new list member injected between read legs marks the case Skipped. So does a competing write committed after Python's write and before the first post-image read: a task update, a delete of the added comment or edge, a re-add of the removed edge, or a change that lifts a refusal. A task or comment still present after a delete response is a Mismatch, and an undisturbed case still Passes. test: `crates/gtasks/tests/compare.rs::relation_and_membership_races_skip`.
+- 4.2.6 - A dependency add or remove, a comment add or delete, or a new list member injected between read legs marks the case Skipped. So does a competing write committed after Python's write and before the first post-image read: a task update, a delete of the added comment or edge, a re-add of the removed edge, a default-backup restore after a task delete, or a change that lifts a refusal. A comment still present after a delete response is a Mismatch, and an undisturbed case still Passes. test: `crates/gtasks/tests/compare.rs::relation_and_membership_races_skip`.
 - 4.2.2 - The sixteen claimed cases replay with ordinary parity or exact cited #24963 replacements, keep Python origin and need no Python backend for native legs. test: `tests/e2e/test_tasks_family.py::test_native_tasks_corpus_matches_python`.
 - 4.2.3 - Controlled compare covers every claimed route with stable evidence, at least one ordinary Passed case and zero unwaived mismatches, and all-Skipped or unwaived-Skipped readiness fails. test: `tests/e2e/test_tasks_family.py::test_compare_has_coverage_without_double_effects`.
 - 4.2.4 - A paired node forwards `/api/tasks` requests to the hub's native family without a database credential. test: `tests/e2e/test_tasks_family.py::test_node_routes_tasks_to_hub`.
@@ -2182,5 +2184,7 @@ both accepted without a ruling.
 - ADV-5: each write ties its post-image to an anchor its response already
   carries, and a write committed between Python's commit and the first
   post-image read marks the case Skipped (4.2.6). This replaces the two-read
-  bracket.
+  bracket. On re-review, a task still present after a delete is Skipped,
+  because restore can re-insert its UUID; comment-delete presence stays a
+  Mismatch.
 No consensus is claimed.
