@@ -44,14 +44,7 @@ fn stderr_log_level(quiet: bool, rust_log: Option<&str>) -> log::LevelFilter {
 }
 
 pub(super) fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> anyhow::Result<()> {
-    warn_if_freshness_skipped(ctx, disabled);
-    if !disabled {
-        warn_if_busy(
-            ctx,
-            freshness::ensure_fresh(ctx, freshness::FreshnessScope::Project)?,
-        );
-    }
-    Ok(())
+    ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::Project).map(drop)
 }
 
 fn ensure_files_fresh(
@@ -59,14 +52,24 @@ fn ensure_files_fresh(
     disabled: bool,
     files: Vec<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
+    ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::Files(files)).map(drop)
+}
+
+/// Checks freshness for `scope` and returns whether another run held the
+/// project's refresh lock, so the caller can serve the existing index as is.
+pub(super) fn ensure_scope_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+    scope: freshness::FreshnessScope,
+) -> anyhow::Result<bool> {
     warn_if_freshness_skipped(ctx, disabled);
-    if !disabled {
-        warn_if_busy(
-            ctx,
-            freshness::ensure_fresh(ctx, freshness::FreshnessScope::Files(files))?,
-        );
+    if disabled {
+        return Ok(false);
     }
-    Ok(())
+    let status = freshness::ensure_fresh(ctx, scope)?;
+    let busy = matches!(status, freshness::FreshnessStatus::SkippedBusy(_));
+    warn_if_busy(ctx, status);
+    Ok(busy)
 }
 
 pub(super) fn ensure_file_fresh(

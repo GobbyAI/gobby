@@ -140,14 +140,11 @@ pub(super) fn dispatch(
             let paths = resolve_filters(ctx, cwd, paths)?;
             let globs = resolve_globs(ctx, cwd, glob)?;
             let freshness_timings = crate::index::indexer::IndexTimings::new("grep.freshness");
-            match grep_freshness_scope(&ctx.project_root, &paths) {
-                freshness::FreshnessScope::Files(files) => {
-                    super::ensure_files_fresh(ctx, allow_stale, files)?
-                }
-                freshness::FreshnessScope::Project => {
-                    super::ensure_project_fresh(ctx, allow_stale)?
-                }
-            }
+            let refresh_busy = super::ensure_scope_fresh(
+                ctx,
+                allow_stale,
+                grep_freshness_scope(&ctx.project_root, &paths),
+            )?;
             drop(freshness_timings);
             commands::grep::run(
                 ctx,
@@ -167,6 +164,7 @@ pub(super) fn dispatch(
                     files_with_matches: *files_with_matches,
                     format,
                 },
+                refresh_busy,
             )?;
         }
         Command::Outline {

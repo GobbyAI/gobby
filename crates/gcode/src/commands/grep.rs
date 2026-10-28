@@ -116,10 +116,13 @@ pub(crate) struct GrepResult {
     pub(crate) coverage_gap: Option<String>,
 }
 
-pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
+/// Runs a grep for the CLI. `refresh_busy` is set when another run holds the
+/// project's index refresh lock; the read then serves the indexed rows as they
+/// stand instead of reading every stale worktree file under the busy lock.
+pub fn run(ctx: &Context, options: GrepOptions<'_>, refresh_busy: bool) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_chunks_for_read(&mut conn, ctx, &filters, &options)?;
+    let loaded = load_chunks_for_read(&mut conn, ctx, &filters, &options, refresh_busy)?;
     let scan_options = GrepOptions {
         max_count: None,
         offset: 0,
@@ -260,7 +263,7 @@ pub(crate) fn grep_repo(
     options: &GrepOptions<'_>,
 ) -> anyhow::Result<GrepResult> {
     let filters = GrepFilters::new(options.paths, options.globs)?;
-    let loaded = load_chunks_for_read(conn, ctx, &filters, options)?;
+    let loaded = load_chunks_for_read(conn, ctx, &filters, options, false)?;
     let mut result = grep_chunks_with_filters(&loaded.chunks, options, &filters)?;
     result.truncated |= loaded.truncated;
     attach_coverage_gap(conn, ctx, &filters, options, &loaded, &mut result)?;
@@ -275,6 +278,7 @@ fn load_chunks_for_read(
     ctx: &Context,
     filters: &GrepFilters,
     options: &GrepOptions<'_>,
+    refresh_busy: bool,
 ) -> anyhow::Result<LoadedIndexedChunks> {
     let mut loaded = load_indexed_chunks(
         conn,
@@ -282,6 +286,11 @@ fn load_chunks_for_read(
         filters,
         content_prefilter::content_literal(options),
     )?;
+    if refresh_busy {
+        // Each stale file costs a visibility check and a read, so reading them
+        // under a lock another run holds would make grep as slow as the stale set.
+        return Ok(loaded);
+    }
     let stale = freshness::stale_served_paths(conn, ctx, None)?;
     if stale.is_empty() {
         return Ok(loaded);

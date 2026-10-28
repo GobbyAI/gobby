@@ -56,7 +56,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gclient", "0.1.89"),
         # gcode, gdaemon, ghook: gcore changed in #25195 under installed 1.9.79, 0.4.112, 0.9.51.
         # gcode: commit-bound search scope verification changed in #24029 under installed 1.9.80.
-        ("gcode", "1.9.81"),
+        # gcode: busy-lock grep skips stale worktree reads (#25267) under installed 1.9.81.
+        ("gcode", "1.9.82"),
         ("gdaemon", "0.4.113"),
         ("ghook", "0.9.52"),
     ],

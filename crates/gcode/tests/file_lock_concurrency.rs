@@ -353,6 +353,20 @@ mod serial_db {
             command
         }
 
+        /// Adds files the overlay has not indexed, so every read sees stale paths
+        /// while the refresh lock is held.
+        fn write_unindexed_files(&self, count: usize) {
+            for index in 0..count {
+                std::fs::write(
+                    self.checkout
+                        .path()
+                        .join(format!("src/unindexed_{index}.rs")),
+                    format!("pub fn unindexed_{index}() -> usize {{ {index} }}\n"),
+                )
+                .expect("write unindexed file");
+            }
+        }
+
         fn read_while_refresh_locked(&self, args: &[&str]) -> Output {
             let mut holder =
                 Client::connect(&self.parent.database_url, NoTls).expect("refresh lock connection");
@@ -451,6 +465,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn linked_worktree_search_symbol_returns_while_refresh_lock_is_held() {
         let fixture = LinkedReadFixture::new("search-symbol-refresh-lock");
+        fixture.write_unindexed_files(400);
         let output = fixture.read_while_refresh_locked(&["search-symbol", "free"]);
         assert!(
             output.status.success() || output.status.code() == Some(2),
@@ -466,6 +481,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     fn linked_worktree_literal_grep_returns_while_refresh_lock_is_held() {
         let fixture = LinkedReadFixture::new("literal-grep-refresh-lock");
+        fixture.write_unindexed_files(400);
         let output = fixture.read_while_refresh_locked(&["grep", "-F", "pub fn", "-m", "50"]);
         assert!(
             output.status.success() || output.status.code() == Some(2),
