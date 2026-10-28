@@ -1039,14 +1039,45 @@ The former route writer, `src/gobby/servers/routes/attention.py`, is deleted.
 The readers `agent_health.py`, `continuation_retry.py` and
 `src/gobby/cli/sessions.py` use the direct reads and stay unchanged.
 
-**4. Reducer.** Implement the Q3 follow-up order, its status fence and its
-replay repair, as the Decision Record states them, in
-`TurnLifecycleReducer._apply` and `block_provider_failure`:
-1. a plain read of the row;
-2. no transition when the attention row is unchanged, and otherwise a CAS
-   carrying `expected_attention_id` and `expected_payload`;
-3. at most three attempts, then `attention_conflict`;
-4. the fenced status write.
+**4. Reducer.** In `TurnLifecycleReducer._apply` and `block_provider_failure`,
+replace the `FOR UPDATE` transaction with this order:
+1. Read the attention row plainly, with no row lock.
+2. If the mutation leaves the row unchanged (state, reason, kind, fingerprint
+   and payload), send no transition and go to step 4. Otherwise send a CAS
+   transition carrying `expected_attention_id` and `expected_payload`, where
+   an absent row compares as `{}`. A sent transition always changes the row,
+   so a not-applied result always means a conflict.
+3. On a conflict, re-read and retry, up to three attempts in all. Then return
+   a not-applied result with reason `attention_conflict`, writing no status.
+4. Write status through the fence, in one short local transaction:
+   1. `SELECT ... FROM sessions WHERE id = %s FOR UPDATE`;
+   2. re-read the attention row in a separate statement, which takes a fresh
+      READ COMMITTED snapshot;
+   3. if the committed `turn_lifecycle` equals the lifecycle this reducer
+      applied, or the one it read when it sent nothing, call
+      `update_session_status` inside the same transaction, as `_apply` does
+      today; otherwise skip the write, because a later reducer's fence owns
+      the status.
+
+   The fence never locks the attention row and makes no client call, because
+   the native store holds its cursor mutex across its own update.
+
+Replay repair changes these duplicate paths:
+- `begin_turn` with the open turn's provider key returns
+  `_status_for_waits(waits)`, or `active` when there are no waits, but only
+  while the observed status equals the lifecycle's `prior_status`. Otherwise it
+  keeps the observed status.
+- `record_provider_failure` for a failure already recorded in this generation
+  returns `paused` when the observed status is `active`.
+
+These paths already repair and stay unchanged:
+- `enter_wait` with a known token;
+- `end_turn`;
+- `resumed_work`.
+
+`resolve_wait` for an already-resolved token keeps the observed status
+deliberately. The stored lifecycle cannot tell a stale awaiting status from one
+another writer set, so the turn's next status-writing transition repairs it.
 
 `block_provider_failure` writes no status, so it needs only steps 1-3. The
 crash tests inject a failure between the CAS and the status write. They then
