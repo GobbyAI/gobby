@@ -432,10 +432,8 @@ fn symbol_callee_edges(
     if symbol_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let (query, params) = with_admitted_versions(
-        symbol_callee_edges_query(project_id, symbol_ids),
-        admitted,
-    );
+    let (query, params) =
+        with_admitted_versions(symbol_callee_edges_query(project_id, symbol_ids), admitted);
     let rows = client.query(&query, Some(params))?;
     Ok(rows
         .iter()
