@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -221,14 +220,6 @@ def approved_dirty_paths(variables: Mapping[str, Any], checkout_root: str) -> se
         except OSError:
             continue
     return approved
-
-
-def dirty_path_approval_command(session_id: str, checkout_root: str, paths: Iterable[str]) -> str:
-    """The operator command that approves `paths` for this session."""
-    root = normalize_task_checkout_root(checkout_root) or checkout_root
-    return shlex.join(
-        ["gobby", "sessions", "approve-dirty-paths", session_id, "--checkout", root, *sorted(paths)]
-    )
 
 
 def _checkout_relative(root: Path, path: str) -> str:

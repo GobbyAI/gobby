@@ -1598,10 +1598,8 @@ async def test_rule3_unowned_dirt_needs_an_exact_operator_approval(
     assert refused.decision == "block"
     assert refused.reason is not None
     assert "approved.txt — no live session owns it" in refused.reason
-    assert (
-        f"gobby sessions approve-dirty-paths {h.current_session.id} "
-        f"--checkout {h.repo.resolve()} approved.txt"
-    ) in refused.reason
+    assert "approve-dirty-paths" not in refused.reason
+    assert "send Triage" in refused.reason
     assert await decide(h.edit_event("approved.txt")) == "allow"
     assert await decide(h.event("rm approved.txt")) == "allow"
     assert await decide(h.event("git checkout -- tracked.txt")) == "allow"
