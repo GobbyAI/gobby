@@ -211,6 +211,11 @@ together. The first is delivered; 1.5 builds the second.
   unverified. At `after_tool` the fingerprint comparison needs no git. In the
   no-entry fallback, a failed status records the pair, and ledger
   reconciliation releases it once git reports it clean.
+- **Node-origin events.** The hub's disk is not a node's checkout, so a
+  node-origin call stores no snapshot and every pair takes the no-entry
+  status, run on the node through `checkout_reads.run_git`. A read the node
+  cannot answer records the pair. The pair gets no content record, so gate 3
+  and rules 2 and 3 find it through the live interval (Decision 4).
 - **Accepted race.** Another process can change the path between the two
   fingerprints, and the recorder then records that change. Overlapping calls
   by one session on one path each compare against their own baseline, so the
@@ -1409,7 +1414,7 @@ Targets:
 - `src/gobby/workflows/session_edit_ledger.py::SessionEditLedger.record_edited_files`
 - `src/gobby/workflows/task_claim_state.py::*` — scope-reason: record_task_content_hashes gains the keyword-only unhashed paths it removes
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: adds the cross-session gate 3 tests
-- `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs test
+- `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs tests, node-origin pairs and roots included
 
 **Granularity:** one section with more than six acceptance items, by design.
 `task_recorded_pairs` and gate 3's use of it verify only together: each
@@ -1532,6 +1537,7 @@ Consumers unchanged:
 - 1.7.6 - `task_recorded_pairs` returns as content pairs every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. It returns as fallback pairs a live pair of the task whose session holds no hash for it, a live directory pair, and a live pair whose stale hash names a file that is now unreadable, and it omits a live pair whose recorded hash belongs to a readable file. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
 - 1.7.7 - An escalated predecessor recorded, for T, a file `p` through the status fallback while `p` was unreadable and a directory `d` that now holds an untracked file, neither with a content record. After B claims T, gate 3 fails instead of passing over either pair. Once `p` is readable again but uncommitted, gate 3 still fails. B commits both through the guarded path, a Bash `git commit` event that `foreign_staged_commit_conflict` passes while the predecessor lives (1.8), never a raw git commit; gate 3 then passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
 - 1.7.8 - Stale-hash recovery: T's predecessor session records readable `p` (hash H1), and a later recorded write changes `p` and leaves it unreadable, which removes that session's hash of `p` for T while its other paths keep theirs. After B claims T and `p` is made readable again without a byte change, gate 3 fails on the uncommitted `p`, then passes once B commits `p` through the guarded path (a Bash `git commit` event that `foreign_staged_commit_conflict` passes while the predecessor lives). test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_pairs_whose_stale_hash_was_dropped`.
+- 1.7.9 - Inside `checkout_reads.delivery_scope` for a node machine, `record_edited_files` records T's pair `p` with no content hash although the hub holds a readable file at that root and path, and drops that session's older hash of `p` for T. `task_recorded_pairs` returns `p` as a fallback pair. It keeps a root a node-machine session recorded although the hub has no such directory, and drops a hub-machine session's root whose directory is gone. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_keeps_node_origin_pairs_and_roots`.
 
 ### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
@@ -1762,6 +1768,39 @@ checkpoint's foreign-owner outcomes.
   eight backend code leaves with TDD and task type feature. Josh's approval
   through the Assistant precedes work on #23565 to #23569 (#25261
   criterion 3).
+- 2026-10-28: Orchestrator review of the stamp `23f2051eeb`, relayed by
+  Triage (gobby#17480), returned it with five findings. The stale
+  `## M1 Task Manifest` was withdrawn unedited (memory f5577ae0).
+  - ORCH-REV-CO-1 and CO-2 (blocking): `_live_path_owners` took a holder's
+    task only from its claims, and `ledger_task_id` is the content-hash
+    owner, so a pair with no content record that an escalated predecessor
+    holds named no task, and rules 2 and 3 refused its claimant while gate
+    3 required the commit. 1.8 now takes the holder's task from its live
+    interval, claimed or not, with a `#<seq_num>` ref for a released task,
+    and adds 1.8.3. Decisions 2 and 15 and 1.8.1 are corrected. 1.7.7 and
+    1.7.8 commit through the guarded path, and V2 step 5 repeats the live
+    case without a content record.
+  - ORCH-REV-CO-3 (blocking): #23277 is partly delivered. Decision 4 is
+    rewritten: node-origin events store no snapshot and take the no-entry
+    status on the node through `checkout_reads.run_git` (1.5, 1.5.15, and
+    the Content-Hash Contract), node-origin pairs get no content record,
+    and gate 3 keeps roots that a node session recorded (1.7, 1.7.9). No
+    open #23277 leaf edits `commit_guard.py`, `task_claim_state.py` or
+    `_tool.py`, so no section gained a `(depends: #N)`. The Orchestrator
+    accepted that.
+  - ORCH-REV-CO-4: rule 4 ships `enabled: false`, and V2 step 6 records the
+    toggle that runs only after Josh approves through the Orchestrator.
+  - ORCH-REV-CO-5: a Constraints bullet orders the S2.11 and tasks-family
+    3.7 port sections after the leaves of this plan that change their
+    sources.
+
+  The Orchestrator withdrew its "No Python" ruling for this plan, which is
+  a rules refresh and not a port. During this round, two found-work items
+  reached Triage. #25280 (the `SessionEditLedger` fingerprint race) was
+  filed. The other: another session's pre-commit stash and restore in the
+  shared checkout reverted an edit made during its run. WIP checkpoints
+  `2d900c772b` and `c11943c` restored attribution. Facts were verified
+  read-only at `c11943c`.
 
 ## V2: Verification
 `kind: verification`
