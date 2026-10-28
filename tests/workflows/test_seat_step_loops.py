@@ -1531,6 +1531,66 @@ async def test_developer_linked_production_commit_moves_to_submit(
     assert (run.step, run.vars["implementation_complete"]) == ("submit", True)
 
 
+@pytest.mark.parametrize("audit", ["test-quality", "test-types"])
+async def test_developer_submit_admits_required_python_test_audits(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audit: str
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+
+    command = (
+        f"uv run gobby {audit} audit tests/workflows/test_repair_only.py "
+        f"--baseline .gobby/{audit}-baseline.json --fail-on-new"
+    )
+    assert await run.admits_native("Bash", {"command": command})
+    assert run.vars["candidate_sent"] is False
+
+
+async def test_developer_submit_keeps_unrelated_tools_blocked(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+
+    assert not await run.admits_native("Edit", {"file_path": "src/gobby/repair.py"})
+    assert not await run.admits("gobby-tasks", "create_task", {"title": "unrelated"})
+
+
+async def test_developer_submit_admits_rust_test_audit_before_candidate(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for #25187: linking a Rust fix must leave its audit runnable."""
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(
+        repo,
+        "fix: move pane",
+        {"crates/gclient/src/move_pane.rs": "pub fn move_pane() {}\n"},
+    )
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    assert run.vars["candidate_sent"] is False
+
+    command = (
+        "uv run gobby test-quality audit crates/gclient/src/move_pane.rs "
+        "--baseline .gobby/test-quality-baseline.json --fail-on-new --min-severity low"
+    )
+    assert await run.admits_native("Bash", {"command": command})
+    await run.call(
+        "gobby-tasks",
+        "record_implementation_step",
+        {"task_id": task.id, "commit_sha": sha, "status": "approved", "epoch": 1},
+    )
+    await run.send(
+        f"EVENT=CANDIDATE TASK=#{task.seq_num} RUN=run WT={repo} COMMIT={sha} "
+        "NOTE=Rust test audit clean"
+    )
+    assert run.vars["candidate_sent"] is True
+
+
 async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
