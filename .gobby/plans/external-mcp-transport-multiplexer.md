@@ -227,8 +227,12 @@ leaves keep their scope; this plan touches neither.
    - Rejected: relying on HTTP disconnects. gmcp's blocking ureq call cannot
      close its socket, and a disconnect through the node relay reaches the hub
      unreliably.
-9. **Timeouts.** Each hop's inner deadline ends 5,000 ms before its outer
-   wait, so the inner typed result always arrives first.
+9. **Timeouts.** Each hop's inner deadline ends before its outer wait, so
+   the inner typed result arrives first. The reserve is 5,000 ms, or half the
+   budget when the budget is under 10,000 ms.
+   - Budgets use saturating arithmetic, so no budget wraps or reads as
+     unlimited. Any step that finds the budget spent answers `timeout`
+     without an upstream write or a node send.
    - The Python forwarder fixes an absolute deadline at entry. It sends the
      remaining budget as `timeout_ms`, and its HTTP read timeout is that
      budget plus 5,000 ms.
@@ -239,9 +243,15 @@ leaves keep their scope; this plan touches neither.
      the pool cancels upstream and answers `timeout`, which Python maps to
      its existing timeout result.
    - A node-placed call waits `outer = min(remaining, 600,000)` ms for the
-     node reply, the internal command route's ceiling, and sends the inner
-     `timeout_ms = outer - 5,000`. A requested 600,000 ms becomes 595,000 ms
-     inner.
+     node reply, the internal command route's ceiling. It reserves
+     `min(5,000, outer / 2)` ms (integer division) for the reply's return
+     and sends the inner `timeout_ms = outer - reserve`.
+     - Examples: 600,000 ms becomes 595,000 ms inner, 4,000 ms becomes
+       2,000 ms, and 3 ms becomes 2 ms.
+     - An `outer` of 1 ms or less answers `timeout` without a node send,
+       because no inner budget below it remains.
+     - Rejected: refusing every budget of 5,000 ms or less. A node-placed
+       tool with a short timeout would then never run.
    - When the outer wait still ends in `node_timeout` or a channel error,
      `Backend` sends a best-effort `mcp.cancel` for the `call_id` and never
      replays the call. The inner deadline bounds the node-side call either
@@ -391,8 +401,12 @@ Targets:
       `{ok: false, error: {code, message, ...}}`.
     - Error codes are `invalid_request`, `connect_failed`, `circuit_open`
       (`recovery_in_ms`), `unauthorized` (`www_authenticate`), `timeout`,
-      `cancelled`, `transport_closed`, `server_error` (`rpc_code`) and
-      `result_too_large`.
+      `cancelled`, `transport_closed`, `server_error` (`rpc_code`, and the
+      upstream `data` when present) and `result_too_large`.
+    - `server_error` carries the upstream JSON-RPC error's message and data
+      unchanged. The `Pool` does not clean them; 1.5's `Backend` does.
+    - A request whose `timeout_ms` is 0 answers `timeout` before connect
+      (Decision 9).
   - `mod.rs` owns `Pool`. It implements Decision 6, the `call_id` registry
     with its tombstones (Decision 8) and `Pool::shutdown`. Requests use
     rmcp's `send_cancellable_request`, and a cancel or deadline calls the
@@ -433,8 +447,10 @@ Targets:
     stdio server. Its tools are `echo`, `whoami` (pid, ppid and `GOBBY_HOME`),
     `getenv`, `sleep` (records receipt of `notifications/cancelled` to a
     marker file), `big`, `spawn_grandchild`, `invisible` (returns text and
-    keys carrying invisible Unicode) and the loopback-browser names
-    `browser_navigate` and `browser_run_code`.
+    keys carrying invisible Unicode), `invisible_error` (answers a JSON-RPC
+    error whose message and data carry invisible Unicode, including a data
+    key) and the loopback-browser names `browser_navigate` and
+    `browser_run_code`.
   - Shipping: load the `rust` skill. This leaf's commit bumps
     `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
     gdaemon pin in `src/gobby/install/version_pins.py`. It copies no binary;
@@ -449,7 +465,7 @@ its Rust surface.
 
 **Acceptance:**
 
-- 1.1.1 - `Pool::request` runs `list_tools`, `call_tool` and `read_resource` against the stdio fixture, and concurrent calls on one connection all complete. test: `crates/gdaemon/tests/mcp_client.rs::stdio_round_trip_and_concurrent_calls`.
+- 1.1.1 - `Pool::request` runs `list_tools`, `call_tool` and `read_resource` against the stdio fixture, and concurrent calls on one connection all complete; `invisible_error` answers `server_error` with its `rpc_code`, message and data unchanged; a `timeout_ms` of 0 answers `timeout` with no fixture launch. test: `crates/gdaemon/tests/mcp_client.rs::stdio_round_trip_and_concurrent_calls`.
 - 1.1.2 - A request whose spec fingerprint changed replaces the pooled connection, and an idle connection closes after the idle limit (test clock). test: `crates/gdaemon/tests/mcp_client.rs::fingerprint_change_and_idle_close_replace_connection`.
 - 1.1.3 - Three failed connects answer `circuit_open` with `recovery_in_ms` until the window passes, then one half-open attempt runs. test: `crates/gdaemon/tests/mcp_client.rs::circuit_opens_after_three_failed_connects`.
 - 1.1.4 - A deadline sends `notifications/cancelled` upstream and answers `timeout`; `Pool::cancel` does the same and answers the pending request `cancelled`. test: `crates/gdaemon/tests/mcp_client.rs::deadline_and_cancel_notify_upstream`.
@@ -725,8 +741,9 @@ Targets:
     - resolves secrets;
     - builds the `ServerSpec` and calls `Pool::request` with the remaining
       budget;
-    - cleans the result. A `list_tools` result also passes through the
-      browser tool filter.
+    - cleans every upstream-controlled part of the reply: a result, and a
+      `server_error`'s message and data. A `list_tools` result also passes
+      through the browser tool filter.
 
     The rest of the surface is `Backend::cancel`, `Backend::disconnect`,
     `Backend::status` and `Backend::shutdown`. #24884 calls these without
@@ -739,8 +756,10 @@ Targets:
     `policy_refused` with Python's message) and `filter_browser_tools`, both
     `pub` so #24884 reuses the filter for the cached inventory.
   - `untrusted.rs` ports `clean_untrusted_value` with the four classes and
-    logs counts only. A result key carrying an invisible character answers
-    `untrusted_key`.
+    logs counts only. A key carrying an invisible character, in a result or
+    in `server_error` data, answers `untrusted_key`. Decision 3's boundary
+    covers both reply variants, so no upstream text reaches a caller
+    uncleaned.
   - `internal_api.rs` serves the loopback route:
     - `POST /api/internal/mcp/request` with a `BackendRequest`;
     - `POST /api/internal/mcp/cancel` with `{call_id}`, returning
@@ -774,7 +793,7 @@ reachable apart from it. The route is the thin adapter Python needs.
 - 1.5.1 - Through `POST /api/internal/mcp/request`, `list_tools`, `call_tool` and `read_resource` reach the stdio fixture with a `StoredServer` whose env and args hold `$secret:` references, and the fixture's `getenv` returns the project-scoped value. test: `crates/gdaemon/tests/mcp_backend.rs::route_resolves_project_secrets_and_round_trips`.
 - 1.5.2 - A missing secret answers `missing_secrets` naming only the missing names, with zero fixture launches; a project-less server resolves from the global scope. test: `crates/gdaemon/tests/mcp_backend.rs::missing_secrets_fail_closed_by_name`.
 - 1.5.3 - On a `loopback_browser` server, `browser_run_code`, a host-path argument and a non-loopback URL answer `policy_refused` with Python's messages and never reach the fixture; `about:blank` and a loopback URL pass; `list_tools` omits the unsafe tools and the host-path arguments. test: `crates/gdaemon/tests/mcp_backend.rs::browser_policy_matches_python`.
-- 1.5.4 - The fixture's `invisible` tool returns text with each character class stripped and TAB, LF and CR kept, and a result key carrying an invisible character answers `untrusted_key`. test: `crates/gdaemon/tests/mcp_backend.rs::results_are_cleaned_of_invisible_unicode`.
+- 1.5.4 - The fixture's `invisible` tool returns text with each character class stripped and TAB, LF and CR kept, and a result key carrying an invisible character answers `untrusted_key`; `invisible_error` answers `server_error` with its message and data cleaned the same way, and its invisible data key answers `untrusted_key`. test: `crates/gdaemon/tests/mcp_backend.rs::results_are_cleaned_of_invisible_unicode`.
 - 1.5.5 - Non-loopback peers, a wrong or missing secret, and every request on the Node door get 404 before the body is read. test: `crates/gdaemon/tests/mcp_backend.rs::route_admits_only_loopback_backend_secret`.
 - 1.5.6 - Delivery: the resolved sentinel reaches the fixture env. Non-disclosure: through `whoami`, a missing secret and a failed connect, neither the sentinel nor any resolved header value appears in a captured gdaemon log line, a route reply, `Backend::status` or an error. test: `crates/gdaemon/tests/mcp_backend.rs::resolved_secrets_stay_out_of_replies_and_logs`.
 - 1.5.7 - An integration test drives `Backend::request` and `Backend::cancel` against the stdio fixture with no HTTP route, as #24884 will. test: `crates/gdaemon/tests/mcp_backend.rs::backend_api_serves_without_route`.
@@ -1353,8 +1372,8 @@ Targets:
 - `Cargo.lock`
 - `crates/gdaemon/Cargo.toml`
 - `crates/gdaemon/src/nodes/agents/commands.rs`
-- `crates/gdaemon/src/state.rs::NodeServices`
-- `crates/gdaemon/src/state.rs::NodeServices::prepare`
+- `crates/gdaemon/src/state.rs::*` — scope-reason: add mcp_clients to NodeServices, build it in NodeServices::prepare, and add NodeServices::shutdown
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: await NodeServices::shutdown in the node branch of run after serve_doors returns and the channel task is aborted
 - `crates/gdaemon/src/mcp_client/mod.rs`
 - `crates/gdaemon/tests/node_mcp.rs`
 - `src/gobby/install/version_pins.py::*` — scope-reason: bump the gdaemon pin
@@ -1364,6 +1383,19 @@ Targets:
   frames today. #24376 creates `nodes/agents/commands.rs::dispatch` and routes
   each command frame there.
 - Observed: `NodeServices::prepare` is the only constructor of `NodeServices`.
+- Observed: the node branch of `crates/gdaemon/src/serve.rs::run` works as
+  follows:
+  - It runs `retry_removals`, registers heartbeat jobs and binds listeners,
+    each able to return early with `?`.
+  - It spawns `nodes::channel::run_client` and awaits `serve_doors`.
+  - It aborts and awaits the channel task, drops the terminal host and the
+    PID claim, and returns the result.
+
+  1.5's `Backend::shutdown` runs only in `serve_with_runtime`, the
+  Standalone and Hub path, so it never reaches a node's pool.
+- Observed: `crates/gdaemon/tests/common/channel.rs::node` builds
+  `NodeServices` with `prepare` and serves it in-process through
+  `serve_doors`, so node lifecycle tests run inside the test process.
 - Chosen approach:
   - `NodeServices` gains `mcp_clients: Arc<mcp_client::Pool>`. A node has no
     `Backend`: it resolves no secrets and holds no OAuth state.
@@ -1371,8 +1403,16 @@ Targets:
     `Pool::cancel`, `mcp.disconnect` to `Pool::disconnect` and `mcp.status`
     to `Pool::status`. MCP commands bypass the per-run queue because they
     name no run.
-  - The node's serve path calls `Pool::shutdown` at exit through the
-    `serve.rs` hook from 1.5.
+  - The node pool and the hub `Backend` are separate lifecycle owners.
+    `NodeServices::shutdown` awaits `Pool::shutdown`, which signals every
+    server's process group (Decision 7).
+    - The node branch of `serve::run` calls it after `serve_doors` returns,
+      on success or error, once the channel task is aborted so no new
+      command arrives.
+    - The early `?` returns before the channel starts need no call: no MCP
+      command can reach the pool before then, so it holds no server.
+    - An abnormal exit that skips the call is covered by the `mcp-child`
+      wrapper's parent-death check (1.2).
   - The node expands `${VAR}` from its own environment and runs hooks against
     its own filesystem.
   - Shipping: load the `rust` skill. This leaf's commit bumps
@@ -1389,6 +1429,7 @@ Targets:
 - 3.2.3 - MCP commands do not wait behind a busy run's queue. test: `crates/gdaemon/tests/node_mcp.rs::mcp_commands_skip_run_queues`.
 - 3.2.4 - Delivery: a node-run `getenv` returns the sentinel env value, the one reply allowed to contain it. Non-disclosure: through `whoami`, a failed connect and `mcp.status`, the sentinel appears in no captured node log line, command reply, error reply or reply envelope field. test: `crates/gdaemon/tests/node_mcp.rs::spec_secrets_stay_out_of_node_logs_and_replies`.
 - 3.2.5 - `mcp.status` lists a node-run server, and `mcp.disconnect` for its id reaps its whole process group, grandchild included, and drops it from the next `mcp.status`. test: `crates/gdaemon/tests/node_mcp.rs::disconnect_and_status_reach_node_pool`.
+- 3.2.6 - With a node-run server that has spawned a grandchild, `NodeServices::shutdown` reaps the server and the grandchild while the test process stays alive, and a later `mcp.status` lists nothing. test: `crates/gdaemon/tests/node_mcp.rs::node_shutdown_reaps_pool_while_host_lives`.
 
 ### 3.3 Backend places stdio servers on the caller's machine [category: code] (depends: 3.2)
 `kind: deliverable`
@@ -1444,10 +1485,16 @@ Consumers unchanged:
     call builds `mcp.request` with the resolved spec, sends it through
     `CommandSender::request`, and records the machine in the holder set
     (Decision 5).
-  - Budgets (Decision 9), stated here for the leaf: the call's absolute
-    deadline was fixed at entry. The outer wait for the node reply is
-    `min(remaining, 600,000)` ms, and the inner `McpRequest.timeout_ms` is
-    that value minus 5,000. A requested 600,000 ms becomes 595,000 ms inner.
+  - Budgets (Decision 9), stated here for the leaf:
+    - The call's absolute deadline was fixed at entry, and secret, OAuth
+      and placement work spend it. All budget arithmetic saturates.
+    - A budget already spent answers `timeout` with no node send.
+    - The outer wait for the node reply is `outer = min(remaining,
+      600,000)` ms. The reserve is `min(5,000, outer / 2)` ms, and the inner
+      `McpRequest.timeout_ms` is `outer - reserve`.
+    - Examples: 600,000 ms becomes 595,000 ms inner, 4,000 ms becomes
+      2,000 ms, and 3 ms becomes 2 ms.
+    - An `outer` of 1 ms or less answers `timeout` with no node send.
   - On `node_timeout` or a channel error, `Backend` sends a best-effort
     `mcp.cancel` for the `call_id` and does not replay.
   - `Backend::cancel` sends `mcp.cancel` to the machine that received the
@@ -1482,7 +1529,8 @@ Consumers unchanged:
 - 3.3.2 - A call with no caller or from the hub's own machine runs on the local pool. test: `crates/gdaemon/tests/mcp_backend_placement.rs::local_and_callerless_calls_stay_local`.
 - 3.3.3 - An unknown machine, a machine without a checkout and an offline node answer `machine_not_found`, `checkout_unresolved` and `node_offline` and run nothing on the hub. test: `crates/gdaemon/tests/mcp_backend_placement.rs::routing_refusals_never_fall_back_to_hub`.
 - 3.3.4 - With two node holders of one stdio server, a disconnect for that server and a disconnect for all each reach both holders and the local pool; with one holder offline the disconnect still completes, `failed_holders` names that holder and its code, and the holder stays tracked; status merges both nodes' `mcp.status`. test: `crates/gdaemon/tests/mcp_backend_placement.rs::lifecycle_fans_out_to_every_holder`.
-- 3.3.5 - A node-placed call waits outer `min(remaining, 600000)` ms and sends inner 5,000 ms less, so a requested 600,000 ms becomes 595,000 inner; with delayed dispatch the caller receives the pool's typed `timeout`, not `node_timeout`; a `node_timeout` sends one `mcp.cancel` and no replay; `Backend::cancel` for a node-placed call reaches that node. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budgets_nest_and_cancel_follows_the_call`.
+- 3.3.5 - A node-placed call waits outer `min(remaining, 600000)` ms and sends inner `outer - min(5000, outer / 2)` ms, so a requested 600,000 ms becomes 595,000 inner; with delayed dispatch the caller receives the pool's typed `timeout`, not `node_timeout`; a `node_timeout` sends one `mcp.cancel` and no replay; `Backend::cancel` for a node-placed call reaches that node. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budgets_nest_and_cancel_follows_the_call`.
+- 3.3.6 - Node-placed budgets of 0, 1, 2, 4,999, 5,000, 5,001 and 10,000 ms send inner `timeout_ms` of none, none, 1, 2,500, 2,500, 2,501 and 5,000. Each "none" answers `timeout` with zero node sends. A call whose budget is spent while the test holds an exclusive lock on `secrets`, as `ChannelDb::lock_machine` does for `machines`, answers `timeout` with zero node sends on the node path and zero fixture launches on the local path. test: `crates/gdaemon/tests/mcp_backend_placement.rs::node_budget_floor_and_spent_preparation_send_nothing`.
 
 ## P4: Live proof
 `kind: framing`
