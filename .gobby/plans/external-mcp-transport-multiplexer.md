@@ -789,8 +789,8 @@ Targets:
 - 3.2.1 - An `mcp.request` frame runs the stdio fixture on the node, and `whoami` reports the node daemon's `GOBBY_HOME`. test: `crates/gdaemon/tests/node_mcp.rs::request_runs_server_on_node`.
 - 3.2.2 - `mcp.cancel` for an in-flight call answers `{cancelled: true}` and the pending request answers `cancelled`. test: `crates/gdaemon/tests/node_mcp.rs::cancel_reaches_node_pool`.
 - 3.2.3 - MCP commands do not wait behind a busy run's queue. test: `crates/gdaemon/tests/node_mcp.rs::mcp_commands_skip_run_queues`.
-- 3.2.5 - `mcp.status` lists a node-run server, and `mcp.disconnect` for its id reaps its whole process group, grandchild included, and drops it from the next `mcp.status`. test: `crates/gdaemon/tests/node_mcp.rs::disconnect_and_status_reach_node_pool`.
 - 3.2.4 - Delivery: a node-run `getenv` returns the sentinel env value, the one reply allowed to contain it. Non-disclosure: through `whoami`, a failed connect and `mcp.status`, the sentinel appears in no captured node log line, command reply, error reply or reply envelope field. test: `crates/gdaemon/tests/node_mcp.rs::spec_secrets_stay_out_of_node_logs_and_replies`.
+- 3.2.5 - `mcp.status` lists a node-run server, and `mcp.disconnect` for its id reaps its whole process group, grandchild included, and drops it from the next `mcp.status`. test: `crates/gdaemon/tests/node_mcp.rs::disconnect_and_status_reach_node_pool`.
 
 ### 3.3 Hub places stdio servers on the caller's machine [category: code] (depends: 3.2)
 `kind: deliverable`
@@ -840,6 +840,8 @@ Consumers unchanged:
 - 3.3.1 - A stdio call from a node session goes to that node as `mcp.request`; a URL server call from the same session stays on the hub route. test: `tests/mcp_proxy/test_backend_placement.py::test_stdio_follows_caller_machine_url_stays_on_hub`.
 - 3.3.2 - A call with no session or from a hub-local session uses the local route. test: `tests/mcp_proxy/test_backend_placement.py::test_local_and_sessionless_calls_stay_local`.
 - 3.3.3 - `node_offline` and `checkout_unresolved` surface as `MCPError` with those codes and run nothing on the hub. test: `tests/mcp_proxy/test_backend_placement.py::test_routing_refusals_never_fall_back_to_hub`.
+- 3.3.4 - With two node holders of one stdio server, remove, disable, config update, `disconnect_server` and `disconnect_all` each send `mcp.disconnect` to both holders and the local pool; with one holder offline the change still applies, the result names that holder and its code, and the holder stays tracked; `get_health_report` merges both nodes' `mcp.status`. test: `tests/mcp_proxy/test_backend_placement.py::test_lifecycle_fans_out_to_every_holder`.
+- 3.3.5 - A node-placed call sends outer `min(remaining + 5000, 600000)` ms and inner 5,000 ms less, so a requested 600,000 ms becomes 595,000 inner; with delayed dispatch the caller receives the pool's typed `timeout`, not `node_timeout`; a `node_timeout` sends one `mcp.cancel` and no replay. test: `tests/mcp_proxy/test_backend_placement.py::test_node_budgets_nest_and_cancel_on_outer_loss`.
 
 ## P4: Live proof
 `kind: framing`
