@@ -87,9 +87,18 @@ operations to the same module, and the later landing rebases.
    through the `_Entity.cluster_id` labels that
    `recluster_knowledge_graph_entities` writes with scikit-learn's HDBSCAN.
    The lockfile holds no HDBSCAN, linfa or ndarray crate. Chosen: keep the
-   tool and the expansion, and add one pure-Rust HDBSCAN crate from crates.io,
-   pinned by 2.5, as the AI plan's Decision 9 authorized `multer`. The
-   silhouette score is computed by hand. Labels keep HDBSCAN semantics: noise
+   tool and the expansion, and add the pure-Rust `hdbscan` crate from
+   crates.io, pinned to exactly `0.12.0` by 2.5, as the AI plan's Decision 9
+   authorized `multer`. It is dual-licensed MIT OR Apache-2.0, needs no
+   native library on macOS or Linux, and brings one new transitive crate,
+   `kdtree` 0.7.0 (MIT OR Apache-2.0); its `num-traits` and `thiserror` 1.x
+   dependencies are already locked and its optional `rayon` feature stays
+   off. It matches scikit-learn's settings for this call: euclidean distance
+   by default, excess-of-mass stability selection (its only selection mode),
+   `min_samples` defaulting to the minimum cluster size, and a core distance
+   that counts the point itself. `petal-clustering` 0.14.0 was rejected:
+   it declares Rust 1.90, above the workspace's 1.88, and pulls in
+   `ndarray`. The silhouette score is computed by hand. Labels keep HDBSCAN semantics: noise
    is -1 and clusters are numbered from 0. The new dependency goes to Josh
    with the stamped plan. If Josh rejects it, the Orchestrator reopens 2.5
    before approval for the recorded fallback: gcore's Leiden
@@ -119,7 +128,10 @@ operations to the same module, and the later landing rebases.
    module, `crates/gcore/src/embedding_generation.rs`. It prepares,
    acknowledges, renews and fences a serving lease, asserts serving before
    every native vector write, appends projection changes and reads managed
-   projection targets. gdaemon holds one lease with instance id
+   projection targets. Its managed lifecycle ports Python's renewal,
+   transient backoff, deadline fencing, reacquisition, projection repair and
+   rebuild-on-mismatch, so a lease that loses serving recovers instead of
+   staying fenced. gdaemon holds one lease with instance id
    `UUIDv5(machine_id, "gdaemon")`, distinct from Python's and stable across
    restarts. #25071's native tool-embeddings writer reuses the module. The
    Orchestrator records AI 7.4's premise as amended.
@@ -712,6 +724,7 @@ against run-unique test-stack collections and the embedding stub;
 
 Targets:
 - `crates/gcore/src/embedding_generation.rs`
+- `crates/gcore/src/embedding_generation/managed.rs`
 - `crates/gcore/src/embedding_generation/tests.rs`
 - `crates/gcore/src/lib.rs::*` — scope-reason: export the shared embedding-generation module beside the existing qdrant export
 - `crates/gcore/tests/embedding_generation.rs`
@@ -742,6 +755,25 @@ configuration key `ai.embeddings.switch_run`, as
 module is backend-neutral so #25071 reuses it for tool embeddings. Python's
 lease stays unchanged and coexists under its own instance id.
 
+`crates/gcore/src/embedding_generation/managed.rs` owns the managed lifecycle,
+ported from `_ManagedEmbeddingLease`, `_renew_embedding_lease`,
+`_renew_with_backoff` and `_reacquire_lease`; no other module renews or
+reacquires. Renewal runs on a dedicated `std::thread`, as Python's
+single-thread executor does, so a stalled tokio runtime cannot starve it. Every
+10 seconds it renews; a transient renew failure retries after 1 second,
+doubling to a 5-second cap, and fences once the remaining lease is no longer
+than the next wait; an expired or lost lease fences at once. While fenced,
+the same thread polls the completed-switch record every 5 seconds. A record
+whose generation and revision match the held lease activates the successor,
+resumes serving and calls the projection-repair callback once; a changed
+record, or a successor that loses to a newer lease, calls the rebuild
+callback with that record and stays fenced until it runs; a storage error
+keeps polling. Python's `HostSleepTracker` only lowers log levels, so a host
+sleep that outlives the lease takes the same expiry path. The holder supplies
+three callbacks: re-target and rebuild from 2.2, and projection repair from
+2.3, which runs its store reconciliation as Python's
+`_request_memory_projection_repair` does.
+
 **Acceptance:**
 
 - 2.1.1 - `append_change`, `watermark` and `projection_targets` produce
@@ -755,6 +787,17 @@ lease stays unchanged and coexists under its own instance id.
 - 2.1.3 - The instance id is stable across restarts and differs from
   `UUID(machine_id)`; a completed switch re-targets the holder through its
   callback. test: `crates/gcore/tests/embedding_generation.rs::instance_identity_and_retarget`.
+- 2.1.4 - The managed lifecycle keeps renewing while the async runtime is
+  blocked; transient renew failures retry at 1, 2, 4 and then 5 seconds and
+  fence once the remaining lease is no longer than the next wait; an expired
+  or lost lease, including one that expires across a simulated host sleep,
+  fences at once.
+  test: `crates/gcore/tests/embedding_generation.rs::managed_renewal_backoff_and_fence`.
+- 2.1.5 - While fenced, a matching completed-switch record re-activates the
+  successor, resumes serving and requests projection repair once; a changed
+  record, or a successor that loses to a newer lease, requests a rebuild with
+  that record and stays fenced; storage errors keep polling without resuming.
+  test: `crates/gcore/tests/embedding_generation.rs::managed_reacquire_or_rebuild`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core --features postgres --test embedding_generation`
 against the isolated test database.
@@ -800,7 +843,21 @@ upsert or delete inside #25059's project fence after `assert_serving`, with
 dual-writes to the managed projection targets, then graph enqueue
 (`graph_status = 'pending'`) and dream due-marking
 (`write_supersession_mark_due_enabled`). The vector writer holds the gdaemon
-lease from 2.1 and supplies its re-target callback. Handlers are
+lease from 2.1 and supplies its re-target and rebuild callbacks.
+
+Failure invariants follow Python's repair design, not a rollback. The row
+write, its `vector_needs_reindex = TRUE` mark (set by create, content or type
+change, move and scope change, as Python's row writes above do)
+and its `append_change` row commit in one transaction. Vector work runs after commit; when the lease is
+fenced, the fence is held, embedding fails or Qdrant fails, Python's
+`embed_and_upsert` logs and returns false, the request still succeeds with
+its committed row, and the flag and change row stay as durable repair intent.
+No derived-store write happens outside that tracked path. 2.3's
+reconciliation (`reconcile_stores` and
+`secondary_reconciliation.reconcile_active_snapshot`) later writes the
+vector, graph and crossref state and clears the flag only once they
+converge. An unexpected fault before commit writes nothing and returns safe
+detail. Handlers are
 `create_memory`, `update_memory`, `delete_memory`, `restore_memory`,
 `promote_memory`, `demote_memory` and `move_memory` in
 `src/gobby/servers/routes/memory.py::create_memory_router`, with request
@@ -838,8 +895,17 @@ separate deliverables.
   an active switch journal dual-writes, and a completed switch re-targets the
   writer. test: `crates/gmemory/tests/writes.rs::fence_lease_and_dual_write`.
 - 2.2.10 - The seven rows return safe detail for injected faults under their
-  exact Waived citations and leave no partial effects.
+  exact Waived citations; a fault before commit leaves the row, ledger and
+  derived stores unchanged, and a fault after commit leaves the committed row
+  with `vector_needs_reindex` true and its change row, with no untracked
+  derived-store write.
   test: `crates/gmemory/tests/writes.rs::unexpected_write_errors_are_safe_and_waived`.
+- 2.2.11 - With the lease fenced or Qdrant failing, create and update commit
+  the row with `vector_needs_reindex` true and its change row and return
+  Python's success response without a vector write; no vector write happens
+  until a successor lease serves, after which the next write projects
+  normally and the earlier row keeps its flag for 2.3's repair.
+  test: `crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test writes`
 against the isolated database, run-unique collections and graphs, the
@@ -880,7 +946,11 @@ clears nothing and returns 202 with the running snapshot and
 `already_running: true`; otherwise it clears, starts the job and returns the
 clear report with `rebuild_status: "started"`. Crossref rebuild adds
 `crossrefs_failed` (`memory.http-crossrefs-rebuild.reported-failures`). This
-leaf adds those two entries and the four 2.3 redaction entries.
+leaf adds those two entries and the four 2.3 redaction entries. It also
+supplies 2.1's projection-repair callback, which runs the applied
+`reconcile_stores` once after the lease is reacquired, as Python's
+`_request_memory_projection_repair` does; a repair failure is logged and the
+successor lease keeps serving.
 
 **Acceptance:**
 
@@ -898,6 +968,11 @@ leaf adds those two entries and the four 2.3 redaction entries.
   test: `crates/gmemory/tests/maintenance.rs::reindex_matches_python`.
 - 2.3.5 - The four rows return safe detail for injected faults under their
   exact Waived citations. test: `crates/gmemory/tests/maintenance.rs::unexpected_maintenance_errors_are_safe_and_waived`.
+- 2.3.6 - After reacquisition, the projection-repair callback writes vectors,
+  graph state and crossrefs for rows left with `vector_needs_reindex` true
+  and clears each flag only once that row converges; a repair failure leaves
+  the flags set and serving continues.
+  test: `crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test maintenance`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core -E 'test(qdrant)'`.
@@ -991,10 +1066,23 @@ embeddings, run HDBSCAN with `HDBSCAN_METRIC` euclidean,
 (default 5) and `memory.cluster_min_samples` (default 2, where none delegates
 to the minimum cluster size), relabel clusters in Python's stable order,
 compute the silhouette score over clustered points by hand, and persist
-`_Entity.cluster_id` (noise -1). Add the one pure-Rust HDBSCAN crate,
-pinned to an exact version in `crates/gmemory/Cargo.toml` and committed in
-`Cargo.lock`. Writes run inside the project fence. 1.2's reader consumes the
-labels.
+`_Entity.cluster_id` (noise -1). Add `hdbscan = "=0.12.0"` with default
+features to `crates/gmemory/Cargo.toml` and commit the resolution in
+`Cargo.lock`, which adds exactly `hdbscan` 0.12.0 and `kdtree` 0.7.0. Build
+the parameters with `HdbscanHyperParams::builder()`, `.min_cluster_size`,
+`.min_samples` (omitted when the setting is none, so the crate's default of
+the minimum cluster size applies) and the default euclidean metric, then call
+`Hdbscan::new(&data, params).cluster()`. The crate sorts distances with a
+panicking float comparison, so keep Python's `_partition_valid_vectors` and
+`_coerce_unit_vector` steps: empty, non-numeric, non-finite or zero-norm
+vectors and vectors whose dimension differs from the most common one are
+labelled noise and listed as invalid, and the rest are unit-normalised before
+they reach the crate. Run the call in `spawn_blocking`. Rust-version evidence against the
+workspace's `rust-version = "1.88"`: neither `hdbscan` 0.12.0 nor `kdtree`
+0.7.0 declares a `rust-version`, both use edition 2021, and `hdbscan` 0.12.0
+was published 2025-11-24, after Rust 1.88, so 2.5.3 builds both crates with
+the 1.88.0 toolchain rather than trusting the missing field. Writes run inside
+the project fence. 1.2's reader consumes the labels.
 
 **Acceptance:**
 
@@ -1004,11 +1092,18 @@ labels.
 - 2.5.2 - Persisted `cluster_id` values and the result summary match Python,
   and 1.2's cluster expansion reads them.
   test: `crates/gmemory/tests/clustering.rs::recluster_persists_labels`.
-- 2.5.3 - The new crate is pinned to one exact version and resolves in the
-  lockfile with no other new dependency.
-  behavior: "single pinned HDBSCAN dependency" in `crates/gmemory/Cargo.toml`.
+- 2.5.3 - `hdbscan` is pinned to `=0.12.0`, the lockfile gains exactly
+  `hdbscan` 0.12.0 and `kdtree` 0.7.0, and both crates compile with the Rust
+  1.88.0 toolchain.
+  behavior: "hdbscan pinned to =0.12.0 and building on Rust 1.88" in `crates/gmemory/Cargo.toml`.
+- 2.5.4 - Entities with empty, non-numeric, non-finite or zero-norm vectors,
+  or a dimension other than the most common one, are labelled noise and
+  listed as invalid without reaching the crate, as in Python.
+  test: `crates/gmemory/tests/clustering.rs::invalid_vectors_are_noise`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test clustering`;
+`cargo +1.88.0 check -p hdbscan -p kdtree` (install the toolchain with
+`rustup toolchain install 1.88.0` when absent);
 the fixture embeddings and expected labels are generated once from Python's
 scikit-learn run and committed with the test.
 
@@ -1085,6 +1180,20 @@ validation, `decisions.py`, `models.py` and `options.py`. Expose
 Every memory mutation goes through 2.2's write path, so ledger, fence and lease
 rules hold.
 
+Port the stale-plan fences exactly. `apply_candidate_action` updates a
+candidate only while its `dream_due_version`, `updated_at`, `project_id` and
+`is_global` still equal the values captured at selection and the row is
+live; otherwise the action is recorded as skipped with zero mutation.
+`revert_snapshot` locks the row, reports `missing` for an absent row and
+`conflict` when any fence column (`deleted_at`, `project_id`, `is_global`
+and the action-owned columns) differs from the snapshot's after-state. It
+restores only the action-owned columns (refresh: `content` and `tags`;
+promote: `is_global`; review and delete: `deleted_at` and `dream_action`),
+preserves every other later change, clears `last_dreamed_at`, increments
+`dream_due_version`, sets `vector_needs_reindex`, restores crossrefs and
+appends a projection change in that transaction, and reconciles projections
+only after commit.
+
 **Acceptance:**
 
 - 4.1.1 - Run creation, admission conflicts, status transitions and
@@ -1098,6 +1207,12 @@ rules hold.
   test: `crates/gmemory/tests/dream_apply.rs::revert_matches_python`.
 - 4.1.4 - The purge function deletes only hidden memories past their
   retention. test: `crates/gmemory/tests/dream_apply.rs::purge_matches_python`.
+- 4.1.5 - A candidate changed after selection is skipped with zero mutation;
+  revert reports a conflict when an action-owned or fence column changed,
+  otherwise restores only action-owned columns, keeps unrelated later
+  changes, increments `dream_due_version`, and reconciles projections only
+  after the row transition commits.
+  test: `crates/gmemory/tests/dream_apply.rs::stale_plan_and_revert_fences`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test dream_apply`
 against the isolated database.
@@ -1427,8 +1542,11 @@ by tool would create per-file wrappers, not independent outcomes.
   arguments call no service.
   test: `crates/gmemory/tests/mcp_memory.rs::catalog_and_validation_match_python`.
 - 6.2.28 - Each of the 21 redaction tools returns safe text for an injected
-  fault under its own exact waiver with no partial effects, and deliberate
-  domain errors keep their text.
+  fault under its own exact waiver, and deliberate domain errors keep their
+  text. A fault before commit leaves the row, ledger and derived stores
+  unchanged; a fault after commit leaves the committed row with
+  `vector_needs_reindex` true and its change row, with no untracked
+  derived-store write, as 2.2 defines.
   test: `crates/gmemory/tests/mcp_memory.rs::tool_internal_errors_are_safe`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test mcp_memory`;
@@ -1741,7 +1859,11 @@ ledger evidence.
 
 - 8.2.1 - Proxy, compare and native states affect only the memory HTTP rows
   and the two MCP servers; compare runs read rows only, effectful rows run
-  once, and rollback to Proxy preserves state.
+  once, and rollback to Proxy preserves state. For
+  `GET /api/memories/search` both implementations compute a result, the
+  native surfaced-statistics mutation is discarded with its isolated
+  transaction, and Python's surfaced counter and debounce effect happens
+  exactly once.
   test: `crates/gdaemon/tests/memory_cutover.rs::memory_cutover_is_scoped_and_single_effect`.
 - 8.2.2 - With the Python backend unavailable, all 25 HTTP rows and 32 tools
   run natively for every admitted caller class on hub and standalone, rule
@@ -1895,5 +2017,9 @@ production cutover or task expansion have been performed during planning.
 
 - 2026-10-28 — Initial narrative by Plan Writer gobby#18291 for #25254,
   carrying the Orchestrator's MEM-D1, MEM-D2 and MEM-D3 rulings and the
-  #25262 edge; awaiting enhancer dispositions and adversarial review by
-  gobby#18294; no consensus claimed.
+  #25262 edge. The Orchestrator accepted enhancer gobby#18364's MEM-ENH-01
+  to 05: the managed lease lifecycle (2.1, 2.2, 2.3), explicit
+  repair-intent failure invariants (2.2, 2.3, 6.2.28), stale-plan and
+  revert fences (4.1), the search compare effect (8.2.1), and the pinned
+  `hdbscan` 0.12.0 with `kdtree` 0.7.0 and Rust 1.88 evidence (Decision 2,
+  2.5). Awaiting adversarial review by gobby#18294; no consensus claimed.
