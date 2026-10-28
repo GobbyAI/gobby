@@ -2188,3 +2188,11 @@ both accepted without a ruling.
   because restore can re-insert its UUID; comment-delete presence stays a
   Mismatch.
 No consensus is claimed.
+
+2026-10-28 — Consensus. Plan Writer gobby#18281 and Plan Adversary gobby#18284
+agree on this narrative as of a6937cec36. ADV-1 through ADV-5 are resolved,
+the Orchestrator's rulings Q1 to Q13 are recorded in the Decision Record, and
+no blocking finding or open decision remains. Project-aware base validation
+passes. The adversary derives `## M1 Task Manifest` from the commit that adds
+this entry. Consensus is not implementation approval; operator approval
+precedes expansion.
