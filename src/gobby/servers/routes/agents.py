@@ -18,6 +18,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     ValidationError,
     field_validator,
     model_validator,
@@ -26,7 +27,7 @@ from pydantic import (
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
-from gobby.workflows.agent_models import AgentPromptBlocks
+from gobby.workflows.agent_models import AgentPromptBlocks, TaskStepWrite
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -119,6 +120,8 @@ class CreateAgentDefinitionRequest(BaseModel):
     checkout_mode: str | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
+    persistent_workspace: StrictBool = False
+    task_step_writes: list[TaskStepWrite] = Field(default_factory=list)
     prewarm_pre_commit_store: bool = True
     workflows: dict[str, Any] | None = None
     blocked_tools: list[str] | None = None
@@ -159,6 +162,8 @@ class UpdateAgentDefinitionRequest(BaseModel):
     checkout_mode: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
+    persistent_workspace: StrictBool | None = None
+    task_step_writes: list[TaskStepWrite] | None = None
     prewarm_pre_commit_store: bool | None = None
     workflows: dict[str, Any] | None = None
     step_workflow: dict[str, Any] | None = None
@@ -427,6 +432,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
                 blocked_mcp_tools=request.blocked_mcp_tools or [],
+                persistent_workspace=request.persistent_workspace,
+                task_step_writes=request.task_step_writes,
                 step_workflow=request.step_workflow,
             )
             dumped = body.model_dump(mode="json")
@@ -499,6 +506,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "base_branch",
                     "timeout",
                     "prewarm_pre_commit_store",
+                    "persistent_workspace",
+                    "task_step_writes",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]

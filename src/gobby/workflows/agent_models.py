@@ -23,6 +23,7 @@ from gobby.workflows.definitions import WorkflowStep
 SPAWN_ANY_AGENT = "*"
 
 SendMessageTarget = Literal["global", "project", "parent", "session", "agent"]
+TaskStepWrite = Literal["test", "implementation", "review", "closing"]
 
 
 def _parent_only() -> list[SendMessageTarget]:
@@ -172,7 +173,7 @@ class AgentDefinitionBody(BaseModel):
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False
     communications_admin: StrictBool = False
-    task_step_writes: list[Literal["test", "implementation", "review", "closing"]] = Field(
+    task_step_writes: list[TaskStepWrite] = Field(
         default_factory=list,
         description="Task step records this definition may write through dedicated tools.",
     )
