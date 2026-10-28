@@ -448,9 +448,11 @@ mod serial_db {
         assert_eq!(skipped["reason"], "indexed_file_not_found");
         assert_eq!(skipped["skipped_files"], 1);
         let requests = fixture.service.requests.lock().expect("request log");
-        let child_collection =
-            gobby_core::qdrant::collection_name("code_symbols_", &fixture.overlay)
-                .expect("child collection");
+        let child_collection = gobby_core::qdrant::collection_name(
+            "code_symbols_",
+            gobby_core::qdrant::CollectionScope::Project(&fixture.overlay),
+        )
+        .expect("child collection");
         assert!(
             requests.iter().any(|request| request.starts_with("PUT ")
                 && request.contains(&child_collection)
@@ -487,7 +489,13 @@ mod serial_db {
         assert!(
             payload["warnings"]
                 .as_array()
-                .is_some_and(|warnings| !warnings.is_empty()),
+                .is_some_and(|warnings| warnings.iter().any(|warning| {
+                    let text = warning.to_string().to_lowercase();
+                    (text.contains("projection") || text.contains("pin"))
+                        && ["pending", "recover", "unavailable", "degraded"]
+                            .iter()
+                            .any(|state| text.contains(state))
+                })),
             "search must report pending projection degradation: {payload}"
         );
     }
