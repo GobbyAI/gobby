@@ -515,34 +515,44 @@ through the Assistant (#25261 criterion 3).
     Rejected: V1's untransferred-pair inventory, retired with the transfer
     (Decision 2).
 23. **Whole-index commits in a shared checkout (Orchestrator found work,
-    2026-10-28).** A Plan Writer's `git commit -m` in the main checkout
-    (2068aaf9a0) recorded another live Plan Writer's staged
+    2026-10-28).** A Plan Writer's commit in the main checkout (2068aaf9a0)
+    recorded another live Plan Writer's edit to
     `.gobby/plans/external-mcp-transport-multiplexer.md`, and rule 2 did not
-    refuse it. A commit without a pathspec records the whole shared index.
-    Rule 2 reads `git diff --cached` when the hook runs and the shell commits
-    later, so a path staged in between is never checked, and a path its
-    stager never recorded has no holder (Decision 1). Which of the two
-    happened is not established, because the other session's ledger is not
-    readable from another seat. Rule: rule 2 refuses a commit that records
-    the whole index (no pathspec, or `--include` with pathspecs; `--all`
-    without one is the first) while another live session on the event's
-    machine holds a pair in that checkout that git still reports dirty. The
-    refusal names the holders and prescribes `git commit -m <msg> --
-    <path>...`. A pathspec commit builds a temporary index from only the
-    listed paths and leaves other sessions' staged paths staged, so no later
-    staging can reach it. Concluding an in-progress merge, cherry-pick,
-    revert or rebase is exempt, because git refuses a partial commit there,
-    and rule 2's per-path check still applies to it. This changes the form
-    of a commit rule 2 accepts, not its path scope: a path no live session
-    mutated still commits freely with a pathspec, so Decision 1 holds.
-    Residual: a session with no dirty pair in the checkout that stages a
-    path it never recorded can still be swept by a whole-index commit while
-    no other session holds dirt there; nothing attributes that path to it.
-    Like every refreshed ruling, this takes effect with Josh's approval
-    through the Assistant (#25261 criterion 3). Rejected: refusing only when
-    the hook-time staged set holds a foreign path, which misses a path
-    staged after the check; and rewriting the command into a pathspec
-    commit, which hides the change from the caller.
+    refuse it. Five seconds before the commit the index held only the
+    committing plan, and the commit was a plain `git commit -m` (no
+    pathspec, `--all` or `--include`). Git stamped it at 09:08:33 CT, when
+    it started, and the command returned at 09:09:11. The other Writer's
+    only `git add` of that path ran at about 09:08:49 to 09:08:55. A commit
+    without a pathspec re-reads the shared index after its pre-commit hook,
+    so it records any path a session stages while the hook runs. A pathspec
+    commit holds `index.lock` through its hooks, so a concurrent `git add`
+    fails and only the listed paths are recorded (scratch-repository probe,
+    git 2.54.0). The pre-commit stash (#25282) rewrites only the working
+    tree, so it stages nothing. Rule 2 reads `git diff --cached` when its
+    hook runs, before any of this. Rule: rule 2 refuses a commit that
+    records the whole index (no pathspec, or `--include` with pathspecs;
+    `--all` without one is the first) while another live session on the
+    event's machine holds a pair in that checkout that git still reports
+    dirty, staged or not. The refusal names the holders and prescribes `git
+    commit -m <msg> -- <path>...`. It keys on the commit's form and the
+    holders' dirt, never on the staged set, so it also covers a `git add -A`
+    or `git add .` earlier in the same command, which stages other
+    sessions' edits after the hook reads the index. A pathspec commit after
+    such an add still records only its listed paths and leaves other
+    sessions' staged paths staged. Concluding an in-progress merge,
+    cherry-pick, revert or rebase is exempt, because git refuses a partial
+    commit there, and rule 2's per-path check still applies to it. This
+    changes the form of a commit rule 2 accepts, not its path scope: a path
+    no live session mutated still commits freely with a pathspec, so
+    Decision 1 holds. Residual: a session with no dirty pair in the checkout
+    that stages a path it never recorded can still be swept by a whole-index
+    commit while no other session holds dirt there; nothing attributes that
+    path to it. Like every refreshed ruling, this takes effect with Josh's
+    approval through the Assistant (#25261 criterion 3). Rejected: refusing
+    only when the hook-time staged set holds a foreign path, which missed
+    2068aaf9a0's path, staged while that commit's hook ran; and rewriting
+    the command into a pathspec commit, which hides the change from the
+    caller.
 
 ## Retired Mechanisms
 `kind: framing`
@@ -1707,9 +1717,13 @@ import it in both rules.
   `git diff --cached` set read when the hook runs; `all_tracked` adds `git
   diff HEAD`. With no live holder in the checkout (`_live_path_owners`
   empty) it passes at once. The shell runs the commit after the hook
-  answers, so a path staged in between is never a candidate. Commit
-  2068aaf9a0 (2026-10-28) recorded a path another live session had staged
-  (Decision 23).
+  answers, so a path staged in between is never a candidate, and neither is
+  one a `git add -A` or `git add .` earlier in the same command stages. A
+  commit without a pathspec also re-reads the index after its own
+  pre-commit hook and records whatever was staged meanwhile, while a
+  pathspec commit holds `index.lock` through its hooks (scratch-repository
+  probe, git 2.54.0). Commit 2068aaf9a0 (2026-10-28) recorded a path
+  another live session staged while that commit's hook ran (Decision 23).
 
 **Implementation:**
 - Rename `_claimed_task_ids` to `claimed_task_ids` and update its two
@@ -1741,8 +1755,9 @@ import it in both rules.
   claimed-task exclusion skips count too, because a pathspec commit is
   always available to the claimant. The refusal is
   `format_conflict_reason` over those holders followed by "This commit
-  records the whole index, which can include their staged files. Commit
-  only your own paths: `git commit -m <msg> -- <path>...`." Path-scoped
+  records the whole index, which can include files they stage before or
+  while it runs. Commit only your own paths: `git commit -m <msg> --
+  <path>...`." Path-scoped
   invocations and an operation's conclusion keep the per-path check
   unchanged (Decision 23).
 - Move `_operation_paths` to `git_operation_paths.operation_paths` unchanged.
@@ -1761,7 +1776,7 @@ checkpoint's foreign-owner outcomes.
 - 1.8.2 - `operation_paths` imports from `git_operation_paths` and returns the merge set while `MERGE_HEAD` exists and an empty set when no operation is in progress. test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.
 - 1.8.3 - Fallback pairs held by a live escalated predecessor: in a temporary git checkout, live session P recorded for T, through the status fallback and so with no content record, a file `p` while it was unreadable and a directory `d` holding an untracked file, then escalated T. After C claims T and `p` is readable again, `_live_path_owners` names T, with T's `#<seq_num>` ref, as P's `owner_task_id` for both pairs while `ledger_task_id` is None. Rule 3 lets C edit `p`. C's Bash `git add p d && git commit -m m` event gets "" from `foreign_staged_commit_conflict` before the commit runs, and the commit then lands. A pair P holds for task U still refuses C's commit, naming U. test: `tests/workflows/test_commit_guard.py::test_claimant_commits_fallback_pairs_held_by_escalated_predecessor`.
 - 1.8.4 - Interval and content owners differ: live session P holds dirty `p` under T's live interval, and ended session Q's content record for U is the newest one matching `p`'s current bytes, so `_live_path_owners` gives P `owner_task_id` T and `ledger_task_id` U. Session C, which claims U, may edit `p` under rule 3 and gets "" from `foreign_staged_commit_conflict` for `git add p && git commit -m m`. Session D, which claims neither T nor U, is refused by both rules, and both texts name T's `#<seq_num>`. test: `tests/workflows/test_commit_guard.py::test_claimed_task_exclusion_tests_interval_and_content_owners_separately`.
-- 1.8.5 - Shared-index sweep, plan files included: in a temporary git checkout, live session P, whose `_agent_type` is `plan-writer`, recorded and staged `.gobby/plans/other.md`. Session C's Bash `git add p && git commit -m m` gets the whole-index refusal naming P before the commit runs, and so do `git commit -a -m m` and `git commit -i -m m -- p`. C's `git commit -m m -- p` gets "", and the commit records only `p` while `.gobby/plans/other.md` stays staged. test: `tests/workflows/test_commit_guard.py::test_rule2_refuses_whole_index_commit_while_another_session_holds_dirt`.
+- 1.8.5 - Shared-index sweep, plan files included: in a temporary git checkout, live session P, whose `_agent_type` is `plan-writer`, recorded `.gobby/plans/other.md`; each case runs with that edit unstaged (the 2068aaf9a0 shape) and again with it staged. Session C's Bash `git add p && git commit -m m` gets the whole-index refusal naming P before the commit runs, and so do `git add -A && git commit -m m`, `git add . && git commit -m m`, `git commit -a -m m` and `git commit -i -m m -- p`. C's `git commit -m m -- p` and `git add -A && git commit -m m -- p` get "", and each commit records only `p`, while `.gobby/plans/other.md` keeps P's edit uncommitted. test: `tests/workflows/test_commit_guard.py::test_rule2_refuses_whole_index_commit_while_another_session_holds_dirt`.
 - 1.8.6 - With no other live holder in the checkout, and again once P's only pair is committed so the stale-holder release clears it, C's `git commit -m m` and `git commit -a -m m` get "". During a merge (`MERGE_HEAD` set), C's `git commit --no-edit` that concludes it passes the whole-index check, while a staged path outside the merge set that P holds dirty still refuses it with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_whole_index_commit_alone_and_merge_conclusion`.
 
 ## V1 Plan Changelog
@@ -1957,13 +1972,20 @@ checkpoint's foreign-owner outcomes.
     ended node session still holds keeps gate 3 unavailable until
     restraint-deferral #25284 lands, after #24521.
   - Orchestrator found work: the WIP commit `2068aaf9a0` also recorded
-    another live Plan Writer's staged
-    `.gobby/plans/external-mcp-transport-multiplexer.md`. Decision 23 and
-    1.8 (1.8.5, 1.8.6 and V2 step 7) make rule 2 refuse a whole-index
-    commit while another live session holds dirt in the checkout. Until
-    then, seats commit with `git commit -- <path>`.
+    another live Plan Writer's edit to
+    `.gobby/plans/external-mcp-transport-multiplexer.md`. That Writer's
+    `git add` ran while the commit's pre-commit hook ran, and a commit
+    without a pathspec re-reads the index after its hook; a probe in a
+    scratch repository confirmed both this and that a pathspec commit holds
+    `index.lock` through its hooks. Decision 23 and 1.8 (1.8.5, 1.8.6 and
+    V2 step 7) make rule 2 refuse a whole-index commit while another live
+    session holds dirt in the checkout, staged or not, and 1.8.5 covers
+    `git commit -a` and a same-command `git add -A` or `git add .` at the
+    Orchestrator's request. Until then, seats commit with `git commit --
+    <path>`.
 
-  WIP checkpoints: `fb9ff9a3f5`, `2068aaf9a0`, `bd2663f7f9` and `6dad31d`.
+  WIP checkpoints: `fb9ff9a3f5`, `2068aaf9a0`, `bd2663f7f9` and `6dad31d`;
+  the review revision `908200ab86` was followed by this evidence update.
   One read during another session's pre-commit stash window (#25282)
   showed the file at its committed bytes; every edit was intact afterwards.
   Facts were verified read-only at `6dad31d`.
@@ -2002,6 +2024,7 @@ After every leaf has landed:
    the rule 4 text. Without that approval the row stays disabled and this
    step is not run.
 7. Whole-index commits, live (Decision 23): in a scratch checkout, live
-   session A writes and stages `q`. Session B's `git add p && git commit -m
-   m` is refused with the whole-index text naming A, and B's `git commit -m
-   m -- p` lands a commit recording only `p` while `q` stays staged.
+   session A writes `q` and leaves it unstaged. Session B's `git add p &&
+   git commit -m m` and `git add -A && git commit -m m` are refused with the
+   whole-index text naming A, and B's `git commit -m m -- p` lands a commit
+   recording only `p` while `q` keeps A's edit uncommitted.
