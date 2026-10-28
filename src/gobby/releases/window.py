@@ -485,9 +485,14 @@ def sync_git_common_dir(cwd: Path) -> Path:
     return Path(result.stdout.strip())
 
 
+def project_checkout_root(db: HubDatabase, project_id: str) -> str:
+    """The machine's primary checkout root. It blocks on the database: run it on a thread."""
+    return require_root(db, project_id, require_machine_id())
+
+
 async def _project_common_dir(db: HubDatabase, project_id: str) -> Path:
     # Same resolution as land_candidate, which also works while the branch is detached.
-    repo = await asyncio.to_thread(require_root, db, project_id, require_machine_id())
+    repo = await asyncio.to_thread(project_checkout_root, db, project_id)
     return await _git_common_dir(Path(repo))
 
 

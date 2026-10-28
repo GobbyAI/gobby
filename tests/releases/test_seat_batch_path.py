@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,6 +27,7 @@ from gobby.mcp_proxy.tools.release_tools import register_release_tools
 from gobby.releases.window import ReleaseWindow, acquire_window
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import get_current_session_id, session_context_for_test
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.release_batch_case import Clock, Fakes
@@ -199,6 +201,65 @@ async def test_batch_storage_tools_admit_only_the_release_manager(
     if tool == "release_batch_checkout":
         assert Path(admitted["root"]).resolve() == case.repo.resolve()
         assert admitted["candidate_sha"] == lease.candidate_sha
+
+
+@pytest.fixture
+def machine_reads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the thread of every machine-id read in the release store and window modules."""
+    reads: list[int] = []
+
+    def recording() -> str:
+        reads.append(threading.get_ident())
+        return require_machine_id()
+
+    monkeypatch.setattr("gobby.releases.store.require_machine_id", recording)
+    monkeypatch.setattr("gobby.releases.window.require_machine_id", recording)
+    return reads
+
+
+@pytest.mark.parametrize("tool", ["release_batch_checkout", "release_batch_active_runs"])
+async def test_batch_reads_the_machine_off_the_event_loop(
+    case: LandingCase, machine_reads: list[int], tool: str
+) -> None:
+    owner = case.session("release manager")
+    grant_step_writes(case.db, owner, case.project_id, "release-manager", ())
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=datetime.now(UTC)
+    )
+    loop_thread = threading.get_ident()
+
+    _status, reply = await _daemon_seam(case)(
+        owner, "gobby-agents", tool, _arguments(tool, lease.token, lease.generation)
+    )
+
+    assert isinstance(reply, dict) and reply["success"] is True, reply
+    assert machine_reads, "the batch never read the machine id"
+    assert loop_thread not in machine_reads
+
+
+@pytest.mark.parametrize(
+    ("foreign", "code"), [(False, "release_run_ids_invalid"), (True, "release_window_stale")]
+)
+async def test_batch_fenced_runs_checks_the_lease_then_the_run_ids(
+    case: LandingCase, foreign: bool, code: str
+) -> None:
+    owner = case.session("release manager")
+    grant_step_writes(case.db, owner, case.project_id, "release-manager", ())
+    lease = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=datetime.now(UTC)
+    )
+    arguments: dict[str, object] = {
+        "token": "foreign" if foreign else lease.token,
+        "generation": lease.generation,
+        "run_ids": ["not-a-run-id"],
+    }
+
+    _status, refused = await _daemon_seam(case)(
+        owner, "gobby-agents", "release_batch_fenced_runs", arguments
+    )
+
+    assert isinstance(refused, dict)
+    assert (refused["success"], refused["error_code"]) == (False, code), refused
 
 
 def test_seat_batch_reports_a_missing_baseline_as_a_refusal(

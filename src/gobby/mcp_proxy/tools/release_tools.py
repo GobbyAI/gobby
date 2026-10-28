@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -39,6 +40,17 @@ def _window_payload(window: ReleaseWindow) -> dict[str, Any]:
 
 def _refusal(code: str, message: str) -> dict[str, Any]:
     return {"success": False, "error": message, "error_code": code}
+
+
+def _is_run_id(value: object) -> bool:
+    """An agent run id is a UUID string; any other value is refused before storage sees it."""
+    if not isinstance(value, str):
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 def register_release_tools(registry: InternalToolRegistry, ctx: AgentsRegistryContext) -> None:
@@ -202,6 +214,8 @@ def register_release_tools(registry: InternalToolRegistry, ctx: AgentsRegistryCo
         try:
             lease = batch_lease(token, generation)
             await lease.require_live()
+            if not all(_is_run_id(run_id) for run_id in run_ids):
+                return _refusal("release_run_ids_invalid", "run_ids must be agent run UUIDs")
             fenced = await lease.fenced_runs(frozenset(run_ids))
         except _Forbidden as exc:
             return _refusal("release_window_forbidden", str(exc))

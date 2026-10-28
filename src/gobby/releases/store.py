@@ -22,12 +22,12 @@ from gobby.releases.batch import Checkout, Phase, ReleaseStoreUnavailable
 from gobby.releases.window import (
     ReleaseWindow,
     ReleaseWindowRefused,
+    project_checkout_root,
     release_window,
     renew_window,
     require_lease,
 )
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.project_checkouts import require_root
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
 
@@ -66,8 +66,9 @@ def _regression_criteria(candidate_sha: str, phase: Phase) -> str:
     )
 
 
-def _active_runs(db: HubDatabase, machine_id: str) -> frozenset[str]:
-    """The machine's active runs that are not already reconciliation-fenced."""
+def _active_runs(db: HubDatabase) -> frozenset[str]:
+    """The machine's active runs that are not already reconciliation-fenced. Blocking."""
+    machine_id = require_machine_id()
     runs = LocalAgentRunManager(db)
     found: set[str] = set()
     offset = 0
@@ -143,9 +144,7 @@ class HubReleaseLease:
     async def checkout(self) -> Checkout:
         async with self._fence:
             window = await self.require_live()
-            root = await asyncio.to_thread(
-                require_root, self.db, self.project_id, require_machine_id()
-            )
+            root = await asyncio.to_thread(project_checkout_root, self.db, self.project_id)
         return Checkout(Path(root), window.candidate_sha)
 
     async def renew(self) -> None:
@@ -172,7 +171,7 @@ class HubReleaseLease:
             )
 
     async def active_runs(self) -> frozenset[str]:
-        return await asyncio.to_thread(_active_runs, self.db, require_machine_id())
+        return await asyncio.to_thread(_active_runs, self.db)
 
     async def fenced_runs(self, run_ids: frozenset[str]) -> frozenset[str]:
         return await asyncio.to_thread(_fenced_runs, self.db, run_ids)
