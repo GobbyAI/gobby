@@ -85,7 +85,14 @@ gains two read functions in 1.3 and 2.3; the AI plan's #25112 adds alias
 operations to the same module, and the later landing rebases.
 `crates/gai/src/lib.rs` gains the re-export of #25097's service in 2.4 only
 when it is absent; the sessions plan's 4.1 adds the same re-export when
-memory has not (Decision 6).
+memory has not (Decision 6). The sessions plan edits
+`src/gobby/sessions/lifecycle.py` and keeps the knowledge-graph queue and
+dream-hidden purge in `SessionLifecycleManager`; 7.3 gates them and 8.6
+deletes them after #21562's leaves land. Most family plans edit the Python
+runner composition files, so 8.6 rebases last and its three delete-lines
+proofs are re-pinned at expansion. The code-index plan's 8.3 moves
+`_initialize_vector_store` out of `runner_lifecycle_subsystems.py` and pins
+a shutdown proof against an older blob; whichever lands second re-pins.
 
 ## Decision Record
 `kind: framing`
@@ -357,8 +364,8 @@ public surfaces; parity matches their intentional contracts, not accidents.
   newer rationale-only edit set and leave a stale vector marked clean. Native
   compares rationale null-safely in both. The difference appears only under
   that interleaving, which 2.2.12 and 2.3.7 prove. A paused Python projection
-  keeps the omission until the family's Python writers retire or #25272
-  fixes the Python side. Owners 2.2 and 2.3.
+  keeps the omission until 8.6 retires the family's Python writers or
+  #25272 fixes the Python side. Owners 2.2 and 2.3.
 
 **Waiver inventory:**
 
@@ -490,7 +497,8 @@ state, never by running the effect twice in production.
   features, `gobby-runtime` for `crates/gruntime/src/config.rs::active_state`
   and the secret store, axum, tokio, serde, serde_json, uuid, chrono, clap
   with `derive` for 7.1, and `reqwest` with `blocking` for 7.2. Only 1.1,
-  2.4, 2.5, 5.1 and 8.2 edit `crates/gmemory/Cargo.toml` or `Cargo.lock`.
+  2.4, 2.5, 5.1 and 8.2 edit `crates/gmemory/Cargo.toml`; those leaves, 8.5
+  and 8.6 are the only ones that edit `Cargo.lock`.
 - gcore's Qdrant, FalkorDB and embeddings clients are blocking. Async handlers
   call them through `tokio::task::spawn_blocking`.
 - Storage reuses existing tables: `memories`, `memory_crossrefs`,
@@ -499,9 +507,9 @@ state, never by running the effect twice in production.
   `session_variables` (Decision 3's keys only), and read-only `sessions` and
   `tasks`. Review lessons are `memories` rows with lesson tags. No schema
   change.
-- Source changes are built and tested before deployment. 8.2 is the one
-  shipping commit and owns release bumps and promotion; earlier commits are
-  unshipped source commits. Read the current `project_policy.release_guidance`
+- Source changes are built and tested before deployment. 8.2, 8.5 and 8.6
+  are the shipping commits and own their release bumps and promotion; the
+  other commits are unshipped source commits. Read the current `project_policy.release_guidance`
   at execution, honor the published and unpublished binary distinction, and
   use `src/gobby/install/bin_set_coherence.py::promote_workspace_binary_set`.
 - Heavy Rust commands require the Release Manager's heavy-work admission and
@@ -538,8 +546,10 @@ which key on `gobby-review-learning` tool names. No Rust crate calls
 `src/gobby/servers/browser_sessions.py::browser_route_allowed` limits managed
 browser cookies to GET, HEAD and OPTIONS. No memory row is a runtime-grant
 route. The Python route, tool and service modules stay as the proxy backend
-until the global Python removal; this plan edits none of them except the CLI
-package that 8.3 replaces.
+until 8.5 makes the family native-only. Before then this plan edits them only
+where 7.3 gates the Python jobs and 8.3 replaces the CLI package; 8.5 deletes
+the routes, and 8.6 deletes the tool and service modules with the family's
+runner wiring.
 
 ## P0: Freeze the family contract
 `kind: framing`
@@ -2213,7 +2223,9 @@ gateway reads each internal server's `front_door.routes` entry (`proxy`,
 `gobby-review-learning` descriptors through #24885's registration interface,
 and selects `front_door.routes.memory`, `front_door.routes.gobby-memory` and
 `front_door.routes.gobby-review-learning` through the existing bootstrap
-mechanism, with Proxy selectable for rollback. Compare runs only the S3 read
+mechanism, with Proxy selectable for rollback until 8.5 retires it. The
+selection takes effect at the activating restart, where 7.3's latch also
+moves the memory background jobs to gdaemon. Compare runs only the S3 read
 rows and read-only tools. Effectful rows and tools are proven by the owning
 leaves' isolated tests and the e2e run, never by running an effect twice.
 Consume #24963's readiness result: every waiver in the inventory needs its
@@ -2887,6 +2899,13 @@ service, 3.1 the #25070 seam, 4.1 and 4.2 the dream internals, 5.1 the
 review-learning service and 6.1 the session-variable writer. 8.1 owns
 admission and the Security approval gate, 8.2 activates the HTTP family and
 both MCP servers, and 8.4 records the delegated ledger state.
+
+Under the Orchestrator's 2026-10-28 ruling the port ends with no Python in
+the family's path. 7.3 runs the six memory background jobs in gdaemon, 8.5
+refuses a Proxy or Compare selection at start, makes Native the default and
+deletes the Python HTTP routes, and 8.6 deletes the Python memory and
+review-learning services, tool modules and runner wiring after the epics it
+names have moved their own callers.
 
 The #24963 readiness gate requires ordinary `Passed` cases and exactly cited,
 native-asserted `Waived` cases for the 64 waivers, and fails skipped-only and
