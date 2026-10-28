@@ -1748,6 +1748,35 @@ class TestClaudeProviderGrants:
             assert root in paths.read_paths
 
 
+def test_linked_codex_login_grants_only_its_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Refresh writes through a linked codex login need its one target granted."""
+    operator = tmp_path / "operator-codex"
+    operator.mkdir()
+    (operator / "auth.json").write_text("{}")
+    home = tmp_path / "home"
+    providers = home / "providers" / "codex"
+    providers.mkdir(parents=True)
+    (providers / "auth.json").symlink_to(operator / "auth.json")
+    (home / ".codex").symlink_to(providers, target_is_directory=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    assert sorted(sandbox_policy.provider_write_exceptions("codex")) == sorted(
+        [str(providers.resolve()), str((operator / "auth.json").resolve())]
+    )
+
+
+def test_real_codex_login_adds_no_grant(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A codex login stored in the root is already covered by the root grant."""
+    codex_home = tmp_path / "home" / ".codex"
+    codex_home.mkdir(parents=True)
+    (codex_home / "auth.json").write_text("{}")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    assert sandbox_policy.provider_write_exceptions("codex") == [str(codex_home.resolve())]
+
+
 class TestAgySandboxResolver:
     """AGY sandbox resolver, policy maps, and capability-gate reachability (plan 3.2)."""
 

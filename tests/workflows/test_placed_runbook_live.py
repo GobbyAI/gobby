@@ -1291,6 +1291,7 @@ def steward_live(
             state.evidence["codex_rollout"] = _preserve_rollout(
                 home, evidence_dir, request.node.name
             )
+            state.evidence["daemon_logs"] = _preserve_logs(home, evidence_dir, request.node.name)
         finally:
             try:
                 _cleanup(state, cleanup)
@@ -1403,6 +1404,19 @@ def _codex_calls(rollout: Path) -> list[str]:
         if str(payload.get("type", "")).endswith("_call"):
             calls.append(json.dumps(payload, sort_keys=True))
     return calls
+
+
+def _preserve_logs(home: Path, evidence_dir: Path, test_name: str) -> str | None:
+    """Copy the isolated daemon's logs into the evidence directory before teardown removes them."""
+    logs = home / "logs"
+    if not logs.is_dir():
+        return None
+    copy = evidence_dir / f"{test_name}.logs"
+    try:
+        shutil.copytree(logs, copy, dirs_exist_ok=True)
+    except OSError as exc:
+        return f"copy failed: {exc}"
+    return str(copy)
 
 
 def _preserve_rollout(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:

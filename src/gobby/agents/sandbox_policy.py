@@ -430,7 +430,30 @@ def provider_write_exceptions(provider: str) -> list[str]:
         # Shared session/log directories preserve resume without a writable host
         # config root (which also contains the installed Grok executable).
         return canonical_paths([f"~/.grok/{name}" for name in GROK_RUNTIME_DIRECTORIES])
-    return canonical_paths(list(_PROVIDER_AUTH_PATHS.get(provider, ())))
+    return canonical_paths(
+        [*_PROVIDER_AUTH_PATHS.get(provider, ()), *_linked_auth_targets(provider)]
+    )
+
+
+# Auth files a provider may rewrite on bootstrap, such as a token refresh.
+_PROVIDER_LINKED_AUTH_FILES: dict[str, str] = {"codex": "auth.json"}
+
+
+def _linked_auth_targets(provider: str) -> list[str]:
+    """Resolved targets of a linked auth file, granted as that one file.
+
+    An isolated home links the operator's existing login into the provider root.
+    A rewrite through that link would land on the target, outside the granted root.
+    A real auth file is already under the root, so it adds nothing.
+    """
+    name = _PROVIDER_LINKED_AUTH_FILES.get(provider)
+    if name is None:
+        return []
+    return [
+        str(link.resolve())
+        for root in _PROVIDER_AUTH_PATHS.get(provider, ())
+        if (link := Path(root).expanduser() / name).is_symlink()
+    ]
 
 
 def _nearest_package_root(executable: Path) -> Path | None:

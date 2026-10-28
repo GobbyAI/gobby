@@ -62,6 +62,12 @@ async def apply_host_event(manager: TerminalHostManager, event: HostEvent) -> No
             except Exception:
                 logger.exception("input activity sink failed for terminal %s", event.terminal_id)
     else:
+        # Nothing else keeps a dead terminal's exit code, so the log is its record.
+        logger.info(
+            "terminal %s exited with code %s",
+            event.terminal_id,
+            event.exit_code,
+        )
         terminal_manager = manager.terminal_manager
         if terminal_manager is not None:
             await asyncio.to_thread(
