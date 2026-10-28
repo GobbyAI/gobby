@@ -430,6 +430,14 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
         checksum: "008a0667fa4ca5fe08b4f1c40845edca39a45fdd13330a72f82804c90ca6c227",
         sql: include_str!("../../assets/schema/migrations/482_query_readonly_role.sql"),
     },
+    EmbeddedMigration {
+        version: 483,
+        filename: "483_statement_scoped_code_authorization.sql",
+        checksum: "8596eeff10c2b96b443bcf33b97dd1618a140b658734bc11109971bd675fd9b1",
+        sql: include_str!(
+            "../../assets/schema/migrations/483_statement_scoped_code_authorization.sql"
+        ),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

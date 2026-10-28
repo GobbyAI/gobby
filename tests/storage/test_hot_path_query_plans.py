@@ -9,6 +9,7 @@ production code actually issues.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +21,7 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.storage.terminals import TerminalManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
@@ -196,5 +198,78 @@ def test_mailbox_reads_do_not_scan_the_message_table(
     assert issued, read
     for statement in issued:
         scans = _scans_of(temp_db, statement, "inter_session_messages")
+        assert scans, statement
+        assert all("Seq Scan" not in node["Node Type"] for node in scans), (read, statement[0])
+
+
+def test_mailbox_retention_finds_its_bounded_batch_through_an_index(
+    temp_db: HubDatabase, recipient: str
+) -> None:
+    """Retention must not sort the entire delivered mailbox for each 500-row batch."""
+    manager = InterSessionMessageManager(temp_db)
+    with (
+        temp_db.transaction() as connection,
+        patch.object(temp_db, "transaction", return_value=nullcontext(connection)),
+        patch.object(connection, "execute", wraps=connection.execute) as execute,
+    ):
+        removed = manager.delete_delivered_before(datetime.now(UTC), limit=500)
+    assert removed == 500
+    assert execute.call_count == 1
+    call = execute.call_args
+    assert call is not None
+    scans = _scans_of(temp_db, (call.args[0], tuple(call.args[1])), "inter_session_messages")
+    assert any(
+        _leading_column(temp_db, node["Index Name"]) == "delivered_at"
+        for node in scans
+        if "Index Name" in node
+    ), scans
+
+
+@pytest.fixture
+def terminal_session(
+    temp_db: HubDatabase, isolated_checkout_factory: IsolatedCheckoutFactory
+) -> str:
+    """A machine with thousands of exited terminals and one reconcilable session."""
+    project = isolated_checkout_factory(temp_db, "terminal-plan-guard").project
+    session_id = str(uuid4())
+    temp_db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+        "VALUES (%s, %s, %s, 'claude', %s)",
+        (session_id, session_id, LOCAL_MACHINE_ID, project.id),
+    )
+    temp_db.execute(
+        """
+        INSERT INTO terminals (id, backend, ownership, state, machine_id, project_id, spawn_key)
+        SELECT gen_random_uuid(), 'native', 'gobby', 'exited', %s, %s, 'plan-guard-' || g
+        FROM generate_series(1, 5000) g
+        """,
+        (LOCAL_MACHINE_ID, project.id),
+    )
+    temp_db.execute(
+        """
+        INSERT INTO terminals
+            (id, backend, ownership, state, machine_id, project_id, spawn_key, session_id)
+        VALUES (%s, 'native', 'gobby', 'pending', %s, %s, %s, %s)
+        """,
+        (str(uuid4()), LOCAL_MACHINE_ID, project.id, session_id, session_id),
+    )
+    temp_db.execute("ANALYZE terminals")
+    return session_id
+
+
+@pytest.mark.parametrize("read", ["session", "reconciliation"])
+def test_terminal_lookups_do_not_scan_settled_history(
+    temp_db: HubDatabase, terminal_session: str, read: str
+) -> None:
+    manager = TerminalManager(temp_db)
+    action = (
+        (lambda: manager.list_for_session(terminal_session))
+        if read == "session"
+        else (lambda: manager.list_reconcilable_by_machine(LOCAL_MACHINE_ID))
+    )
+    issued = _issued_statements(temp_db, action)
+    assert issued, read
+    for statement in issued:
+        scans = _scans_of(temp_db, statement, "terminals")
         assert scans, statement
         assert all("Seq Scan" not in node["Node Type"] for node in scans), (read, statement[0])

@@ -50,9 +50,20 @@ SEED_FILES = """
     SELECT gen_random_uuid(), %(project)s, 'bulk/' || g, 'rust', 'bulk-' || g, 1, 10
     FROM generate_series(1, %(rows)s) g
 """
+SEED_GAPS = """
+    INSERT INTO public.code_overlay_pin_gaps (machine_id, overlay_project_id, file_path)
+    SELECT %(machine)s, %(project)s, 'bulk/' || g FROM generate_series(1, %(rows)s) g
+"""
 SCANS = {
     "code_symbols": "SELECT count(*) FROM code_symbols WHERE name LIKE 'bulk_%'",
     "code_indexed_files": "SELECT count(*) FROM code_indexed_files WHERE file_path LIKE 'bulk/%'",
+    "code_overlay_pin_gaps": (
+        "SELECT count(*) FROM code_overlay_pin_gaps WHERE file_path LIKE 'bulk/%'"
+    ),
+    "delete_code_overlay_pin_gaps": (
+        "WITH removed AS (DELETE FROM code_overlay_pin_gaps "
+        "WHERE file_path LIKE 'bulk/%' RETURNING file_path) SELECT count(*) FROM removed"
+    ),
 }
 
 
@@ -65,10 +76,18 @@ def populated_index(postgres_database_url: str) -> Iterator[AuthorizationFixture
                 (fixture.other_project_id, OUT_OF_SCOPE_ROWS),
                 (fixture.project_id, IN_SCOPE_ROWS),
             ):
-                for seed in (SEED_FILES, SEED_SYMBOLS):
-                    admin.execute(seed, {"project": project_id, "rows": rows})
+                for seed in (SEED_FILES, SEED_SYMBOLS, SEED_GAPS):
+                    admin.execute(
+                        seed, {"project": project_id, "rows": rows, "machine": fixture.machine_id}
+                    )
+            # Same project on another machine must remain invisible and unwritable.
+            admin.execute(
+                SEED_GAPS,
+                {"project": fixture.project_id, "rows": 20, "machine": fixture.other_machine_id},
+            )
             admin.execute("ANALYZE public.code_symbols")
             admin.execute("ANALYZE public.code_indexed_files")
+            admin.execute("ANALYZE public.code_overlay_pin_gaps")
             # Track the policy helpers inside the agent's own sessions; only a superuser may
             # enable this, and ALTER ROLE applies it to the agent's next login.
             admin.execute(
@@ -99,3 +118,24 @@ def test_scoped_scan_runs_policy_helpers_a_bounded_number_of_times(
         f"{calls[0]} policy helper calls for one scan of {OUT_OF_SCOPE_ROWS + IN_SCOPE_ROWS} "
         f"{table} rows"
     )
+    if table == "delete_code_overlay_pin_gaps":
+        with psycopg.connect(populated_index.database_url) as admin:
+            remaining = admin.execute("SELECT count(*) FROM code_overlay_pin_gaps").fetchone()
+        assert remaining == (OUT_OF_SCOPE_ROWS + 20,)
+
+
+def test_prepared_scan_rechecks_authority_each_execution(
+    populated_index: AuthorizationFixture,
+) -> None:
+    """An InitPlan must not retain a principal's authority after its statement ends."""
+    with psycopg.connect(populated_index.agent_url) as agent:
+        statement = SCANS["code_symbols"]
+        assert agent.execute(statement, prepare=True).fetchone() == (IN_SCOPE_ROWS,)
+        with psycopg.connect(populated_index.database_url, autocommit=True) as admin:
+            admin.execute(
+                "UPDATE gobby_agent_auth.principal_bindings SET revoked_at = now() "
+                "WHERE role_name = %s",
+                (populated_index.role_name,),
+            )
+        with pytest.raises(psycopg.errors.NoDataFound):
+            agent.execute(statement, prepare=True).fetchone()
