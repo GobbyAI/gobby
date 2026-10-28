@@ -1663,3 +1663,352 @@ After every leaf has landed:
    `de_escalate_task` on T, and session B claims T. B's `close_task` fails
    gate 3 on `p`, B commits `p` past rule 2, and `close_task` then passes
    gate 3.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Retire release_task_paths, inspect_task_path_ownership and the claim scope
+    check
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The `gobby-tasks` registry built by `create_lifecycle_registry`
+    exposes neither `release_task_paths` nor `inspect_task_path_ownership`. test:
+    `tests/mcp_proxy/tools/test_read_only_classification.py::test_task_registry_omits_retired_path_tools`.
+
+    1.1.2: `claim_task` succeeds for a task whose declared affected files are dirty
+    and held by another live session, and returns no scope-conflict error. test: `tests/mcp_proxy/tools/test_claim_task.py::test_claim_task_ignores_foreign_dirty_declared_paths`.
+
+    1.1.3: `TASK_MUTATION_TOOLS_BY_SERVER` no longer names `release_task_paths`, and
+    the enforcement tool lists hold neither retired name. test: `tests/workflows/test_task_enforcement_rules.py::test_retired_path_tools_absent_from_enforcement_lists`.'
+  labels:
+  - covers:content-ownership-rules:1.1:1.1.1
+  - covers:content-ownership-rules:1.1:1.1.2
+  - covers:content-ownership-rules:1.1:1.1.3
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Retire capture_baseline_dirty_files and baseline_dirty_files
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: The sessions registry built by `create_session_messages_registry`
+    has no `capture_baseline_dirty_files` tool. test: `tests/mcp_proxy/tools/test_internal_action_tools.py::test_sessions_registry_omits_capture_baseline_dirty_files`.
+
+    1.2.2: Session activation on a fresh session writes no `baseline_dirty_files`
+    variable and does not report it missing. test: `tests/hooks/test_session_activation_reconciliation.py::test_activation_seeds_no_baseline_dirty_files`.
+
+    1.2.3: `rg -n "baseline_dirty_files|capture_baseline_dirty_files|GIT_STATUS_UNAVAILABLE_MARKER"
+    src/ docs/guides docs/reference-audit -g ''!src/gobby/workflows/hooks.py''` prints
+    nothing. `hooks.py` is excluded because its line 408 comment is fixed in 1.6,
+    which runs after 1.2; V2 step 2 sweeps the whole tree. test: `tests/hooks/test_session_activation_reconciliation.py::test_baseline_dirty_tracking_invariant_still_seeds_edit_ledgers`.'
+  labels:
+  - covers:content-ownership-rules:1.2:1.2.1
+  - covers:content-ownership-rules:1.2:1.2.2
+  - covers:content-ownership-rules:1.2:1.2.3
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Rules 2 and 3 judge live session ownership
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.3.1: Rule 3 refuses a Write to a path that is dirty and
+    absent from the session''s ledger, naming the holding live session''s ref and
+    its claimed task ref; with no live holder the line says "no live session owns
+    it". test: `tests/workflows/test_commit_guard.py::test_rule3_refuses_dirty_first_touch_naming_owner`.
+
+    1.3.2: Rule 3 allows a write to a path in the session''s own ledger without running
+    git, and allows a clean path while releasing it from another live holder''s `session_dirty_files`.
+    test: `tests/workflows/test_commit_guard.py::test_rule3_allows_owned_and_clean_paths_and_releases_stale_holder`.
+
+    1.3.3: Rule 3 ignores execute-kind calls (`git add`, `git restore --staged`),
+    uses the `cp` destination and not its dirty source, and refuses as unverified
+    when git status fails. test: `tests/workflows/test_commit_guard.py::test_rule3_checks_write_paths_of_write_kind_calls_only`.
+
+    1.3.4: With MERGE_HEAD present, rule 3 allows writes to merge-set paths, including
+    both names of a rename, and still refuses a dirty path outside the merge set;
+    once MERGE_HEAD is gone, a dirty unowned former merge-set path is refused again.
+    test: `tests/workflows/test_commit_guard.py::test_rule3_exempts_merge_set_paths_during_merge`.
+
+    1.3.5: #23363 land 7 regression: a merge commit whose merge-set paths are dirty
+    and held by another live session passes rule 2, while a non-merge path staged
+    in the same commit and held by another live session is refused with the rule 2
+    text. test: `tests/workflows/test_commit_guard.py::test_rule2_landing_merge_passes_for_merge_set_paths`.
+
+    1.3.6: Rule 2 allows the session''s own dirty paths and unowned dirty paths, and
+    refuses another live session''s dirty path with no `release_task_paths` advice
+    in the text. test: `tests/workflows/test_commit_guard.py::test_rule2_blocks_only_other_live_sessions_dirty_paths`.
+
+    1.3.7: `resolve_edit_pair` returns `(root, rel)` for relative and absolute paths
+    in any checkout of the session''s project and, through `sanctioned_worktree_root`,
+    in another project''s registered worktree bound to a claimed task (reached through
+    a symlinked temp path); it returns None for any other path of another project
+    and for a path under no `.gobby/project.json` root. test: `tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_keys_on_project_root`.
+
+    1.3.8: `parse_git_commit_invocations` and `resolve_commit_inspect_cwd` import
+    from `git_commit_parsing` and keep their behavior. test: `tests/workflows/test_git_commit_parsing.py::test_parse_git_commit_invocations_handles_chdir_and_nested_shells`.
+
+    1.3.9: With the cwd in the main checkout, `resolve_edit_pair` maps `../<worktree>/p.py`
+    and a relative symlink in the main checkout that points into the worktree to the
+    worktree''s pair, and maps a relative path to None when the cwd is None. test:
+    `tests/workflows/test_task_claim_state.py::test_resolve_edit_pair_finds_root_from_resolved_target`.
+
+    1.3.10: `effective_tool_cwd` returns an absolute `workdir`, joins a relative `workdir`
+    or `cwd` to `event.cwd`, returns `event.cwd` without either, and returns None
+    for a relative `workdir` without `event.cwd`. Rule 3 judges a relative write path
+    at that cwd: with `event.cwd` in the main checkout and `workdir` in a second checkout
+    of the project, a write to `p.py` is refused when the second checkout''s `p.py`
+    is dirty and unowned, and allowed when only the main checkout''s `p.py` is. test:
+    `tests/workflows/test_commit_guard.py::test_rule3_resolves_relative_paths_at_tool_workdir`.'
+  labels:
+  - covers:content-ownership-rules:1.3:1.3.1
+  - covers:content-ownership-rules:1.3:1.3.2
+  - covers:content-ownership-rules:1.3:1.3.3
+  - covers:content-ownership-rules:1.3:1.3.4
+  - covers:content-ownership-rules:1.3:1.3.5
+  - covers:content-ownership-rules:1.3:1.3.6
+  - covers:content-ownership-rules:1.3:1.3.7
+  - covers:content-ownership-rules:1.3:1.3.8
+  - covers:content-ownership-rules:1.3:1.3.9
+  - covers:content-ownership-rules:1.3:1.3.10
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Retire the ledger state v4 left without readers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: `record_edited_files` writes `task_edited_checkout_times`,
+    `task_edited_checkout_hashes`, `task_edited_file_checkouts` and `task_edited_files`
+    for the attributed task and writes none of `task_edited_file_times`, `task_edited_file_checkouts_history`
+    and `task_edited_file_checkouts_history_started_at`; a replayed record with an
+    older `edited_at` never lowers a pair''s `task_edited_checkout_times` stamp. test:
+    `tests/workflows/test_session_variable_manager.py::test_record_edited_files_writes_no_retired_ledgers`.
+
+    1.4.2: After task B''s edit of a pair takes its live interval from task A in the
+    same session, `task_edited_checkout_paths(variables, A)` omits the pair and `task_edited_checkout_paths(variables,
+    B)` holds it. test: `tests/workflows/test_task_claim_state.py::test_task_edited_checkout_paths_returns_live_pairs_only`.
+
+    1.4.3: `release_task_claim` releases the holder''s claim on task A when the only
+    dirty path A edited was later taken by the holder''s task B, and still refuses
+    with `task_has_uncommitted_changes` while a live pair of A is dirty. test: `tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py::test_claim_release_ignores_pairs_a_later_task_took`.
+
+    1.4.4: `capture_attribution`, given a `task_edited_files` path with no checkout
+    pair and a linked commit, reports `complete`, skips the linked-commit fallback
+    and returns no checkouts. test: `tests/mcp_proxy/tools/tasks/test_close_attribution.py::test_attribution_complete_ignores_unscoped_task_paths`,
+    which replaces `test_unscoped_ledger_is_not_replaced_by_commit_fallback`.
+
+    1.4.5: `task_claim_state` defines none of `task_edited_checkout_history_paths`,
+    `other_task_edited_checkout_paths`, `task_checkout_paths_in_window`, `task_edited_file_set_with_history`
+    and `task_edited_file_times`, and `remove_claimed_task` returns no `task_edited_file_times`
+    key. test: `tests/workflows/test_task_claim_state.py::test_v4_orphaned_ledger_accessors_are_gone`.
+
+    1.4.6: The bundled session variable defaults declare no `task_edited_file_times`.
+    test: `tests/workflows/test_session_defaults.py::test_defaults_declare_no_retired_edit_ledgers`.'
+  labels:
+  - covers:content-ownership-rules:1.4:1.4.1
+  - covers:content-ownership-rules:1.4:1.4.2
+  - covers:content-ownership-rules:1.4:1.4.3
+  - covers:content-ownership-rules:1.4:1.4.4
+  - covers:content-ownership-rules:1.4:1.4.5
+  - covers:content-ownership-rules:1.4:1.4.6
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: The recorder records only content-changing writes
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.5.1: #22642 regression: in a temporary git checkout where
+    a tracked file is staged, a Bash `git restore --staged <path>` call records no
+    pair in `session_dirty_files`, `task_edited_files` or `session_edited_files`.
+    test: `tests/hooks/test_tool_handlers.py::test_git_restore_staged_records_no_attribution`.
+
+    1.5.2: A Write or Edit that leaves a clean path''s bytes unchanged records nothing,
+    and one that changes them records the pair. test: `tests/hooks/test_tool_handlers.py::test_recorder_records_only_content_changes`.
+
+    1.5.3: A Write creating a new untracked file records it. A path the session owns
+    under task A, rewritten with the same bytes while task B is active, records nothing
+    for B: A keeps the live interval and the newest content record. test: `tests/hooks/test_tool_handlers.py::test_recorder_handles_untracked_and_owned_paths`.
+
+    1.5.4: Mixed shell segments publish `canonical_write_file_paths` as the union
+    of write-kind targets: `cp a b && git restore -- c` gives `[b, c]`, `mv a b &&
+    echo x > d` gives `[a, b, d]`, `rm e && echo x > d` gives `[e, d]`, and `git add
+    x && git restore -- y` and `git restore --staged x && echo z > y` give `[y]` only.
+    test: `tests/hooks/test_normalization.py::test_mixed_segments_publish_union_of_write_kind_targets`.
+
+    1.5.5: In a temporary git checkout, a Bash `git add <foreign path> && git restore
+    -- <own path>` call, where `<own path>` is in the session''s ledger and the restore
+    changes it, records `<own path>` and nothing for the `git add` path. test: `tests/hooks/test_tool_handlers.py::test_recorder_ignores_execute_segment_paths_in_mixed_command`.
+
+    1.5.6: A failed Bash call `echo changed > <path> && false` records the pair, and
+    a failed call that leaves the bytes unchanged records nothing. test: `tests/hooks/test_tool_handlers.py::test_failed_write_call_records_only_changed_bytes`.
+
+    1.5.7: With MERGE_HEAD present, a same-bytes Write to a dirty merge-set path held
+    by another session records nothing for the writer. test: `tests/hooks/test_tool_handlers.py::test_merge_set_noop_write_records_nothing`.
+
+    1.5.8: A Bash call that writes a clean tracked path and commits it (`echo x >
+    <path> && git commit -qam m`) records the pair for the task, and reconciliation
+    then drops it from the session''s dirty set. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
+
+    1.5.9: With no stored entry, the status rule decides (dirty records, clean records
+    nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
+
+    1.5.10: Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path
+    with distinct request ids keep separate baselines. With no request id, the second
+    `before` overwrites the first, and the second `take` finds no entry. test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
+
+    1.5.11: `handle_session_end` drops the session''s entries and keeps other sessions''
+    entries, `snapshot` drops entries older than one hour, and `take` returns None
+    for an entry older than one hour when no `snapshot` ran since. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
+
+    1.5.12: A Bash write to the relative path `p.py` with `event.cwd` in the main
+    checkout and `workdir` in a second checkout of the project fingerprints and records
+    the second checkout''s pair and records nothing for the main checkout''s `p.py`.
+    test: `tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir`.
+
+    1.5.13: A Bash call that changes two paths and makes the first unreadable (`chmod
+    000`) records both pairs, the first through the status fallback, and an unreadable
+    path at `before_tool` stores no entry while the call''s other paths keep theirs.
+    test: `tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others`.
+
+    1.5.14: The read-only probe loop `for i in 1 2 3; do curl -s -o /dev/null ...;
+    done` reaches the recorder as a write-kind call and records nothing, because `/dev/null`
+    resolves to no pair. test: `tests/hooks/test_normalization_canonical_mutation_scope.py::test_read_only_probe_loop_is_not_an_in_project_mutation`.'
+  labels:
+  - covers:content-ownership-rules:1.5:1.5.1
+  - covers:content-ownership-rules:1.5:1.5.2
+  - covers:content-ownership-rules:1.5:1.5.3
+  - covers:content-ownership-rules:1.5:1.5.4
+  - covers:content-ownership-rules:1.5:1.5.5
+  - covers:content-ownership-rules:1.5:1.5.6
+  - covers:content-ownership-rules:1.5:1.5.7
+  - covers:content-ownership-rules:1.5:1.5.8
+  - covers:content-ownership-rules:1.5:1.5.9
+  - covers:content-ownership-rules:1.5:1.5.10
+  - covers:content-ownership-rules:1.5:1.5.11
+  - covers:content-ownership-rules:1.5:1.5.12
+  - covers:content-ownership-rules:1.5:1.5.13
+  - covers:content-ownership-rules:1.5:1.5.14
+  tdd: true
+  source_section: '1.5'
+  implementation_domain: backend
+- title: Rule 4 refuses writes into another Gobby project
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '1.5'
+  validation_criteria: '1.6.1: A Write whose path lies in a checkout of a different
+    registered project returns the rule 4 text naming both projects, while writes
+    into the session''s own main checkout, its task worktree and a path under no `.gobby/project.json`
+    root are allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_refuses_other_project_and_allows_own_and_unmanaged`.
+
+    1.6.2: End to end through a registered worktree of another project bound to a
+    claimed task, reached through a symlinked temp path: rule 4 allows writes there,
+    yet rule 3 refuses a write to a dirty path the session does not own; a clean path''s
+    write passes, the recorder records the pair under the worktree''s real root, and
+    `capture_attribution` attributes that pair to the task under that root, so gate
+    3 inspects it. test: `tests/workflows/test_ownership_eval_context.py::test_sanctioned_worktree_write_obeys_rules_1_to_3`.
+
+    1.6.3: `RuleEngine.evaluate` with an eval_context lacking `cross_project_write_conflict`
+    evaluates the rule as not matching instead of failing closed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_default_key_keeps_unwired_callers_open`.
+
+    1.6.4: The bundled `block-cross-project-write` template loads with event `before_tool`,
+    priority 24 and a block effect carrying the key. test: `tests/workflows/test_task_enforcement_rules.py::test_block_cross_project_write_template_shape`.
+
+    1.6.5: Rule 4 judges the file the tool names: with `event.cwd` in the session''s
+    checkout, a write to `p.py` with `workdir` in another project''s checkout, a write
+    to `../<other project>/p.py`, and a write through a relative symlink in the session''s
+    checkout that points into the other project are each refused, while the same relative
+    write with `workdir` in the session''s own task worktree is allowed. test: `tests/workflows/test_ownership_eval_context.py::test_rule4_resolves_workdir_relative_and_symlinked_paths`.'
+  labels:
+  - covers:content-ownership-rules:1.6:1.6.1
+  - covers:content-ownership-rules:1.6:1.6.2
+  - covers:content-ownership-rules:1.6:1.6.3
+  - covers:content-ownership-rules:1.6:1.6.4
+  - covers:content-ownership-rules:1.6:1.6.5
+  tdd: true
+  source_section: '1.6'
+  implementation_domain: backend
+- title: 'Rule 1: gate 3 checks the task''s uncommitted work in every session'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '1.8'
+  validation_criteria: '1.7.1: An ended predecessor session recorded `p` for task
+    T and left it dirty, and the owner has no record of `p`; gate 3 for T fails with
+    "Commit task-attributed changes before closing." and lists `p` under its checkout,
+    and passes once `p` is committed. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_blocks_on_ended_predecessor_dirt_for_the_task`.
+
+    1.7.2: A live predecessor that released T still holds T''s dirty `p`; gate 3 fails
+    on `p` instead of subtracting it as foreign. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_live_predecessor_dirt_for_the_task`.
+
+    1.7.3: #24402 holds: after T committed `p`, a live session dirtied `p` for task
+    U with a recorded edit, and another live session dirtied `q` with no task record;
+    gate 3 for T passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_ignores_later_foreign_dirt_on_committed_paths`.
+
+    1.7.4: A predecessor''s record of `p` for T whose current content task U''s later
+    recorded edit owns adds nothing to T''s attributed paths. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_skips_recorded_pairs_another_task_now_owns`.
+
+    1.7.5: A recorded pair under a deleted checkout root is dropped and never makes
+    gate 3 unavailable, while a failing `task_recorded_pairs` read fails gate 3 with
+    "Git could not inspect all task-attributed files." test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_drops_deleted_roots_and_fails_closed_on_unread_records`.
+
+    1.7.6: `task_recorded_pairs` returns as content pairs every root and path that
+    any session''s `task_edited_checkout_hashes` recorded for the task, and nothing
+    recorded only for other tasks. It returns as fallback pairs a live pair of the
+    task whose session holds no hash for it, a live directory pair, and a live pair
+    whose stale hash names a file that is now unreadable, and it omits a live pair
+    whose recorded hash belongs to a readable file. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
+
+    1.7.7: An escalated predecessor recorded, for T, a file `p` through the status
+    fallback while `p` was unreadable and a directory `d` that now holds an untracked
+    file, neither with a content record. After B claims T, gate 3 fails instead of
+    passing over either pair. Once `p` is readable again but uncommitted, gate 3 still
+    fails. Once both are committed, gate 3 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
+
+    1.7.8: Stale-hash recovery: T''s predecessor session records readable `p` (hash
+    H1), and a later recorded write changes `p` and leaves it unreadable, which removes
+    that session''s hash of `p` for T while its other paths keep theirs. After B claims
+    T and `p` is made readable again without a byte change, gate 3 fails on the uncommitted
+    `p`, then passes once `p` is committed. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_pairs_whose_stale_hash_was_dropped`.'
+  labels:
+  - covers:content-ownership-rules:1.7:1.7.1
+  - covers:content-ownership-rules:1.7:1.7.2
+  - covers:content-ownership-rules:1.7:1.7.3
+  - covers:content-ownership-rules:1.7:1.7.4
+  - covers:content-ownership-rules:1.7:1.7.5
+  - covers:content-ownership-rules:1.7:1.7.6
+  - covers:content-ownership-rules:1.7:1.7.7
+  - covers:content-ownership-rules:1.7:1.7.8
+  tdd: true
+  source_section: '1.7'
+  implementation_domain: backend
+- title: Rule 2 lets a claimant commit its claimed task's dirt
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '1.4'
+  validation_criteria: '1.8.1: Session C claims task T, and live session P, which
+    no longer claims T, holds dirty `p` whose live interval is T''s; rule 2 lets C
+    commit `p`, while a dirty path P holds for task U, which C does not claim, is
+    refused with the rule 2 text. test: `tests/workflows/test_commit_guard.py::test_rule2_allows_commit_of_claimed_task_dirt_held_by_live_predecessor`.
+
+    1.8.2: `operation_paths` imports from `git_operation_paths` and returns the merge
+    set while `MERGE_HEAD` exists and an empty set when no operation is in progress.
+    test: `tests/workflows/test_git_operation_paths.py::test_operation_paths_lists_merge_set_only_during_merge`.'
+  labels:
+  - covers:content-ownership-rules:1.8:1.8.1
+  - covers:content-ownership-rules:1.8:1.8.2
+  tdd: true
+  source_section: '1.8'
+  implementation_domain: backend
+```
