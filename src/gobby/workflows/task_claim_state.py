@@ -792,8 +792,9 @@ def record_unclaimed_edits(
 def adopt_unclaimed_edits(variables: dict[str, Any], task_id: str) -> None:
     """Give ``task_id`` the session's pre-claim writes that still hold the content they left.
 
-    A path that another session or an operator changed since the write, or that another live
-    claim holds, stays out. Every pending record is settled here, so the next claim starts clean.
+    A path that another session or an operator changed since the write, or that another task's
+    live attribution holds, stays out. Every pending record is settled here, so the next claim
+    starts clean.
     """
     raw = variables.get("session_unclaimed_edits")
     variables["session_unclaimed_edits"] = None
@@ -801,15 +802,16 @@ def adopt_unclaimed_edits(variables: dict[str, Any], task_id: str) -> None:
         return
     raw_dirty = variables.get("session_dirty_file_checkouts")
     dirty_checkouts = raw_dirty if isinstance(raw_dirty, dict) else {}
-    raw_live = variables.get("task_edited_file_checkouts")
-    live = raw_live if isinstance(raw_live, dict) else {}
+    # Held means another task's live attribution interval, not retained checkout history.
+    raw_starts = variables.get("task_live_edit_starts")
+    live_starts = raw_starts if isinstance(raw_starts, dict) else {}
     for root, records in raw.items():
         if not isinstance(records, dict):
             continue
         still_dirty = set(dirty_checkouts.get(root) or [])
         held = {
             path
-            for other_id, checkouts in live.items()
+            for other_id, checkouts in live_starts.items()
             if other_id != task_id and isinstance(checkouts, dict)
             for path in checkouts.get(root) or []
         }
