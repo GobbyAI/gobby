@@ -162,5 +162,5 @@ branch found in this pass.
   edits one bundled rule template, so it needs an ordinary announced daemon restart after
   the merge, with no cutover and no binary install. The `clean-window` rationale in
   #22643's description no longer applies; that label is the Orchestrator's to edit.
-- **Routing.** The remaining scope is one atomic deliverable. Expansion yields exactly one
-  leaf under #22643.
+- **Routing.** The remaining scope is two deliverables, 2.3 and 4.1. Expansion yields two
+  leaves under #22643, one per deliverable.

@@ -254,10 +254,10 @@ All commands run against the isolated test hub, from the implementing checkout:
   passes.
 - `bash -n pre-push-test.sh` is clean, and
   `gcode grep -F "GOBBY_RUN_BUILD_CANARY" pre-push-test.sh tests/ci -m 5` returns no hits.
-- `uv run ruff format --check tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
-  and `uv run ruff check tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
+- `uv run ruff format --check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
+  and `uv run ruff check tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py`
   are clean.
-- `uv run gobby test-types audit tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py --baseline .gobby/test-types-baseline.json --fail-on-new`
+- `uv run gobby test-types audit tests/workflows/test_plan_mode_rules.py tests/install/test_bundled_content_manifest.py tests/ci/test_postgres_test_stack.py --baseline .gobby/test-types-baseline.json --fail-on-new`
   reports no new findings.
 
 Live check for 2.3, from the main checkout after the merge and an announced daemon
