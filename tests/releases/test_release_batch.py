@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
-import re
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -17,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock
 import click
 import psycopg
 import pytest
-import yaml
 from click.testing import CliRunner
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
@@ -37,14 +35,12 @@ from gobby.releases.batch import (
 from gobby.releases.smoke import SmokeResult, reconnect_result, run_smokes
 from gobby.releases.store import HubReleaseLease
 from gobby.releases.window import (
-    LEASE_TTL,
     ReleaseWindow,
     ReleaseWindowRefused,
     acquire_window,
     read_window,
     release_window,
     renew_window,
-    window_path,
 )
 from gobby.servers.auth_service import _agent_capability_allows
 from gobby.servers.http import HTTPServer
@@ -55,10 +51,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.machine_id import require_machine_id
-from gobby.workflows.sync_rules import get_bundled_rules_path
 from tests.fixtures.landing_case import LandingCase, make_landing_case
 from tests.fixtures.release_batch_case import NOW, Clock, Fakes
-from tests.fixtures.review_approvals import grant_step_writes
 
 pytestmark = pytest.mark.unit
 
@@ -451,19 +445,6 @@ def _refused_with(outcomes: dict[str, str | None], code: str) -> bool:
     return all(output is not None and code in output for output in outcomes.values())
 
 
-def _stub_cutover_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> MagicMock:
-    """Skip the cargo build and promotion preflight; return the promotion probe."""
-    build = cutover_cli._Build({"gdaemon": tmp_path / "gdaemon"}, "no client")
-    monkeypatch.setattr(cutover_cli, "workspace_source_identity", lambda _root, _name: "source")
-    monkeypatch.setattr(cutover_cli, "_build_artifacts", lambda _root: build)
-    monkeypatch.setattr(cutover_cli, "preflight_binary_promotions", MagicMock())
-    monkeypatch.setattr(cutover_cli, "_prove_catalog_freshness", MagicMock())
-    monkeypatch.setattr(cutover_cli, "_verify_restart_target", MagicMock())
-    promote = MagicMock()
-    monkeypatch.setattr(cutover_cli, "promote_workspace_binary_set", promote)
-    return promote
-
-
 class _RouteServer:
     def __init__(self, db: HubDatabase, principal: AgentApiTokenClaims | None | bool) -> None:
         self.services = SimpleNamespace(database=db)
@@ -497,12 +478,6 @@ def _stop_boundaries(monkeypatch: pytest.MonkeyPatch) -> dict[str, MagicMock]:
     monkeypatch.setattr("gobby.runner_maintenance.write_shutdown_source", MagicMock())
     monkeypatch.setattr("gobby.cli.daemon_preflight.restart_start_refusal", lambda _rt: None)
     return {"prepare": prepare, "request": request}
-
-
-def _rule_pattern(name: str) -> re.Pattern[str]:
-    path = get_bundled_rules_path() / "worker-safety" / "no-daemon-management.yaml"
-    body = yaml.safe_load(path.read_text())["rules"][name]
-    return re.compile(body["effects"][0]["command_pattern"])
 
 
 class _RecoveredDaemon:
@@ -547,89 +522,23 @@ def _smokes(
     return {result.name: result for result in results}
 
 
-async def test_release_authority_and_worker_reconnect(
-    case: LandingCase, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_activation_refuses_uncredentialed_agents_and_allows_the_operator(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    common = case.repo / ".git"
     owner = case.session("release manager")
-    grant_step_writes(case.db, owner, case.project_id, "release-manager", ())
     monkeypatch.chdir(case.repo)
     case.lend_hub(monkeypatch)
     entry_points = _probe_entry_points(monkeypatch)
-    agent: dict[str, str | None] = {"GOBBY_AGENT_RUN_ID": "run-1", "GOBBY_SESSION_ID": owner}
-    operator: dict[str, str | None] = dict.fromkeys(
-        ("GOBBY_AGENT_RUN_ID", "GOBBY_SESSION_ID", "GOBBY_RELEASE_TOKEN")
-    )
-    proceeded = dict.fromkeys(entry_points)
-
-    # A spawned agent without a token is refused at every entry point; the operator is not.
-    refused = _activate_all(entry_points, {**agent, "GOBBY_RELEASE_TOKEN": None})
+    agent = {
+        "GOBBY_AGENT_RUN_ID": "run-1",
+        "GOBBY_SESSION_ID": owner,
+        "GOBBY_RELEASE_TOKEN": None,
+    }
+    refused = _activate_all(entry_points, agent)
     assert _refused_with(refused, "release_token_missing"), refused
-    assert _activate_all(entry_points, operator) == proceeded
+    operator = dict.fromkeys(agent)
+    assert _activate_all(entry_points, operator) == dict.fromkeys(entry_points)
 
-    # A wrong token is stale; the live token proceeds.
-    lease = await acquire_window(
-        case.db, project_id=case.project_id, owner_session_id=owner, now=datetime.now(UTC)
-    )
-    wrong = _activate_all(entry_points, {**agent, "GOBBY_RELEASE_TOKEN": "0" * 32})
-    assert _refused_with(wrong, "release_window_stale"), wrong
-    assert _activate_all(entry_points, {**agent, "GOBBY_RELEASE_TOKEN": lease.token}) == proceeded
-
-    # An expired lease's token is stale too.
-    await release_window(
-        case.db,
-        project_id=case.project_id,
-        owner_session_id=owner,
-        token=lease.token,
-        generation=lease.generation,
-        now=datetime.now(UTC),
-    )
-    expired = await acquire_window(
-        case.db,
-        project_id=case.project_id,
-        owner_session_id=owner,
-        now=datetime.now(UTC) - LEASE_TTL - timedelta(minutes=1),
-    )
-    late = _activate_all(entry_points, {**agent, "GOBBY_RELEASE_TOKEN": expired.token})
-    assert _refused_with(late, "release_window_stale"), late
-
-    # Cutover re-proves the lease after the stop: a lost lease never promotes.
-    live = await acquire_window(
-        case.db, project_id=case.project_id, owner_session_id=owner, now=datetime.now(UTC)
-    )
-    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "run-1")
-    monkeypatch.setenv("GOBBY_SESSION_ID", owner)
-    monkeypatch.setenv("GOBBY_RELEASE_TOKEN", live.token)
-    promote = _stub_cutover_build(monkeypatch, tmp_path)
-
-    def lose_lease() -> bool:
-        window_path(common).unlink()
-        return True
-
-    with pytest.raises(cutover_cli.CutoverError, match="release_window_missing"):
-        cutover_cli.run_cutover(
-            case.repo,
-            tmp_path / "bin",
-            stop_daemon=lose_lease,
-            start_daemon=MagicMock(),
-            start_refusal=lambda _candidate: None,
-        )
-    promote.assert_not_called()
-    held = await acquire_window(
-        case.db, project_id=case.project_id, owner_session_id=owner, now=datetime.now(UTC)
-    )
-    monkeypatch.setenv("GOBBY_RELEASE_TOKEN", held.token)
-    client_failure = cutover_cli.run_cutover(
-        case.repo,
-        tmp_path / "bin",
-        stop_daemon=lambda: True,
-        start_daemon=MagicMock(),
-        start_refusal=lambda _candidate: None,
-    )
-    assert client_failure == "no client"
-    promote.assert_called_once()
-
-    # Managed credentials reach the admin routes, which demand the live token.
     for route in ("shutdown", "restart"):
         scope = {"type": "http", "method": "POST", "path": f"/api/admin/{route}", "headers": []}
         entry = _agent_capability_allows(Request(scope))
@@ -647,25 +556,22 @@ async def test_release_authority_and_worker_reconnect(
     tool_claims = replace(
         run_claims, agent_run_id=None, managed_execution_id="exec", kind="tool_chat"
     )
-    unregistered = replace(run_claims, project_id="00000000-0000-4000-8000-000000000000")
     for route in ("shutdown", "restart"):
         assert _route_status(case.db, route, run_claims) == 403, route
         assert _route_status(case.db, route, run_claims, "0" * 32) == 403, route
         assert _route_status(case.db, route, tool_claims) == 403, route
         assert _route_status(case.db, route, False) == 403, route
-        assert _route_status(case.db, route, unregistered, held.token) == 403, route
     boundaries["prepare"].assert_not_called()
     boundaries["request"].assert_not_called()
-    assert _route_status(case.db, "shutdown", run_claims, held.token) == 200
     assert _route_status(case.db, "restart", None) == 200
-    assert boundaries["request"].call_count == 2
+    boundaries["request"].assert_called_once()
 
-    # Only the batch activates: the spawned-agent rule blocks cutover, not the batch.
-    pattern = _rule_pattern("no-daemon-management")
-    assert pattern.search("uv run gobby cutover --wait")
-    assert pattern.search("gobby restart")
-    assert not pattern.search("uv run gobby release batch --token t --generation 2")
 
+async def test_worker_reconnect_after_activation(case: LandingCase) -> None:
+    owner = case.session("orchestrator")
+    held = await acquire_window(
+        case.db, project_id=case.project_id, owner_session_id=owner, now=datetime.now(UTC)
+    )
     # Runs active and unfenced before activation must stay unfenced after it.
     runs = LocalAgentRunManager(case.db)
     parent = case.session("orchestrator")

@@ -136,7 +136,7 @@ async def test_concurrent_release_cohort(world: TeamWorld) -> None:
     case = world.case
     common = case.repo / ".git"
     tasks = LocalTaskManager(case.db)
-    owner = case.session("release manager")
+    owner = case.session("orchestrator")
     # Admission and landing read the wall clock, so the lease does too.
     clock = Clock(datetime.now(UTC))
 

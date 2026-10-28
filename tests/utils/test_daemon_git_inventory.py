@@ -328,8 +328,8 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commands pass; the daemon's bin freshness loop promotes release archives
     # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
     ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
-    # Reached only from Click commands: `gobby release batch` runs run_batch, and the
-    # stop, start, restart and cutover commands run agent_activation_refusal
+    # Offline release core has no production caller after removal of the seat CLI.
+    # Stop, start, restart and cutover commands run agent_activation_refusal
     # (test_cli_only_git_boundaries_are_reached_only_from_cli below).
     ("src/gobby/releases/batch.py", "_git"),
     ("src/gobby/releases/window.py", "sync_git_common_dir"),
@@ -489,19 +489,18 @@ def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
     # test_types/cli.py calls (src/gobby/cli/test_types.py mounts it).
     assert _modules_referencing("_git_python_files") == {"src/gobby/test_types/suppressions.py"}
     assert _modules_referencing("scan_suppressions") == {"src/gobby/test_types/cli.py"}
-    # workspace_source_identity runs from cutover, from release batch's activation
-    # choice, or from check_binary_release given a workspace_root. Only
+    # workspace_source_identity runs from cutover or from check_binary_release
+    # given a workspace_root. Only
     # preflight_binary_promotions supplies one; the daemon's release path
     # (_stage_and_promote) passes None.
     assert _modules_referencing("workspace_source_identity") == {
         "src/gobby/cli/cutover.py",
-        "src/gobby/cli/release.py",
         "src/gobby/install/bin_release_identity.py",
     }
-    # batch._git runs inside run_batch, which only the `gobby release batch` command
-    # calls; sync_git_common_dir's other caller, agent_activation_refusal, runs only
+    # The seat batch CLI is retired; the core has no production caller.
+    # sync_git_common_dir's other caller, agent_activation_refusal, runs only
     # from the stop, start, restart and cutover commands.
-    assert _modules_referencing("run_batch") == {"src/gobby/cli/release.py"}
+    assert _modules_referencing("run_batch") == set()
     assert _modules_referencing("sync_git_common_dir") == {
         "src/gobby/releases/batch.py",
         "src/gobby/releases/window.py",

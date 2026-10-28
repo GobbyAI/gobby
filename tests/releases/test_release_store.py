@@ -10,10 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 
-from gobby.cli.release import _DaemonProbe
 from gobby.releases.batch import Checkout, ReleaseStoreUnavailable
 from gobby.releases.store import DaemonReleaseLease
 from gobby.releases.window import ReleaseWindowRefused
@@ -129,33 +127,3 @@ async def test_regression_filing_creates_one_bug_for_the_candidate() -> None:
     assert created["implementation_domain"] == "backend"
     assert "smokes" in str(created["validation_criteria"])
     assert calls[1][0] == SEAT
-
-
-def test_the_probe_delegates_the_owner_session_only_when_told(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sent: list[dict[str, str] | None] = []
-
-    class FakeClient:
-        def call_http_api(
-            self,
-            path: str,
-            method: str = "POST",
-            json_data: dict[str, object] | None = None,
-            headers: dict[str, str] | None = None,
-        ) -> httpx.Response:
-            sent.append(headers)
-            return httpx.Response(200, json={"success": True})
-
-    monkeypatch.setattr("gobby.cli.utils_config.get_daemon_client", lambda **_kw: FakeClient())
-
-    assert _DaemonProbe(session_id="rm-1").call_tool("gobby-agents", "end_release_window", {}) == (
-        200,
-        {"success": True},
-    )
-    _DaemonProbe().call_tool("gobby-agents", "send_message", {})
-
-    assert sent == [
-        {"X-Gobby-CLI-Internal": "1", "X-Gobby-Session-Id": "rm-1"},
-        {"X-Gobby-CLI-Internal": "1"},
-    ]
