@@ -275,14 +275,28 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
     notify channel covers `agent_runs`. Python's own terminal producers (the
     idle check, the stale sweeps and remote run outcomes) stay through this
     plan (Decisions 8 and 14), so the registry stays the completion owner.
-    Every native terminal transition ends with gdaemon posting the run id to
-    2.0's delivery route after the commit, and Python runs
+    Every native terminal transition, whether its parent delivery succeeded
+    or failed, ends by handing the run id to gdaemon, which posts it to 2.0's
+    delivery route after the commit; Python runs
     `src/gobby/agents/terminal_delivery.py::deliver_existing_terminal_run` on
-    its own loop, as its own producers do. A refused or unreachable route logs
-    a warning; the durable subscriber rows stay, and Python's startup
-    recovery
+    its own loop, as its own producers do. gdaemon keeps the run until the
+    route acknowledges it. The route rereads the run's durable
+    `completion_subscribers` rows after the delivery, and an acknowledgement
+    is an answer with none left, because Python removes a row only when
+    `src/gobby/events/completion_registry.py::wake_result_is_delivered`
+    accepts the wake. A refused or unreachable route, a retained row or a
+    failed reread keeps the run, and gdaemon posts it again every 5 seconds
+    with no restart, for a remote run as for a hub-local one. The set of
+    kept runs is in memory. A gdaemon restart always starts a fresh Python
+    backend (`crates/gdaemon/src/lifecycle/backend.rs` hands each backend
+    its secret at spawn), whose startup recovery
     (`src/gobby/runner_lifecycle_agents.py::_cleanup_terminal_agent_completion_subscribers`)
-    redelivers them for the hub machine's runs. `wait_for_agent` stays
+    redelivers the hub machine's runs. Another machine's run waits for its
+    owning machine's recovery, as
+    `.gobby/plans/completed/gdaemon-run-modes.md` ruled ("Per-run rows that
+    carry a `machine_id` are recovered by the owning machine in every
+    mode", acceptance 2.2.8) and as it does today when hub Python's single
+    delivery of a remote cancel fails. `wait_for_agent` stays
     proxied after #21570's flip; its native port and native completion
     delivery are deferred to D1, owned under #21564 beside the run-lifecycle
     rows. No schema change.
@@ -921,13 +935,23 @@ with a JSON body of `terminal_id` and `machine_id` calls `mark_stopped`
 and returns 204.
 
 Decision 15 (D-AF-7) adds `POST /_gobby/agent-run-delivery` to the same
-module. Its JSON body carries `run_id`. It calls
+module. Its JSON body carries `run_id`. While
+`src/gobby/agents/readiness.py::spawn_readiness_blocker` names a blocker
+for `server.services` (shutdown, startup, or restart recovery still
+running), it returns 503, so no post races Python's startup recovery. A
+missing or non-terminal run returns 409, and its subscribers stay.
+Otherwise it calls
 `src/gobby/agents/terminal_delivery.py::deliver_existing_terminal_run` with
 the app's database, run manager, `completion_registry` and `run_db` from
 `server.services`, the call that `cancel_agent_run` in
-`src/gobby/servers/routes/agents.py` makes after its own commit, and returns
-`{"delivered": ...}`. A missing or non-terminal run returns `false`, and its
-subscribers stay.
+`src/gobby/servers/routes/agents.py` makes after its own commit. Then it
+rereads the run's rows with `get_completion_subscribers` from
+`src/gobby/storage/pipeline_subscribers.py` and returns
+`{"pending": <rows left>}`. The helper's boolean says only that the run was
+terminal and discards the per-subscriber result, so the reread is the
+acknowledgement (Decision 15), and a failed reread returns 503. The helper
+has no machine check, so another machine's terminal run is delivered the
+same way.
 
 Admission for all three methods copies the native WS bridge's pair proof
 (`src/gobby/servers/websocket/native_bridge.py::mount_native_bridge`): the
@@ -961,13 +985,19 @@ Regenerate the ledger.
   test: `tests/servers/routes/test_loopback_bridge.py::test_refuses_without_pair_proof`.
 - 2.0.4 - The ledger lists the three methods as `proxied` with their
   retirement notes. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
-- 2.0.5 - For a terminal run, a delivery request with the pair secret wakes
-  its in-memory waiter and its durable subscribers once and removes the
-  acknowledged subscriber rows, as Python's own producers do; a missing or
-  non-terminal run returns `delivered: false` and keeps its subscribers.
+- 2.0.5 - For a terminal run on this machine or another one, a delivery
+  request with the pair secret wakes its in-memory waiter and its durable
+  subscribers once, removes the acknowledged subscriber rows as Python's
+  own producers do, and answers `pending: 0`; a missing or non-terminal run
+  gets 409 and keeps its subscribers.
   test: `tests/servers/routes/test_loopback_bridge.py::test_agent_run_delivery_matches_python_producers`.
+- 2.0.6 - When the first wake is not acknowledged, the request answers
+  `pending: 1` and keeps that row, and a second request wakes the session
+  and answers `pending: 0`. A request while restart recovery is pending, and
+  a request whose reread fails, each get 503.
+  test: `tests/servers/routes/test_loopback_bridge.py::test_agent_run_delivery_reports_pending_rows`.
 
-Planned verification: the five named tests with the protected Python
+Planned verification: the six named tests with the protected Python
 prefix; `uv run python scripts/generate_parity_ledger.py` run twice with no
 second-run diff; scoped Ruff and mypy; a changed-test type audit.
 
@@ -1593,10 +1623,20 @@ capture persists, as `capture_then_kill_async` does.
 Completion handoff (Decision 15, D-AF-7). Every native terminal transition
 ends the same way after its commit: delivery to the parent through 5.1,
 then the `deliver_completion` effect, which this leaf adds to
-`MachineEffects` in `crates/gagents/src/effects.rs`. gdaemon implements it
-by posting the run id to 2.0's delivery route through 2.2's loopback client
-and pair secret, and logs a warning when the route is refused or
-unreachable. The termination services here, 6.2's cleanup and 8.1's
+`MachineEffects` in `crates/gagents/src/effects.rs`. The effect runs
+whether the parent delivery succeeded or failed, as the `finally` in
+`terminate_agent_run` runs Python's delivery. gdaemon implements it in
+`crates/gdaemon/src/agent_effects.rs` as an in-memory set of run ids and
+one task: the effect adds the run id and returns, and the task posts each
+id to 2.0's delivery route through 2.2's loopback client and pair secret.
+`pending: 0` removes the id, and 409 removes it with a warning. A 503,
+retained rows, any other answer or an unreachable route keeps it, and the
+task posts it again 5 seconds later (the retry interval of 5.3's worker),
+warning once per run. Another machine's run is kept the same way, so a
+transient refusal never needs a restart. Stopping gdaemon drops the set;
+the fresh Python backend's startup recovery redelivers the hub machine's
+runs, and another machine's run waits for its owning machine (Decision
+15). The termination services here, 6.2's cleanup and 8.1's
 terminations through them, and 4.1's exit observation in
 `crates/gdaemon/src/hub_launch.rs` all end this way. Posting after the
 commit keeps the order Python's own producers keep, which `wait_for_agent`'s
@@ -1626,13 +1666,15 @@ notifies.
   parent delivery.
   test: `crates/gagents/tests/termination.rs::capture_barrier_matches_corpus`.
 - 6.1.5 - Each native terminal transition (cancel, kill, stop, end,
-  unregister and cleanup) calls `deliver_completion` once, after its
-  commit and its parent delivery.
+  unregister and cleanup) calls `deliver_completion` once after its commit
+  and its parent delivery, including when the parent delivery fails.
   test: `crates/gagents/tests/termination.rs::terminal_transitions_hand_off_completion`.
 - 6.1.6 - gdaemon's `deliver_completion` posts the run id to 2.0's delivery
-  route with the pair secret, and a refused or unreachable route logs a
-  warning and leaves the committed transition in place.
-  test: `crates/gdaemon/tests/agent_effects.rs::deliver_completion_posts_to_delivery_route`.
+  route with the pair secret and keeps it until the route answers
+  `pending: 0` or 409. An unreachable route, a 503 and `pending: 1` each
+  lead to another post 5 seconds later with no restart, the committed
+  transition stays in place, and another machine's run is kept the same
+  way. test: `crates/gdaemon/tests/agent_effects.rs::deliver_completion_retries_until_acknowledged`.
 - 6.1.7 - A hub-local run's observed exit commits its terminal row, then
   delivers to the parent and calls `deliver_completion` once.
   test: `crates/gdaemon/tests/hub_launch.rs::exit_observation_hands_off_completion`.
@@ -2379,7 +2421,8 @@ that starts their native owners.
   wakes once when the run ends by native cancel, by hub-local exit or by a
   native monitor termination, whether it registered before or after the
   transition; when the first wake fails, the durable subscriber row stays
-  and a Python restart delivers it once. A Python-registered coordination
+  and gdaemon's next post delivers it once with both daemons still
+  running. A Python-registered coordination
   wait released by a native send wakes once.
   test: `tests/e2e/test_agents_native.py::test_python_waiters_wake_once_across_runtimes`.
 - 11.2.14 - After the forward cutover and after a rehearsed full rollback,
