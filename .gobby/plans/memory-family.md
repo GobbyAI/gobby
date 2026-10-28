@@ -193,9 +193,11 @@ operations to the same module, and the later landing rebases.
     `{{ name }}` and one `{{ name | default('literal') }}`. Restraint stops at
     a renderer for exactly that subset in the memory crate (2.4). An override
     that uses other syntax fails with a typed validation error naming the
-    template path and calls no model; it never renders partially. A second
-    native consumer of prompts would move this renderer to gcore rather than
-    copy it.
+    template path and calls no model; it never renders partially. Python
+    renders such an override, so the refusal is a changed behavior on the
+    eight surfaces that report a graph rebuild or a dream run, each under an
+    exact waiver (Debt not to port). A second native consumer of prompts
+    would move this renderer to gcore rather than copy it.
 
 ## Debt not to port
 `kind: framing`
@@ -267,6 +269,24 @@ public surfaces; parity matches their intentional contracts, not accidents.
   `backup_memories` falls back the same way when no project is current.
   Native reads and writes the current project's backup file, using the
   personal project when none is current, as `list_memories` does. Owner 6.2.
+- **Prompt overrides outside the rendered subset.** Python renders any
+  `prompts` record the memory jobs load with full Jinja
+  (`src/gobby/prompts/loader.py::PromptLoader.render`): a global override of
+  the three graph templates, or a project or global override of the dream
+  template at the configured `prompt_path`. Native renders Decision 12's
+  subset and refuses other syntax with a validation-class error naming the
+  template path, before any model call. A graph rebuild resolves and parses
+  its three templates before it marks any memory pending, so a refusal fails
+  the whole job and leaves every row's graph state unchanged: a foreground
+  rebuild returns the error, and the job status ends `failed` with it,
+  unredacted. A dream run refuses at its first planner page, before any
+  action applies, and ends `failed` with the error, the branch Python takes
+  for a Jinja error, which `src/gobby/memory/dream/planner.py`'s page
+  isolation does not catch. Triggers keep their admission responses
+  (`POST /memory/dream`, `memory_dream`, a background rebuild's 202 and
+  `invalidate`); the change shows on the eight surfaces that report the job.
+  Corpus cases for other rows use the bundled templates. Owners 2.4 and 4.3
+  for HTTP, 6.2 for MCP and 7.2 for CLI.
 
 **Waiver inventory:**
 
@@ -294,8 +314,11 @@ public surfaces; parity matches their intentional contracts, not accidents.
 | `memory.http-crossrefs-rebuild.reported-failures` | `HTTP POST /api/memories/crossrefs/rebuild` | 2.3 |
 | `memory.http-embeddings-reindex.internal-error-redaction` | `HTTP POST /api/memories/embeddings/reindex` | 2.3 |
 | `memory.http-graph-rebuild.internal-error-redaction` | `HTTP POST /api/memories/graph/rebuild` | 2.4 |
+| `memory.http-graph-rebuild.unsupported-prompt-syntax` | `HTTP POST /api/memories/graph/rebuild` | 2.4 |
 | `memory.http-graph-rebuild-status.internal-error-redaction` | `HTTP GET /api/memories/graph/rebuild/status` | 2.4 |
+| `memory.http-graph-rebuild-status.unsupported-prompt-syntax` | `HTTP GET /api/memories/graph/rebuild/status` | 2.4 |
 | `memory.http-graph-clear.internal-error-redaction` | `HTTP POST /api/memories/graph/clear` | 2.4 |
+| `memory.http-dream-status.unsupported-prompt-syntax` | `HTTP GET /memory/dream/{run_id}` | 4.3 |
 | `memory.http-dream-revert.state-conflict-status` | `HTTP POST /memory/dream/{run_id}/revert` | 4.3 |
 | `memory.mcp-backup-memories.internal-error-redaction` | `MCP gobby-memory:backup_memories` | 6.2 |
 | `memory.mcp-backup-memories.project-backup-path` | `MCP gobby-memory:backup_memories` | 6.2 |
@@ -306,12 +329,14 @@ public surfaces; parity matches their intentional contracts, not accidents.
 | `memory.mcp-get-memory.internal-error-redaction` | `MCP gobby-memory:get_memory` | 6.2 |
 | `memory.mcp-get-related-memories.internal-error-redaction` | `MCP gobby-memory:get_related_memories` | 6.2 |
 | `memory.mcp-list-memories.internal-error-redaction` | `MCP gobby-memory:list_memories` | 6.2 |
+| `memory.mcp-memory-dream-status.unsupported-prompt-syntax` | `MCP gobby-memory:memory_dream_status` | 6.2 |
 | `memory.mcp-memory-stats.internal-error-redaction` | `MCP gobby-memory:memory_stats` | 6.2 |
 | `memory.mcp-move-memory.internal-error-redaction` | `MCP gobby-memory:move_memory` | 6.2 |
 | `memory.mcp-promote-memory-to-global.internal-error-redaction` | `MCP gobby-memory:promote_memory_to_global` | 6.2 |
 | `memory.mcp-rebuild-crossrefs.internal-error-redaction` | `MCP gobby-memory:rebuild_crossrefs` | 6.2 |
 | `memory.mcp-rebuild-crossrefs.reported-failures` | `MCP gobby-memory:rebuild_crossrefs` | 6.2 |
 | `memory.mcp-rebuild-knowledge-graph.internal-error-redaction` | `MCP gobby-memory:rebuild_knowledge_graph` | 6.2 |
+| `memory.mcp-rebuild-knowledge-graph.unsupported-prompt-syntax` | `MCP gobby-memory:rebuild_knowledge_graph` | 6.2 |
 | `memory.mcp-recluster-knowledge-graph-entities.internal-error-redaction` | `MCP gobby-memory:recluster_knowledge_graph_entities` | 6.2 |
 | `memory.mcp-reindex-embeddings.internal-error-redaction` | `MCP gobby-memory:reindex_embeddings` | 6.2 |
 | `memory.mcp-restore-memories.internal-error-redaction` | `MCP gobby-memory:restore_memories` | 6.2 |
@@ -327,7 +352,10 @@ public surfaces; parity matches their intentional contracts, not accidents.
 | `memory.mcp-recall-review-lessons-for-files.internal-error-redaction` | `MCP gobby-review-learning:recall_review_lessons_for_files` | 6.3 |
 | `memory.mcp-record-review-lesson.internal-error-redaction` | `MCP gobby-review-learning:record_review_lesson` | 6.3 |
 | `memory.mcp-retire-review-lesson.internal-error-redaction` | `MCP gobby-review-learning:retire_review_lesson` | 6.3 |
+| `memory.cli-dream.unsupported-prompt-syntax` | `CLI gobby memory dream` | 7.2 |
+| `memory.cli-dream-status.unsupported-prompt-syntax` | `CLI gobby memory dream status` | 7.2 |
 | `memory.cli-invalidate.tracked-rebuild` | `CLI gobby memory invalidate` | 7.2 |
+| `memory.cli-rebuild-graph.unsupported-prompt-syntax` | `CLI gobby memory rebuild-graph` | 7.2 |
 
 Each owner adds its entries to `docs/contracts/parity-waivers.json` and depends
 on #24963, which owns that file's schema, loader and consumers. Entry fields
@@ -465,7 +493,7 @@ and `src/gobby/cli/memory/main.py::memory`. Existing Python fixtures live in
 `tests/cli/test_memory_coverage.py` and `tests/servers/routes/`. Generate a
 committed, versioned JSON corpus from isolated Python fixtures: method and
 path, tool and arguments, or command and argv; headers; seeded `memories`,
-`memory_crossrefs`, dream, session and task rows; seeded Qdrant points and
+`memory_crossrefs`, `prompts`, dream, session and task rows; seeded Qdrant points and
 FalkorDB nodes; stub embedding and generation behavior; expected response,
 exit code and effects. Only explicitly enumerated volatile fields are
 normalized: generated UUIDs, timestamps, job IDs and checkout paths.
@@ -480,11 +508,17 @@ matching and mismatched session identity, using Python's
 record the exact input schema, description, brief projection and definition
 hash. For every CLI row, record help text, stdout, stderr and exit codes.
 
-Consume #24963's one `docs/contracts/parity-waivers.json` loader. The 56
+Consume #24963's one `docs/contracts/parity-waivers.json` loader. The 64
 changed behaviors in the waiver inventory keep their Python baseline and get
 case-specific `Waived` assertions with a required native outcome, never masks
 or `Skipped`. Each redaction case injects an unexpected fault into the Python
-fixture to record the raw-text baseline. This leaf uses test-only waiver
+fixture to record the raw-text baseline. Each unsupported-prompt-syntax case
+seeds a `prompts` row whose template uses a `{% if %}` block: a global
+override of `memory/extract_relations` for the four graph-rebuild surfaces
+and a project override of `memory/dream` for the four dream-status surfaces.
+Python's baseline renders it and completes against the stub; the native
+assertion requires the validation-class error naming the template path and
+no stub generation request. This leaf uses test-only waiver
 entries and native-result doubles to check loader matching; the owning leaves
 add the production entries and replay against real handlers. No dependency
 cycle is introduced.
@@ -503,7 +537,7 @@ cycle is introduced.
   including agent-token admission on the two graph rows only and managed
   cookies refused on every mutation.
   test: `tests/contracts/test_memory_parity_corpus.py::test_http_admission_matrix`.
-- 0.1.4 - Each of the 56 changed behaviors resolves to one exact-surface test
+- 0.1.4 - Each of the 64 changed behaviors resolves to one exact-surface test
   waiver with explicit native assertions, while untouched cases on the same
   surface stay `Passed`.
   test: `tests/contracts/test_memory_parity_corpus.py::test_debt_waivers_are_behavior_scoped`.
@@ -1054,16 +1088,32 @@ it loads the `prompts` record for a path with
 `src/gobby/prompts/loader.py::PromptLoader.load`'s scope precedence and
 renders it with strict undefined variables, as `PromptLoader.render` does,
 for the `memory/extract_entities`, `memory/extract_relations`,
-`memory/delete_relations` and `memory/dream` templates. Writes run inside #25059's fence, per project or under the
+`memory/delete_relations` and `memory/dream` templates. Graph extraction
+loads with no project, so only global and bundled records apply, as
+`src/gobby/memory/manager.py` builds its loader; dream planning passes the
+run's project, so project, global and bundled records apply in that order.
+The template's metadata defaults
+(`src/gobby/prompts/models.py::PromptTemplate.get_default_context`, `None`
+for a declared variable without one) merge first, and call variables replace
+them. Values render as Python's `str()` does, including `None`, `True`,
+`False` and floats such as `1.0`; a default of another type is refused as
+unsupported. `default('literal')` applies only to a variable absent from the
+merged context, and one trailing newline is dropped, as Jinja's defaults do.
+A rebuild resolves and parses all three graph templates before it marks any
+memory pending and refuses the whole job on an unsupported one (Debt not to
+port). `extract_memory_graph` parses them before its first model call; the
+sessions family (#21562) owns waiving its queue loop's matching per-memory
+failure. Writes run inside #25059's fence, per project or under the
 global writer for global memories, as `service.py` lines 157-160 and 662-703
 do. Handlers are `rebuild_knowledge_graph` (foreground, or background with
 `background=true`), `rebuild_knowledge_graph_status` and
 `clear_knowledge_graph` in `create_memory_router`, with
 `_execute_graph_rebuild` progress callbacks recorded into 2.3's job slot.
 Expose `extract_memory_graph(memory)` for the sessions family's queue loop
-(Overview non-goal). This leaf adds the three 2.4 redaction entries; the
-status redaction replaces the stored `error` text with `Internal server
-error` and logs the diagnostic.
+(Overview non-goal). This leaf adds the three 2.4 redaction entries and the
+two 2.4 unsupported-prompt-syntax entries. The status redaction replaces an
+internal-class `error` with `Internal server error` and logs the diagnostic;
+the validation-class prompt refusal keeps its text.
 
 **Granularity:** Three HTTP rows and the densify service share one graph
 writer, the extraction client and the job slot. Reclustering adds a new
@@ -1082,12 +1132,23 @@ dependency and is split into 2.5.
 - 2.4.4 - Extraction, writer, densify and code-link effects match Python for
   a fixture project, using the stubbed `memory.kg` candidates.
   test: `crates/gmemory/tests/graph_writes.rs::extraction_and_densify_match_python`.
-- 2.4.5 - The four bundled memory prompts and a project override render
-  byte-identically to Python; an undefined variable and an override using
-  unsupported template syntax fail with a typed error naming the path and
-  call no model. test: `crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python`.
+- 2.4.5 - The four bundled memory prompts, a global override of a graph
+  template and a project override of `memory/dream` render byte-identically
+  to Python, including metadata defaults that call variables replace, a
+  `None` default, a `1.0` float and the dropped trailing newline. A project
+  override of a graph template is ignored and the global or bundled record
+  renders. An undefined variable and an override using unsupported template
+  syntax fail with a typed error naming the path and call no model.
+  test: `crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python`.
 - 2.4.6 - Injected faults return safe detail on the three rows under their
   exact Waived citations. test: `crates/gmemory/tests/graph_writes.rs::unexpected_graph_errors_are_safe_and_waived`.
+- 2.4.7 - With a global `{% if %}` override of `memory/extract_relations`,
+  a foreground `HTTP POST /api/memories/graph/rebuild` returns the
+  validation-class error naming the path, and a background job's
+  `HTTP GET /api/memories/graph/rebuild/status` ends `failed` with that text
+  unredacted, under their exact waivers. No memory's graph state changes and
+  the generation stub receives no request.
+  test: `crates/gmemory/tests/graph_writes.rs::unsupported_graph_prompt_refuses_rebuild`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test graph_writes`
 against a run-unique FalkorDB graph and the generation stub;
@@ -1308,7 +1369,12 @@ keyword evidence with `related_evidence_top_k`,
 `work_unit_timeout_seconds`, `max_runtime_seconds`). The planner renders
 `memory/dream` through 2.4's `crates/gmemory/src/prompts.rs` with the
 variables `truth_digest`, `candidates`, `previous_summary` and the three
-confidence floors, as `planner.py` passes them.
+confidence floors, as `planner.py` passes them. Each page renders before its
+model call, and the first page renders before any action applies. A missing
+record stays isolated to its page, as Python's `FileNotFoundError` is an
+`OSError` in `_EXPECTED_PLANNER_ERRORS`. An undefined variable or an
+unsupported override fails the run, as Python's Jinja errors escape that
+tuple (Debt not to port).
 
 **Acceptance:**
 
@@ -1320,6 +1386,10 @@ confidence floors, as `planner.py` passes them.
 - 4.2.3 - Sweeps, work units, dry runs, inventory runs, checkpoints and
   runtime limits match Python's totals and stored plan.
   test: `crates/gmemory/tests/dream_sweep.rs::sweep_orchestration_matches_python`.
+- 4.2.4 - A missing `memory/dream` record is isolated to its page as in
+  Python, while an undefined variable or an unsupported project override
+  fails the run with no generation request and no applied action.
+  test: `crates/gmemory/tests/dream_sweep.rs::prompt_errors_match_python_isolation`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test dream_sweep`
 against the generation stub and the isolated database.
@@ -1349,7 +1419,9 @@ unscoped trigger), `coordinator.py::MemoryDreamCoordinator` (`trigger`,
 `src/gobby/servers/routes/memory_dream.py::create_memory_dream_router`, with
 `_http_status` kept (Debt KEEP). Revert keeps 404 for an unknown run and
 returns 409 with the same `detail` for `revert_forfeited` and `revert_failed`
-(`memory.http-dream-revert.state-conflict-status`).
+(`memory.http-dream-revert.state-conflict-status`). Run status reports a run
+that 4.2 failed on an unsupported prompt override as `failed` with the
+validation-class error (`memory.http-dream-status.unsupported-prompt-syntax`).
 
 `MemoryDreamService::new` takes the hub `Pool` by value (Decision 5) and is
 the constructor #25024 binds; it also exposes
@@ -1372,6 +1444,10 @@ the cron registration. This plan registers no schedule.
   interrupted-run reconciliation match Python; the service cannot be built
   without a hub pool.
   test: `crates/gmemory/tests/dream_routes.rs::aggregate_reports_and_hub_only_construction`.
+- 4.3.5 - With a project `{% if %}` override of `memory/dream`,
+  `HTTP GET /memory/dream/{run_id}` reports the run `failed` with the error
+  naming the path under its exact waiver, where Python's baseline completes.
+  test: `crates/gmemory/tests/dream_routes.rs::unsupported_dream_prompt_status_is_waived`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test dream_routes`
 against the generation stub, the isolated database and a temporary project
@@ -1526,8 +1602,10 @@ Consume #24970's classification and MCP adapter. Unexpected text becomes
 `Internal server error`; deliberate domain errors keep their text. This leaf
 adds the 21 gobby-memory redaction entries and
 `memory.mcp-rebuild-crossrefs.reported-failures`,
-`memory.mcp-backup-memories.project-backup-path` and
-`memory.mcp-restore-memories.project-backup-path`, each with decision
+`memory.mcp-backup-memories.project-backup-path`,
+`memory.mcp-restore-memories.project-backup-path`,
+`memory.mcp-rebuild-knowledge-graph.unsupported-prompt-syntax` and
+`memory.mcp-memory-dream-status.unsupported-prompt-syntax`, each with decision
 `.gobby/plans/memory-family.md#6.2`. Registering and activating the
 descriptor waits for 8.2.
 
@@ -1567,7 +1645,9 @@ by tool would create per-file wrappers, not independent outcomes.
   listing. test: `crates/gmemory/tests/mcp_memory.rs::dream_decisions_match_python`.
 - 6.2.11 - `MCP gobby-memory:memory_dream_revert` matches revert results.
   test: `crates/gmemory/tests/mcp_memory.rs::dream_revert_matches_python`.
-- 6.2.12 - `MCP gobby-memory:memory_dream_status` matches run status.
+- 6.2.12 - `MCP gobby-memory:memory_dream_status` matches run status, and
+  reports a run refused by an unsupported prompt override as `failed` with
+  the error naming the path under its exact waiver.
   test: `crates/gmemory/tests/mcp_memory.rs::dream_status_matches_python`.
 - 6.2.13 - `MCP gobby-memory:memory_stats` matches statistics.
   test: `crates/gmemory/tests/mcp_memory.rs::memory_stats_matches_python`.
@@ -1579,7 +1659,9 @@ by tool would create per-file wrappers, not independent outcomes.
   and reports `crossrefs_failed` under its exact waiver.
   test: `crates/gmemory/tests/mcp_memory.rs::rebuild_crossrefs_reports_failures`.
 - 6.2.17 - `MCP gobby-memory:rebuild_knowledge_graph` matches rebuild
-  results. test: `crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python`.
+  results, and returns the validation-class error naming the path for an
+  unsupported graph prompt override under its exact waiver.
+  test: `crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python`.
 - 6.2.18 - `MCP gobby-memory:recluster_knowledge_graph_entities` matches the
   clustering summary. test: `crates/gmemory/tests/mcp_memory.rs::recluster_matches_python`.
 - 6.2.19 - `MCP gobby-memory:reindex_embeddings` matches the reindex report.
@@ -1759,8 +1841,11 @@ does. Reuse gcore's daemon URL and local token helpers
 blocking reqwest. A health failure prints Python's `Daemon not running`
 message. `invalidate` prints that nothing was cleared and a rebuild is
 already running when the response carries `already_running`
-(`memory.cli-invalidate.tracked-rebuild`); this leaf adds that entry. Its
-other output, and `rebuild-crossrefs`'s, is unchanged.
+(`memory.cli-invalidate.tracked-rebuild`). `rebuild-graph`, `dream` and
+`dream status` print the refusal or failed run that 2.4 and 4.3 report for
+an unsupported prompt override through Python's existing error and
+failed-run renderers. This leaf adds those four entries. Other output,
+including `rebuild-crossrefs`'s, is unchanged.
 
 **Granularity:** Ten ledger rows are thin HTTP clients sharing one client,
 health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
@@ -1772,7 +1857,9 @@ health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
 - 7.2.2 - `CLI gobby memory graph-counts` matches text and JSON output.
   test: `crates/gmemory/tests/cli_daemon.rs::graph_counts_matches_python`.
 - 7.2.3 - `CLI gobby memory rebuild-graph` matches foreground, `--wait`
-  polling and timeout behavior. test: `crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python`.
+  polling and timeout behavior, and prints an unsupported prompt override's
+  refusal under its exact waiver.
+  test: `crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python`.
 - 7.2.4 - `CLI gobby memory invalidate` matches confirmation and the clear
   report, and reports a running rebuild under its exact waiver.
   test: `crates/gmemory/tests/cli_daemon.rs::invalidate_reports_running_rebuild`.
@@ -1783,8 +1870,11 @@ health check and error mapping. Their behavior lives in 2.3, 2.4 and 4.3.
 - 7.2.7 - `CLI gobby memory reindex-embeddings` matches output.
   test: `crates/gmemory/tests/cli_daemon.rs::reindex_matches_python`.
 - 7.2.8 - `CLI gobby memory dream` matches trigger, polling, dry-run,
-  aggregate and resume-hint output. test: `crates/gmemory/tests/cli_daemon.rs::dream_matches_python`.
-- 7.2.9 - `CLI gobby memory dream status` matches status rendering.
+  aggregate and resume-hint output, and prints a run failed by an
+  unsupported prompt override under its exact waiver.
+  test: `crates/gmemory/tests/cli_daemon.rs::dream_matches_python`.
+- 7.2.9 - `CLI gobby memory dream status` matches status rendering, including
+  that failed run under its exact waiver.
   test: `crates/gmemory/tests/cli_daemon.rs::dream_status_matches_python`.
 - 7.2.10 - `CLI gobby memory dream revert` matches output and error detail.
   test: `crates/gmemory/tests/cli_daemon.rs::dream_revert_matches_python`.
@@ -2070,12 +2160,12 @@ admission and the Security approval gate, 8.2 activates the HTTP family and
 both MCP servers, and 8.4 records the delegated ledger state.
 
 The #24963 readiness gate requires ordinary `Passed` cases and exactly cited,
-native-asserted `Waived` cases for the 56 waivers, and fails skipped-only and
+native-asserted `Waived` cases for the 64 waivers, and fails skipped-only and
 unwaived reports. #24970 supplies the shared error classes and adapters.
 Shared target files are dependency-ordered throughout, and no section leaves
-a product choice to its executor. Josh reviews the two flagged items with the
-stamped plan: the HDBSCAN dependency (Decision 2) and the AI 7.4 amendment
-(Decision 4).
+a product choice to its executor. Josh reviews the flagged items with the
+stamped plan: the HDBSCAN dependency (Decision 2), the AI 7.4 amendment
+(Decision 4) and the AI 7.4 and 7.6 rebuild-seam amendments (3.1).
 
 Draft validation command:
 `uv run gobby plans validate .gobby/plans/memory-family.md -p /Users/josh/Projects/gobby`.
