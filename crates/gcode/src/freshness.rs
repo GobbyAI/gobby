@@ -11,8 +11,17 @@ use crate::visibility;
 
 const INFLIGHT_ENV: &str = "GCODE_FRESHNESS_INFLIGHT";
 
+/// Stale paths a whole-project read reconciles inline. Past this many, a
+/// `ProjectRead` answers from the indexed rows and reports the backlog as
+/// `Deferred`, so one read cannot stall on the work a large checkout change queued.
+pub(crate) const FOREGROUND_STALE_BUDGET: usize = 50;
+
 pub enum FreshnessScope {
     Project,
+    /// Whole-project freshness for a read-only navigation lane. A refresh that
+    /// would reconcile more than `FOREGROUND_STALE_BUDGET` paths is deferred when
+    /// the project already has indexed rows to serve.
+    ProjectRead,
     Files(Vec<PathBuf>),
 }
 
@@ -27,9 +36,24 @@ pub enum FreshnessStatus {
     /// visible rows serve bytes the worktree no longer has, or the worktree holds
     /// indexable files no row serves.
     Stale(Vec<String>),
+    /// A read deferred its refresh: this many paths are stale, more than the
+    /// foreground budget. The read served the indexed rows; `gcode index` catches
+    /// the index up.
+    Deferred(usize),
 }
 
 impl FreshnessStatus {
+    /// Warning for a read that deferred its refresh past the foreground budget.
+    pub fn deferred_warning(&self) -> Option<String> {
+        let Self::Deferred(behind) = self else {
+            return None;
+        };
+        Some(format!(
+            "warning: gcode index is {behind} path(s) behind the worktree, more than a read \
+             refreshes inline; serving existing index (run gcode index to catch up)"
+        ))
+    }
+
     /// Warning text for a refresh skipped by a busy index lock, naming the
     /// holder when one was identified.
     ///
@@ -82,7 +106,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
     if !ctx.can_refresh_index()? {
         let mut conn = db::connect_readonly(&ctx.database_url)?;
         let files = match &scope {
-            FreshnessScope::Project => None,
+            FreshnessScope::Project | FreshnessScope::ProjectRead => None,
             FreshnessScope::Files(paths) => Some(paths.as_slice()),
         };
         let stale = stale_served_paths(&mut conn, ctx, files)?;
@@ -98,8 +122,18 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
     // and the full re-hash entirely (no "refresh already running" warning).
     // `FreshnessScope::Files` is already cheap (explicit-files path) and is left
     // untouched.
-    if matches!(scope, FreshnessScope::Project) && !project_needs_refresh(ctx)? {
+    if matches!(scope, FreshnessScope::Project | FreshnessScope::ProjectRead)
+        && !project_needs_refresh(ctx)?
+    {
         return Ok(FreshnessStatus::Checked);
+    }
+
+    // A read past the foreground budget answers from the rows it has, without the
+    // lock or the reconcile. A project never indexed keeps its first build.
+    if matches!(scope, FreshnessScope::ProjectRead)
+        && let Some(behind) = foreground_backlog(ctx)?
+    {
+        return Ok(FreshnessStatus::Deferred(behind));
     }
 
     // Overlay explicit-file reads skip the refresh when every requested file
@@ -113,7 +147,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
 
     let _guard = FreshnessGuard::enter();
     match scope {
-        FreshnessScope::Project => {
+        FreshnessScope::Project | FreshnessScope::ProjectRead => {
             let result =
                 index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
                     Ok(refresh_files(ctx, Vec::new()).map_err(|error| degraded_detail(&error)))
@@ -265,6 +299,19 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
             respect_gitignore: ctx.indexing.respect_gitignore,
         },
     ))
+}
+
+/// Stale-path count behind a whole-project read, when it exceeds the foreground
+/// budget. A project never indexed has no rows to serve, so its first build is
+/// never deferred.
+fn foreground_backlog(ctx: &Context) -> anyhow::Result<Option<usize>> {
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let machine_id = db::id_param(&ctx.machine_id)?;
+    if project_last_indexed_at(&mut conn, &machine_id, &ctx.project_id)?.is_none() {
+        return Ok(None);
+    }
+    let behind = stale_served_paths(&mut conn, ctx, None)?.len();
+    Ok((behind > FOREGROUND_STALE_BUDGET).then_some(behind))
 }
 
 fn project_last_indexed_at(

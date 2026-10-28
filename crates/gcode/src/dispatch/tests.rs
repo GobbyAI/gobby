@@ -129,6 +129,18 @@ fn degraded_freshness_warning_is_suppressed_when_quiet() {
 }
 
 #[test]
+fn deferred_freshness_warning_names_the_backlog_and_respects_quiet() {
+    let line = freshness_warning(false, &freshness::FreshnessStatus::Deferred(120))
+        .expect("deferred status should warn");
+    assert!(line.contains("120 path(s) behind"), "{line}");
+    assert!(line.contains("gcode index"), "{line}");
+    assert_eq!(
+        freshness_warning(true, &freshness::FreshnessStatus::Deferred(120)),
+        None
+    );
+}
+
+#[test]
 fn allow_stale_notice_is_one_line_and_respects_quiet() {
     let notice = freshness_skip_notice(false, true).expect("allow-stale should emit a notice");
     assert_eq!(notice, "freshness check skipped (--allow-stale)");
@@ -349,7 +361,7 @@ fn grep_of_directories_globs_or_no_paths_keeps_project_freshness() {
         assert!(
             matches!(
                 navigation::grep_freshness_scope(project.path(), &paths),
-                freshness::FreshnessScope::Project
+                freshness::FreshnessScope::ProjectRead
             ),
             "paths {paths:?} must keep the whole-project freshness check",
         );

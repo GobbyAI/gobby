@@ -442,6 +442,28 @@ mod serial_db {
             }
             output
         }
+
+        /// Runs a read with no refresh holder, killing it once `bound` has passed.
+        fn read_within(&self, mut command: Command, bound: Duration) -> (Output, bool) {
+            let started = Instant::now();
+            let mut child = command
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("spawn read command");
+            let completed = loop {
+                if child.try_wait().expect("poll read command").is_some() {
+                    break true;
+                }
+                if started.elapsed() >= bound {
+                    child.kill().expect("reap stalled read command");
+                    break false;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            let output = child.wait_with_output().expect("collect read command");
+            (output, completed)
+        }
     }
 
     impl Drop for LinkedReadFixture {
@@ -487,6 +509,54 @@ mod serial_db {
             output.status.success() || output.status.code() == Some(2),
             "{output:?}"
         );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_search_symbol_returns_within_bound_without_refresh_holder() {
+        let fixture = LinkedReadFixture::new("search-symbol-no-holder");
+        fixture.write_unindexed_files(400);
+        let (output, completed) = fixture.read_within(
+            fixture.command(&["search-symbol", "free"]),
+            Duration::from_secs(20),
+        );
+        assert!(
+            completed,
+            "read must return within 20s with no refresh holder: {output:?}"
+        );
+        assert!(
+            output.status.success() || output.status.code() == Some(2),
+            "{output:?}"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn linked_worktree_grep_returns_within_bound_with_many_stale_files() {
+        let fixture = LinkedReadFixture::new("grep-stale-budget");
+        fixture.write_unindexed_files(400);
+        let (output, completed) = fixture.read_within(
+            fixture.command(&["grep", "-F", "pub fn", "-m", "50"]),
+            Duration::from_secs(10),
+        );
+        assert!(
+            completed,
+            "grep must return within 10s over 400 stale files: {output:?}"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("behind the worktree"),
+            "a read past the foreground budget must report its backlog: {stderr}"
+        );
+        assert!(output.status.success(), "{output:?}");
     }
 
     #[test]

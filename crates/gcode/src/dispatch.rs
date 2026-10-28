@@ -47,6 +47,15 @@ pub(super) fn ensure_project_fresh(ctx: &config::Context, disabled: bool) -> any
     ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::Project).map(drop)
 }
 
+/// Whole-project freshness for a read-only navigation lane, which answers from
+/// the indexed rows past the foreground budget rather than reconciling inline.
+pub(super) fn ensure_project_read_fresh(
+    ctx: &config::Context,
+    disabled: bool,
+) -> anyhow::Result<()> {
+    ensure_scope_fresh(ctx, disabled, freshness::FreshnessScope::ProjectRead).map(drop)
+}
+
 fn ensure_files_fresh(
     ctx: &config::Context,
     disabled: bool,
@@ -117,6 +126,7 @@ fn freshness_warning(quiet: bool, status: &freshness::FreshnessStatus) -> Option
     match status {
         freshness::FreshnessStatus::SkippedBusy(_) => status.busy_warning(),
         freshness::FreshnessStatus::Stale(_) => status.stale_warning(),
+        freshness::FreshnessStatus::Deferred(_) => status.deferred_warning(),
         freshness::FreshnessStatus::Degraded(error) => Some(format!(
             "warning: index refresh failed ({error}); serving existing index \
              (pass --allow-stale to skip this check)"

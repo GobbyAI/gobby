@@ -299,7 +299,18 @@ fn load_chunks_for_read(
     loaded
         .chunks
         .retain(|chunk| !stale_set.contains(chunk.file_path.as_str()));
-    loaded.chunks.extend(live_chunks(ctx, filters, &stale));
+    // Past the foreground budget the in-scope stale paths get no live read, so the
+    // read does not stall on the reads a large checkout change queued. Their rows
+    // are left out, and the warning names the omission.
+    let live_reads = stale
+        .iter()
+        .filter(|path| filters.matches(path.as_str()))
+        .count();
+    if live_reads <= freshness::FOREGROUND_STALE_BUDGET {
+        loaded.chunks.extend(live_chunks(ctx, filters, &stale));
+    } else {
+        log::warn!("warning: {live_reads} stale path(s) left out of grep; run gcode index");
+    }
     loaded.chunks.sort_by(|a, b| {
         a.file_path
             .cmp(&b.file_path)
