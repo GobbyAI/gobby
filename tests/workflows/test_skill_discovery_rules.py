@@ -5398,11 +5398,12 @@ class TestCodeIndexNavigationRules:
 
     @pytest.mark.asyncio
     async def test_compound_search_after_pipeline_uses_persistent_shell_cwd(
-        self, db: HubDatabase, tmp_path: Path
+        self, db: HubDatabase
     ) -> None:
         _sync_bundled(db)
-        repo = tmp_path / "repo"
-        scratchpad = tmp_path / "scratchpad"
+        # Literal roots outside the temp roots: a write under tmp_path is a temp write (#25218).
+        repo = Path("/Users/dev/.gobby/worktrees/gobby/nav-checkout")
+        scratchpad = Path("/Users/dev/.gobby/agents_workspaces/nav-scratch")
         command_template = (
             "cd {root} && "
             "echo alpha > first.txt && "

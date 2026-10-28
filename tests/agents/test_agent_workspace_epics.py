@@ -17,6 +17,7 @@ from gobby.agents.agent_workspaces import (
     drain_workspace_commits,
     workspace_git_dir,
 )
+from gobby.agents.team_lifecycle import TeamBinding
 from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools import agent_cancellation
@@ -73,6 +74,12 @@ def engine(temp_db: HubDatabase) -> RuleEngine:
                 tags=document["tags"],
             )
     return RuleEngine(temp_db)
+
+
+def tree_of(binding: TeamBinding) -> Path:
+    """The team tree a binding names; these tests always admit a team with one."""
+    assert binding.worktree_path is not None
+    return Path(binding.worktree_path)
 
 
 def _epic(world: TeamWorld, title: str) -> tuple[Task, Task]:
@@ -189,7 +196,7 @@ async def test_epic_close_commit_and_lock(
     (epic_dir / "decisions.md").write_text("merge order: leaf first\n")
 
     # Land the epic tip, close the leaf, then the bound epic.
-    tree = Path(team.binding.worktree_path)
+    tree = tree_of(team.binding)
     (tree / "epic.py").write_text("# epic work\n")
     git_in(tree, "add", "epic.py")
     git_in(tree, "commit", "-m", "epic work")

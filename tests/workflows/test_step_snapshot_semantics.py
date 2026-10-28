@@ -1074,6 +1074,7 @@ def test_compact_end_retains_instance_expired_end_deletes(
             self._call_tool = None
             self._get_machine_id = MagicMock(return_value=LOCAL_MACHINE_ID)
             self._resolve_project_id = MagicMock(return_value=None)
+            self._event_loop = None
             self._handler_map = cast(Any, {})
 
     def _event(reason: SessionEndReason) -> HookEvent:
@@ -1345,6 +1346,8 @@ async def _run_post_launch_failure_case(
             }
             result = await spawn_agent_impl(
                 prompt="Test prompt",
+                provider="claude",
+                model="claude-sonnet-5",
                 runner=runner,
                 agent_body=make_agent_definition(
                     prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},

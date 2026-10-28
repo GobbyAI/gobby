@@ -86,6 +86,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._call_tool = None
         self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")
         self._resolve_project_id = MagicMock(return_value=PROJECT_ID)
+        self._event_loop = None
         self._handler_map = {}
 
 

@@ -95,6 +95,22 @@ def seat(
     return session
 
 
+def dispatched_seat(world: TeamWorld, team: Team, tree: str) -> str:
+    """A seat the Dev Manager dispatched into ``tree``, a child of its session, not the runbook's."""
+    db = world.case.db
+    manager = team.seats[0]
+    session = world.case.session("developer", parent=manager)
+    db.execute("UPDATE sessions SET workspace_path = %s WHERE id = %s", (tree, session))
+    LocalAgentRunManager(db).create(
+        parent_session_id=manager,
+        provider="claude",
+        prompt="Run the developer seat.",
+        agent_name="developer",
+        child_session_id=session,
+    )
+    return session
+
+
 async def admitted_team(world: TeamWorld, title: str) -> Team:
     """A devteam whose runbook admitted its tree and launched all four seats."""
     task = world.case.task(title)

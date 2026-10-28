@@ -34,6 +34,8 @@ SESSION_ID = "22222222-2222-4222-8222-222222222222"
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 ROLES_DIR = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules/roles"
 GUIDANCE_HEADING = "## Seat Guidance"
+# A checkout outside the temp roots. A project under tmp_path reads as a temp write (#25218).
+CHECKOUT = "/Users/dev/.gobby/worktrees/gobby/seat-scope-checkout"
 
 ENHANCER_CALL = {"agent": "plan-enhancer-taskless-old", "checkout_mode": "none"}
 DEVELOPER: dict[str, Any] = {"_agent_type": "developer"}
@@ -420,8 +422,7 @@ def _write(project: Path, file_path: str) -> dict[str, Any]:
 async def test_seat_write_scope_is_path_aware(
     engine: RuleEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    project = (tmp_path / "checkout").resolve()
-    (project / "docs").mkdir(parents=True)
+    project = Path(CHECKOUT)
     home = (tmp_path / "home").resolve()
     monkeypatch.setenv("HOME", str(home))
     digest_dir = f"{home}/Desktop"
@@ -466,7 +467,7 @@ async def test_archivist_staging_scope_is_bounded(
 ) -> None:
     home = (tmp_path / "home").resolve()
     monkeypatch.setenv("HOME", str(home))
-    reports = tmp_path / ".gobby/reports"
+    reports = Path(CHECKOUT) / ".gobby/reports"
     digest = "gobby-digest-2026-10-10.md"
     for filename, expected in (
         (digest, "allow"),
@@ -498,8 +499,8 @@ async def test_archivist_staging_scope_is_bounded(
             {
                 "tool_name": tool_name,
                 "tool_input": tool_input,
-                "cwd": str(tmp_path),
-                "project_path": str(tmp_path),
+                "cwd": CHECKOUT,
+                "project_path": CHECKOUT,
             },
             ARCHIVIST,
         )
@@ -695,7 +696,6 @@ NON_CLOSERS = (
     "debugger",
     "design-reviewer",
     "recovery-steward",
-    "consolidator",
     "tech-writer",
     "epic-reviewer",
     "expansion-qa",
@@ -755,9 +755,35 @@ def test_only_dev_managers_orchestrator_and_researcher_are_granted_close_task() 
     granted = {
         path.stem: _close_task_names(yaml.safe_load(path.read_text()))
         for path in sorted(AGENTS_DIR.glob("*.yaml"))
-        if path.stem not in ("dev-manager", "orchestrator", "researcher")
+        if path.stem not in ("dev-manager", "orchestrator", "researcher", "consolidator")
     }
     assert {stem: names for stem, names in granted.items() if names} == {}
     # The researcher closes only its own report spike as done; the MCP close enforces the rest.
     researcher = yaml.safe_load((AGENTS_DIR / "researcher.yaml").read_text())
     assert _close_task_names(researcher) == ["gobby-tasks:close_task"]
+
+
+@pytest.mark.parametrize(
+    "reason,allowed", [("moot", True), ("superseded", True), ("done", False), ("wont_do", False)]
+)
+@pytest.mark.asyncio
+async def test_consolidator_rule_allows_only_fold_and_retirement_closes(
+    engine: RuleEngine, reason: str, allowed: bool
+) -> None:
+    call = _proxy_call(
+        "gobby-tasks",
+        "close_task",
+        {
+            "task_id": "#25235",
+            "reason": reason,
+            "superseded_by": "#25223",
+        },
+    )
+    result = await _decide(engine, call, {"_agent_type": "consolidator"})
+    assert result.decision == ("allow" if allowed else "block")
+
+
+def test_consolidator_definition_grants_approved_fold_tools() -> None:
+    definition = yaml.safe_load((AGENTS_DIR / "consolidator.yaml").read_text())
+    assert "name:block-update-task" in definition["workflows"]["rule_selectors"].get("exclude", [])
+    assert _close_task_names(definition)
