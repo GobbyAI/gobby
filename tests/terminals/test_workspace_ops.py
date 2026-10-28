@@ -70,6 +70,7 @@ from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.condition_helpers_sessions import send_keys_target_in_scope
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
@@ -818,6 +819,28 @@ async def test_cross_workspace_pane_move_publishes_each_workspace_its_own_rows(
         ("pane.moved", home.id, [], [staying.id]),
         ("tab.removed", home.id, [staying.tab_id], []),
     ]
+
+
+async def test_pane_move_refuses_a_destination_tab_of_another_project(
+    harness: _Harness, isolated_checkout_factory: IsolatedCheckoutFactory
+) -> None:
+    h = harness
+    other_project = isolated_checkout_factory(h.db, "other-project").project
+    workspace = await h.ops.workspace_create(OPERATOR, "shared")
+    staying = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    moving = (await h.ops.pane_split(OPERATOR, staying.id, "horizontal")).panes[0]
+    foreign = await h.ops.tab_create(OPERATOR, workspace.id, str(other_project.id))
+    h.events.clear()
+
+    error = await _raises(
+        "invalid_move",
+        h.ops.pane_move(OPERATOR, moving.id, foreign.tabs[0].id, beside=foreign.panes[0].id),
+    )
+
+    assert "another project" in str(error)
+    assert h.events == []
+    tab_of = {row.id: row.tab_id for row in h.workspaces.list_panes(workspace.id)}
+    assert tab_of[moving.id] == staying.tab_id
 
 
 async def test_workspace_create_announces_only_a_new_row(harness: _Harness) -> None:
