@@ -5,6 +5,7 @@
 //! `RELIST_REFRESH`, so a row's working directory and command follow a `cd`.
 
 use super::*;
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 /// How long after a relist starts the next one falls due unasked.
@@ -49,7 +50,8 @@ impl RelistState {
 }
 
 /// The rows and snapshot one background relist came back with.
-pub(crate) struct Relist {
+#[derive(Debug)]
+pub struct Relist {
     generation: u64,
     project: String,
     rows: Vec<TerminalRow>,
@@ -87,10 +89,19 @@ impl Workspace<LiveDaemon> {
         if !self.relist.take_due(Instant::now()) {
             return None;
         }
-        let daemon = self.daemon.clone();
         let project = self.project_id.clone().unwrap_or_default();
+        Some(Box::pin(self.issue_roster_fetch(project)))
+    }
+
+    /// Issues the roster read for `project`, whichever project is focused
+    /// when it lands. `apply_relist` drops the answer for any other project.
+    pub(crate) fn issue_roster_fetch(
+        &self,
+        project: String,
+    ) -> impl Future<Output = Result<Relist, DaemonError>> + Send + 'static {
+        let daemon = self.daemon.clone();
         let generation = self.relist.generation;
-        Some(Box::pin(async move {
+        async move {
             let (rows, pin) = list_roster(&daemon, &project).await?;
             Ok(Relist {
                 generation,
@@ -98,7 +109,7 @@ impl Workspace<LiveDaemon> {
                 rows,
                 pin,
             })
-        }))
+        }
     }
 
     pub(crate) fn start_initial_relist(&mut self) -> RelistFuture {
@@ -107,9 +118,10 @@ impl Workspace<LiveDaemon> {
     }
 
     /// Installs a background relist unless something newer overtook it.
-    pub(crate) fn apply_relist(&mut self, relist: Relist) {
+    /// Returns whether it was installed.
+    pub(crate) fn apply_relist(&mut self, relist: Relist) -> bool {
         if self.project_id.as_deref().unwrap_or_default() != relist.project {
-            return;
+            return false;
         }
         // A roster change here or a lifecycle event applied while the request
         // was out is newer than the answer, and installing it would undo the
@@ -120,9 +132,10 @@ impl Workspace<LiveDaemon> {
             })
         {
             self.relist.pending = true;
-            return;
+            return false;
         }
         self.install_relist(relist.rows, relist.pin);
+        true
     }
 
     fn install_relist(&mut self, rows: Vec<TerminalRow>, pin: Snapshot) {

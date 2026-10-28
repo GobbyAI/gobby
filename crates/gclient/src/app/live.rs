@@ -1,4 +1,4 @@
-use super::sidebar_model::{GIT_REFRESH_INTERVAL, ROSTER_REFRESH_INTERVAL};
+use super::sidebar_model::{PendingRefetch, GIT_REFRESH_INTERVAL, ROSTER_REFRESH_INTERVAL};
 use super::*;
 use crate::daemon::{message_kind, ProjectRow, RunRow, SessionRow, SourceStatus, WorktreeRow};
 use std::collections::BTreeSet;
@@ -7,6 +7,7 @@ use std::pin::Pin;
 #[path = "live_sidebar.rs"]
 mod live_sidebar;
 pub(super) use live_sidebar::FetchRetry;
+pub(super) use live_sidebar::RosterSnapshot;
 pub use live_sidebar::{SidebarFetch, SidebarFetchFuture};
 
 pub(super) mod relist;
@@ -34,6 +35,9 @@ impl Workspace<LiveDaemon> {
             projects_retry: FetchRetry::default(),
             last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
+            pending_refetch: PendingRefetch::default(),
+            last_event_at: Instant::now(),
+            roster_landed: false,
             sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,
             gobby_home: None,
@@ -263,8 +267,9 @@ impl Workspace<LiveDaemon> {
                 continue;
             }
             for event in buffered {
-                self.apply_live_event(event).await?;
+                self.apply_live_event(event);
             }
+            self.flush_pending_refetch().await?;
             self.flush_sidebar_refetches().await?;
             self.rebuild_sidebar();
             let current = self.daemon.subscribe().0;
@@ -282,7 +287,11 @@ impl Workspace<LiveDaemon> {
         }
     }
 
-    pub(super) async fn apply_live_event(&mut self, event: DaemonEvent) -> Result<(), DaemonError> {
+    /// Applies one live event without awaiting. A roster or attention read it
+    /// needs is only flagged in `pending_refetch`; the loop issues it beside
+    /// itself, and `drain_receiver` reads it inline for the callers without a loop.
+    pub(super) fn apply_live_event(&mut self, event: DaemonEvent) {
+        let gap = std::mem::replace(&mut self.last_event_at, Instant::now()).elapsed();
         match event {
             DaemonEvent::Terminal {
                 daemon_epoch,
@@ -295,9 +304,9 @@ impl Workspace<LiveDaemon> {
                         .as_ref()
                         .is_some_and(|pin| pin.daemon_epoch != daemon_epoch)
                     {
-                        self.fetch_roster().await?;
+                        self.request_focused_roster();
                     }
-                    return Ok(());
+                    return;
                 }
                 let terminal_id = payload
                     .get("terminal_id")
@@ -350,7 +359,7 @@ impl Workspace<LiveDaemon> {
                     .as_ref()
                     .is_some_and(|pin| pin.daemon_epoch != daemon_epoch)
                 {
-                    self.fetch_roster().await?;
+                    self.request_focused_roster();
                 }
             }
             DaemonEvent::AttachmentFinalized {
@@ -369,7 +378,7 @@ impl Workspace<LiveDaemon> {
                     .as_ref()
                     .is_some_and(|pin| pin.daemon_epoch != daemon_epoch)
                 {
-                    self.fetch_roster().await?;
+                    self.request_focused_roster();
                 }
             }
             DaemonEvent::Attention {
@@ -378,11 +387,11 @@ impl Workspace<LiveDaemon> {
                 payload,
             } => {
                 if !self.attention.epoch.is_empty() && self.attention.epoch != epoch {
-                    self.fetch_attention().await?;
-                    return Ok(());
+                    self.pending_refetch.attention = true;
+                    return;
                 }
                 if epoch == self.attention.epoch && seq <= self.attention.seq {
-                    return Ok(());
+                    return;
                 }
                 self.note_attention_event(&payload);
                 self.attention.epoch = epoch;
@@ -393,10 +402,15 @@ impl Workspace<LiveDaemon> {
                 self.observe_daemon_disconnect(generation, error);
             }
             DaemonEvent::Lagged => {
-                // The repairs run beside the loop: inline, a slow answer held
-                // it while frames lagged the receiver again (#22747).
-                self.request_relist();
-                self.pending_sidebar = PendingSidebar::everything(self.checked_out_projects());
+                // The decoded lag carries no skipped count; the raw receiver
+                // arm in the loop reports that one.
+                tracing::warn!(
+                    source = "daemon event",
+                    generation = self.daemon.generation().0,
+                    elapsed_ms = u64::try_from(gap.as_millis()).unwrap_or(u64::MAX),
+                    "event stream lagged; refetching roster, attention and sidebar"
+                );
+                self.repair_lag();
             }
             DaemonEvent::Message(message) => {
                 if message_kind(&message) == Some("terminal_resize_result") {
@@ -415,7 +429,43 @@ impl Workspace<LiveDaemon> {
                 self.apply_live_workspace_event(&event);
             }
         }
+    }
+
+    /// Reads what `pending_refetch` asks for, inline. Only the callers that
+    /// have no loop to drain it into reach this.
+    async fn flush_pending_refetch(&mut self) -> Result<(), DaemonError> {
+        let rosters = std::mem::take(&mut self.pending_refetch.rosters);
+        if self
+            .project_id
+            .as_ref()
+            .is_some_and(|project| rosters.contains(project))
+        {
+            self.fetch_roster().await?;
+        }
+        if std::mem::take(&mut self.pending_refetch.attention) {
+            self.fetch_attention().await?;
+        }
         Ok(())
+    }
+
+    /// `project`'s roster, read beside the loop.
+    pub(super) fn request_roster(&mut self, project: &str) {
+        self.pending_refetch.rosters.insert(project.to_owned());
+    }
+
+    /// The focused project's roster, read beside the loop.
+    fn request_focused_roster(&mut self) {
+        if let Some(project) = self.project_id.clone() {
+            self.request_roster(&project);
+        }
+    }
+
+    /// Repairs a lag: the relist, every sidebar row set and attention are read
+    /// again beside the loop, since the dropped events cannot be replayed.
+    pub(super) fn repair_lag(&mut self) {
+        self.request_relist();
+        self.pending_sidebar = PendingSidebar::everything(self.checked_out_projects());
+        self.pending_refetch.attention = true;
     }
 
     fn accept_lifecycle(&self, epoch: &str, seq: u64) -> bool {

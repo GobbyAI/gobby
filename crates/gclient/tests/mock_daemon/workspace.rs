@@ -146,6 +146,16 @@ impl WorkspaceSim {
 
     pub fn seed_other_workspace(&mut self, project: &str, tabs: &[(&[&str], &str)]) -> String {
         let previous = self.workspace_id();
+        // When seeding another project, keep the current project's seeded
+        // workspace addressable on switch-back. Same-project fixtures still
+        // create a distinct workspace beside the projectless scratch.
+        if self.workspace["default_project_id"].is_null()
+            && self.workspace["focused_project_id"]
+                .as_str()
+                .is_some_and(|focused| focused != project)
+        {
+            self.workspace["default_project_id"] = self.workspace["focused_project_id"].clone();
+        }
         self.workspace["node_ref"] = json!(0);
         self.workspace["ref"] = json!(0);
         self.open_project(project);
