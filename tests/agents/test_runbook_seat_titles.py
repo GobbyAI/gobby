@@ -19,11 +19,17 @@ from gobby.agents.spawn import prepare_terminal_resume, prepare_terminal_spawn
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.sessions.title_lifecycle import recompute_automatic_title, update_title_for_claim
 from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.terminals import TerminalManager
+from gobby.storage.workspaces import WorkspaceManager
+from gobby.terminals.workspace_agent_panes import AgentPaneReserver, AgentPlacement
 from gobby.workflows.definitions import PipelineDefinition
 from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
+from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
+from tests.terminals.fakes import FakeRuntime, runtime_registry
 
 PIPELINES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/pipelines"
 BRANCH = "task-24797-runbooks"
@@ -33,6 +39,53 @@ EXPECTED_TAB = {
     "support": "Support",
     "team-planning": "Team Planning",
 }
+
+
+@pytest.mark.parametrize(
+    ("tab_title", "seat_title"),
+    [
+        pytest.param(f"Dev Team - {TASK_REF}", "Dev Manager", id="devteam"),
+        pytest.param("Support", "Release Manager", id="support"),
+        pytest.param(f"Research - {TASK_REF}", "Researcher", id="research"),
+        pytest.param(f"Team Planning - {TASK_REF}", "Plan Writer", id="team-planning"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_tab_opening_seat_keeps_its_definition_pane_title(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tab_title: str,
+    seat_title: str,
+) -> None:
+    """Reservation preserves the runbook tab title and gives its opener a seat title.
+
+    Research exercises the shared placement path while its pipeline YAML is unlanded.
+    """
+    db = session_manager.db
+    machine_id = f"{TEST_MACHINE_ID_PREFIX}000000000001"
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", machine_id)
+    LocalMachineManager(db).upsert_seen(machine_id, TEST_USER_ID, hostname="local")
+    workspaces = WorkspaceManager(db)
+    workspace = workspaces.create(machine_id, "seat-titles")[0]
+    reserver = AgentPaneReserver(
+        workspaces=workspaces,
+        terminals=TerminalManager(db),
+        registry=runtime_registry(FakeRuntime(backend="tmux"), FakeRuntime(backend="native")),
+        sessions=session_manager,
+        publish=AsyncMock(),
+    )
+    placement = AgentPlacement.parse(
+        {"tab": {"workspace": workspace.id, "title": tab_title}}
+    ).for_seat(seat_title)
+
+    resolved = await reserver.preflight("operator", sample_project["id"], placement)
+    reserved = await reserver.reserve(resolved, worktree_id=None)
+
+    tab = next(tab for tab in workspaces.list_tabs(workspace.id) if tab.id == reserved.tab_id)
+    pane = next(pane for pane in workspaces.list_panes(workspace.id) if pane.id == reserved.pane_id)
+    assert tab.title == tab_title
+    assert pane.label == seat_title
 
 
 def _placement_titles(placement: dict[str, Any]) -> tuple[str | None, str]:
