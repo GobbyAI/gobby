@@ -1468,6 +1468,90 @@ async fn a_read_that_outlives_its_pane_never_installs_or_attaches_the_terminal()
 }
 
 #[tokio::test]
+async fn removal_with_an_attach_in_flight_does_not_resurrect_the_opened_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, tab_id, first) = on_demand_workspace(&mock).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        let attach = mock.hold_ws("terminal_attach", for_terminal("terminal-late"));
+        mock.enqueue(
+            "GET",
+            "/api/terminals/terminal-late",
+            200,
+            json!({"terminal_id": "terminal-late", "backend": "native", "state": "live"}),
+        );
+        mock.send_event_and_wait(pane_added_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            1,
+        ))
+        .await;
+        // Only start_due_attaches can send this: apply_open installed PaneId(2)
+        // and the first tick started its attach, whose reply remains held.
+        wait_until("the opened terminal's held attach", || {
+            websocket_requests(&mock, "terminal_attach")
+                .iter()
+                .any(|request| request["terminal_id"] == "terminal-late")
+        })
+        .await;
+        mock.send_event_and_wait(pane_removed_event(
+            &tab_id,
+            &first,
+            "mock-pane-late",
+            "terminal-late",
+            2,
+        ))
+        .await;
+        // Frame processing follows queued daemon events in the biased loop.
+        // This proves the removal applied before the held reply is released.
+        probe.frames_render("terminal-a").await;
+        attach.notify_one();
+        wait_until("the stale attach reply", || {
+            mock.replies().iter().any(|reply| {
+                reply["type"] == "terminal_attached" && reply["terminal_id"] == "terminal-late"
+            })
+        })
+        .await;
+        // Drive recovery completion and later ticks; the surviving pane must
+        // still render frames and deliver input after the stale reply lands.
+        probe.assert_live("terminal-a", "terminal-a", 'k').await;
+        probe.draws_continue().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("stale attach completion must not panic or stop the loop");
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_none(),
+        "the stale attach must not resurrect the removed live pane"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_take_control")
+            .iter()
+            .all(|request| request["terminal_id"] != "terminal-late"),
+        "the removed pane must never acquire control"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_held_focus_hint_op_never_stalls_frames_or_ticks() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
