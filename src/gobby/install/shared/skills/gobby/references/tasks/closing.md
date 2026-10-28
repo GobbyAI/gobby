@@ -1,10 +1,11 @@
 # Close verified work
 
-Load before any task close, including no-work dispositions. Discover `close_task`
-on `gobby-tasks` and post-close `review_task_memories` on `gobby-memory`.
-Tool schemas own parameters.
+Load before any task close, including no-work dispositions. Only the Dev Manager and
+the Orchestrator call `close_task`; every other seat is refused and reports to its
+Dev Manager or Triage. Discover `close_task` on `gobby-tasks` and post-close
+`review_task_memories` on `gobby-memory`. Tool schemas own parameters.
 
-Finish in this order:
+Finish in this order (closers: the Dev Manager or the Orchestrator):
 
 1. Finish the task, resolve owned findings, and check its acceptance criteria.
 2. Run focused validation after the final edit and follow every command to its
@@ -21,16 +22,24 @@ Finish in this order:
 6. After closing, call `review_task_memories` with the task and summary. Record
    only valuable durable knowledge.
 
-## Four close gates
+## Who closes
 
-Both leaves and epics use these invariants, in order:
+- The Dev Manager closes delivered work with `reason=done`.
+- The Orchestrator closes no-work dispositions (`moot`, `superseded`, `wont_do`) and may close with `done`.
+- A researcher spike closes with `done` by the Dev Manager of the DevTeam that reviewed it, or by the Orchestrator when no Dev Manager seat exists.
+- `preview=true` is open to every seat and changes nothing.
+
+## Five close gates
+
+Leaves and epics use these gates, in order. `step_records` applies to non-epic closes.
 
 | Gate | Required state |
 | --- | --- |
 | `children_closed` | Every child is closed. |
-| `linked_commits` | At least one linked or prospective commit, or an explicit no-work reason. |
+| `linked_commits` | At least one linked or prospective commit. A no-work close with no commit skips this gate. |
 | `uncommitted_task_edits` | Every task-attributed path is clean in its recorded checkout; attribution must be complete. |
-| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. A no-work close has no linked commits: unlink each candidate first (see below). |
+| `integration_ancestry` | Every linked or prospective commit resolves and is an ancestor of the authoritative integration branch. A no-work close with no linked commit skips this gate; with a linked commit, unlink each candidate first (see below). |
+| `step_records` | When `task_close_policy` sets `enforce_step_records`, the approved records for the task's category. A no-work close skips this gate. |
 
 The response exposes `gates`, `can_close`, `closed`, and resolved commit identities.
 Task, caller, machine, and repository authorization are checked before the gates.
@@ -38,8 +47,9 @@ The final close re-evaluates current state before writing. A concurrent change
 can require another preview or retry.
 
 Close reasons are `done`, `moot`, `superseded`, and `wont_do`. Delivered work closes
-with `done`. The no-work reasons `moot`, `superseded`, and `wont_do` permit only a
-close with no linked commit, and explain the disposition in `changes_summary`.
+with `done`. Only the Orchestrator closes with the no-work reasons `moot`, `superseded`,
+and `wont_do`; a Dev Manager's attempt is refused with `no_work_close_orchestrator_only`.
+A no-work close is commitless and explains the disposition in `changes_summary`.
 A no-work close with any linked commit fails `integration_ancestry`, landed or not.
 Unlink each unlanded candidate first with
 `unlink_commit(task_id, commit_sha, reason)`. The reason and the caller are recorded
@@ -47,9 +57,8 @@ as a task lifecycle event. `unlink_commit` refuses a commit already on the integ
 branch, so landed work closes with `done`. A `superseded` close must name the
 superseding task or commit in `superseded_by`, or it is refused with
 `superseded_by_required`; the closing record stores it.
-No-work closes do not waive child closure or attributed-file cleanliness.
-When step records are enforced, the unlinked task's implementation and closing
-records need the no-work disposition and no commit SHA, recorded after the unlink.
+No-work closes do not waive child closure or attributed-file cleanliness. A no-work
+close skips the `step_records` gate, so it needs no step records.
 
 Developers and independent reviewers remain responsible for acceptance criteria,
 test quality, and validation results. The close tool does not score transcripts,
@@ -65,8 +74,8 @@ When the project's `task_close_policy` sets `enforce_step_records`, a non-epic
 close also needs the approved step records that policy selects for the task's
 category: implementation and closing always, plus test and review where
 configured. Implementation, review and closing records cite the latest linked
-commit; a test record may cite any linked commit. With no linked commit, records
-carry the no-work disposition. `force` never bypasses them.
+commit; a test record may cite any linked commit. A no-work close skips this gate.
+`force` never bypasses a gate that applies.
 
 Each step has one writer: `record_test_step`, `record_implementation_step`,
 `record_review_step` and `record_closing_step`. A writer accepts a session only

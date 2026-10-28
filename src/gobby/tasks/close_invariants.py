@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence, Set
 
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
+from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS
 from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 from gobby.workflows.task_dirty_state import task_dirty_paths_async
 
-NO_WORK_CLOSE_REASONS = frozenset({"moot", "superseded", "wont_do"})
 CLOSE_GATE_ORDER = (
     (1, "children_closed"),
     (2, "linked_commits"),
@@ -41,8 +41,13 @@ async def evaluate_close_invariants(
         attribution_complete=attribution_complete,
     )
     details = {"required_steps": list(required_steps), "missing_steps": list(missing_steps)}
-    gates.append(
-        CloseGateResult(
+    if reason.casefold() in NO_WORK_CLOSE_REASONS:
+        # A no-work close is an Orchestrator override: it records no step records.
+        step_gate = CloseGateResult(
+            5, "step_records", "skipped", "A no-work close records no step records.", details
+        )
+    else:
+        step_gate = CloseGateResult(
             5,
             "step_records",
             "skipped" if not required_steps else "failed" if missing_steps else "passed",
@@ -53,7 +58,7 @@ async def evaluate_close_invariants(
             else "Every required step record is approved.",
             details,
         )
-    )
+    gates.append(step_gate)
     return CloseChecklist(tuple(gates))
 
 
@@ -76,15 +81,17 @@ async def _data_invariants(
             {"open_children": list(open_children)},
         )
     ]
-    has_disposition = bool(commit_shas) or reason.casefold() in NO_WORK_CLOSE_REASONS
+    no_work = reason.casefold() in NO_WORK_CLOSE_REASONS
     gates.append(
         CloseGateResult(
             2,
             "linked_commits",
-            "passed" if has_disposition else "failed",
-            "A linked commit or no-work disposition exists."
-            if has_disposition
-            else "Link a commit or supply an explicit no-work close reason.",
+            "passed" if commit_shas else "skipped" if no_work else "failed",
+            "A linked commit exists."
+            if commit_shas
+            else "A no-work close has no commit to link."
+            if no_work
+            else "Link a commit, or close with a no-work reason (Orchestrator only).",
             {"commit_shas": list(commit_shas)},
         )
     )

@@ -15,7 +15,7 @@ from gobby.storage.tasks._models import (
 )
 from gobby.storage.team_records import live_team_rows_sql
 from gobby.tasks.criteria_text import normalized_validation_criteria
-from gobby.tasks.state_semantics import validate_task_close_reason
+from gobby.tasks.state_semantics import NO_WORK_CLOSE_REASONS, validate_task_close_reason
 from gobby.utils.datetime import utc_now
 
 _LEGACY_VALIDATION_CRITERIA = (
@@ -69,7 +69,8 @@ def _close_task_in_txn(
         if open_children:
             listed = [f"{child['id']} ({child['title']})" for child in open_children]
             raise TaskHasOpenChildrenError(task_id, listed)
-    if row is not None and row["closed_at"] is None:
+    # A no-work close records no step records (gate 5 is skipped), so only done closes check them.
+    if row is not None and row["closed_at"] is None and reason not in NO_WORK_CLOSE_REASONS:
         # step_records imports this package, so it loads at call time.
         from gobby.tasks.step_records import task_step_requirements
 

@@ -143,7 +143,6 @@ step_workflow:
         send the coordinator the stamped plan. Then call end_agent_run.
       allowed_tools: "all"
       blocked_mcp_tools:
-        - "gobby-tasks:close_task"
         - "gobby-plans:derive_plan_handoff_manifest"
         - "gobby-plans:apply_plan_handoff_manifest"
         - "gobby-agents:spawn_agent"

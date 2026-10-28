@@ -27,7 +27,11 @@ from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
+from gobby.tasks.state_semantics import (
+    NO_WORK_CLOSE_REASONS,
+    get_claimed_session_id,
+    is_task_closed,
+)
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.git import descends_from_all
 from gobby.utils.session_context import get_current_session_id
@@ -67,6 +71,22 @@ async def _evaluate_close(
     except ValueError as exc:
         return evaluation.refuse("session_resolution_failed", str(exc))
     evaluation.resolved_session_id = session_id
+    # No-work reasons are Orchestrator overrides; an unseated operator session keeps them too.
+    closer_role = (
+        await asyncio.to_thread(
+            ctx.session_var_manager.get_variable_subset, session_id, ("_agent_type",)
+        )
+    ).get("_agent_type")
+    if reason.casefold() in NO_WORK_CLOSE_REASONS and closer_role not in (
+        None,
+        "default",
+        "orchestrator",
+    ):
+        return evaluation.refuse(
+            "no_work_close_orchestrator_only",
+            f"Only the Orchestrator closes a task as {reason}. Close with reason done, "
+            "or send the request to the Orchestrator.",
+        )
     evaluation.edit_session_id = get_claimed_session_id(task) or session_id
     session = await asyncio.to_thread(ctx.session_manager.get, session_id)
     if session is None or not session.machine_id:
