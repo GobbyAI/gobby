@@ -210,7 +210,22 @@ def _admit(
         live = _live_seats(stores, session, seats, team_id=None)
     else:
         live = {}
-    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, task)
+    tab_task = task
+    if team_id is not None:
+        from gobby.agents.team_lifecycle import team_binding
+
+        binding = team_binding(stores.tasks.db, team_id)
+        if binding is not None:
+            tab_task = binding.task_id
+            if binding.parent_team_id is not None:
+                tab_title = "Dev Pod"
+                seats = tuple(seat for seat in seats if seat.name != "dev-manager")
+                parent_live = _live_seats(
+                    stores, session, catalogue, team_id=binding.parent_team_id
+                )
+                if "dev-manager" in parent_live:
+                    live["dev-manager"] = parent_live["dev-manager"]
+    tab = _runbook_tab_title(stores.tasks, project_id, tab_title, tab_task)
     return AdmittedSeats(
         workspace_id=workspace_id,
         seats=seats,

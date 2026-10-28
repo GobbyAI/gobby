@@ -30,7 +30,7 @@ from gobby.sessions.machine_scope import (
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.close_invariants import evaluate_close_invariants
-from gobby.tasks.land_commit import LandingGitError, main_checkout_target
+from gobby.tasks.land_commit import LandingGitError, task_landing_target
 from gobby.tasks.state_semantics import (
     NO_WORK_CLOSE_REASONS,
     get_claimed_session_id,
@@ -194,9 +194,7 @@ async def _evaluate_close(
         return evaluation.refuse("session_variable_lookup_failed", str(exc))
     child_tasks = await asyncio.to_thread(children, ctx, task.id)
     try:
-        target = (
-            await main_checkout_target(ctx.task_manager.db, task.project_id) if commits else None
-        )
+        target = await task_landing_target(ctx.task_manager.db, task) if commits else None
     except (LandingGitError, CheckoutNotFoundError, ValueError):
         target = None
     integration_ref = f"refs/heads/{target[1]}" if target else None

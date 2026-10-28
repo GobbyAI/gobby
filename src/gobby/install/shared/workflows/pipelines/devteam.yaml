@@ -22,6 +22,10 @@ inputs:
     type: string
     default: null
     description: "Full UUID of the team's admitting execution; omitted admits a new team"
+  parent_team_id:
+    type: string
+    default: null
+    description: "Epic team UUID; its bound Dev Manager launches a leaf pod with its own team and tree"
   workspace:
     type: string
     required: true
@@ -99,13 +103,13 @@ steps:
       tool: check_runbook_seats
       arguments:
         workspace: "${{ inputs.workspace }}"
-        requested: "${{ 'code-reviewer' if inputs.fresh_reviewer else inputs.seats }}"
+        requested: "${{ 'code-reviewer' if inputs.fresh_reviewer else ('test-writer,developer,code-reviewer' if inputs.parent_team_id else inputs.seats) }}"
         report_to: "${{ inputs.report_to }}"
         require_report_to: true
         skip_live_seats: "${{ inputs.team_id is not none and not inputs.fresh_reviewer }}"
         team_id: "${{ inputs.team_id }}"
         task: "${{ inputs.task }}"
-        tab_title: Dev Team
+        tab_title: "${{ 'Dev Pod' if inputs.parent_team_id else 'Dev Team' }}"
         catalogue:
           - name: dev-manager
             title: Dev Manager
@@ -128,6 +132,7 @@ steps:
         task: "${{ inputs.task }}"
         team_id: "${{ inputs.team_id }}"
         fresh_reviewer: "${{ inputs.fresh_reviewer }}"
+        parent_team_id: "${{ inputs.parent_team_id }}"
         exclude_reviewers: "${{ inputs.exclude_reviewers }}"
         reviewer_agent: "${{ inputs.reviewer_agent }}"
 
@@ -146,7 +151,7 @@ steps:
         project_path: "${{ steps.admit.output.project_path }}"
         task_id: "${{ steps.admit.output.task_id }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the dev manager seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the dev manager seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. In epic mode, run devteam with parent_team_id for parallel leaf pods; single-task teams cannot launch pods."
         # The manager opens the team tab when none exists; otherwise it splits that tab.
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
@@ -169,7 +174,7 @@ steps:
         checkout_mode: none
         project_path: "${{ steps.admit.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the test writer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the test writer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else (('Your Dev Manager is session ' + inputs.report_to + '.') if inputs.parent_team_id else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.') }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         # A seat opens the team tab only when no earlier launch in this run opens it.
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
@@ -193,7 +198,7 @@ steps:
         checkout_mode: none
         project_path: "${{ steps.admit.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the developer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the developer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else (('Your Dev Manager is session ' + inputs.report_to + '.') if inputs.parent_team_id else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.') }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
           'tab_title': steps.guard.output.tab_title, 'axis': 'right',
@@ -221,7 +226,7 @@ steps:
         checkout_mode: none
         project_path: "${{ steps.admit.output.project_path }}"
         reserved_run_id: "${{ invocation_id }}"
-        prompt: "You are the ${{ 'fresh ' if inputs.fresh_reviewer else '' }}code reviewer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.' }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
+        prompt: "You are the ${{ 'fresh ' if inputs.fresh_reviewer else '' }}code reviewer seat for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }} on branch ${{ steps.admit.output.branch }}. ${{ ('Your Dev Manager is session ' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '; reach it with gobby-agents:send_message(target=\"session\", target_id=\"' + (steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id) + '\").') if ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output)) else (('Your Dev Manager is session ' + inputs.report_to + '.') if inputs.parent_team_id else 'No Dev Manager session ref is known at launch; report to the session named in your launch prompt until your Dev Manager names itself.') }} Your current session ref is fresh; follow your installed agent definition for your standing duties and authority. Report your current session ref and every SRT denial you hit through gobby-agents:send_message(target=\"session\", target_id=\"${{ inputs.report_to }}\"). Use that live session for bootstrap blockers and coordination; the pipeline parent may have ended. Do not launch other seats or pipelines."
         placement: >-
           ${{ {'split': {'workspace': steps.guard.output.workspace_id,
           'tab_title': steps.guard.output.tab_title, 'axis': 'right',
@@ -236,7 +241,7 @@ steps:
   # The Dev Manager is live on a fresh-reviewer run, or was spawned above; a run with neither sends nothing.
   - id: roster
     condition: >-
-      ${{ ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output))
+      ${{ (inputs.parent_team_id or 'dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output))
       and (('test-writer' in steps and steps['test-writer'].output)
       or ('developer' in steps and steps['developer'].output)
       or ('code-reviewer' in steps and steps['code-reviewer'].output)) }}
@@ -245,7 +250,7 @@ steps:
       tool: send_message
       arguments:
         target: session
-        target_id: "${{ steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id }}"
+        target_id: "${{ inputs.report_to if inputs.parent_team_id else steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id }}"
         content: >-
           Seat roster for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }}.
           ${{ ('test-writer: session ' + steps['test-writer'].output.child_session_id + ', run ' + steps['test-writer'].output.run_id + '.') if ('test-writer' in steps and steps['test-writer'].output) else '' }}

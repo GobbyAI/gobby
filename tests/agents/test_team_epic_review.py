@@ -1,4 +1,4 @@
-"""Epic-mode review: no reviewer fixer, epic holds and epic-tip repair through leaves (addendum 8.4)."""
+"""Epic primary leaves and pods use the single-task review and landing lifecycle."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding
+from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, managed_task_team
 from gobby.agents.team_review import sync_epic_review
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
@@ -21,6 +22,8 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.close_invariants import evaluate_close_invariants
+from gobby.tasks.land_commit import land_candidate, task_landing_target
 from gobby.tasks.step_records import (
     StepRecordError,
     StepStatus,
@@ -31,6 +34,7 @@ from gobby.tasks.step_records import (
     record_task_step,
 )
 from gobby.utils.session_context import session_context_for_test
+from gobby.workflows.condition_helpers_sessions import dev_pod_launch_allowed
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
@@ -39,6 +43,7 @@ from tests.fixtures.team_case import (
     TeamWorld,
     git_in,
     make_team_world,
+    running_seat,
     synthetic_manager_body,
 )
 
@@ -229,7 +234,7 @@ async def hand_off(
 
 
 @pytest.mark.asyncio
-async def test_reviewer_never_fixes_in_epic_mode(world: TeamWorld) -> None:
+async def test_epic_leaf_uses_single_task_fixer_and_fresh_reviewer(world: TeamWorld) -> None:
     tasks = LocalTaskManager(world.case.db)
     tools = create_task_registry(tasks)
     epic = new_task(world, TITLE, epic=True)
@@ -240,28 +245,131 @@ async def test_reviewer_never_fixes_in_epic_mode(world: TeamWorld) -> None:
     tasks.claim_task(leaf.id, developer, force=True)
     sha = reject_rounds(team, leaf, developer, reviewer, 2)
 
-    # Each rejection returns the leaf to a developer; the reviewer never takes the claim.
-    other_developer = team.seat("developer", "implementation")
-    moved = await hand_off(tools, team, leaf, developer, other_developer)
+    moved = await hand_off(tools, team, leaf, developer, reviewer)
     assert moved.get("success") is True, moved
-    refused = await hand_off(tools, team, leaf, other_developer, reviewer)
-    assert refused.get("error_code") == "reviewer_claim_forbidden", refused
-    assert tasks.get_task(leaf.id).claimed_by_session_id == other_developer
-    with pytest.raises(StepRecordError, match="cannot write the implementation step"):
-        submit(team.db, reviewer, leaf, "implementation", "approved", 3, sha)
+    assert tasks.get_task(leaf.id).claimed_by_session_id == reviewer
+    submit(team.db, reviewer, leaf, "implementation", "approved", 3, sha)
+    with pytest.raises(StepRecordError, match="claimant"):
+        submit(team.db, reviewer, leaf, "review", "approved", 3, sha)
 
-    # No fresh reviewer joins an epic team.
-    fresh = world.child(epic)
-    with pytest.raises(TeamAdmissionRefused) as refusal:
+    fresh = world.child(leaf)
+    admitted = await world.admit(
+        fresh, leaf, team.binding.team_id, fresh_reviewer=True, exclude_reviewers=[reviewer]
+    )
+    assert admitted == team.binding
+    assert (
         await world.admit(
-            fresh, epic, team.binding.team_id, fresh_reviewer=True, exclude_reviewers=[reviewer]
+            fresh, leaf, team.binding.team_id, fresh_reviewer=True, exclude_reviewers=[reviewer]
         )
-    assert refusal.value.code == "fresh_reviewer_epic_mode"
+        == admitted
+    )
 
     # The definition that wrote the leaf's earlier reviews reviews its next round.
     state = sync_epic_review(team.db, team.binding.team_id)
     assert state.next_reviewers == {leaf.id: "code-reviewer"}
     assert (state.held, state.holds) == (False, ())
+
+
+@pytest.mark.asyncio
+async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
+    epic = new_task(world, "Parallel delivery", epic=True)
+    leaf = new_task(world, "Independent leaf", parent=epic)
+    sibling = new_task(world, "Other leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+
+    assert pod.mode == "single"
+    assert pod.parent_team_id == team.binding.team_id
+    assert pod.branch == f"epic/{epic.seq_num}/{leaf.seq_num}"
+    assert pod.base_branch == team.binding.branch
+    assert pod.worktree_id != team.binding.worktree_id
+    assert git_in(tree_of(pod), "rev-parse", "HEAD") == git_in(
+        tree_of(team.binding), "rev-parse", "HEAD"
+    )
+    assert managed_task_team(team.db, team.manager, leaf.id) == pod
+    assert await world.admit(run, leaf, parent_team_id=team.binding.team_id) == pod
+
+    writer = running_seat(world, run, "test-writer")
+    tools = create_task_registry(LocalTaskManager(team.db))
+    with session_context_for_test(writer.id):
+        claimed = await tools.call("claim_task", {"task_id": leaf.id})
+        wrong_leaf = await tools.call("claim_task", {"task_id": sibling.id})
+    assert claimed.get("success") is True, claimed
+    assert wrong_leaf.get("error_code") == "TASK_CLAIM_CONFLICT", wrong_leaf
+    developer = running_seat(world, run, "developer")
+    moved = await hand_off(tools, team, leaf, writer.id, developer.id)
+    assert moved.get("success") is True, moved
+
+
+@pytest.mark.asyncio
+async def test_only_epic_manager_can_launch_pods(world: TeamWorld) -> None:
+    epic = new_task(world, "Managed epic", epic=True)
+    leaf = new_task(world, "Open leaf", parent=epic)
+    team = await epic_team(world, epic)
+    inputs = {"parent_team_id": team.binding.team_id, "task": leaf.id}
+    sessions = SessionManager(team.db)
+    assert dev_pod_launch_allowed(
+        sessions, team.manager, "run_pipeline", {"name": "devteam", "inputs": inputs}
+    )
+    assert dev_pod_launch_allowed(sessions, team.manager, "pipeline:devteam", inputs)
+    assert not dev_pod_launch_allowed(
+        sessions, team.manager, "run_pipeline", {"name": "other", "inputs": inputs}
+    )
+    assert not dev_pod_launch_allowed(
+        sessions, team.manager, "pipeline:devteam", {**inputs, "task": epic.id}
+    )
+    outsider = world.child(leaf)
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(outsider, leaf, parent_team_id=team.binding.team_id)
+    assert refused.value.code == "pod_parent_invalid"
+    single = new_task(world, "Single task")
+    single_team = await epic_team(world, single)
+    single_run = world.child(leaf, parent=single_team.manager)
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(single_run, leaf, parent_team_id=single_team.binding.team_id)
+    assert refused.value.code == "pod_parent_invalid"
+    assert not dev_pod_launch_allowed(sessions, single_team.manager, "pipeline:devteam", inputs)
+
+
+@pytest.mark.asyncio
+async def test_pod_lands_and_closes_against_epic_branch(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.tasks.land_commit._refresh_index", AsyncMock())
+    epic = new_task(world, "Epic integration", epic=True)
+    leaf = new_task(world, "Pod implementation", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    leaf_team = EpicTeam(world, leaf, run, pod, team.manager)
+    developer = leaf_team.seat("developer", "implementation")
+    reviewer = leaf_team.seat("code-reviewer", "review")
+    LocalTaskManager(team.db).claim_task(leaf.id, developer, force=True)
+    sha = leaf_team.commit(leaf, "pod_feature.py")
+    submit(team.db, developer, leaf, "implementation", "approved", 1, sha)
+    submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+    main_tip = git_in(world.case.repo, "rev-parse", "HEAD")
+    target = await task_landing_target(team.db, leaf)
+    assert target == (tree_of(team.binding), team.binding.branch)
+    result = await land_candidate(
+        team.db, task=leaf, caller_session_id=team.manager, commit_sha=sha
+    )
+    assert result.get("landed") is True, result
+    assert git_in(tree_of(team.binding), "rev-parse", "HEAD") == sha
+    assert git_in(world.case.repo, "rev-parse", "HEAD") == main_tip
+    checklist = await evaluate_close_invariants(
+        open_children=[],
+        commit_shas=[sha],
+        reason="done",
+        attributed_checkouts={},
+        integration_repo_path=str(tree_of(team.binding)),
+        integration_ref=f"refs/heads/{team.binding.branch}",
+        required_steps=[],
+        missing_steps=[],
+        attribution_complete=True,
+    )
+    assert checklist.ready, checklist
 
 
 @pytest.mark.asyncio

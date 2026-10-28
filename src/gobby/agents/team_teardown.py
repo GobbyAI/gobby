@@ -160,6 +160,15 @@ ORDER BY w.id
     teams = _with_members(db, [b for b in bindings if b])
     due: list[_DueLeaf] = []
     for row in rows:
+        # A pod owns its seats and teardown record. Its parent must not clean the
+        # same tree through the older developer-only leaf path.
+        if db.fetchone(
+            "SELECT 1 FROM step_executions WHERE step_id = %s "
+            "AND output_json #>> '{team,task_id}' = %s "
+            "AND output_json #>> '{team,parent_team_id}' IS NOT NULL",
+            (ADMISSION_STEP, row["task_id"]),
+        ):
+            continue
         team = next(
             (
                 team

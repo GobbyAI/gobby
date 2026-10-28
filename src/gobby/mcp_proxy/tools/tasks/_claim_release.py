@@ -22,7 +22,6 @@ from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.lifecycle_access import (
     is_operator_coordinator,
     session_agent_definition,
-    session_grants,
 )
 from gobby.tasks.step_records import fixer_round, list_task_step_records
 from gobby.utils.session_context import get_current_session_id
@@ -195,10 +194,9 @@ def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBi
     team comes from the caller's runbook execution (``seat_team``), shared by every caller.
     """
     db = ctx.task_manager.db
-    team = seat_team(db, caller.id)
-    if team is None or not _team_task(db, team, task_id):
-        return None
-    return team if _bound_dev_manager(ctx, caller, team.task_id) else None
+    from gobby.agents.team_lifecycle import managed_task_team
+
+    return managed_task_team(db, caller.id, task_id)
 
 
 def _recipient_refusal(
@@ -268,15 +266,6 @@ def register_hand_off_task_claim(registry: InternalToolRegistry, ctx: RegistryCo
                 return {
                     "error": "The holder and the recipient must be seats of the task's team",
                     "error_code": "team_seat_required",
-                }
-            if (
-                team.mode == EPIC_MODE
-                and session_grants(db, recipient.id, "review")
-                and not session_grants(db, recipient.id, "implementation")
-            ):
-                return {
-                    "error": "An epic reviewer never takes a claim; findings go to a developer",
-                    "error_code": "reviewer_claim_forbidden",
                 }
             # claim_task_for_agent re-takes these exact locks, so the ownership check, the
             # dirty-file check and the move commit as one transfer.

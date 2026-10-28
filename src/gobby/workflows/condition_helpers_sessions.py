@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -573,6 +574,9 @@ def session_condition_helpers(
     from gobby.workflows.engine.idle_declaration import readiness_message_completed
 
     return {
+        "dev_pod_launch_allowed": lambda caller_id, tool_name, arguments: dev_pod_launch_allowed(
+            session_manager, caller_id, tool_name, arguments
+        ),
         "seat_readiness_completed": lambda caller_id, output: readiness_message_completed(
             session_manager, caller_id, output
         ),
@@ -600,3 +604,38 @@ def session_condition_helpers(
             )
         ),
     }
+
+
+def dev_pod_launch_allowed(
+    sessions: SessionManager | None, caller_ref: Any, tool_name: Any, arguments: Any
+) -> bool:
+    """A bound epic manager may launch only devteam pods for its own open leaves."""
+    from gobby.agents.team_lifecycle import TeamAdmissionRefused, pod_parent
+    from gobby.storage.tasks import LocalTaskManager
+
+    if sessions is None:
+        return False
+    try:
+        if isinstance(arguments, str):
+            arguments = json.loads(arguments)
+        if not isinstance(arguments, dict):
+            return False
+        if tool_name == "run_pipeline" and arguments.get("name") == "devteam":
+            inputs = arguments.get("inputs")
+        elif tool_name == "pipeline:devteam":
+            inputs = arguments
+        else:
+            return False
+        if not isinstance(inputs, dict) or inputs.get("team_id") or inputs.get("fresh_reviewer"):
+            return False
+        parent_id, task_ref = inputs.get("parent_team_id"), inputs.get("task")
+        if not isinstance(parent_id, str) or not isinstance(task_ref, str):
+            return False
+        caller, agent = _spawn_caller(sessions, caller_ref)
+        if not _running_team_manager(sessions, caller, agent):
+            return False
+        task_id = LocalTaskManager(sessions.db).resolve_task_reference(task_ref, caller.project_id)
+        pod_parent(sessions.db, caller.id, task_id, parent_id)
+        return True
+    except (ValueError, TeamAdmissionRefused, AgentResolutionError):
+        return False

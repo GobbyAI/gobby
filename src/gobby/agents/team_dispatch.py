@@ -304,6 +304,25 @@ def dispatch_for_caller(
             )
     if _REVIEWER_GRANT in grants:
         return _reviewer(db, binding, agent, parent, resume_session_id=resume_session_id, **options)
+    if agent in {"test-writer", "researcher"}:
+        if (
+            task_id is not None
+            and open_leaf_below(db, epic.id, _leaf_id(db, binding.project_id, task_id)) is None
+        ):
+            raise TeamAdmissionRefused("task_outside_epic", "the seat must work an open epic leaf")
+        if (
+            branch_name
+            or base_branch
+            or checkout_mode not in (None, "none")
+            or worktree_id not in (None, binding.worktree_id)
+        ):
+            raise TeamAdmissionRefused("team_tree_fixed", "use a Dev Pod for a parallel leaf")
+        return DispatchScope(
+            team_id=binding.team_id,
+            project_id=binding.project_id,
+            parent_session_id=parent,
+            worktree_id=binding.worktree_id if agent == "test-writer" and not resumed else None,
+        )
     if resumed:
         return _resumed_maker(db, binding, parent, session_id) if _MAKER_GRANT in grants else None
     if _MAKER_GRANT in grants:
