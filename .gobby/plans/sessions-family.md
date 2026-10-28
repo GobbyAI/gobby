@@ -183,8 +183,9 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    - **Port traits** for owners that depend on Sessions or that #21562
      blocks: agent runs and worktrees (gagents depends on gsessions,
      `.gobby/plans/agents-family.md`), memories (gmemory depends on 2.4 per
-     Decision 10), pipeline executions (#21567) and the web-chat registry
-     (#21592). `crates/gsessions/src/ports.rs` declares each trait; gdaemon
+     Decision 10), session skill loads (gskills,
+     `.gobby/plans/gdaemon-skills-family.md` 1.6, writes session state),
+     pipeline executions (#21567) and the web-chat registry (#21592). `crates/gsessions/src/ports.rs` declares each trait; gdaemon
      binds an adapter that calls the owner crate's public functions. The
      Tasks plan's `AssignmentNotifier` port is the precedent. Before an
      adapter lands, tests bind fixture adapters and production stays passive.
@@ -192,9 +193,11 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
      exports (ORCH-REV-AF-7): `run_rows(tx, selector)`,
      `move_run_lineage(tx, session_ids, successor_id)` and
      `containing_worktree_id(tx, project_id, workspace_path)`. 7.2 binds the
-     gagents and gmemory adapters and depends on `agents-family 3.6` as a
-     cross-plan edge the Orchestrator converts at expansion. The pipeline and
-     web-chat adapters land in their P8 leaves.
+     gagents, gmemory and gskills adapters. It depends on `agents-family 3.6`
+     and `gdaemon-skills-family 1.6` as cross-plan edges the Orchestrator
+     converts at expansion. Where an owner crate lacks a function an adapter
+     needs, 7.2 adds one narrow function there. The pipeline and web-chat
+     adapters land in their P8 leaves.
    Each consuming leaf names its foreign operations.
 8. **Ownership boundaries (S6).** Sessions owns session variables, dirty-path
    grants and claim holds. `SessionVariableMutation` takes its explicit
@@ -768,8 +771,10 @@ Targets:
 - `crates/gsessions/src/family.rs`
 - `crates/gsessions/src/http.rs`
 - `crates/gsessions/src/owner.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/src/git_views.rs`
 - `crates/gsessions/tests/git_views.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `crates/gdaemon/src/front_door/sessions.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: add the B5 and W3 Sessions waiver entries
 
@@ -784,6 +789,16 @@ Targets:
     `changes.py::session_change_diff` over `src/gobby/servers/session_changes.py`.
   - `src/gobby/sessions/machine_scope.py::require_local_session_ownership`
     refuses a session owned by another machine.
+- Foreign reads in `_get_session_stats` (Decision 7): `tasks_closed` counts
+  `session_tasks` rows with action `closed`; `memories_created` counts
+  `memories` by `source_session_id`; `skills_used` counts distinct
+  `session_skills` names. Native reads them through
+  `closed_task_count(conn, session_id)`, added to
+  `crates/gtasks/src/session_refs.rs`, and two port functions in `ports.rs`:
+  `memories_created(session_id)` for gmemory and `skills_used(session_id)`
+  for gskills, which owns `session_skills`
+  (`.gobby/plans/gdaemon-skills-family.md` 1.6). Tests bind fixture
+  adapters; 7.2 binds the real ones.
 - Ownership seam: `owner.rs` defines the `OwnerChannel` trait the git views and
   transcript leaves share. The hub resolves the owning machine from the session
   row. The serving machine runs git in-process in the session's checkout. A
@@ -820,6 +835,9 @@ Targets:
 - 1.3.5 - An injected statistics storage fault returns the shared internal
   error and reports its exact W3 waiver.
   test: `crates/gsessions/tests/git_views.rs::stats_storage_errors_propagate`.
+- 1.3.6 - Detail statistics take the closed-task count from gtasks and the
+  memory and skill counts from the ports, matching the corpus with fixture
+  adapters. test: `crates/gsessions/tests/git_views.rs::detail_counts_use_owner_apis`.
 
 Planned verification: the `git_views` test binary with the 1.1 DB prefix, using
 a temporary git checkout and a doubled owner channel. Nothing has run during
@@ -864,7 +882,10 @@ Targets:
 - Public API: `register_session` and `create_session` are exported for Cron
   2.4's cron parent sessions (`.gobby/plans/gdaemon-cron-family.md`) and for the
   hooks family's node session registration
-  (`.gobby/plans/s2-11-hub-hooks-rules.md` item 8).
+  (`.gobby/plans/s2-11-hub-hooks-rules.md` item 8). `create_session` also
+  takes the child-session fields the agents family sets when it spawns a
+  run (Decision 10): parent session id, agent run id, agent depth and a
+  pre-created external id, written in the caller's transaction.
 
 **Acceptance:**
 
@@ -878,6 +899,10 @@ Targets:
 - 2.1.4 - Each committed write publishes one `session_event` with Python's
   project filter, and a rolled-back write publishes none.
   test: `crates/gsessions/tests/register.rs::events_publish_after_commit_only`.
+- 2.1.5 - `create_session` with child fields writes the parent session,
+  agent run, depth and pre-created external id in the caller's transaction,
+  and a rolled-back caller leaves no row.
+  test: `crates/gsessions/tests/register.rs::create_session_writes_child_fields`.
 
 Planned verification: the `register` test binary with the 1.1 DB prefix and a
 doubled event sink; `cargo nextest run -p gobby-daemon --test sessions_family`.
@@ -892,7 +917,9 @@ Targets:
 - `crates/gsessions/src/http.rs`
 - `crates/gsessions/src/events.rs`
 - `crates/gsessions/src/mutate.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/mutate.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: add the B6, B7 and native DELETE waiver entries
 - `src/gobby/storage/sessions/status_notifications.py`
 - `src/gobby/sessions/lifecycle.py::*` — scope-reason: start and stop the session status notification bridge with the hub's background jobs
@@ -912,6 +939,19 @@ Targets:
     calls `src/gobby/storage/sessions/_identity_crud.py::delete`, which refuses
     a session with retained references, hard-deletes the row and emits
     `session_deleted` plus a `deleted` status transition.
+- Retained references (`src/gobby/storage/session_lifecycle.py::session_has_retained_references`
+  over `_EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS`): child sessions are read
+  from the Sessions table. The foreign references go through their owners
+  (Decision 7):
+  - tasks: `referenced_session_ids(conn, session_ids)`, added to
+    `crates/gtasks/src/session_refs.rs`;
+  - memories: the gmemory port;
+  - agent runs: the gagents port's `run_rows` over the three session
+    columns;
+  - `workflow_audit_log`: the workflow-audit port.
+  The `pending_approvals` entry names a table the schema lacks, so Python
+  skips it and native omits it. `mutate.rs` exports the check for 4.2's
+  empty-session prune.
 - B7: `update_status` validates the transition under a row lock; an invalid
   transition returns 400 under `sessions.http-update-status.invalid-transition`.
   B6: bulk-move reports per-row failures through #24970's classes under
@@ -933,16 +973,19 @@ Targets:
   status-transition listeners. Python's own writes keep in-process dispatch,
   so no transition is dispatched twice. `SessionLifecycleManager` starts the
   bridge with its hub jobs and stops it on shutdown. No schema change.
-- Retirement edge: the bridge is deleted when the last registrant ports:
-  wake replay with #21564 and status communications with #21583. The
-  Orchestrator records that edge from those porting leaves to this section.
+- Retirement edge: the bridge is deleted when the last registrant ports.
+  The wake-replay registrant retires with `.gobby/plans/agents-family.md`
+  D1.3, and status communications with #21583 (Decision 15). The
+  Orchestrator records those edges to this section.
 - Public API: status update, expiry, rename and delete services; 4.1's expiry
   job calls the same expiry service.
 
 **Granularity:** Eight rows share one row-locked mutation service and one event
 and notification path; splitting them would duplicate both. The production
-files are the mutation service, its routes, the shared event module and the
-one Python bridge.
+files are the mutation service, its routes, the shared event module, the
+port declarations, the one gtasks read and the one Python bridge. Delete
+cannot ship without its retained-reference check, which is the eighth
+acceptance item.
 
 **Acceptance:**
 
@@ -967,6 +1010,10 @@ one Python bridge.
 - 2.2.7 - The Python bridge dispatches each notification once to every
   registered listener, reconnects after a dropped connection and stops cleanly.
   test: `tests/storage/sessions/test_status_notifications.py::test_bridge_dispatches_native_transitions_once`.
+- 2.2.8 - The retained-reference check refuses a session referenced by a
+  child session, a task, a memory, an agent run or a workflow audit row,
+  reading each foreign table only through its owner function or fixture
+  port adapter. test: `crates/gsessions/tests/mutate.rs::retained_references_use_owner_apis`.
 
 Planned verification: the `mutate` test binary with the 1.1 DB prefix; the
 bridge test with
@@ -1019,6 +1066,7 @@ Targets:
 - `crates/gsessions/src/http.rs`
 - `crates/gsessions/src/variables.rs`
 - `crates/gsessions/src/clear_lineage.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/variables.rs`
 
 **Research context:**
@@ -1039,10 +1087,26 @@ Targets:
   change (memory 38321642).
 - Locking: each mutation takes the explicit `SessionVariableMutation`
   advisory-lock key that #25262 assigns.
+- Foreign reads and writes (Decision 7):
+  - `current_run_session_id` reads the run through the gagents port's
+    `run_rows`.
+  - A `session_task` value resolves through gtasks' `refs.rs` `resolve_read`
+    (`.gobby/plans/tasks-family.md` 1.1).
+  - `scope: "step"` reads and merges the session's `agent_step_instances`
+    row (`src/gobby/workflows/step_instances.py::AgentStepInstanceManager`),
+    which Workflows owns. It goes through a step-instance port. At 7.2
+    gdaemon binds a transitional Rust adapter that runs those two
+    statements; #25279's crate exports them, replaces the adapter body and
+    deletes the adapter (the Orchestrator's ruling A for owners that
+    #21562 blocks).
 - The gobby-workflows MCP variable tools belong to their own family and are not
-  ported here. This leaf owns the HTTP rows and exports a key-scoped variable
-  read and mutation API for the rule-engine seam adapters
-  (`.gobby/plans/rust-rule-evaluation.md` D1.2).
+  ported here. This leaf owns the HTTP rows and exports a general key-scoped
+  variable read and mutation API: a value set and a bounded-list upsert for
+  any non-reserved key, under the `SessionVariableMutation` key at priority
+  950 (Decision 10). The rule-engine seam adapters
+  (`.gobby/plans/rust-rule-evaluation.md` D1.2) and Memory 6.1 call it. It
+  absorbs the narrow writer that Memory 6.1 planned in
+  `crates/gmemory/src/session_vars.rs`.
 
 **Acceptance:**
 
@@ -1054,6 +1118,14 @@ Targets:
   test: `crates/gsessions/tests/variables.rs::get_variable_matches_python`.
 - 2.4.3 - Concurrent mutations of one session serialize on the #25262 key and
   lose no write. test: `crates/gsessions/tests/variables.rs::concurrent_mutations_serialize`.
+- 2.4.4 - The public API sets an arbitrary non-reserved key and upserts a
+  bounded list without losing a concurrent upsert to the same list, and
+  refuses a reserved key.
+  test: `crates/gsessions/tests/variables.rs::general_writer_handles_arbitrary_keys`.
+- 2.4.5 - Caller binding reads runs through the gagents port, `session_task`
+  values resolve through gtasks, and step-scoped reads and writes go through
+  the step-instance port, with fixture adapters.
+  test: `crates/gsessions/tests/variables.rs::foreign_variable_paths_use_owner_apis`.
 
 Planned verification: the `variables` test binary with the 1.1 DB prefix.
 Nothing has run during drafting.
@@ -1124,9 +1196,10 @@ Targets:
   `src/gobby/storage/sessions/_operator_claim_hold.py`.
 - Feedback: `src/gobby/mcp_proxy/tools/sessions/_handoff.py::feedback`
   normalizes observations with
-  `src/gobby/sessions/handoff.py::normalize_feedback_observations` (task and
-  claimant resolution read task rows with read-only SQL, ruling C2.3), writes
-  them with `handoff.py::write_feedback_batch` and merges
+  `src/gobby/sessions/handoff.py::normalize_feedback_observations`. Its task
+  and claimant resolution read task rows (ruling C2.3); native resolves them
+  through gtasks' `refs.rs` `resolve_read`, whose row carries the claimant
+  (Decision 7). It writes them with `handoff.py::write_feedback_batch` and merges
   `_gobby_feedback_epoch_submitted` into the caller's variables in the same
   transaction, through 2.4's variable service.
 - These are MCP-only rows; 5.1 publishes the descriptors.
@@ -1137,7 +1210,8 @@ Targets:
   match authorization, held-by-other and release cases.
   test: `crates/gsessions/tests/claim_hold.rs::claim_hold_services_match_python`.
 - 2.6.2 - The `feedback` service matches normalization, invalid-feedback
-  errors, written rows and the variable merge, all in one transaction.
+  errors, written rows and the variable merge, all in one transaction, and
+  resolves tasks and claimants only through gtasks.
   test: `crates/gsessions/tests/claim_hold.rs::feedback_service_matches_python`.
 
 Planned verification: the `claim_hold` test binary with the 1.1 DB prefix.
@@ -1158,7 +1232,11 @@ Targets:
   `_run` under `SET ROLE gobby_query_readonly` (migration 482) with a row cap
   and a statement timeout.
 - `src/gobby/mcp_proxy/tools/hub.py::list_cross_project_sessions` lists
-  sessions across projects on the hub.
+  sessions across projects on the hub. Native takes project names from
+  1.1's gprojects `project_names` (Decision 7).
+- `query_readonly` runs the caller's own SQL under the read-only role. It is
+  a query surface over the whole schema, so its catalog refusals stay and no
+  owner API applies.
 - Both are MCP-only rows; 5.1 publishes the descriptors.
 
 **Acceptance:**
@@ -1207,6 +1285,9 @@ Targets:
   caller sees that interim refusal.
 - Python `set_handoff` keeps staging handoffs until 8.1, so the native reader
   reads the same rows and variables; the corpus covers each mode.
+- Agent runs: the `agent_run_id` mode's run lookup and its descendant walk
+  (depth below 5) read `agent_runs` through the gagents port's `run_rows`
+  (Decision 7, `agents-family 3.6`).
 - MCP-only row; 5.1 publishes the descriptor.
 
 **Granularity:** One reader with four modes over one marker state machine;
@@ -1217,7 +1298,8 @@ staging stays in 8.1 and delivery in 8.2, 8.3 and 8.6.
 - 2.8.1 - The no-argument read consumes exactly one pending handoff, and a
   second read finds none. test: `crates/gsessions/tests/handoff_read.rs::pending_handoff_is_consumed_once`.
 - 2.8.2 - `agent_run_id` reads are idempotent for the parent and its clear
-  successor and refused for any other caller.
+  successor and refused for any other caller, with runs read through a
+  fixture gagents port adapter.
   test: `crates/gsessions/tests/handoff_read.rs::agent_end_handoff_reads_match_python`.
 - 2.8.3 - `failed_attempt_id` and `reconcile_late_compact` match the corpus,
   including late, untimely and mismatched notifications.
@@ -1237,6 +1319,8 @@ Targets:
 - `crates/gsessions/src/hook_rows.rs`
 - `crates/gsessions/src/clear_lineage.rs`
 - `crates/gsessions/tests/hook_rows.rs`
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the run-terminal rebind module
+- `crates/gterminals/src/session_rebind.rs`
 
 **Research context:**
 - Ruling C5 (a): the hooks plan's handlers reach session rows through
@@ -1276,6 +1360,16 @@ Targets:
   `clear_lineage.rs`; this leaf adds `clear_run_lineage.py::earlier_clear_session_id`
   and `clear_run_lineage.py::move_clear_run_lineage`, and exports all three.
   8.3's clear path calls the same functions.
+- `move_clear_run_lineage` writes three owners' tables in one transaction.
+  Native keeps that atomicity by passing the caller's transaction to each
+  owner (Decision 7):
+  - the two `agent_runs` updates go through the gagents port's
+    `move_run_lineage(tx, session_ids, successor_id)`, which returns the
+    moved run ids;
+  - the `terminals` update (pending and live rows of each moved run) goes
+    through `rebind_run_terminals(tx, run_id, successor_id)`, a narrow
+    function this leaf adds to `crates/gterminals/src/session_rebind.rs`;
+  - the `sessions` updates stay in `clear_lineage.rs`.
 - Every status change goes through 2.2's notifying write path, and every
   committed write publishes through 2.1's event sink.
 - Receipts and staged effects stay with the hooks plan's 3.4. The hooks plan
@@ -1308,7 +1402,9 @@ would only spread the shared row lock and event path.
 - 2.9.4 - Usage, context-usage, edit and transcript-reset counters match the
   storage results. test: `crates/gsessions/tests/hook_rows.rs::counter_updates_match_storage`.
 - 2.9.5 - Clear-run lineage returns the current and earlier run sessions and
-  moves lineage exactly as `clear_run_lineage.py` does.
+  moves lineage exactly as `clear_run_lineage.py` does, writing runs through
+  the gagents port and terminals through `rebind_run_terminals` in one
+  transaction; a failure in any owner's write rolls back all three.
   test: `crates/gsessions/tests/hook_rows.rs::clear_run_lineage_matches_python`.
 
 Planned verification: the `hook_rows` test binary with the 1.1 DB prefix.
