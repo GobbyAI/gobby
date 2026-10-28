@@ -1519,8 +1519,12 @@ token read:
   `gobby_core::bootstrap::read_files_home_view()` reports
   `DatastoreMode::Remote`, the verb exits 1 with
   `gclient <verb>: workspace and pane verbs do not run on a node yet; they would act on the hub host's panes. Gobby task #20202 (remote terminal attach) brings them to nodes.`;
-- a bootstrap read error falls through to the existing path, whose token
-  read reports it.
+- when `acts_on_panes()` is true and `read_files_home_view()` returns an
+  error, the verb exits 3 with `gclient <verb>: cannot read bootstrap:
+  <error>` before token resolution or any request. The guard fails closed
+  because `--token-file` reads the token without the bootstrap, so a
+  fall-through with explicit `--daemon-url` and `--token-file` would act on
+  the hub host's panes.
 
 Usage errors still exit 2 first, because `Action::parse` runs before the
 guard. The TUI is out of scope; remote attach (#20202) owns it.
@@ -1532,6 +1536,13 @@ guard. The TUI is out of scope; remote attach (#20202) owns it.
   host's panes.
 - The operator verbs (`status`, `projects`, `tasks`, `config`) and the `node`
   family route before `Action::parse` and never reach the guard.
+- `read_files_home_view` treats a missing bootstrap as owner-less local
+  defaults and fails closed on a present one: read errors propagate and
+  invalid YAML or mode returns `FilesHomeError` (`crates/gcore/src/bootstrap.rs`
+  283, 306-309, 313-328 at `77798bc4ed`). A hub with no bootstrap file
+  therefore still runs pane verbs. `dispatch_inner` reads an explicit
+  `--token-file` directly (`command.rs:198-203`), so the token path does
+  not catch a bad bootstrap.
 - Planned checks:
   `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-client -E 'binary(node_pane_refusal) | binary(command_mode)'`.
 
@@ -1549,7 +1560,11 @@ guard. The TUI is out of scope; remote attach (#20202) owns it.
 - 2.6.4 - With a remote-mode bootstrap, a pane verb with a usage error exits
   2, not 1. test:
   `crates/gclient/tests/node_pane_refusal.rs::pane_usage_errors_exit_two_on_node`.
-- 2.6.5 - `gclient` is one patch version above the executor's starting tip
+- 2.6.5 - With a present but invalid bootstrap, and with a valid explicit
+  `--daemon-url` and `--token-file`, a pane verb exits 3 with the bootstrap
+  error and the mock daemon records no request. test:
+  `crates/gclient/tests/node_pane_refusal.rs::pane_verbs_refuse_on_unreadable_bootstrap`.
+- 2.6.6 - `gclient` is one patch version above the executor's starting tip
   in `crates/gclient/Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
   test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
