@@ -26,6 +26,18 @@ pub(super) fn anchored_call_node(alias: &str, id_expr: &str) -> String {
          WHERE {alias} IS NOT NULL"
     )
 }
+
+/// `anchored_call_node`, admitting the symbol only at an admitted file version.
+pub(super) fn admitted_symbol_anchor(alias: &str, id_expr: &str) -> String {
+    format!(
+        "OPTIONAL MATCH (anchor_symbol:CodeSymbol {{id: {id_expr}, project: $project}}) \
+         WHERE anchor_symbol.file_path + '|' + anchor_symbol.file_content_hash IN $admitted_versions \
+         OPTIONAL MATCH (anchor_unresolved:UnresolvedCallee {{id: {id_expr}, project: $project}}) \
+         OPTIONAL MATCH (anchor_external:ExternalSymbol {{id: {id_expr}, project: $project}}) \
+         WITH coalesce(anchor_symbol, anchor_unresolved, anchor_external) AS {alias} \
+         WHERE {alias} IS NOT NULL"
+    )
+}
 pub(super) const TARGET_TYPE_CASE: &str = "CASE \
      WHEN target:CodeSymbol THEN coalesce(target.kind, 'function') \
      WHEN target:ExternalSymbol THEN 'external' \

@@ -1,5 +1,6 @@
 use crate::config::Context;
 use crate::graph::typed_query;
+use crate::visibility::graph_versions::{admitted_graph_versions, with_admitted_versions};
 
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{
@@ -18,11 +19,15 @@ use super::support::{clamp_limit, dedupe_limited_blast_rows};
 
 pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
+        let admitted = admitted_graph_versions(ctx)?;
         let limit = clamp_limit(limit);
         let link_limit = clamp_limit(limit.saturating_mul(4));
         let max_nodes = limit.saturating_mul(8);
 
-        let (query, params) = project_overview_files_query(&ctx.project_id, limit);
+        let (query, params) = with_admitted_versions(
+            project_overview_files_query(&ctx.project_id, limit),
+            &admitted,
+        );
         let file_rows = client.query(&query, Some(params))?;
         let mut payload = GraphPayload::default();
         for row in &file_rows {
@@ -39,8 +44,10 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             return Ok(payload);
         }
 
-        let (query, params) =
-            project_overview_imports_query(&ctx.project_id, &file_paths, link_limit);
+        let (query, params) = with_admitted_versions(
+            project_overview_imports_query(&ctx.project_id, &file_paths, link_limit),
+            &admitted,
+        );
         for row in client.query(&query, Some(params))? {
             add_link_from_row(&mut payload, &row);
             if let Some(module_id) = row_string_owned(&row, &["target"]) {
@@ -51,8 +58,10 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             }
         }
 
-        let (query, params) =
-            project_overview_defines_query(&ctx.project_id, &file_paths, link_limit);
+        let (query, params) = with_admitted_versions(
+            project_overview_defines_query(&ctx.project_id, &file_paths, link_limit),
+            &admitted,
+        );
         for row in client.query(&query, Some(params))? {
             add_link_from_row(&mut payload, &row);
             if let Some(symbol_id) = row_string_owned(&row, &["target"]) {
@@ -72,8 +81,10 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
             }
         }
 
-        let (query, params) =
-            project_overview_calls_query(&ctx.project_id, &file_paths, link_limit);
+        let (query, params) = with_admitted_versions(
+            project_overview_calls_query(&ctx.project_id, &file_paths, link_limit),
+            &admitted,
+        );
         for row in client.query(&query, Some(params))? {
             add_link_from_row(&mut payload, &row);
             if let Some(target_id) = row_string_owned(&row, &["target"]) {
@@ -99,12 +110,14 @@ pub fn project_overview_graph(ctx: &Context, limit: usize) -> anyhow::Result<Gra
 
 pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
+        let admitted = admitted_graph_versions(ctx)?;
         let mut payload = GraphPayload::default();
         let mut file_node = GraphNode::new(file_path, file_path, "file");
         file_node.file_path = Some(file_path.to_string());
         payload.push_node(file_node);
 
-        let (query, params) = file_symbols_query(&ctx.project_id, file_path);
+        let (query, params) =
+            with_admitted_versions(file_symbols_query(&ctx.project_id, file_path), &admitted);
         for row in client.query(&query, Some(params))? {
             add_node_from_row(&mut payload, &row, "function");
             if let Some(symbol_id) = row_string_owned(&row, &["id"]) {
@@ -114,7 +127,8 @@ pub fn file_graph(ctx: &Context, file_path: &str) -> anyhow::Result<GraphPayload
             }
         }
 
-        let (query, params) = file_calls_query(&ctx.project_id, file_path);
+        let (query, params) =
+            with_admitted_versions(file_calls_query(&ctx.project_id, file_path), &admitted);
         for row in client.query(&query, Some(params))? {
             add_prefixed_node_from_row(&mut payload, &row, "source", "function");
             add_prefixed_node_from_row(&mut payload, &row, "target", "unresolved");
@@ -131,8 +145,12 @@ pub fn symbol_neighbors(
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
+        let admitted = admitted_graph_versions(ctx)?;
         let mut payload = GraphPayload::with_center(symbol_id.to_string());
-        let (query, params) = blast_radius_center_query(&ctx.project_id, symbol_id);
+        let (query, params) = with_admitted_versions(
+            blast_radius_center_query(&ctx.project_id, symbol_id),
+            &admitted,
+        );
         let center_rows = client.query(&query, Some(params))?;
         let center_node = center_rows
             .first()
@@ -140,7 +158,10 @@ pub fn symbol_neighbors(
             .unwrap_or_else(|| GraphNode::new(symbol_id, symbol_id, "function"));
         payload.push_node(center_node);
 
-        let (query, params) = symbol_neighbors_query(&ctx.project_id, symbol_id, limit);
+        let (query, params) = with_admitted_versions(
+            symbol_neighbors_query(&ctx.project_id, symbol_id, limit),
+            &admitted,
+        );
         let rows = client.query(&query, Some(params))?;
 
         for row in rows {
@@ -170,27 +191,36 @@ pub fn blast_radius_graph(
     limit: usize,
 ) -> anyhow::Result<GraphPayload> {
     with_optional_core_graph(ctx, GraphPayload::default, |client| {
+        let admitted = admitted_graph_versions(ctx)?;
         let (center_id, mut center_node, rows) = match target {
             GraphBlastRadiusTarget::SymbolId(symbol_id) => {
-                let (query, params) = blast_radius_center_query(&ctx.project_id, &symbol_id);
+                let (query, params) = with_admitted_versions(
+                    blast_radius_center_query(&ctx.project_id, &symbol_id),
+                    &admitted,
+                );
                 let center_rows = client.query(&query, Some(params))?;
                 let center_node = center_rows
                     .first()
                     .and_then(|row| GraphNode::from_row(row, "function"))
                     .unwrap_or_else(|| GraphNode::new(&symbol_id, &symbol_id, "function"));
 
-                let query = blast_radius_query(depth, limit);
                 let params =
                     typed_query::string_params(&[("project", &ctx.project_id), ("id", &symbol_id)]);
+                let (query, params) =
+                    with_admitted_versions((blast_radius_query(depth, limit), params), &admitted);
                 (symbol_id, center_node, client.query(&query, Some(params))?)
             }
             GraphBlastRadiusTarget::FilePath(file_path) => {
                 let mut rows = vec![];
-                let (query, params) =
-                    blast_radius_file_call_query(&ctx.project_id, &file_path, depth, limit);
+                let (query, params) = with_admitted_versions(
+                    blast_radius_file_call_query(&ctx.project_id, &file_path, depth, limit),
+                    &admitted,
+                );
                 rows.extend(client.query(&query, Some(params))?);
-                let (query, params) =
-                    blast_radius_file_import_query(&ctx.project_id, &file_path, depth, limit);
+                let (query, params) = with_admitted_versions(
+                    blast_radius_file_import_query(&ctx.project_id, &file_path, depth, limit),
+                    &admitted,
+                );
                 rows.extend(client.query(&query, Some(params))?);
                 let rows = dedupe_limited_blast_rows(rows, limit);
                 let mut center_node = GraphNode::new(&file_path, &file_path, "file");

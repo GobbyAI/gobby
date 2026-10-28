@@ -15,6 +15,7 @@ use super::types::{
 };
 use crate::communities::{self, StoredCommunity};
 use crate::config::Context;
+use crate::visibility::graph_versions::{AdmittedGraphVersions, with_admitted_versions};
 use gobby_core::falkor::Row;
 
 /// The degradation input name for the stored import communities.
@@ -48,9 +49,10 @@ pub(super) fn community_input(rows: anyhow::Result<Vec<StoredCommunity>>) -> Com
 pub(super) fn load_report_snapshot(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     top_n: usize,
 ) -> anyhow::Result<ReportGraphSnapshot> {
-    let (query, params) = report_node_counts_query(project_id);
+    let (query, params) = with_admitted_versions(report_node_counts_query(project_id), admitted);
     let node_counts_by_type = rows_to_named_counts(
         client
             .query(&query, Some(params))
@@ -58,7 +60,8 @@ pub(super) fn load_report_snapshot(
     );
     let node_count = node_counts_by_type.values().sum();
 
-    let (query, params) = report_code_edge_counts_query(project_id);
+    let (query, params) =
+        with_admitted_versions(report_code_edge_counts_query(project_id), admitted);
     let code_edge_counts = rows_to_named_counts(
         client
             .query(&query, Some(params))
@@ -74,16 +77,18 @@ pub(super) fn load_report_snapshot(
     };
 
     let hotspots = GraphReportHotspots {
-        high_degree_files: load_hotspots(client, project_id, "file", top_n)?,
-        high_degree_symbols: load_hotspots(client, project_id, "symbol", top_n)?,
-        high_degree_modules: load_hotspots(client, project_id, "module", top_n)?,
-        incoming_call_hotspots: load_incoming_call_hotspots(client, project_id, top_n)?,
+        high_degree_files: load_hotspots(client, project_id, admitted, "file", top_n)?,
+        high_degree_symbols: load_hotspots(client, project_id, admitted, "symbol", top_n)?,
+        high_degree_modules: load_hotspots(client, project_id, admitted, "module", top_n)?,
+        incoming_call_hotspots: load_incoming_call_hotspots(client, project_id, admitted, top_n)?,
     };
 
-    let unresolved_targets = load_target_frequencies(client, project_id, "unresolved", top_n)?;
-    let external_targets = load_target_frequencies(client, project_id, "external", top_n)?;
+    let unresolved_targets =
+        load_target_frequencies(client, project_id, admitted, "unresolved", top_n)?;
+    let external_targets =
+        load_target_frequencies(client, project_id, admitted, "external", top_n)?;
 
-    let (query, params) = report_bridge_edges_query(project_id);
+    let (query, params) = with_admitted_versions(report_bridge_edges_query(project_id), admitted);
     let rows = client
         .query(&query, Some(params))
         .context("load graph report bridge edges")?;
@@ -110,10 +115,14 @@ pub(super) fn load_report_snapshot(
 fn load_hotspots(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     node_class: &str,
     top_n: usize,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
-    let (query, params) = report_hotspots_query(project_id, node_class, top_n);
+    let (query, params) = with_admitted_versions(
+        report_hotspots_query(project_id, node_class, top_n),
+        admitted,
+    );
     let rows = client
         .query(&query, Some(params))
         .with_context(|| format!("load graph report {node_class} hotspots"))?;
@@ -127,9 +136,13 @@ fn load_hotspots(
 fn load_incoming_call_hotspots(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     top_n: usize,
 ) -> anyhow::Result<Vec<GraphHotspot>> {
-    let (query, params) = report_incoming_call_hotspots_query(project_id, top_n);
+    let (query, params) = with_admitted_versions(
+        report_incoming_call_hotspots_query(project_id, top_n),
+        admitted,
+    );
     let rows = client
         .query(&query, Some(params))
         .context("load graph report incoming call hotspots")?;
@@ -143,10 +156,14 @@ fn load_incoming_call_hotspots(
 fn load_target_frequencies(
     client: &mut GraphClient,
     project_id: &str,
+    admitted: &AdmittedGraphVersions,
     target_type: &str,
     top_n: usize,
 ) -> anyhow::Result<Vec<TargetFrequency>> {
-    let (query, params) = report_target_frequencies_query(project_id, target_type, top_n);
+    let (query, params) = with_admitted_versions(
+        report_target_frequencies_query(project_id, target_type, top_n),
+        admitted,
+    );
     let rows = client
         .query(&query, Some(params))
         .with_context(|| format!("load graph report {target_type} target frequencies"))?;

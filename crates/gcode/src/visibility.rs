@@ -9,6 +9,7 @@ use crate::models::Symbol;
 
 pub(crate) mod catalog;
 pub mod graph;
+pub(crate) mod graph_versions;
 mod selectors;
 
 #[cfg(test)]

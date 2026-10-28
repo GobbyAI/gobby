@@ -299,8 +299,10 @@ pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
     format!(
         "{anchor} \
          MATCH path = (affected:CodeSymbol {{project: $project}})-[:CALLS*1..{depth}]->(target) \
+         WHERE all(rel IN relationships(path) WHERE rel.file + '|' + rel.content_hash IN $admitted_versions) \
          WITH affected, min(length(path)) AS distance \
-         OPTIONAL MATCH (file:CodeFile {{project: $project}})-[:DEFINES]->(affected) \
+         OPTIONAL MATCH (file:CodeFile {{project: $project}})-[d:DEFINES]->(affected) \
+         WHERE file.path + '|' + d.content_hash IN $admitted_versions \
          RETURN DISTINCT affected.id AS node_id, \
                 affected.name AS node_name, \
                 affected.kind AS kind, file.path AS file_path, \

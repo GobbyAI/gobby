@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use gobby_core::degradation::ServiceState;
 
 use crate::config::Context;
+use crate::visibility::graph_versions::admitted_graph_versions;
 
 #[cfg(test)]
 use super::RELATES_TO_CODE;
@@ -39,7 +40,10 @@ pub fn generate_report_with_options(
         Some(&connection_config),
         &config.graph_name,
         ReportGraphSnapshot::default(),
-        |client| load_report_snapshot(client, &ctx.project_id, options.top_n),
+        |client| {
+            let admitted = admitted_graph_versions(ctx)?;
+            load_report_snapshot(client, &ctx.project_id, &admitted, options.top_n)
+        },
     );
 
     match result {
