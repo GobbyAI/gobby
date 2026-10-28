@@ -263,6 +263,11 @@ leaves keep their scope; this plan touches neither.
    serves it. `auth` and `oauth-shape` exec `gdaemon mcp-auth`. The
    `mcp-proxy` row of client-operator-verbs stays on #21566 and needs no
    amendment there.
+   - The verbs go through gclient's one hand-written parser, which gains
+     their long options and a list of repeatable options. Python's
+     single-letter aliases are dropped (AGENTS.md rule 10).
+   - Rejected: a separate `clap` parser for the subtree. It would be a second
+     parser and a new dependency.
 
 ## Constraints
 `kind: framing`
@@ -1537,7 +1542,7 @@ Targets:
 Targets:
 - `Cargo.lock`
 - `crates/gclient/Cargo.toml`
-- `crates/gclient/src/command.rs::*` — scope-reason: declare the mcp_proxy module and route `mcp-proxy` to it before the workspace verbs' parse and eager token read
+- `crates/gclient/src/command.rs::*` — scope-reason: add the mcp-proxy long options and the repeatable-option list to the shared parser, extract the token read into resolve_token, declare the mcp_proxy module and route `mcp-proxy` before verbs::Action::parse
 - `crates/gclient/src/command/help.rs::VERBS`
 - `crates/gclient/src/command/mcp_proxy.rs`
 - `crates/gclient/src/command/mcp_proxy/client.rs`
@@ -1570,8 +1575,19 @@ Targets:
 - Observed: client-operator-verbs 1.1 proposes `command/api.rs` but has not
   landed. Like the Projects family, this plan does not wait on #21571,
   because its 1.7 gate already waits on #21566.
-- Observed: `clap` with `derive` is in the workspace lockfile through
-  gdaemon. gclient does not use it yet.
+- Observed: `crates/gclient/src/command.rs::parse` is the one parser for
+  every verb.
+  - It accepts only the long options in `VALUE_FLAGS` and `SWITCH_FLAGS`.
+  - It refuses a repeated option.
+  - It puts every other argument in `positions`.
+
+  `dispatch_inner` takes `--json`, `--daemon-url` and `--token-file`, then
+  calls `verbs::Action::parse` and reads the token. client-operator-verbs
+  1.1 through 1.4 extend this same parser and plan to extract the token read
+  into `resolve_token`.
+- Observed: `src/gobby/cli/installers/shared.py::registered_project_id`
+  takes the `id` from the working directory's `.gobby/project.json` and
+  keeps it only when the `projects` table has that row.
 - Observed: the Python read verbs live in `src/gobby/cli/mcp_proxy.py` and
   `src/gobby/cli/mcp_proxy_templates.py`:
 
@@ -1595,16 +1611,36 @@ Targets:
     - required: `resolve_cli_mcp_project`, which returns the global scope
       with `--global` and otherwise needs a registered project.
 - Chosen approach:
-  - `command.rs` sends `mcp-proxy` and its remaining arguments to
-    `command/mcp_proxy.rs` before the workspace verbs' flag parse and token
-    read. `help.rs` gains the `mcp-proxy` row.
-  - `mcp_proxy.rs` parses the subtree with a `clap` derive enum. It keeps
-    every Python verb name, positional argument, long option, short alias,
-    choice list and default, so `gclient mcp-proxy` accepts the same command
-    lines.
-  - The cwd project comes from `gobby_core::project::find_project_root` and
-    `read_project_id`, with no database access. A required project that
-    cannot be found exits 2 with Python's message.
+  - `command.rs` keeps one parser for every verb:
+    - `VALUE_FLAGS` and `SWITCH_FLAGS` gain the long options of the
+      `mcp-proxy` verbs.
+    - A new `REPEAT_FLAGS` list (`--set`, `--server`, `--arg`) collects
+      repeated values in order, read with `Parsed::take_all`. A verb that
+      takes one value refuses a second with exit 2.
+    - `dispatch_inner` sends `mcp-proxy` to `command/mcp_proxy.rs` after it
+      takes `--json`, `--daemon-url` and `--token-file`, and before
+      `verbs::Action::parse`.
+    - The token read moves into `resolve_token(token_file)`, the extraction
+      client-operator-verbs 1.1 also plans. Whichever leaf lands first adds
+      it, and the other reuses it.
+  - `mcp-proxy` is one row in `help.rs::VERBS`. Its first position names the
+    Python subcommand (`list-servers`, `get-schema` and so on). An unknown or
+    missing subcommand exits 2 before any request.
+  - Every Python verb name, positional argument, long option, choice list and
+    default carries over. Python's single-letter aliases (`-s`, `-k`, `-a`
+    and the rest) are dropped. AGENTS.md rule 10 keeps no backward
+    compatibility, and Python gives `-s` different meanings in different
+    verbs.
+    - Rejected: a separate `clap` parser for the subtree. It would add a
+      dependency and a second parser beside the one every gclient verb
+      shares.
+  - The cwd project is the `id` in `<root>/.gobby/project.json`, where
+    `root` comes from `gobby_core::project::find_project_root(cwd)`.
+    - It is kept only when `GET /api/projects` lists it, as
+      `registered_project_id` does.
+    - It never reads `gcode.json` and never opens the database.
+    - When a verb requires a project and it is missing or unregistered, the
+      verb exits 2 with Python's message.
   - `client.rs` sends one JSON request with the bearer from `--token-file`,
     `X-Gobby-CLI-Internal: 1` and the verb's timeout. It checks health first,
     as Python does. An unreachable daemon exits 3. A non-2xx reply prints
@@ -1615,8 +1651,8 @@ Targets:
     pin that text; they are captured once from the Python verbs against the
     same canned replies.
   - Shipping: load the `rust` skill. This leaf's commit bumps
-    `crates/gclient/Cargo.toml` by 0.0.1, adds the `clap` dependency, and
-    updates `Cargo.lock` and the gclient pin in
+    `crates/gclient/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gclient pin in
     `src/gobby/install/version_pins.py`. gclient is unpublished, so the
     checkout build installs it. The leaf copies no binary.
 - Planned verification:
@@ -1627,7 +1663,7 @@ Targets:
 - 5.1.1 - `list-servers`, `list-tools`, `get-schema` and `status` send Python's route, query and body against the mock daemon, with and without a cwd project, and print the route reply with `--json` and the golden text otherwise. test: `crates/gclient/tests/mcp_proxy_verbs.rs::server_tool_and_status_reads_match_python`.
 - 5.1.2 - `search-tools` and `recommend-tools` send `cwd`, every option with its default, and the 120-second timeout, and print the golden text. test: `crates/gclient/tests/mcp_proxy_verbs.rs::search_and_recommend_match_python`.
 - 5.1.3 - `list-templates` and `show-template` resolve scope from `--global` or the cwd project, and exit 2 with Python's message outside a project without `--global`; `show-template` prints the matched template and its parameter lines. test: `crates/gclient/tests/mcp_proxy_verbs.rs::template_reads_resolve_scope_like_python`.
-- 5.1.4 - Every read verb accepts Python's short aliases, rejects an unknown option with exit 2 before any request, exits 3 when the daemon is unreachable, and exits 1 with `Error: <body>` on a non-2xx reply. test: `crates/gclient/tests/mcp_proxy_verbs.rs::read_verbs_share_python_options_and_exits`.
+- 5.1.4 - Every read verb accepts Python's long options and defaults. An unknown option, an unknown subcommand and a repeated single-value option each exit 2 before any request. An unreachable daemon exits 3, and a non-2xx reply exits 1 with `Error: <body>`. A `.gobby/project.json` id that `GET /api/projects` does not list is treated as no project. test: `crates/gclient/tests/mcp_proxy_verbs.rs::read_verbs_share_python_long_options_and_exits`.
 - 5.1.5 - `gclient help mcp-proxy` documents the group, and `mcp-proxy` is in the command-mode verb list. test: `crates/gclient/tests/command_mode.rs::every_verb_has_its_own_help`.
 
 ### 5.2 `gclient mcp-proxy` write and local verbs [category: code] (depends: 5.1)
@@ -1683,7 +1719,7 @@ Consumers unchanged:
   `gobby_core::gobby_home` names the home whose `bin/` holds `gdaemon`.
 - Chosen approach:
   - `write.rs` implements `add-server`, `remove-server`, `import-server`,
-    `refresh` and `call-tool` with Python's options, payloads, timeouts,
+    `refresh` and `call-tool` with Python's long options, payloads, timeouts,
     output and exits. It uses 5.1's `client.rs` and scope rules.
   - The `add-server` TTY prompt reads each secret with hidden input and
     sends `POST /api/config/secrets {name, value, category: "general",
@@ -1719,7 +1755,7 @@ Consumers unchanged:
 - 5.2.1 - `add-server` sends Python's payload for stdio, HTTP and template forms; off a TTY a `missing_secrets` reply prints `needs_configuration` and the configure lines and exits 0; on a pseudo-terminal it prompts, posts each secret with the instance's `project_id`, then posts the refresh. test: `crates/gclient/tests/mcp_proxy_verbs.rs::add_server_matches_python_including_secret_prompt`.
 - 5.2.2 - `remove-server` sends the scoped DELETE only after `--yes` or a confirmed prompt, and a refused prompt exits 1 with no request. test: `crates/gclient/tests/mcp_proxy_verbs.rs::remove_server_requires_confirmation`.
 - 5.2.3 - `import-server` and `refresh` send Python's payloads, including `cwd`, the multiple `--server` values and the 300-second refresh timeout. test: `crates/gclient/tests/mcp_proxy_verbs.rs::import_and_refresh_match_python`.
-- 5.2.4 - `call-tool` merges `-j` with `-a` (each `-a` value JSON-parsed and overriding), sends `offload: false` only under `--raw`, prints the result or full reply, and exits 1 with stderr on `success: false`. test: `crates/gclient/tests/mcp_proxy_verbs.rs::call_tool_matches_python`.
+- 5.2.4 - `call-tool` merges `--json-args` with the repeated `--arg` values (each `--arg` value JSON-parsed and overriding), sends `offload: false` only under `--raw`, prints the result or full reply, and exits 1 with stderr on `success: false`. test: `crates/gclient/tests/mcp_proxy_verbs.rs::call_tool_matches_python`.
 - 5.2.5 - `auth` executes a stub `gdaemon` with `mcp-auth <name>`, the scope and the timeout, sends the `requires_oauth` PUT only after exit 0, and sends nothing after a nonzero exit; `oauth-shape` executes `--shape` without a daemon health check and prints its JSON. test: `crates/gclient/tests/mcp_proxy_verbs.rs::auth_and_shape_exec_gdaemon_mcp_auth`.
 - 5.2.6 - `POST /api/config/secrets` with `project_id` stores the secret in that project's scope, and without it stores globally. test: `tests/servers/routes/test_configuration_routes.py::test_save_secret_honours_project_scope`.
 
