@@ -925,14 +925,15 @@ async def auto_link_commits_async(
                 continue
             try:
                 await assert_auto_link_commit_available(task_manager, task, commit_sha, cwd)
-                link_by_history(task_manager, task.id, commit_sha, existing_commits, history)
+                existing_commits = link_by_history(
+                    task_manager, task.id, commit_sha, existing_commits, history
+                )
             except ValueError as error:
                 logger.debug("Skipping commit %s for task %s: %s", commit_sha, task_ref, error)
                 result.skipped += 1
                 continue
             result.linked_tasks.setdefault(task_ref, []).append(commit_sha)
             result.total_linked += 1
-            existing_commits.append(commit_sha)
         return result
 
     result = AutoLinkResult()

@@ -43,3 +43,35 @@ async def test_autolink_historical_commit_preserves_newer_candidate(
 
     assert result.total_linked == 1
     assert manager.get_task(task.id).commits == [older, newer]
+
+
+@pytest.mark.asyncio
+async def test_autolink_two_historical_commits_keep_newest_candidate_tip(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    first, second, newest = "b" * 10, "c" * 10, "a" * 10
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        sample_project["id"],
+        "Discover two older commits",
+        validation_criteria="Newest candidate stays last.",
+    )
+    manager.link_commit(task.id, newest)
+    history = (
+        f"{first}|[gobby-#{task.seq_num}] older change\n"
+        f"{second}|[gobby-#{task.seq_num}] middle change\n"
+        f"{newest}|[gobby-#{task.seq_num}] newer candidate\n"
+    )
+    with (
+        patch(
+            "gobby.tasks.commits.daemon_git.run",
+            new=AsyncMock(return_value=GitOk("ok", ("git", "log"), history, "")),
+        ),
+        patch("gobby.tasks.commit_ownership.assert_auto_link_commit_available", new=AsyncMock()),
+    ):
+        result = await auto_link_commits_async(
+            manager, task_id=task.id, cwd=tmp_path, project_name="gobby"
+        )
+
+    assert result.total_linked == 2
+    assert manager.get_task(task.id).commits == [first, second, newest]

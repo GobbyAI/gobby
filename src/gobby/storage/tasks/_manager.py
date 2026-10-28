@@ -344,10 +344,11 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin, TaskUpdateM
             self._notify_listeners()
         return self.get_task(task_id)
 
-    def move_commit_to_tip(self, task_id: str, commit_sha: str) -> None:
+    def move_commit_to_tip(self, task_id: str, commit_sha: str) -> Task:
         """Move a linked commit to the task's tip, the last entry of its commits array."""
         _move_commit_to_tip(self.db, task_id, commit_sha)
         self._notify_listeners()
+        return self.get_task(task_id)
 
     def unlink_commit(self, task_id: str, commit_sha: str) -> Task:
         """Remove ``commit_sha`` from the task's commits array, failing when it is not linked."""
