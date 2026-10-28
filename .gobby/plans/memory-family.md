@@ -2221,3 +2221,880 @@ production cutover or task expansion have been performed during planning.
   its granularity. MEM-ADV-05: compare mode rolls back native surfaced-stat
   writes through the route backend passed at family construction (1.3.6,
   8.2.1). No governing decision remains open.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Executable 80-row characterization corpus
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: '0.1.1: The corpus inventory equals the exact 80-key ledger
+    predicate, every key has a success case and a representative failure case, and
+    a key outside the family is rejected. test: `tests/contracts/test_memory_parity_corpus.py::test_inventory_matches_memory_ledger`.
+
+    0.1.2: Running the collector twice against reset isolated state gives the same
+    normalized fixtures, ordering, stdout, stderr, exit codes, vectors, graph effects
+    and stub requests. test: `tests/contracts/test_memory_parity_corpus.py::test_collection_is_reproducible`.
+
+    0.1.3: Each of the 25 HTTP rows records the full admission matrix, including agent-token
+    admission on the two graph rows only and managed cookies refused on every mutation.
+    test: `tests/contracts/test_memory_parity_corpus.py::test_http_admission_matrix`.
+
+    0.1.4: Each of the 64 changed behaviors resolves to one exact-surface test waiver
+    with explicit native assertions, while untouched cases on the same surface stay
+    `Passed`. test: `tests/contracts/test_memory_parity_corpus.py::test_debt_waivers_are_behavior_scoped`.
+
+    0.1.5: Skipped-only reports, unwaived `Skipped`, stale or missing waiver decisions
+    and an unrelated injected regression fail readiness even beside a valid `Waived`
+    case. test: `tests/contracts/test_memory_parity_corpus.py::test_waiver_does_not_hide_unrelated_diff`.'
+  labels:
+  - covers:memory-family:0.1:0.1.1
+  - covers:memory-family:0.1:0.1.2
+  - covers:memory-family:0.1:0.1.3
+  - covers:memory-family:0.1:0.1.4
+  - covers:memory-family:0.1:0.1.5
+  tdd: false
+  source_section: '0.1'
+  assigned_agent: developer
+- title: Crate, memory family shell, configuration and record reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '1.1.1: `HTTP GET /api/memories` matches list scope, filters,
+    ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`.
+
+    1.1.2: `HTTP GET /api/memories/{memory_id}` matches identity, prefix resolution,
+    foreign-project refusal and not-found outcomes. test: `crates/gmemory/tests/records.rs::get_matches_python`.
+
+    1.1.3: `HTTP GET /api/memories/stats` matches totals, per-type counts and project
+    filtering. test: `crates/gmemory/tests/records.rs::stats_matches_python`.
+
+    1.1.4: The family claims only implemented rows, admission fails closed, a node
+    composes no memory family, and a configuration change applies on the next request.
+    test: `crates/gmemory/tests/records.rs::family_shell_and_placement`.
+
+    1.1.5: Injected unexpected faults on the three rows return safe detail under their
+    exact Waived citations and change no state. test: `crates/gmemory/tests/records.rs::unexpected_read_errors_are_safe_and_waived`.'
+  labels:
+  - covers:memory-family:1.1:1.1.1
+  - covers:memory-family:1.1:1.1.2
+  - covers:memory-family:1.1:1.1.3
+  - covers:memory-family:1.1:1.1.4
+  - covers:memory-family:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Knowledge-graph reads
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: `HTTP GET /api/memories/graph` matches nodes, crossref
+    edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_matches_python`.
+
+    1.2.2: `HTTP GET /api/memories/graph/counts` matches counts and the FalkorDB-unavailable
+    502. test: `crates/gmemory/tests/graph_reads.rs::graph_counts_matches_python`.
+
+    1.2.3: `HTTP GET /api/memories/graph/entities` matches entity listing, ordering
+    and limit bounds. test: `crates/gmemory/tests/graph_reads.rs::entities_match_python`.
+
+    1.2.4: `HTTP GET /api/memories/graph/entities/{entity_key}/neighbors` matches
+    neighbor expansion, encoded keys, weights and unknown-entity results. test: `crates/gmemory/tests/graph_reads.rs::neighbors_match_python`.
+
+    1.2.5: Cluster expansion matches Python with the flag on and off, and the four
+    rows return safe detail under their exact Waived citations. test: `crates/gmemory/tests/graph_reads.rs::cluster_expansion_and_safe_errors`.'
+  labels:
+  - covers:memory-family:1.2:1.2.1
+  - covers:memory-family:1.2:1.2.2
+  - covers:memory-family:1.2:1.2.3
+  - covers:memory-family:1.2:1.2.4
+  - covers:memory-family:1.2:1.2.5
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Hybrid search and surfaced statistics
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: `HTTP GET /api/memories/search` matches ranking, scores,
+    diagnostics, filters, limit and min-score across semantic, keyword and graph legs.
+    test: `crates/gmemory/tests/search.rs::search_matches_python`.
+
+    1.3.2: Keyword-only fallback, an unavailable vector store, a pg_search parse error
+    and a graph-leg timeout match Python''s degraded results. test: `crates/gmemory/tests/search.rs::degraded_search_matches_python`.
+
+    1.3.3: Surfaced statistics change only for the five surfaced callers, with Python''s
+    debounce. test: `crates/gmemory/tests/search.rs::surfaced_stats_match_python`.
+
+    1.3.4: The gcore retrieval function returns stored vectors by id and a typed error
+    for a missing collection. test: `crates/gmemory/tests/search.rs::qdrant_retrieval_returns_vectors`.
+
+    1.3.5: An injected unexpected fault returns safe detail under `memory.http-search.internal-error-redaction`.
+    test: `crates/gmemory/tests/search.rs::unexpected_search_error_is_safe_and_waived`.
+
+    1.3.6: With the family built for `Compare`, search returns its result and every
+    surfaced-stat write rolls back, including after an error injected mid-update;
+    built for `Native`, the writes commit with Python''s debounce. test: `crates/gmemory/tests/search.rs::compare_backend_rolls_back_surfaced_stats`.'
+  labels:
+  - covers:memory-family:1.3:1.3.1
+  - covers:memory-family:1.3:1.3.2
+  - covers:memory-family:1.3:1.3.3
+  - covers:memory-family:1.3:1.3.4
+  - covers:memory-family:1.3:1.3.5
+  - covers:memory-family:1.3:1.3.6
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Shared embedding serving lease and projection-change ledger
+  category: code
+  task_type: feature
+  depends_on:
+  - '0.1'
+  validation_criteria: '2.1.1: `append_change`, `watermark` and `projection_targets`
+    produce Python''s rows and target sets for memory and tool sources, inside and
+    outside a caller transaction. test: `crates/gcore/tests/embedding_generation.rs::ledger_matches_python`.
+
+    2.1.2: Prepare, acknowledge, renew, fence, successor and `assert_serving` match
+    Python''s lease states, expiry and errors; a native and a Python lease on one
+    machine hold separate rows, and `can_collect` honors both. test: `crates/gcore/tests/embedding_generation.rs::serving_lease_matches_python`.
+
+    2.1.3: The instance id is stable across restarts and differs from `UUID(machine_id)`;
+    a completed switch re-targets the holder through its callback. test: `crates/gcore/tests/embedding_generation.rs::instance_identity_and_retarget`.
+
+    2.1.4: The managed lifecycle keeps renewing while the async runtime is blocked;
+    transient renew failures retry at 1, 2, 4 and then 5 seconds and fence once the
+    remaining lease is no longer than the next wait; an expired or lost lease, including
+    one that expires across a simulated host sleep, fences at once. test: `crates/gcore/tests/embedding_generation.rs::managed_renewal_backoff_and_fence`.
+
+    2.1.5: While fenced, a matching completed-switch record re-activates the successor,
+    resumes serving and requests projection repair once; a changed record, or a successor
+    that loses to a newer lease, requests a rebuild with that record and stays fenced;
+    storage errors keep polling without resuming. test: `crates/gcore/tests/embedding_generation.rs::managed_reacquire_or_rebuild`.'
+  labels:
+  - covers:memory-family:2.1:2.1.1
+  - covers:memory-family:2.1:2.1.2
+  - covers:memory-family:2.1:2.1.3
+  - covers:memory-family:2.1:2.1.4
+  - covers:memory-family:2.1:2.1.5
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Record lifecycle writes
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  - '2.1'
+  validation_criteria: '2.2.1: `HTTP POST /api/memories` matches row, vector, crossref,
+    graph enqueue and ledger effects, and validation failures write nothing. test:
+    `crates/gmemory/tests/writes.rs::create_matches_python`.
+
+    2.2.2: `HTTP PUT /api/memories/{memory_id}` matches content, tag and type updates
+    with re-embedding and ledger rows. test: `crates/gmemory/tests/writes.rs::update_matches_python`.
+
+    2.2.3: `HTTP DELETE /api/memories/{memory_id}` matches soft deletion, vector removal,
+    tombstone change rows and foreign-project refusal. test: `crates/gmemory/tests/writes.rs::delete_matches_python`.
+
+    2.2.4: `HTTP POST /api/memories/{memory_id}/restore` matches restoration and index
+    re-projection. test: `crates/gmemory/tests/writes.rs::restore_matches_python`.
+
+    2.2.5: `HTTP POST /api/memories/{memory_id}/promote` matches global promotion
+    and scope re-projection. test: `crates/gmemory/tests/writes.rs::promote_matches_python`.
+
+    2.2.6: `HTTP POST /api/memories/{memory_id}/demote` matches demotion to the current
+    project. test: `crates/gmemory/tests/writes.rs::demote_matches_python`.
+
+    2.2.7: `HTTP POST /api/memories/{memory_id}/move` matches the project move and
+    its index effects. test: `crates/gmemory/tests/writes.rs::move_matches_python`.
+
+    2.2.8: Supersedes, auto-supersede at 0.9, `similar_existing`, ephemeral notes,
+    rationale and content caps and provenance match Python''s create policy. test:
+    `crates/gmemory/tests/writes.rs::create_policy_matches_python`.
+
+    2.2.9: A held purge fence blocks vector writes, a lost lease refuses them, an
+    active switch journal dual-writes, and a completed switch re-targets the writer.
+    test: `crates/gmemory/tests/writes.rs::fence_lease_and_dual_write`.
+
+    2.2.10: The seven rows return safe detail for injected faults under their exact
+    Waived citations; a fault before commit leaves the row, ledger and derived stores
+    unchanged, and a fault after commit leaves the committed row with `vector_needs_reindex`
+    true and its change row, with no untracked derived-store write. test: `crates/gmemory/tests/writes.rs::unexpected_write_errors_are_safe_and_waived`.
+
+    2.2.11: With the lease fenced or Qdrant failing, create and update commit the
+    row with `vector_needs_reindex` true and its change row and return Python''s success
+    response without a vector write; no vector write happens until a successor lease
+    serves, after which the next write projects normally and the earlier row keeps
+    its flag for 2.3''s repair. test: `crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor`.
+
+    2.2.12: With projection I/O paused, an update, a rationale-only update, a delete
+    or a move of the same memory by native and, separately, by a Python writer never
+    lets the paused stale projection clear the newer flag. After the interleave, including
+    a rationale-only update whose own projection then fails or is fenced, the final
+    state is the newest row''s projection or its durable repair intent; a stale vector,
+    scope or resurrected point that lands transiently never stays untracked. test:
+    `crates/gmemory/tests/writes.rs::stale_projection_loses_to_newer_writes`.'
+  labels:
+  - covers:memory-family:2.2:2.2.1
+  - covers:memory-family:2.2:2.2.2
+  - covers:memory-family:2.2:2.2.3
+  - covers:memory-family:2.2:2.2.4
+  - covers:memory-family:2.2:2.2.5
+  - covers:memory-family:2.2:2.2.6
+  - covers:memory-family:2.2:2.2.7
+  - covers:memory-family:2.2:2.2.8
+  - covers:memory-family:2.2:2.2.9
+  - covers:memory-family:2.2:2.2.10
+  - covers:memory-family:2.2:2.2.11
+  - covers:memory-family:2.2:2.2.12
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Index maintenance and the shared job slot
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: `HTTP POST /api/memories/invalidate` matches the clear
+    report and starts a tracked rebuild; a running job refuses to clear with the coalesced
+    202. test: `crates/gmemory/tests/maintenance.rs::invalidate_is_tracked_and_waived`.
+
+    2.3.2: `HTTP POST /api/memories/reconcile` matches dry-run and applied reconciliation
+    reports and effects. test: `crates/gmemory/tests/maintenance.rs::reconcile_matches_python`.
+
+    2.3.3: `HTTP POST /api/memories/crossrefs/rebuild` matches processed and created
+    counts and reports per-memory failures in `crossrefs_failed`. test: `crates/gmemory/tests/maintenance.rs::crossref_rebuild_reports_failures`.
+
+    2.3.4: `HTTP POST /api/memories/embeddings/reindex` matches the reindex report,
+    flag clearing and vector effects. test: `crates/gmemory/tests/maintenance.rs::reindex_matches_python`.
+
+    2.3.5: The four rows return safe detail for injected faults under their exact
+    Waived citations. test: `crates/gmemory/tests/maintenance.rs::unexpected_maintenance_errors_are_safe_and_waived`.
+
+    2.3.6: After reacquisition, the projection-repair callback writes vectors, graph
+    state and crossrefs for rows left with `vector_needs_reindex` true and clears
+    each flag only once that row converges; a repair failure leaves the flags set
+    and serving continues. test: `crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire`.
+
+    2.3.7: A reconciliation paused after its snapshot check, then raced by a native
+    or Python update, rationale-only update, delete or move, never clears the newer
+    row''s flag. Afterwards the final state is the newest row''s projection or its
+    durable repair intent, the newer row stays flagged until its own reconciliation
+    converges, and a stale vector, graph or crossref write that lands transiently
+    never stays untracked. test: `crates/gmemory/tests/maintenance.rs::stale_reconciliation_keeps_newer_repair_intent`.'
+  labels:
+  - covers:memory-family:2.3:2.3.1
+  - covers:memory-family:2.3:2.3.2
+  - covers:memory-family:2.3:2.3.3
+  - covers:memory-family:2.3:2.3.4
+  - covers:memory-family:2.3:2.3.5
+  - covers:memory-family:2.3:2.3.6
+  - covers:memory-family:2.3:2.3.7
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Knowledge-graph writes, extraction and rebuild jobs
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches foreground
+    and background rebuilds, coalescing onto a running job, and FalkorDB effects.
+    test: `crates/gmemory/tests/graph_writes.rs::graph_rebuild_matches_python`.
+
+    2.4.2: `HTTP GET /api/memories/graph/rebuild/status` matches idle, running, completed
+    and failed snapshots, with failure text redacted under its exact waiver. test:
+    `crates/gmemory/tests/graph_writes.rs::rebuild_status_matches_python`.
+
+    2.4.3: `HTTP POST /api/memories/graph/clear` matches the clear report and graph
+    effects per project. test: `crates/gmemory/tests/graph_writes.rs::graph_clear_matches_python`.
+
+    2.4.4: Extraction, writer, densify and code-link effects match Python for a fixture
+    project, using the stubbed `memory.kg` candidates. test: `crates/gmemory/tests/graph_writes.rs::extraction_and_densify_match_python`.
+
+    2.4.5: The four bundled memory prompts, a global override of a graph template
+    and a project override of `memory/dream` render byte-identically to Python, including
+    metadata defaults that call variables replace, a `None` default, a `1.0` float
+    and the dropped trailing newline. A project override of a graph template is ignored
+    and the global or bundled record renders. An undefined variable and an override
+    using unsupported template syntax fail with a typed error naming the path and
+    call no model. test: `crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python`.
+
+    2.4.6: Injected faults return safe detail on the three rows under their exact
+    Waived citations. test: `crates/gmemory/tests/graph_writes.rs::unexpected_graph_errors_are_safe_and_waived`.
+
+    2.4.7: With a global `{% if %}` override of `memory/extract_relations`, a foreground
+    `HTTP POST /api/memories/graph/rebuild` returns the validation-class error naming
+    the path, and a background job''s `HTTP GET /api/memories/graph/rebuild/status`
+    ends `failed` with that text unredacted, under their exact waivers. No memory''s
+    graph state changes and the generation stub receives no request. test: `crates/gmemory/tests/graph_writes.rs::unsupported_graph_prompt_refuses_rebuild`.'
+  labels:
+  - covers:memory-family:2.4:2.4.1
+  - covers:memory-family:2.4:2.4.2
+  - covers:memory-family:2.4:2.4.3
+  - covers:memory-family:2.4:2.4.4
+  - covers:memory-family:2.4:2.4.5
+  - covers:memory-family:2.4:2.4.6
+  - covers:memory-family:2.4:2.4.7
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: HDBSCAN entity reclustering
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: On fixture embeddings the labels, noise set, cluster
+    sizes and silhouette score match scikit-learn''s output, up to the relabelling
+    Python applies. test: `crates/gmemory/tests/clustering.rs::hdbscan_matches_sklearn_fixture`.
+
+    2.5.2: Persisted `cluster_id` values and the result summary match Python, and
+    1.2''s cluster expansion reads them. test: `crates/gmemory/tests/clustering.rs::recluster_persists_labels`.
+
+    2.5.3: `hdbscan` is pinned to `=0.12.0`, the lockfile gains exactly `hdbscan`
+    0.12.0 and `kdtree` 0.7.0, and both crates compile with the Rust 1.88.0 toolchain.
+    behavior: "hdbscan pinned to =0.12.0 and building on Rust 1.88" in `crates/gmemory/Cargo.toml`.
+
+    2.5.4: Entities with empty, non-numeric, non-finite or zero-norm vectors, or a
+    dimension other than the most common one, are labelled noise and listed as invalid
+    without reaching the crate, as in Python. test: `crates/gmemory/tests/clustering.rs::invalid_vectors_are_noise`.'
+  labels:
+  - covers:memory-family:2.5:2.5.1
+  - covers:memory-family:2.5:2.5.2
+  - covers:memory-family:2.5:2.5.3
+  - covers:memory-family:2.5:2.5.4
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Native memories rebuild and project_change seam
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '3.1.1: `rebuild` fills the named collection with one point
+    per live memory from the target embedder, under the fence, and Python''s `batch_upsert`
+    rebuild yields the same point set for a fixture project. test: `crates/gmemory/tests/rebuild_seam.rs::rebuild_matches_python_point_set`.
+
+    3.1.2: `project_change` upserts a changed memory''s point from the authoritative
+    row and deletes the point for a tombstone. test: `crates/gmemory/tests/rebuild_seam.rs::project_change_upserts_and_deletes`.
+
+    3.1.3: Native create, update and delete during an armed switch append change rows
+    and dual-write to the named physical target. test: `crates/gmemory/tests/rebuild_seam.rs::producers_dual_write_while_armed`.
+
+    3.1.4: `rebuild` and `project_change` called through an `Arc<dyn CollectionRebuildSeam>`
+    reach the real `MemoriesRebuildSeam`, and `cargo tree -p gobby-ai --edges normal`
+    lists no `gobby-memory`. test: `crates/gmemory/tests/rebuild_seam.rs::seam_trait_object_reaches_memories_and_stays_acyclic`.'
+  labels:
+  - covers:memory-family:3.1:3.1.1
+  - covers:memory-family:3.1:3.1.2
+  - covers:memory-family:3.1:3.1.3
+  - covers:memory-family:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Dream store, journal, apply and revert
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '4.1.1: Run creation, admission conflicts, status transitions
+    and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches_python`.
+
+    4.1.2: Applying a validated plan matches Python''s memory, snapshot, ledger and
+    reconcile effects for each action, and an invalid plan writes nothing. test: `crates/gmemory/tests/dream_apply.rs::apply_matches_python`.
+
+    4.1.3: Revert matches Python for reverted, already reverted, forfeited and failed
+    runs, including conflict and missing-row outcomes. test: `crates/gmemory/tests/dream_apply.rs::revert_matches_python`.
+
+    4.1.4: The purge function deletes only hidden memories past their retention. test:
+    `crates/gmemory/tests/dream_apply.rs::purge_matches_python`.
+
+    4.1.5: A candidate changed after selection is skipped with zero mutation; revert
+    reports a conflict when an action-owned or fence column changed, otherwise restores
+    only action-owned columns, keeps unrelated later changes, increments `dream_due_version`,
+    and reconciles projections only after the row transition commits. test: `crates/gmemory/tests/dream_apply.rs::stale_plan_and_revert_fences`.'
+  labels:
+  - covers:memory-family:4.1:4.1.1
+  - covers:memory-family:4.1:4.1.2
+  - covers:memory-family:4.1:4.1.3
+  - covers:memory-family:4.1:4.1.4
+  - covers:memory-family:4.1:4.1.5
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Dream planning, related evidence and sweep orchestration
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Candidate selection, batching and the plan request
+    match Python for a fixture scope, and the stubbed plan is validated with Python''s
+    floors. test: `crates/gmemory/tests/dream_sweep.rs::planning_matches_python`.
+
+    4.2.2: Related evidence matches Python''s hits, timeouts and retries. test: `crates/gmemory/tests/dream_sweep.rs::related_evidence_matches_python`.
+
+    4.2.3: Sweeps, work units, dry runs, inventory runs, checkpoints and runtime limits
+    match Python''s totals and stored plan. test: `crates/gmemory/tests/dream_sweep.rs::sweep_orchestration_matches_python`.
+
+    4.2.4: A missing `memory/dream` record is isolated to its page as in Python, while
+    an undefined variable or an unsupported project override fails the run with no
+    generation request and no applied action. test: `crates/gmemory/tests/dream_sweep.rs::prompt_errors_match_python_isolation`.'
+  labels:
+  - covers:memory-family:4.2:4.2.1
+  - covers:memory-family:4.2:4.2.2
+  - covers:memory-family:4.2:4.2.3
+  - covers:memory-family:4.2:4.2.4
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Dream service, aggregate runs, reports and routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  validation_criteria: '4.3.1: `HTTP POST /memory/dream` matches 202 admission, 200
+    coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503 unavailable
+    coordinator, for scoped and unscoped triggers. test: `crates/gmemory/tests/dream_routes.rs::dream_trigger_matches_python`.
+
+    4.3.2: `HTTP GET /memory/dream/{run_id}` matches run payloads and the unknown-run
+    404. test: `crates/gmemory/tests/dream_routes.rs::dream_status_matches_python`.
+
+    4.3.3: `HTTP POST /memory/dream/{run_id}/revert` matches successful and already-reverted
+    results and returns 409 for forfeited and failed reverts under its exact waiver.
+    test: `crates/gmemory/tests/dream_routes.rs::dream_revert_status_is_waived`.
+
+    4.3.4: Aggregate runs, the per-scope execution lock, reports and interrupted-run
+    reconciliation match Python; the service cannot be built without a hub pool. test:
+    `crates/gmemory/tests/dream_routes.rs::aggregate_reports_and_hub_only_construction`.
+
+    4.3.5: With a project `{% if %}` override of `memory/dream`, `HTTP GET /memory/dream/{run_id}`
+    reports the run `failed` with the error naming the path under its exact waiver,
+    where Python''s baseline completes. test: `crates/gmemory/tests/dream_routes.rs::unsupported_dream_prompt_status_is_waived`.'
+  labels:
+  - covers:memory-family:4.3:4.3.1
+  - covers:memory-family:4.3:4.3.2
+  - covers:memory-family:4.3:4.3.3
+  - covers:memory-family:4.3:4.3.4
+  - covers:memory-family:4.3:4.3.5
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Native review-learning service over memory rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.3'
+  validation_criteria: '5.1.1: Recording matches Python''s identity, normalization,
+    tags, rendered content, deduplication and validation refusals, and a concurrent
+    Python writer on the same pattern serializes with the native one. test: `crates/gmemory/tests/review_learning.rs::record_matches_python`.
+
+    5.1.2: Context, file and class recall match Python''s queries, ranking, tiers
+    and scope resolution. test: `crates/gmemory/tests/review_learning.rs::recall_matches_python`.
+
+    5.1.3: Check-key listing and retirement match Python''s results and effects. test:
+    `crates/gmemory/tests/review_learning.rs::check_keys_and_retire_match_python`.'
+  labels:
+  - covers:memory-family:5.1:5.1.1
+  - covers:memory-family:5.1:5.1.2
+  - covers:memory-family:5.1:5.1.3
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Memory session-variable writer
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '6.1.1: Bounded-list upserts and the boolean set produce Python''s
+    rows for all three keys, including identity replacement and trimming. test: `crates/gmemory/tests/session_vars.rs::writes_match_python`.
+
+    6.1.2: Concurrent Python and native writers on one session serialize under the
+    shared key without losing either update, and writes to other keys are preserved.
+    test: `crates/gmemory/tests/session_vars.rs::shared_lock_serializes_writers`.
+
+    6.1.3: Any key outside the three is refused before a write. test: `crates/gmemory/tests/session_vars.rs::only_owned_keys_are_writable`.'
+  labels:
+  - covers:memory-family:6.1:6.1.1
+  - covers:memory-family:6.1:6.1.2
+  - covers:memory-family:6.1:6.1.3
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: gobby-memory descriptor, schemas and MCP behavior
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: `MCP gobby-memory:backup_memories` writes the current
+    project''s backup, or the personal project''s when none is current, under its
+    exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::backup_memories_uses_project_backup_path`.
+
+    6.2.2: `MCP gobby-memory:create_memory` matches the create policy, provenance
+    and result fields. test: `crates/gmemory/tests/mcp_memory.rs::create_memory_matches_python`.
+
+    6.2.3: `MCP gobby-memory:delete_memory` matches deletion and ownership refusals.
+    test: `crates/gmemory/tests/mcp_memory.rs::delete_memory_matches_python`.
+
+    6.2.4: `MCP gobby-memory:demote_memory_from_global` matches demotion. test: `crates/gmemory/tests/mcp_memory.rs::demote_matches_python`.
+
+    6.2.5: `MCP gobby-memory:densify_knowledge_graph_cooccurrence` matches densification
+    results. test: `crates/gmemory/tests/mcp_memory.rs::densify_matches_python`.
+
+    6.2.6: `MCP gobby-memory:get_memory` matches the payload, access recording and
+    the `accessed_memory_ids` record with the claimed task id. test: `crates/gmemory/tests/mcp_memory.rs::get_memory_records_access`.
+
+    6.2.7: `MCP gobby-memory:get_related_memories` matches crossref results. test:
+    `crates/gmemory/tests/mcp_memory.rs::get_related_matches_python`.
+
+    6.2.8: `MCP gobby-memory:list_memories` matches filters and the personal fallback.
+    test: `crates/gmemory/tests/mcp_memory.rs::list_memories_matches_python`.
+
+    6.2.9: `MCP gobby-memory:memory_dream` matches admission and coalescing results.
+    test: `crates/gmemory/tests/mcp_memory.rs::memory_dream_matches_python`.
+
+    6.2.10: `MCP gobby-memory:memory_dream_decisions` matches decision listing. test:
+    `crates/gmemory/tests/mcp_memory.rs::dream_decisions_match_python`.
+
+    6.2.11: `MCP gobby-memory:memory_dream_revert` matches revert results. test: `crates/gmemory/tests/mcp_memory.rs::dream_revert_matches_python`.
+
+    6.2.12: `MCP gobby-memory:memory_dream_status` matches run status, and reports
+    a run refused by an unsupported prompt override as `failed` with the error naming
+    the path under its exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::dream_status_matches_python`.
+
+    6.2.13: `MCP gobby-memory:memory_stats` matches statistics. test: `crates/gmemory/tests/mcp_memory.rs::memory_stats_matches_python`.
+
+    6.2.14: `MCP gobby-memory:move_memory` matches the move and ownership checks.
+    test: `crates/gmemory/tests/mcp_memory.rs::move_memory_matches_python`.
+
+    6.2.15: `MCP gobby-memory:promote_memory_to_global` matches promotion. test: `crates/gmemory/tests/mcp_memory.rs::promote_matches_python`.
+
+    6.2.16: `MCP gobby-memory:rebuild_crossrefs` matches the limit and counts and
+    reports `crossrefs_failed` under its exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::rebuild_crossrefs_reports_failures`.
+
+    6.2.17: `MCP gobby-memory:rebuild_knowledge_graph` matches rebuild results, and
+    returns the validation-class error naming the path for an unsupported graph prompt
+    override under its exact waiver. test: `crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python`.
+
+    6.2.18: `MCP gobby-memory:recluster_knowledge_graph_entities` matches the clustering
+    summary. test: `crates/gmemory/tests/mcp_memory.rs::recluster_matches_python`.
+
+    6.2.19: `MCP gobby-memory:reindex_embeddings` matches the reindex report. test:
+    `crates/gmemory/tests/mcp_memory.rs::reindex_matches_python`.
+
+    6.2.20: `MCP gobby-memory:restore_memories` restores from the current project''s
+    backup file with timestamp-wins outcomes and index reconciliation, under its exact
+    waiver. test: `crates/gmemory/tests/mcp_memory.rs::restore_memories_uses_project_backup_path`.
+
+    6.2.21: `MCP gobby-memory:restore_memory` matches single restoration. test: `crates/gmemory/tests/mcp_memory.rs::restore_memory_matches_python`.
+
+    6.2.22: `MCP gobby-memory:review_task_memories` matches task resolution, candidate
+    search, records and the delivered flag. test: `crates/gmemory/tests/mcp_memory.rs::review_task_memories_matches_python`.
+
+    6.2.23: `MCP gobby-memory:search_knowledge_graph` matches graph search. test:
+    `crates/gmemory/tests/mcp_memory.rs::search_knowledge_graph_matches_python`.
+
+    6.2.24: `MCP gobby-memory:search_memories` matches ranking, diagnostics and surfaced
+    statistics. test: `crates/gmemory/tests/mcp_memory.rs::search_memories_matches_python`.
+
+    6.2.25: `MCP gobby-memory:surface_memories` matches triggers, the assistant-message
+    fallback, exclusions and the fail-soft empty result. test: `crates/gmemory/tests/mcp_memory.rs::surface_memories_matches_python`.
+
+    6.2.26: `MCP gobby-memory:update_memory` matches updates and validation. test:
+    `crates/gmemory/tests/mcp_memory.rs::update_memory_matches_python`.
+
+    6.2.27: Tool inventory, descriptions, schemas, definition hashes and read-only
+    classifications match the frozen Python contract; malformed arguments call no
+    service. test: `crates/gmemory/tests/mcp_memory.rs::catalog_and_validation_match_python`.
+
+    6.2.28: Each of the 21 redaction tools returns safe text for an injected fault
+    under its own exact waiver, and deliberate domain errors keep their text. A fault
+    before commit leaves the row, ledger and derived stores unchanged; a fault after
+    commit leaves the committed row with `vector_needs_reindex` true and its change
+    row, with no untracked derived-store write, as 2.2 defines. test: `crates/gmemory/tests/mcp_memory.rs::tool_internal_errors_are_safe`.'
+  labels:
+  - covers:memory-family:6.2:6.2.1
+  - covers:memory-family:6.2:6.2.2
+  - covers:memory-family:6.2:6.2.3
+  - covers:memory-family:6.2:6.2.4
+  - covers:memory-family:6.2:6.2.5
+  - covers:memory-family:6.2:6.2.6
+  - covers:memory-family:6.2:6.2.7
+  - covers:memory-family:6.2:6.2.8
+  - covers:memory-family:6.2:6.2.9
+  - covers:memory-family:6.2:6.2.10
+  - covers:memory-family:6.2:6.2.11
+  - covers:memory-family:6.2:6.2.12
+  - covers:memory-family:6.2:6.2.13
+  - covers:memory-family:6.2:6.2.14
+  - covers:memory-family:6.2:6.2.15
+  - covers:memory-family:6.2:6.2.16
+  - covers:memory-family:6.2:6.2.17
+  - covers:memory-family:6.2:6.2.18
+  - covers:memory-family:6.2:6.2.19
+  - covers:memory-family:6.2:6.2.20
+  - covers:memory-family:6.2:6.2.21
+  - covers:memory-family:6.2:6.2.22
+  - covers:memory-family:6.2:6.2.23
+  - covers:memory-family:6.2:6.2.24
+  - covers:memory-family:6.2:6.2.25
+  - covers:memory-family:6.2:6.2.26
+  - covers:memory-family:6.2:6.2.27
+  - covers:memory-family:6.2:6.2.28
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: gobby-review-learning descriptor
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.2'
+  validation_criteria: '6.3.1: `MCP gobby-review-learning:list_check_keys` matches
+    results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+
+    6.3.2: `MCP gobby-review-learning:recall_review_context` matches recall. test:
+    `crates/gmemory/tests/mcp_review.rs::recall_context_matches_python`.
+
+    6.3.3: `MCP gobby-review-learning:recall_review_lessons_by_class` matches class
+    recall. test: `crates/gmemory/tests/mcp_review.rs::recall_by_class_matches_python`.
+
+    6.3.4: `MCP gobby-review-learning:recall_review_lessons_for_files` matches file
+    recall and path coercion. test: `crates/gmemory/tests/mcp_review.rs::recall_for_files_matches_python`.
+
+    6.3.5: `MCP gobby-review-learning:record_review_lesson` matches recording and
+    refusals. test: `crates/gmemory/tests/mcp_review.rs::record_lesson_matches_python`.
+
+    6.3.6: `MCP gobby-review-learning:retire_review_lesson` matches retirement. test:
+    `crates/gmemory/tests/mcp_review.rs::retire_lesson_matches_python`.
+
+    6.3.7: The catalog matches the frozen contract, and all six tools return safe
+    text for injected faults under their exact waivers. test: `crates/gmemory/tests/mcp_review.rs::catalog_and_safe_errors_match`.'
+  labels:
+  - covers:memory-family:6.3:6.3.1
+  - covers:memory-family:6.3:6.3.2
+  - covers:memory-family:6.3:6.3.3
+  - covers:memory-family:6.3:6.3.4
+  - covers:memory-family:6.3:6.3.5
+  - covers:memory-family:6.3:6.3.6
+  - covers:memory-family:6.3:6.3.7
+  tdd: true
+  source_section: '6.3'
+  implementation_domain: backend
+- title: Native command tree and record commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.3'
+  validation_criteria: '7.1.1: `CLI gobby memory` matches group help and dispatch.
+    test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+
+    7.1.2: `CLI gobby memory create` matches flags, output and the database-only effect.
+    test: `crates/gmemory/tests/cli_records.rs::create_matches_python`.
+
+    7.1.3: `CLI gobby memory recall` matches keyword-only results and surfaced statistics.
+    test: `crates/gmemory/tests/cli_records.rs::recall_matches_python`.
+
+    7.1.4: `CLI gobby memory delete` matches prefix resolution and output. test: `crates/gmemory/tests/cli_records.rs::delete_matches_python`.
+
+    7.1.5: `CLI gobby memory list` matches filters and formatting. test: `crates/gmemory/tests/cli_records.rs::list_matches_python`.
+
+    7.1.6: `CLI gobby memory show` matches output and errors. test: `crates/gmemory/tests/cli_records.rs::show_matches_python`.
+
+    7.1.7: `CLI gobby memory update` matches updates and output. test: `crates/gmemory/tests/cli_records.rs::update_matches_python`.
+
+    7.1.8: `CLI gobby memory stats` matches output. test: `crates/gmemory/tests/cli_records.rs::stats_matches_python`.
+
+    7.1.9: `CLI gobby memory backfill-unscoped-lessons` stamps the same lessons and
+    prints the same count. test: `crates/gmemory/tests/cli_records.rs::backfill_matches_python`.
+
+    7.1.10: `CLI gobby memory dedupe` matches dry-run, confirmation and deletions.
+    test: `crates/gmemory/tests/cli_records.rs::dedupe_matches_python`.
+
+    7.1.11: `CLI gobby memory export` matches the markdown document and the metadata
+    and stats flags. test: `crates/gmemory/tests/cli_records.rs::export_matches_python`.
+
+    7.1.12: `CLI gobby memory backup` matches default and explicit paths and the JSONL
+    bytes. test: `crates/gmemory/tests/cli_records.rs::backup_matches_python`.
+
+    7.1.13: `CLI gobby memory restore` matches timestamp-wins restoration, missing-file
+    messages and exit codes. test: `crates/gmemory/tests/cli_records.rs::restore_matches_python`.'
+  labels:
+  - covers:memory-family:7.1:7.1.1
+  - covers:memory-family:7.1:7.1.2
+  - covers:memory-family:7.1:7.1.3
+  - covers:memory-family:7.1:7.1.4
+  - covers:memory-family:7.1:7.1.5
+  - covers:memory-family:7.1:7.1.6
+  - covers:memory-family:7.1:7.1.7
+  - covers:memory-family:7.1:7.1.8
+  - covers:memory-family:7.1:7.1.9
+  - covers:memory-family:7.1:7.1.10
+  - covers:memory-family:7.1:7.1.11
+  - covers:memory-family:7.1:7.1.12
+  - covers:memory-family:7.1:7.1.13
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Native index, graph and dream commands
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+    output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+
+    7.2.2: `CLI gobby memory graph-counts` matches text and JSON output. test: `crates/gmemory/tests/cli_daemon.rs::graph_counts_matches_python`.
+
+    7.2.3: `CLI gobby memory rebuild-graph` matches foreground, `--wait` polling and
+    timeout behavior, and prints an unsupported prompt override''s refusal under its
+    exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python`.
+
+    7.2.4: `CLI gobby memory invalidate` matches confirmation and the clear report,
+    and reports a running rebuild under its exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::invalidate_reports_running_rebuild`.
+
+    7.2.5: `CLI gobby memory rebuild-crossrefs` matches output. test: `crates/gmemory/tests/cli_daemon.rs::rebuild_crossrefs_matches_python`.
+
+    7.2.6: `CLI gobby memory reconcile` matches dry-run and applied output. test:
+    `crates/gmemory/tests/cli_daemon.rs::reconcile_matches_python`.
+
+    7.2.7: `CLI gobby memory reindex-embeddings` matches output. test: `crates/gmemory/tests/cli_daemon.rs::reindex_matches_python`.
+
+    7.2.8: `CLI gobby memory dream` matches trigger, polling, dry-run, aggregate and
+    resume-hint output, and prints a run failed by an unsupported prompt override
+    under its exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::dream_matches_python`.
+
+    7.2.9: `CLI gobby memory dream status` matches status rendering, including that
+    failed run under its exact waiver. test: `crates/gmemory/tests/cli_daemon.rs::dream_status_matches_python`.
+
+    7.2.10: `CLI gobby memory dream revert` matches output and error detail. test:
+    `crates/gmemory/tests/cli_daemon.rs::dream_revert_matches_python`.
+
+    7.2.11: An unreachable daemon, an error status and invalid JSON produce Python''s
+    messages and exit codes. test: `crates/gmemory/tests/cli_daemon.rs::daemon_errors_match_python`.'
+  labels:
+  - covers:memory-family:7.2:7.2.1
+  - covers:memory-family:7.2:7.2.2
+  - covers:memory-family:7.2:7.2.3
+  - covers:memory-family:7.2:7.2.4
+  - covers:memory-family:7.2:7.2.5
+  - covers:memory-family:7.2:7.2.6
+  - covers:memory-family:7.2:7.2.7
+  - covers:memory-family:7.2:7.2.8
+  - covers:memory-family:7.2:7.2.9
+  - covers:memory-family:7.2:7.2.10
+  - covers:memory-family:7.2:7.2.11
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Native admission binding for memory rows
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.2'
+  validation_criteria: '8.1.1: Agent tokens with matching, mismatched, revoked and
+    expired identity get Python''s outcomes on the two graph rows and are refused
+    on the other 23. test: `crates/gmemory/tests/admission.rs::agent_token_rows_match_python`.
+
+    8.1.2: API keys, the local operator and ordinary cookies keep Python''s permissions
+    on all 25 rows, and managed cookies are refused on every mutation before any effect.
+    test: `crates/gmemory/tests/admission.rs::operator_and_browser_classes_match_python`.
+
+    8.1.3: Without a bound Admitted value the row stays proxied, unavailable authority
+    returns 503, and no second verifier exists in the crate. test: `crates/gmemory/tests/admission.rs::admission_fails_closed_without_shared_seam`.
+
+    8.1.4: The admission record names the persisted `security-review` label, the pre-dispatch
+    check and the approved step for the exact SHA; absent or stale approval holds
+    native admission. behavior: "memory admission security gate" in `docs/contracts/memory-native.md`.'
+  labels:
+  - covers:memory-family:8.1:8.1.1
+  - covers:memory-family:8.1:8.1.2
+  - covers:memory-family:8.1:8.1.3
+  - covers:memory-family:8.1:8.1.4
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: Memory family activation and coherent release
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.1'
+  validation_criteria: '8.2.1: Proxy, compare and native states affect only the memory
+    HTTP rows and the two MCP servers; compare runs read rows only, effectful rows
+    run once, and rollback to Proxy preserves state. For `GET /api/memories/search`
+    both implementations compute a result, the native surfaced-statistics mutation
+    is discarded with its isolated transaction, and Python''s surfaced counter and
+    debounce effect happens exactly once. This runs through the real front-door router
+    against a Python stub: native shadow counters roll back even when the native leg
+    errors, and in `Native` the native counters persist. test: `crates/gdaemon/tests/memory_cutover.rs::memory_cutover_is_scoped_and_single_effect`.
+
+    8.2.2: With the Python backend unavailable, all 25 HTTP rows and 32 tools run
+    natively for every admitted caller class on hub and standalone, rule surfacing
+    still injects memories, and a node keeps its current backend. test: `tests/e2e/test_memory_native.py::test_memory_rows_work_without_python_backend`.
+
+    8.2.3: Readiness rejects zero-Passed, all-Skipped and unwaived-Skipped reports
+    and unknown or stale waivers, and requires every inventory entry beside ordinary
+    `Passed` cases. test: `crates/gdaemon/tests/memory_cutover.rs::waiver_readiness_gates_memory_activation`.
+
+    8.2.4: Shipping manifests, lock and pins agree at the required patch increment.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+    8.2.5: The runbook records build and installed hashes, compared cases, rollback
+    command, announcement, health, the Security approval for 8.1 and native smoke
+    evidence. behavior: "memory activation evidence" in `docs/contracts/memory-native.md`.'
+  labels:
+  - covers:memory-family:8.2:8.2.1
+  - covers:memory-family:8.2:8.2.2
+  - covers:memory-family:8.2:8.2.3
+  - covers:memory-family:8.2:8.2.4
+  - covers:memory-family:8.2:8.2.5
+  tdd: true
+  source_section: '8.2'
+  implementation_domain: backend
+- title: Forward the public memory CLI and retire Python callbacks
+  category: code
+  task_type: feature
+  depends_on:
+  - '8.2'
+  validation_criteria: '8.3.1: The public launcher forwards literal arguments, cwd,
+    configuration and exit status, including unknown options, Unicode, help and errors,
+    to the resolved binary, and imports no memory business, storage or service module.
+    test: `tests/cli/test_memory_native_forwarding.py::test_launcher_only_forwards`.
+
+    8.3.2: Every retired callback expectation maps to the frozen corpus and a native
+    row test, and import and patch-string sweeps find no reference to a deleted module.
+    test: `tests/cli/test_memory_native_forwarding.py::test_retired_callbacks_have_native_coverage`.'
+  labels:
+  - covers:memory-family:8.3:8.3.1
+  - covers:memory-family:8.3:8.3.2
+  tdd: true
+  source_section: '8.3'
+  implementation_domain: backend
+- title: Publish memory family parity ownership
+  category: docs
+  task_type: chore
+  depends_on:
+  - '8.3'
+  validation_criteria: '8.4.1: The 74 memory rows are `delegated` with notes citing
+    their leaf, tests and waiver IDs, and every other record is unchanged. behavior:
+    "74 delegated memory parity rows" in `docs/contracts/parity-ledger-status.d/memory-skills.json`.
+
+    8.4.2: The six review-learning rows are `delegated` with notes citing 6.3 and
+    its tests, and every other record is unchanged. behavior: "6 delegated review-learning
+    parity rows" in `docs/contracts/parity-ledger-status.d/remainder.json`.
+
+    8.4.3: The regenerated ledger matches the shards and the public inventory. test:
+    `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+    8.4.4: The guide describes native memory operation and the forwarding CLI. behavior:
+    "native memory operation" in `docs/guides/memory.md`.'
+  labels:
+  - covers:memory-family:8.4:8.4.1
+  - covers:memory-family:8.4:8.4.2
+  - covers:memory-family:8.4:8.4.3
+  - covers:memory-family:8.4:8.4.4
+  tdd: false
+  source_section: '8.4'
+  assigned_agent: tech-writer
+```
