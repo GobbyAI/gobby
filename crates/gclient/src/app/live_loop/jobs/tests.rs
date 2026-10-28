@@ -5,6 +5,116 @@ use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::{PaneFrameSource, ProxyFrameSource, ScriptedFrameSource, Transport};
 use crate::ui::Chrome;
 
+// Drive the job/event boundary directly: no render tick can start an attach
+// between installing the opened row and applying the removal.
+fn opened_then_removed(shared: bool) -> Workspace<LiveDaemon> {
+    use serde_json::json;
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token")
+        .expect("unconnected daemon handle");
+    let mut workspace = Workspace::live(daemon);
+    let tab = |id: &str, pane: &str, position| {
+        json!({
+            "id": id, "workspace_id": "workspace-1", "ref": position + 1,
+            "title": null, "project_id": "project-1", "worktree_id": null,
+            "position": position, "focused_pane_id": pane,
+            "layout": {"kind": "pane", "pane_id": pane},
+            "created_at": "", "updated_at": ""
+        })
+    };
+    let pane = |id: &str, tab: &str, terminal: &str| {
+        json!({
+            "id": id, "tab_id": tab, "ref": 1, "terminal_id": terminal,
+            "owns_terminal": true, "label": null, "created_at": "", "updated_at": ""
+        })
+    };
+    let mut tabs = vec![tab("tab-1", "pane-late", 0)];
+    let mut panes = vec![pane("pane-late", "tab-1", "terminal-late")];
+    if shared {
+        tabs.push(tab("tab-2", "pane-shared", 1));
+        panes.push(pane("pane-shared", "tab-2", "terminal-late"));
+    }
+    workspace.apply_workspace_snapshot(
+        serde_json::from_value(json!({
+            "workspace": {
+                "id": "workspace-1", "machine_id": "machine-1", "ref": 1,
+                "name": "test", "focused_project_id": "project-1",
+                "focused_tab_id": "tab-1", "default_project_id": "project-1",
+                "created_at": "", "updated_at": ""
+            },
+            "tabs": tabs, "panes": panes,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 0}
+        }))
+        .expect("workspace snapshot"),
+    );
+    workspace.select_project("project-1");
+    let mut jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    let generation = workspace.daemon().generation();
+    apply_job_outcome(
+        &mut workspace,
+        &mut chrome,
+        &mut jobs,
+        JobOutcome {
+            tag: JobTag {
+                id: 1,
+                generation,
+                key: JobKey::Terminal("terminal-late".into()),
+            },
+            result: JobResult::Opened {
+                terminal_id: "terminal-late".into(),
+                elapsed: std::time::Duration::ZERO,
+                result: Ok(serde_json::from_value(json!({
+                    "terminal_id": "terminal-late", "backend": "native", "state": "live"
+                }))
+                .expect("terminal row")),
+            },
+        },
+    );
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_some(),
+        "apply_open must install the pane before the removal"
+    );
+    let event = serde_json::from_value(json!({
+        "kind": "pane.removed", "workspace_id": "workspace-1",
+        "project_id": "project-1", "workspace": null, "tabs": [],
+        "panes": [pane("pane-late", "tab-1", "terminal-late")],
+        "daemon_epoch": "epoch-1", "seq": 1, "timestamp": ""
+    }))
+    .expect("pane removal event");
+    assert!(
+        workspace.apply_live_workspace_event(&event),
+        "removal must apply"
+    );
+    workspace
+}
+
+#[test]
+fn removal_after_open_before_the_first_tick_removes_the_live_pane() {
+    let workspace = opened_then_removed(false);
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_none(),
+        "a terminal whose final layout pane was removed must leave no live pane"
+    );
+    assert!(
+        workspace.order.is_empty(),
+        "no removed pane remains due for attach"
+    );
+}
+
+#[test]
+fn removal_after_open_preserves_a_terminal_still_shown_in_another_tab() {
+    let workspace = opened_then_removed(true);
+    let id = workspace
+        .pane_for_terminal("terminal-late")
+        .expect("the other tab still needs the live terminal");
+    assert_eq!(workspace.pane(id).terminal_id, "terminal-late");
+    assert_eq!(
+        workspace.order,
+        vec![id],
+        "the shared live pane remains installed"
+    );
+}
+
 #[test]
 fn coalescer_keeps_one_in_flight_and_latest_pending() {
     let mut coalescer = Coalescer::default();

@@ -1513,13 +1513,9 @@ async fn removal_with_an_attach_in_flight_does_not_resurrect_the_opened_pane() {
         // Frame processing follows queued daemon events in the biased loop.
         // This proves the removal applied before the held reply is released.
         probe.frames_render("terminal-a").await;
+        let replies_before_release = mock.replies("terminal_attach");
         attach.notify_one();
-        wait_until("the stale attach reply", || {
-            mock.replies().iter().any(|reply| {
-                reply["type"] == "terminal_attached" && reply["terminal_id"] == "terminal-late"
-            })
-        })
-        .await;
+        wait_for_replies(&mock, "terminal_attach", replies_before_release + 1).await;
         // Drive recovery completion and later ticks; the surviving pane must
         // still render frames and deliver input after the stale reply lands.
         probe.assert_live("terminal-a", "terminal-a", 'k').await;
