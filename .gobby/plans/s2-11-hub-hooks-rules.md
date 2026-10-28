@@ -112,8 +112,8 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
      `hooks.execute.mcp-call-partial` and is never `Verified`; the 1.1 cases
      with scripted call results are its replacement proof (7.13). Without the
      waiver every such record would be an unwaived skip, and `Report::passes`
-     would fail every soak. The Orchestrator's confirmation of this waiver is
-     pending through Triage.
+     would fail every soak. Partial records are reported apart from verified
+     ones (Orchestrator, 2026-10-28).
    - Rejected: changing `check_proxied`'s signature. Seven other family plans
      implement it on their own schedules, so 3.1 could not target every
      implementor.
