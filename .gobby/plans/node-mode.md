@@ -2164,6 +2164,20 @@ deferral:
 
 - 2026-10-28: First draft by Plan Writer gobby#18264 under the Orchestrator's
   rulings R1 to R7 (gobby#17281 through Triage gobby#17480).
+- 2026-10-28: Consensus between Plan Writer gobby#18264 and Plan Adversary
+  gobby#18269. The Orchestrator dispositioned the Enhancer's (gobby#18272)
+  ENH-01 to ENH-06, and all six were applied before review. ENH-01, 04
+  and 05 went in as proposed; ENH-02, 03 and 06 went in modified. The edits
+  add the two reverse expansion edges to the checklist and split 2.3.1 into
+  default and `--closed` cases. `machine_id` gets one source, and the
+  inventory test checks the tail words of multiword carriers. `projects::find`
+  matches in tiers, and 1.3 creates the `command/api.rs` request function.
+  The adversary's review at `77798bc4ed` raised one blocking finding, NM-F1:
+  2.6's pane guard let a bootstrap read error fall through, and explicit
+  `--daemon-url` and `--token-file` bypassed the bootstrap. That was
+  resolved at `ae9a2039d5`: the guard exits 3 before any token read or
+  request, and acceptance 2.6.5 pins the zero-request case. The re-review
+  found no remaining findings or unresolved decisions.
 
 ## V2 Verification
 `kind: verification`
