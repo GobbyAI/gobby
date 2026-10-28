@@ -30,8 +30,10 @@ from gobby.workflows.variable_defaults import (
     resolve_session_project_id,
 )
 from gobby.workflows.worktree_shell_attribution import (
+    OVERLAPS_VARIABLE,
     WorktreeShellCallRegistry,
     background_output_state,
+    overlapped_worktree_paths,
 )
 
 __all__ = [
@@ -418,14 +420,20 @@ class SessionVariableManager(SessionEditLedger, WorktreeShellCallRegistry):
             else:
                 entries[call_id] = {**entry, "owned": kept, "output_path": output_path}
             variables["claimed_shell_snapshots"] = entries or None
+            # A path an overlapping call changed stays foreign, so the task does not adopt it.
+            overlapped = overlapped_worktree_paths(variables, root)
             for task_id, digests in changed.items():
-                record_task_content_hashes(variables, task_id, root, digests)
+                adopted = {
+                    path: digest for path, digest in digests.items() if path not in overlapped
+                }
+                if adopted:
+                    record_task_content_hashes(variables, task_id, root, adopted)
             return None, True
 
         self._mutate_variables(
             session_id,
             mutate,
-            keys=("claimed_shell_snapshots", "task_edited_checkout_hashes"),
+            keys=("claimed_shell_snapshots", "task_edited_checkout_hashes", OVERLAPS_VARIABLE),
             apply_defaults=False,
         )
 

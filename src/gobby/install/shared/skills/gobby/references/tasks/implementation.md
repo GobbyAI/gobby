@@ -32,15 +32,19 @@ writes cannot be named from the command text. Gobby attributes them by the check
 call ran in:
 
 - In a linked task worktree that a claimed task sanctions for your session, every path
-  the Bash call made dirty or changed belongs to your session. This covers writes by a
-  script, a formatter, or a literal write. A failed call keeps the changes it made. You
-  may then Edit, `git restore`, `git checkout --`, or `rm` those paths like any file you
-  wrote. A background call is attributed when its process ends, at your next tool call.
-  If its output file is gone, its paths stay foreign.
+  the Bash call made dirty, changed, or deleted belongs to your session. This covers
+  writes by a script, a formatter, or a literal write, including deleting a clean tracked
+  file. A failed call keeps the changes it made. You may then Edit, `git restore`,
+  `git checkout --`, or `rm` those paths like any file you wrote. A background call is
+  attributed when its process ends, at your next tool call. If its output file is gone,
+  its paths stay foreign.
 - If another session's call overlapped yours in the same worktree and changed a path,
-  that path stays foreign to every session, including yours. A structured Edit or Write
-  in flight counts as overlap for a Bash call, so a Bash call that overlaps it does not
-  attribute the paths it changed. Retry once the other call has finished.
+  that path stays foreign to every session, including yours, for as long as it stays
+  dirty. This holds even when your task already owns the path: an overlapping rewrite of
+  it is refused too. A structured Edit or Write in flight counts as overlap for a Bash
+  call, so a Bash call that overlaps it does not attribute the paths it changed. The other
+  call finishing does not release the path; only its return to a clean state does, which
+  Triage arranges as below.
 - In the main or a shared checkout, script writes stay unattributed and nothing changes.
   `block-cross-session-foreign-dirty-edit` refuses later edits to those paths with the
   reason "no live session owns it".

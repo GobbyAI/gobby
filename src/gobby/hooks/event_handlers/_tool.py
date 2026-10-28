@@ -40,6 +40,7 @@ from gobby.workflows.worktree_shell_attribution import (
     attribute_settled_call,
     is_registered_worktree,
     mark_session_had_edits_if_claimed,
+    overlapped_worktree_paths,
     release_structured_edit_calls,
     structured_edit_paths,
     worktree_digests,
@@ -413,6 +414,11 @@ class ToolEventHandlerMixin(EventHandlersBase):
             )
             is_edit = str(tool_name).lower() in EDIT_TOOLS or is_canonical_edit
 
+            # A Bash call settles its worktree overlap first: the overlap record decides which
+            # paths the literal and claimed-shell recording below may attribute.
+            if tool_name == "Bash" and self._session_manager is not None:
+                self._record_worktree_shell_writes(event, session_id)
+
             if not is_failure and is_edit and self._session_manager:
                 try:
                     self._record_successful_file_mutation(
@@ -426,7 +432,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
             if tool_name == "Bash" and self._session_manager is not None:
                 self._adopt_shell_writes(event, session_id)
-                self._record_worktree_shell_writes(event, session_id)
 
             if tool_name != "Bash" and is_edit:
                 self._release_worktree_edit_calls(event, session_id)
@@ -638,6 +643,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
             variables = variable_manager.get_variables(session_id)
             task_id = task_selected_at(variables, started_at) if started_at is not None else None
             for checkout_root, paths in paths_by_checkout.items():
+                # A path an overlapping call changed stays foreign, so this call does not claim it.
+                overlapped = overlapped_worktree_paths(variables, checkout_root)
+                paths = [path for path in paths if path not in overlapped]
                 if task_id is not None:
                     landed = self._paths_landed_before_edit(
                         variables, task_id, checkout_root, paths, edited_at

@@ -41,6 +41,7 @@ from gobby.workflows.ledger_reconcile import session_dirty_file_set_for_checkout
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path
+from gobby.workflows.worktree_shell_attribution import OVERLAPS_VARIABLE
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, write_project_marker
 
 pytestmark = pytest.mark.unit
@@ -418,6 +419,119 @@ def test_overlapping_bash_calls_leave_changed_paths_foreign(
     reason = checkout.rule_3_reason("racer.txt")
     assert "racer.txt" in reason
     assert re.search(r"\boverlap(?:ped|ping)?\b", reason, re.IGNORECASE), reason
+
+
+def _assert_refused_for_overlap(checkout: Checkout, rel_path: str) -> None:
+    """Edit, restore and deletion of ``rel_path`` are each refused, and the refusal names the overlap."""
+    for command in (None, f"git restore -- {rel_path}", f"rm {rel_path}"):
+        reason = checkout.rule_3_reason(rel_path, command=command)
+        assert rel_path in reason, reason
+        assert re.search(r"\boverlap(?:ped|ping)?\b", reason, re.IGNORECASE), reason
+
+
+def test_script_deleting_a_clean_tracked_file_attributes_the_deletion(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout
+) -> None:
+    """A script that deletes a clean tracked file owns the deletion, so its restore is not refused."""
+    checkout = task_worktree
+
+    def delete_tracked() -> None:
+        (checkout.repo / "base.txt").unlink()
+
+    checkout.run(
+        _handlers(mock_dependencies, checkout.db),
+        "uv run python /tmp/delete_tracked.py base.txt",
+        delete_tracked,
+    )
+
+    assert "base.txt" in checkout.ledger()
+    assert "base.txt" in checkout.task_ledger()
+    assert checkout.rule_3_reason("base.txt") == ""
+    for mutation in ("git restore -- base.txt", "rm base.txt"):
+        assert checkout.rule_3_reason("base.txt", command=mutation) == ""
+
+
+@pytest.mark.parametrize("foreign_finishes_first", [False, True])
+def test_overlapping_literal_write_stays_foreign(
+    mock_dependencies: dict[str, Any], task_worktree: Checkout, foreign_finishes_first: bool
+) -> None:
+    """A literal write an overlapping call also changed stays foreign, in either completion order."""
+    checkout = task_worktree
+    handlers = _handlers(mock_dependencies, checkout.db)
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    command = "printf 'literal write\\n' > racer.txt"
+    current_before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    foreign_before = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "uv run python /tmp/rewrite.py racer.txt"),
+        session_id="foreign-external",
+        request_id="toolu_foreign",
+    )
+    assert not _shell_write_refused(handlers, current_before)
+    assert not _shell_write_refused(handlers, foreign_before)
+    checkout.write("racer.txt", "overlapping write\n")
+    current_after = checkout.tool_event(HookEventType.AFTER_TOOL, command)
+    foreign_after = replace(foreign_before, event_type=HookEventType.AFTER_TOOL)
+    events = (
+        (foreign_after, current_after) if foreign_finishes_first else (current_after, foreign_after)
+    )
+    for event in events:
+        handlers.handle_after_tool(event)
+
+    assert "racer.txt" not in checkout.ledger()
+    assert "racer.txt" not in checkout.task_ledger()
+    _assert_refused_for_overlap(checkout, "racer.txt")
+
+
+@pytest.mark.parametrize("foreign_finishes_first", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv run python /tmp/rewrite.py owned.txt",
+        "printf 'script rewrite\\n' > owned.txt",
+        "uv run ruff format owned.txt",
+    ],
+)
+def test_overlapping_rewrite_of_an_owned_path_is_refused_with_overlap_named(
+    mock_dependencies: dict[str, Any],
+    task_worktree: Checkout,
+    command: str,
+    foreign_finishes_first: bool,
+) -> None:
+    """A rewrite of a path the task owns, overlapped by another session's write, stays foreign."""
+    checkout = task_worktree
+    handlers = _handlers(mock_dependencies, checkout.db)
+    foreign = replace(checkout, session_id=checkout.foreign_session_id)
+    current_before = checkout.tool_event(HookEventType.BEFORE_TOOL, command)
+    foreign_before = replace(
+        foreign.tool_event(HookEventType.BEFORE_TOOL, "uv run python /tmp/rewrite.py owned.txt"),
+        session_id="foreign-external",
+        request_id="toolu_foreign",
+    )
+    assert not _shell_write_refused(handlers, current_before)
+    assert not _shell_write_refused(handlers, foreign_before)
+    checkout.write("owned.txt", "foreign rewrite\n")
+    checkout.write("owned.txt", "script rewrite\n")
+    current_after = checkout.tool_event(HookEventType.AFTER_TOOL, command)
+    foreign_after = replace(foreign_before, event_type=HookEventType.AFTER_TOOL)
+    events = (
+        (foreign_after, current_after) if foreign_finishes_first else (current_after, foreign_after)
+    )
+    for event in events:
+        handlers.handle_after_tool(event)
+
+    _assert_refused_for_overlap(checkout, "owned.txt")
+
+
+def test_overlap_record_refuses_an_owned_path_whose_content_still_matches(
+    task_worktree: Checkout,
+) -> None:
+    """An overlap record refuses its path even when the caller's own record matches its content."""
+    SessionVariableManager(task_worktree.db).merge_variables(
+        task_worktree.session_id,
+        {OVERLAPS_VARIABLE: {str(task_worktree.repo): ["owned.txt"]}},
+    )
+
+    _assert_refused_for_overlap(task_worktree, "owned.txt")
 
 
 @pytest.mark.parametrize(

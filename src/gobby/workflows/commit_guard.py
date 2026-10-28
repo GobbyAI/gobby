@@ -311,8 +311,12 @@ async def foreign_dirty_edit_conflict(
                 root,
                 session_dirty_file_set_for_checkout(variables, root),
             )
+            # An overlapped path stays foreign even when this session's own record matches it.
+            overlapped_here = overlapped_worktree_paths(variables, root)
             candidates = {
-                rel for rel in rels if not any(task_edit_path_covers(p, rel) for p in own)
+                rel
+                for rel in rels
+                if rel in overlapped_here or not any(task_edit_path_covers(p, rel) for p in own)
             }
             if not candidates:
                 continue
@@ -343,11 +347,15 @@ async def foreign_dirty_edit_conflict(
                 claimed_task_carriers, db, session_id=session_id, checkout_root=root, paths=dirty
             )
             approved = await asyncio.to_thread(approved_dirty_paths, variables, root)
-            overlapped_here = overlapped_worktree_paths(variables, root)
             root_unowned: set[str] = set()
             root_overlapped: set[str] = set()
             for path in dirty:
-                if path in operation_paths or any(task_edit_path_covers(p, path) for p in own):
+                # An overlapping Bash call changed this dirt, so no single writer owns it: the
+                # task's and the carriers' claims do not exempt it.
+                overlapped_path = path in overlapped_here
+                if path in operation_paths or (
+                    not overlapped_path and any(task_edit_path_covers(p, path) for p in own)
+                ):
                     continue
                 overlapping = [
                     owner
@@ -362,16 +370,15 @@ async def foreign_dirty_edit_conflict(
                 ]
                 if holders:
                     conflicts.update(replace(owner, path=path) for owner in holders)
+                elif overlapped_path:
+                    if path not in approved:
+                        root_overlapped.add(path)
                 elif not (
                     overlapping
                     or path in approved
                     or any(task_edit_path_covers(carrier, path) for carrier in carriers)
                 ):
-                    # An overlapping Bash call changed this dirt, so no single writer owns it.
-                    if path in overlapped_here:
-                        root_overlapped.add(path)
-                    else:
-                        root_unowned.add(path)
+                    root_unowned.add(path)
             unowned |= root_unowned
             overlapped |= root_overlapped
         if not (conflicts or unowned or overlapped):

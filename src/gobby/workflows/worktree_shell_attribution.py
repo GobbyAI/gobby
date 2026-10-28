@@ -85,9 +85,15 @@ async def worktree_digests(root: str) -> dict[str, str | None] | None:
 
 
 def changed_paths(before: Mapping[str, str | None], after: Mapping[str, str | None]) -> list[str]:
-    """Paths whose digest differs between two snapshots; a missing digest counts as None."""
+    """Paths dirty in one snapshot and not the other, or dirty in both with different digests.
+
+    A clean path is absent from a snapshot, and a deleted one maps to None, so presence is part
+    of the comparison: a clean tracked file that a call deletes changed.
+    """
     return sorted(
-        path for path in before.keys() | after.keys() if before.get(path) != after.get(path)
+        path
+        for path in before.keys() | after.keys()
+        if (path in before) != (path in after) or before[path] != after[path]
     )
 
 

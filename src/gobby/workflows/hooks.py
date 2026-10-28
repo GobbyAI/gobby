@@ -308,21 +308,14 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     event.data.setdefault("cwd", event.cwd)
                     await asyncio.to_thread(normalize_tool_fields, event.data)
 
-                # A background Bash call that ended adopts its edits before this call's
-                # claimed-edit guards read the ledger.
+                # A background Bash call that ended settles its worktree overlap before it
+                # adopts its edits, and both happen before this call's claimed-edit guards
+                # read the ledger.
                 if (
                     self._session_var_manager
                     and session_id
                     and event.event_type == HookEventType.BEFORE_TOOL
                 ):
-                    try:
-                        await asyncio.to_thread(
-                            self._session_var_manager.settle_pending_shell_calls, session_id
-                        )
-                    except _DATABASE_TIMEOUTS:
-                        raise
-                    except Exception:
-                        logger.warning("Failed to settle background shell edits", exc_info=True)
                     try:
                         if await settle_background_worktree_shell_calls(
                             self._session_var_manager, session_id
@@ -338,6 +331,14 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         raise
                     except Exception:
                         logger.warning("Failed to settle background worktree calls", exc_info=True)
+                    try:
+                        await asyncio.to_thread(
+                            self._session_var_manager.settle_pending_shell_calls, session_id
+                        )
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning("Failed to settle background shell edits", exc_info=True)
 
                 # Load session-scoped variables (canonical store).
                 # session_id may be "" for session-less events; session_variables.session_id
