@@ -23,6 +23,7 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_json,
     remove_project_mcp_server,
 )
+from gobby.cli.installers.mcp_config_shared import gmcp_command
 
 
 @pytest.mark.parametrize("selector", ["custom", "legacy", "oauth"])
@@ -287,16 +288,21 @@ def test_host_writers_wait_for_claude_lock_and_reread(
         finally:
             lock_path.rmdir()
         future.result(timeout=5)
+        # The managed gmcp path resolves under the patched home, as the writer resolved it.
+        expected_gmcp = gmcp_command()
 
     config = json.loads(config_path.read_text())
     assert config["concurrentClaudeKey"] == "retained"
     if writer == "trust":
         assert config["projects"][str(workspace)]["hasTrustDialogAccepted"] is True
     elif writer == "isolation":
-        assert config["projects"][str(workspace)]["mcpServers"]["gobby"]["command"] == "uv"
+        gobby_entry = config["projects"][str(workspace)]["mcpServers"]["gobby"]
+        assert gobby_entry["command"] == expected_gmcp
+        assert gobby_entry["args"] == []
         assert config["projects"][str(workspace)]["mcpServers"]["other"] == {"command": "other"}
     elif writer == "install":
-        assert config["mcpServers"]["gobby"]["args"] == ["mcp-server"]
+        assert config["mcpServers"]["gobby"]["command"] == expected_gmcp
+        assert config["mcpServers"]["gobby"]["args"] == []
     elif writer == "remove":
         assert "mcpServers" not in config
     elif writer == "install_project":
