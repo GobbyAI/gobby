@@ -228,7 +228,6 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
     long_leaf = new_task(world, LONG_LEAF_TITLE, parent=epic)
     busy = new_task(world, "Already in flight", parent=epic)
     team = await epic_team(world, epic)
-    seq = epic.seq_num
 
     # A primary works in the epic worktree itself.
     primary = await team.spawn("developer", task_id=leaf.id, worktree_id=team.binding.worktree_id)
@@ -236,13 +235,11 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
     assert world.launches[-1]["worktree_id"] == team.binding.worktree_id
     assert world.launches[-1].get("branch_name") is None
 
-    # A sub-worktree developer gets its leaf branch and titled tree off epic main.
+    # Parallel leaves need the full pod, never a developer-only sub-worktree.
+    before = len(world.launches)
     sub = await team.spawn("developer", task_id=long_leaf.id, checkout_mode="worktree")
-    assert sub.get("success") is True, sub
-    launch = world.launches[-1]
-    assert launch["branch_name"] == f"epic/{seq}/{long_leaf.seq_num}"
-    assert launch["base_branch"] == f"epic/{seq}/main"
-    assert f"wt-epic-{seq}-{long_leaf.seq_num}-{LONG_LEAF_SLUG}" in launched_names(launch)
+    assert sub.get("error_code") == "team_pod_required", sub
+    assert len(world.launches) == before
 
     # Out of scope: another task, a definition without a team grant, an in-flight leaf.
     outside = new_task(world, "Outside the epic")
@@ -261,7 +258,7 @@ async def test_manager_leaf_spawns_scoped(world: TeamWorld) -> None:
 
 @pytest.mark.asyncio
 async def test_one_live_primary_per_implementation_domain(world: TeamWorld) -> None:
-    """A second primary in a domain waits for the first; other domains and sub-worktrees do not."""
+    """A second primary in a domain waits for the first; other domains and pods do not."""
     epic = new_task(world, TITLE, epic=True)
     backend = new_task(world, LEAF_TITLE, parent=epic, domain="backend")
     second_backend = new_task(world, "Second backend leaf", parent=epic, domain="backend")
@@ -277,8 +274,9 @@ async def test_one_live_primary_per_implementation_domain(world: TeamWorld) -> N
 
     other = await team.spawn("developer", task_id=frontend.id, worktree_id=tree)
     assert other.get("success") is True, other
-    sub = await team.spawn("developer", task_id=second_backend.id, checkout_mode="worktree")
-    assert sub.get("success") is True, sub
+    run = world.child(second_backend, parent=team.manager)
+    pod = await world.admit(run, second_backend, parent_team_id=team.binding.team_id)
+    assert pod.worktree_id != tree
     assert primary_bindings(team) == {"backend": first["run_id"], "frontend": other["run_id"]}
 
 
@@ -503,17 +501,13 @@ async def test_merged_leaf_tree_cleanup(world: TeamWorld) -> None:
     open_leaf = new_task(world, "Unmerged leaf", parent=epic)
     team = await epic_team(world, epic)
     epic_tree = tree_of(team.binding)
-    trees = LocalWorktreeManager(db)
 
     async def sub_tree(leaf: Task) -> tuple[str, Path, str]:
-        """Dispatch a sub-worktree developer, then make the tree its launch named."""
-        reply = await team.spawn("developer", task_id=leaf.id, checkout_mode="worktree")
-        assert reply.get("success") is True, reply
-        branch = world.launches[-1]["branch_name"]
-        assert branch == f"epic/{epic.seq_num}/{leaf.seq_num}"
+        """Register a clean tree to exercise the low-level merge/deletion guard."""
+        branch = f"epic/{epic.seq_num}/{leaf.seq_num}"
         path = epic_tree.parent / f"sub-{epic.seq_num}-{leaf.seq_num}"
         git_in(epic_tree, "worktree", "add", "-b", branch, str(path), team.binding.branch)
-        row = trees.create(
+        row = LocalWorktreeManager(db).create(
             world.case.project_id,
             branch_name=branch,
             worktree_path=str(path),
@@ -521,7 +515,7 @@ async def test_merged_leaf_tree_cleanup(world: TeamWorld) -> None:
             task_id=leaf.id,
         )
         (path / f"leaf_{leaf.seq_num}.py").write_text("work = True\n")
-        git_in(path, "add", "--all")
+        git_in(path, "add", f"leaf_{leaf.seq_num}.py")
         git_in(path, "commit", "-m", f"[gobby-#{leaf.seq_num}] feat: leaf work")
         return row.id, path, branch
 

@@ -41,5 +41,6 @@ Epic mode applies to a team bound to an epic with open non-epic descendants. Its
 - A pod relaunch or fresh reviewer joins the pod with `team_id=<pod UUID>`. A primary leaf's fresh reviewer joins the epic team. Fresh-reviewer reservations are per leaf and epoch, so parallel leaves do not consume each other's replacement.
 - Route every leaf's reviewer with the table above. You may also spawn test-writer, researcher, docs-reviewer and research-reviewer seats as needed within your epic.
 - Preserve dependency order. Approved implementation records unlock intra-epic dependencies; a test commit alone does not. Merge epic main into sub-branches and the integration branch into epic main; never rebase or squash linked work.
+- Holds. An explicit hold or escalation of the epic blocks new pod admission and dispatch until its owner releases it. A stuck, escalated or unstarted leaf holds only itself and its dependents; continue ready siblings and land approved ready tips. Never back out landed leaves or bypass task dependencies.
 - No-work leaves use the no-work path above and are closed through Triage by the Orchestrator.
 - Link and review each ready epic tip, then land it on the integration branch. When all leaves are closed, record the epic's closing step and close the epic last. That ends its four primary seats and removes the epic worktree.

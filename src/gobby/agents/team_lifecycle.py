@@ -687,6 +687,7 @@ def managed_task_team(db: HubDatabase, caller_id: str, task_id: str) -> TeamBind
 def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) -> TeamBinding:
     """Only an epic's bound manager may admit a pod for an unclaimed open leaf."""
     from gobby.agents.team_dispatch import _is_bound_dev_manager
+    from gobby.agents.team_review import seat_team_held
 
     parent = seat_team(db, caller_id)
     task = LocalTaskManager(db).get_task(task_id)
@@ -702,6 +703,8 @@ def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) ->
         raise TeamAdmissionRefused(
             "pod_parent_invalid", "only the epic's Dev Manager admits a leaf pod"
         )
+    if seat_team_held(db, parent):
+        raise TeamAdmissionRefused("team_held", "the epic is held; resume after its hold is lifted")
     if task.claimed_by_session_id:
         raise TeamAdmissionRefused(
             "pod_leaf_claimed", "release the leaf claim before admitting its pod"

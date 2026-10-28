@@ -411,12 +411,12 @@ async def test_ready_tip_uses_included_approval_and_requires_git_evidence(
     team.link_tip()
     later = team.commit(leaf, "later.py")
     submit(team.db, developer, leaf, "implementation", "approved", 2, later)
-    submit(team.db, reviewer, leaf, "review", "rejected", 2, later)
+    submit(team.db, reviewer, leaf, "review", "rejected", 1, later)
     assert sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
 
     team.link_tip()
     assert not sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
-    submit(team.db, reviewer, leaf, "review", "approved", 3, later)
+    submit(team.db, reviewer, leaf, "review", "approved", 2, later)
     assert sync_epic_review(team.db, team.binding.team_id).epic_tip_ready
 
     monkeypatch.setattr("gobby.agents.team_review.run_git_command", lambda *args, **kwargs: None)
@@ -448,6 +448,68 @@ async def test_tip_dependency_holds_propagate_without_holding_siblings(world: Te
     assert not state.epic_tip_ready
     assert set(state.holds) == {first.id, second.id, missing.id}
     assert sibling.id not in state.holds
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("nested_phase", [False, True])
+async def test_closed_prerequisite_must_be_in_the_linked_tip(
+    world: TeamWorld, nested_phase: bool
+) -> None:
+    tasks = LocalTaskManager(world.case.db)
+    epic = new_task(world, "Closed prerequisites", epic=True)
+    dependent = new_task(world, "Dependent", parent=epic)
+    phase = new_task(world, "Prerequisite phase", epic=True, parent=epic) if nested_phase else epic
+    prerequisite = new_task(world, "Prerequisite closed after tip linked", parent=phase)
+    team = await epic_team(world, epic)
+    developer = team.seat("developer", "implementation")
+    reviewer = team.seat("code-reviewer", "review")
+    for leaf in (dependent, prerequisite):
+        tasks.claim_task(leaf.id, developer, force=True)
+        sha = team.commit(leaf, f"leaf_{leaf.seq_num}.py")
+        submit(team.db, developer, leaf, "implementation", "approved", 1, sha)
+        submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+        if leaf.id == dependent.id:
+            team.link_tip()
+    TaskDependencyManager(team.db).add_dependency(
+        dependent.id, phase.id if nested_phase else prerequisite.id, "blocks"
+    )
+    tasks.close_task(prerequisite.id, reason="done")
+    if nested_phase:
+        assert tasks.get_task(phase.id).closed_at is not None
+
+    stale = sync_epic_review(team.db, team.binding.team_id)
+    assert not stale.held
+    assert not stale.epic_tip_ready
+    expected_holds = {dependent.id, prerequisite.id}
+    if nested_phase:
+        expected_holds.add(phase.id)
+    assert set(stale.holds) == expected_holds
+    team.link_tip()
+    current = sync_epic_review(team.db, team.binding.team_id)
+    assert current.epic_tip_ready
+    assert current.holds == ()
+
+
+@pytest.mark.asyncio
+async def test_running_pod_review_respects_explicit_parent_hold(world: TeamWorld) -> None:
+    epic = new_task(world, "Parent hold", epic=True)
+    leaf = new_task(world, "Running pod", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    leaf_team = EpicTeam(world, leaf, run, pod, team.manager)
+    developer = leaf_team.seat("developer", "implementation")
+    reviewer = leaf_team.seat("code-reviewer", "review")
+    tasks = LocalTaskManager(team.db)
+    tasks.claim_task(leaf.id, developer, force=True)
+    sha = leaf_team.commit(leaf, "pod_work.py")
+    tasks.escalate_task(epic.id, "Operator hold")
+    submit(team.db, developer, leaf, "implementation", "approved", 1, sha)
+    with pytest.raises(StepRecordError, match="held"):
+        submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+    tasks.de_escalate_task(epic.id, reason="Operator released hold")
+    submit(team.db, reviewer, leaf, "review", "approved", 1, sha)
+    assert approved(team.db, tasks.get_task(leaf.id), "review")
 
 
 @pytest.mark.asyncio

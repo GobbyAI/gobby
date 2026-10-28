@@ -107,6 +107,7 @@ class EpicTeam:
 
     @property
     def tree(self) -> Path:
+        assert self.binding.worktree_path is not None
         return Path(self.binding.worktree_path)
 
     def seat(self, definition: str, step: TaskStep) -> str:
@@ -511,6 +512,7 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
     assert manager in terminations.ended()
     assert session_status(db, manager) == "expired"
     assert not tree.exists()
+    assert team.binding.worktree_id is not None
     assert LocalWorktreeManager(db).get(team.binding.worktree_id) is None
     assert not branch_exists(world, team.binding.branch)
 
@@ -521,8 +523,8 @@ async def test_complete_epic_team(world: TeamWorld, monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
-    """A third leaf rejection holds the epic until Triage's audited reset, then it lands (8.6.2)."""
+async def test_ready_tip_lands_while_sibling_is_escalated(world: TeamWorld) -> None:
+    """Ready siblings land before an isolated rejected leaf is reset and merged."""
     adopt_close_policy(world)
     db = world.case.db
     tasks = LocalTaskManager(db)
@@ -534,11 +536,12 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     tree, manager = team.tree, team.manager
     developer = team.seat("developer", "implementation")
     reviewer = team.seat("code-reviewer", "review")
+    _, stuck_tree, stuck_branch = sub_worktree(team, stuck)
 
     # Three implementation rounds, each rejected: the third rejection escalates the leaf.
     tasks.claim_task(stuck.id, developer, force=True)
     for number in (1, 2, 3):
-        sha = commit_work(db, tree, stuck, f"stuck_round_{number}.py")
+        sha = commit_work(db, stuck_tree, stuck, f"stuck_round_{number}.py")
         submit(db, developer, stuck, "implementation", "approved", number, sha=sha)
         submit(db, reviewer, stuck, "review", "rejected", number, sha=sha)
     assert tasks.get_task(stuck.id).escalated_at is not None
@@ -546,46 +549,41 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     tasks.claim_task(done.id, developer, force=True)
     done_sha = commit_work(db, tree, done, "done.py")
     submit(db, developer, done, "implementation", "approved", 1, sha=done_sha)
+    submit(db, reviewer, done, "review", "approved", 1, sha=done_sha)
 
-    # The escalated leaf holds the epic: the epic escalates once, and dispatch stops.
+    # The rejected branch and unstarted sibling never hold the ready epic tip.
     state = sync_epic_review(db, team.binding.team_id)
-    assert state.held and stuck.id in state.holds
-    held_epic = tasks.get_task(epic.id)
-    assert held_epic.escalated_at is not None
-    assert held_epic.claimed_by_session_id is None
-    assert stuck.id in (held_epic.escalation_reason or "")
-    assert sync_epic_review(db, team.binding.team_id).held
-    before = len(world.launches)
-    refused = await team.spawn("developer", task_id=waiting.id, checkout_mode="worktree")
-    assert refused.get("success") is not True, refused
-    assert len(world.launches) == before
+    assert (state.held, state.holds) == (False, (stuck.id,))
+    assert tasks.get_task(epic.id).escalated_at is None
 
-    # Nothing lands while held: no epic-tip approval can exist before every leaf is approved.
+    # The tip still requires its own review, then lands while the sibling stays escalated.
     tip = git_in(tree, "rev-parse", "HEAD")
     tasks.link_commit(epic.id, tip)
-    assert not sync_epic_review(db, team.binding.team_id).epic_tip_ready
-    held_land = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
-    assert held_land["landed"] is False, held_land
-    assert "review_approval_missing" in held_land["blockers"], held_land
+    assert sync_epic_review(db, team.binding.team_id).epic_tip_ready
+    unreviewed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
+    assert unreviewed["landed"] is False, unreviewed
+    assert "review_approval_missing" in unreviewed["blockers"], unreviewed
+    tip_reviewer = team.seat("code-reviewer", "review")
+    submit(db, tip_reviewer, epic, "review", "approved", 1, sha=tip)
+    landed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)
+    assert (landed["landed"], landed["worktree_merged"]) == (True, True), landed
+    assert world.case.git("rev-parse", "trunk") == tip
+    assert tasks.get_task(stuck.id).escalated_at is not None
+    assert not tasks.get_task(waiting.id).commits
 
-    # Triage's audited reset starts a new review epoch for the leaf and de-escalates the epic.
+    # Triage's audited reset starts a new review epoch for only the rejected leaf.
     epoch = tasks.get_task(stuck.id).review_epoch
     tasks.de_escalate_task(stuck.id, reason="Triage audited reset")
     assert tasks.get_task(stuck.id).review_epoch == epoch + 1
-    tasks.de_escalate_task(epic.id, reason="Triage audited reset")
     lifted = sync_epic_review(db, team.binding.team_id)
     assert (lifted.held, lifted.holds) == (False, ())
-    allowed = await team.spawn("developer", task_id=waiting.id, checkout_mode="worktree")
-    assert allowed.get("success") is True, allowed
-
-    # A held team refuses new review rounds, so the finished leaf is reviewed once the hold lifts.
-    submit(db, reviewer, done, "review", "approved", 1, sha=done_sha)
 
     # The reset leaf is worked again in its new epoch, and the waiting leaf finishes.
     tasks.claim_task(stuck.id, developer, force=True)
-    fix = commit_work(db, tree, stuck, "stuck_fix.py")
+    fix = commit_work(db, stuck_tree, stuck, "stuck_fix.py")
     submit(db, developer, stuck, "implementation", "approved", 1, sha=fix)
     submit(db, reviewer, stuck, "review", "approved", 1, sha=fix)
+    git_in(tree, "merge", "--no-ff", stuck_branch, "-m", "Merge repaired leaf")
     waiting_dev = team.seat("developer", "implementation")
     tasks.claim_task(waiting.id, waiting_dev, force=True)
     waiting_sha = commit_work(db, tree, waiting, "waiting.py")
@@ -595,7 +593,6 @@ async def test_escalated_leaf_holds_then_lands(world: TeamWorld) -> None:
     # The epic tip is approved by the epic-tip reviewer and lands through the Dev Manager.
     tip = git_in(tree, "rev-parse", "HEAD")
     tasks.link_commit(epic.id, tip)
-    tip_reviewer = team.seat("code-reviewer", "review")
     assert sync_epic_review(db, team.binding.team_id).epic_tip_ready
     submit(db, tip_reviewer, epic, "review", "approved", 1, sha=tip)
     landed = await world.case.land(tasks.get_task(epic.id), tip, caller=manager)

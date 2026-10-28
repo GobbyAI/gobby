@@ -46,8 +46,8 @@ class EpicReviewState:
     epic_tip_ready: bool
 
 
-def _tip_blockers(db: HubDatabase, leaf_id: str, epic_leaf_ids: set[str]) -> set[str]:
-    """Closed epic prerequisites still need evidence in this exact candidate tip."""
+def _tip_blockers(db: HubDatabase, leaf_id: str, descendants: dict[str, Task]) -> set[str]:
+    """Closed internal prerequisites still need evidence in this exact candidate tip."""
     rows = db.fetchall(
         """
         SELECT d.depends_on, blocker.closed_at
@@ -60,12 +60,12 @@ def _tip_blockers(db: HubDatabase, leaf_id: str, epic_leaf_ids: set[str]) -> set
     return {
         str(row["depends_on"])
         for row in rows
-        if row["closed_at"] is None or str(row["depends_on"]) in epic_leaf_ids
+        if row["closed_at"] is None or str(row["depends_on"]) in descendants
     }
 
 
-def _epic_leaves(db: HubDatabase, epic_id: str) -> list[Task]:
-    """Include closed pod leaves: their delivered commits still belong to the epic tip."""
+def _epic_descendants(db: HubDatabase, epic_id: str) -> dict[str, Task]:
+    """Include closed pods and phase containers when checking delivered prerequisites."""
     rows = db.fetchall(
         """
         WITH RECURSIVE below(id) AS (
@@ -74,12 +74,12 @@ def _epic_leaves(db: HubDatabase, epic_id: str) -> list[Task]:
             SELECT t.id FROM tasks t JOIN below ON t.parent_task_id = below.id
         )
         SELECT * FROM tasks
-        WHERE id IN (SELECT id FROM below) AND task_type != 'epic'
+        WHERE id IN (SELECT id FROM below)
         ORDER BY id
         """,
         (epic_id,),
     )
-    return [Task.from_row(row) for row in rows]
+    return {str(row["id"]): Task.from_row(row) for row in rows}
 
 
 def _merged_tips(binding: TeamBinding, leaves: list[Task], tip: str | None) -> dict[str, str]:
@@ -117,8 +117,9 @@ def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
 
     tasks = LocalTaskManager(db)
     epic = tasks.get_task(binding.task_id)
-    leaves = _epic_leaves(db, epic.id)
-    holds = {leaf.id for leaf in leaves if leaf.escalated_at is not None}
+    descendants = _epic_descendants(db, epic.id)
+    leaves = [task for task in descendants.values() if task.task_type != "epic"]
+    holds = {task.id for task in descendants.values() if task.escalated_at is not None}
     if epic.escalated_at is not None:
         holds.add(epic.id)
     held = epic.escalated_at is not None
@@ -150,8 +151,17 @@ def sync_epic_review(db: HubDatabase, team_id: str) -> EpicReviewState:
         ):
             approved.add(leaf.id)
 
-    epic_leaf_ids = {leaf.id for leaf in leaves}
-    dependencies = {leaf.id: _tip_blockers(db, leaf.id, epic_leaf_ids) for leaf in leaves}
+    dependencies = {task_id: _tip_blockers(db, task_id, descendants) for task_id in descendants}
+    for task in descendants.values():
+        if task.task_type == "epic":
+            children = {
+                child.id for child in descendants.values() if child.parent_task_id == task.id
+            }
+            dependencies[task.id].update(children)
+            # A phase has no implementation of its own; its descendants and dependency
+            # edges provide the proof. Open empty phases remain unfinished prerequisites.
+            if children or task.closed_at is not None:
+                approved.add(task.id)
     # Propagate a held prerequisite through its dependents, never unrelated siblings.
     while True:
         previous = holds.copy()

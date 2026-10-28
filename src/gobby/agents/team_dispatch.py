@@ -108,16 +108,9 @@ def _maker(
         raise TeamAdmissionRefused("task_in_flight", f"task {task_id} already has a claimed seat")
     leaf = LocalTaskManager(db).get_task(leaf_id)
     if checkout_mode == "worktree":
-        if worktree_id is not None:
-            raise TeamAdmissionRefused("team_tree_fixed", "a sub-worktree leaf names no tree")
-        branch, directory = leaf_names(epic, leaf)
-        return DispatchScope(
-            team_id=binding.team_id,
-            project_id=binding.project_id,
-            parent_session_id=parent,
-            branch_name=branch,
-            base_branch=binding.branch,
-            worktree_dir_name=directory,
+        raise TeamAdmissionRefused(
+            "team_pod_required",
+            "launch the devteam pipeline with parent_team_id for a parallel leaf",
         )
     if worktree_id not in (None, binding.worktree_id):
         raise TeamAdmissionRefused(

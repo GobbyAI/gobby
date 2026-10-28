@@ -3,12 +3,10 @@
 from typing import Any
 
 from gobby.agents.team_lifecycle import TeamBinding, seat_team
-from gobby.agents.team_scope import open_leaf_below
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import record_claimant_state
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import (
     AgentTaskClaimMutation,
     HubDatabase,
@@ -17,7 +15,6 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
-from gobby.storage.team_records import EPIC_MODE
 from gobby.tasks.attributed_roots import is_ignorable_attributed_root
 from gobby.tasks.lifecycle_access import (
     is_operator_coordinator,
@@ -164,27 +161,6 @@ def register_release_task_claim(registry: InternalToolRegistry, ctx: RegistryCon
         func=release_task_claim,
     )
     register_hand_off_task_claim(registry, ctx)
-
-
-def _bound_dev_manager(ctx: RegistryContext, caller: Session, task_id: str) -> bool:
-    """The caller's active run is bound to the task and its definition writes closing."""
-    db = ctx.task_manager.db
-    run = LocalAgentRunManager(db).get_by_session(caller.id)
-    definition = session_agent_definition(db, caller)
-    return (
-        run is not None
-        and run.task_id == task_id
-        and definition is not None
-        and definition[0].name != "researcher"
-        and "closing" in definition[0].task_step_writes
-    )
-
-
-def _team_task(db: HubDatabase, team: TeamBinding, task_id: str) -> bool:
-    """The team's own task, or in epic mode an open leaf below its epic."""
-    if team.task_id == task_id:
-        return True
-    return team.mode == EPIC_MODE and open_leaf_below(db, team.task_id, task_id) is not None
 
 
 def _managed_team(ctx: RegistryContext, caller: Session, task_id: str) -> TeamBinding | None:
