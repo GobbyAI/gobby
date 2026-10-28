@@ -741,13 +741,10 @@ then clear the episode by CAS:
 6. Inject through the gterminals `Coordinator::write` with
    `Origin::Attention` and action key `attention-respond:<attention_id>`.
 
-Outcome mapping:
-
-| Write outcome | Result |
-| --- | --- |
-| Delivered | `{"status": "accepted", "entry_id"}` |
-| Uncertain | stage `partial`, 502 `injection_indeterminate` |
-| Suppressed, Quarantined or Refusal | stage `none`, 502 `injection_failed` |
+Outcome mapping: Delivered returns `{"status": "accepted", "entry_id"}`.
+Uncertain is stage `partial` and returns 502 `injection_indeterminate`.
+Suppressed, Quarantined and Refusal are stage `none` and return 502
+`injection_failed`.
 
 After a local failure, redetect the retired episode, following 1.1's recorded
 stages.
@@ -865,8 +862,15 @@ follows `src/gobby/hub/node_client.py::NodeCommandClient`:
 
 It provides sync and async `transition`, `set_metadata` and `clear_metadata`.
 A connection failure or a missing secret raises `AttentionServiceUnavailable`.
-That error propagates exactly as a database error from the old transition did,
-since every writer call site either lets it propagate or catches `Exception`.
+For transitions, that error propagates exactly as a database error from the old
+transition did, since every transition call site either lets it propagate or
+catches `Exception`. Metadata is different: it is advisory and bounded by its
+time-to-live, and its call sites do not expect a service error.
+`hooks/event_handlers/_agent.py::_set_attention_metadata` catches only
+`TypeError` and `ValueError`, and `attention_tracker.py` has no handler at all.
+So the client's metadata `set` and `clear` log a warning and drop the change
+when the service is unavailable, in the same shape as the existing "Dropped
+invalid attention metadata self-report" warning. Validation errors still raise.
 There is no retry or fallback write.
 
 `tests/storage/attention_fake.py` is an httpx transport that applies the
@@ -881,8 +885,9 @@ Nothing is wired to the client in this leaf.
 Planned: `DATABASE_URL=... GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_attention_client.py`.
 
 **Acceptance:**
-- 4.2.1 - The client sends each operation to its loopback route with the backend secret and no proxy environment, maps the responses, and raises `AttentionServiceUnavailable` when the connection fails or the secret is missing. test: `tests/storage/test_attention_client.py::test_client_wire_contract`.
+- 4.2.1 - The client sends each operation to its loopback route with the backend secret and no proxy environment, maps the responses, and raises `AttentionServiceUnavailable` from a transition when the connection fails or the secret is missing. test: `tests/storage/test_attention_client.py::test_client_wire_contract`.
 - 4.2.2 - The fake transport passes every 1.1 transition vector, including `expected_payload`. test: `tests/storage/test_attention_client.py::test_fake_transport_matches_transition_vectors`.
+- 4.2.3 - When the service is unavailable, metadata set and clear log a warning and drop the change without raising, while invalid metadata still raises its validation error. test: `tests/storage/test_attention_client.py::test_metadata_unavailable_is_dropped`.
 
 ### 4.3 Native takeover and Python attention retirement [category: code] (depends: 4.2, #24967)
 `kind: deliverable`
@@ -913,6 +918,7 @@ Targets:
 - `tests/servers/test_node_routes.py::*` — scope-reason: assert the transitions sent instead of Python-published events
 - `tests/sessions/test_turn_lifecycle.py::*` — scope-reason: drop the removed epoch constructor argument
 - `tests/sessions/test_turn_lifecycle_cas.py`
+- `tests/storage/test_attention_client.py` — edit the file created by 4.2 to assert Python keeps no attention ordering state
 - `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
 - `tests/storage/test_terminal_bindings.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
 - `tests/config/test_config_authority_audit.py::*` — scope-reason: remove the deleted attention route path
@@ -981,7 +987,9 @@ then replays the same evidence and asserts the status is repaired.
 `src/gobby/runner_init/orchestration.py` and into the new split module
 `src/gobby/runner_init/attention_clients.py`, as `init_attention_clients(runner)`.
 It sets `runner.attention_manager` and `runner.attention_metadata_store` before
-their consumers at the current lines 532 and 599-600, and the
+their consumers: the `attention_manager=` argument to the `WakeDispatcher`
+construction, and the `attention_manager=` and `attention_metadata_store=`
+arguments to the lifecycle monitor construction. The
 `publish_attention_event` and `publish_attention_metadata` closures are deleted.
 This shrinks orchestration.py, which is at 896 lines.
 
