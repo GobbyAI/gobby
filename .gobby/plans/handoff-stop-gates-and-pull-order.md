@@ -316,3 +316,58 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
   seat as Plan Adversary gobby#18400. It re-reviewed `9d51b37` and found no blocking
   findings, no nits and no unresolved decisions. Writer gobby#18340 and Plan Adversary
   gobby#18400 reached consensus on this revision.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Guard the plan-mode skill directive on a pending pull
+  category: config
+  task_type: chore
+  depends_on: []
+  validation_criteria: '2.3.1: The plan-mode entry rule''s when starts with `not variables.get(''handoff_pull_pending'')`
+    and keeps the plan-mode and directive-delivered clauses. file: `src/gobby/install/shared/workflows/rules/plan-mode/handle-plan-mode-entry.yaml`.
+
+    2.3.2: With a pull pending, a plan-mode turn start delivers no plan-reference
+    directive and leaves the delivered flag unset; after the pull marker clears, the
+    next turn start delivers it once. test: `tests/workflows/test_plan_mode_rules.py::TestHandlePlanModeEntry::test_skill_directive_waits_for_pending_handoff_pull`.'
+  labels:
+  - covers:handoff-stop-gates-and-pull-order:2.3:2.3.1
+  - covers:handoff-stop-gates-and-pull-order:2.3:2.3.2
+  tdd: false
+  source_section: '2.3'
+  assigned_agent: developer
+- title: Put the wheel-manifest parity test behind an opt-in flag
+  category: test
+  task_type: chore
+  depends_on: []
+  validation_criteria: '4.1.1: The module carries a `pytestmark` list of `pytest.mark.integration`
+    and a skipif on `GOBBY_RUN_WHEEL_MANIFEST_PARITY`, so the test is skipped without
+    the variable and runs with it set to 1. test: `tests/install/test_bundled_content_manifest.py::test_manifest_membership_matches_wheel`.
+
+    4.1.2: The CI test job env exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and
+    the CI-contract test asserts it. test: `tests/ci/test_postgres_test_stack.py::test_ci_test_job_builds_and_runs_local_postgres_test_container`.
+
+    4.1.3: The pre-push selection block ignores the manifest module unless `GOBBY_RUN_WHEEL_MANIFEST_PARITY`
+    is 1. file: `pre-push-test.sh`.
+
+    4.1.4: The opt-in registry test asserts the new variable and its ignore target.
+    test: `tests/ci/test_postgres_test_stack.py::test_pre_push_excludes_live_opt_in_tests_by_default`.
+
+    4.1.5: No `GOBBY_RUN_BUILD_CANARY` branch or build-canary deselect remains in
+    the pre-push script, and the registry test no longer asserts either. file: `pre-push-test.sh`.
+
+    4.1.6: The `release-branch-ci` job env in `.github/workflows/postgres-pgsearch-smoke.yml`
+    exports `GOBBY_RUN_WHEEL_MANIFEST_PARITY: "1"`, and the release-workflow test
+    asserts it. test: `tests/ci/test_release_branch_prerequisites.py::test_release_workflow_provisions_pre_push_tools_and_falkor`.'
+  labels:
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.1
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.2
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.3
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.4
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.5
+  - covers:handoff-stop-gates-and-pull-order:4.1:4.1.6
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: developer
+```
