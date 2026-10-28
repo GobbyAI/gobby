@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import Future as ThreadFuture
 from concurrent.futures import ThreadPoolExecutor
@@ -46,6 +47,7 @@ from gobby.config.runtime_projection import (
     runtime_bindings as _runtime_bindings,
 )
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
+from gobby.storage.hub.operation_deadline import database_operation_deadline
 
 __all__ = [
     "ApplyFailure",
@@ -625,16 +627,40 @@ class ConfigRuntime:
                 dict(stored.overrides), stored.secret_bindings
             )
 
-        return await self._run_db(read)
+        return await self._run_db(read, label="read")
 
-    async def _run_db(self, operation: Callable[[], _T]) -> _T:
+    async def _run_db(self, operation: Callable[[], _T], *, label: str = "db") -> _T:
+        started = time.monotonic()
         try:
             await asyncio.wait_for(self._db_capacity.acquire(), timeout=self._db_timeout)
         except TimeoutError as exc:
+            logger.warning(
+                "config-db %s admission timed out after %.3fs",
+                label,
+                time.monotonic() - started,
+            )
             raise ConfigRuntimeError("Database lane admission timed out") from exc
+        admitted = time.monotonic()
+        marks: dict[str, float] = {"submitted": time.monotonic()}
+
+        def bounded() -> _T:
+            # The worker outlives the caller's wait. Running under the same budget
+            # bounds pool acquisition and every statement, so the lane frees on time.
+            marks["began"] = time.monotonic()
+            try:
+                with database_operation_deadline(timeout_seconds=self._db_timeout):
+                    return operation()
+            finally:
+                logger.debug(
+                    "config-db %s queued=%.3fs run=%.3fs",
+                    label,
+                    marks["began"] - marks["submitted"],
+                    time.monotonic() - marks["began"],
+                )
+
         loop = asyncio.get_running_loop()
         try:
-            future = self._db_executor.submit(operation)
+            future = self._db_executor.submit(bounded)
         except BaseException:
             self._db_capacity.release()
             raise
@@ -645,6 +671,15 @@ class ConfigRuntime:
                 timeout=self._db_timeout,
             )
         except TimeoutError as exc:
+            now = time.monotonic()
+            began = marks.get("began")
+            logger.warning(
+                "config-db %s timed out: admission=%.3fs queued=%s running=%s",
+                label,
+                admitted - started,
+                f"{began - marks['submitted']:.3f}s" if began is not None else "not-started",
+                f"{now - began:.3f}s" if began is not None else "-",
+            )
             raise ConfigRuntimeError("Bounded configuration database work timed out") from exc
 
     @staticmethod
@@ -759,7 +794,7 @@ class ConfigRuntime:
         if publisher is None:
             return
         try:
-            await self._run_db(lambda: publisher(snapshot))
+            await self._run_db(lambda: publisher(snapshot), label="publish")
         except asyncio.CancelledError:
             raise
         except Exception:
