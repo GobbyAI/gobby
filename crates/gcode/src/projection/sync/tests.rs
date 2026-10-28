@@ -388,6 +388,17 @@ pub(crate) mod serial_db {
         (ctx, source, source_cleanup, overlay_cleanup)
     }
 
+    /// Direct-route lifecycle over the fixture's mock Qdrant and embedding service.
+    fn direct_vector_lifecycle(ctx: &Context) -> CodeSymbolVectorLifecycle {
+        CodeSymbolVectorLifecycle::new(
+            ctx.project_id.clone(),
+            ctx.qdrant.clone().expect("qdrant config"),
+            ctx.embedding.clone().expect("embedding config"),
+            ctx.code_vectors.clone(),
+        )
+        .expect("vector lifecycle")
+    }
+
     fn pinned_vector_service(
         ctx: &mut Context,
         on_upsert: impl FnOnce() + Send + 'static,
@@ -446,7 +457,7 @@ pub(crate) mod serial_db {
         let (mut ctx, source, _source_cleanup, _overlay_cleanup) =
             pinned_fixture(&mut conn, &database_url);
         let server = pinned_vector_service(&mut ctx, || {});
-        let lifecycle = vector_lifecycle_from_context(&ctx).expect("vector lifecycle");
+        let lifecycle = direct_vector_lifecycle(&ctx);
         let mut state = VectorProjectionState {
             ctx: &ctx,
             conn,
@@ -562,7 +573,7 @@ pub(crate) mod serial_db {
                         }
                     })
                 };
-            let lifecycle = vector_lifecycle_from_context(&ctx).expect("vector lifecycle");
+            let lifecycle = direct_vector_lifecycle(&ctx);
             let mut state = VectorProjectionState {
                 ctx: &ctx,
                 conn,
