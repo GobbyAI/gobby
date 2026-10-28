@@ -6,7 +6,8 @@ mod host_support;
 
 use base64::Engine;
 use host_support::{
-    committed_pane, control, pane_text, rpc, spawn_host, temp_socket_dir, wait_until, write_token,
+    committed_pane, control, pane_text, rpc, spawn_host, temp_socket_dir, wait_socket, wait_until,
+    write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
 
@@ -16,6 +17,7 @@ fn batch_paste_preserves_long_prompt_and_separate_return() {
     let token = "batch-paste-isolated-token";
     write_token(dir.path(), token);
     let mut host = spawn_host(dir.path());
+    wait_socket(&dir.path().join(CONTROL_SOCKET));
     let mut stream = control(dir.path(), token);
     let text = format!("HEAD:{}:TAIL", "界".repeat(2001));
     let expected = [b"\x1b[200~".as_slice(), text.as_bytes(), b"\x1b[201~\r"].concat();
