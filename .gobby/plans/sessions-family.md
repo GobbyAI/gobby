@@ -36,7 +36,7 @@ Python registrations and keeps only dropped rows for absent surfaces
 (Orchestrator ruling 2026-10-28, as the projects plan records removed
 routes).
 
-- 29 HTTP rows are served natively and their Python routes are deleted. 25
+- 29 HTTP rows are served natively and their Python routes are deleted. 26
   switch at 7.2 and 7.3 deletes their Python routes; `GET /api/sessions`
   (ACP enrichment and resumability, 8.5) and the two ACP rows (8.4) switch
   and delete in their P8 leaves. `POST /api/sessions/{session_id}/release-composer`
@@ -284,7 +284,7 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
     layer, loopback client, rollback route or direct-storage writer stays in
     a Sessions surface's path. Deletions:
     - 7.3 deletes the Python CLI verbs and dropped commands, the Python
-      routes of the 25 rows that switch at 7.2, and Python's Sessions-owned
+      routes of the 26 rows that switch at 7.2, and Python's Sessions-owned
       expiry steps and transcript-processing loop with their storage
       functions.
     - 8.4, 8.5 and 8.7 each delete the Python route or handler they replace.
@@ -2508,7 +2508,7 @@ against `crates/gclient/tests/mock_daemon/mod.rs`, and
 7.1 admits browser callers through the shared verifier. 7.2 is the family's
 shipping commit: it makes Native the Sessions default, switches the Python
 loops off and releases the binaries. 7.3 deletes Sessions-owned Python: the
-CLI verbs and dropped commands, the routes of the 25 switched rows, and the
+CLI verbs and dropped commands, the routes of the 26 switched rows, and the
 Python expiry and processing loops (Decision Record item 15). 7.4 records the
 ledger and documentation.
 
@@ -2537,10 +2537,9 @@ Targets:
   `browser-testing.` cookies keep the managed rules: live capability,
   loopback peer and host, Python's per-route allowance, and project and
   session selectors that match the verified managed session.
-- Rows registered for `Caller::Browser`, exactly these 25 method and path
+- Rows registered for `Caller::Browser`, exactly these 24 method and path
   pairs:
-  - GET: `/api/sessions` without `include_resumability`,
-    `/api/sessions/usage`, `/api/sessions/{session_id}`,
+  - GET: `/api/sessions/usage`, `/api/sessions/{session_id}`,
     `/api/sessions/{session_id}/changes`,
     `/api/sessions/{session_id}/changes/diff`,
     `/api/sessions/{session_id}/messages`,
@@ -2561,7 +2560,8 @@ Targets:
   - DELETE: `/api/sessions/{session_id}/stop`.
 - Never browser-admitted: the two operator-only routes (2.5) and the native
   `DELETE /api/sessions/{session_id}`, which serves API-key callers only.
-  The P8 rows register their own browser admission.
+  The P8 rows, `GET /api/sessions` among them (8.5), register their own
+  browser admission.
 - Until this leaf ships with Security approval of its exact SHA, every
   Sessions cookie request stays proxied in every switch state. Once
   admitted, a verifier denial never falls through to a native handler.
@@ -2572,7 +2572,7 @@ Targets:
 **Acceptance:**
 
 - 7.1.1 - Ordinary cookies reproduce Python's admission, payloads and errors
-  on each of the 25 rows through the shared verifier only.
+  on each of the 24 rows through the shared verifier only.
   test: `crates/gdaemon/tests/sessions_browser.rs::ordinary_cookie_routes_match_python`.
 - 7.1.2 - Managed cookies keep loopback, live-capability, per-route and
   selector checks, and refused requests reach no Sessions effect.
@@ -2595,14 +2595,22 @@ stub. Nothing has run during drafting.
 
 Targets:
 - `crates/gsessions/src/family.rs`
-- `src/gobby/sessions/lifecycle.py::*` — scope-reason: skip the transcript-processing loop and the stale-session expiry step when this machine's bootstrap selects Native for sessions
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: skip the transcript-processing loop and the Sessions-owned expiry steps when this machine's bootstrap selects Native for sessions
+- `crates/gdaemon/src/front_door/sessions.rs`
+- `crates/gdaemon/src/sessions_ports.rs`
+- `crates/gdaemon/src/lib.rs`
+- `crates/gmemory/src/lib.rs`
+- `crates/gmemory/src/session_reads.rs`
+- `crates/gskills/src/lib.rs`
+- `crates/gskills/src/session_reads.rs`
 - `crates/gdaemon/Cargo.toml`
 - `crates/gcode/Cargo.toml`
 - `crates/ghook/Cargo.toml`
 - `crates/gclient/Cargo.toml`
 - `Cargo.lock`
-- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `src/gobby/install/version_pins.py::*` — scope-reason: keep the managed release pins coherent with the four bumped binaries
 - `crates/gdaemon/tests/sessions_cutover.rs`
+- `crates/gdaemon/tests/sessions_ports.rs`
 - `tests/sessions/test_lifecycle_native_owner.py`
 - `tests/e2e/test_sessions_native.py`
 - `docs/contracts/sessions-native.md`
@@ -2634,17 +2642,37 @@ Consumers unchanged:
 **Research context:**
 - Switch: `crates/gcore/src/route_family.rs::RouteFamily` supplies
   `default_backend`; this leaf makes Native the Sessions default. Proxy and
-  Compare stay selectable through `front_door.routes` for rollback. The
-  Sessions jobs (4.2) and the node's `transcript.process` (3.9) follow the
-  effective selection.
+  Compare stay selectable through `front_door.routes` for rollback only
+  until 7.3 deletes the Python routes and loops; after that, rollback means
+  the prior coherent release (Decision 15). The Sessions jobs (4.2) and the
+  node's `transcript.process` (3.9) follow the effective selection.
+- Port adapters (Decision 7): the new `crates/gdaemon/src/sessions_ports.rs`
+  implements the `crates/gsessions/src/ports.rs` traits, and `sessions.rs`
+  binds them when it builds the family:
+  - gagents: `run_rows`, `move_run_lineage` and `containing_worktree_id`
+    from `agents-family 3.6`'s `session_port.rs`.
+  - gmemory: the memory count, session memories and retained-reference
+    reads, added as narrow functions in `crates/gmemory/src/session_reads.rs`
+    (`memory-family 1.1` creates the crate).
+  - gskills: the distinct skill count, added in
+    `crates/gskills/src/session_reads.rs` (`gdaemon-skills-family 1.6` owns
+    `session_skills`).
+  - Workflows: the transitional adapters for the `workflow_audit_log`
+    reference check and the `agent_step_instances` step-variable statements
+    (Orchestrator ruling A). They run only those statements, and #25279
+    replaces and deletes them.
+  The three cross-plan edges (`agents-family 3.6`, `memory-family 1.1`,
+  `gdaemon-skills-family 1.6`) are converted by the Orchestrator at
+  expansion. The pipeline and web-chat adapters land in 8.4 and 8.5.
 - Python switch-off (Decision Record item 5): `src/gobby/config/bootstrap.py`
   types `front_door.routes` as `proxy`, `native` or `compare`.
   `SessionLifecycleManager.start` skips `_process_loop`, and
-  `SessionLifecycleManager._sweep_shared_rows` skips `_expire_stale_sessions`,
-  when this machine's bootstrap selects Native for `sessions`; an absent key
-  means Native, matching the new family default, and a test pins both
-  defaults together. The other sweeps, the knowledge-graph queue and
-  prompt-file cleanup keep running. `src/gobby/runner_lifecycle_subsystems.py`
+  `SessionLifecycleManager._sweep_shared_rows` skips the Sessions-owned steps
+  of `_expire_stale_sessions`, when this machine's bootstrap selects Native
+  for `sessions`; an absent key means Native, matching the new family
+  default, and a test pins both defaults together. The three foreign expiry
+  pieces (Decision 5), the other sweeps, the knowledge-graph queue and
+  prompt-file cleanup keep running in every mode. `src/gobby/runner_lifecycle_subsystems.py`
   needs no edit: its hub and node paths both call `start`. 2.2's status
   notification bridge keeps running in both modes.
 - Readiness: consume #24963's shared manifest and readiness result. Every
@@ -2669,8 +2697,9 @@ Consumers unchanged:
   Orchestrator delegates cutover. No push is authorized here.
 
 **Granularity:** The targets and acceptance items belong to one activation
-and release state machine; 7.3 and 7.4 record the retirement and ledger
-separately.
+and release state machine. The family cannot activate with unbound ports,
+so the adapters and the owners' narrow functions ship in the same release;
+7.3 and 7.4 record the retirement and ledger separately.
 
 **Acceptance:**
 
@@ -2681,20 +2710,26 @@ separately.
   unknown or stale waivers, and accepts the family's exact waivers with
   ordinary parity Passed. test: `crates/gdaemon/tests/sessions_cutover.rs::waiver_readiness_gates_activation`.
 - 7.2.3 - With Native selected or the key absent, Python starts neither
-  transcript processing nor stale-session expiry and keeps its other
-  sweeps; with Proxy or Compare it keeps both loops.
+  transcript processing nor the Sessions-owned expiry steps and keeps the
+  three foreign pieces and its other sweeps; with Proxy or Compare it keeps
+  both loops.
   test: `tests/sessions/test_lifecycle_native_owner.py::test_native_selection_moves_both_loops`.
 - 7.2.4 - With the Python backend unavailable, the 26 HTTP rows and the
-  nine CLI verbs work natively on a hub and a standalone daemon, and remote
-  transcript reads reach a node. test: `tests/e2e/test_sessions_native.py::test_rows_work_without_python_backend`.
+  eight `gclient sessions` verbs work natively on a hub and a standalone
+  daemon, and remote transcript reads reach a node.
+  test: `tests/e2e/test_sessions_native.py::test_rows_work_without_python_backend`.
 - 7.2.5 - Shipping manifests, `Cargo.lock` and pins agree at the required
   patch increments. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 7.2.6 - The runbook records build and installed hashes, compared cases,
   the rollback selection, the announcement, health, the Security approvals
   and native smoke evidence.
   behavior: "Sessions activation evidence" in `docs/contracts/sessions-native.md`.
+- 7.2.7 - Each bound adapter answers its port call from its owner's
+  function, the transitional Workflows adapters run only their named
+  statements, and an owner error propagates as the shared internal error.
+  test: `crates/gdaemon/tests/sessions_ports.rs::adapters_call_owner_functions`.
 
-Planned verification: `cargo nextest run -p gobby-daemon --test sessions_cutover`;
+Planned verification: `cargo nextest run -p gobby-daemon --test sessions_cutover --test sessions_ports`;
 `tests/sessions/test_lifecycle_native_owner.py` and the e2e test with the
 protected Python prefix; scoped Ruff and mypy; the version-pin test; the
 release build and Orchestrator-directed cutover. These are execution gates,
