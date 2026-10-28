@@ -10,8 +10,8 @@ Plan artifact: `.gobby/plans/agents-family.md`
 Port the agents, dispatch and worktrees family (epic #21564) from Python
 ownership to native Rust services with machine scoping. The bounded
 inventory is 124 proxied ledger rows: the 120 whose notes name #21564 after
-the re-homes below, and four node rows the Orchestrator assigned here
-(Decision 14):
+the re-homes below, which this plan ports, and four node rows whose ownership
+the Orchestrator assigned here without a port (Decision 14):
 
 - `docs/contracts/parity-ledger-status.d/sessions-agents.json` holds 63:
   28 `MCP gobby-agents:*` tools, 21 `HTTP ... /api/agents/*` routes and 14
@@ -28,9 +28,8 @@ the re-homes below, and four node rows the Orchestrator assigned here
 The rendered `docs/contracts/parity-ledger.md` is generated. This plan does
 not expand work or authorize a restart, cutover or push.
 
-The work is necessary: all 124 rows are proxied, and gdaemon has no
-`/api/agents`, `/api/source-control/{worktrees,clones}`, `/api/nodes/report`
-or `/api/nodes/runs` handler and no
+The work is necessary: all 120 ported rows are proxied, and gdaemon has no
+`/api/agents` or `/api/source-control/{worktrees,clones}` handler and no
 `gobby-agents`, `gobby-worktrees` or `gobby-clones` tool family. Native
 pieces already exist and are reused: the hub terminal host
 (`gobby_terminals::family::TerminalFamily`, started by
@@ -42,12 +41,12 @@ frames in `crates/gdaemon/src/node_commands.rs`), node-side workspace and
 sandbox launch code under `crates/gdaemon/src/nodes/agents/`, and the pane
 detectors in `crates/gdaemon/src/pane_detection/`. Restraint stops at one
 library crate, `crates/gagents` (package `gobby-agents`, lib
-`gobby_agents`), statically linked into gdaemon; three `RouteFamily`
+`gobby_agents`), statically linked into gdaemon; two `RouteFamily`
 instances; three `ToolFamily` descriptors; one machine-effects seam that
 gdaemon implements; and the existing tables. No new process, executable,
 database table or second terminal host is added.
 
-Three route families give the surface groups independent activation, each
+Two route families give the surface groups independent activation, each
 with its own `front_door.routes.<name>` key and a default of Proxy:
 
 - `agents` claims `/api/agents`: 21 HTTP rows.
@@ -56,16 +55,19 @@ with its own `front_door.routes.<name>` key and a default of Proxy:
   `crates/gdaemon/src/front_door/routes.rs::RouteTable::lookup` picks the
   longest matching prefix, so `/api/source-control/branches`, `/diff` and
   `/status` (#21584) never resolve to `checkouts`.
-- `node-runs` claims exactly `/api/nodes/report` and `/api/nodes/runs`: four
-  HTTP rows. It stays on Proxy throughout this plan (Decision 14).
+
+No family claims `/api/nodes/report` or `/api/nodes/runs`; those four rows
+stay Python-served (Decision 14).
 
 The 58 MCP rows gain native descriptors and handlers whose schema and result
 parity is proven here; they stay proxied until #21570 flips the internal MCP
 registries (Decision 4). The 32 CLI rows move to native `gdaemon agents`,
 `gdaemon worktrees` and `gdaemon clones` commands, and the public `gobby`
 groups forward to them one subcommand per verb (Decision 5). Activation order
-is `checkouts` (11.1), then `agents` (11.2), which also moves the hub pane
-steps; 11.3 records the ledger result.
+is `checkouts` (11.1), which publishes its own ledger rows, then `agents`
+(11.2), which also moves the hub pane steps; 11.3 records the remaining
+ledger result. One time-boxed Python route, 2.0, lets native code read the
+hub's in-memory reported pane store until #25269 ports it (Decision 10).
 
 **Re-homed and excluded rows.** Three rows that name #21564 belong to other
 owners. The Orchestrator's AF-Q1 ruling (2026-10-28) moves `WS message
@@ -81,12 +83,12 @@ belong to #24149, and `CLI gobby nodes` and `CLI gobby nodes list` to
 **Boundaries.** The hub half of hub/node operation (#24149) owns
 `attention_states` transitions, ordering, metadata and event publishing as a
 native service that Python writers reach through a loopback route; this
-family's pane monitor and report ingress write attention through it. Node
+family's pane monitor writes attention through it. Node
 halves (#24148) own node-side launch (#24375), the node pane monitor
 (#24383) and the node command contract; this plan reuses both and adds the
 hub-local case. Hook ingress (#24151) keeps `GET
-/api/nodes/detection-manifests`; the node report and run-outcome routes and
-the reported pane store are this plan's (Decision 14). WS chat (#21592) owns the native web-chat
+/api/nodes/detection-manifests`; the node report and run-outcome rows and
+the reported pane store are owned here and stay Python-served (Decision 14). WS chat (#21592) owns the native web-chat
 runtime and supplies the web-chat wake seam. Merge and source-control
 status (#21584) own `gobby-merge` and the other `/api/source-control`
 routes. Future messaging channels (#24173) extend the mailbox under their own
@@ -109,7 +111,7 @@ both plans push families in `crates/gdaemon/src/serve.rs`, which 1.1, 2.2,
 11.1 and 11.2 edit. The landings serialize, and each later one rebases onto
 the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
 (`.gobby/plans/s2-11-hub-hooks-rules.md`) drops `/api/nodes/report` and
-`/api/nodes/runs` from its `hooks` family, so no two families claim them.
+`/api/nodes/runs` from its `hooks` family, so no native family claims them.
 
 ## Decision Record
 `kind: framing`
@@ -129,14 +131,16 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
    hub-local runs and leaves the rest of the lifecycle monitor in Python;
    AF-Q3(a) ports the inter-session mailbox and the coordination-wait
    contract unchanged; AF-Q4 keeps all 23 clone rows. The clone CLI route
-   failure is dropped through exact waivers (Debt not to port). A later
-   ruling assigns the node report and run-outcome rows here (Decision 14).
+   failure is dropped through exact waivers (Debt not to port). Later
+   rulings assign ownership of the node report and run-outcome rows here
+   without a port (Decision 14) and keep remote live output Python-served
+   (Decision 12).
 3. One crate, `crates/gagents`, holds every family service: definitions,
    runs, checkouts (worktrees and clones), spawn admission and execution,
    termination, mailbox, wake decisions, coordination waits, seats, the MCP
    adapters and the CLI trees. Worktrees and clones share machine ownership,
    git effects and the node `workspace.*` and `checkout.*` commands with
-   spawn, so a second crate would split one ownership model. Three route
+   spawn, so a second crate would split one ownership model. Two route
    families keep the HTTP groups independently activatable.
 4. MCP rows. The family publishes three descriptors through #24883's
    `crates/gcore/src/mcp.rs::ToolFamily` and proves catalog, schema and
@@ -159,7 +163,8 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
    hub launch (4.1) and the hub terminal host; another machine receives the
    matching node command through `Registry::command_sender` and
    `CommandSender::request`, with the routing and hub-flow codes of
-   `docs/contracts/node-commands.md` (v4). The trait exists because gdaemon
+   `docs/contracts/node-commands.md` (v4). A pane on another machine is read
+   from the hub's reported pane store through 2.0's route (Decision 12). The trait exists because gdaemon
    depends on gagents, and these effects need gdaemon's node registry,
    launch code and terminal host; tests use doubles. Worktree and clone git
    operations for the hub's own machine run in gagents with the `git`
@@ -191,15 +196,21 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
    ports `src/gobby/events/wake.py::WakeDispatcher` for wakes the native
    mailbox and coordination waits produce. It injects through the terminal
    write path locally and `terminal.write` remotely, and reaches web-chat
-   sessions through the seam #21592 supplies. Python's dispatcher keeps
+   sessions through the seam #21592 supplies. A terminal on another machine
+   takes a live wake only when its reported composer is empty, as
+   `WakeDispatcher._composer_blocks_wake` decides; the native decision reads
+   that composer state through 2.0's route. Python's dispatcher keeps
    serving Python callers. Both read the same durable session and mailbox
    state, so eligibility agrees.
 10. Python modules stay as the proxy backend. Route and tool modules, storage
     managers and the remote-routing helpers in `src/gobby/hub/` are unchanged
-    until global Python removal, as in the AI providers plan. Only 10.4
-    (CLI forwarding) and 11.2 (pane-step scheduling and the idle path's local
-    attention sync) edit Python. No Target names a Python production file of
-    850 lines or more except 11.2's typed `delete-lines` proof.
+    until global Python removal, as in the AI providers plan. Only 2.0 (the
+    reported pane route), 10.4 (CLI forwarding) and 11.2 (pane-step
+    scheduling and the idle path's local attention sync) edit Python. No
+    Target names a Python production file of 850 lines or more except 11.2's
+    typed `delete-lines` proof. 2.0 is a named, time-boxed exception (D-AF-5,
+    Orchestrator ruling relayed by Triage on 2026-10-28): it retires when the
+    node-runs port (#25269) gives the native side its own reported pane store.
 11. Admission. No `/api/agents` or `/api/source-control` route appears in
     `src/gobby/servers/auth_service.py::_AGENT_CAPABILITY_MATRIX` or
     `src/gobby/servers/grant_auth.py::_GRANT_ROUTES`, so every HTTP row
@@ -207,33 +218,40 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
     declares that class per route and fails closed; 11.1 binds it to #25046's
     reusable native admission. MCP rows reach the tools through #24884's
     gateway after #21570.
-12. Remote live output. Python serves a remote run's capture and live output
-    from the hub's in-memory store of node-reported pane tails
-    (`src/gobby/hub/remote_pane.py::RemotePaneStore`, read by
-    `src/gobby/hub/remote_runtime.py::RemoteTerminalRuntime.snapshot`), not
-    a node command. The native read does the same through 8.2's native store;
-    no node command is added. Until 8.2 binds that store, and while
-    `node-runs` stays on Proxy so no report reaches it, gdaemon's remote pane
-    read returns the empty tail that `RemoteTerminalRuntime.snapshot` returns
-    for a remote run with no reported pane.
+12. Remote panes (D-AF-5). Python reads a pane on another machine from the
+    hub's in-memory store of node-reported panes
+    (`src/gobby/hub/remote_pane.py::RemotePaneStore`), never through a node
+    command. `src/gobby/hub/remote_runtime.py::RemoteTerminalRuntime` serves
+    the stored tail to live output, `wait_for_output` and capture before
+    kill, `remote_composer_state` serves the composer to the wake gate, and a
+    successful remote stop marks the entry stopped. The store lives in the
+    Python process and stays there until #25269, so 2.0 adds one
+    loopback-only internal Python route over it: read the tail and composer
+    state, and mark an entry stopped. gdaemon's effects use it for every
+    remote pane read; no node command is added. The two live-pane MCP rows,
+    `get_agent_live_output` and `wait_for_output`, still stay proxied after
+    #21570's flip until the node-runs port lands (Orchestrator ruling,
+    2026-10-28). `get_agent_capture` reads the capture persisted in the run's
+    result and never reads a pane.
 13. Activation. 11.1 activates `checkouts` and 11.2 activates `agents`; each
     is a shipping commit with release bumps, promotion through
     `src/gobby/install/bin_set_coherence.py::promote_workspace_binary_set`
-    and an Orchestrator-delegated cutover. 11.3 records the ledger last.
+    and an Orchestrator-delegated cutover. 11.1 publishes the rows its
+    cutover makes native; 11.3 records the rest of the ledger last.
 14. Node report and run-outcome rows. The Orchestrator's ruling, relayed by
     Triage on 2026-10-28 (option A of the S2.11 hub plan's Decision R),
-    assigns `HTTP POST /api/nodes/report`, the three `HTTP POST
-    /api/nodes/runs/*` rows and the reported pane store to 8.2; #24151 keeps
-    `GET /api/nodes/detection-manifests`. The routes stay Python-served until
-    the reconciler and the idle check go native. Python's report route
-    applies pane tails to its in-memory store and queues the report in an
-    in-memory inbox that `src/gobby/hub/remote_reconcile.py::RemoteRunReconciler`
-    drains; Python's idle check reads remote panes from that store, and AF-Q2
-    keeps both in Python. 8.2 therefore ports the four handlers and the store behind a
-    third route family, `node-runs`, proves their parity and leaves the
-    family on Proxy. 11.3 records the four rows as owned here and still
-    `proxied`. Switching `node-runs` needs those Python consumers ported
-    first, which this plan does not do.
+    assigns ownership of `HTTP POST /api/nodes/report`, the three `HTTP POST
+    /api/nodes/runs/*` rows and the reported pane store to this family, with
+    no native port here; #24151 keeps `GET /api/nodes/detection-manifests`.
+    The routes stay Python-served until the reconciler and the idle check go
+    native. Python's report route applies pane tails to its in-memory store
+    and queues the report in an in-memory inbox that
+    `src/gobby/hub/remote_reconcile.py::RemoteRunReconciler` drains; Python's
+    idle check reads remote panes from that store, and AF-Q2 keeps both in
+    Python. No family claims the two prefixes, and 11.3 records the four rows
+    as owned here and still `proxied`. #25269 (Plan the node-runs native
+    port, under #21542) owns the reconciler, remote idle and store port and
+    the retirement of 2.0's route.
 
 ## Debt not to port
 `kind: framing`
@@ -343,13 +361,15 @@ cloned database state, never by running the effect twice in production.
   `crates/gdaemon/Cargo.toml`, `crates/gdaemon/src/serve.rs`,
   `crates/gdaemon/src/main.rs`, `crates/gdaemon/src/lib.rs`,
   `crates/gdaemon/src/agent_effects.rs` and its test file,
-  `src/gobby/install/version_pins.py` and `docs/contracts/agents-native.md`)
-  has one ordered owner sequence. Two leaves branch off the chain. 8.1
-  follows 6.2 and edits `crates/gdaemon/src/lib.rs` after its last chain
-  owner, 4.1. 8.2 follows 10.3 and edits `crates/gagents/src/lib.rs` and
-  `agent_effects.rs` after their last chain owners, 10.1 and 6.1. 11.2 joins
-  both. 10.4 follows 11.1 so the public commands forward only to a released
-  gdaemon that carries the native command trees.
+  `src/gobby/install/version_pins.py`, `docs/contracts/agents-native.md`,
+  the parity shards and `docs/contracts/parity-ledger.md`) has one ordered
+  owner sequence. 2.0 has no internal dependency and joins the chain at 2.2,
+  the first consumer of its route; it edits the node-rows shard and the
+  ledger before 11.1 and 11.3. 8.1 branches off the chain after 6.1, whose
+  termination service it calls, and edits `crates/gdaemon/src/lib.rs` after
+  its last chain owner, 4.1; 11.2 joins it. 10.4 follows 11.1 so the public
+  commands forward only to a released gdaemon that carries the native
+  command trees.
 - Storage reuses the existing tables `agent_definitions`, `agent_runs`,
   `worktrees`, `clones`, `inter_session_messages` and `coordination_waits`
   (`crates/gcore/assets/schema/baseline.sql`) through the shared pool
@@ -393,14 +413,19 @@ cloned database state, never by running the effect twice in production.
 | `CLI gobby agents ...` | 14 | `sessions-agents.json` | 10.1 |
 | `CLI gobby worktrees ...` | 11 | `git-workspaces.json` | 10.2 |
 | `CLI gobby clones ...` | 7 | `git-workspaces.json` | 10.3 |
-| `HTTP POST /api/nodes/{report,runs/*}` | 4 | `comms-cron-hub-nodes.json` | 8.2 |
+| `HTTP POST /api/nodes/{report,runs/*}` (ownership only) | 4 | `comms-cron-hub-nodes.json` | 11.3 records |
 | Total | 124 | | |
 | `WS message workspace_*` (re-homed to #21565) | 3 | `websocket-chat-voice-ui.json` | 11.3 rewrites notes |
+| `HTTP GET` and `HTTP POST /_gobby/remote-pane` (new, private) | 2 | `comms-cron-hub-nodes.json` | 2.0 adds |
 
-11.3 sets the 62 HTTP and CLI rows of `agents` and `checkouts` to
-`delegated`, keeps the 58 MCP rows `proxied` with `Registry flip: #21570`,
-and keeps the four node rows `proxied` with a note citing 8.2 and Decision
-14's condition.
+11.1 sets the nine `checkouts` HTTP rows to `delegated` and keeps the 30
+checkouts MCP rows `proxied` with `Registry flip: #21570`. 11.3 sets the 35
+agents HTTP and CLI rows and the 18 checkouts CLI rows to `delegated`, keeps
+the 28 agents MCP rows `proxied` with `Registry flip: #21570`, and keeps the
+four node rows `proxied` with notes citing this family's ownership and
+Decision 14's condition. The two private rows 2.0 adds stay `proxied` with a
+note naming #25269 as their retirement owner; they are outside the 124 and
+their notes do not name #21564.
 
 ## Cross-plan edges set at expansion
 `kind: framing`
@@ -415,17 +440,18 @@ and keeps the four node rows `proxied` with a note citing 8.2 and Decision
   modules. 4.1 depends on it.
 - #24383 (open, blocked): node pane monitor. 4.1 depends on it because both
   edit `crates/gdaemon/src/nodes/agents/`; 8.1 generalizes its pass.
-- #24149 (open): native attention store and loopback transition route. 8.1,
-  8.2 and 11.2 depend on it.
+- #24149 (open): native attention store and loopback transition route. 8.1
+  and 11.2 depend on it.
 - #24151 (open, blocked): keeps `GET /api/nodes/detection-manifests`. No
-  dependency: under Decision 14, 8.2 owns the node report and run-outcome
-  routes and the pane store. Native remote capture and live output read
-  reported panes only once `node-runs` is native, so #21570's flip of
-  `gobby-agents` either waits for that switch or accepts empty remote tails;
-  the Orchestrator sets that edge on #21570's side.
+  dependency: under Decision 14 this family owns the node report and
+  run-outcome rows and the pane store, which stay Python-served.
 - `.gobby/plans/s2-11-hub-hooks-rules.md` (#24151's hub hooks plan): its
   `hooks` family does not claim `/api/nodes/report` or `/api/nodes/runs`
-  (Decision 14), so the two plans never claim one prefix.
+  (Decision 14), and neither does this plan, so the prefixes fall through to
+  Proxy.
+- #25269 (Plan the node-runs native port: reported pane store, remote idle
+  and the run reconciler, under #21542): retirement owner of 2.0's route
+  and of the four node rows' port. No dependency.
 - `.gobby/plans/apply-agent-definition.md`: its leaves may still change
   Python's `apply_agent_definition` and `apply_persona`. 0.1 freezes the
   behavior at collection; a later Python change to any corpus row requires
@@ -434,7 +460,11 @@ and keeps the four node rows `proxied` with a note citing 8.2 and Decision
   seam's use and 11.2 depends on #21592 for the runtime that supplies it.
 - #25046 (open): reusable native admission. 11.1 depends on it.
 - #21570, #24884 and #24885: MCP registry flip, gateway and compatibility
-  backend. No dependency; 11.3 records `Registry flip: #21570`.
+  backend. No dependency; 11.1 and 11.3 record `Registry flip: #21570`.
+  Edge on #21570's side (Orchestrator ruling, 2026-10-28): its flip keeps
+  `MCP gobby-agents:get_agent_live_output` and `MCP
+  gobby-agents:wait_for_output` proxied to Python until #25269's node-runs
+  port lands; empty remote tails are not accepted.
 - #21565: owns the three re-homed WS rows. No dependency.
 - Skills 5.1 and AI providers 7.5: contention on
   `crates/gdaemon/src/main.rs`, serialized by landing order.
@@ -561,16 +591,11 @@ Targets:
 - `crates/gagents/tests/fixtures/parity_launch.json`
 - `tests/contracts/test_agents_parity_corpus_launch.py`
 
-**Research context:** The group's 23 keys are the six HTTP rows `GET
+**Research context:** The group's 19 keys are the six HTTP rows `GET
 /api/agents/launch-defaults`, `POST /api/agents/spawn/prompt-preview`, `POST
 /api/agents/spawn`, `POST /api/agents/spawn/batch`
 (`src/gobby/servers/routes/agent_spawn.py::create_agent_spawn_router`), `POST
-/api/agents/runs/{run_id}/cancel` and `POST /api/agents/cleanup`; the four
-node rows `POST /api/nodes/report`
-(`src/gobby/servers/routes/nodes.py::create_nodes_router`) and `POST
-/api/nodes/runs/terminate`, `/prompt-delivery-failure` and
-`/code-index-warning`
-(`src/gobby/servers/routes/node_runs.py::create_node_runs_router`); the nine
+/api/agents/runs/{run_id}/cancel` and `POST /api/agents/cleanup`; the nine
 tools `can_spawn_agent`, `evaluate_spawn`, `spawn_agent`, `kill_agent`,
 `stop_agent`, `end_agent_run`, `unregister_agent`, `cancel_stale_helpers`
 and `checkpoint_agent_worktree`; and the four CLI rows `gobby agents spawn`,
@@ -592,24 +617,23 @@ temporary `PATH` record argv, environment keys (never values), working
 directory and stdin. The isolated terminal host records spawned commands and
 writes. Remote vectors record the `agent.spawn` and `agent.cancel` frames and
 cover `machine_cap_reached`, `remote_loopback_endpoint`, `spawn_in_doubt`
-and `not_stopped`. Each vector also records the run's final `agent_runs` row
-and the parent's mailbox delivery. Node-row vectors post scripted reports and
-run outcomes as the owning node and record the reported pane store's
-contents (`src/gobby/hub/remote_pane.py::RemotePaneStore`), attention
-transitions, byte-budget refusals and run state.
+and `not_stopped`. Each vector also records the run's final `agent_runs` row,
+including the capture written before kill, and the parent's mailbox
+delivery. Remote termination vectors seed the reported pane store
+(`src/gobby/hub/remote_pane.py::RemotePaneStore`) with a tail and record the
+captured tail and the entry's stopped flag.
 
 **Acceptance:**
 
-- 0.3.1 - The group inventory equals the exact 23-key predicate, every key
-  has a success and a failure case, and an out-of-group key such as `GET
-  /api/nodes/detection-manifests` is rejected.
+- 0.3.1 - The group inventory equals the exact 19-key predicate, every key
+  has a success and a failure case, and an out-of-group key such as `POST
+  /api/nodes/report` is rejected.
   test: `tests/contracts/test_agents_parity_corpus_launch.py::test_inventory_matches_group_predicate`.
 - 0.3.2 - Collection is reproducible, including recorded provider argv,
-  terminal writes, node frames, run rows and reported pane contents.
+  terminal writes, node frames, run rows and captured remote tails.
   test: `tests/contracts/test_agents_parity_corpus_launch.py::test_collection_is_reproducible`.
 - 0.3.3 - Each of the six agents HTTP rows records the full admission
-  matrix, and each of the four node rows records the owning-node,
-  foreign-node, operator and no-credential cases.
+  matrix.
   test: `tests/contracts/test_agents_parity_corpus_launch.py::test_http_admission_matrix`.
 - 0.3.4 - Local and remote spawn, cancel and stop record every hub-flow code
   and the resulting run and mailbox state.
@@ -649,9 +673,10 @@ Vectors cover every target kind (`session`, `parent`, `agent`, `project`,
 `global`), the `wake` default and explicit values, refused recipients
 (`message_recipient_not_allowed`), queued delivery to interrupted and
 waiting sessions, terminal-injected and web-chat wakes recorded through
-doubles, and coordination wait timeout, reply and cancel. This leaf also adds
-the partition check: the four group predicates are disjoint and their union
-is exactly the 124 owned keys.
+doubles, wakes to a node terminal under each reported composer state, and
+coordination wait timeout, reply and cancel. This leaf also adds the
+partition check: the four group predicates are disjoint and their union is
+exactly the 120 ported keys.
 
 **Acceptance:**
 
@@ -661,9 +686,10 @@ is exactly the 124 owned keys.
 - 0.4.2 - Collection is reproducible, including mailbox rows, wake records
   and coordination-wait rows.
   test: `tests/contracts/test_agents_parity_corpus_messaging.py::test_collection_is_reproducible`.
-- 0.4.3 - The four groups are disjoint and cover exactly the 124 owned keys:
-  the 120 that name #21564 outside the re-homed WS, attention and nodes CLI
-  rows, and the four node report and run-outcome rows.
+- 0.4.3 - The four groups are disjoint and cover exactly the 120 ported
+  keys: the ones that name #21564, excluding by exact key the re-homed WS,
+  attention and nodes CLI rows and the four node report and run-outcome
+  rows, which stay outside every group.
   test: `tests/contracts/test_agents_parity_corpus_messaging.py::test_groups_partition_the_family`.
 
 Planned verification: the three named tests with the protected Python prefix.
@@ -802,6 +828,65 @@ Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --te
 ## P2: Agent runs and live output
 `kind: framing`
 
+### 2.0 Loopback reported-pane route [category: code]
+`kind: deliverable`
+
+Targets:
+- `src/gobby/servers/routes/remote_pane_bridge.py`
+- `src/gobby/servers/_app_routes.py::register_routes`
+- `tests/servers/routes/test_remote_pane_bridge.py`
+- `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: add the two private reported-pane route records and retain every other record
+- `docs/contracts/parity-ledger.md`
+
+Consumers unchanged:
+- `src/gobby/servers/app_factory.py` — no-edit-reason: calls register_routes with an unchanged signature.
+- `tests/test_wiki_retirement_contract.py` — no-edit-reason: calls register_routes with an unchanged signature and asserts wiki routes only.
+
+**Research context:** Decisions 10 and 12 (D-AF-5). Python's reads of a
+pane on another machine live in `src/gobby/hub/remote_runtime.py`:
+`_stored_tail` returns the entry's tail, or the empty string for a missing,
+stopped or pane-less entry; `remote_composer_state` returns the entry's
+composer state, or `unknown` in those cases; and
+`RemoteTerminalRuntime.terminate` calls
+`src/gobby/hub/remote_pane.py::RemotePaneStore.mark_stopped` after a
+successful remote cancel. Add one router module at `/_gobby/remote-pane`.
+`GET` with the query parameters `terminal_id` and `machine_id` returns
+`{"tail": ..., "composer": ...}`, computed by those two helpers. `POST`
+with a JSON body of `terminal_id` and `machine_id` calls `mark_stopped`
+and returns 204. Admission copies the native WS bridge's pair proof
+(`src/gobby/servers/websocket/native_bridge.py::mount_native_bridge`): the
+peer must be loopback (`src/gobby/config/bootstrap.py::is_loopback_host`)
+and `X-Gobby-Front-Door` must equal
+`src/gobby/runner_backend.py::front_door_secret` under
+`secrets.compare_digest`. Anything else gets 403 before the store is
+touched, and a Python daemon started without gdaemon has no secret and
+refuses every request. gdaemon's front door hands every `/_gobby/` path to
+`crates/gdaemon/src/websocket/publish.rs::handle`, which answers 404
+outside its two paths, so no outside request reaches this route through
+the proxy. `scripts/generate_parity_ledger.py::http_surfaces` lists every
+application route, so both methods become ledger surfaces in this commit:
+record them as `proxied` with a note naming this leaf, the pair proof and
+#25269 as the retirement owner, never #21564, and regenerate the ledger.
+
+**Acceptance:**
+
+- 2.0.1 - A loopback request with the pair secret reads the tail and
+  composer state that the two helpers return for a live, stopped,
+  pane-less and missing entry.
+  test: `tests/servers/routes/test_remote_pane_bridge.py::test_read_matches_remote_runtime`.
+- 2.0.2 - A loopback request with the pair secret marks the entry stopped,
+  and later reads return the empty tail and `unknown`.
+  test: `tests/servers/routes/test_remote_pane_bridge.py::test_mark_stopped_matches_remote_runtime`.
+- 2.0.3 - A non-loopback peer, a missing or wrong secret, and a daemon
+  without a secret each get 403 and leave the store untouched.
+  test: `tests/servers/routes/test_remote_pane_bridge.py::test_refuses_without_pair_proof`.
+- 2.0.4 - The ledger lists both methods as `proxied` with the retirement
+  note. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
+
+Planned verification: the four named tests with the protected Python
+prefix; `uv run python scripts/generate_parity_ledger.py` run twice with no
+second-run diff; scoped Ruff and mypy; a changed-test type audit.
+
 ### 2.1 Run reads [category: code] (depends: 1.2)
 `kind: deliverable`
 
@@ -839,7 +924,7 @@ the family tables from them, as 1.2 did for the definition writes.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test runs`.
 
-### 2.2 Live output and gdaemon's machine effects [category: code] (depends: 2.1)
+### 2.2 Live output and gdaemon's machine effects [category: code] (depends: 2.1, 2.0)
 `kind: deliverable`
 
 Targets:
@@ -849,12 +934,14 @@ Targets:
 - `crates/gterminals/src/control.rs::ControlClient`
 - `crates/gdaemon/src/agent_effects.rs`
 - `crates/gdaemon/src/lib.rs`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: pass gdaemon's machine effects into the pool-gated agents and checkouts composition of both cfg-gated serve entry points
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: pass gdaemon's machine effects, with the Python backend address and pair secret, into the pool-gated agents and checkouts composition of both cfg-gated serve entry points
 - `crates/gdaemon/tests/agent_effects.rs`
 
-**Research context:** `get_agent_capture`, `get_agent_live_output` and
-`wait_for_output` in `src/gobby/mcp_proxy/tools/agents_query_tools.py` read a
-run's pane. Python reads a local pane with the host's `snapshot` method
+**Research context:** `get_agent_live_output` and `wait_for_output` in
+`src/gobby/mcp_proxy/tools/agents_query_tools.py` read a run's pane;
+`get_agent_capture` pages the capture persisted in the run's result
+(`src/gobby/mcp_proxy/tools/agents_payloads.py::_agent_capture_parts`).
+Python reads a local pane with the host's `snapshot` method
 (`src/gobby/terminals/host_client.py`, line counts and text mode per tool)
 and a remote pane from the reported store (Decision 12). The native
 `crates/gterminals/src/control.rs::ControlClient` has no `snapshot` request
@@ -866,7 +953,14 @@ whichever lands first adds it and the other consumes it.
 Create `crates/gdaemon/src/agent_effects.rs` with gdaemon's
 `MachineEffects` implementation. This leaf implements the pane read: a
 hub-local run is read through the hub terminal host's control client, and a
-remote run returns the empty tail until 8.2. Every other effect returns the
+remote run's tail and composer state come from 2.0's `GET`, with the last
+requested lines kept as `RemoteTerminalRuntime.snapshot` keeps them. The
+effects call the Python backend address with the `X-Gobby-Front-Door` pair
+secret, the address and secret gdaemon already gives its WS bridge leg
+(`crates/gdaemon/src/websocket/transport.rs`), through the hyper client
+gdaemon already depends on. A refused or unreachable route reads as a
+missing entry, empty tail and `unknown` composer, which is what Python's own
+read returns once its in-memory store is lost, and logs a warning. Every other effect returns the
 `unavailable` class until its owning leaf (3.2, 4.1, 5.2, 6.1) implements
 it; no route reaches those effects before then, because both families stay
 on Proxy and fail closed. Declare the module in `crates/gdaemon/src/lib.rs`
@@ -880,15 +974,18 @@ request; no part of that path is usable alone.
 
 **Acceptance:**
 
-- 2.2.1 - The capture service returns 0.1's recorded output for local and
-  remote runs. test: `crates/gagents/tests/run_output.rs::capture_matches_corpus`.
+- 2.2.1 - The capture service returns 0.1's recorded capture pages for
+  local and remote runs. test: `crates/gagents/tests/run_output.rs::capture_matches_corpus`.
 - 2.2.2 - The live-output service returns 0.1's recorded output, offsets
-  and limits. test: `crates/gagents/tests/run_output.rs::live_output_matches_corpus`.
+  and limits for local runs and for remote runs whose tail comes from the
+  reported store. test: `crates/gagents/tests/run_output.rs::live_output_matches_corpus`.
 - 2.2.3 - The wait-for-output service matches 0.1's matched, timed-out and
   ended-run outcomes. test: `crates/gagents/tests/run_output.rs::wait_for_output_matches_corpus`.
 - 2.2.4 - gdaemon's effects read a hub-local pane through the host
-  `snapshot` request, return the empty tail for a remote run and the
-  `unavailable` class for unimplemented effects.
+  `snapshot` request and a remote pane's tail and composer through 2.0's
+  route with the pair secret, read a refused or unreachable route as a
+  missing entry, and return the `unavailable` class for unimplemented
+  effects.
   test: `crates/gdaemon/tests/agent_effects.rs::pane_read_local_and_remote`.
 - 2.2.5 - The effects reach the composition only on hub and standalone with
   a pool; a node composes none.
@@ -1169,7 +1266,10 @@ and sends with `spawn_remote_route`; the frame comes from
 `src/gobby/hub/spawn_payload.py::build_spawn_payload`. One gagents service
 serves all three surfaces: admission (4.2), isolation through 3.x's worktree
 and clone services, the run row, and the spawn effect (4.1). `payload.rs`
-reproduces Python's frame byte for byte.
+reproduces Python's frame byte for byte. Failure cleanup captures the
+terminal's tail through 2.2's pane read before teardown, as
+`src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py` does through
+`snapshot_full`, so a remote run's tail comes from the reported store.
 
 **Acceptance:**
 
@@ -1255,7 +1355,12 @@ calls `src/gobby/events/wake.py::WakeDispatcher` (`wake`,
 `dispatch_live_wakes`, `_should_send_live_wake`). Port its decision for
 wakes the native mailbox and coordination waits produce (Decision 9): the
 `wake` default per target kind, queued delivery for interrupted,
-input-waiting and handoff-waiting sessions, and the live-wake choice.
+input-waiting and handoff-waiting sessions, and the live-wake choice. For a
+terminal on another machine, `WakeDispatcher._composer_blocks_wake` lets
+only a reported `empty` composer take the wake and skips the local activity
+probe and turn checks; the native decision reads that composer from 2.2's
+pane read, so a missing entry reads `unknown` and withholds the wake while
+the durable message waits for hook delivery.
 gdaemon's effects implement `terminal_write`: a hub-local terminal goes
 through the native write path
 (`crates/gterminals/src/write/wake_dispatch.rs::dispatch_wake`), and another
@@ -1266,7 +1371,8 @@ runtime to it, before any native caller exists.
 **Acceptance:**
 
 - 5.2.1 - Wake decisions match 0.4's recorded outcome for each session state
-  and `wake` value. test: `crates/gagents/tests/wake.rs::wake_decisions_match_corpus`.
+  and `wake` value, and for a node terminal under each reported composer
+  state. test: `crates/gagents/tests/wake.rs::wake_decisions_match_corpus`.
 - 5.2.2 - Web-chat wakes go through the seam trait and nowhere else.
   test: `crates/gagents/tests/wake.rs::web_chat_wakes_use_seam`.
 - 5.2.3 - The terminal-write effect writes a hub-local terminal through the
@@ -1325,9 +1431,15 @@ Targets:
 remote run, `src/gobby/hub/remote_cancel.py::cancel` with `not_stopped`.
 Keep the documented `kill` default difference (Debt not to port), terminal
 delivery of the result or handoff to the parent through 5.1, and
-`unregister_agent`'s reconcile contract. gdaemon's effects implement
-`cancel`: a hub-local run is stopped through the hub terminal host, and
-another machine's run receives `agent.cancel`.
+`unregister_agent`'s reconcile contract. Capture before kill follows
+`src/gobby/agents/capture.py::terminate_managed_runtime_async`: the tail is
+read through 2.2's pane read and written into the run's result between the
+capture markers before the stop, so a remote run's capture comes from the
+reported store. gdaemon's effects implement `cancel`: a hub-local run is
+stopped through the hub terminal host, and another machine's run receives
+`agent.cancel`; after a successful remote cancel the effect marks the entry
+stopped through 2.0's `POST`, as `RemoteTerminalRuntime.terminate` does, and
+skips that step with a warning when the route is refused or unreachable.
 
 **Acceptance:**
 
@@ -1337,8 +1449,9 @@ another machine's run receives `agent.cancel`.
 - 6.1.2 - The kill, stop, end and unregister services reproduce 0.3's run
   rows, parent deliveries and `not_stopped` outcomes.
   test: `crates/gagents/tests/termination.rs::termination_services_match_corpus`.
-- 6.1.3 - The cancel effect stops a hub-local run in process and sends
-  `agent.cancel` for another machine.
+- 6.1.3 - The cancel effect stops a hub-local run in process, sends
+  `agent.cancel` for another machine and then marks the reported entry
+  stopped through 2.0's route; the run's capture holds the stored tail.
   test: `crates/gdaemon/tests/agent_effects.rs::cancel_routes_local_and_remote`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test termination`;
@@ -1400,10 +1513,10 @@ them if it does.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test seats`.
 
-## P8: Hub pane steps and reported panes
+## P8: Hub pane steps
 `kind: framing`
 
-### 8.1 Native hub pane monitor [category: code] (depends: 6.2, #24383, #24149)
+### 8.1 Native hub pane monitor [category: code] (depends: 6.1, #24383, #24149)
 `kind: deliverable`
 
 Targets:
@@ -1445,63 +1558,6 @@ and `agent_health.py`. Nothing starts the hub monitor until 11.2.
   step. test: `crates/gdaemon/tests/hub_pane_monitor.rs::hub_pass_skips_remote_runs_and_idle`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test hub_pane_monitor --test node_agents`.
-
-### 8.2 Node report ingress, run outcomes and the reported pane store [category: code] (depends: 10.3, #24149)
-`kind: deliverable`
-
-Targets:
-- `crates/gagents/src/lib.rs`
-- `crates/gagents/src/node_reports/mod.rs`
-- `crates/gagents/src/node_reports/ingress.rs`
-- `crates/gagents/src/node_reports/outcomes.rs`
-- `crates/gagents/src/node_reports/pane_store.rs`
-- `crates/gagents/tests/node_reports.rs`
-- `crates/gdaemon/src/agent_effects.rs`
-- `crates/gdaemon/tests/agent_effects.rs`
-
-**Research context:** Decision 14. `report` in
-`src/gobby/servers/routes/nodes.py::create_nodes_router` checks the calling
-machine's front-door key identity, admits the body into
-`src/gobby/hub/node_reports.py::NodeReportInbox` under per-machine byte
-budgets (`stale_report` against the hub epoch, release on refusal), applies
-pane state through `src/gobby/hub/remote_pane.py::apply_report_panes`
-(`RemotePaneStore.apply_report`, redaction by `redact_report_panes`,
-attention by `apply_pane_state`) and queues the report. `create_node_runs_router`
-in `src/gobby/servers/routes/node_runs.py` serves `terminate_run` (timeout,
-initialization and stall verdicts), `prompt_delivery_failure` and
-`code_index_preflight_warning`. Port these four handlers, the inbox
-admission and the store into gagents. Terminations go through 6.1's service
-and attention through #24149's native service. Create `NodeRunsFamily`
-(name `node-runs`, prefixes exactly `/api/nodes/report` and
-`/api/nodes/runs`, default Proxy) and push it from the composition function
-in `crates/gagents/src/lib.rs`. The family's node-identity admission fails
-closed, as 1.1's class did, because no leaf here switches it. gdaemon's pane
-read for a remote run returns the store's latest tail for the terminal and
-machine, or the empty tail when there is none.
-
-**Granularity:** The four rows share one machine-identity check, one inbox
-and one store, and the pane read is the store's only reader; splitting them
-would leave a store with no writer or no reader.
-
-**Acceptance:**
-
-- 8.2.1 - `HTTP POST /api/nodes/report` matches Python's admission, byte
-  budgets, stale-report refusal, stored panes and attention transitions.
-  test: `crates/gagents/tests/node_reports.rs::report_matches_python`.
-- 8.2.2 - `HTTP POST /api/nodes/runs/terminate` matches Python's verdict
-  handling and run rows. test: `crates/gagents/tests/node_reports.rs::terminate_matches_python`.
-- 8.2.3 - `HTTP POST /api/nodes/runs/prompt-delivery-failure` matches
-  Python's recorded failure. test: `crates/gagents/tests/node_reports.rs::prompt_delivery_failure_matches_python`.
-- 8.2.4 - `HTTP POST /api/nodes/runs/code-index-warning` matches Python's
-  recorded warning. test: `crates/gagents/tests/node_reports.rs::code_index_warning_matches_python`.
-- 8.2.5 - `node-runs` claims only its two prefixes, defaults to Proxy and
-  fails closed. test: `crates/gagents/tests/node_reports.rs::node_runs_family_stays_proxied`.
-- 8.2.6 - A remote pane read returns the latest reported tail, and the empty
-  tail when none is stored.
-  test: `crates/gdaemon/tests/agent_effects.rs::remote_pane_read_uses_native_store`.
-
-Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test node_reports`;
-`CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test agent_effects`.
 
 ## P9: Internal-tool descriptors
 `kind: framing`
@@ -1869,6 +1925,9 @@ Targets:
 - `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
 - `crates/gdaemon/tests/checkouts_cutover.rs`
 - `tests/e2e/test_checkouts_native.py`
+- `crates/gagents/tests/fixtures/parity_checkouts.json`
+- `docs/contracts/parity-ledger-status.d/git-workspaces.json::*` — scope-reason: set only the nine checkouts HTTP records to delegated and rewrite the 30 checkouts MCP notes, retaining every other record
+- `docs/contracts/parity-ledger.md`
 - `docs/contracts/agents-native.md`
 
 Consumers unchanged:
@@ -1900,12 +1959,30 @@ Consumers unchanged:
 operator and ordinary and managed browser cookies are admitted, and agent
 tokens and missing credentials are refused as 0.1 to 0.3 record. Activation
 selects `front_door.routes.checkouts` through the existing bootstrap
-mechanism; Proxy stays selectable for rollback, and `agents` and `node-runs`
-stay on Proxy. Compare runs only the read rows (`GET
+mechanism; Proxy stays selectable for rollback, and `agents` stays on
+Proxy. Compare runs only the read rows (`GET
 /api/source-control/worktrees`, `GET /api/source-control/worktrees/stats`,
 `GET /api/source-control/clones`); effectful rows are proven by 3.5's tests
 and the isolated e2e run, never run twice (S3). Consume #24963's readiness
 result with ordinary `Passed` cases.
+
+Corpus freshness gates the cutover. From the integration checkout, rerun
+`scripts/agents_parity_corpus.py` for 0.2's checkouts group against reset
+isolated state and compare the result with the committed fixture. A
+byte-identical result passes. A difference is committed here with the
+refreshed fixture once every native proof that reads the group (3.1 to
+3.5, 9.2, 9.3, 10.2 and 10.3) passes against it; a difference that a native
+proof fails stops the activation and goes to the Dev Manager as a blocker
+naming the failing proof. Record the integration SHA and the fixture hash.
+
+Publication goes with the cutover, so the ledger never reports a native
+row as proxied. Set the nine `checkouts` HTTP rows of `git-workspaces.json`
+to `delegated` with notes citing their owning leaf, native tests and this
+activation, and rewrite the 30 checkouts MCP notes to cite 9.2 or 9.3 and
+`Registry flip: #21570` with status `proxied`. The 18 checkouts CLI rows
+stay `proxied` until 10.4 forwards them; 11.3 records them. Regenerate
+`docs/contracts/parity-ledger.md` with `uv run python
+scripts/generate_parity_ledger.py`; a second run leaves it unchanged.
 
 This is the first shipping commit since 1.1 added the `crates/gagents`
 member to the root `Cargo.toml`.
@@ -1921,7 +1998,8 @@ window, a passing source, schema and installed-set preflight, and a health
 report. No push is authorized here.
 
 **Granularity:** The targets and items belong to one admission binding and
-one family-specific activation and release; 11.3 records the ledger.
+one family-specific activation and release, with the ledger rows that
+activation makes native.
 
 **Acceptance:**
 
@@ -1943,13 +2021,24 @@ one family-specific activation and release; 11.3 records the ledger.
 - 11.1.6 - The runbook records build and installed hashes, compared cases,
   the rollback command, the announcement, health and native smoke evidence.
   behavior: "checkouts activation evidence" in `docs/contracts/agents-native.md`.
+- 11.1.7 - The checkouts corpus rerun from the integration checkout matches
+  the committed fixture, or the refreshed fixture is committed with every
+  native proof that reads it passing; the integration SHA and fixture hash
+  are recorded. behavior: "checkouts corpus freshness" in `docs/contracts/agents-native.md`.
+- 11.1.8 - The nine `checkouts` HTTP rows are `delegated`, the 30 checkouts
+  MCP rows `proxied` with `Registry flip: #21570`, and every other record is
+  unchanged. behavior: "checkouts activation parity rows" in `docs/contracts/parity-ledger-status.d/git-workspaces.json`.
+- 11.1.9 - The regenerated ledger matches the shards and the public
+  inventory. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test checkouts_cutover`;
-the isolated e2e test with the protected Python prefix; the targeted
-version-pin check; an admitted release build and Orchestrator-directed
-cutover. These are execution gates, not results observed while drafting.
+the isolated e2e test and the ledger test with the protected Python prefix;
+the corpus rerun; the ledger generator run twice with no second-run diff;
+the targeted version-pin check; an admitted release build and
+Orchestrator-directed cutover. These are execution gates, not results
+observed while drafting.
 
-### 11.2 agents activation, hub pane steps and gdaemon release [category: code] (depends: 10.4, 8.1, 8.2, #24149, #21592)
+### 11.2 agents activation, hub pane steps and gdaemon release [category: code] (depends: 10.4, 8.1, #24149, #21592)
 `kind: deliverable`
 
 Targets:
@@ -1963,6 +2052,9 @@ Targets:
 - `tests/agents/test_attention_state.py::*` — scope-reason: replace the local idle path's attention-sync expectation with native monitor ownership
 - `crates/gdaemon/tests/agents_cutover.rs`
 - `tests/e2e/test_agents_native.py`
+- `crates/gagents/tests/fixtures/parity_definitions_runs.json`
+- `crates/gagents/tests/fixtures/parity_launch.json`
+- `crates/gagents/tests/fixtures/parity_messaging.json`
 - `docs/contracts/agents-native.md`
 
 Consumers unchanged:
@@ -1992,8 +2084,9 @@ Consumers unchanged:
 - `tests/agents/test_lifecycle_monitor_extra.py` — no-edit-reason: asserts idle outcomes that the attention-sync change leaves unchanged.
 - `tests/hub/test_remote_idle_policy.py` — no-edit-reason: covers remote runs, whose attention sync is unchanged.
 
-**Research context:** Activation selects `front_door.routes.agents`;
-`node-runs` stays on Proxy (Decision 14). Compare runs only the read rows
+**Research context:** Activation selects `front_door.routes.agents`; the
+node report and run-outcome routes stay Python-served (Decision 14), and
+2.0's route serves remote pane reads from Python's store. Compare runs only the read rows
 (the three definition reads, the four run reads and `GET
 /api/agents/launch-defaults`); spawn, cancel, cleanup, preview and definition
 writes are proven by their leaves' stub tests and the isolated e2e run (S3).
@@ -2010,9 +2103,25 @@ pass captures each local pane itself, as it already does when the attention
 cache is empty. `IdleCheckHandler._handle_idle_check` then stops calling
 `self._attention_tracker.sync` for a local run, because 8.1 owns local
 attention; a remote run keeps its sync. The Python step implementations stay
-unscheduled until global Python removal. Rolling `agents` back to Proxy
-does not stop the monitor; reverting the pane move means reverting this
-commit.
+unscheduled until global Python removal.
+
+Rollback has two scopes, and the runbook names both. Route-only rollback
+selects Proxy for `front_door.routes.agents`; the 21 rows return to Python,
+and the native monitor keeps the eight pane steps because Python no longer
+schedules them. Full rollback restores Python ownership of the pane steps:
+revert this shipping commit, reinstall the matching Python checkout and the
+coherent gdaemon set through `promote_workspace_binary_set`, and run an
+Orchestrator-delegated cutover. After the forward cutover and after a full
+rollback rehearsed against isolated state, the evidence shows exactly one
+owner scheduling each pane step.
+
+Corpus freshness gates the cutover as in 11.1, for the groups of 0.1, 0.3
+and 0.4: rerun the collector from the integration checkout against reset
+isolated state; a byte-identical result passes; a difference is committed
+with the refreshed fixture once every native proof that reads that group
+passes against it; a difference a native proof fails stops the activation
+and goes to the Dev Manager as a blocker naming the failing proof. Record
+the integration SHA and the fixture hashes.
 
 gdaemon changed since 11.1, so gdaemon takes a 0.0.1 bump; no leaf after
 11.1 changes the source identity of gcode or ghook, whose pins stay. Promote
@@ -2029,7 +2138,8 @@ starts the native monitor.
   to Proxy preserves state.
   test: `crates/gdaemon/tests/agents_cutover.rs::agents_cutover_is_scoped_and_single_effect`.
 - 11.2.2 - With the Python backend unavailable, the 21 rows run natively on
-  hub and standalone, and a node keeps its current backend.
+  hub and standalone, remote pane reads fall back to a missing entry, and a
+  node keeps its current backend.
   test: `tests/e2e/test_agents_native.py::test_agents_rows_work_without_python_backend`.
 - 11.2.3 - The hub pane monitor starts only on hub and standalone with a
   pool, and web-chat wakes reach #21592's runtime.
@@ -2046,22 +2156,33 @@ starts the native monitor.
 - 11.2.7 - Shipping manifests, lock and pins agree at the required patch
   increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 11.2.8 - The runbook records build and installed hashes, compared cases,
-  the rollback command, the announcement, health and native smoke evidence,
-  including a hub-local run whose trust prompt the native monitor answers.
+  the route-only and full rollback sequences, the announcement, health and
+  native smoke evidence, including a hub-local run whose trust prompt the
+  native monitor answers and a remote run whose live output and capture come
+  from the reported store.
   behavior: "agents activation evidence" in `docs/contracts/agents-native.md`.
+- 11.2.9 - After the forward cutover and after a rehearsed full rollback,
+  exactly one owner schedules each of the eight pane steps.
+  behavior: "pane step ownership after cutover and rollback" in `docs/contracts/agents-native.md`.
+- 11.2.10 - The agents corpus groups rerun from the integration checkout
+  match the committed fixtures, or the refreshed fixtures are committed with
+  every native proof that reads them passing; the integration SHA and
+  fixture hashes are recorded.
+  behavior: "agents corpus freshness" in `docs/contracts/agents-native.md`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test agents_cutover --test hub_pane_monitor`;
 the two Python tests and the isolated e2e test with the protected Python
-prefix; scoped Ruff and mypy; a changed-test type audit; the targeted
-version-pin check; an admitted release build and Orchestrator-directed
-cutover. These are execution gates, not results observed while drafting.
+prefix; scoped Ruff and mypy; a changed-test type audit; the corpus rerun;
+the targeted version-pin check; an admitted release build, a full-rollback
+rehearsal against isolated state and Orchestrator-directed cutover. These
+are execution gates, not results observed while drafting.
 
 ### 11.3 Publish the family's parity ownership [category: docs] (depends: 11.2)
 `kind: deliverable`
 
 Targets:
 - `docs/contracts/parity-ledger-status.d/sessions-agents.json::*` — scope-reason: update only the 63 agents family status records and retain every other record
-- `docs/contracts/parity-ledger-status.d/git-workspaces.json::*` — scope-reason: update only the 57 checkouts family status records and retain every other record
+- `docs/contracts/parity-ledger-status.d/git-workspaces.json::*` — scope-reason: set only the 18 checkouts CLI records to delegated and retain every other record
 - `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json::*` — scope-reason: rewrite only the four node report and run-outcome notes and retain every other record
 - `docs/contracts/parity-ledger-status.d/websocket-chat-voice-ui.json::*` — scope-reason: rewrite only the three workspace WS notes to cite #21565 and retain every other record
 - `docs/contracts/parity-ledger.md`
@@ -2071,13 +2192,16 @@ Targets:
 
 **Research context:** `scripts/generate_parity_ledger.py` accepts
 `proxied`, `delegated` and `dropped by decision #N`; objects carry exactly
-`status` and `note`. Set the 21 HTTP and 14 CLI rows of `sessions-agents.json`
-and the nine HTTP and 18 CLI rows of `git-workspaces.json` to `delegated`
-with notes citing the owning leaf, its native tests and any waiver ID. Keep
-the 28 and 30 MCP rows `proxied` with notes citing their 9.x leaf and
-`Registry flip: #21570`. Keep the four node rows `proxied` with notes citing
-8.2 and Decision 14's condition, and rewrite the three workspace WS notes
-to cite #21565 alone. Regenerate `docs/contracts/parity-ledger.md` with `uv
+`status` and `note`. 11.1 already published the nine checkouts HTTP rows
+and the 30 checkouts MCP notes. Set the 21 HTTP and 14 CLI rows of
+`sessions-agents.json` and the 18 CLI rows of `git-workspaces.json` to
+`delegated` with notes citing the owning leaf, its native tests and any
+waiver ID. Keep the 28 agents MCP rows `proxied` with notes citing 9.1 and
+`Registry flip: #21570`. Keep the four node rows `proxied` with notes
+saying the agents family (#21564) owns them, that they stay Python-served
+until the reconciler and the idle check go native (Decision 14), and that
+#25269 owns that port. Rewrite the three workspace WS notes to cite #21565
+alone. Regenerate `docs/contracts/parity-ledger.md` with `uv
 run python scripts/generate_parity_ledger.py`; a second run leaves it
 unchanged. The guides say that gdaemon serves the agents and checkouts
 routes and the hub pane steps, and that the public groups forward to
@@ -2092,11 +2216,12 @@ that disagrees with its shards.
 - 11.3.1 - The 35 HTTP and CLI rows are `delegated` and the 28 MCP rows
   `proxied` with `Registry flip: #21570`, and every other record is
   unchanged. behavior: "63 agents family parity rows" in `docs/contracts/parity-ledger-status.d/sessions-agents.json`.
-- 11.3.2 - The 27 HTTP and CLI rows are `delegated` and the 30 MCP rows
-  `proxied` with `Registry flip: #21570`, and every other record is
-  unchanged. behavior: "57 checkouts family parity rows" in `docs/contracts/parity-ledger-status.d/git-workspaces.json`.
-- 11.3.3 - The four node rows stay `proxied` with notes citing 8.2 and
-  Decision 14, and every other record is unchanged.
+- 11.3.2 - The 18 checkouts CLI rows are `delegated`, and every other
+  record, including 11.1's nine HTTP and 30 MCP records, is unchanged.
+  behavior: "57 checkouts family parity rows" in `docs/contracts/parity-ledger-status.d/git-workspaces.json`.
+- 11.3.3 - The four node rows stay `proxied` with notes citing this
+  family's ownership, Decision 14's condition and #25269, and every other
+  record is unchanged.
   behavior: "4 node report and run-outcome rows" in `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.
 - 11.3.4 - The three workspace WS notes cite #21565 alone with status
   unchanged. behavior: "3 re-homed workspace WS rows" in `docs/contracts/parity-ledger-status.d/websocket-chat-voice-ui.json`.
@@ -2116,29 +2241,36 @@ protected Python prefix.
 ## E1 End-to-end verification
 `kind: verification`
 
-The acceptance items own all 124 rows, one item per row. HTTP, 34: 1.1 owns
-the three definition reads, 1.2 the eight definition writes, 2.1 the four
-run reads, 3.5 the nine source-control routes, 4.2 launch defaults and
-prompt preview, 4.3 spawn and batch spawn, 6.1 run cancel, 6.2 cleanup, and
-8.2 the four node report and run-outcome routes. MCP, 58: 9.1 owns the 28
-`gobby-agents` tools, 9.2 the 17 `gobby-worktrees` tools and 9.3 the 13
-`gobby-clones` tools. CLI, 32: 10.1 owns the 14 agents commands, 10.2 the 11
-worktrees commands and 10.3 the seven clones commands, and 10.4 forwards the
-public groups to them. Per shard: `sessions-agents.json` 63 (21 HTTP, 28 MCP,
-14 CLI), `git-workspaces.json` 57 (9 HTTP, 30 MCP, 18 CLI) and
-`comms-cron-hub-nodes.json` 4. 0.1 to 0.4 freeze the Python contract, and
-0.4.3 rejects missing, extra or overlapping keys.
+The acceptance items own the 120 ported rows, one item per row. HTTP, 30:
+1.1 owns the three definition reads, 1.2 the eight definition writes, 2.1
+the four run reads, 3.5 the nine source-control routes, 4.2 launch defaults
+and prompt preview, 4.3 spawn and batch spawn, 6.1 run cancel and 6.2
+cleanup. MCP, 58: 9.1 owns the 28 `gobby-agents` tools, 9.2 the 17
+`gobby-worktrees` tools and 9.3 the 13 `gobby-clones` tools. CLI, 32: 10.1
+owns the 14 agents commands, 10.2 the 11 worktrees commands and 10.3 the
+seven clones commands, and 10.4 forwards the public groups to them. Per
+shard: `sessions-agents.json` 63 (21 HTTP, 28 MCP, 14 CLI) and
+`git-workspaces.json` 57 (9 HTTP, 30 MCP, 18 CLI). The four node report and
+run-outcome rows in `comms-cron-hub-nodes.json` are owned without a port:
+11.3.3 records them, and #25269 owns their port (Decision 14). 0.1 to 0.4
+freeze the Python contract, and 0.4.3 rejects missing, extra or overlapping
+keys.
 
-Service leaves support the row owners: 2.2 (live output and gdaemon's
-effects), 3.1 to 3.4 (checkout records, git effects and machine ownership),
-4.1 (hub-local launch), 4.4 (apply definition and persona), 5.1 to 5.3
-(mailbox, wake decisions, coordination waits), 7.1 (seats) and 8.1 (hub
-pane monitor). Every HTTP claim fails closed until 11.1 binds #25046's
-admission; `checkouts` activates in 11.1 and `agents` in 11.2, and
-`node-runs` stays on Proxy under Decision 14. The hub pane monitor starts
-only in 11.2, the commit that removes the eight Python steps. 11.3 records
-62 rows `delegated`, 58 MCP rows `proxied` with `Registry flip: #21570`, the
-four node rows `proxied` under Decision 14 and the three re-homed WS notes.
+Service leaves support the row owners: 2.0 (the loopback reported-pane
+route), 2.2 (live output and gdaemon's effects), 3.1 to 3.4 (checkout
+records, git effects and machine ownership), 4.1 (hub-local launch), 4.4
+(apply definition and persona), 5.1 to 5.3 (mailbox, wake decisions,
+coordination waits), 7.1 (seats) and 8.1 (hub pane monitor). Native reads
+of a pane on another machine go through 2.0's route, so remote live output,
+capture before kill, the wake composer gate and the stopped mark match
+Python. Every HTTP claim fails closed until 11.1 binds #25046's admission;
+`checkouts` activates in 11.1 with its HTTP and MCP ledger rows, and
+`agents` in 11.2, with both corpus freshness gates. The hub pane monitor
+starts only in 11.2, the commit that removes the eight Python steps, and
+11.2 records both rollback scopes. 11.3 records the remaining 53 rows
+`delegated`, the 28 agents MCP rows `proxied` with `Registry flip: #21570`,
+the four node rows `proxied` under Decision 14 and the three re-homed WS
+notes. The two private route rows 2.0 adds stay `proxied` until #25269.
 
 The #24963 readiness gate requires ordinary `Passed` cases and exactly
 cited, native-asserted `Waived` cases for the five clone CLI waivers, and
