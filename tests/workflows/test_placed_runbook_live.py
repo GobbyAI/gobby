@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from functools import partial
@@ -1318,6 +1319,12 @@ def _install_codex_hooks(home: Path, project: Path) -> dict[str, Any]:
     with mock.patch.dict(os.environ, overrides):
         result = install_codex(project)
     assert result["success"], result
+    # Codex loads hooks from <home>/.codex/hooks.json; a trust key naming any other file
+    # reads as a new hook to Codex, which then waits on its review screen.
+    loaded = str(home / ".codex" / "hooks.json")
+    config = tomllib.loads((home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    hook_keys = [key for key in config["hooks"]["state"] if "hooks.json:" in key]
+    assert hook_keys and all(key.startswith(f"{loaded}:") for key in hook_keys), hook_keys
     return {key: result[key] for key in ("success", "hooks_installed", "config_updated")}
 
 

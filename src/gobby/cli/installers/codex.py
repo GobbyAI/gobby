@@ -259,7 +259,8 @@ def _codex_hook_state_key(
     hooks_file: Path, event_name: str, group_index: int, handler_index: int
 ) -> str:
     event_label = CODEX_HOOK_EVENT_KEY_LABELS[event_name]
-    return f"{hooks_file.resolve()}:{event_label}:{group_index}:{handler_index}"
+    # Codex keys trust by the path it loads; resolving a symlinked ~/.codex names another file.
+    return f"{hooks_file.absolute()}:{event_label}:{group_index}:{handler_index}"
 
 
 def _normalize_codex_command(command: Any) -> str | None:
@@ -381,7 +382,7 @@ def _remove_stale_gobby_hook_trust_state(
     unrelated user trust state remains intact.
     """
     current_keys = {key for key, _ in current_entries}
-    hooks_prefix = f"{hooks_file.resolve()}:"
+    hooks_prefix = f"{hooks_file.absolute()}:"
     event_labels = set(CODEX_HOOK_EVENT_KEY_LABELS.values())
     previous_keys = {key for key, _ in previous_entries}
     previous_suffixes = {

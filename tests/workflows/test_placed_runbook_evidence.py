@@ -261,6 +261,8 @@ def test_codex_hooks_install_into_the_home_and_name_the_staged_ghook(tmp_path: P
     home = tmp_path / "home"
     home.mkdir()
     _installed(home / "bin", "ghook", b"ghook-build")
+    (home / "providers" / "codex").mkdir(parents=True)
+    (home / ".codex").symlink_to(home / "providers" / "codex", target_is_directory=True)
 
     installed = _install_codex_hooks(home, tmp_path / "project")
 
