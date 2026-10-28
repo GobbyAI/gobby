@@ -487,6 +487,18 @@
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/agents_query_tools.py::list_running_agents`; Rust blocker: implement native agent run query/admission/statistics and completion/output-wait MCP handlers. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
   },
+  "MCP gobby-agents:release_batch_active_runs": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::release_batch_active_runs`; Rust blocker: implement the native release-batch run query MCP handler under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-agents:release_batch_checkout": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::release_batch_checkout`; Rust blocker: implement the native release-batch checkout MCP handler under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-agents:release_batch_fenced_runs": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::release_batch_fenced_runs`; Rust blocker: implement the native release-batch fenced run query MCP handler under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
+  },
   "MCP gobby-agents:renew_release_window": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/release_tools.py::renew_release_window`; Rust blocker: implement the native release-window lease MCP handlers under the landing lock. Owner: #21564 Attention, agents, dispatch, and worktrees. Registry flip: #21570 MCP registries."
@@ -574,6 +586,10 @@
   "MCP gobby-sessions:mark_loop_complete": {
     "status": "proxied",
     "note": "Python `src/gobby/mcp_proxy/tools/sessions/_commits.py::mark_loop_complete`; Rust blocker: implement native session commit queries and loop-completion MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
+  },
+  "MCP gobby-sessions:query_readonly": {
+    "status": "proxied",
+    "note": "Python `src/gobby/mcp_proxy/tools/sessions/_readonly_query.py::query_readonly`; Rust blocker: implement the native row-capped read-only query handler over the gobby_query_readonly role (migration 482). Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries."
   },
   "MCP gobby-sessions:register_session": {
     "status": "proxied",

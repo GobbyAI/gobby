@@ -915,19 +915,6 @@
       "audience": "agent; Release Manager only"
     },
     {
-      "surface": "cli",
-      "command": "gobby release batch",
-      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
-      "implementation": {
-        "path": "src/gobby/cli/release.py",
-        "symbol": "batch"
-      },
-      "verification": [
-        "release-batch"
-      ],
-      "audience": "agent; Release Manager only"
-    },
-    {
       "surface": "mcp",
       "server": "gobby-tasks-ops",
       "tool": "land_commit",

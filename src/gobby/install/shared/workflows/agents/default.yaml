@@ -30,8 +30,8 @@ prompts:
     ## Platform Context
     Gobby is fleet management for AI coding agents: one local-first platform
     for sessions, tasks, memory, rules, workflows, agents, pipelines, skills,
-    and an MCP proxy. PostgreSQL hub reached via bootstrap.yaml
-    database_url settings. HTTP :60887, WebSocket :60888. Git is source of truth
+    and an MCP proxy. The PostgreSQL hub is reached through the daemon.
+    HTTP :60887, WebSocket :60888. Git is source of truth
     for code; PostgreSQL is authoritative for tasks and memories. Pre-push refreshes
     machine-local `~/.gobby/backups/<project-uuid>/{tasks,memories}.jsonl` snapshots;
     restore is an explicit operator action.

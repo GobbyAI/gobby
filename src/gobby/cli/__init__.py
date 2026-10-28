@@ -51,7 +51,6 @@ _COMMAND_SOURCES: dict[str, tuple[str, str]] = {
     "clones": ("clones", "clones"),
     "cron": ("cron", "cron"),
     "cutover": ("cutover", "cutover"),
-    "release": ("release", "release"),
     "hooks": ("extensions", "hooks"),
     "webhooks": ("extensions", "webhooks"),
     "ui": ("ui", "ui"),

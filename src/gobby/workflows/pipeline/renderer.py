@@ -48,6 +48,9 @@ _SENSITIVE_NAMES = frozenset(
     }
 )
 
+# Hub credentials that no step may read, even when its whitelist names them.
+_NEVER_EXPOSED_NAMES = frozenset({"DATABASE_URL"})
+
 
 def _filter_env(
     env: Mapping[str, str],
@@ -56,11 +59,16 @@ def _filter_env(
     """Return a copy of *env* with sensitive variables removed.
 
     If *allowed_keys* is provided only those keys are included (explicit
-    whitelist). Otherwise sensitive names and underscore-delimited segments
-    are excluded case-insensitively.
+    whitelist), and the hub credential in _NEVER_EXPOSED_NAMES stays excluded.
+    Otherwise sensitive names and underscore-delimited segments are excluded
+    case-insensitively.
     """
     if allowed_keys is not None:
-        return {k: v for k, v in env.items() if k in allowed_keys}
+        return {
+            k: v
+            for k, v in env.items()
+            if k in allowed_keys and k.upper() not in _NEVER_EXPOSED_NAMES
+        }
     return {
         k: v
         for k, v in env.items()

@@ -101,9 +101,8 @@ create a fresh worktree or clone. An admitted team keeps working: its admission
 re-runs, replacement seats join its tree, an interrupted admission recovers its
 tree, and spawns that reuse a tree proceed.
 
-The Release Manager validates and activates the window's pinned candidate with
-`gobby release batch --token <token> --generation <n> [--base-sha <sha>]`, run
-in the background from its session. It refuses before touching the window
+The Orchestrator owns the release batch that validates and activates the window's
+pinned candidate. A batch refuses before touching the window
 unless the caller owns it, the main checkout HEAD is the pinned candidate, and
 the baseline (the last succeeded batch, else `--base-sha`) is an ancestor of
 it. It then renews the lease while it runs the checks the diff selects,
