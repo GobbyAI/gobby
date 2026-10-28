@@ -312,3 +312,7 @@ pending-pull clause in the installed `when`. 4.1 needs no live check.
   Targets, adds acceptance 4.1.6, and corrects the research claim about the `CI`
   variable. The stale M1 is withdrawn for a fresh derivation by Plan Adversary
   gobby#18349.
+- 2026-10-28: gobby#18349 ended before re-stamping, and the Orchestrator relaunched the
+  seat as Plan Adversary gobby#18400. It re-reviewed `9d51b37` and found no blocking
+  findings, no nits and no unresolved decisions. Writer gobby#18340 and Plan Adversary
+  gobby#18400 reached consensus on this revision.
