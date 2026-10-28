@@ -155,7 +155,8 @@ memory has not (Decision 6).
 6. **LLM and embeddings.** Dream planning and knowledge-graph extraction call
    the AI family's text-generation service in process. The AI crate exports
    only its family-push function, so 2.4 adds one re-export of the #25097
-   service to `crates/gai/src/lib.rs`, keeping crates/AGENTS.md's rule that
+   service to `crates/gai/src/lib.rs` when that re-export is absent (the
+   sessions plan's 4.1 adds the same one), keeping crates/AGENTS.md's rule that
    families reach each other only through public APIs. The `memory.dream` and
    `memory.kg` feature profiles (`feature_mid`, `feature_low`) and candidate
    lists resolve through that service. Embeddings reuse the landed
@@ -468,12 +469,13 @@ state, never by running the effect twice in production.
   HTTP handlers, search, graph, writes, dream and MCP each have their own
   module files, and test modules live in `tests/` or `<module>/tests.rs`,
   never inline (crates/AGENTS.md).
-- 1.1 declares the crate's dependency set except `gobby-ai` (2.4) and the
-  HDBSCAN crate (2.5): `gobby-core` with its `postgres` and qdrant/falkor
+- 1.1 declares the crate's dependency set except `gobby-ai` (2.4), the
+  HDBSCAN crate (2.5) and `gobby-tasks` and `gobby-sessions` (5.1,
+  Decision 8): `gobby-core` with its `postgres` and qdrant/falkor
   features, `gobby-runtime` for `crates/gruntime/src/config.rs::active_state`
   and the secret store, axum, tokio, serde, serde_json, uuid, chrono, clap
   with `derive` for 7.1, and `reqwest` with `blocking` for 7.2. Only 1.1,
-  2.4, 2.5 and 8.2 edit `crates/gmemory/Cargo.toml` or `Cargo.lock`.
+  2.4, 2.5, 5.1 and 8.2 edit `crates/gmemory/Cargo.toml` or `Cargo.lock`.
 - gcore's Qdrant, FalkorDB and embeddings clients are blocking. Async handlers
   call them through `tokio::task::spawn_blocking`.
 - Storage reuses existing tables: `memories`, `memory_crossrefs`,
@@ -1136,8 +1138,10 @@ Targets:
 - `crates/gmemory/tests/graph_writes.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: append this leaf's waiver entries to the shared manifest array
 
-**Research context:** Decision 6: add `gobby-ai` as a path dependency and one
-re-export of #25097's text-generation service in `crates/gai/src/lib.rs`.
+**Research context:** Decision 6: add `gobby-ai` as a path dependency and,
+only when it is absent, one re-export of #25097's text-generation service in
+`crates/gai/src/lib.rs`; the sessions plan's 4.1 adds the same re-export
+when it lands first.
 Port `src/gobby/memory/services/knowledge_graph/service.py::KnowledgeGraphService`,
 `writer.py`, `extraction.py` (structured output through
 `src/gobby/memory/generation_schemas.py`), `rebuild.py`, `maintenance.py`,
@@ -1519,10 +1523,12 @@ root for reports.
 ## P5: Review-learning service
 `kind: framing`
 
-### 5.1 Native review-learning service over memory rows [category: code] (depends: 4.3)
+### 5.1 Native review-learning service over memory rows [category: code] (depends: 4.3, #21560, #21562)
 `kind: deliverable`
 
 Targets:
+- `crates/gmemory/Cargo.toml`
+- `Cargo.lock`
 - `crates/gmemory/src/lib.rs`
 - `crates/gmemory/src/review/mod.rs`
 - `crates/gmemory/src/review/lessons.rs`
@@ -1535,7 +1541,8 @@ Targets:
 `recall_review_lessons_by_class`, `list_check_keys`,
 `retire_review_lesson`, `record`, `_search_recall_matches`,
 `_candidate_lesson_memories` and the scope resolvers `_resolve_scope_sync`
-and `_resolve_explicit_scope_sync`, which read the session row) and its
+and `_resolve_explicit_scope_sync`, which read the session's project through
+sessions 1.1's store and `resolve_session_ref`) and its
 module functions (`build_recall_queries`, `rank_recall_matches`,
 `_validate_recorded_finding`, `_missing_qa_rejection_fields`,
 `_build_file_lesson`, `_parse_lesson_content`), plus `lessons.py`
@@ -1550,6 +1557,12 @@ search. `record` serializes per pattern under
 transaction advisory lock exactly as
 `src/gobby/storage/hub/postgres_pool.py::advisory_lock_keys` derives it, so
 Python and native writers exclude each other.
+
+Decision 8: this leaf adds `gobby-tasks` and `gobby-sessions` as path
+dependencies of `crates/gmemory/Cargo.toml`. Class recall's retirement listing
+(`class_recall.py::RetirementTaskManager.list_tasks` by project, closed state,
+label and limit) calls tasks 1.2's listing, and the scope resolvers call
+sessions 1.1. No gmemory query names a tasks or sessions table.
 
 **Acceptance:**
 
@@ -1568,45 +1581,48 @@ against the isolated database, run-unique collections and the embedding stub.
 ## P6: Native internal-tool families
 `kind: framing`
 
-### 6.1 Memory session-variable writer [category: code] (depends: 5.1, #25262)
+### 6.1 Memory session-variable records over the sessions API [category: code] (depends: 5.1, #21562, #25262)
 `kind: deliverable`
 
 Targets:
 - `crates/gmemory/src/lib.rs`
-- `crates/gmemory/src/session_vars.rs`
-- `crates/gmemory/tests/session_vars.rs`
+- `crates/gmemory/src/session_records.rs`
+- `crates/gmemory/tests/session_records.rs`
 
-**Research context:** Decision 3. The writer touches exactly three keys of
-the `session_variables` row: `accessed_memory_ids`
+**Research context:** Decision 3. Sessions 2.4 owns the `session_variables`
+writer, its bounded-list upsert and the #25262 lock; this module holds only
+memory's knowledge of three keys. They are `accessed_memory_ids`
 (`src/gobby/mcp_proxy/tools/memory_session.py::ACCESSED_MEMORY_IDS_VARIABLE`,
 bounded by `src/gobby/mcp_proxy/tools/memory.py`'s `_ACCESSED_MEMORY_IDS_MAX`
 of 1000, identity the whole `{memory_id, task_id}` record as
 `_record_accessed_memory` passes it), `_memory_task_review_records`
 (`REVIEW_RECORDS_VARIABLE`, bounded at 50, identity `closure_id`) and
 `_memory_review_stop_delivered` (`REVIEW_DELIVERED_VARIABLE`, set true).
-Semantics match `src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`
-(drop a matching item, append, keep the newest `max_items`) and
-`::set_variable`, key-scoped so concurrent writers of other keys are
-untouched. Each write runs under `SessionVariableMutation`'s explicit key
-from #25262, at priority 950, so Python and native writers of one session
-serialize. Reads of `_memory_pending_task_reviews` reuse the same row read.
-No other key is writable through this module.
+The module exposes one function per key. Each builds memory's record and
+calls the sessions 2.4 bounded-list upsert, which ports
+`src/gobby/workflows/state_manager.py::SessionVariableManager.upsert_bounded_list_variable`
+(drop a matching item, append, keep the newest `max_items`), or its key-scoped
+set, which ports `::set_variable`. Reads of `_memory_pending_task_reviews` and
+the three keys go through the sessions 2.4 read API. The module takes no lock
+and issues no SQL; no other key is writable through it.
 
 **Acceptance:**
 
-- 6.1.1 - Bounded-list upserts and the boolean set produce Python's rows for
-  all three keys, including identity replacement and trimming.
-  test: `crates/gmemory/tests/session_vars.rs::writes_match_python`.
-- 6.1.2 - Concurrent Python and native writers on one session serialize
-  under the shared key without losing either update, and writes to other
-  keys are preserved. test: `crates/gmemory/tests/session_vars.rs::shared_lock_serializes_writers`.
-- 6.1.3 - Any key outside the three is refused before a write.
-  test: `crates/gmemory/tests/session_vars.rs::only_owned_keys_are_writable`.
+- 6.1.1 - Through the sessions API, bounded-list upserts and the boolean set
+  produce Python's rows for all three keys, including identity replacement
+  and trimming. test: `crates/gmemory/tests/session_records.rs::writes_match_python`.
+- 6.1.2 - A concurrent Python writer and a native memory write on one
+  session both land, serialized on the #25262 key that sessions 2.4 takes,
+  and writes to other keys are preserved.
+  test: `crates/gmemory/tests/session_records.rs::python_and_native_writes_both_land`.
+- 6.1.3 - Reads of `_memory_pending_task_reviews` and the three keys through
+  the sessions read API match Python's values.
+  test: `crates/gmemory/tests/session_records.rs::reads_match_python`.
 
-Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test session_vars`
+Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --test session_records`
 against the isolated database, with a Python writer started by the test.
 
-### 6.2 gobby-memory descriptor, schemas and MCP behavior [category: code] (depends: 6.1, #24883)
+### 6.2 gobby-memory descriptor, schemas and MCP behavior [category: code] (depends: 6.1, #24883, #21560, #21562)
 `kind: deliverable`
 
 Targets:
@@ -1631,7 +1647,8 @@ the handler context the shared gateway projects, as
 `::memory_owned_by_current_project` and `::resolve_current_memory_id` and
 `memory_session.py::resolve_session` and `::resolve_claimed_task_id` resolve
 them; a missing project falls back to the personal project as
-`list_memories` does.
+`list_memories` does. Session and task data come only from Decision 8's
+gsessions and gtasks calls.
 
 Tool specifics. `search_memories` uses caller
 `mcp_proxy.memory.search_memories`. `surface_memories` uses
@@ -1645,7 +1662,10 @@ session's last assistant message for a `turn` trigger whose text fails
 `accessed_memory_ids` through 6.1. `review_task_memories` ports
 `src/gobby/mcp_proxy/tools/memory_review.py` (`_resolve_task`,
 `_accessed_ids`, `_record_review`, `_CANDIDATE_LIMIT` 5, caller
-`mcp_proxy.memory.review_task_memories`) and writes through 6.1. The dream
+`mcp_proxy.memory.review_task_memories`) and writes through 6.1. It resolves
+the task, operator review and the closing session's lineage through
+Decision 8's tasks 1.1 and 2.1 calls and the gsessions `is_ancestor` export,
+and returns `foreign_session_closure` exactly as Python does. The dream
 tools call 4.3's service; `memory_dream_decisions` reads 4.1's decisions.
 `recluster_knowledge_graph_entities` calls 2.5, `densify_knowledge_graph_cooccurrence`
 and `rebuild_knowledge_graph` call 2.4, and `rebuild_crossrefs` (with its
@@ -1842,8 +1862,8 @@ dispatcher with `memory`; clap parsing and output formatting live in the
 family crate. `gdaemon memory` is the internal dispatcher for the existing
 public `gobby memory` contract and adds no public surface. Map errors through
 #24970's CLI adapter for exit codes and stderr. This leaf edits
-`crates/gdaemon/src/main.rs` after the skills plan's 5.1 and the AI plan's
-7.5 if those land first (Overview).
+`crates/gdaemon/src/main.rs` after any of the six plans the Overview's
+cross-plan contention lists that land first, and rebases onto them.
 
 **Granularity:** Thirteen ledger rows share one command tree, one CLI pool
 and the database-only service mode. The HTTP-client commands are 7.2.
@@ -2063,7 +2083,7 @@ hub and standalone (Decision 5).
 This is the first shipping commit since 1.1 added the `crates/gmemory`
 member to the root `Cargo.toml`.
 `src/gobby/install/bin_release_identity.py::workspace_source_identity` hashes
-the root manifest for every managed binary, and 1.3, 2.1 and 2.3 changed
+the root manifest for every managed binary, and 1.3, 2.1, 2.3 and 3.1 changed
 gcore, so gdaemon, gcode and ghook each take a 0.0.1 bump above their
 preceding released version, with manifests, lock and pins updated. Rebuild
 gclient, gmcp and gterm alongside; unpublished binaries keep their versions
@@ -2228,7 +2248,8 @@ unwaived reports. #24970 supplies the shared error classes and adapters.
 Shared target files are dependency-ordered throughout, and no section leaves
 a product choice to its executor. Josh reviews the flagged items with the
 stamped plan: the HDBSCAN dependency (Decision 2), the AI 7.4 amendment
-(Decision 4) and the AI 7.4 and 7.6 rebuild-seam amendments (3.1).
+(Decision 4) and the AI 7.4 and 7.6 rebuild-seam amendments (3.1), both
+committed to the AI plan at 23d0c055b8.
 
 Draft validation command:
 `uv run gobby plans validate .gobby/plans/memory-family.md -p /Users/josh/Projects/gobby`.
