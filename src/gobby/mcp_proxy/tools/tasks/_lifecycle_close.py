@@ -24,7 +24,7 @@ from gobby.sessions.machine_scope import (
     require_local_session_ownership,
 )
 from gobby.storage.project_checkouts import CheckoutNotFoundError
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import LandingGitError, main_checkout_target
 from gobby.tasks.state_semantics import (
@@ -35,6 +35,19 @@ from gobby.tasks.state_semantics import (
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.utils.git import descends_from_all
 from gobby.utils.session_context import get_current_session_id
+
+
+def _researcher_close_refusal(task: Task, closer: str, reason: str) -> tuple[str, str] | None:
+    """A researcher closes only the research spike it claimed, as done."""
+    if reason.casefold() != "done":
+        return "researcher_close_done_only", "A researcher closes its research spike as done."
+    if (
+        task.claimed_by_session_id != closer
+        or task.task_type != "research_spike"
+        or task.category != "research"
+    ):
+        return "researcher_close_own_spike_only", "A researcher closes only its claimed spike."
+    return None
 
 
 async def _evaluate_close(
@@ -87,6 +100,10 @@ async def _evaluate_close(
             f"Only the Orchestrator closes a task as {reason}. Close with reason done, "
             "or send the request to the Orchestrator.",
         )
+    if closer_role == "researcher":
+        researcher_refusal = _researcher_close_refusal(task, session_id, reason)
+        if researcher_refusal is not None:
+            return evaluation.refuse(*researcher_refusal)
     evaluation.edit_session_id = get_claimed_session_id(task) or session_id
     session = await asyncio.to_thread(ctx.session_manager.get, session_id)
     if session is None or not session.machine_id:
@@ -173,7 +190,7 @@ async def _evaluate_close(
         target = None
     integration_ref = f"refs/heads/{target[1]}" if target else None
     try:
-        steps = await step_requirements(ctx, task, commits)
+        steps = await step_requirements(ctx, task, commits, closer_definition=closer_role)
     except ValueError as exc:
         return evaluation.refuse("step_records_unavailable", str(exc))
     evaluation.checklist = await evaluate_close_invariants(

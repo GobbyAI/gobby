@@ -38,7 +38,7 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
     repo = Path(sample_git_project["repo_path"])
     _set_close_policy(temp_db, project_id, {"enforce_step_records": True})
     seed_seat(temp_db, "researcher", task_step_writes=["implementation", "closing"])
-    seed_seat(temp_db, "research-reviewer", task_step_writes=["review"])
+    seed_seat(temp_db, "orchestrator", task_step_writes=["review"])
     sessions = SessionManager(temp_db)
     session = sessions.register(
         external_id="researcher-spike-close",
@@ -103,21 +103,21 @@ async def test_researcher_records_its_spike_steps_and_closes_it(
 
         unreviewed = await registry.call("close_task", {"task_id": task.id, "commit_sha": sha})
 
-    # Without the research-reviewer's approval, gate 5 names review and the spike stays open.
+    # Without the Orchestrator's approval, gate 5 names review and the spike stays open.
     assert unreviewed.get("closed") is not True, unreviewed
     (review_gate,) = (gate for gate in unreviewed["gates"] if gate["item"] == 5)
     assert review_gate["status"] == "failed"
     assert "review" in review_gate["message"]
     assert manager.get_task(task.id).closed_at is None
 
-    reviewer = sessions.register(
-        external_id="research-reviewer-spike-close",
+    orchestrator = sessions.register(
+        external_id="orchestrator-spike-close",
         machine_id=require_machine_id(),
         source="claude",
         project_id=project_id,
     )
-    SessionVariableManager(temp_db).set_variable(reviewer.id, "_agent_type", "research-reviewer")
-    with session_context_for_test(reviewer.id):
+    SessionVariableManager(temp_db).set_variable(orchestrator.id, "_agent_type", "orchestrator")
+    with session_context_for_test(orchestrator.id):
         reviewed = await registry.call(
             "record_review_step",
             {
