@@ -121,7 +121,7 @@ leaves keep their scope; this plan touches neither.
      - keepalive 600 seconds before expiry on a 60-second tick;
      - refusal to re-register an existing client;
      - credential-free failure summaries.
-   - Login is the subcommand `gdaemon mcp-auth <server-id>`. It runs on the
+   - Login is the subcommand `gdaemon mcp-auth <name>`. It runs on the
      hub or standalone machine with direct database access, as
      `gobby mcp-proxy auth` does today. `gobby mcp-proxy auth`, and
      `gclient mcp-proxy auth` after it, exec the subcommand.
@@ -330,7 +330,8 @@ leaves keep their scope; this plan touches neither.
 | none | #25283 (native `gobby-results` paging) | relation | It ports `get_tool_result` and `search_tool_result`, which 4.1.3 exercises through Python today. |
 | 1.4 | #24466 (runtime-family 5.9) | relation | Its 5.9.10 consumes 1.4's `SecretStore::set_in`; neither adds a second writer. |
 | 3.3 | #21564 (agents family, `ownership.rs`) | relation | 3.3's `placement.rs` is the precedent its general machine-routing port can share; no ordering. |
-| 5.1, 5.2 | #24954 (client-operator-verbs S3.1) | relation | They carry the `mcp-proxy` CLI row assigned to #21566. |
+| 5.1, 5.2 | #24954 (client-operator-verbs S3.1) | relation | They carry the `mcp-proxy` CLI row assigned to #21566. No leaf waits on #21571, whose 1.7 gate waits on #21566. |
+| 5.2 | #24467 (runtime-family 5.10, native `POST /api/config/secrets`) | relation | 5.2 adds an optional `project_id` to the Python route. 5.10 ignores unknown body members today, so its owner amendment must accept `project_id` and pass it to 1.4's `set_in`. |
 | none | #24359, #24360 (gmcp-stdio) | relation | Packaging and server-side OAuth keep their scope. |
 
 **Granularity:** Fifteen deliverables, one per independently testable outcome.
@@ -940,11 +941,17 @@ Targets:
   `configure_client`, `get_authorization_url` (PKCE) and
   `exchange_code_for_token`.
 - Chosen approach:
-  - `gdaemon mcp-auth <server-id> [--timeout <seconds>] [--shape]` runs on
-    the hub or standalone machine with the database from
+  - `gdaemon mcp-auth <name> [--project-id <uuid>] [--timeout <seconds>] [--shape]`
+    runs on the hub or standalone machine with the database from
     `resolve_database_url`.
+    - It loads the row by name in exactly the given scope, as
+      `LocalMCPManager.get_server(name, project_id=project_id or GLOBAL_PROJECT_ID)`
+      does. An omitted `--project-id` means the global scope.
+    - An unknown name exits 1 with "No MCP server '<name>' in <scope> scope".
+    - Callers pass a name and a scope, so neither the Python CLI nor gclient
+      resolves a server id first.
   - `login.rs` does the following:
-    - loads the row and resolves its headers through 1.5's resolver;
+    - resolves the row's headers through 1.5's resolver;
     - takes the 1.6 guard;
     - probes the server and discovers metadata from its challenge;
     - registers a client only when none is stored, with the auth-method
@@ -962,9 +969,11 @@ Targets:
   - `--shape` prints `oauth_state_shape`'s JSON with Python's type names
     (`OAuthToken`, `OAuthClientInformationFull`, `float`, `OAuthMetadata`,
     `ProtectedResourceMetadata`, `str`) and touches nothing.
-  - `auth_server` keeps its name, scope and daemon checks. It execs
-    `~/.gobby/bin/gdaemon mcp-auth <id> --timeout <t>` with inherited stdio,
-    then sends the existing `PUT`. `oauth_shape` execs `--shape`.
+  - `auth_server` keeps its scope and daemon checks. It execs
+    `<gobby home>/bin/gdaemon mcp-auth <name> [--project-id <id>] --timeout <t>`
+    with inherited stdio, then sends the existing `PUT` after exit 0.
+    `oauth_shape` execs the same with `--shape` and needs no running
+    daemon, as today.
   - Windows compiles `start` for browser opening; runtime proof stays with
     the 1.0 Windows work.
   - Shipping: load the `rust` skill. This leaf's commit bumps
@@ -981,8 +990,8 @@ Targets:
 - 1.7.1 - Against a stub authorization server that challenges the MCP URL, `gdaemon mcp-auth` discovers metadata, registers a client with the first supported auth method, completes PKCE through a scripted callback, and stores credentials that 1.6's `OAuthStore` reads. test: `crates/gdaemon/tests/mcp_client_login.rs::login_registers_authorizes_and_stores`.
 - 1.7.2 - With a stored client it reuses the redirect port and never registers again; a stored non-loopback redirect is refused before any request. test: `crates/gdaemon/tests/mcp_client_login.rs::stored_client_reuses_port_and_never_reregisters`.
 - 1.7.3 - A callback with `access_denied`, a state mismatch and a timeout each exit nonzero with Python's message and store nothing; a 429 registration records backoff. test: `crates/gdaemon/tests/mcp_client_login.rs::callback_errors_and_timeout_store_nothing`.
-- 1.7.4 - `--shape` prints the field-to-type map with Python's type names and no values. test: `crates/gdaemon/tests/mcp_client_login.rs::shape_prints_types_never_values`.
-- 1.7.5 - `gobby mcp-proxy auth` execs `gdaemon mcp-auth` with the resolved server id and timeout and sends the `requires_oauth` update only after exit 0; `gobby mcp-proxy oauth-shape` prints the subcommand's JSON. test: `tests/cli/test_mcp_oauth.py::test_auth_and_shape_exec_gdaemon_mcp_auth`.
+- 1.7.4 - `--shape` prints the field-to-type map with Python's type names and no values, and an unknown name or wrong scope exits 1 naming the scope. test: `crates/gdaemon/tests/mcp_client_login.rs::shape_prints_types_never_values`.
+- 1.7.5 - `gobby mcp-proxy auth` execs `gdaemon mcp-auth` with the server name, scope and timeout and sends the `requires_oauth` update only after exit 0; `gobby mcp-proxy oauth-shape` prints the subcommand's JSON. test: `tests/cli/test_mcp_oauth.py::test_auth_and_shape_exec_gdaemon_mcp_auth`.
 
 ## P2: Transitional Python forwarder
 `kind: framing`
@@ -1000,7 +1009,7 @@ Targets:
 - `src/gobby/mcp_proxy/client_manager/health.py::*` — operation: delete — scope-reason: the gdaemon pool owns idle close and health
 - `src/gobby/mcp_proxy/client_manager/invocation.py::*` — operation: delete — scope-reason: the manager calls the backend directly
 - `src/gobby/mcp_proxy/client_manager/secrets.py::*` — operation: delete — scope-reason: gdaemon resolves secret references (1.5)
-- `src/gobby/mcp_proxy/browser_policy.py::enforce_browser_call` — operation: delete — scope-reason: the gdaemon Backend enforces the call policy (1.5); its only caller, invocation.py, is deleted
+- `src/gobby/mcp_proxy/browser_policy.py::*` — scope-reason: remove enforce_browser_call, which the gdaemon Backend enforces (1.5) and whose only caller, invocation.py, is deleted; keep filter_browser_tools for the cached inventory
 - `src/gobby/mcp_proxy/oauth.py::*` — operation: delete — scope-reason: gdaemon owns OAuth storage, refresh and login (1.6, 1.7)
 - `src/gobby/mcp_proxy/oauth_keepalive.py::*` — operation: delete — scope-reason: the gdaemon keepalive replaces it (1.6)
 - `src/gobby/mcp_proxy/lazy.py::*` — operation: delete — scope-reason: the gdaemon pool owns retry and the circuit
@@ -1117,7 +1126,10 @@ Targets:
       - `authorization_required` becomes
         `MCPAuthorizationRequired(auth_command)`;
       - `policy_refused` becomes `ValueError(message)`, as
-        `enforce_browser_call` raised.
+        `enforce_browser_call` raised;
+      - the routing codes `machine_not_found`, `checkout_unresolved`,
+        `node_offline`, `node_timeout` and `channel_closed` that 3.3 adds
+        become `MCPError` carrying that code.
     - It records each reply's `connected` flag for `is_connected`.
     - On `asyncio.CancelledError` it sends `cancel` for its `call_id` as a
       shielded task, then re-raises.
@@ -1169,7 +1181,7 @@ from the forwarding would leave a commit where external servers do not work.
 
 - 2.1.1 - Stdio and HTTP servers list and call tools through `McpBackend` against a stub backend route, which receives the stored config with `$secret:` references unresolved and the caller's session, machine and project. test: `tests/mcp_proxy/test_backend_client.py::test_manager_forwards_stored_config_and_caller`.
 - 2.1.2 - `authorization_required` raises `MCPAuthorizationRequired` with the reply's auth command; `missing_secrets` raises `MCPError` with Python's "needs configuration" message and the names; `policy_refused` raises `ValueError` with its message. test: `tests/mcp_proxy/test_backend_client.py::test_policy_and_auth_codes_map_to_existing_errors`.
-- 2.1.3 - `timeout`, `circuit_open` and `transport_closed` map to the existing timeout result and `MCPError` messages, and the HTTP read timeout is the remaining budget plus 5,000 ms. test: `tests/mcp_proxy/test_backend_client.py::test_error_codes_map_to_existing_shapes`.
+- 2.1.3 - `timeout`, `circuit_open` and `transport_closed` map to the existing timeout result and `MCPError` messages, `node_offline` and `checkout_unresolved` map to `MCPError` carrying that code, and the HTTP read timeout is the remaining budget plus 5,000 ms. test: `tests/mcp_proxy/test_backend_client.py::test_error_codes_map_to_existing_shapes`.
 - 2.1.4 - Cancelling the awaiting coroutine sends a backend `cancel` for its `call_id`. test: `tests/mcp_proxy/test_backend_client.py::test_cancelled_call_cancels_backend`.
 - 2.1.5 - A websocket server config is rejected by `MCPServerConfig` and absent from the CLI choices. test: `tests/mcp_proxy/test_backend_client.py::test_websocket_transport_is_rejected`.
 - 2.1.6 - `remove_server`, disabling, a config-changing `update_server`, `disconnect_server` and `disconnect_all` post the matching backend disconnect at once and flip `is_connected`; `connect_all` warms only `preconnect_servers`; `get_health_report` returns the backend status. test: `tests/mcp_proxy/test_backend_client.py::test_lifecycle_methods_map_to_backend_routes`.
@@ -1207,7 +1219,6 @@ Consumers unchanged:
 - `tests/servers/routes/mcp_endpoints/test_resolved_session_ownership.py` — no-edit-reason: it calls call_mcp_tool without the call id header, which keeps today's path.
 - `src/gobby/servers/_app_routes.py` — no-edit-reason: create_mcp_router keeps its signature and returns the router that now also carries the cancel route.
 - `src/gobby/servers/routes/mcp/__init__.py` — no-edit-reason: it re-exports create_mcp_router unchanged.
-- `tests/mcp_proxy/test_oauth_registry.py` — no-edit-reason: it mounts create_mcp_router, whose signature stays.
 - `tests/servers/routes/mcp_endpoints/test_bridge.py` — no-edit-reason: it mounts create_mcp_router, whose signature stays.
 - `tests/servers/routes/mcp_endpoints/test_http_scope_resolution_matrix.py` — no-edit-reason: it mounts create_mcp_router, whose signature stays.
 - `tests/servers/routes/mcp_endpoints/test_template_routes.py` — no-edit-reason: it mounts create_mcp_router, whose signature stays.
@@ -1389,7 +1400,6 @@ Targets:
 - `src/gobby/install/version_pins.py::*` — scope-reason: bump the gdaemon pin
 
 Consumers unchanged:
-- `src/gobby/mcp_proxy/client_manager/backend.py` — no-edit-reason: it already sends Caller and maps routing codes to MCPError; placement is invisible to it.
 - `src/gobby/hub/machine_routing.py` — no-edit-reason: its Python callers are spawn routing, which #21564 owns; placement ports only the no-explicit-target case.
 
 **Research context:**
@@ -1521,7 +1531,197 @@ Targets:
 ## P5: gclient mcp-proxy carrier
 `kind: framing`
 
-P5_PLACEHOLDER
+### 5.1 `gclient mcp-proxy` group and read verbs [category: code] (depends: 3.3)
+`kind: deliverable`
+
+Targets:
+- `Cargo.lock`
+- `crates/gclient/Cargo.toml`
+- `crates/gclient/src/command.rs::*` — scope-reason: declare the mcp_proxy module and route `mcp-proxy` to it before the workspace verbs' parse and eager token read
+- `crates/gclient/src/command/help.rs::VERBS`
+- `crates/gclient/src/command/mcp_proxy.rs`
+- `crates/gclient/src/command/mcp_proxy/client.rs`
+- `crates/gclient/src/command/mcp_proxy/read.rs`
+- `crates/gclient/tests/command_mode.rs::VERBS`
+- `crates/gclient/tests/mock_daemon/mod.rs::*` — scope-reason: serve and record the /api/mcp read routes
+- `crates/gclient/tests/mcp_proxy_verbs.rs`
+- `crates/gclient/tests/fixtures/mcp_proxy_golden.json`
+- `src/gobby/install/version_pins.py::*` — scope-reason: bump the gclient pin
+
+**Research context:**
+- Observed: `.gobby/plans/client-operator-verbs.md` (S3.1 amendment, #24954)
+  assigns the row `mcp-proxy` (carrier `gclient mcp-proxy`,
+  `carried = false`) to #21566. The owner delivers every member through Rust,
+  "HTTP/MCP route parity alone does not fulfil a CLI row", and its 1.7 gate
+  executes every member through the Rust entry point without Python.
+- Observed: gclient command mode is hand-written.
+  - `crates/gclient/src/command.rs::dispatch_inner` parses global flat
+    `VALUE_FLAGS` and `SWITCH_FLAGS` and rejects any unknown short flag.
+  - `command/help.rs::VERBS` lists each verb, and
+    `tests/command_mode.rs::every_verb_has_its_own_help` checks every entry
+    of `tests/command_mode.rs::VERBS`.
+  - With `--json`, a verb prints its result compactly; otherwise it prints
+    plain text.
+  - Usage errors exit 2 and connection failures exit 3.
+  - `--daemon-url` defaults to `gobby_core::daemon_url::daemon_url()`, and
+    `--token-file` defaults to `gobby_core::local_token::read_api_key()`.
+  - gclient has no generic JSON HTTP helper and no MCP code.
+    `daemon/rest.rs::RestClient` is private to the TUI.
+- Observed: client-operator-verbs 1.1 proposes `command/api.rs` but has not
+  landed. Like the Projects family, this plan does not wait on #21571,
+  because its 1.7 gate already waits on #21566.
+- Observed: `clap` with `derive` is in the workspace lockfile through
+  gdaemon. gclient does not use it yet.
+- Observed: the Python read verbs live in `src/gobby/cli/mcp_proxy.py` and
+  `src/gobby/cli/mcp_proxy_templates.py`:
+
+  | Verb | Arguments and options | Route |
+  | --- | --- | --- |
+  | `list-servers` | `--json` | `GET /api/mcp/servers[?project_id=]` |
+  | `list-tools` | `-s/--server`, `--json` | `GET /api/mcp/tools?server_filter=&project_id=` |
+  | `get-schema` | `SERVER_NAME TOOL_NAME` | `POST /api/mcp/tools/schema` |
+  | `search-tools` | `QUERY`, `-k/--top-k` (10), `-s/--min-similarity` (0.0), `-S/--server`, `--json` | `POST /api/mcp/tools/search` with `cwd`, 120 s |
+  | `recommend-tools` | `TASK_DESCRIPTION`, `-a/--agent`, `-m/--mode` (`llm`, `semantic`, `hybrid`; default `llm`), `-k/--top-k` (10), `--json` | `POST /api/mcp/tools/recommend` with `cwd`, 120 s |
+  | `status` | `--json` | `GET /api/mcp/status` |
+  | `list-templates` | `--global`, `--json` | `GET /api/mcp/templates?scope=&project_id=` |
+  | `show-template` | `NAME`, `--global` | `GET /api/mcp/templates?...`, filtered by name on the client |
+
+  - Every verb first checks daemon health.
+  - Requests carry `X-Gobby-CLI-Internal: 1` and a 30-second default
+    timeout. A non-200 prints `Error: <body>` to stderr and exits 1.
+  - Project scope comes in two forms:
+    - best-effort: `_cwd_project_id`, the registered project of the working
+      directory, or none;
+    - required: `resolve_cli_mcp_project`, which returns the global scope
+      with `--global` and otherwise needs a registered project.
+- Chosen approach:
+  - `command.rs` sends `mcp-proxy` and its remaining arguments to
+    `command/mcp_proxy.rs` before the workspace verbs' flag parse and token
+    read. `help.rs` gains the `mcp-proxy` row.
+  - `mcp_proxy.rs` parses the subtree with a `clap` derive enum. It keeps
+    every Python verb name, positional argument, long option, short alias,
+    choice list and default, so `gclient mcp-proxy` accepts the same command
+    lines.
+  - The cwd project comes from `gobby_core::project::find_project_root` and
+    `read_project_id`, with no database access. A required project that
+    cannot be found exits 2 with Python's message.
+  - `client.rs` sends one JSON request with the bearer from `--token-file`,
+    `X-Gobby-CLI-Internal: 1` and the verb's timeout. It checks health first,
+    as Python does. An unreachable daemon exits 3. A non-2xx reply prints
+    `Error: <body>` and exits 1.
+  - `read.rs` implements the eight read verbs. `--json` prints the route's
+    reply. Plain text prints the same lines the Python verb prints for the
+    same reply. Golden entries in `crates/gclient/tests/fixtures/mcp_proxy_golden.json`
+    pin that text; they are captured once from the Python verbs against the
+    same canned replies.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gclient/Cargo.toml` by 0.0.1, adds the `clap` dependency, and
+    updates `Cargo.lock` and the gclient pin in
+    `src/gobby/install/version_pins.py`. gclient is unpublished, so the
+    checkout build installs it. The leaf copies no binary.
+- Planned verification:
+  `cargo nextest run -p gobby-client --test mcp_proxy_verbs --test command_mode`.
+
+**Acceptance:**
+
+- 5.1.1 - `list-servers`, `list-tools`, `get-schema` and `status` send Python's route, query and body against the mock daemon, with and without a cwd project, and print the route reply with `--json` and the golden text otherwise. test: `crates/gclient/tests/mcp_proxy_verbs.rs::server_tool_and_status_reads_match_python`.
+- 5.1.2 - `search-tools` and `recommend-tools` send `cwd`, every option with its default, and the 120-second timeout, and print the golden text. test: `crates/gclient/tests/mcp_proxy_verbs.rs::search_and_recommend_match_python`.
+- 5.1.3 - `list-templates` and `show-template` resolve scope from `--global` or the cwd project, and exit 2 with Python's message outside a project without `--global`; `show-template` prints the matched template and its parameter lines. test: `crates/gclient/tests/mcp_proxy_verbs.rs::template_reads_resolve_scope_like_python`.
+- 5.1.4 - Every read verb accepts Python's short aliases, rejects an unknown option with exit 2 before any request, exits 3 when the daemon is unreachable, and exits 1 with `Error: <body>` on a non-2xx reply. test: `crates/gclient/tests/mcp_proxy_verbs.rs::read_verbs_share_python_options_and_exits`.
+- 5.1.5 - `gclient help mcp-proxy` documents the group, and `mcp-proxy` is in the command-mode verb list. test: `crates/gclient/tests/command_mode.rs::every_verb_has_its_own_help`.
+
+### 5.2 `gclient mcp-proxy` write and local verbs [category: code] (depends: 5.1)
+`kind: deliverable`
+
+Targets:
+- `Cargo.lock`
+- `crates/gclient/Cargo.toml`
+- `crates/gclient/src/command/mcp_proxy.rs`
+- `crates/gclient/src/command/mcp_proxy/write.rs`
+- `crates/gclient/src/command/mcp_proxy/auth.rs`
+- `crates/gclient/tests/mock_daemon/mod.rs::*` — scope-reason: serve and record the /api/mcp write routes and the secrets route
+- `crates/gclient/tests/mcp_proxy_verbs.rs`
+- `crates/gclient/tests/fixtures/mcp_proxy_golden.json`
+- `src/gobby/servers/routes/configuration_models.py::SaveSecretRequest`
+- `src/gobby/servers/routes/configuration_secrets.py::*` — scope-reason: pass the optional project_id from SaveSecretRequest to set_named_secret in save_secret
+- `tests/servers/routes/test_configuration_routes.py::*` — scope-reason: cover a project-scoped secret save
+- `src/gobby/install/version_pins.py::*` — scope-reason: bump the gclient pin
+
+Consumers unchanged:
+- `src/gobby/servers/routes/configuration.py` — no-edit-reason: it re-exports SaveSecretRequest, whose new field is optional.
+
+**Research context:**
+- Observed: the Python verbs, all in `src/gobby/cli/mcp_proxy.py` except
+  `auth` and `oauth-shape` in `src/gobby/cli/mcp_oauth.py`:
+
+  | Verb | Arguments and options | Route or operation |
+  | --- | --- | --- |
+  | `add-server` | `NAME`, `-t/--transport` (`http`, `sse`, `stdio` after 2.1), `-u/--url`, `-c/--command`, `-A/--args` (JSON array), `-e/--env` (JSON), `--headers` (JSON), `--oauth`, `--disabled`, `--template`, `--set` (multiple `k=v`), `--description`, `--global` | `POST /api/mcp/servers` |
+  | `remove-server` | `NAME`, `--global`, `--yes` confirmation | `DELETE /api/mcp/servers/{name}?scope=&project_id=` |
+  | `import-server` | `-p/--from-project`, `-g/--github`, `-q/--query`, `-s/--server` (multiple), `--json`, `--global` | `POST /api/mcp/servers/import` |
+  | `refresh` | `-f/--force`, `-s/--server`, `--json` | `POST /api/mcp/refresh` with `cwd`, 300 s |
+  | `call-tool` | `SERVER_NAME TOOL_NAME`, `-a/--arg` (multiple `k=v`, values JSON-parsed, overriding `-j`), `-j/--json-args`, `--raw` | `POST /api/mcp/tools/call` with `offload: false` under `--raw` |
+  | `auth` | `NAME`, `--global`, `--timeout` (at least 1, default 300) | 1.7's `gdaemon mcp-auth`, then `PUT /api/mcp/servers/{name}` |
+  | `oauth-shape` | `NAME`, `--global` | 1.7's `gdaemon mcp-auth --shape`; no daemon check |
+
+- Observed: `add_server` handles a reply's `missing_secrets` two ways.
+  - On a TTY it prompts for each secret with hidden input, stores it with
+    `store_cli_secret` (a direct database write in the instance's scope),
+    then sends `POST /api/mcp/refresh {server, scope, project_id}`.
+  - Off a TTY it prints `needs_configuration` and the reply's `configure`
+    lines and exits 0.
+- Observed: `call_tool` with `--raw` prints the full reply. Otherwise it
+  prints the `result` field as JSON or text. `success: false` goes to stderr
+  and exits 1.
+- Observed: `src/gobby/servers/routes/configuration_secrets.py::save_secret`
+  (`POST /api/config/secrets`) writes only the global scope.
+  `SaveSecretRequest` has `name`, `value`, `category` and `description`, and
+  `ConfigStore.set_named_secret` already takes `project_id`. gclient never
+  reads the database (client-operator-verbs Constraints), so the prompt
+  needs a scoped route.
+- Observed: gclient has no helper that locates sibling binaries.
+  `gobby_core::gobby_home` names the home whose `bin/` holds `gdaemon`.
+- Chosen approach:
+  - `write.rs` implements `add-server`, `remove-server`, `import-server`,
+    `refresh` and `call-tool` with Python's options, payloads, timeouts,
+    output and exits. It uses 5.1's `client.rs` and scope rules.
+  - The `add-server` TTY prompt reads each secret with hidden input and
+    sends `POST /api/config/secrets {name, value, category: "general",
+    project_id}` in the instance's scope, then the same refresh.
+    `SaveSecretRequest` gains an optional `project_id`, which `save_secret`
+    passes to `set_named_secret`. #24467 (runtime-family 5.10) must accept
+    the same field in its native route; that is an amendment to its plan,
+    not work in this leaf.
+  - `remove-server` without `--yes` asks for confirmation on the terminal.
+    A refusal or end of input aborts with exit 1, as click's confirmation
+    does.
+  - `auth.rs` runs `auth` and `oauth-shape` by executing
+    `<gobby_home>/bin/gdaemon mcp-auth <name> [--project-id <id>]` with
+    inherited stdio.
+    - `auth` checks daemon health first and adds `--timeout`. After exit 0
+      it sends `PUT /api/mcp/servers/{name} {requires_oauth: true, scope,
+      project_id}` and prints `Authorized MCP server: <name>`.
+    - `oauth-shape` adds `--shape` and prints the subcommand's JSON.
+    - A nonzero subcommand exit returns exit 1 after the subcommand's own
+      message.
+    - A missing `gdaemon` exits 3 naming the expected path.
+  - Golden text for the write verbs is captured from the Python verbs, as in
+    5.1.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gclient/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gclient pin in `src/gobby/install/version_pins.py`. It copies no binary.
+- Planned verification:
+  `cargo nextest run -p gobby-client --test mcp_proxy_verbs` and
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_configuration_routes.py -v`.
+
+**Acceptance:**
+
+- 5.2.1 - `add-server` sends Python's payload for stdio, HTTP and template forms; off a TTY a `missing_secrets` reply prints `needs_configuration` and the configure lines and exits 0; on a pseudo-terminal it prompts, posts each secret with the instance's `project_id`, then posts the refresh. test: `crates/gclient/tests/mcp_proxy_verbs.rs::add_server_matches_python_including_secret_prompt`.
+- 5.2.2 - `remove-server` sends the scoped DELETE only after `--yes` or a confirmed prompt, and a refused prompt exits 1 with no request. test: `crates/gclient/tests/mcp_proxy_verbs.rs::remove_server_requires_confirmation`.
+- 5.2.3 - `import-server` and `refresh` send Python's payloads, including `cwd`, the multiple `--server` values and the 300-second refresh timeout. test: `crates/gclient/tests/mcp_proxy_verbs.rs::import_and_refresh_match_python`.
+- 5.2.4 - `call-tool` merges `-j` with `-a` (each `-a` value JSON-parsed and overriding), sends `offload: false` only under `--raw`, prints the result or full reply, and exits 1 with stderr on `success: false`. test: `crates/gclient/tests/mcp_proxy_verbs.rs::call_tool_matches_python`.
+- 5.2.5 - `auth` executes a stub `gdaemon` with `mcp-auth <name>`, the scope and the timeout, sends the `requires_oauth` PUT only after exit 0, and sends nothing after a nonzero exit; `oauth-shape` executes `--shape` without a daemon health check and prints its JSON. test: `crates/gclient/tests/mcp_proxy_verbs.rs::auth_and_shape_exec_gdaemon_mcp_auth`.
+- 5.2.6 - `POST /api/config/secrets` with `project_id` stores the secret in that project's scope, and without it stores globally. test: `tests/servers/routes/test_configuration_routes.py::test_save_secret_honours_project_scope`.
 
 ## V1 Plan Changelog
 `kind: framing`
@@ -1575,6 +1775,8 @@ the change list and ruled D1-D6.
     (D5).
   - #25283: `gobby-results` paging (D3).
   - #24466 5.9.10: consumes 1.4's `set_in` (D2).
+  - #24467 5.10: needs an owner amendment so the native
+    `POST /api/config/secrets` accepts the `project_id` that 5.2 adds.
   - #21564: placement precedent.
 - New P5 carries the `gclient mcp-proxy` CLI row that client-operator-verbs
   assigns to #21566 (D6).
