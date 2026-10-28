@@ -97,12 +97,28 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
      per-file claims are exclusive.
 6. **Compare soak for a mutating route.** For non-GET methods the front door
    proxies once and then calls `RouteFamily::check_proxied`, which sees only
-   post-state. A new gcore default method, `RouteFamily::prepare_proxied`
-   (no-op default, 3.1), is awaited before the proxied leg. The `hooks` family runs
-   the Rust pass in record mode against pre-state: no writes and no external
-   effects, with an in-pass overlay. `check_proxied` then compares the decision,
-   reason, context, system message, modified input and staged receipt fields.
-   A pass that depends on an `mcp_call` result compares only up to that call.
+   post-state. 3.1 adds two gcore default methods. `RouteFamily::prepare_proxied`
+   is awaited before the proxied leg and returns an opaque `ProxiedPrep`, empty
+   by default. `RouteFamily::check_prepared` receives that prep with Python's
+   response and by default calls `check_proxied`. `compare` holds the prep in a
+   local between the two calls, so it belongs to one request, and a proxy error
+   or a cancelled request drops it. The `hooks` family's prep runs the Rust pass
+   in record mode against pre-state: no writes and no external effects, with an
+   in-pass overlay. Its `check_prepared` then compares the decision, reason,
+   context, system message, modified input and staged receipt fields.
+   - A pass that runs an inline `mcp_call` or carries a foreground deferred one
+     cannot be verified, because Python's response carries no call result. Its
+     record is `Waived` under the committed waiver
+     `hooks.execute.mcp-call-partial` and is never `Verified`; the 1.1 cases
+     with scripted call results are its replacement proof (7.13). Without the
+     waiver every such record would be an unwaived skip, and `Report::passes`
+     would fail every soak. The Orchestrator's confirmation of this waiver is
+     pending through Triage.
+   - Rejected: changing `check_proxied`'s signature. Seven other family plans
+     implement it on their own schedules, so 3.1 could not target every
+     implementor.
+   - Rejected: keying the record by envelope id. Execute accepts requests
+     without one, and concurrent retries share one.
 7. **Python deletion boundary.** 7.17 and 7.18 delete the routes and the modules only
    ingress uses, each only when `gcode grep -w <symbol> -l -g 'src/**'` shows no
    surviving importer. `HookManager` and the event handlers stay (Decision 4).
@@ -319,7 +335,9 @@ JSON file per case, listed in `manifest.json`. A case carries:
   response or failure;
 - the `expect` block: every response field above, the eager variable delta,
   the staged `on_receipt` payload, the ordered effect log, the audit records
-  and the DR8 outcome.
+  and the DR8 outcome;
+- `family`, naming the helper family or observer the case exercises, when it
+  exercises one.
 
 Rule bodies are synthetic. They exercise engine features; no case asserts the
 behavior of a bundled rule (Decision 11). Both engines must produce each
@@ -361,7 +379,21 @@ Required scenario cases:
   non-block effects run once;
 - a turn end with `HANDOFF_TURN_END_PENDING_VARIABLE` set, which allows;
 - a hardcoded override with no rule installed (`include_rule_outputs=False`);
-- one case per hardcoded behavior 2.16 and 2.17 list.
+- one case per hardcoded behavior 2.16 and 2.17 list;
+- an after-tool event with no pending before context, and a duplicate before;
+- for each helper family 2.10, 2.11 and 2.12 port, at least one allow, one
+  block and one seam-error case: commit guard, review scope, ledger reconcile
+  and dirty state (2.10); claim, binding, dirty grant and edit ledger (2.11);
+  found work, validation, monolith, memory review and session target (2.12);
+- for each observer 2.18 ports (plan mode, context usage, MCP, commits and
+  turn interrupt), an observed and a not-observed case, plus a seam-error case
+  for each observer that reads a seam;
+- three transitions as event sequences: a claim and its release, a review gate
+  armed and then cleared, and plan mode entered and then exited.
+
+Family cases reuse the inputs of those modules' Python unit tests, rewritten as
+synthetic rule bodies, events and seam scripts. They stay engine cases: none
+asserts a bundled rule's behavior.
 
 **Granularity:** one leaf with seven acceptance items. The case schema, the
 exporter that is its oracle and the coverage checks are one artifact; a corpus
@@ -370,7 +402,7 @@ without its exporter cannot be re-recorded.
 **Acceptance:**
 - 1.1.1 - The manifest and every case load at `schema_version` 1, and a stale version is rejected. test: `tests/contracts/test_rules_corpus.py::test_loader_rejects_stale_schema_version`.
 - 1.1.2 - All 15 effect types and both delivery classes appear in some case's expected effect log, using synthetic rule bodies only. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_effect_types_and_delivery`.
-- 1.1.3 - Every required scenario case exists, including both F4 recheck cases. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
+- 1.1.3 - Every required scenario case exists, including both F4 recheck cases, every listed helper family's and observer's classes and the three transitions; removing any of them fails the check. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
 - 1.1.4 - The Python engine reproduces every case's `expect` block. test: `tests/contracts/test_rules_corpus.py::test_python_engine_replays_corpus`.
 - 1.1.5 - Every hardcoded behavior 2.16 and 2.17 list has a case, and every response field appears set in some case. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_hardcoded_behavior_and_response_fields`.
 - 1.1.6 - The Python functions reproduce every normalizer vector. test: `tests/contracts/test_rules_corpus.py::test_python_normalizer_replays_vectors`.
@@ -1046,7 +1078,7 @@ through the seam. The 863-line commit guard splits into `commit_guard.rs` and
 together.
 
 **Acceptance:**
-- 2.10.1 - Every commit-guard, review-scope, ledger-reconcile and dirty-state case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/git_helpers_corpus.rs::git_helper_cases_replay_equal`.
+- 2.10.1 - Every commit-guard, review-scope, ledger-reconcile and dirty-state case in the 1.1 corpus replays equal, and the replay fails when any of those families has no case. test: `crates/gworkflows/tests/git_helpers_corpus.rs::git_helper_cases_replay_equal`.
 - 2.10.2 - Site row 2: for a node event with an unanswered read, the commit guard blocks naming the detail, the review gate stays armed, the ledger releases nothing, the worktree root stays unresolved and the landed check keeps the attribution. test: `crates/gworkflows/src/git/tests.rs::site_row_2_git_failures_fail_closed_per_caller`.
 - 2.10.3 - Site row 17: live path owners come only from the event's machine. test: `crates/gworkflows/src/git/tests.rs::site_row_17_owners_are_machine_scoped`.
 
@@ -1081,7 +1113,7 @@ Port them as `claims` and register the task-backed helper names in
 `condition::helpers`.
 
 **Acceptance:**
-- 2.11.1 - Every claim, binding, dirty-grant and edit-ledger case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/claims_corpus.rs::claim_cases_replay_equal`.
+- 2.11.1 - Every claim, binding, dirty-grant and edit-ledger case in the 1.1 corpus replays equal, and the replay fails when any of those families has no case. test: `crates/gworkflows/tests/claims_corpus.rs::claim_cases_replay_equal`.
 - 2.11.2 - Every task-backed condition helper replays equal, and a seam failure follows the per-rule rule. test: `crates/gworkflows/src/claims/tests.rs::task_helpers_match_python`.
 - 2.11.3 - Site row 15: an unanswered node read resolves the edit pair to the lexical path under the node's checkout row. test: `crates/gworkflows/src/claims/tests.rs::site_row_15_edit_pair_degrades_to_lexical_path`.
 
@@ -1129,7 +1161,7 @@ helper set, registered together in `condition::helpers` and tested by one
 corpus replay.
 
 **Acceptance:**
-- 2.12.1 - Every found-work, validation, monolith, memory-review and session-target case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/gates_corpus.rs::gate_cases_replay_equal`.
+- 2.12.1 - Every found-work, validation, monolith, memory-review and session-target case in the 1.1 corpus replays equal, and the replay fails when any of those families has no case. test: `crates/gworkflows/tests/gates_corpus.rs::gate_cases_replay_equal`.
 - 2.12.2 - Site row 11: an unanswered projection read lists the path with the diagnostic. test: `crates/gworkflows/src/gates/tests.rs::site_row_11_projection_fails_closed`.
 - 2.12.3 - Site row 12: one batched read serves every guard path, and an unanswered read lists each path with the diagnostic. test: `crates/gworkflows/src/gates/tests.rs::site_row_12_outstanding_paths_fail_closed`.
 - 2.12.4 - Site row 23: terminal-failure analysis for a node session matches Python unchanged. test: `crates/gworkflows/src/gates/tests.rs::site_row_23_terminal_failures_unchanged`.
@@ -1418,7 +1450,7 @@ Transcript reads go through `TranscriptQueries`.
 run by one dispatcher and tested by one corpus replay.
 
 **Acceptance:**
-- 2.18.1 - Every observer case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/observers_corpus.rs::observer_cases_replay_equal`.
+- 2.18.1 - Every observer case in the 1.1 corpus replays equal, and the replay fails when any of the five observers has no case. test: `crates/gworkflows/tests/observers_corpus.rs::observer_cases_replay_equal`.
 - 2.18.2 - Site row 26: the plan-mode observer reads the Codex transcript for a node session as Python does. test: `crates/gworkflows/src/observers/tests.rs::site_row_26_transcript_read_unchanged`.
 
 **Verification:** the shared P2 commands.
@@ -1492,7 +1524,7 @@ Targets:
 - `crates/gcore/src/lib.rs::*` — scope-reason: declares the feature-gated hook_ledger module
 - `crates/gcore/src/hook_ledger.rs`
 - `crates/gcore/src/hook_ledger/tests.rs`
-- `crates/gcore/src/route_family.rs::RouteFamily`
+- `crates/gcore/src/route_family.rs::*` — scope-reason: adds ProxiedPrep, the two default methods and the Waived variant
 - `crates/gdaemon/Cargo.toml`
 - `crates/gdaemon/src/nodes/hooks/ledger.rs::*` — operation: delete — scope-reason: the whole module moves to crates/gcore/src/hook_ledger.rs
 - `crates/gdaemon/src/nodes/hooks/mod.rs`
@@ -1502,7 +1534,7 @@ Targets:
 - `crates/gdaemon/src/nodes/hooks/receipts.rs::*` — scope-reason: import path changes only
 - `crates/gdaemon/src/state.rs::NodeServices`
 - `crates/gdaemon/tests/node_hooks.rs::*` — scope-reason: import path changes only
-- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: compare awaits the new seam and gains its test
+- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: compare holds each request's prep and records waived checks, with their tests
 - `crates/gcode/Cargo.toml`
 - `crates/ghook/Cargo.toml`
 - `crates/gclient/Cargo.toml`
@@ -1532,7 +1564,17 @@ Targets:
   native and proxied legs concurrently for GET and HEAD. For other methods it
   proxies once and then calls `RouteFamily::check_proxied`
   (`crates/gcore/src/route_family.rs`), logging to `front-door-compare.jsonl`
-  through `crates/gdaemon/src/front_door/compare.rs`.
+  through `crates/gdaemon/src/front_door/compare.rs`. On a proxy error it
+  returns before any check.
+- **Check outcomes.** `ProxiedCheck` has `Skipped`, `Verified` and
+  `Mismatch(String)`, and `compare` holds its only exhaustive match.
+  `compare.rs::Record` carries `waiver: Option<WaiverRef>`, a gdaemon type,
+  which `routes.rs::record` always sets to `None`. `compare::report` accepts a
+  `Waived` record only when its waiver is in the manifest with the same
+  decision and an `HTTP <method> <path>` surface that matches.
+- **Implementors.** `crates/gruntime/src/lib.rs` and
+  `crates/gdaemon/tests/compare.rs` implement `check_proxied`, and seven other
+  family plans add implementors on their own schedules.
 - **Release carriers.** gcore 0.10.21 is a path dependency of gcode, gdaemon,
   ghook, gclient, gmcp, gruntime and gterminals.
 
@@ -1545,9 +1587,25 @@ machine use; `Some(id)` uses `.stop_replay_epoch.<machine_id>`.
 `terminal_response` takes the envelope's machine id and checks that machine's
 epoch. gdaemon enables the feature and imports from gcore.
 
-Add `RouteFamily::prepare_proxied(&self, parts, request) -> Pin<Box<dyn
-Future<Output = ()> + Send>>` with a no-op default. `compare` awaits it before
-the proxied leg for non-GET/HEAD requests. No family overrides it until 7.13.
+Add the request-local compare seam to `route_family.rs`:
+- `ProxiedPrep` wraps `Option<Box<dyn Any + Send>>`. `ProxiedPrep::default()`
+  is empty, and a family stores and takes back its own type.
+- `RouteFamily::prepare_proxied(&self, parts, request) -> Pin<Box<dyn
+  Future<Output = ProxiedPrep> + Send + 'a>>` returns the empty prep by
+  default.
+- `RouteFamily::check_prepared(&self, parts, request, status, response, prep:
+  ProxiedPrep)` returns `self.check_proxied(parts, request, status, response)`
+  by default, so every current and planned `check_proxied` implementor stays
+  unchanged.
+- `ProxiedCheck::Waived { id, decision }` carries strings, because `WaiverRef`
+  is gdaemon-local.
+
+`compare` awaits `prepare_proxied` for a claimed non-GET/HEAD request, holds
+the prep in a local across the proxied leg, and moves it into
+`check_prepared`. A proxy error or a cancelled request drops the prep with the
+request future, so no family keeps a per-request map. `compare` maps `Waived`
+to `Outcome::Waived` and passes its `WaiverRef` to `record`, which stops
+hardcoding `None`. No family overrides the new methods until 7.13.
 
 Bump gcore and every released dependent (gcode, gdaemon, ghook, gclient,
 gmcp) by 0.0.1, update `Cargo.lock`, and keep `MANAGED_BIN_VERSION_PINS` in
@@ -1560,12 +1618,14 @@ dependent.
 **Acceptance:**
 - 3.1.1 - The node arm's existing ledger, drain and ingress tests pass unchanged against `gcore::hook_ledger`, including the session-start epoch bump. test: `crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch`.
 - 3.1.2 - A per-machine epoch bump bounds STOP replays for that machine only, and `None` keeps the single-file layout Python reads. test: `crates/gcore/src/hook_ledger/tests.rs::stop_epoch_is_per_machine`.
-- 3.1.3 - Compare awaits `prepare_proxied` before the proxied leg of a non-GET request, and the default does nothing. test: `crates/gdaemon/src/front_door/routes.rs::compare_awaits_prepare_before_proxied_leg`.
+- 3.1.3 - Compare awaits `prepare_proxied` before the proxied leg of a non-GET request and moves that request's prep into its `check_prepared`: concurrent requests each receive their own prep, a proxy error or a cancelled request drops it, and the defaults return an empty prep and delegate to `check_proxied`. test: `crates/gdaemon/src/front_door/routes.rs::compare_hands_each_request_its_own_prep`.
 - 3.1.4 - gcore and its released dependents carry 0.0.1 bumps, and `Cargo.lock` and the managed pins agree. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 3.1.5 - A `ProxiedCheck::Waived` result is recorded as `Waived` with its waiver id and decision. test: `crates/gdaemon/src/front_door/routes.rs::waived_check_records_its_waiver`.
 
 **Verification:** planned:
 `cargo nextest run -p gobby-core --features hook-ledger -E 'test(hook_ledger)'`,
 `cargo nextest run -p gobby-daemon -E 'test(node_hooks) | test(compare)'`,
+`cargo check --workspace --all-targets`,
 `cargo clippy -p gobby-core -p gobby-daemon --all-targets -- -D warnings`.
 
 ### 3.2 `gobby-ingress` crate, `hooks` family and request validation [category: code] (depends: 3.1)
@@ -1596,7 +1656,7 @@ Targets:
 - **Contract.** `docs/contracts/hook-ingress.md` and the 1.2 corpus.
 - **Family seam.** `crates/gcore/src/route_family.rs::RouteFamily` (`name`,
   `prefixes`, `router`, `default_backend` defaulting to `Proxy`, `claims`,
-  `check_proxied`, 3.1's `prepare_proxied`). Pattern:
+  `check_proxied`, and 3.1's `prepare_proxied` and `check_prepared`). Pattern:
   `crates/gruntime/Cargo.toml`.
 - **Door.** `crates/gdaemon/src/front_door/mod.rs` answers node-mode
   `/api/hooks/execute` in `Door::Node` before any routing table, so the
@@ -2471,8 +2531,9 @@ Shared rules for every P7 deliverable:
   method of its 5.1 group, and the engine seams of the same family, to that
   family's public operation. A family failure returns `SeamUnavailable`.
 - No agent reads or edits the live bootstrap. The operator sets each
-  `front_door.routes.hooks` value, and the Orchestrator coordinates it at each
-  cutover.
+  `front_door.routes.hooks` value only while the daemon is stopped, and the
+  Orchestrator coordinates it at each cutover. gdaemon reads the value once at
+  start (7.14).
 - Verification: `GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test cargo nextest run -p gobby-daemon -p gobby-ingress`,
   `cargo clippy -p gobby-daemon -p gobby-ingress --all-targets -- -D warnings`
   and `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/install/test_version_pins.py`.
@@ -2818,6 +2879,8 @@ Targets:
 - `tests/test_runner_bin_freshness.py::*` — scope-reason: drop the drain loop argument
 - `tests/test_runner_maintenance_startup.py::*` — scope-reason: remove the quarantine-loop scheduling test
 - `tests/test_runner_shutdown.py::*` — scope-reason: drop the quarantine task attribute from the shutdown fixture
+- `docs/contracts/parity-waivers.json::*` — scope-reason: adds the mcp-call-partial waiver entry
+- `docs/contracts/parity-ledger.md::*` — scope-reason: regenerated so the execute row notes the new waiver
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
@@ -2825,8 +2888,9 @@ Targets:
 **Research context:**
 - **Compare.** `crates/gdaemon/src/front_door/routes.rs::compare` runs both legs
   for GET and HEAD. For other methods it awaits 3.1's `prepare_proxied`, proxies
-  once, then calls `check_proxied`, which returns `ProxiedCheck::Verified` or
-  `Mismatch(pointer)`. Records go to `front-door-compare.jsonl`
+  once, then moves that request's `ProxiedPrep` into `check_prepared`, which
+  returns `ProxiedCheck::Verified`, `Mismatch(pointer)` or `Waived { id,
+  decision }`. Records go to `front-door-compare.jsonl`
   (`crates/gdaemon/src/front_door/compare.rs::Record`), and
   `gdaemon compare-report --since <ts>` passes only with no diff, native error,
   mismatch or unwaived skip (`Report::passes`).
@@ -2834,6 +2898,17 @@ Targets:
   reason, injected context or staged receipt fields), D2.5 (DR8 counters per
   route) and D2.6 (allow-audit lines keep `record_rule_evaluation`'s schema in
   `rule-allow-audit.jsonl`).
+- **`mcp_call` results.** `src/gobby/workflows/engine/effects.py` runs an
+  `mcp_call` inline when it sets `inject_result`, is not `background` and a
+  dispatcher is present. The result sets `success_variable`, adds context and
+  can block. Other calls go to `metadata["mcp_calls"]` as server, tool and
+  arguments only, and `src/gobby/hooks/rule_evaluator.py` dispatches the
+  foreground ones before it builds the response, so their results add context
+  or override the decision. Python's response carries no call result. The
+  hardcoded `list_mcp_servers` seed on a session's first prompt
+  (`src/gobby/workflows/engine/core.py`) is one such deferred call, and six
+  bundled rule files, `surface-memories-on-turn-start` among them, use
+  `mcp_call`.
 - **Python loops.** `runner_lifecycle_periodic.py::start_periodic_tasks` spawns
   `hook-inbox-drain` (`runner._hook_inbox_task`) and `hook-quarantine-retention`.
   `runner_lifecycle.py::run_daemon` passes `drain_hook_inbox_loop`.
@@ -2846,19 +2921,24 @@ Targets:
   Per-file claims are exclusive (3.5.2), and a timeout fences unresolved
   sessions.
 
-`HooksFamily` overrides both methods:
+`HooksFamily` overrides `prepare_proxied` and `check_prepared`. Each request's
+record travels in its own `ProxiedPrep`; the envelope id, when present, is
+diagnostic only, so anonymous requests and concurrent retries of one envelope
+each compare against their own pre-state.
 - **Execute.** `prepare_proxied` runs 5.12's execution on pre-state in record
   mode: every seam write and external effect is recorded, the claim is skipped
-  and the driver commits nothing. The record is keyed by envelope id.
-  `check_proxied` compares decision, reason, context, system message, modified
-  input and staged receipt fields with Python's response. A pass whose later
-  rules read an `mcp_call` result compares up to that call and is counted as
-  partial.
+  and the driver commits nothing. `check_prepared` compares decision, reason,
+  context, system message, modified input and staged receipt fields with
+  Python's response. A pass that runs an inline `mcp_call` or carries a
+  foreground deferred one is partial: `check_prepared` returns `Waived` under
+  `hooks.execute.mcp-call-partial` and never `Verified` or `Mismatch`, because
+  Python's response cannot show what Rust would produce from the same call
+  results (Decision 6).
 - **Node replay.** `prepare_proxied` computes the decision on pre-state, and
-  `check_proxied` compares it.
-- **Receipts.** `check_proxied` verifies that the receipt row's post-state
+  `check_prepared` compares it.
+- **Receipts.** `check_prepared` verifies that the receipt row's post-state
   agrees with Python's body.
-- **Webhook test.** `check_proxied` recomputes the config-determined error
+- **Webhook test.** `check_prepared` recomputes the config-determined error
   bodies and, for a delivery, checks the response shape and the named enabled
   endpoint.
 - The GET rows use the door's concurrent compare.
@@ -2869,7 +2949,15 @@ partial flag and verdict. That is the family's per-route observability (D2.5).
 In native mode the family appends each pass's audit records to
 `rule-allow-audit.jsonl` (D2.6). An explained difference is one recorded under a
 #24963 waiver in `docs/contracts/parity-waivers.json`, such as 5.4's
-`hooks.node-session.register`.
+`hooks.node-session.register`. This leaf adds `hooks.execute.mcp-call-partial`
+on surface `HTTP POST /api/hooks/execute` with decision
+`.gobby/plans/s2-11-hub-hooks-rules.md#7.13`. Its behaviour: the Rust pass of
+an execute that runs or carries a foreground `mcp_call` is not compared with
+Python's response. Its replacement: the 1.1 cases with scripted `mcp_call`
+results replay equal through both engines (1.1.4, 7.15.1). `compare-report`
+counts these records under the waiver id, apart from `Verified`
+(`Report::waived`). The leaf regenerates `docs/contracts/parity-ledger.md`
+so the execute row notes the waiver.
 
 Drain handover: `hooks::compose` starts 3.5's drain and retention with a
 closure that sends each envelope through `LocalDispatch`. The drain follows the
@@ -2887,9 +2975,9 @@ split: the attribute-name tuple in `_cancel_periodic_tasks` is the move to
 two hook loop names, and `stop_restart_recovery` drops `_hook_inbox_task` from
 its tuple.
 
-**Granularity:** one leaf with 15 production files and six acceptance items.
-Record mode, the per-route checks and the outcome log are one compare step that
-the soak reads together. The drain handover lands with them so the same soak
+**Granularity:** one leaf with 15 production files and eight acceptance items.
+Record mode, the per-route checks, the waiver they cite and the outcome log are
+one compare step that the soak reads together. The drain handover lands with them so the same soak
 covers the Rust drain while proxy rollback still reaches Python, and so
 exactly one periodic drain runs.
 
@@ -2912,11 +3000,13 @@ Consumers unchanged:
 
 **Acceptance:**
 - 7.13.1 - A record-mode execute writes nothing and runs no external effect, and its response fields compare equal to Python's on every 1.2 and 1.4 case. test: `crates/gingress/src/compare/tests.rs::record_mode_execute_matches_python_without_effects`.
-- 7.13.2 - An `mcp_call`-dependent pass compares up to the call and is logged as partial, and a changed decision reports a JSON pointer mismatch. test: `crates/gingress/src/compare/tests.rs::partial_and_mismatch_are_reported`.
+- 7.13.2 - A divergence planted after an inline `mcp_call`, and one after a foreground deferred call, each return `Waived` with `hooks.execute.mcp-call-partial`, never `Verified` or `Mismatch`, and their `hooks-compare.jsonl` lines carry the partial flag; a changed decision in a pass with no `mcp_call` reports a JSON pointer mismatch. test: `crates/gingress/src/compare/tests.rs::partial_passes_are_waived_and_mismatches_reported`.
 - 7.13.3 - Replay, receipt and webhook-test checks verify Python's responses and report a planted divergence; every execute line carries its DR8 class, and native audit lines parse with `record_rule_evaluation`'s schema. test: `crates/gingress/src/compare/tests.rs::post_route_checks_and_outcome_lines`.
 - 7.13.4 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 - 7.13.5 - Under `proxy` and `compare` the Rust drain delivers each spooled envelope once through `LocalDispatch` to Python, settles or quarantines it by the response, and a compare-mode delivery writes a `hooks-compare.jsonl` line with its envelope id. test: `crates/gdaemon/tests/hooks_drain.rs::drain_delivers_through_the_route_table`.
 - 7.13.6 - The Rust drain and the Python barrier never deliver one file twice, and Python schedules no drain or quarantine loop. test: `tests/hooks/test_inbox.py::test_barrier_coexists_with_the_rust_drain`.
+- 7.13.7 - Two concurrent executes without an envelope id, and two concurrent retries of one envelope, each compare against their own pre-state record. test: `crates/gingress/src/compare/tests.rs::concurrent_requests_compare_their_own_snapshots`.
+- 7.13.8 - The waiver loads with its id, surface, decision and replacement, and the regenerated ledger matches the committed one. test: `tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory`.
 
 ### 7.14 DR6 pass endpoint and the Python proxy forward [category: code] (depends: 7.13)
 `kind: deliverable`
@@ -2950,8 +3040,22 @@ Targets:
 - **Python client pattern.** `src/gobby/hub/node_client.py::NodeCommandClient`:
   daemon port from `load_bootstrap()`, `X-Gobby-Backend-Secret:
   front_door_secret()`, `trust_env=False`, no redirects.
-- **Route value.** `src/gobby/config/bootstrap.py::FrontDoorConfig` `routes`.
-  Python treats an absent family as proxied.
+- **Tool context.** `src/gobby/workflows/tool_context.py` keeps before- and
+  after-tool correlation in process memory (`_tool_contexts`,
+  `_tool_context_by_id`, `_direct_tool_completions`).
+  `apply_before_tool_enforcement` asks `has_pending_tool_context` to flag a
+  duplicate before, and `apply_after_tool_workflow` calls
+  `mark_direct_tool_completed`. 2.19 ports the module as
+  `crates/gworkflows/src/driver/tool_context.rs`.
+- **Restart.** `gobby start` execs `gdaemon serve` with
+  `GOBBY_BACKEND_COMMAND` (`src/gobby/cli/daemon_start.py`), and gdaemon's
+  `BackendSupervisor` spawns the Python runner and respawns it after a crash
+  (`crates/gdaemon/src/lifecycle/backend.rs`). gdaemon builds its `RouteTable`
+  once at serve start (`crates/gdaemon/src/serve.rs::serve_with_runtime`), so a
+  route value changes only when gdaemon restarts. A Python respawn keeps the
+  route table and Rust's tool context and loses Python's, as it does today.
+  ghook enqueues each hook in the inbox before posting it
+  (`crates/ghook/src/dispatch.rs`).
 
 `POST /api/internal/hooks/rule-pass` takes the pass input the two Python sites
 build (1.1's proxied-pass cases record it), runs 2.19's `driver` and returns
@@ -2959,14 +3063,35 @@ the full 1.1 response field set, `modified_input` included. Unknown or invalid
 bodies get not-found or the shared validation error.
 
 Ownership marker: the Rust pipeline merges `_rule_pass_owner: "rust"` into the
-delta of the first pass it commits for a session. `rule_pass_forward` defines
-`HOOKS_ROUTE_DEFAULT = "proxy"`, which 7.15 flips. Its `rust_owns_session`
-returns true when the effective `hooks` value is native and the session's
+delta of the first pass it commits for a session. Python reads no route value.
+`rule_pass_forward.rust_owns_session` returns true when the session's
 variables carry the marker. Web chat, ACP, Codex app-server and in-process
 runner sessions never get the marker, because their hooks never reach the
-route (Decision 4). Both Python sites forward when it returns true, run no
-Python pass, and apply the returned response as they apply Python's. Rollback
-to proxy makes the check false, so Python runs the passes again.
+route (Decision 4). When it returns true, both Python sites forward and apply
+the returned response as they apply Python's. The endpoint runs the pass only
+while gdaemon's `hooks` backend is native. Otherwise it answers 409
+`rule_pass_not_owner` before any pass, and the Python site runs its own pass.
+gdaemon's start-time route table is therefore the one ownership authority, and
+after a rollback a marked session pays one loopback per proxied tool call.
+
+A forwarding site skips Python's `has_pending_tool_context` check and
+`mark_direct_tool_completed`. The forwarded input carries the correlation
+data, and Rust's `driver::tool_context` detects duplicate befores and records
+completions, so each session has one bookkeeping owner. A refused forward runs
+both Python calls as before.
+
+Transition: the flip (7.15) and any rollback take effect only when gdaemon
+restarts through the cutover path. Hooks that arrive while the daemon is down
+wait in the inbox, and the new daemon's drain delivers them under the new
+route. Both engines keep pending tool context in memory, so a tool whose
+before pass ran before the restart reaches its new owner with no pending
+context, exactly as after a Python restart today; 1.1's no-pending-context
+case pins that path for both engines. A failed start leaves the daemon stopped
+with hooks spooled, so no half-switched process serves.
+
+**Granularity:** one leaf with eight acceptance items. The endpoint, its
+ownership refusal and the Python forward form one ownership contract; either
+half alone would leave a pass with no owner or with two.
 
 Consumers unchanged:
 - `src/gobby/mcp_proxy/services/tool_proxy.py` — no-edit-reason: Its wrappers call both functions, whose signatures and return shapes are unchanged.
@@ -2975,10 +3100,13 @@ Consumers unchanged:
 
 **Acceptance:**
 - 7.14.1 - The endpoint returns every response field of a 1.1 proxied-pass case, and non-loopback peers, a missing or wrong secret and the node door get not-found before body parsing. test: `crates/gdaemon/tests/hook_rule_pass.rs::rule_pass_endpoint_is_loopback_only_and_complete`.
-- 7.14.2 - D2.8: across every session kind, both pass sites and all three route values, exactly one engine runs each pass. test: `tests/mcp_proxy/services/test_rule_pass_forward.py::test_one_engine_per_session`.
+- 7.14.2 - D2.8: across every session kind, both pass sites, a marked and an unmarked session, and an endpoint that runs the pass or answers `rule_pass_not_owner`, exactly one engine runs each pass. test: `tests/mcp_proxy/services/test_rule_pass_forward.py::test_one_engine_per_session`.
 - 7.14.3 - D2.8: a Rust-owned session's before- and after-tool passes forward to Rust, run none in Python, and apply every field, `modified_input` included. test: `tests/mcp_proxy/services/test_rule_pass_forward.py::test_rust_owned_passes_forward_with_every_field`.
 - 7.14.4 - The first committed Rust pass of a session sets the ownership marker once. test: `crates/gingress/src/pipeline/tests.rs::first_rust_pass_marks_ownership`.
 - 7.14.5 - gdaemon carries this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 7.14.6 - The endpoint answers 409 `rule_pass_not_owner` before any pass unless gdaemon's `hooks` backend is native. test: `crates/gdaemon/tests/hook_rule_pass.rs::endpoint_refuses_unless_native`.
+- 7.14.7 - A forwarded pass leaves the pending-context check and the completion mark to Rust, and a refused forward runs both in Python. test: `tests/mcp_proxy/services/test_rule_pass_forward.py::test_forwarding_leaves_tool_bookkeeping_to_rust`.
+- 7.14.8 - A before pass and its after pass split by a restart that changes the owner, in both directions, take the new owner's no-pending-context path and apply no effect twice. test: `crates/gdaemon/tests/hook_rule_pass.rs::tool_pair_across_restart_matches_python_restart`.
 
 ### 7.15 Native default [category: code] (depends: 7.14)
 `kind: deliverable`
@@ -2986,7 +3114,6 @@ Consumers unchanged:
 Targets:
 - `crates/gingress/src/family.rs`
 - `crates/gdaemon/tests/hooks_flip.rs`
-- `src/gobby/mcp_proxy/services/rule_pass_forward.py`
 - `crates/gdaemon/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
@@ -3010,10 +3137,12 @@ Targets:
 - **Platforms.** The soak and cutover evidence run on macOS only. Linux CI
   evidence (E1) does not gate this leaf (Josh, 2026-09-14).
 
-`HooksFamily::default_backend` returns `Native`, and `HOOKS_ROUTE_DEFAULT`
-becomes `"native"` in the same commit. The Rust drain has run since 7.13 and
-follows the new default through `LocalDispatch`, so `hooks: proxy` still rolls
-both the route and the drain's deliveries back to Python.
+`HooksFamily::default_backend` returns `Native`. Python reads no route value
+(7.14), so this leaf changes no Python. The new default takes effect at the
+cutover that installs it, and the endpoint then runs Rust-owned passes. The
+Rust drain has run since 7.13 and follows the new default through
+`LocalDispatch`, so `hooks: proxy` at a later restart still rolls both the
+route and the drain's deliveries back to Python.
 
 **Acceptance:**
 - 7.15.1 - D2.1 and D2.9: with no `hooks` entry, every 1.2 envelope and sequence case and every 1.1 hardcoded-behavior and response-field case replays equal through gdaemon. test: `crates/gdaemon/tests/hooks_flip.rs::native_default_replays_the_corpora`.
