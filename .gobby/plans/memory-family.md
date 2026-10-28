@@ -1987,38 +1987,13 @@ Targets:
 - `crates/gmemory/tests/background.rs`
 - `crates/gdaemon/src/state.rs::RuntimeState::prepare`
 - `src/gobby/memory/job_ownership.py`
-- `src/gobby/sessions/lifecycle.py::SessionLifecycleManager.start`
-- `src/gobby/sessions/lifecycle.py::SessionLifecycleManager._sweep_shared_rows`
-- `src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`
-- `src/gobby/runner_init/services.py::MemoryServiceBundle.memory_manager`
-- `src/gobby/runner_init/services.py::_init_memory_stack`
-- `src/gobby/memory/dream/cron.py::reconcile_interrupted_dream_runs`
-- `src/gobby/runner_maintenance/lifecycle.py::rebuild_vector_store`
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: skip the graph queue task in `SessionLifecycleManager.start` and the dream-hidden purge in `_sweep_shared_rows` when gdaemon owns the memory jobs
+- `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: skip the `memory-reconcile` spawn in `start_periodic_tasks` when gdaemon owns the memory jobs
+- `src/gobby/runner_init/services.py::*` — scope-reason: skip both `start_projection_scope_repair` calls when gdaemon owns the memory jobs
+- `src/gobby/memory/dream/cron.py::*` — scope-reason: make `reconcile_interrupted_dream_runs` return no IDs when gdaemon owns the memory jobs
+- `src/gobby/runner_maintenance/lifecycle.py::*` — scope-reason: make `rebuild_vector_store` log that gdaemon owns the rebuild and return when gdaemon owns the memory jobs
 - `tests/conftest.py::_clear_terminal_route_latch`
 - `tests/memory/test_native_job_ownership.py`
-
-Consumers unchanged:
-- `src/gobby/runner.py` — no-edit-reason: it starts the lifecycle manager and reads the memory bundle through unchanged signatures.
-- `src/gobby/runner_init/orchestration.py` — no-edit-reason: its interrupted-run reconcile call keeps the same signature and receives no IDs when gdaemon owns the jobs.
-- `src/gobby/runner_init/project_purge.py` — no-edit-reason: it reads the memory manager through the unchanged property.
-- `src/gobby/runner_lifecycle.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
-- `src/gobby/runner_lifecycle_subsystems.py` — no-edit-reason: it calls the gated `rebuild_vector_store` through the unchanged signature.
-- `src/gobby/runner_maintenance/__init__.py` — no-edit-reason: it re-exports `rebuild_vector_store` by name.
-- `src/gobby/servers/http.py` — no-edit-reason: it reads the memory manager through the unchanged property.
-- `tests/ai/test_ai_runner_lease_lifecycle.py` — no-edit-reason: the autouse fixture clears the latch, so Python keeps its jobs.
-- `tests/memory/test_dream_summaries.py` — no-edit-reason: the autouse fixture clears the latch, so the reconcile still marks runs.
-- `tests/memory/test_indexing_service.py` — no-edit-reason: the autouse fixture clears the latch, so the scope repair still starts.
-- `tests/servers/routes/test_admin.py` — no-edit-reason: it reads the memory manager through the unchanged property.
-- `tests/sessions/test_sessions_lifecycle.py` — no-edit-reason: the autouse fixture clears the latch, so the queue and purge still run.
-- `tests/test_runner_approval_timeout.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
-- `tests/test_runner_bin_freshness.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
-- `tests/test_runner_init.py` — no-edit-reason: the autouse fixture clears the latch, so memory startup is unchanged.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: the autouse fixture clears the latch, so the periodic spawns are unchanged.
-- `tests/test_runner_lifecycle_periodic.py` — no-edit-reason: the autouse fixture clears the latch, so the reconcile spawn is unchanged.
-- `tests/test_runner_maintenance_startup.py` — no-edit-reason: the autouse fixture clears the latch, so the reconcile spawn is unchanged.
-- `tests/test_runner_resource_monitor.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
-- `tests/test_runner_skill_maintenance.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
-- `tests/test_runner_workflow_audit_maintenance.py` — no-edit-reason: it calls `start_periodic_tasks` with unchanged arguments.
 
 **Research context:** Python runs six memory jobs outside any ledger row,
 all hub-only. `src/gobby/sessions/lifecycle.py::SessionLifecycleManager._kg_queue_loop`
@@ -2317,7 +2292,6 @@ Targets:
 
 Consumers unchanged:
 - `src/gobby/cli/__init__.py` — no-edit-reason: its lazy map entry `"memory": ("memory", "memory")` still resolves `gobby.cli.memory.memory`.
-- `src/gobby/memory/services/_search_access.py` — no-edit-reason: the `cli.memory.recall` caller tag stays in `SURFACED_CALLERS`; 7.1 sends it.
 
 **Research context:** Literal sweeps for `gobby.cli.memory` found the six
 test importers listed above and no production importer outside the package.
@@ -2495,6 +2469,407 @@ Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-memory --te
 `tests/servers/test_auth_service.py` with the protected Python prefix; the
 isolated e2e test; the targeted version-pin check; scoped Ruff and mypy with
 a changed-test type audit; an admitted release build and
+Orchestrator-directed cutover.
+
+### 8.6 Retire the Python memory and review-learning services [category: code] (depends: 8.5, #25024, #21560, #21562, #24151, #21567, #21570, #21583, #21585, #21587, #21589, #21591)
+`kind: deliverable`
+
+Targets:
+- `crates/gdaemon/src/state.rs::RuntimeState::prepare`
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`
+- `src/gobby/memory/job_ownership.py`
+- `src/gobby/mcp_proxy/tools/memory.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_dream.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_review.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_surface.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_scope.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_session.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/memory_write.py::*` — operation: delete — scope-reason: retire the Python memory tool module
+- `src/gobby/mcp_proxy/tools/review_learning.py::*` — operation: delete — scope-reason: retire the Python review-learning tool module
+- `src/gobby/memory/backends/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/backends/null.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/backends/storage_adapter.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/collection_names.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/components/__init__.py`
+- `src/gobby/memory/dream/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/aggregate.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/apply.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/candidates.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/coordinator.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/cron.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/decisions.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/models.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/options.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/orchestrator.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/plan.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/planner.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/protocols.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/related.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/report.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/service.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage_actions.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage_journal.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/storage_runs.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/dream/truth_digest.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/embedding_text.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/facade.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/falkor_client.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/generation_schemas.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/identity.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/manager.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/prompt_triage.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/protocol.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/push_exclusion.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/scoring.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_access.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_backfill.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_constants.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_graph.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_keyword.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_models.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_paths.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_ranking.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_results.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/_search_rrf.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/crossref.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/indexing.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/keyword.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/__init__.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/clustering.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/code_linker.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/densify.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/extraction.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/maintenance.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/models.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/normalization.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/reader.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/rebuild.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/service.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/knowledge_graph/writer.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/lifecycle.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/maintenance.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/projection_repair.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/repository.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/search.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/services/secondary_reconciliation.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/surface_format.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_client.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_filters.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_logging.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_maintenance.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_queries.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_rebuild.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/vectorstore_status.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/memory/write_result.py::*` — operation: delete — scope-reason: retire the Python memory service
+- `src/gobby/review_learning/__init__.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/class_recall.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/file_paths.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/fingerprint.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/guidance.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/lessons.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/review_learning/service.py::*` — operation: delete — scope-reason: retire the Python review-learning service
+- `src/gobby/storage/memories.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_base.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_crossrefs.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_crud.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_dreams.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_graph.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_models.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_query.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_scope.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/storage/memories_vector_reindex.py::*` — operation: delete — scope-reason: retire the Python memory storage
+- `src/gobby/sync/memories.py::*` — operation: delete — scope-reason: retire the Python memory backup manager
+- `src/gobby/app_context.py::*` — scope-reason: drop the memory manager, dream coordinator and backup manager fields and their imports
+- `src/gobby/runner.py::*` — scope-reason: drop the memory, vector store, dream coordinator and backup manager attributes, the reconcile task slot and their imports
+- `src/gobby/runner_init/config_subscribers.py::*` — scope-reason: drop the `memory_services` subscriber and its live keys
+- `src/gobby/runner_init/orchestration.py::*` — operation: delete-lines — base-blob: 8958a08506fae444c05ab2b01b47302846f14c81 — lines: 616-638, 715-737, 860-874 — scope-reason: remove the dream coordinator, the Python dream cron registration and the interrupted-run reconcile
+- `src/gobby/runner_init/servers.py::*` — scope-reason: stop passing the memory manager, dream coordinator and backup manager to the HTTP server
+- `src/gobby/runner_init/services.py::*` — scope-reason: delete the memory service stack: the bundle, its builders and rebuild requests, the vector store, both scope repairs and the projection repair
+- `src/gobby/runner_lifecycle.py::*` — scope-reason: stop threading `rebuild_vector_store` into subsystem startup
+- `src/gobby/runner_lifecycle_periodic.py::*` — scope-reason: delete the gated `memory-reconcile` spawn and its loop entry
+- `src/gobby/runner_lifecycle_shutdown.py::*` — operation: delete-lines — base-blob: b2aca3939c682863c87789d2f67d9a6f84d17afd — lines: 288, 422-439 — scope-reason: remove the memory reconcile task slot and the memory manager and vector store closes
+- `src/gobby/runner_lifecycle_subsystems.py::*` — operation: delete-lines — base-blob: e37cc910330a11e0df8f3bf9c606fa5113bb54ba — lines: 49, 155-207, 771, 811-813 — scope-reason: remove the vector store startup phase, the vector store initializer and its rebuild parameter
+- `src/gobby/runner_maintenance/__init__.py::*` — scope-reason: drop the `rebuild_vector_store` and `memory_reconcile_loop` re-exports
+- `src/gobby/runner_maintenance/lifecycle.py::*` — scope-reason: delete `rebuild_vector_store`
+- `src/gobby/runner_maintenance_recurring.py::*` — scope-reason: delete `memory_reconcile_loop`
+- `src/gobby/runner_rollback.py::*` — scope-reason: drop the memory manager rollback entry
+- `src/gobby/runner_service_readiness.py::*` — scope-reason: drop the FalkorDB probe, whose client and only Python user retire here
+- `src/gobby/servers/_app_lifecycle.py::*` — scope-reason: drop the memory manager from the app state
+- `src/gobby/servers/http.py::*` — scope-reason: drop the memory resolvers, constructor parameters and property, and the dream coordinator shutdown
+- `src/gobby/mcp_proxy/registries.py::*` — scope-reason: drop the memory and review-learning registries, the review-learning service construction and the memory resolver parameters
+- `src/gobby/mcp_proxy/server.py::*` — scope-reason: drop the unused `memory_manager` parameter
+- `src/gobby/sessions/lifecycle.py::*` — scope-reason: delete the knowledge-graph queue loop, the dream-hidden purge and their gated start sites
+- `tests/mcp_proxy/test_memory_tools_kg.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_get_access.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_review.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_surface.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_tools.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_memory_write_cap.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/mcp_proxy/tools/test_review_learning.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/__init__.py`
+- `tests/memory/_recall_corpus.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/conftest.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/fixtures/claude_transcript_titles.jsonl`
+- `tests/memory/fixtures/gobby_cli_truth_digest.json::*` — operation: delete — scope-reason: retire the fixture of the deleted Python dream tests
+- `tests/memory/fixtures/ranking_cohort.json::*` — operation: delete — scope-reason: retire the fixture of the deleted Python ranking tests
+- `tests/memory/recall_benchmark_cleanup.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_async_db_offload.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_backends.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_collapse_screen.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_cooccurrence_densify.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_create_supersedes.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_coordinator.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_cron.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_evidence.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_frozen_digest.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_keyword_parse.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_options.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_related.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_reports.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_dream_summaries.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_embedding_text.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_client.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_phase2_dialect.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_phase2_wiring.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_vector_search.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_falkor_write_methods.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_graph_backfill_equivalence.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_graph_edge_weighting.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_graph_search_integration.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_identity.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_indexing_service.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_knowledge_graph.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_knowledge_graph_clustering.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_maintenance_update.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_graph_search.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_knowledge_graph_wiring.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_renames.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_manager_vectorstore.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_memory_manager_1.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_memory_protocol.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_projection_repair.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_prompt_triage.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_ranking_policy.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_recall_benchmark.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_recall_benchmark_cleanup.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_recall_benchmark_e2e.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_scoring.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_search_access_gating.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_search_ranking.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_secondary_reconciliation.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_v2_features.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_vectorstore.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_vectorstore_init.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_write_cap.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/__init__.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/conftest.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_ci_guard.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_class_recall.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_feedback_loop_e2e.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_file_paths.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_fingerprint.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_guidance.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_lessons.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_promotion.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_recall_context.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_recall_limits.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_retirement.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/review_learning/test_storage_contract.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_memories_dreams.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_memory_manager.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_memory_media.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/storage/test_storage_memories.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/sync/test_memory_backup.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/sync/test_memory_sync.py::*` — operation: delete — scope-reason: retire the tests of the deleted Python modules; the native tests own their behavior
+- `tests/memory/test_native_job_ownership.py`
+- `tests/e2e/test_memory_dream_gc_e2e.py::*` — operation: delete — scope-reason: retire the e2e of the Python dream-hidden purge, which 7.3's native job owns
+- `tests/conftest.py::_clear_terminal_route_latch`
+- `tests/ai/test_ai_runner_lease_lifecycle.py::*` — scope-reason: drop the memory-services rebuild cases
+- `tests/config/test_stateful_config_subscribers.py::*` — scope-reason: drop the `memory_services` subscriber cases
+- `tests/mcp_proxy/test_registries.py::*` — scope-reason: drop the memory and review-learning registry cases
+- `tests/mcp_proxy/tools/tasks/test_cross_project_task_refs.py::*` — scope-reason: drop the cases that build the Python memory registry
+- `tests/mcp_proxy/tools/test_internal_action_tools.py::*` — scope-reason: drop the memory backup and restore cases
+- `tests/mcp_proxy/tools/test_tool_verbosity.py::*` — scope-reason: drop the memory verbosity case
+- `tests/meta/test_import_hygiene.py::*` — scope-reason: drop the memory manager argument
+- `tests/reports/test_publishing_retirement.py::*` — scope-reason: seed dream rows with SQL instead of the retired dream store
+- `tests/reports/test_tools.py::*` — scope-reason: seed dream rows with SQL instead of the retired dream store
+- `tests/runner_init/test_services_mcp_stack.py::*` — scope-reason: drop the memory stack expectations
+- `tests/servers/conftest.py::*` — scope-reason: drop the memory manager and backup manager fixture arguments
+- `tests/servers/test_http_endpoints.py::*` — scope-reason: drop the memory manager arguments
+- `tests/servers/test_http_middleware.py::*` — scope-reason: drop the memory manager argument
+- `tests/sessions/test_sessions_lifecycle.py::*` — scope-reason: drop the knowledge-graph queue and dream-hidden purge cases
+- `tests/skills/test_epic_review_skill.py::*` — scope-reason: drop the cases that drive the Python review-learning service
+- `tests/skills/test_review_learning_skill.py::*` — scope-reason: drop the cases that drive the Python review-learning service
+- `tests/storage/sessions/test_storage_sessions_lifecycle.py::*` — scope-reason: seed memory rows with SQL instead of the retired storage manager
+- `tests/storage/test_datetime_bindings.py::*` — scope-reason: drop the memory storage cases
+- `tests/storage/test_datetime_models.py::*` — scope-reason: drop the memory model cases
+- `tests/storage/test_dialect_parity.py::*` — scope-reason: drop the memory manager cases
+- `tests/storage/test_embedding_generation_ledger.py::*` — scope-reason: seed memory rows with SQL instead of the retired storage manager
+- `tests/sync/test_local_backup_paths.py::*` — scope-reason: drop the memory backup path cases
+- `tests/test_bm25_startup.py::*` — scope-reason: drop the `_initialize_vector_store` patch
+- `tests/test_runner_approval_timeout.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_backlog.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_bin_freshness.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_code_index_shutdown.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_init.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle_periodic.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle_startup.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_maintenance_offload.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_maintenance_startup.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_rollback.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_service_readiness.py::*` — scope-reason: drop the FalkorDB probe cases
+- `tests/test_runner_shutdown.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_skill_maintenance.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/test_runner_workflow_audit_maintenance.py::*` — scope-reason: drop the memory wiring expectations
+- `tests/utils/test_deps.py::*` — scope-reason: drop the `_init_memory_stack` expectations
+- `tests/workflows/test_memory_lifecycle_rules.py::*` — scope-reason: drop the case that builds the Python memory registry
+- `tests/workflows/test_session_variable_mutation_scope.py::*` — scope-reason: drop the retired tool helper imports
+- `tests/servers/test_memory_python_retired.py`
+- `docs/contracts/memory-native.md`
+
+Consumers unchanged:
+- `src/gobby/cli/install_setup_gclient.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gcode.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gdaemon.py` — no-edit-reason: dynamically reads the bumped gdaemon pin.
+- `src/gobby/cli/install_setup_ghook.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gmcp.py` — no-edit-reason: dynamically reads its unchanged native version pin.
+- `src/gobby/cli/install_setup_gterm.py` — no-edit-reason: dynamically reads unchanged native version pins.
+- `src/gobby/cli/install_setup_versions.py` — no-edit-reason: resolves every pin dynamically by binary name.
+- `src/gobby/code_index/gcode_versions.py` — no-edit-reason: both gcode maintenance floors derive from the unchanged gcode pin.
+- `src/gobby/hooks/runtime_compat.py` — no-edit-reason: the hook compatibility floor derives from the unchanged ghook pin.
+- `src/gobby/install/bin_freshness_models.py` — no-edit-reason: enumerates the map dynamically.
+- `src/gobby/install/distribution.py` — no-edit-reason: resolves minimum versions dynamically.
+- `tests/cli/installers/test_grok_installer.py` — no-edit-reason: derives expected ghook versions from the map.
+- `tests/cli/test_install_ghook.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gclient.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gdaemon.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gmcp.py` — no-edit-reason: derives expected versions from the map.
+- `tests/cli/test_install_setup_gterm.py` — no-edit-reason: derives expected versions from the map.
+- `tests/code_index/test_gcode_gateway.py` — no-edit-reason: derives gcode expectations from the unchanged pin.
+- `tests/hooks/test_runtime_compat.py` — no-edit-reason: derives ghook expectations from the unchanged pin.
+- `tests/install/test_distribution.py` — no-edit-reason: dynamically parameterizes managed version expectations.
+- `tests/install/test_version_pins.py` — no-edit-reason: already verifies each managed pin against its Cargo manifest.
+
+**Research context:** After 8.5 no public caller reaches Python memory
+code, but Python still constructs the memory service, the review-learning
+service, the shared `VectorStore` and the dream coordinator, and other
+families' Python code calls them in-process. This leaf deletes all of it
+once those callers have moved. Each remaining caller outside this family is
+named below against the epic whose Rust plan owns it; that epic moves the
+caller off the Python service before this leaf runs. The Orchestrator
+narrows each epic edge to the owning leaf tasks at expansion, because
+several of those epics hold leaves that depend on this plan.
+
+- #21560 tasks: `ReviewLearningService` in
+  `src/gobby/mcp_proxy/tools/tasks/_context.py`, `_factory.py` and
+  `_ops_factory.py`.
+- #21562 sessions: `src/gobby/sessions/summary_context.py::_get_session_memories`,
+  the memory manager in `src/gobby/sessions/transcript_processing.py`,
+  `src/gobby/mcp_proxy/tools/sessions/_factory.py`,
+  `src/gobby/hooks/session_summary_dispatcher.py` and
+  `src/gobby/hooks/session_summary_wiring.py`.
+- #24151 hooks: the memory components and inline MCP dispatcher in
+  `src/gobby/hooks/factory.py`, `src/gobby/hooks/hook_manager.py`, and
+  `src/gobby/hooks/dispatchers/mcp.py` (`dispatch_mcp_calls` and
+  `format_review_lesson_guidance`).
+- #21567 workflows: the Python rule engine's `mcp_call` dispatch, including
+  the web chat consumer in `src/gobby/servers/websocket/chat/_lifecycle.py`
+  (`.gobby/plans/rust-rule-evaluation.md` D4 to D6), the pipeline tool
+  steps in `src/gobby/workflows/pipeline/handlers.py`, and
+  `src/gobby/workflows/engine/delivery_formatting.py`.
+- #21570 MCP front door: the Python tool proxy's internal-registry dispatch
+  (`src/gobby/servers/routes/mcp/endpoints/execution.py`,
+  `src/gobby/mcp_proxy/server.py` and `src/gobby/mcp_proxy/stdio_tools.py`),
+  `src/gobby/mcp_proxy/semantic_search.py`,
+  `src/gobby/mcp_proxy/services/fallback.py`, the tool-embeddings half of
+  `_initialize_vector_store`, and the bundle's `semantic_search` that
+  `src/gobby/servers/http.py` reads.
+- #21583 communications: `get_current_project_id` in
+  `src/gobby/mcp_proxy/tools/communications.py`.
+- #21585 projects: `src/gobby/runner_init/project_purge.py`,
+  `src/gobby/projects/vector_cleanup.py` and
+  `src/gobby/projects/fenced_vector_store.py`.
+- #21587 AI: `src/gobby/ai/embedding_switch.py` and
+  `src/gobby/ai/embedding_switch_runner.py`.
+- #21589 admin: the memory statistics and vector store in
+  `src/gobby/servers/routes/admin/_health.py`.
+- #21591 install: the `VectorStore` in
+  `src/gobby/cli/installers/embedding.py`.
+- #25024 cron: binds the native nightly dream to 4.3's service, so the
+  Python dream cron registration has no role left.
+
+Their tests move with them: the embedding switch, project write fence,
+admin health and status-budget, and memory index delivery tests, and the
+memory component fixtures under `tests/hooks/` and `tests/adapters/`.
+`ReviewLearningPatternMutation` in `src/gobby/storage/hub/protocol.py` and
+`src/gobby/storage/hub/postgres_pool.py` stays with the shared hub lock
+registry; 5.1 takes the same key string.
+
+This leaf owns the rest: the family's packages, storage mixins, backup
+manager and tool modules, and the family's wiring in the Python runner. The
+sessions plan keeps the knowledge-graph queue and the dream-hidden purge in
+`SessionLifecycleManager`; this leaf deletes them there, with 7.3's gates
+and `src/gobby/memory/job_ownership.py`. 7.3's latch has no reader left, so
+`RuntimeState::prepare` stops exporting `GOBBY_MEMORY_ROUTE`,
+`tests/conftest.py` stops clearing it, and gdaemon takes a 0.0.1 bump with
+manifest, lock and pin, as in 8.5. A node runs no Python backend, so no
+node behavior changes. The bare-path entries for
+`src/gobby/memory/components/__init__.py`, `tests/memory/__init__.py`,
+`tests/memory/fixtures/claude_transcript_titles.jsonl`,
+`src/gobby/memory/job_ownership.py` and
+`tests/memory/test_native_job_ownership.py` are deletions as well: the
+index holds no symbols for the first three, and 7.3 creates the last two.
+
+The three runner files over 850 lines take delete-lines proofs pinned to
+their current blobs: in `orchestration.py` the dream coordinator, the
+dream cron registration and the interrupted-run reconcile; in
+`runner_lifecycle_shutdown.py` the reconcile task slot and the memory
+manager and vector store closes; in `runner_lifecycle_subsystems.py` the
+`vector_store` startup phase, `_initialize_vector_store` and its
+`rebuild_vector_store` parameter. Other families edit these files before
+this leaf runs, so the proofs are re-pinned at expansion and the executor
+removes the named blocks. If the code-index plan's 8.3 has moved
+`_initialize_vector_store` into `src/gobby/runner_startup_vectors.py`, the
+re-pin follows it there.
+
+**Granularity:** One atomic state: nothing under `src/` imports the Python
+memory, review-learning, memory storage or memory backup modules, or the
+eight memory tool modules. The tools cannot go first, because
+`registries.py` builds `ReviewLearningService` from the service package,
+and the runner wiring must change in the same commit as the deletions.
+Every target is a deletion or the removal of a reference to a deleted
+module.
+
+**Acceptance:**
+
+- 8.6.1 - No module remains under `gobby.memory`, `gobby.review_learning`,
+  `gobby.storage.memories*`, `gobby.sync.memories` or the eight memory tool
+  modules; import and patch-string sweeps under `src/` and `tests/` find no
+  reference to them; and no source under `crates/` or `src/` names
+  `GOBBY_MEMORY_ROUTE`.
+  test: `tests/servers/test_memory_python_retired.py::test_python_memory_services_are_retired`.
+- 8.6.2 - The Python runner starts, serves its remaining families and shuts
+  down with no memory service, vector store, dream coordinator, memory job
+  or FalkorDB probe. test: `tests/test_runner_lifecycle.py::test_runner_runs_without_python_memory`.
+- 8.6.3 - The gdaemon manifest, lock and pin agree at the required patch
+  increment. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+- 8.6.4 - The contract records the retirement and each named piece with its
+  owning epic. behavior: "memory Python retirement" in `docs/contracts/memory-native.md`.
+
+Planned verification: `cargo check -p gobby-daemon` and the gdaemon state
+tests; the retirement and runner tests and every edited test file with the
+protected Python prefix; scoped Ruff, mypy over `src/` and a changed-test
+type audit; the targeted version-pin check; an admitted release build and
 Orchestrator-directed cutover.
 
 ## E1 End-to-end verification
