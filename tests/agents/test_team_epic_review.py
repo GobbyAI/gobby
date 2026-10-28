@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.team_lifecycle import TeamAdmissionRefused, TeamBinding, managed_task_team
+from gobby.agents.team_dispatch import dispatch_for_caller
+from gobby.agents.team_lifecycle import (
+    TeamAdmissionRefused,
+    TeamBinding,
+    bind_reviewer_run,
+    managed_task_team,
+)
 from gobby.agents.team_review import sync_epic_review
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
@@ -22,6 +28,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.workspaces import WorkspaceManager
 from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import land_candidate, task_landing_target
 from gobby.tasks.step_records import (
@@ -33,8 +40,10 @@ from gobby.tasks.step_records import (
     list_task_step_records,
     record_task_step,
 )
+from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.condition_helpers_sessions import dev_pod_launch_allowed
+from gobby.workflows.condition_helpers_sessions import dev_pod_launch_allowed, own_seat_resume
+from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.review_approvals import grant_step_writes
@@ -269,6 +278,27 @@ async def test_epic_leaf_uses_single_task_fixer_and_fresh_reviewer(world: TeamWo
     assert state.next_reviewers == {leaf.id: "code-reviewer"}
     assert (state.held, state.holds) == (False, ())
 
+    sibling = new_task(world, "Different leaf", parent=epic)
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(fresh, sibling, team.binding.team_id, fresh_reviewer=True)
+    assert refused.value.code == "team_binding_drift"
+
+    # A separate leaf at the same review epoch gets its own fresh-review reservation.
+    tasks.claim_task(sibling.id, developer, force=True)
+    reject_rounds(team, sibling, developer, reviewer, 2)
+    assert (await hand_off(tools, team, sibling, developer, reviewer)).get("success") is True
+    other_fresh = world.child(sibling)
+    assert (
+        await world.admit(
+            other_fresh,
+            sibling,
+            team.binding.team_id,
+            fresh_reviewer=True,
+            exclude_reviewers=[reviewer],
+        )
+        == team.binding
+    )
+
 
 @pytest.mark.asyncio
 async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
@@ -290,6 +320,10 @@ async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
     assert managed_task_team(team.db, team.manager, leaf.id) == pod
     assert await world.admit(run, leaf, parent_team_id=team.binding.team_id) == pod
 
+    with pytest.raises(TeamAdmissionRefused) as refused:
+        await world.admit(world.child(leaf), leaf, team.binding.team_id)
+    assert refused.value.code == "team_task_mismatch"
+
     writer = running_seat(world, run, "test-writer")
     tools = create_task_registry(LocalTaskManager(team.db))
     with session_context_for_test(writer.id):
@@ -300,6 +334,107 @@ async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
     developer = running_seat(world, run, "developer")
     moved = await hand_off(tools, team, leaf, writer.id, developer.id)
     assert moved.get("success") is True, moved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "agent,grant",
+    [("test-writer", "test"), ("developer", "implementation"), ("code-reviewer", "review")],
+)
+async def test_epic_manager_resumes_pod_seat_in_its_own_team(
+    world: TeamWorld, agent: str, grant: TaskStep
+) -> None:
+    epic = new_task(world, "Resume pod", epic=True)
+    leaf = new_task(world, "Pod leaf", parent=epic)
+    team = await epic_team(world, epic)
+    run = world.child(leaf, parent=team.manager)
+    pod = await world.admit(run, leaf, parent_team_id=team.binding.team_id)
+    seat = running_seat(world, run, agent)
+    primary = running_seat(world, team.runbook, "code-reviewer")
+    assert primary.agent_run_id is not None
+    bind_reviewer_run(
+        team.db,
+        team.binding.team_id,
+        team.binding.project_id,
+        "code-reviewer",
+        primary.agent_run_id,
+    )
+    sessions = SessionManager(team.db)
+    assert own_seat_resume(sessions, team.manager, agent, seat.id)
+    assert not own_seat_resume(sessions, team.manager, "docs-reviewer", seat.id)
+    other = await epic_team(world, new_task(world, "Other epic", epic=True))
+    assert not own_seat_resume(sessions, other.manager, agent, seat.id)
+    body = AgentDefinitionBody.model_validate(
+        {
+            "name": agent,
+            "version": "1.0",
+            "task_step_writes": [grant],
+            "workflows": {"rule_selectors": {"include": []}},
+        }
+    )
+    scope = dispatch_for_caller(
+        team.db,
+        team.manager,
+        agent_body=body,
+        agent=agent,
+        task_id=None,
+        checkout_mode=None,
+        branch_name=None,
+        base_branch=None,
+        worktree_id=None,
+        resume_session_id=seat.id,
+    )
+    assert scope is not None and scope.team_id == pod.team_id
+    assert scope.worktree_id is None  # Resume retains the seat's recorded tree.
+
+
+@pytest.mark.asyncio
+async def test_pod_pipeline_launches_triplet_and_relaunches_in_pod_tab(world: TeamWorld) -> None:
+    from tests.agents.test_devteam_rerun import (
+        DEVTEAM,
+        RENDERER,
+        _admit,
+        _inputs,
+        _launched,
+        _seat_prompt,
+        _step_context,
+    )
+
+    epic = new_task(world, "Pipeline epic", epic=True)
+    leaf = new_task(world, "Pipeline leaf", parent=epic)
+    team = await epic_team(world, epic)
+    definitions = AgentDefinitionManager(team.db)
+    for name in ("test-writer", "code-reviewer"):
+        definitions.create(name, {"name": name, "version": "1.0"}, project_id=world.case.project_id)
+    workspace = WorkspaceManager(team.db).create(require_machine_id(), "devteam")[0].id
+    inputs = _inputs(leaf, workspace, team.manager, None)
+    inputs["parent_team_id"] = team.binding.team_id
+    run = world.child(leaf, DEVTEAM, parent=team.manager)
+    context = await _admit(world, run, inputs)
+    assert _launched(run, context) == ["test-writer", "developer", "code-reviewer"]
+    assert context["steps"]["guard"]["output"]["tab_title"] == f"Dev Pod - #{leaf.seq_num}"
+    for name in ("test-writer", "developer", "code-reviewer"):
+        assert team.manager in _seat_prompt(run, name, context)
+    roster = next(step for step in DEVTEAM.steps if step.id == "roster")
+    assert roster.mcp is not None
+    context["steps"].update(
+        {
+            name: {"output": {"child_session_id": name, "run_id": name}}
+            for name in ("test-writer", "developer", "code-reviewer")
+        }
+    )
+    args = RENDERER.render_mcp_arguments(
+        roster.mcp.arguments or {}, _step_context(run, roster.id, context), drop_none=True
+    )
+    assert args["target_id"] == team.manager
+    world.finish(run)
+    pod_id = context["steps"]["admit"]["output"]["team_id"]
+    replay_inputs = _inputs(leaf, workspace, team.manager, pod_id)
+    replacement = world.child(leaf, DEVTEAM, parent=team.manager)
+    replay = await _admit(world, replacement, replay_inputs)
+    assert _launched(replacement, replay) == ["test-writer", "developer", "code-reviewer"]
+    assert replay["steps"]["guard"]["output"]["live"]["dev-manager"] == team.manager
+    assert replay["steps"]["guard"]["output"]["tab_title"] == f"Dev Pod - #{leaf.seq_num}"
 
 
 @pytest.mark.asyncio
@@ -330,6 +465,26 @@ async def test_only_epic_manager_can_launch_pods(world: TeamWorld) -> None:
         await world.admit(single_run, leaf, parent_team_id=single_team.binding.team_id)
     assert refused.value.code == "pod_parent_invalid"
     assert not dev_pod_launch_allowed(sessions, single_team.manager, "pipeline:devteam", inputs)
+
+    # Exercise the bundled rule through real proxy normalization and caller identity.
+    from gobby.hooks.events import HookEventType
+    from gobby.workflows.engine.core import RuleEngine
+    from tests.workflows.test_seat_rules import _event, _load_roles, _proxy_call
+
+    _load_roles(team.db)
+    engine = RuleEngine(team.db)
+    for tool, arguments, allowed in (
+        ("run_pipeline", {"name": "devteam", "inputs": inputs}, True),
+        ("pipeline:devteam", inputs, True),
+        ("run_pipeline", {"name": "other", "inputs": inputs}, False),
+        ("pipeline:devteam", {**inputs, "task": epic.id}, False),
+    ):
+        event = _event(HookEventType.BEFORE_TOOL, _proxy_call("gobby-workflows", tool, arguments))
+        event.metadata["_platform_session_id"] = team.manager
+        response = await engine.evaluate(
+            event, session_id=team.manager, variables={"_agent_type": "dev-manager"}
+        )
+        assert (response.decision != "block") is allowed, response
 
 
 @pytest.mark.asyncio
@@ -370,6 +525,29 @@ async def test_pod_lands_and_closes_against_epic_branch(
         attribution_complete=True,
     )
     assert checklist.ready, checklist
+
+    from gobby.agents.team_teardown import TEARDOWN_GRACE
+    from gobby.mcp_proxy.tools import agent_cancellation
+    from tests.agents.test_team_teardown_epic_leaf import close_leaf
+    from tests.fixtures.team_teardown_case import (
+        Terminations,
+        closed_at,
+        daemon,
+        session_status,
+        teardown_pass,
+    )
+
+    primary = running_seat(world, team.runbook, "developer")
+    writer = running_seat(world, run, "test-writer")
+    terminations = Terminations(team.db)
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
+    closed = close_leaf(world, leaf, sha)
+    await teardown_pass(team.db, daemon(team.db), closed_at(closed) + TEARDOWN_GRACE)
+    assert set(terminations.ended()) == {developer, reviewer, writer.id}
+    assert not tree_of(pod).exists()
+    assert tree_of(team.binding).is_dir()
+    assert session_status(team.db, primary.id) == "active"
+    assert session_status(team.db, team.manager) == "active"
 
 
 @pytest.mark.asyncio
