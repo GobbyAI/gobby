@@ -2924,7 +2924,9 @@ Targets:
   (`.gobby/plans/gdaemon-runtime-family.md` Q2): at least 24 hours, measured
   once from the cutover that starts compare. The window also needs at least one
   execute from each of the five CLIs and one request on each node and webhook
-  row. No restart resets the clock.
+  row. No restart resets the clock. If a CLI cannot run on this machine at flip
+  time, the soak evidence names it and the flip waits for Josh's waiver; the
+  CLI is never skipped silently (Orchestrator, 2026-10-28).
 - **Python loops.** `runner_lifecycle_periodic.py::start_periodic_tasks` spawns
   `hook-inbox-drain` (`runner._hook_inbox_task`) and `hook-quarantine-retention`.
   `runner_lifecycle.py::run_daemon` passes `drain_hook_inbox_loop`.
