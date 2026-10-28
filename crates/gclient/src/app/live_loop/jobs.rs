@@ -139,12 +139,16 @@ pub enum JobResult {
     },
     /// A project's roster read. `apply_relist` installs it only while that
     /// project is focused, so a read that lands after a switch is dropped.
+    /// `elapsed` spans the read, for the WARN when it fails.
     Roster {
         project: String,
+        elapsed: Duration,
         result: Result<Relist, DaemonError>,
     },
     /// The attention roster read. An attention event newer than it wins.
+    /// `elapsed` spans the read, for the WARN when it fails.
     Attention {
+        elapsed: Duration,
         result: Result<RosterSnapshot, DaemonError>,
     },
 }
@@ -491,9 +495,12 @@ impl LoopJobs {
             Pending::Roster(project) => {
                 let read = workspace.issue_roster_fetch(project.clone());
                 spawn_job(&self.tx, tag.clone(), async move {
+                    let started = Instant::now();
+                    let result = read.await;
                     JobResult::Roster {
                         project,
-                        result: read.await,
+                        elapsed: started.elapsed(),
+                        result,
                     }
                 });
                 true
@@ -501,8 +508,11 @@ impl LoopJobs {
             Pending::Attention => {
                 let daemon = workspace.daemon().clone();
                 spawn_job(&self.tx, tag.clone(), async move {
+                    let started = Instant::now();
+                    let result = daemon.attention_roster().await;
                     JobResult::Attention {
-                        result: daemon.attention_roster().await,
+                        elapsed: started.elapsed(),
+                        result,
                     }
                 });
                 true

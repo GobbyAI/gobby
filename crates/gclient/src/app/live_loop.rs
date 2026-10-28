@@ -454,7 +454,9 @@ pub async fn run_live_loop<B: Backend>(
                 relist_job = None;
                 match result {
                     Ok(relist) => {
-                        workspace.apply_relist(relist);
+                        if workspace.apply_relist(relist) {
+                            workspace.roster_landed = true;
+                        }
                     }
                     Err(error) => begin_reconnect(workspace, chrome, &mut supervisor, &daemon, error),
                 }
