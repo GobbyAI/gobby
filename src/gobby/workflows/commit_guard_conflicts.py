@@ -1,6 +1,6 @@
 """Ownership conflict scope and actionable diagnostics, independent of I/O."""
 
-from collections.abc import Mapping, Sequence, Set
+from collections.abc import Mapping, Set
 from dataclasses import dataclass, replace
 
 from gobby.workflows.task_claim_state import task_edit_path_covers
@@ -94,7 +94,7 @@ def format_unverified_dirty_edit_reason(paths: Set[str]) -> str:
 def format_dirty_edit_reason(
     conflicts: set[ForeignPathOwner],
     unowned: Set[str] = frozenset(),
-    approval_commands: Sequence[str] = (),
+    overlapped: Set[str] = frozenset(),
 ) -> str:
     ordered_conflicts = sorted(
         conflicts, key=lambda item: (item.path, item.session_ref, item.task_ref)
@@ -109,6 +109,11 @@ def format_dirty_edit_reason(
                 for owner in ordered_conflicts
             ],
             *[f"- {path} — no live session owns it" for path in sorted(unowned)],
+            *[
+                f"- {path} — overlapped with another session's Bash call in this worktree; "
+                "it stays foreign"
+                for path in sorted(overlapped)
+            ],
             *(
                 ["Ask each owner with `gobby-agents:send_message` to commit its work."]
                 if conflicts
@@ -116,16 +121,21 @@ def format_dirty_edit_reason(
             ),
             *(
                 [
-                    "Unowned paths may come from an unattributable interpreter-script or "
-                    "other opaque write, including your own session's write.",
-                    "Ask the operator through Triage/Assistant to revert the change or run "
-                    "the approval command in their own shell:",
-                    *[f"  {command}" for command in approval_commands],
-                    "Redo the intended change with Edit/Write, then retry.",
+                    "Unowned paths may come from an opaque write, such as an interpreter script "
+                    "run outside a task worktree. Do not revert or approve them: send Triage "
+                    "the path and the command that wrote it.",
                 ]
                 if unowned
                 else []
             ),
-            *([] if unowned else ["Then retry."]),
+            *(
+                [
+                    "Overlapped paths were changed while another session's Bash call ran in this "
+                    "worktree. Retry once that call has finished.",
+                ]
+                if overlapped
+                else []
+            ),
+            *([] if unowned or overlapped else ["Then retry."]),
         ]
     )

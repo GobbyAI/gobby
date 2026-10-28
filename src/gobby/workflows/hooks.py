@@ -34,6 +34,12 @@ from gobby.workflows.hook_project_path import _is_known_no_repo_project, resolve
 from gobby.workflows.observer_dispatch import run_observers as _dispatch_observers
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
+from gobby.workflows.worktree_shell_attribution import (
+    begin_structured_edit_calls,
+    mark_session_had_edits_if_claimed,
+    release_structured_edit_calls,
+    settle_background_worktree_shell_calls,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
@@ -317,6 +323,21 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         raise
                     except Exception:
                         logger.warning("Failed to settle background shell edits", exc_info=True)
+                    try:
+                        if await settle_background_worktree_shell_calls(
+                            self._session_var_manager, session_id
+                        ):
+                            await asyncio.to_thread(
+                                mark_session_had_edits_if_claimed,
+                                self._task_manager,
+                                self._session_manager,
+                                session_id,
+                                logger,
+                            )
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning("Failed to settle background worktree calls", exc_info=True)
 
                 # Load session-scoped variables (canonical store).
                 # session_id may be "" for session-less events; session_variables.session_id
@@ -502,6 +523,28 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         logger.debug("Commit gate target task no longer exists: %s", target_task_id)
                     else:
                         variables["target_task_has_commits"] = bool(task.commits)
+
+                # A structured edit is in flight from before its rules are judged, so a Bash
+                # call that settles after that judgment finds it. A block releases it below.
+                if (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and session_id
+                    and event.project_id
+                    and self._session_var_manager
+                ):
+                    try:
+                        await asyncio.to_thread(
+                            begin_structured_edit_calls,
+                            self._session_var_manager,
+                            session_id,
+                            event,
+                        )
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "Failed to register structured edit in flight", exc_info=True
+                        )
 
                 eval_context: dict[str, Any] = {
                     "foreign_dirty_edit_conflict": "",
@@ -694,6 +737,24 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     eval_context=eval_context,
                     blocking_deadline=blocking_deadline,
                 )
+                if (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and session_id
+                    and event.request_id
+                    and response.decision == "block"
+                    and self._session_var_manager
+                ):
+                    try:
+                        await asyncio.to_thread(
+                            release_structured_edit_calls,
+                            self._session_var_manager,
+                            session_id,
+                            event.request_id,
+                        )
+                    except _DATABASE_TIMEOUTS:
+                        raise
+                    except Exception:
+                        logger.warning("Failed to release structured edit in flight", exc_info=True)
 
                 staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
                 staged_keys: set[str] = set()
