@@ -328,13 +328,28 @@ the earlier. Under the same ruling as Decision 14, the S2.11 hub hooks plan
     takes `FOR UPDATE` on them when `lock` is set. A native statement that
     joined or filtered on session columns selects its own candidate rows,
     reads their sessions through `session_rows` in the same transaction, and
-    applies the session predicate, ordering and limit in Rust. One snapshot
-    covers both families, and the corpus proves the results unchanged.
-    Schema triggers and functions that span both families
+    applies the session predicate, ordering and limit in Rust after the full
+    candidate read. Transaction membership alone does not give one view
+    (AF-READV-001), so the split statements follow one of two contracts.
+    A read-only path (2.1's run reads, 6.2's cleanup selection, 7.1's seat
+    reads) opens its transaction with `SET TRANSACTION ISOLATION LEVEL
+    REPEATABLE READ, READ ONLY` as its first statement, so every statement
+    reads the snapshot the first one takes, which is the view Python's
+    single statement had; no gcore change is needed. A path whose writes
+    follow the read (5.3's registration and refresh, 6.1's termination)
+    stays at read committed and locks before it reads: it takes its own
+    `FOR UPDATE` on the agents rows, then `session_rows` with `lock` set,
+    in the order Python's statement locks them, and evaluates the session
+    predicate only after both locks are held, so a concurrent transition or
+    deletion either commits before the locks (and is read) or waits for the
+    caller's commit. No retry loop is needed; 2.1.6, 5.3.5 and 6.1.8 assert
+    the interleavings. Schema triggers and functions that span both families
     (`coordination_owner_changed`, `resolve_coordination_wait`) are schema,
-    not crate access, and stay. sessions-family's Decision 10 does not yet
-    list `session_rows` or the child-session fields of `create_session`; the
-    #21562 cross-plan edge records both as exports this family requires.
+    not crate access, and stay. The sessions plan
+    (`.gobby/plans/sessions-family.md`) exports `session_rows` from its leaf
+    1.1 and the child-session fields of `create_session` from its leaf 2.1
+    (its Decision 10), and its Decision 7 binds 3.6's adapter at its leaf
+    7.2.
 
 ## Debt not to port
 `kind: framing`
@@ -551,14 +566,16 @@ row names D1. They are outside the 124, and their notes do not name
   sessions leaves it consumes: 1.1 (ref resolution, lookup, listing) for
   2.1, 4.3, 4.4, 5.1, 5.2 and 7.1; 2.1 (`create_session`) for 4.3; 2.2
   (status and delete services) for 4.3 and 6.1; 2.4 (session variables)
-  for 4.3, 4.4, 5.2 and 7.1; and the leaf that exports `session_rows` for
-  2.1, 5.3 and 6.1. Two exports this family requires are not yet in the
-  sessions plan's Decision 10: `session_rows(tx, selector, lock)` and the
-  child-session fields of `create_session` (parent, agent run, depth and
-  the pre-created external id). In the other direction, sessions leaf 7.2
-  depends on 3.6, whose exported reads gdaemon adapts to a trait the
-  sessions plan defines, because gsessions never depends on gagents
-  (ORCH-REV-AF-7).
+  for 4.3, 4.4, 5.2 and 7.1; and 1.1 again (`session_rows`) for 2.1, 5.3,
+  6.1, 6.2 and 7.1. The sessions plan lists `session_rows(tx, selector,
+  lock)` under its 1.1 and the child-session fields of
+  `create_session` (parent, agent run, depth and the pre-created external
+  id) under its 2.1 in its Decision 10. In the other direction, sessions
+  leaf 7.2 depends on 3.6, whose exported functions gdaemon adapts to a
+  trait the sessions plan defines (its Decision 7), because gsessions never
+  depends on gagents (ORCH-REV-AF-7). The Orchestrator accepted narrowing
+  each #21562 heading to these leaves at expansion (2026-10-28), which
+  keeps the 7.2-to-3.6 edge acyclic.
 - `.gobby/plans/sessions-family.md` line 86 gates set_handoff on #21564
   for workspace handoff references. That function,
   `src/gobby/agents/agent_workspaces.py::workspace_handoff_references`,
@@ -1135,6 +1152,11 @@ the family tables from them, as 1.2 did for the definition writes.
   resolution. test: `crates/gagents/tests/runs.rs::run_name_matches_python`.
 - 2.1.5 - The run read services return 0.1's recorded results for the five
   MCP read tools. test: `crates/gagents/tests/runs.rs::run_read_services_match_corpus`.
+- 2.1.6 - A run's terminal transition or a session deletion committed by a
+  second connection between the run read and its `session_rows` read
+  leaves the result equal to the view at the first statement, with
+  filtering, ordering and limit applied after the full candidate read.
+  test: `crates/gagents/tests/runs.rs::split_run_reads_share_one_snapshot`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test runs`.
 
@@ -1743,6 +1765,10 @@ that yields payloads until it closes. Nothing starts the worker until 11.2.
 - 5.3.4 - `Pool::listen` yields notifications committed after it listens
   and ends when its connection closes.
   test: `crates/gcore/src/postgres_pool/tests.rs::listen_yields_committed_notifications`.
+- 5.3.5 - An owner transition or deletion committed by a second connection
+  between registration's statements waits for the owner lock or is read
+  after it, so a wait never registers against a stale owner status.
+  test: `crates/gagents/tests/coordination.rs::registration_locks_owner_before_reading_status`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test coordination`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-core listen_yields_committed_notifications`.
@@ -1855,6 +1881,11 @@ notifies.
 - 6.1.7 - A hub-local run's observed exit commits its terminal row, then
   delivers to the parent and calls `deliver_completion` once.
   test: `crates/gdaemon/tests/hub_launch.rs::exit_observation_hands_off_completion`.
+- 6.1.8 - A session transition or deletion committed by a second connection
+  while termination holds its run and session locks waits for that commit,
+  and one committed before the locks is read; termination never combines
+  pre-transition run state with post-transition session state.
+  test: `crates/gagents/tests/termination.rs::termination_locks_before_session_predicate`.
 
 Planned verification: `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents --test termination`;
 `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-daemon --test agent_effects --test hub_launch`.
