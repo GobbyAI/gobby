@@ -56,7 +56,7 @@ from gobby.agents.spawn_executor_support import (
 )
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.srt_runtime import SrtRuntimeError, prepare_sandbox_launch
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.trust import active_codex_launch_models, pre_approve_directory
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
     codex_endpoint_env,
@@ -539,7 +539,12 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
-    await asyncio.to_thread(pre_approve_directory, provider, cwd)
+    codex_models = (
+        await asyncio.to_thread(active_codex_launch_models, runner.run_storage.db, project_id)
+        if provider == "codex"
+        else ()
+    )
+    await asyncio.to_thread(pre_approve_directory, provider, cwd, codex_models)
     from gobby.agents.spawn_executor import _runtime_spawn
     from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
     from gobby.agents.spawn_models import SpawnRequest

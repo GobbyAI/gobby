@@ -345,13 +345,21 @@ async def test_codex_spawn_uses_sandbox_effective_cache_paths(
     monkeypatch.setattr(
         "gobby.agents.spawn_executor_providers._record_resume_launch_details", MagicMock()
     )
-    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+    seed_trust = MagicMock()
+    live_models = MagicMock(return_value=("gpt-future-policy",))
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", seed_trust)
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers.active_codex_launch_models", live_models
+    )
     build_command = MagicMock(return_value=(["codex"], {}))
     monkeypatch.setattr("gobby.agents.spawn_executor_providers.build_cli_command", build_command)
 
     result = await prepare_codex_spawn(request)
 
     assert isinstance(result, ProviderSpawnPlan)
+    assert request.run_manager is not None
+    live_models.assert_called_once_with(request.run_manager.db, request.project_id)
+    seed_trust.assert_called_once_with("codex", request.cwd, ("gpt-future-policy",))
     config = tomllib.loads("\n".join(build_command.call_args.kwargs["config_overrides"]))
     for name, path in cache_env.items():
         assert config["shell_environment_policy"]["set"][name] == path

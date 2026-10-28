@@ -47,7 +47,7 @@ from gobby.agents.srt_runtime import (
     SrtRuntimeError,
     prepare_sandbox_launch,
 )
-from gobby.agents.trust import pre_approve_directory
+from gobby.agents.trust import active_codex_launch_models, pre_approve_directory
 from gobby.utils.terminal_output import redact_terminal_output
 
 if TYPE_CHECKING:
@@ -546,7 +546,12 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         config_overrides=config_overrides,
         sandbox_launch=launch,
     )
-    await asyncio.to_thread(pre_approve_directory, "codex", request.cwd)
+    codex_models = await asyncio.to_thread(
+        active_codex_launch_models,
+        request.run_manager.db if request.run_manager is not None else None,
+        request.project_id,
+    )
+    await asyncio.to_thread(pre_approve_directory, "codex", request.cwd, codex_models)
     finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,

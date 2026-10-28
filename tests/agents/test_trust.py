@@ -354,7 +354,8 @@ class TestCodexTrust:
         config_file.write_text(
             f'[projects.{json.dumps(str(workspace))}]\ntrust_level = "trusted"\n\n'
             "[tui]\nscreen_reader_detection_done = false\n\n"
-            '[tui.model_availability_nux]\n"gpt-6.1-sol" = 4\n',
+            '[tui.model_availability_nux]\n"gpt-5.6-sol" = 4\n"gpt-6-luna" = 4\n'
+            '"gpt-6.1-sol" = 4\n"gpt-6.1-terra" = 4\n',
             encoding="utf-8",
         )
         before = config_file.read_bytes()
