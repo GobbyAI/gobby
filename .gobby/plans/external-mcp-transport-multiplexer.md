@@ -336,7 +336,7 @@ leaves keep their scope; this plan touches neither.
 | 1.4 | #24466 (runtime-family 5.9) | relation | Its 5.9.10 consumes 1.4's `SecretStore::set_in`; neither adds a second writer. |
 | 3.3 | #21564 (agents family, `ownership.rs`) | relation | 3.3's `placement.rs` is the precedent its general machine-routing port can share; no ordering. |
 | 5.1, 5.2 | #24954 (client-operator-verbs S3.1) | relation | They carry the `mcp-proxy` CLI row assigned to #21566. No leaf waits on #21571, whose 1.7 gate waits on #21566. |
-| 5.2 | #24467 (runtime-family 5.10, native `POST /api/config/secrets`) | relation | 5.2 adds an optional `project_id` to the Python route. 5.10 ignores unknown body members today, so its owner amendment must accept `project_id` and pass it to 1.4's `set_in`. |
+| 5.2 | #24467 (runtime-family 5.10, native `POST /api/config/secrets`) | blocked by | Its 5.10.6 adds the optional `project_id` that 5.2's secret prompt sends and passes it to 1.4's `set_in`. 5.2 does not edit `save_secret`. |
 | none | #24359, #24360 (gmcp-stdio) | relation | Packaging and server-side OAuth keep their scope. |
 
 **Granularity:** Fifteen deliverables, one per independently testable outcome.
@@ -1666,7 +1666,7 @@ Targets:
 - 5.1.4 - Every read verb accepts Python's long options and defaults. An unknown option, an unknown subcommand and a repeated single-value option each exit 2 before any request. An unreachable daemon exits 3, and a non-2xx reply exits 1 with `Error: <body>`. A `.gobby/project.json` id that `GET /api/projects` does not list is treated as no project. test: `crates/gclient/tests/mcp_proxy_verbs.rs::read_verbs_share_python_long_options_and_exits`.
 - 5.1.5 - `gclient help mcp-proxy` documents the group, and `mcp-proxy` is in the command-mode verb list. test: `crates/gclient/tests/command_mode.rs::every_verb_has_its_own_help`.
 
-### 5.2 `gclient mcp-proxy` write and local verbs [category: code] (depends: 5.1)
+### 5.2 `gclient mcp-proxy` write and local verbs [category: code] (depends: 5.1, #24467)
 `kind: deliverable`
 
 Targets:
@@ -1678,13 +1678,7 @@ Targets:
 - `crates/gclient/tests/mock_daemon/mod.rs::*` — scope-reason: serve and record the /api/mcp write routes and the secrets route
 - `crates/gclient/tests/mcp_proxy_verbs.rs`
 - `crates/gclient/tests/fixtures/mcp_proxy_golden.json`
-- `src/gobby/servers/routes/configuration_models.py::SaveSecretRequest`
-- `src/gobby/servers/routes/configuration_secrets.py::*` — scope-reason: pass the optional project_id from SaveSecretRequest to set_named_secret in save_secret
-- `tests/servers/routes/test_configuration_routes.py::*` — scope-reason: cover a project-scoped secret save
 - `src/gobby/install/version_pins.py::*` — scope-reason: bump the gclient pin
-
-Consumers unchanged:
-- `src/gobby/servers/routes/configuration.py` — no-edit-reason: it re-exports SaveSecretRequest, whose new field is optional.
 
 **Research context:**
 - Observed: the Python verbs, all in `src/gobby/cli/mcp_proxy.py` except
@@ -1710,11 +1704,11 @@ Consumers unchanged:
   prints the `result` field as JSON or text. `success: false` goes to stderr
   and exits 1.
 - Observed: `src/gobby/servers/routes/configuration_secrets.py::save_secret`
-  (`POST /api/config/secrets`) writes only the global scope.
-  `SaveSecretRequest` has `name`, `value`, `category` and `description`, and
-  `ConfigStore.set_named_secret` already takes `project_id`. gclient never
-  reads the database (client-operator-verbs Constraints), so the prompt
-  needs a scoped route.
+  (`POST /api/config/secrets`) writes only the global scope today. gclient
+  never reads the database (client-operator-verbs Constraints), so the
+  prompt needs a scoped route. #24467 (runtime-family 5.10.6) adds an
+  optional `project_id` to that route and passes it to 1.4's `set_in`. This
+  leaf waits on it and does not edit the route.
 - Observed: gclient has no helper that locates sibling binaries.
   `gobby_core::gobby_home` names the home whose `bin/` holds `gdaemon`.
 - Chosen approach:
@@ -1723,11 +1717,8 @@ Consumers unchanged:
     output and exits. It uses 5.1's `client.rs` and scope rules.
   - The `add-server` TTY prompt reads each secret with hidden input and
     sends `POST /api/config/secrets {name, value, category: "general",
-    project_id}` in the instance's scope, then the same refresh.
-    `SaveSecretRequest` gains an optional `project_id`, which `save_secret`
-    passes to `set_named_secret`. #24467 (runtime-family 5.10) must accept
-    the same field in its native route; that is an amendment to its plan,
-    not work in this leaf.
+    project_id}` in the instance's scope, then the same refresh. The
+    `project_id` field comes from #24467 (5.10.6).
   - `remove-server` without `--yes` asks for confirmation on the terminal.
     A refusal or end of input aborts with exit 1, as click's confirmation
     does.
@@ -1747,8 +1738,7 @@ Consumers unchanged:
     `crates/gclient/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
     gclient pin in `src/gobby/install/version_pins.py`. It copies no binary.
 - Planned verification:
-  `cargo nextest run -p gobby-client --test mcp_proxy_verbs` and
-  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/routes/test_configuration_routes.py -v`.
+  `cargo nextest run -p gobby-client --test mcp_proxy_verbs`.
 
 **Acceptance:**
 
@@ -1757,8 +1747,6 @@ Consumers unchanged:
 - 5.2.3 - `import-server` and `refresh` send Python's payloads, including `cwd`, the multiple `--server` values and the 300-second refresh timeout. test: `crates/gclient/tests/mcp_proxy_verbs.rs::import_and_refresh_match_python`.
 - 5.2.4 - `call-tool` merges `--json-args` with the repeated `--arg` values (each `--arg` value JSON-parsed and overriding), sends `offload: false` only under `--raw`, prints the result or full reply, and exits 1 with stderr on `success: false`. test: `crates/gclient/tests/mcp_proxy_verbs.rs::call_tool_matches_python`.
 - 5.2.5 - `auth` executes a stub `gdaemon` with `mcp-auth <name>`, the scope and the timeout, sends the `requires_oauth` PUT only after exit 0, and sends nothing after a nonzero exit; `oauth-shape` executes `--shape` without a daemon health check and prints its JSON. test: `crates/gclient/tests/mcp_proxy_verbs.rs::auth_and_shape_exec_gdaemon_mcp_auth`.
-- 5.2.6 - `POST /api/config/secrets` with `project_id` stores the secret in that project's scope, and without it stores globally. test: `tests/servers/routes/test_configuration_routes.py::test_save_secret_honours_project_scope`.
-
 ## V1 Plan Changelog
 `kind: framing`
 
@@ -1811,8 +1799,9 @@ the change list and ruled D1-D6.
     (D5).
   - #25283: `gobby-results` paging (D3).
   - #24466 5.9.10: consumes 1.4's `set_in` (D2).
-  - #24467 5.10: needs an owner amendment so the native
-    `POST /api/config/secrets` accepts the `project_id` that 5.2 adds.
+  - #24467 5.10.6, an owner edit by the Orchestrator: the optional
+    `project_id` on `POST /api/config/secrets` that 5.2 sends. 5.2 is
+    blocked by #24467.
   - #21564: placement precedent.
 - New P5 carries the `gclient mcp-proxy` CLI row that client-operator-verbs
   assigns to #21566 (D6).
