@@ -53,7 +53,8 @@ rulings #25261 asks for in the Decision Record: the #23565 storage layout
 **When the leaves close:**
 - Gate 3 checks the attribution owner's live task pairs plus every pair any
   session recorded for the task whose current content the task still owns,
-  each against its own checkout. #24402's exclusion of later foreign dirt
+  or that was recorded without a content record, each against its own
+  checkout. #24402's exclusion of later foreign dirt
   still holds for paths the task no longer owns (1.7).
 - A claimant may commit dirt whose live holder works a task the claimant now
   claims (rule 2), as rule 3 already lets it edit that dirt (1.8).
@@ -173,7 +174,9 @@ together. The first is delivered; 1.5 builds the second.
   and a write committed by the same call is missed (the F3 shape). The policy
   chooses to record when in doubt, so rule 1 never misses dirt the session
   may have made; a false record costs a commit of the session's own paths,
-  which rule 2 allows.
+  which rule 2 allows. A pair whose path cannot be fingerprinted when it is
+  recorded (an unreadable file, or a directory) gets no content record; gate
+  3 still finds it through the task's live interval (Decision 22).
 - **Fingerprint read failure.** Each path is observed on its own. A path
   whose before-call fingerprint raises `OSError` stores no entry. A path
   whose after-call fingerprint raises `OSError` (for example, the call made
@@ -426,8 +429,19 @@ through the Assistant (#25261 criterion 3).
     the cross-session set, because nothing there can be committed (precedent:
     the Orchestrator's ruling on CR7 LOW-2, 2026-10-05). The owner's own pairs
     keep `tasks/attributed_roots.py::is_ignorable_attributed_root`, which
-    stays fail-closed for a registered root. Rejected: V1's
-    untransferred-pair inventory, retired with the transfer (Decision 2).
+    stays fail-closed for a registered root. A pair recorded without a
+    content record, because its path could not be fingerprinted (an
+    unreadable file, or a directory), is found from the task's live interval
+    in every session (`task_edited_file_checkouts`). It counts unless its
+    current content is another task's, so a failed observation never hides
+    the task's work (Adversary CO-A4-F2, 2026-10-28). A directory pair is
+    inspected as a git pathspec: gate 3 fails while any path under it is
+    dirty, including dirt another session made there after the task's write.
+    That over-block is accepted. The owner's own directory pairs already
+    behave so, rule 3 refuses the directory write when foreign dirt lies under
+    it at first touch, and the block clears once that dirt is committed.
+    Rejected: V1's untransferred-pair inventory, retired with the transfer
+    (Decision 2).
 
 ## Retired Mechanisms
 `kind: framing`
@@ -1134,7 +1148,7 @@ publishes. The #22642 regression needs both halves.
     debug and gets no entry; the other paths are still stored.
   - `take(session_id, request_id, path) -> tuple[str | None] | None` pops the
     entry and returns a one-tuple holding the stored fingerprint, or None
-    when there is no entry.
+    when there is no entry or the entry is older than 3600 seconds.
   - `clear_session(session_id)` drops all of that session's entries.
   The module holds one daemon-wide instance, `PRE_WRITE_DIGESTS`, which
   `_tool.py` and `_session_end.py` import.
@@ -1182,7 +1196,7 @@ Consumers unchanged:
 - 1.5.8 - A Bash call that writes a clean tracked path and commits it (`echo x > <path> && git commit -qam m`) records the pair for the task, and reconciliation then drops it from the session's dirty set. test: `tests/hooks/test_tool_handlers.py::test_write_committed_in_same_call_keeps_task_record`.
 - 1.5.9 - With no stored entry, the status rule decides (dirty records, clean records nothing), and a directory path uses the same rule. test: `tests/hooks/test_tool_handlers.py::test_recorder_falls_back_to_status_without_entry`.
 - 1.5.10 - Interleaved `before(A)`, `before(B)`, `after(A)`, `after(B)` on one path with distinct request ids keep separate baselines. With no request id, the second `before` overwrites the first, and the second `take` finds no entry. test: `tests/hooks/test_pre_write_digests.py::test_interleaved_calls_keep_baselines_by_request_id`.
-- 1.5.11 - `handle_session_end` drops the session's entries and keeps other sessions' entries, and `snapshot` drops entries older than one hour. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
+- 1.5.11 - `handle_session_end` drops the session's entries and keeps other sessions' entries, `snapshot` drops entries older than one hour, and `take` returns None for an entry older than one hour when no `snapshot` ran since. test: `tests/hooks/test_pre_write_digests.py::test_session_end_and_age_prune_drop_stale_entries`.
 - 1.5.12 - A Bash write to the relative path `p.py` with `event.cwd` in the main checkout and `workdir` in a second checkout of the project fingerprints and records the second checkout's pair and records nothing for the main checkout's `p.py`. test: `tests/hooks/test_tool_handlers.py::test_recorder_resolves_relative_paths_at_tool_workdir`.
 - 1.5.13 - A Bash call that changes two paths and makes the first unreadable (`chmod 000`) records both pairs, the first through the status fallback, and an unreadable path at `before_tool` stores no entry while the call's other paths keep theirs. test: `tests/hooks/test_tool_handlers.py::test_unreadable_path_takes_status_fallback_without_skipping_others`.
 - 1.5.14 - The read-only probe loop `for i in 1 2 3; do curl -s -o /dev/null ...; done` reaches the recorder as a write-kind call and records nothing, because `/dev/null` resolves to no pair. test: `tests/hooks/test_normalization_canonical_mutation_scope.py::test_read_only_probe_loop_is_not_an_in_project_mutation`.
@@ -1310,6 +1324,10 @@ Targets:
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: adds the cross-session gate 3 tests
 - `tests/workflows/test_dirty_edit_grants.py::*` — scope-reason: adds the task_recorded_pairs test
 
+**Granularity:** one section with more than six acceptance items, by design.
+`task_recorded_pairs` and gate 3's use of it verify only together: each
+discovery rule exists for one gate 3 outcome.
+
 **Research context:**
 - `_lifecycle_close.py::_evaluate_close` (lines 57-218) sets the attribution
   owner to `get_claimed_session_id(task) or session_id`, calls
@@ -1340,22 +1358,41 @@ Targets:
   root. `checkout_path_owners(db, *, checkout_root, paths)` (lines 97-137)
   maps each path to the task whose newest record matches its current
   fingerprint, across every session.
+- A pair whose path cannot be fingerprinted when recorded gets no content
+  record. `session_edit_ledger.py::SessionEditLedger.record_edited_files`
+  takes its digests from `checkout_fingerprint.path_fingerprints`, which
+  skips a path whose fingerprint raises `OSError` (an unreadable file or a
+  directory), and `task_claim_state.record_task_content_hashes` returns
+  early on empty digests. The pair still enters `session_dirty_file_checkouts`
+  and `task_edited_file_checkouts`, and an earlier record of the same path
+  stays as a stale hash. `checkout_path_owners` compares each record with
+  `dirty_edit_grants._current_digest`, which returns "unreadable" on
+  `OSError`, so it never maps such a pair to a task. Only three functions
+  write `task_edited_file_checkouts`: `record_edited_files` adds,
+  `transfer_live_checkout_paths` moves a pair within a session, and
+  `remove_claimed_task` drops a closed task's entry.
 - `tasks/attributed_roots.py::is_ignorable_attributed_root` treats a git
   checkout as inspectable and a missing registered root as fail-closed.
 
 **Implementation:**
 - Add `dirty_edit_grants.task_recorded_pairs(db, *, task_id) ->
-  dict[str, set[str]]`: one query for the session rows whose
-  `task_edited_checkout_hashes` holds the task (jsonb `?`), returning every
-  normalized checkout root and path recorded for it, in any session.
+  tuple[dict[str, set[str]], dict[str, set[str]]]`: one query for the
+  session rows whose `task_edited_checkout_hashes` or
+  `task_edited_file_checkouts` holds the task (jsonb `?`). It returns two
+  maps from normalized checkout root to paths, across every session:
+  - content pairs: every pair a session's `task_edited_checkout_hashes`
+    entry for the task records;
+  - fallback pairs: every pair of a session's `task_edited_file_checkouts`
+    entry for the task that the same session's hash entry for the task
+    lacks, or whose `_current_digest` is "unreadable".
 - In `capture_attribution`, after reading the owner's live pairs:
   1. Read `task_recorded_pairs(db, task_id=task.id)` and drop roots whose
      directory no longer exists (Decision 22).
-  2. For every root among the owner's live pairs and the recorded pairs, call
-     `checkout_path_owners` once over that root's paths, and let the
-     task-owned set be the paths it maps to the closing task.
-  3. Add each root's task-owned recorded paths to the attributed paths of
-     that root.
+  2. For every root among the owner's live pairs and both maps, call
+     `checkout_path_owners` once over that root's paths. The task-owned set
+     is the content pairs it maps to the closing task plus the fallback pairs
+     it maps to no other task.
+  3. Add each root's task-owned paths to the attributed paths of that root.
   4. Run the linked-commit fallback only when the owner has no task paths
      and the cross-session read added none.
   5. Pass `foreign_owned_dirty_paths_async` only the committed paths outside
@@ -1386,7 +1423,8 @@ Consumers unchanged:
 - 1.7.3 - #24402 holds: after T committed `p`, a live session dirtied `p` for task U with a recorded edit, and another live session dirtied `q` with no task record; gate 3 for T passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_ignores_later_foreign_dirt_on_committed_paths`.
 - 1.7.4 - A predecessor's record of `p` for T whose current content task U's later recorded edit owns adds nothing to T's attributed paths. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_skips_recorded_pairs_another_task_now_owns`.
 - 1.7.5 - A recorded pair under a deleted checkout root is dropped and never makes gate 3 unavailable, while a failing `task_recorded_pairs` read fails gate 3 with "Git could not inspect all task-attributed files." test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_drops_deleted_roots_and_fails_closed_on_unread_records`.
-- 1.7.6 - `task_recorded_pairs` returns every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
+- 1.7.6 - `task_recorded_pairs` returns as content pairs every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. It returns as fallback pairs a live pair of the task whose session holds no hash for it, a live directory pair, and a live pair whose stale hash names a file that is now unreadable, and it omits a live pair whose recorded hash belongs to a readable file. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
+- 1.7.7 - An escalated predecessor recorded, for T, a file `p` through the status fallback while `p` was unreadable and a directory `d` that now holds an untracked file, neither with a content record. After B claims T, gate 3 fails instead of passing over either pair. Once `p` is readable again and both are committed, gate 3 passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
 
 ### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
