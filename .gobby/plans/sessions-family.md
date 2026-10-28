@@ -133,15 +133,17 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
    precedent): Native starts the native jobs and Python skips the two loops;
    Proxy and Compare keep Python as the owner until 7.3 deletes the Python
    Sessions loops. Expiry is hub-only, so the
-   hub's selection decides it. Two expiry steps write tables owned by epics
-   that #21562 blocks: `src/gobby/storage/hook_receipts.py::retire_expired_session_hook_effects`
-   (#24151) and `src/gobby/storage/session_lifecycle.py::prune_stale_compact_workflow_instances`
-   (#21567). They are those families' pieces: they stay in Python's shared
-   sweep in every mode (Orchestrator ruling 2026-10-28), so the switch-off is
-   per step, and 7.3 leaves them running. The hooks plan
-   (`.gobby/plans/s2-11-hub-hooks-rules.md`, #24151) and the Workflows, rules
-   and pipelines plan (#25279 under #21567) each carry an explicit edge naming
-   its step for its own Rust port. Processing follows each machine's own
+   hub's selection decides it. Three expiry pieces write tables owned by
+   epics that #21562 blocks: `src/gobby/storage/hook_receipts.py::retire_expired_session_hook_effects`
+   (#24151), `src/gobby/storage/session_lifecycle.py::prune_stale_compact_workflow_instances`
+   (#21567) and the `pending_interactions` update inside
+   `session_lifecycle.py::cleanup_expired_session_state` (#21592). They are
+   those families' pieces: they stay in Python's shared sweep in every mode
+   (Orchestrator ruling 2026-10-28), so the switch-off is per step, and 7.3
+   leaves them running. The hooks plan
+   (`.gobby/plans/s2-11-hub-hooks-rules.md`, #24151), the Workflows, rules
+   and pipelines plan (#25279 under #21567) and #21592 each carry an
+   explicit edge naming its piece for its own Rust port. Processing follows each machine's own
    selection for the transcripts it holds: a node whose selection is not
    Native refuses `transcript.process`, so its Python runner stays the single
    owner of those sessions.
@@ -185,7 +187,8 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
      `.gobby/plans/agents-family.md`), memories (gmemory depends on 2.4 per
      Decision 10), session skill loads (gskills,
      `.gobby/plans/gdaemon-skills-family.md` 1.6, writes session state),
-     pipeline executions (#21567) and the web-chat registry (#21592). `crates/gsessions/src/ports.rs` declares each trait; gdaemon
+     Workflows' audit log and agent step instances, pipeline executions
+     (all #21567) and the web-chat registry (#21592). `crates/gsessions/src/ports.rs` declares each trait; gdaemon
      binds an adapter that calls the owner crate's public functions. The
      Tasks plan's `AssignmentNotifier` port is the precedent. Before an
      adapter lands, tests bind fixture adapters and production stays passive.
@@ -195,9 +198,17 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
      `containing_worktree_id(tx, project_id, workspace_path)`. 7.2 binds the
      gagents, gmemory and gskills adapters. It depends on `agents-family 3.6`
      and `gdaemon-skills-family 1.6` as cross-plan edges the Orchestrator
-     converts at expansion. Where an owner crate lacks a function an adapter
-     needs, 7.2 adds one narrow function there. The pipeline and web-chat
-     adapters land in their P8 leaves.
+     converts at expansion, and on `memory-family 1.1`, which creates
+     gmemory. Where an owner crate lacks a function an adapter needs, 7.2
+     adds one narrow function there. Two Workflows reads are needed before
+     any Workflows crate exists, because #21567 waits on #21562: 2.2's
+     retained-reference check over `workflow_audit_log` and 2.4's
+     step-scoped variables over `agent_step_instances`. For those, 7.2 binds
+     transitional Rust adapters in gdaemon that run only those statements;
+     gsessions never reads the tables. #25279's crate exports the functions,
+     replaces the adapter bodies and deletes the adapters (Orchestrator
+     ruling A, 2026-10-28). The pipeline and web-chat adapters land in
+     their P8 leaves.
    Each consuming leaf names its foreign operations.
 8. **Ownership boundaries (S6).** Sessions owns session variables, dirty-path
    grants and claim holds. `SessionVariableMutation` takes its explicit
@@ -287,6 +298,10 @@ All rulings below came from the Orchestrator (gobby#17281) through Triage
     - both release-composer rows (#25276);
     - `retire_expired_session_hook_effects` (the hooks plan, #24151);
     - `prune_stale_compact_workflow_instances` (#25279);
+    - the `pending_interactions` update of `cleanup_expired_session_state`
+      (#21592);
+    - the transitional `workflow_audit_log` and `agent_step_instances`
+      adapters that 7.2 binds (#25279 replaces and deletes them);
     - the wake-replay registrant of 2.2's status-notification bridge
       (`.gobby/plans/agents-family.md` D1.3);
     - the gagents port functions (`agents-family 3.6`).
@@ -322,6 +337,7 @@ No whole surface is masked or skipped.
 | W4 | Python CLI verbs open the database directly (`delete_session` uses `SessionManager`). | Not ported: `gclient` uses the public HTTP API. | No contract change; 6.1 |
 | W5 | Synchronous storage calls inside async handlers. | Not applicable to native async code. | None |
 | W6 | `src/gobby/mcp_proxy/tools/sessions/_terminal_clear.py::execute_clear_session` has no production caller; delivery runs through `deliver_staged_clear_session`. | Not ported. | No contract change; 8.3 |
+| W7 | `src/gobby/storage/session_lifecycle.py::_EMPTY_SESSION_PRUNE_REFERENCE_COLUMNS` names `pending_approvals`, a table the schema lacks, so the retained-reference guard skips it. | Not ported (Orchestrator ruling 2026-10-28). | No contract change; 2.2 |
 
 KEEP (ported exactly): MCP HTTP-200 error envelopes; exact machine ownership;
 rendered messages answer 413 when too large while the raw transcript streams;
@@ -1319,8 +1335,8 @@ Targets:
 - `crates/gsessions/src/hook_rows.rs`
 - `crates/gsessions/src/clear_lineage.rs`
 - `crates/gsessions/tests/hook_rows.rs`
-- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the run-terminal rebind module
-- `crates/gterminals/src/session_rebind.rs`
+- `crates/gterminals/src/lib.rs::*` — scope-reason: declare the session-link module that holds the narrow terminal functions Sessions calls
+- `crates/gterminals/src/session_links.rs`
 
 **Research context:**
 - Ruling C5 (a): the hooks plan's handlers reach session rows through
@@ -1368,7 +1384,7 @@ Targets:
     moved run ids;
   - the `terminals` update (pending and live rows of each moved run) goes
     through `rebind_run_terminals(tx, run_id, successor_id)`, a narrow
-    function this leaf adds to `crates/gterminals/src/session_rebind.rs`;
+    function this leaf adds to `crates/gterminals/src/session_links.rs`;
   - the `sessions` updates stay in `clear_lineage.rs`.
 - Every status change goes through 2.2's notifying write path, and every
   committed write publishes through 2.1's event sink.
@@ -1975,7 +1991,9 @@ Targets:
 - `crates/gsessions/src/summary_format.rs`
 - `crates/gsessions/src/analyzer.rs`
 - `crates/gsessions/src/analyzer_turns.rs`
+- `crates/gsessions/src/ports.rs`
 - `crates/gsessions/tests/summaries.rs`
+- `crates/gtasks/src/session_refs.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: add the generate-summary request-options and prompt-template waiver entries
 
 **Research context:**
@@ -2014,14 +2032,19 @@ Targets:
     `--output db|file|all`, `--path` (default `.gobby/session_summaries/`) and
     notes. When generation fails it warns and builds a code-only summary from
     the analyzer context, `git status --short` and `git log -10`.
-- Reads: task and memory rows are read-only SQL over the hub pool (Decision
-  Record item 7). Turns come from 3.7's reader and git status and diff from
-  1.3's git service, so a remote owner is served through `OwnerChannel` like
-  every owner-routed read.
+- Reads (Decision 7): claimed tasks come from gtasks, through a narrow
+  `claimed_tasks(conn, session_id)` this leaf adds to
+  `crates/gtasks/src/session_refs.rs`; session memories come from the gmemory
+  port's `session_memories(session_id)`. Turns come from 3.7's reader and git
+  status and diff from 1.3's git service, so a remote owner is served through
+  `OwnerChannel` like every owner-routed read.
 - Prompt: `summary_context.py::load_summary_prompt_template` loads
   `handoff/session_end` through
   `src/gobby/storage/prompts.py::LocalPromptManager.get_by_name` with no
-  project and falls back to the configured prompt.
+  project and falls back to the configured prompt. Native loads it through
+  `crates/gruntime/src/prompts.rs`, the prompts owner, with the same
+  no-project lookup and fallback. `gdaemon-runtime-family 5.4` creates that
+  module; the Orchestrator converts this cross-plan edge at expansion.
   `src/gobby/llm/prompt_rendering.py::render_summary_prompt` uses Jinja when
   the template contains `{{`, `{%` or `{#`, and `str.format` otherwise. The
   bundled template uses only `{{ name }}` placeholders, and no Rust template
@@ -2066,7 +2089,9 @@ stay in separate files to keep each under 1,000 lines.
   test: `crates/gsessions/tests/summaries.rs::generate_summary_route_matches_python`.
 - 4.1.2 - Transcript and delivered-handoff summaries build the same prompt
   context as Python for the fixture sessions, locally and through the doubled
-  owner channel. test: `crates/gsessions/tests/summaries.rs::summary_context_matches_python`.
+  owner channel, reading tasks through gtasks, memories through a fixture
+  gmemory adapter and the prompt through gruntime.
+  test: `crates/gsessions/tests/summaries.rs::summary_context_matches_python`.
 - 4.1.3 - Rendering matches Python for `{{ name }}` and `{name}` templates,
   and other Jinja syntax is refused without a model call under its waiver.
   test: `crates/gsessions/tests/summaries.rs::prompt_rendering_matches_python_subset`.
@@ -2091,6 +2116,7 @@ Targets:
 - `crates/gsessions/src/lib.rs`
 - `crates/gsessions/src/jobs.rs`
 - `crates/gsessions/tests/jobs.rs`
+- `crates/gterminals/src/session_links.rs`
 - `crates/gdaemon/src/lib.rs`
 - `crates/gdaemon/src/sessions_jobs.rs`
 - `crates/gdaemon/src/state.rs::RuntimeState::run`
@@ -2128,10 +2154,32 @@ Targets:
   `src/gobby/storage/hook_receipts.py::retire_expired_session_hook_effects`,
   `session_lifecycle.py::expire_empty_sessions` (2 hours) and
   `session_lifecycle.py::prune_empty_sessions` (1 hour), every
-  `expire_check_interval_minutes`. The hooks plan's 3.4 owns the hook-effects
-  table; the job issues the same statement. Every status change the job
-  writes sends 2.2's `gobby_session_status` notification in the same
-  transaction.
+  `expire_check_interval_minutes`.
+- Native steps: the job runs the Sessions-owned steps in that order with
+  Python's thresholds: pause, orphaned-handoff expiry, the session-variable
+  delete of `cleanup_expired_session_state`, stale expiry, empty expiry and
+  empty prune. Every status change the job writes sends 2.2's
+  `gobby_session_status` notification in the same transaction.
+- Foreign pieces stay in Python's shared sweep in every mode (Decision 5),
+  and the native job runs none of them:
+  - `prune_stale_compact_workflow_instances` (#25279);
+  - `retire_expired_session_hook_effects` (the hooks plan's 3.4 table,
+    #24151);
+  - the `pending_interactions` update inside `cleanup_expired_session_state`,
+    whose table the web-chat family owns (#21592).
+  Each native step selects by the session row's own status and age, so
+  splitting the cleanup from the `pending_interactions` update loses no
+  correctness: each half is idempotent.
+- Foreign reads (Decision 7):
+  - `expire_orphaned_handoff_sessions` expires an `awaiting_handoff`
+    terminal session only when its recorded native terminal has exited and
+    it holds no pending or live terminal. Native asks gterminals through
+    `released_handoff_sessions(tx, candidates)`, a narrow function this leaf
+    adds to `crates/gterminals/src/session_links.rs`, and filters its update
+    with `id = ANY(...)`.
+  - `prune_empty_sessions` refuses retained sessions through 2.2's exported
+    retained-reference check.
+  - Status events carry `project_name` from 1.1's `project_names`.
 - Processing: `src/gobby/sessions/transcript_processing.py::TranscriptProcessingMixin._process_pending_transcripts`
   reads machine-local pages from
   `src/gobby/storage/sessions/_transcript.py::_TranscriptMixin.get_pending_transcript_sessions`
@@ -2158,8 +2206,9 @@ splitting the two loops would compose the host twice.
 
 **Acceptance:**
 
-- 4.2.1 - One expiry cycle applies the eight steps in Python's order with
-  Python's thresholds and notifies every status change.
+- 4.2.1 - One expiry cycle applies the six Sessions-owned steps in Python's
+  order with Python's thresholds, notifies every status change, and leaves
+  workflow instances, hook effects and pending interactions untouched.
   test: `crates/gsessions/tests/jobs.rs::expiry_cycle_matches_python`.
 - 4.2.2 - One processing cycle writes the same statistics, token events,
   summaries, processed marks and failure counts as Python for local
@@ -2172,6 +2221,10 @@ splitting the two loops would compose the host twice.
   `sessions`, runs on one daemon at a time under its owner lock, and stops
   with `ActiveServices::stop`.
   test: `crates/gdaemon/tests/sessions_jobs.rs::job_runs_only_when_native_and_single_owner`.
+- 4.2.5 - Orphaned-handoff expiry reads terminals only through
+  `released_handoff_sessions`, and the empty prune keeps every session the
+  retained-reference check names.
+  test: `crates/gsessions/tests/jobs.rs::expiry_foreign_reads_use_owner_apis`.
 
 Planned verification: the `jobs` test binary with the 1.1 DB prefix,
 `cargo nextest run -p gobby-daemon -E 'binary(sessions_jobs) | test(explicit_drain_stops_host_default_stop_preserves_it)'`
