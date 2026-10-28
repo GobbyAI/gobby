@@ -1937,6 +1937,36 @@ checkpoint's foreign-owner outcomes.
   shared checkout reverted an edit made during its run. WIP checkpoints
   `2d900c772b` and `c11943c` restored attribution. Facts were verified
   read-only at `c11943c`.
+- 2026-10-28: Adversary review of `4d94bebe1d`. Plan Adversary gobby#18336
+  ended before reviewing it. The Orchestrator relaunched the seat, and Plan
+  Adversary gobby#18407 raised two findings.
+  - CO-A5-F1 (blocking): rules 2 and 3 tested `owner_task_id or
+    ledger_task_id`, so a holder's interval task masked a content owner the
+    session claims. 1.8 now tests each field on its own in both rules and
+    adds 1.8.4 (`fb9ff9a3f5`). The Adversary confirmed the fix.
+  - CO-A5-F2 (blocking): 1.7 discarded which machine recorded a pair, so
+    the hub's digests and status could drop or pass a pair a node session
+    recorded. Content ownership is now machine-local
+    (`checkout_path_owners`), and `task_recorded_pairs` keeps remote pairs
+    apart. A remote pair that its recording session's dirty ledger still
+    holds, matched by `task_edit_path_covers` overlap, fails gate 3 as
+    unavailable. A remote owner or predecessor never triggers the
+    linked-commit fallback. Decisions 4, 15 and 22, the Content-Hash
+    Contract, 1.7.9 and the new 1.7.10 and 1.7.11 carry it. The Orchestrator
+    ruled on the remaining ceiling through Triage (option A): a pair an
+    ended node session still holds keeps gate 3 unavailable until
+    restraint-deferral #25284 lands, after #24521.
+  - Orchestrator found work: the WIP commit `2068aaf9a0` also recorded
+    another live Plan Writer's staged
+    `.gobby/plans/external-mcp-transport-multiplexer.md`. Decision 23 and
+    1.8 (1.8.5, 1.8.6 and V2 step 7) make rule 2 refuse a whole-index
+    commit while another live session holds dirt in the checkout. Until
+    then, seats commit with `git commit -- <path>`.
+
+  WIP checkpoints: `fb9ff9a3f5`, `2068aaf9a0`, `bd2663f7f9` and `6dad31d`.
+  One read during another session's pre-commit stash window (#25282)
+  showed the file at its committed bytes; every edit was intact afterwards.
+  Facts were verified read-only at `6dad31d`.
 
 ## V2: Verification
 `kind: verification`
@@ -1971,3 +2001,7 @@ After every leaf has landed:
    that a Write into another registered project's checkout is refused with
    the rule 4 text. Without that approval the row stays disabled and this
    step is not run.
+7. Whole-index commits, live (Decision 23): in a scratch checkout, live
+   session A writes and stages `q`. Session B's `git add p && git commit -m
+   m` is refused with the whole-index text naming A, and B's `git commit -m
+   m -- p` lands a commit recording only `p` while `q` stays staged.
