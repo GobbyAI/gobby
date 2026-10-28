@@ -40,9 +40,10 @@ async def test_resume_seeds_trust_off_event_loop(monkeypatch: pytest.MonkeyPatch
     loop_thread = threading.get_ident()
     trust_threads: list[int] = []
 
-    def seed(provider: str, cwd: str) -> None:
+    def seed(provider: str, cwd: str, codex_models: tuple[str, ...]) -> None:
         assert provider == "claude"
         assert cwd == metadata["cwd"]
+        assert codex_models == ()
         trust_threads.append(threading.get_ident())
 
     monkeypatch.setattr(resume_executor, "pre_approve_directory", seed)

@@ -21,18 +21,21 @@ import re
 import tempfile
 import threading
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+import psycopg
 import tomlkit
-import yaml
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
 from gobby.claude_config import claude_config_home, claude_config_path, update_claude_config
 from gobby.paths import get_gobby_home
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,7 @@ def encode_claude_project_path(directory: PathValue) -> str:
     return re.sub(r"[^A-Za-z0-9]", "-", path)
 
 
-def pre_approve_directory(cli: str, directory: PathValue) -> None:
+def pre_approve_directory(cli: str, directory: PathValue, codex_models: Iterable[str] = ()) -> None:
     """Pre-approve a directory for the given CLI so trust prompts are skipped.
 
     Resolves symlinks (e.g. /tmp -> /private/tmp on macOS) to match what
@@ -130,11 +133,15 @@ def pre_approve_directory(cli: str, directory: PathValue) -> None:
     Args:
         cli: CLI name (claude, codex, droid)
         directory: Absolute path to the workspace directory
+        codex_models: Codex model ids from the active project policy, added to the
+            packaged defaults when seeding Codex first-run acknowledgements
     """
-    seed_cli_trust(cli, directory)
+    seed_cli_trust(cli, directory, codex_models)
 
 
-def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict[str, Any]:
+def seed_gobby_home_trust(
+    cli: str, gobby_home: PathValue | None = None, codex_models: Iterable[str] = ()
+) -> dict[str, Any]:
     """Seed install-time trust for the configured Gobby home directory.
 
     The Gobby home defaults to ``$GOBBY_HOME`` or ``Path.home() / ".gobby"``.
@@ -142,19 +149,23 @@ def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict
     they differ.
     """
     home = gobby_home if gobby_home is not None else get_gobby_home()
-    return seed_cli_trust(cli, home).as_dict()
+    return seed_cli_trust(cli, home, codex_models).as_dict()
 
 
-def seed_cli_trust(cli: str, directory: PathValue) -> TrustSeedResult:
+def seed_cli_trust(
+    cli: str, directory: PathValue, codex_models: Iterable[str] = ()
+) -> TrustSeedResult:
     """Seed trust for a CLI and return structured details about the writes."""
     with _TRUST_STORE_LOCKS_LOCK:
         lock = _TRUST_STORE_LOCKS.setdefault(cli, threading.Lock())
 
     with lock:
-        return _seed_cli_trust_unlocked(cli, directory)
+        return _seed_cli_trust_unlocked(cli, directory, codex_models)
 
 
-def _seed_cli_trust_unlocked(cli: str, directory: PathValue) -> TrustSeedResult:
+def _seed_cli_trust_unlocked(
+    cli: str, directory: PathValue, codex_models: Iterable[str]
+) -> TrustSeedResult:
     """Seed trust for a CLI. Caller must hold the per-CLI trust-store lock."""
     paths = _trust_path_strings(directory)
     result = TrustSeedResult(cli=cli, paths=paths)
@@ -163,7 +174,7 @@ def _seed_cli_trust_unlocked(cli: str, directory: PathValue) -> TrustSeedResult:
         if cli in _CLAUDE_COMPATIBLE_CLIS:
             _seed_claude_trust(paths, result)
         elif cli == "codex":
-            _seed_codex_trust(paths, result)
+            _seed_codex_trust(paths, result, codex_models)
         elif cli == "droid":
             result.skipped = True
             result.reason = (
@@ -274,7 +285,9 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
         logger.warning(message, exc_info=True)
 
 
-def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
+def _seed_codex_trust(
+    paths: list[str], result: TrustSeedResult, codex_models: Iterable[str]
+) -> None:
     """Seed Codex [projects] trust and first-run [tui] keys in ~/.codex/config.toml."""
     codex_home = Path.home() / ".codex"
     codex_home.mkdir(parents=True, exist_ok=True)
@@ -290,7 +303,7 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
             result.add_entry(store="codex_projects", target=path, status="existing")
             continue
         pending.append((path, "created" if entry is None else "updated"))
-    tui_pending = _codex_first_run_tui_pending(parsed)
+    tui_pending = _codex_first_run_tui_pending(parsed, codex_models)
 
     if not pending and not tui_pending:
         return
@@ -336,7 +349,19 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
     result.add_file_written(config_path)
 
 
-def _codex_launch_model_ids(defaults: Any) -> set[str]:
+# Codex models Gobby launches by default. They ship with the package, so a fresh Codex
+# home is seeded with no daemon, no checkout and no active policy. The daemon adds the
+# active project policy's models at spawn and resume (``active_codex_launch_models``).
+_PACKAGED_CODEX_LAUNCH_MODELS: tuple[str, ...] = (
+    "gpt-5.6-sol",
+    "gpt-6-luna",
+    "gpt-6.1-sol",
+    "gpt-6.1-terra",
+)
+_PROJECT_POLICY_RULE = "project-operating-policy"
+
+
+def codex_model_ids_in_policy(defaults: Any) -> set[str]:
     """Return the Codex model ids named anywhere under one launch-defaults tree.
 
     A ``model`` or ``*_model`` value counts when its ``*_provider`` sibling is ``codex``,
@@ -347,7 +372,7 @@ def _codex_launch_model_ids(defaults: Any) -> set[str]:
         return models
     for key, value in defaults.items():
         if isinstance(value, Mapping):
-            models |= _codex_launch_model_ids(value)
+            models |= codex_model_ids_in_policy(value)
         elif (key == "model" or str(key).endswith("_model")) and isinstance(value, str):
             provider = defaults.get(str(key).removesuffix("model") + "provider")
             if provider == "codex" or (provider in (None, "inherit") and value.startswith("gpt-")):
@@ -355,49 +380,37 @@ def _codex_launch_model_ids(defaults: Any) -> set[str]:
     return models
 
 
-def _project_policy_values(document: Any) -> list[Mapping[str, Any]]:
-    """Return each ``project_policy`` value that a rule document's effects set."""
-    rules = document.get("rules") if isinstance(document, Mapping) else None
-    if not isinstance(rules, Mapping):
-        return []
-    values: list[Mapping[str, Any]] = []
-    for rule in rules.values():
-        effects = rule.get("effects") if isinstance(rule, Mapping) else None
-        for effect in effects if isinstance(effects, list) else []:
-            if isinstance(effect, Mapping) and effect.get("variable") == "project_policy":
-                value = effect.get("value")
-                if isinstance(value, Mapping):
-                    values.append(value)
-    return values
+def active_codex_launch_models(db: HubDatabase | None, project_id: str | None) -> tuple[str, ...]:
+    """Return the Codex model ids in the DB-active project operating policy.
 
-
-def _default_codex_launch_models() -> list[str]:
-    """Return every Codex model id Gobby launches by default, sorted.
-
-    The ids come from the project operating policy (``launch_defaults`` and
-    ``role_launch_defaults``) in this source checkout, plus the bundled agent
-    definitions. An unreadable policy file adds nothing: the NUX seed is best effort.
+    Reads the ``project-operating-policy`` rule row and walks each ``project_policy``
+    effect value, so a live policy change is seeded without a checkout edit. Returns
+    an empty tuple when there is no database or the row cannot be read: a database
+    error, or a malformed row, must not block a spawn.
     """
-    from gobby.agents.sync import get_bundled_agents_path
+    from gobby.storage.definitions.rules import RuleDefinitionManager
 
+    if db is None:
+        return ()
+    try:
+        rule = RuleDefinitionManager(db).get_by_name(_PROJECT_POLICY_RULE, project_id)
+    except (psycopg.Error, ValueError):
+        logger.warning(
+            "Active project policy unreadable; using packaged Codex defaults", exc_info=True
+        )
+        return ()
+    if rule is None:
+        return ()
     models: set[str] = set()
-    rules_dir = Path(__file__).resolve().parents[3] / ".gobby" / "workflows" / "rules"
-    for rule_file in sorted(rules_dir.glob("*.yaml")):
-        try:
-            document = yaml.safe_load(rule_file.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError):
-            logger.debug("Skipping unreadable rule file %s", rule_file, exc_info=True)
-            continue
-        for policy in _project_policy_values(document):
-            models |= _codex_launch_model_ids(policy.get("launch_defaults"))
-            models |= _codex_launch_model_ids(policy.get("role_launch_defaults"))
-    for definition_file in sorted(get_bundled_agents_path().glob("*.yaml")):
-        definition = yaml.safe_load(definition_file.read_text(encoding="utf-8"))
-        models |= _codex_launch_model_ids(definition)
-    return sorted(models)
+    for effect in rule.definition_json.get("effects") or []:
+        if isinstance(effect, Mapping) and effect.get("variable") == "project_policy":
+            models |= codex_model_ids_in_policy(effect.get("value"))
+    return tuple(sorted(models))
 
 
-def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, str, Any]]:
+def _codex_first_run_tui_pending(
+    parsed: Mapping[str, Any], codex_models: Iterable[str]
+) -> list[tuple[str, str, Any]]:
     """Return the first-run ``[tui]`` entries that ``parsed`` lacks or must raise.
 
     A present key keeps its value, the operator's own record, except an exposure count
@@ -405,7 +418,8 @@ def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, s
     """
     pending: list[tuple[str, str, Any]] = []
     nux_entries = [
-        ("tui.model_availability_nux", model, 4) for model in _default_codex_launch_models()
+        ("tui.model_availability_nux", model, 4)
+        for model in sorted({*_PACKAGED_CODEX_LAUNCH_MODELS, *codex_models})
     ]
     for table, key, value in (*_CODEX_FIRST_RUN_TUI, *nux_entries):
         section: Any = parsed
@@ -461,7 +475,7 @@ def ensure_codex_project_trust(config: TOMLDocument, directory: PathValue) -> No
         entry = existing.get(path)
         if not (isinstance(entry, Mapping) and entry.get("trust_level") == "trusted"):
             pending.append(path)
-    tui_pending = _codex_first_run_tui_pending(config)
+    tui_pending = _codex_first_run_tui_pending(config, ())
     if not pending and not tui_pending:
         return
 
