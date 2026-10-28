@@ -119,6 +119,7 @@ fn graph_selector(query: GraphQuery, source: EntitySelector) -> GraphSelector {
 struct FakeFacts {
     project_id: String,
     indexed_source: String,
+    live_only_sources: Vec<(String, String)>,
     files: Vec<FileFact>,
     symbols: Vec<SymbolFact>,
     edges: Vec<GraphEdge>,
@@ -126,6 +127,17 @@ struct FakeFacts {
 }
 
 impl FakeFacts {
+    /// Indexed files as (path, source): the bound file, then live-only files.
+    fn indexed_sources(&self) -> Vec<(&str, &str)> {
+        let mut sources = vec![("src/lib.rs", self.indexed_source.as_str())];
+        sources.extend(
+            self.live_only_sources
+                .iter()
+                .map(|(path, source)| (path.as_str(), source.as_str())),
+        );
+        sources
+    }
+
     fn for_source(binding: &RepositoryBinding) -> Self {
         let hash = gobby_core::indexing::content_hash(SOURCE.as_bytes());
         let files = vec![FileFact {
@@ -162,6 +174,7 @@ impl FakeFacts {
         Self {
             project_id: binding.project_id.clone(),
             indexed_source: SOURCE.to_string(),
+            live_only_sources: Vec::new(),
             files,
             symbols,
             edges,
@@ -213,17 +226,18 @@ impl EvidenceFacts for FakeFacts {
 
     fn search_content(&self, query: &SearchQuery) -> anyhow::Result<FactPage<ContentFact>> {
         let needle = query.text.to_lowercase();
-        let mut items = self
-            .indexed_source
-            .lines()
-            .enumerate()
-            .filter(|(_, line)| line.to_lowercase().contains(&needle))
-            .map(|(index, _)| ContentFact {
-                path: "src/lib.rs".to_string(),
-                line_start: index + 1,
-                line_end: index + 1,
-            })
-            .collect::<Vec<_>>();
+        let mut items = Vec::new();
+        for (path, source) in self.indexed_sources() {
+            for (index, line) in source.lines().enumerate() {
+                if line.to_lowercase().contains(&needle) {
+                    items.push(ContentFact {
+                        path: path.to_string(),
+                        line_start: index + 1,
+                        line_end: index + 1,
+                    });
+                }
+            }
+        }
         let truncated = items.len() > query.limit;
         items.truncate(query.limit);
         Ok(FactPage { items, truncated })
@@ -244,11 +258,9 @@ impl EvidenceFacts for FakeFacts {
         } else {
             query.pattern.clone()
         };
-        let mut hits = self
-            .indexed_source
-            .lines()
-            .enumerate()
-            .filter_map(|(index, line)| {
+        let mut hits = Vec::new();
+        for (path, source) in self.indexed_sources() {
+            for (index, line) in source.lines().enumerate() {
                 let comparison = if query.ignore_case {
                     line.to_lowercase()
                 } else {
@@ -258,16 +270,18 @@ impl EvidenceFacts for FakeFacts {
                     || comparison.contains(&needle),
                     |regex| regex.is_match(line),
                 );
-                matched.then(|| GrepHit {
-                    path: "src/lib.rs".to_string(),
-                    line: index + 1,
-                    text: line.to_string(),
-                    spans: Vec::<GrepSpanFact>::new(),
-                    before: Vec::<GrepContextLineFact>::new(),
-                    after: Vec::<GrepContextLineFact>::new(),
-                })
-            })
-            .collect::<Vec<_>>();
+                if matched {
+                    hits.push(GrepHit {
+                        path: path.to_string(),
+                        line: index + 1,
+                        text: line.to_string(),
+                        spans: Vec::<GrepSpanFact>::new(),
+                        before: Vec::<GrepContextLineFact>::new(),
+                        after: Vec::<GrepContextLineFact>::new(),
+                    });
+                }
+            }
+        }
         let truncated = hits.len() > query.limit;
         hits.truncate(query.limit);
         Ok(GrepOutcome {
@@ -1728,6 +1742,72 @@ fn bound_search_reports_incomplete_for_bound_files_missing_from_the_live_index()
 }
 
 #[test]
+fn bound_search_skips_live_only_file_hits_for_text_lanes() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    let added = "fn added() {}\n// beta\n";
+    facts.files.push(FileFact {
+        id: FileId::new("src/added.rs"),
+        path: "src/added.rs".to_string(),
+        language: "rust".to_string(),
+        symbol_count: 0,
+        content_hash: gobby_core::indexing::content_hash(added.as_bytes()),
+    });
+    facts
+        .live_only_sources
+        .push(("src/added.rs".to_string(), added.to_string()));
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    for paths in [Vec::new(), vec!["src".to_string()]] {
+        for lane in [SearchLane::Literal, SearchLane::Regex, SearchLane::Content] {
+            let mut search = search_selector(lane, "beta");
+            search.paths = paths.clone();
+            let response =
+                library.query(request(&binding, EvidenceOperation::Search { search }))?;
+            assert_eq!(
+                response.completeness,
+                Completeness::Complete,
+                "{paths:?} {lane:?}"
+            );
+            assert_eq!(response.items.len(), 2, "{paths:?} {lane:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn bound_search_skips_live_only_symbols_for_symbol_lanes() -> anyhow::Result<()> {
+    let (temporary, binding) = source_repo()?;
+    let mut facts = FakeFacts::for_source(&binding);
+    let added = "fn added() {}\n// beta\n";
+    facts.files.push(FileFact {
+        id: FileId::new("src/added.rs"),
+        path: "src/added.rs".to_string(),
+        language: "rust".to_string(),
+        symbol_count: 1,
+        content_hash: gobby_core::indexing::content_hash(added.as_bytes()),
+    });
+    let mut beta = facts
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "beta")
+        .cloned()
+        .expect("beta symbol");
+    beta.id = "beta-added".to_string();
+    beta.file = FileId::new("src/added.rs");
+    beta.file_path = "src/added.rs".to_string();
+    beta.file_content_hash = gobby_core::indexing::content_hash(added.as_bytes());
+    facts.symbols.push(beta);
+    let library = EvidenceLibrary::new(temporary.path(), binding.clone(), Arc::new(facts))?;
+    for lane in [SearchLane::Symbol, SearchLane::LexicalSymbol] {
+        let search = search_selector(lane, "beta");
+        let response = library.query(request(&binding, EvidenceOperation::Search { search }))?;
+        assert_eq!(response.completeness, Completeness::Complete, "{lane:?}");
+        assert_eq!(response.items.len(), 1, "{lane:?}");
+    }
+    Ok(())
+}
+
+#[test]
 fn bound_search_ignores_index_files_absent_from_the_bound_commit() -> anyhow::Result<()> {
     let (temporary, binding) = source_repo()?;
     let mut facts = FakeFacts::for_source(&binding);
@@ -1980,6 +2060,7 @@ fn community_library(
     let facts = FakeFacts {
         project_id: binding.project_id.clone(),
         indexed_source: SOURCE.to_string(),
+        live_only_sources: Vec::new(),
         files,
         symbols: Vec::new(),
         edges: Vec::new(),
