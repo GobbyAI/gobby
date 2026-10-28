@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import tomlkit
+import yaml
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
@@ -46,7 +47,6 @@ _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 # a future announcement adds a key that Codex rewrites once. No supported switch is known.
 _CODEX_FIRST_RUN_TUI: tuple[tuple[str, str, Any], ...] = (
     ("tui", "screen_reader_detection_done", True),
-    ("tui.model_availability_nux", "gpt-6.1-sol", 4),
 )
 
 type PathValue = str | os.PathLike[str]
@@ -336,6 +336,67 @@ def _seed_codex_trust(paths: list[str], result: TrustSeedResult) -> None:
     result.add_file_written(config_path)
 
 
+def _codex_launch_model_ids(defaults: Any) -> set[str]:
+    """Return the Codex model ids named anywhere under one launch-defaults tree.
+
+    A ``model`` or ``*_model`` value counts when its ``*_provider`` sibling is ``codex``,
+    or when no provider is set and the id starts with ``gpt-``.
+    """
+    models: set[str] = set()
+    if not isinstance(defaults, Mapping):
+        return models
+    for key, value in defaults.items():
+        if isinstance(value, Mapping):
+            models |= _codex_launch_model_ids(value)
+        elif (key == "model" or str(key).endswith("_model")) and isinstance(value, str):
+            provider = defaults.get(str(key).removesuffix("model") + "provider")
+            if provider == "codex" or (provider in (None, "inherit") and value.startswith("gpt-")):
+                models.add(value)
+    return models
+
+
+def _project_policy_values(document: Any) -> list[Mapping[str, Any]]:
+    """Return each ``project_policy`` value that a rule document's effects set."""
+    rules = document.get("rules") if isinstance(document, Mapping) else None
+    if not isinstance(rules, Mapping):
+        return []
+    values: list[Mapping[str, Any]] = []
+    for rule in rules.values():
+        effects = rule.get("effects") if isinstance(rule, Mapping) else None
+        for effect in effects if isinstance(effects, list) else []:
+            if isinstance(effect, Mapping) and effect.get("variable") == "project_policy":
+                value = effect.get("value")
+                if isinstance(value, Mapping):
+                    values.append(value)
+    return values
+
+
+def _default_codex_launch_models() -> list[str]:
+    """Return every Codex model id Gobby launches by default, sorted.
+
+    The ids come from the project operating policy (``launch_defaults`` and
+    ``role_launch_defaults``) in this source checkout, plus the bundled agent
+    definitions. An unreadable policy file adds nothing: the NUX seed is best effort.
+    """
+    from gobby.agents.sync import get_bundled_agents_path
+
+    models: set[str] = set()
+    rules_dir = Path(__file__).resolve().parents[3] / ".gobby" / "workflows" / "rules"
+    for rule_file in sorted(rules_dir.glob("*.yaml")):
+        try:
+            document = yaml.safe_load(rule_file.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            logger.debug("Skipping unreadable rule file %s", rule_file, exc_info=True)
+            continue
+        for policy in _project_policy_values(document):
+            models |= _codex_launch_model_ids(policy.get("launch_defaults"))
+            models |= _codex_launch_model_ids(policy.get("role_launch_defaults"))
+    for definition_file in sorted(get_bundled_agents_path().glob("*.yaml")):
+        definition = yaml.safe_load(definition_file.read_text(encoding="utf-8"))
+        models |= _codex_launch_model_ids(definition)
+    return sorted(models)
+
+
 def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, str, Any]]:
     """Return the first-run ``[tui]`` entries that ``parsed`` lacks or must raise.
 
@@ -343,7 +404,10 @@ def _codex_first_run_tui_pending(parsed: Mapping[str, Any]) -> list[tuple[str, s
     below its seed: Codex would rewrite the file again on the next launch.
     """
     pending: list[tuple[str, str, Any]] = []
-    for table, key, value in _CODEX_FIRST_RUN_TUI:
+    nux_entries = [
+        ("tui.model_availability_nux", model, 4) for model in _default_codex_launch_models()
+    ]
+    for table, key, value in (*_CODEX_FIRST_RUN_TUI, *nux_entries):
         section: Any = parsed
         for part in table.split("."):
             section = section.get(part) if isinstance(section, Mapping) else None
