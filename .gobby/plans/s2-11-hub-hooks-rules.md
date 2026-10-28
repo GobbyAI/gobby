@@ -221,7 +221,228 @@ deliverable carries one acceptance item per row.
 
 Freeze executable characterization of the Python engine, the ingress contract
 clauses not yet recorded, and each adapter's translation before any Rust
-replaces them.
+replaces them. Python is the oracle until 7.13.
+
+### 1.1 Rule-pass parity corpus and its Python exporter [category: test]
+`kind: deliverable`
+
+Targets:
+- `tests/contracts/rules/manifest.json`
+- `tests/contracts/rules/normalize_vectors.json`
+- `tests/contracts/rules/README.md`
+- `tests/contracts/rules_corpus.py`
+- `tests/contracts/test_rules_corpus.py`
+
+**Research context:**
+- **Call surface.** `src/gobby/workflows/hooks.py::WorkflowHookHandler._evaluate_rules`
+  calls `RuleEngine.evaluate(event, session_id, variables, eval_context,
+  blocking_deadline)` (`src/gobby/workflows/engine/core.py`). It reads the staged
+  payload from `response.metadata["_gobby_staged_effects"]` and merges the
+  changed-key delta with `SessionVariableManager.merge_variables`
+  (`src/gobby/workflows/state_manager.py`) under a `SessionVariableMutation`
+  advisory lock. #23808 made that merge key-scoped.
+- **Loading.** `RuleEngine._load_rules` calls `list_by_event` once per trigger
+  event with `enabled=True` and the event's project id, dedupes rows by id, logs
+  and skips parse failures, and sorts by `(priority, trigger_index, name)`. An
+  event with no project id loads global rows only (#23866, `0328276aa4`).
+- **Filtering.** `_filter_by_agent_scope`, `_filter_by_audience` and
+  `_filter_by_active_rules`.
+- **Effects.** `src/gobby/workflows/definitions.py::RuleEffect` accepts 15
+  types. Bundled YAML uses eight: `block`, `set_variable`, `inject_context`,
+  `mcp_call`, `observe`, `load_skill`, `run_command` and `proxy_hook`. The other
+  seven are kept (Debt not to port, F2) and pinned here by synthetic cases.
+- **Response.** `src/gobby/workflows/engine/evaluation.py::EvaluationMixin._assemble_response`
+  fills these `HookResponse` fields (`src/gobby/hooks/events.py`): `decision`,
+  `reason`, `context`, `context_parts`, `system_message`, `display_content`,
+  `modified_input`, `modify_args`, `auto_approve`, `permission_decision`,
+  `updated_permissions`, `retry`, `watch_paths`, `worktree_path`,
+  `elicitation_action`, `elicitation_content`, `elicitation_error`,
+  `trigger_action` and `metadata` (which carries `mcp_calls` and the staged
+  payload).
+- **Rewrite recheck (F4).** In `RuleEngine.evaluate`, a before-tool event whose
+  input was rewritten by `_rewrite_input` or a `proxy_hook` re-runs agent tool
+  enforcement, step tool enforcement and `_run_rule_loop(...,
+  block_effects_only=True)` against the rewritten input. Non-block effects are
+  not applied twice.
+- **Seam-backed names.** The helpers and effects that reach other families are
+  listed in `.gobby/plans/research/rule-evaluation-evidence-2026-10-09.md`
+  (`#cross-family-seams-per-rule`).
+- **Pattern to copy.** `tests/contracts/http_corpus.py` provides the
+  schema-versioned manifest and case loading.
+
+Build a schema-versioned corpus (`schema_version: 1`) of rule-pass cases, one
+JSON file per case, listed in `manifest.json`. A case carries:
+- synthetic rule bodies as `definition_json` with priority and project id;
+- the project id, session facts and pre-pass variables;
+- the normalized event the engine receives;
+- an ordered seam script: each seam call with its arguments and its recorded
+  response or failure;
+- the `expect` block: every response field above, the eager variable delta,
+  the staged `on_receipt` payload, the ordered effect log, the audit records
+  and the DR8 outcome.
+
+Rule bodies are synthetic. They exercise engine features; no case asserts the
+behavior of a bundled rule (Decision 11). Both engines must produce each
+case's `expect` block; no case carries a Rust-only expectation.
+
+`rules_corpus.py` records cases. It seeds rows through `RuleDefinitionManager`
+in the isolated test hub and runs `RuleEngine.evaluate`. Pytest monkeypatching
+wraps each seam-backed helper and external effect executor in a recorder, so
+no production Python changes. The exporter also writes `normalize_vectors.json`
+from the normalizer entry points 2.2-2.7 port: `tokenize_shell_command`,
+`scan_shell_command` and `extract_heredoc_bodies` (`_normalization_shell`),
+`decode_ansi_c_escape` (`_ansi_c`), `apply_path_scope_metadata`
+(`_path_scope`), `normalize_tool_fields` (`_normalization_tools`),
+`classify_git_mutation` (`_normalization_git`), `executable_command_subjects`
+and `command_patterns_match` (`command_matching`),
+`blocks_direct_provider_launch` (`provider_launch_guard`) and
+`rule_matches_agent` (`selectors`). Command strings come from the corpus
+events and the existing cases in `tests/workflows/test_command_matching.py`.
+
+Required scenario cases:
+- ordering by priority and trigger index;
+- aggregate block;
+- a `set_variable` read by a later rule;
+- an `mcp_call` result read by a later rule;
+- agent-scope, audience and active-rule-name filtering;
+- two projects with different rows, and an event with no project id;
+- a parse-failure row skipped;
+- a condition error in a block rule and in a non-block rule;
+- one failing seam call per seam kind (DR5);
+- `on_receipt` staging, and an `acknowledge_variable` both eager and
+  `on_receipt`;
+- step-tool enforcement allow and block;
+- the blocking deadline;
+- a `proxy_hook` with handler `rtk` producing `modified_input`;
+- the F4 recheck: a rewrite that a block rule then denies, and a rewrite whose
+  non-block effects run once;
+- a turn end with `HANDOFF_TURN_END_PENDING_VARIABLE` set, which allows;
+- a hardcoded override with no rule installed (`include_rule_outputs=False`);
+- one case per hardcoded behavior 2.14 and 2.15 list.
+
+**Granularity:** one leaf with seven acceptance items. The case schema, the
+exporter that is its oracle and the coverage checks are one artifact; a corpus
+without its exporter cannot be re-recorded.
+
+**Acceptance:**
+- 1.1.1 - The manifest and every case load at `schema_version` 1, and a stale version is rejected. test: `tests/contracts/test_rules_corpus.py::test_loader_rejects_stale_schema_version`.
+- 1.1.2 - All 15 effect types and both delivery classes appear in some case's expected effect log, using synthetic rule bodies only. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_effect_types_and_delivery`.
+- 1.1.3 - Every required scenario case exists, including both F4 recheck cases. test: `tests/contracts/test_rules_corpus.py::test_corpus_has_required_scenarios`.
+- 1.1.4 - The Python engine reproduces every case's `expect` block. test: `tests/contracts/test_rules_corpus.py::test_python_engine_replays_corpus`.
+- 1.1.5 - Every hardcoded behavior 2.14 and 2.15 list has a case, and every response field appears set in some case. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_hardcoded_behavior_and_response_fields`.
+- 1.1.6 - The Python functions reproduce every normalizer vector. test: `tests/contracts/test_rules_corpus.py::test_python_normalizer_replays_vectors`.
+- 1.1.7 - The README documents the record and replay commands, the synthetic-rule rule, and the re-record obligation when the engine changes. file: `tests/contracts/rules/README.md`.
+
+**Verification:** planned:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_rules_corpus.py -v`.
+
+### 1.2 Ingress contract cases not yet recorded [category: test]
+`kind: deliverable`
+
+Targets:
+- `tests/contracts/hooks/manifest.json`
+- `tests/contracts/hooks/README.md`
+- `tests/contracts/hooks_corpus.py`
+- `tests/contracts/test_hooks_corpus.py`
+- `docs/contracts/hook-ingress.md`
+- `tests/contracts/test_hook_ingress_doc.py::test_doc_states_frozen_contract`
+
+**Research context:**
+- **Already recorded by #24364.** `docs/contracts/hook-ingress.md` freezes the
+  contract. `tests/contracts/http/hooks_execute_{ok,replay,below_floor,bad_schema}.json`
+  are single-request HTTP cases (`schema_version` 2, family `hooks`, parity
+  `proxy`, origin `python`), and
+  `tests/contracts/test_hook_ingress_doc.py::test_doc_states_frozen_contract`
+  checks the document.
+- **Not yet recorded.** 403 `{"code":"hook_machine_mismatch"}`; the three 409
+  bodies (`processing`, `processed`, `malformed_marker`); the STOP and
+  `turn_end` 120-second block grace and its `.stop_replay_epoch` bound; the 503
+  bodies `preflight_timeout`, `ingress_backpressure` (reasons
+  `agent_run_identity_pending` and `daemon_not_ready`) and `adapter_timeout`;
+  503 `{"detail":"HookManager not initialized"}`; and a receipt round trip.
+- **DR5 mapping, not in the document.** A rule pass that raises
+  `DatabaseOperationDeadlineExceeded` (`rule_pass_deadline`), a rule-row load
+  failure (`rule_load_failure`), a STOP pass whose session variables cannot load
+  (`stop_state_unavailable`), and a tool pass whose variables cannot load, which
+  runs on empty variables and persists nothing (`tool_state_unavailable`).
+- **Harness.** The HTTP corpus uses one function-scoped boundary daemon per
+  case, so related requests must be one case. Forced failures run in process,
+  as in
+  `tests/servers/routes/test_hooks_agy_dispatch.py::test_ingress_retry_includes_retry_kind_discriminator`.
+
+Add `tests/contracts/hooks/` with two case kinds:
+- **`sequence`**: ordered requests against one boundary daemon, built the way
+  `tests/contracts/test_http_corpus.py` builds it.
+- **`envelope`**: one response forced in process with the technique above.
+
+`hooks_corpus.py` imports `apply_masks`, `redact_secrets`, `credential_headers`
+and `normalize_response` from `tests/contracts/http_corpus.py`.
+
+Required sequence cases, for the Claude Code and Codex adapters: 403 machine
+mismatch before any claim; a duplicate after success replayed with HTTP 200;
+409 `processing` with a live lease; 409 `malformed_marker`; 409 `processed`
+with no replayable response; a STOP block replayed inside the grace; a STOP
+block re-evaluated after the grace and after an epoch bump; a synthetic block
+rule and a synthetic turn-start context injection; and a response carrying
+`_gobby_delivery_receipt`, followed by its acknowledgement file.
+
+Required envelope cases: `preflight_timeout`, both `ingress_backpressure`
+reasons, `adapter_timeout`, HookManager not initialized, and the four DR5
+mappings recorded as observed.
+
+Add a "Rule-pass failure responses" section to `docs/contracts/hook-ingress.md`
+stating the four DR5 mappings, and extend the document test to require it.
+
+**Acceptance:**
+- 1.2.1 - The hooks manifest and every case load, and the loader rejects an unknown case kind. test: `tests/contracts/test_hooks_corpus.py::test_hooks_manifest_contract`.
+- 1.2.2 - Every sequence case replays equal against the Python boundary daemon. test: `tests/contracts/test_hooks_corpus.py::test_sequence_case_replays_equal`.
+- 1.2.3 - Every envelope case replays equal in process. test: `tests/contracts/test_hooks_corpus.py::test_envelope_case_replays_equal`.
+- 1.2.4 - Every required sequence and envelope case exists. test: `tests/contracts/test_hooks_corpus.py::test_hooks_corpus_has_required_cases`.
+- 1.2.5 - The contract document states the four DR5 failure responses, and its test requires the section. test: `tests/contracts/test_hook_ingress_doc.py::test_doc_states_frozen_contract`.
+
+**Verification:** planned:
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_hooks_corpus.py tests/contracts/test_hook_ingress_doc.py tests/contracts/test_http_corpus.py -v`.
+
+### 1.3 Adapter translation corpus [category: test]
+`kind: deliverable`
+
+Targets:
+- `tests/contracts/adapters/manifest.json`
+- `tests/contracts/adapters/README.md`
+- `tests/contracts/adapters_corpus.py`
+- `tests/contracts/test_adapters_corpus.py`
+
+**Research context:**
+- **Adapters on the route.** `src/gobby/adapters/claude_code.py::ClaudeCodeAdapter`,
+  `src/gobby/adapters/codex_impl/hooks_adapter.py::CodexHooksAdapter` and
+  `src/gobby/adapters/droid.py::DroidAdapter` extend
+  `src/gobby/adapters/base.py::BaseAdapter`. `src/gobby/adapters/grok.py::GrokAdapter`
+  and `src/gobby/adapters/agy.py::AgyAdapter` extend
+  `src/gobby/adapters/acp_hook_adapter.py::ACPHookAdapter`. Each implements
+  `translate_to_hook_event` and `translate_from_hook_response`.
+- **Selection.** `source` alone selects the adapter (memory a39d0411, #17173).
+- **Recorded payloads to reuse.** `tests/fixtures/provider_contracts/` holds
+  recorded hook payloads per provider (`agy/hook-payloads.jsonl`,
+  `droid/hook-payloads-0.219.0.jsonl`, `grok/hook-payloads.jsonl`,
+  `claude/session-8944-post-tool-use.json`, `codex/*.json`), checked by
+  `tests/adapters/test_provider_contract_fixtures.py`.
+- **Node-origin branches.** Site rows 20 and 28-30 take a no-file branch for a
+  node delivery.
+
+Each case is one adapter call: a raw provider payload, the delivery origin and
+the expected `HookEvent`, or a `HookResponse` and the expected provider output
+JSON. The exporter replays the recorded fixtures above through each adapter
+and adds synthetic payloads for every hook type the recorded set misses,
+including the node-origin no-file branches.
+
+**Acceptance:**
+- 1.3.1 - The manifest and every case load, and the loader rejects an unknown adapter source. test: `tests/contracts/test_adapters_corpus.py::test_adapters_manifest_contract`.
+- 1.3.2 - Every hook type each of the five adapters accepts has an inbound case, and every `HookResponse` field the adapter emits has an outbound case. test: `tests/contracts/test_adapters_corpus.py::test_adapters_corpus_covers_hook_types_and_fields`.
+- 1.3.3 - The Python adapters reproduce every case. test: `tests/contracts/test_adapters_corpus.py::test_python_adapters_replay_corpus`.
+- 1.3.4 - Node-origin cases exist for Site rows 20, 28, 29 and 30. test: `tests/contracts/test_adapters_corpus.py::test_adapters_corpus_has_node_origin_cases`.
+
+**Verification:** planned:
+`GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_adapters_corpus.py -v`.
 
 ## P2: Rule engine in `gobby-workflows`
 `kind: framing`
