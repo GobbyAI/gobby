@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID
 
+import psycopg
 import pytest
 
 from gobby.runner_init.servers import issue_grant_postgres
@@ -20,7 +21,7 @@ from tests.storage.test_managed_credential_recovery import (
     _rewrite_recovery_grant,
 )
 from tests.storage.test_managed_credentials import _manager, _secret_store
-from tests.storage.test_postgres_agent_authorization import AuthorizationFixture
+from tests.storage.test_postgres_agent_authorization import AUTH_SCHEMA, AuthorizationFixture
 from tests.storage.test_postgres_agent_authorization import (
     fresh_authorization_fixture as authorization_fixture,
 )
@@ -124,6 +125,84 @@ def test_first_handshake_rotation_retries_and_renews_launch_token(
         assert rewritten.capabilities.postgres.dsn == direct.dsn
         assert rewritten.capabilities.postgres.credential_generation == direct.credential_generation
         assert direct.credential_generation == first.credential_generation + 1
+    finally:
+        manager.revoke(fixture.agent_run_id, reason="test-cleanup")
+        manager.close()
+        store.db.close()
+
+
+def test_sweep_renews_seat_after_outage_outlasts_in_request_retry(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saturated pool past the in-request window must heal on a later lifecycle sweep."""
+    fixture = authorization_fixture
+    manager = _manager(fixture, tmp_path)
+    store = _secret_store(fixture)
+    signing_key = b"rotation-sweep-test-key"
+    monkeypatch.setattr(local_token, "read_managed_signing_key", lambda: signing_key)
+    delays: list[float] = []
+    monkeypatch.setattr("time.sleep", delays.append)
+    try:
+        first = manager.issue(
+            managed_execution_id=fixture.agent_run_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=59),
+        )
+        golden = Path(__file__).parents[1] / "runtime_grants/golden/direct_datastores.json"
+        grant = GrantBundle.model_validate_json(golden.read_bytes()).model_copy(
+            update={"principal": _principal(fixture)}
+        )
+        launch = materialize_managed_launch(
+            grant,
+            dest_dir=first.bootstrap_path.parent,
+            signing_key=signing_key,
+            deadline_seconds=3600,
+        )
+        original = local_token.read_managed_api_token(launch.env)
+        assert original is not None
+        original_claims = local_token.verify_agent_api_token(original, signing_key)
+        assert isinstance(original_claims, local_token.AgentApiTokenClaims)
+        manager.bind_launch_grant_rewriter(_rewrite_recovery_grant)
+
+        # The outage outlasts the in-request retry window, so the seat keeps its launch token.
+        with patch.object(
+            manager,
+            "_rotate_if_generation",
+            side_effect=TimeoutError("test: saturated credential pool"),
+        ):
+            with pytest.raises(HandshakeRejection):
+                issue_grant_postgres(
+                    _principal(fixture),
+                    credentials=manager,
+                    deployment_token=DEPLOYMENT_TOKEN,
+                    secrets=store,
+                    managed_bootstrap_dsn=_dsn,
+                )
+        assert len(delays) == 3
+        assert local_token.read_managed_api_token(launch.env) == original
+
+        # The lifecycle sweep finds the binding due once it is 45 minutes old.
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                f"UPDATE {AUTH_SCHEMA}.principal_bindings SET issued_at = NOW() - "
+                "INTERVAL '46 minutes' WHERE managed_execution_id = %s AND revoked_at IS NULL",
+                (fixture.agent_run_id,),
+            )
+        rotated = manager.rotate_due()
+
+        assert [credential.credential_generation for credential in rotated] == [
+            first.credential_generation + 1
+        ]
+        renewed = local_token.read_managed_api_token(launch.env)
+        assert renewed is not None and renewed != original
+        claims = local_token.verify_agent_api_token(renewed, signing_key)
+        assert isinstance(claims, local_token.AgentApiTokenClaims)
+        assert claims.iat < original_claims.exp
+        assert claims.exp - claims.iat >= local_token.AGENT_TOKEN_MAX_TTL_SECONDS
     finally:
         manager.revoke(fixture.agent_run_id, reason="test-cleanup")
         manager.close()
