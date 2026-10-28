@@ -1235,9 +1235,12 @@ terminal-epic hook, and it keeps every observable effect of `archive_plan`:
 - The destination keeps the path below `.gobby/plans/`, so
   `.gobby/plans/a/b.md` moves to `.gobby/plans/completed/a/b.md`. A path outside
   `.gobby/plans/` keeps its whole relative path.
+- A missing source file refuses before any move or row write, because
+  `src/gobby/storage/plans.py::LocalPlanManager._relative_plan_path` raises
+  `FileNotFoundError` ahead of the move. A file outside the project root
+  refuses the same way with `ValueError`.
 - An existing destination file refuses the archive before any move, as Python's
   `FileExistsError` does, and nothing is written.
-- A missing source file still archives the row without a move.
 - The `plans` row records `state` archived, the new `plan_path`, `archived_at`
   and `updated_at`. If that update fails, the move is rolled back.
 - After the row commits, the coverage manifest at
@@ -1246,8 +1249,13 @@ terminal-epic hook, and it keeps every observable effect of `archive_plan`:
   `src/gobby/storage/plans.py::LocalPlanManager._remove_coverage_artifacts`
   does. A missing manifest is not an error.
 - Nothing happens when no plan is linked.
-The oracle is `tests/storage/test_plans_manager.py`, whose archive test asserts
-manifest removal and a repeated archive. #21581 later moves this implementation
+- Archival runs after the close commits, so a refusal never fails the close.
+  As `src/gobby/hooks/event_handlers/_plan.py::on_epic_terminal` does, a
+  missing plan or missing source file is a silent no-op and any other refusal
+  is logged.
+The oracles are `tests/storage/test_plans_manager.py`, whose archive test
+asserts manifest removal and a repeated archive, and
+`tests/hooks/event_handlers/test_plan.py` for the hook. #21581 later moves this implementation
 into the Plans crate and rewires the hook; 6.1 records that handoff.
 Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test close`.
 
@@ -1259,7 +1267,7 @@ close state machine; repair and step records feed gate 5 directly.
 - 3.7.2 - Successful closes write Python's rows, receipts, lifecycle events and ancestor auto-closes, and HTTP close keeps its operator semantics. test: `crates/gtasks/tests/close.rs::close_finalization_matches_python`.
 - 3.7.3 - Candidate repair and the four step records match Python, including SHA resolution. test: `crates/gtasks/tests/close.rs::repair_and_steps_match_python`.
 - 3.7.4 - Closing an epic as done or moot archives its linked plan after commit, rolls back on failure and is a no-op without a plan. test: `crates/gtasks/tests/close.rs::epic_close_archives_plan`.
-- 3.7.6 - Native archival matches `archive_plan`: nested paths map below `completed/`, the coverage manifest is removed except for strategy plans, a repeated archive changes nothing, and an existing destination refuses with no move and no row write. test: `crates/gtasks/tests/close.rs::plan_archive_matches_python`.
+- 3.7.6 - Native archival matches `archive_plan`: nested paths map below `completed/`, the coverage manifest is removed except for strategy plans, a repeated archive changes nothing, a missing source, a source outside the project root or an existing destination refuses with no move and no row write, and the epic close still succeeds. test: `crates/gtasks/tests/close.rs::plan_archive_matches_python`.
 - 3.7.5 - A session on another machine is still refused with Python's remote-session error. test: `crates/gtasks/tests/close.rs::remote_session_close_refused_locally`.
 
 ### 3.8 Node checkout git evidence [category: code] (depends: 3.7, #24521, #24532)
@@ -1571,14 +1579,46 @@ Any difference marks the case Skipped with a bounded reason and is never a
 match. A case whose result is unbounded or larger than the set limit cannot be
 proven stable, so it is Skipped conservatively.
 
-For writes, Python executes once. `check_proxied` reads Python's committed
-post-image, meaning the task row, `task_lifecycle_events`, dependency, comment
-and session-variable rows. It reads that same post-image set again after the
-check. If the two reads differ, a later write intervened, and the case is
-Skipped rather than checked against later state. Otherwise the response is
-checked against the native projection of that state without repeating the
-mutation. These checks reuse the existing compare seam; there is no schema
-version column and no retry. The compare log
+For writes, Python executes once. Another writer can commit between Python's
+commit and `check_proxied`'s first read, so the post-image must be tied to the
+response before it is compared. `check_proxied` reads the post-image (the task
+row, `task_lifecycle_events`, dependency, comment and session-variable rows) in
+one read transaction, and the check uses only that snapshot. Each operation
+then proves linkage through an anchor its response already carries, as
+`crates/gruntime/src/verify.rs::verify` does with `config_revision`:
+- Task-row writes (`POST /api/tasks`, `PATCH`, close, reopen, escalate,
+  de-escalate and release-claim) return
+  `src/gobby/storage/tasks/_models.py::Task.to_dict`. The anchor is its `id`
+  and `updated_at`. A matching row is compared in full, so a difference is a
+  Mismatch. A different `updated_at` or a missing row means a later write, and
+  the case is Skipped.
+- Comment add returns the inserted row and dependency add returns
+  `src/gobby/storage/task_dependencies.py::TaskDependency.to_dict`. The anchor
+  is the row `id`. A present row is compared in full; a missing row means a
+  later delete, and the case is Skipped.
+- Task delete and comment delete name a UUID, which nothing can recreate.
+  Absence is Verified, and a row still present is a Mismatch.
+- Dependency remove returns only the pair, and a later add can restore the
+  same pair under a new edge `id`. Absence is Verified; a present pair is
+  Skipped.
+- Effects the response does not carry are lifecycle events, ancestor
+  auto-closes and session-variable keys. They are linked only when they are
+  exactly the effects native projects from the request and the anchored row,
+  and the task's newest events are those events. Anything else is Skipped,
+  because `src/gobby/mcp_proxy/tools/tasks/_claim_release.py` and
+  `src/gobby/tasks/commit_unlink.py` append events without touching the task
+  row.
+- A refused write commits nothing and carries no anchor. It is Verified when
+  native refuses the same request identically against the snapshot, and
+  otherwise Skipped, because a later write may have removed the refusing
+  condition.
+Skipped never counts as a pass:
+`crates/gdaemon/src/front_door/compare.rs::Report::passes` fails a report with
+any unwaived Skipped outcome. An isolated, undisturbed case reproduces every
+anchor and still Passes. A test reproduces the race deterministically without
+a new seam: it runs the Python write, keeps response A, commits a competing
+write B, then calls `check_proxied` with A. No mutation is repeated, and these
+checks add no schema version column and no retry. The compare log
 stores IDs and reasons, never descriptions, comments or commit content. The
 claim route is unclaimed (Q11), so compare never sees it; 4.1.12 covers it.
 
@@ -1600,7 +1640,7 @@ outcome is trustworthy compare and replay evidence for this family.
 
 **Acceptance:**
 - 4.2.1 - Read and write comparisons detect a tampered response or post-image, skip concurrent changes and never repeat a mutation. test: `crates/gtasks/tests/compare.rs::compare_is_side_effect_free_and_race_aware`.
-- 4.2.6 - A dependency add or remove, a comment add or delete, or a new list member injected between legs or after a write's post-image read marks the case Skipped, while an undisturbed case still Passes. test: `crates/gtasks/tests/compare.rs::relation_and_membership_races_skip`.
+- 4.2.6 - A dependency add or remove, a comment add or delete, or a new list member injected between read legs marks the case Skipped. So does a competing write committed after Python's write and before the first post-image read: a task update, a delete of the added comment or edge, a re-add of the removed edge, or a change that lifts a refusal. A task or comment still present after a delete response is a Mismatch, and an undisturbed case still Passes. test: `crates/gtasks/tests/compare.rs::relation_and_membership_races_skip`.
 - 4.2.2 - The sixteen claimed cases replay with ordinary parity or exact cited #24963 replacements, keep Python origin and need no Python backend for native legs. test: `tests/e2e/test_tasks_family.py::test_native_tasks_corpus_matches_python`.
 - 4.2.3 - Controlled compare covers every claimed route with stable evidence, at least one ordinary Passed case and zero unwaived mismatches, and all-Skipped or unwaived-Skipped readiness fails. test: `tests/e2e/test_tasks_family.py::test_compare_has_coverage_without_double_effects`.
 - 4.2.4 - A paired node forwards `/api/tasks` requests to the hub's native family without a database credential. test: `tests/e2e/test_tasks_family.py::test_node_routes_tasks_to_hub`.
@@ -2132,4 +2172,15 @@ ADV-5. The Orchestrator ruled Q12 and Q13 through Triage.
   for sessions, and moves the expansion runtime to #21581.
 - ADV-5: 4.2's stability check covers relation tables and list membership
   (4.2.6).
+No consensus is claimed.
+
+2026-10-28 — Adversary gobby#18284's second pass on dddb6fd found two residuals,
+both accepted without a ruling.
+- ADV-1: a missing source file now refuses before any move or row write, as
+  `_relative_plan_path` does, and the terminal-epic hook keeps
+  `on_epic_terminal`'s handling of refusals (3.7.6).
+- ADV-5: each write ties its post-image to an anchor its response already
+  carries, and a write committed between Python's commit and the first
+  post-image read marks the case Skipped (4.2.6). This replaces the two-read
+  bracket.
 No consensus is claimed.
