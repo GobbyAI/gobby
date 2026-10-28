@@ -1,6 +1,6 @@
 name: team-planning
 type: pipeline
-version: "1.1"
+version: "1.2"
 description: |
   Planning runbook: launches the plan writer, plan enhancer and plan adversary seats into one
   'Team Planning - #<task>' tab in the shared checkout. Each seat runs its own agent definition, and
@@ -110,8 +110,22 @@ steps:
       arguments:
         task_id: "${{ inputs.task }}"
 
+  # list_tasks returns at most limit rows, and open_count is the total of open children. The count
+  # comes first so the next step can list every open child.
+  - id: planning-children-count
+    condition: "${{ 'plan-writer' in inputs.seats.split(',') }}"
+    mcp:
+      server: gobby-tasks
+      tool: list_tasks
+      arguments:
+        parent_task_id: "${{ inputs.task }}"
+        closed: false
+        limit: 1
+
   # The plan writer's planning task is the open planning child of the run's task. The run reuses
-  # one when it exists and creates one otherwise; the plan writer claims it before writing.
+  # one when it exists and creates one otherwise; the plan writer claims it before writing. The
+  # limit is the open count plus one slack row, which keeps it at least 1 and covers a child
+  # added between the two reads.
   - id: planning-children
     condition: "${{ 'plan-writer' in inputs.seats.split(',') }}"
     mcp:
@@ -120,6 +134,7 @@ steps:
       arguments:
         parent_task_id: "${{ inputs.task }}"
         closed: false
+        limit: "${{ steps['planning-children-count'].output.get('open_count', 0) + 1 }}"
 
   - id: planning-child
     condition: "${{ 'plan-writer' in inputs.seats.split(',') and not [t for t in steps['planning-children'].output.get('tasks', []) if t.get('category') == 'planning'] }}"

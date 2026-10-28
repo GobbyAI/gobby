@@ -84,7 +84,8 @@ class RunbookAgentsProxy:
             return {"success": True}
         if arguments["agent"] in self.fail_agents:
             return {"success": False, "error": "spawn refused"}
-        index = len(self.calls)
+        # Ids number spawns, so the plan writer is run-1 whatever steps launch before it.
+        index = len(self.spawns())
         return {
             "success": True,
             "run_id": f"run-{index}",
@@ -169,6 +170,7 @@ async def test_runbook_syncs_bundled_and_tagged(temp_db: HubDatabase) -> None:
     assert list(steps) == [
         "guard",
         "target",
+        "planning-children-count",
         "planning-children",
         "planning-child",
         *SEATS,
@@ -199,14 +201,12 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
     assert guard["requested"] == SEATS_INPUT
     assert [seat["agent"] for seat in guard["catalogue"]] == list(SEATS)
     writer, adversary, enhancer = full.spawns()
-    # Fake pane and run ids follow call position: guard, target, planning-children and
-    # planning-child precede the writer's spawn, which is call five.
     assert writer["placement"] == {"tab": {"workspace": "ws-1", "title": TAB_TITLE}}
     assert adversary["placement"] == {
-        "split": {"pane": "pane-5", "axis": "right", "title": "Plan Adversary"}
+        "split": {"pane": "pane-1", "axis": "right", "title": "Plan Adversary"}
     }
     assert enhancer["placement"] == {
-        "split": {"pane": "pane-5", "axis": "right", "title": "Plan Enhancer"}
+        "split": {"pane": "pane-1", "axis": "right", "title": "Plan Enhancer"}
     }
     for spawn, agent in zip((writer, adversary, enhancer), SEATS, strict=True):
         assert spawn["reserved_run_id"] == step_invocation_id(deployed.id, agent)
@@ -220,7 +220,7 @@ async def test_partial_deploy_relaunches_missing_seat(temp_db: HubDatabase) -> N
         for step in manager.get_steps_for_execution(_latest_execution_id(temp_db))
     }
     assert steps["plan-writer"].status == StepStatus.COMPLETED
-    assert json.loads(steps["plan-writer"].output_json or "null")["run_id"] == "run-5"
+    assert json.loads(steps["plan-writer"].output_json or "null")["run_id"] == "run-1"
     assert steps["plan-adversary"].status == StepStatus.FAILED
 
     relaunch = RunbookAgentsProxy()
@@ -496,11 +496,57 @@ async def test_restart_reruns_on_same_child(
     writer = {step.step_id: step for step in manager.get_steps_for_execution(execution_id)}[
         "plan-writer"
     ]
-    # Run ids follow call position. A writer interrupted at its spawn reruns as the resumed run's
-    # first call; otherwise it keeps the first attempt's run, which is call five behind the
-    # guard, target, planning-children and planning-child steps.
-    expected_writer_run = "run-1" if interrupt_agent == "plan-writer" else "run-5"
-    assert json.loads(writer.output_json or "null")["run_id"] == expected_writer_run
+    # The writer is the first spawn of either attempt, so its run is run-1 in both.
+    assert json.loads(writer.output_json or "null")["run_id"] == "run-1"
+
+
+class ManyChildrenProxy(RunbookAgentsProxy):
+    """Lists the task's children as the daemon does: rows up to limit, open_count in total."""
+
+    def __init__(self, children: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.children = children
+
+    async def call_tool(
+        self,
+        server: str,
+        tool: str,
+        arguments: dict[str, Any],
+        *,
+        session_id: str | None,
+        enforce_workflow: bool,
+    ) -> dict[str, Any]:
+        reply = await super().call_tool(
+            server, tool, arguments, session_id=session_id, enforce_workflow=enforce_workflow
+        )
+        if tool != "list_tasks":
+            return reply
+        limit = arguments.get("limit", 50)
+        return {
+            "success": True,
+            "tasks": self.children[:limit],
+            "count": min(limit, len(self.children)),
+            "open_count": len(self.children),
+        }
+
+
+async def test_planning_child_past_the_first_fifty_children_is_reused(
+    temp_db: HubDatabase,
+) -> None:
+    pipeline = await _team_planning(temp_db)
+    children = [
+        {"ref": f"#{26000 + index}", "category": "code", "title": f"Child {index}"}
+        for index in range(54)
+    ]
+    children.append({"ref": "#26100", "category": "planning", "title": "Plan #25248"})
+    proxy = ManyChildrenProxy(children)
+
+    result = await _executor(temp_db, proxy).execute(pipeline, RUN_INPUTS, PROJECT_ID)
+
+    assert result.status == ExecutionStatus.COMPLETED
+    assert "gobby-tasks:create_task" not in [call["tool"] for call in proxy.calls]
+    writer = proxy.spawns()[0]
+    assert "#26100" in writer["prompt"]
 
 
 def _assert_child_parent(
