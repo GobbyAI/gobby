@@ -701,11 +701,15 @@ def requires_task_for_any_touched_file(
     Structured tool inputs (Write/Edit shapes) carry their own paths; shell
     commands carry none, so the adapter's canonical path extraction in event
     data is the fallback — a bash write whose extracted paths are all plan or
-    taskless feedback files is exempt exactly like the structured path. The
-    helper still fails closed: when neither source yields a path for a write-like
+    taskless feedback files is exempt, but a structured Write/Edit of a plan file is
+    not: plan mode and the plan-writer seat exempt those paths below. The helper still
+    fails closed: when neither source yields a path for a write-like
     tool, the edit is treated as requiring a task.
     """
     touched_paths = get_touched_file_paths(tool_input) or _canonical_event_paths(event_data)
+    structured_mutation = (
+        isinstance(event_data, dict) and event_data.get("canonical_structured_mutation") is True
+    )
     if not touched_paths:
         return True
 
@@ -718,7 +722,9 @@ def requires_task_for_any_touched_file(
             )
         ):
             continue
-        if is_plan_file(path, source):
+        # A native Write/Edit of a plan file needs a claim outside plan mode and the
+        # plan-writer role; only shell writes keep the taskless plan-file exemption.
+        if not structured_mutation and is_plan_file(path, source):
             continue
         if plan_mode and path.endswith(".md"):
             continue

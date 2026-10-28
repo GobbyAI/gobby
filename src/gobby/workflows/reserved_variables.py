@@ -28,6 +28,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         # Edit ledgers the foreign-dirty edit gate trusts; only the edit observer writes them.
         "session_dirty_file_checkouts",
         "session_dirty_files",
+        "session_unclaimed_edits",
         "task_edited_file_checkouts",
         "grok_pending_briefing",
         "grok_pending_delivery",
