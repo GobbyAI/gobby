@@ -81,3 +81,32 @@ async def test_generated_trees_are_absent_from_git_status(
     assert statuses
     assert all("artifact-" not in status for status in statuses)
     assert any("notes.md" in status for status in statuses)
+
+
+async def test_trigger_during_backup_commits_later_changes(
+    project_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    anchor = agent_workspaces.ensure_workspace(project_id)
+    (anchor / "first.md").write_text("first event\n")
+    entered = threading.Event()
+    release = threading.Event()
+    real_worker = agent_workspaces._commit_worker
+
+    def paused_worker(project: str, trigger: str) -> str | None:
+        sha = real_worker(project, trigger)
+        entered.set()
+        if not release.wait(timeout=10):
+            raise TimeoutError("test did not release completed backup")
+        return sha
+
+    monkeypatch.setattr(agent_workspaces, "_commit_worker", paused_worker)
+    agent_workspaces.schedule_workspace_commit(project_id, "pre_compact")
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        (anchor / "later.md").write_text("second event\n")
+        agent_workspaces.schedule_workspace_commit(project_id, "set_handoff")
+    finally:
+        release.set()
+        await agent_workspaces.drain_workspace_commits()
+    tree = await agent_workspaces._git(project_id, "ls-tree", "-r", "--name-only", "HEAD")
+    assert {"first.md", "later.md"} <= set(tree.stdout.splitlines())

@@ -5,7 +5,7 @@ work tree, ``<gobby_home>/agents_workspaces/<project_id>.git/`` its daemon-only 
 Each session writes ``<definition>/session-<seq>/``; an epic team shares ``epics/epic-<seq>/``.
 
 The daemon is the only committer. A trigger schedules a commit and returns; a failed commit is
-logged and never raised into set_handoff, compaction or session end. The five-minute cron commits
+logged and never raised into set_handoff, compaction or session end. The nightly cron commits
 whatever a trigger missed.
 """
 
@@ -50,7 +50,7 @@ WORKSPACE_VARIABLE_NAMES = frozenset(
 WORKSPACE_CRON_JOB_NAME = "gobby:agent-workspaces"
 WORKSPACE_CRON_HANDLER = "agent.workspaces"
 WORKSPACE_CRON_DESCRIPTION = "Commit agent workspace changes to the daemon-owned repository"
-WORKSPACE_CRON_INTERVAL_SECONDS = 300
+WORKSPACE_CRON_EXPRESSION = "30 3 * * *"
 WORKSPACE_CRON_TRIGGER = "timer"
 WORKSPACE_GIT_TIMEOUT_SECONDS = 30.0
 WORKSPACE_GC_TIMEOUT_SECONDS = 120.0
@@ -70,7 +70,7 @@ _BACKUP_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="gobby-workspace-backup"
 )
 _SCHEDULE_LOCK = threading.Lock()
-_SCHEDULED_PROJECTS: set[str] = set()
+_SCHEDULED_PROJECTS: dict[str, str | None] = {}
 _BLOCKED_UNTIL: dict[str, float] = {}
 _INDEX_LOCK_MIN_AGE_SECONDS = 120.0
 _LOCK_BACKOFF_SECONDS = 60.0
@@ -305,8 +305,6 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
         return None
     entries = parse_porcelain_v1_z(status.stdout)
     eligible = _eligible_paths(anchor, [entry.path for entry in entries])
-    if not eligible:
-        return None
     for chunk in _chunks(eligible):
         await _git(project_id, "add", "-A", "--", *chunk)
     staged = await _git(project_id, "diff", "--cached", "--name-only", "-z")
@@ -352,9 +350,22 @@ def _commit_worker(project_id: str, trigger: str) -> str | None:
 
 async def _commit_logged(project_id: str, trigger: str) -> None:
     try:
-        await commit_workspace(project_id, trigger)
-    except Exception as exc:
-        logger.warning("Agent workspace commit failed (%s) for %s: %s", trigger, project_id, exc)
+        while True:
+            try:
+                await commit_workspace(project_id, trigger)
+            except Exception as exc:
+                logger.warning("Agent workspace commit failed (%s) for %s: %s", trigger, project_id, exc)
+            with _SCHEDULE_LOCK:
+                pending = _SCHEDULED_PROJECTS.get(project_id)
+                if pending is None:
+                    del _SCHEDULED_PROJECTS[project_id]
+                    return
+                trigger = pending
+                _SCHEDULED_PROJECTS[project_id] = None
+    except asyncio.CancelledError:
+        with _SCHEDULE_LOCK:
+            _SCHEDULED_PROJECTS.pop(project_id, None)
+        raise
 
 
 def schedule_workspace_commit(
@@ -365,7 +376,7 @@ def schedule_workspace_commit(
 ) -> None:
     """Schedule a commit on the daemon loop and return; never raises or awaits.
 
-    Without a running loop the trigger is dropped and the five-minute cron commits the tree.
+    Without a running loop the trigger is dropped and the nightly cron commits the tree.
     """
     if project_id is None:
         return
@@ -380,13 +391,14 @@ def schedule_workspace_commit(
         return
     with _SCHEDULE_LOCK:
         if project_id in _SCHEDULED_PROJECTS:
+            _SCHEDULED_PROJECTS[project_id] = trigger
             return
-        _SCHEDULED_PROJECTS.add(project_id)
+        _SCHEDULED_PROJECTS[project_id] = None
     try:
         future = asyncio.run_coroutine_threadsafe(_commit_logged(project_id, trigger), target)
     except RuntimeError as exc:
         with _SCHEDULE_LOCK:
-            _SCHEDULED_PROJECTS.discard(project_id)
+            _SCHEDULED_PROJECTS.pop(project_id, None)
         logger.warning("Agent workspace commit not scheduled (%s): %s", trigger, exc)
         return
     with _SCHEDULE_LOCK:
@@ -395,25 +407,30 @@ def schedule_workspace_commit(
     def finished(done: concurrent.futures.Future[None]) -> None:
         with _SCHEDULE_LOCK:
             _PENDING.discard(done)
-            _SCHEDULED_PROJECTS.discard(project_id)
 
     future.add_done_callback(finished)
 
 
 async def drain_workspace_commits() -> None:
     """Wait for every scheduled workspace commit to finish."""
-    while _PENDING:
-        pending = [asyncio.wrap_future(future) for future in list(_PENDING)]
+    while True:
+        with _SCHEDULE_LOCK:
+            pending = [asyncio.wrap_future(future) for future in _PENDING]
+        if not pending:
+            return
         await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _maybe_gc(project_id: str) -> None:
+    await asyncio.wrap_future(_BACKUP_EXECUTOR.submit(_gc_worker, project_id))
+
+
+def _gc_worker(project_id: str) -> None:
     stamp = workspace_git_dir(project_id) / _GC_STAMP
-    async with _project_lock(project_id):
-        if stamp.exists() and time.time() - stamp.stat().st_mtime < WORKSPACE_GC_INTERVAL_SECONDS:
-            return
-        await _git(project_id, "gc", "--auto", "--quiet", timeout=WORKSPACE_GC_TIMEOUT_SECONDS)
-        stamp.touch()
+    if stamp.exists() and time.time() - stamp.stat().st_mtime < WORKSPACE_GC_INTERVAL_SECONDS:
+        return
+    asyncio.run(_git(project_id, "gc", "--auto", "--quiet", timeout=WORKSPACE_GC_TIMEOUT_SECONDS))
+    stamp.touch()
 
 
 def _workspace_project_ids() -> list[str]:
@@ -430,7 +447,7 @@ async def run_workspace_cron(_job: CronJob) -> str:
     """Commit every project's workspace and run its weekly ``git gc --auto``."""
     committed = 0
     failed = 0
-    for project_id in _workspace_project_ids():
+    for project_id in await asyncio.to_thread(_workspace_project_ids):
         try:
             if await commit_workspace(project_id, WORKSPACE_CRON_TRIGGER):
                 committed += 1
@@ -449,8 +466,8 @@ def _ensure_workspace_cron_job(cron_storage: CronJobStorage) -> None:
             project_id=PERSONAL_PROJECT_ID,
             name=WORKSPACE_CRON_JOB_NAME,
             description=WORKSPACE_CRON_DESCRIPTION,
-            schedule_type="interval",
-            interval_seconds=WORKSPACE_CRON_INTERVAL_SECONDS,
+            schedule_type="cron",
+            cron_expr=WORKSPACE_CRON_EXPRESSION,
             action_type="handler",
             action_config=action_config,
             enabled=True,
@@ -465,9 +482,9 @@ def _ensure_workspace_cron_job(cron_storage: CronJobStorage) -> None:
         action_type="handler",
         action_config=action_config,
         description=WORKSPACE_CRON_DESCRIPTION,
-        schedule_type="interval",
-        cron_expr=None,
-        interval_seconds=WORKSPACE_CRON_INTERVAL_SECONDS,
+        schedule_type="cron",
+        cron_expr=WORKSPACE_CRON_EXPRESSION,
+        interval_seconds=None,
         run_at=None,
     )
     if repaired and was_enabled and not repaired.enabled:

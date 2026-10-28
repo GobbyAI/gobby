@@ -249,21 +249,26 @@ async def test_secret_named_files_are_never_staged(project_id: str) -> None:
     assert "SECRET-" not in _ws_git(project_id, "log", "--all", "-p")
 
 
-async def test_already_tracked_secret_is_not_restaged(project_id: str) -> None:
+@pytest.mark.parametrize("with_notes", [True, False])
+async def test_already_tracked_secret_is_not_restaged(project_id: str, with_notes: bool) -> None:
     anchor = ensure_workspace(project_id)
     secret = "developer/session-3/evidence-probe/home/providers/codex/auth.json"
     _write(anchor, secret, "SECRET-SEEDED\n")
-    _ws_git(project_id, "add", "--", secret)
+    _ws_git(project_id, "add", "--", secret, "README.md")
     _ws_git(
         project_id,
         *("-c", "user.name=seed", "-c", "user.email=seed@localhost"),
         *("commit", "--quiet", "-m", "seed a fixture the old committer tracked"),
     )
     _write(anchor, secret, "SECRET-MODIFIED\n")
-    _write(anchor, NOTES, "one finding\n")
+    if with_notes:
+        _write(anchor, NOTES, "one finding\n")
 
     sha = await commit_workspace(project_id, "set_handoff")
 
     assert sha is not None
-    assert NOTES in _tracked(project_id)
+    assert secret not in _ws_git(project_id, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    assert (anchor / secret).read_text() == "SECRET-MODIFIED\n"
+    if with_notes:
+        assert NOTES in _tracked(project_id)
     assert "SECRET-MODIFIED" not in _ws_git(project_id, "log", "--all", "-p")

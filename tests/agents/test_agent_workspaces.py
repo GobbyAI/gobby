@@ -28,6 +28,7 @@ from gobby.mcp_proxy.tools.sessions import _terminal
 from gobby.runner_init import orchestration
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
@@ -178,7 +179,7 @@ async def test_trigger_failures_are_non_blocking(
         assert "schedule_workspace_commit(" in inspect.getsource(trigger_site), trigger_site
     assert "register_agent_workspace_cron(" in inspect.getsource(orchestration.init_orchestration)
 
-    # The five-minute cron commits a dirty tree.
+    # The nightly cron commits a dirty tree.
     storage = CronJobStorage(temp_db)
     executor = _Executor()
     assert register_agent_workspace_cron(cron_storage=storage, cron_executor=executor) == 1
@@ -189,9 +190,9 @@ async def test_trigger_failures_are_non_blocking(
         for job in storage.list_jobs(is_system=True)
         if job.action_config.get("handler") == handler_name
     ]
-    assert (job.schedule_type, job.interval_seconds, job.action_type) == (
-        "interval",
-        300,
+    assert (job.schedule_type, job.cron_expr, job.action_type) == (
+        "cron",
+        "30 3 * * *",
         "handler",
     )
     anchor = ensure_workspace(PROJECT)
@@ -233,3 +234,32 @@ async def test_timer_bootstraps_the_first_workspace(
     relative = folder.relative_to(workspace_anchor(project_id)).as_posix()
     assert {"README.md", f"{relative}/notes.md"} <= _tracked(project_id)
     assert _subjects(project_id) == ["agents-ws: timer default"]
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_registration_migrates_interval_to_nightly_and_preserves_parked_state(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    monkeypatch.setattr("gobby.storage.cron.resolve_local_timezone", lambda zone: "America/Chicago")
+    storage = CronJobStorage(temp_db)
+    old = storage.create_job(
+        project_id=PERSONAL_PROJECT_ID,
+        name=agent_workspaces.WORKSPACE_CRON_JOB_NAME,
+        schedule_type="interval",
+        interval_seconds=300,
+        action_type="handler",
+        action_config={"handler": agent_workspaces.WORKSPACE_CRON_HANDLER},
+        is_system=True,
+        enabled=enabled,
+    )
+
+    agent_workspaces._ensure_workspace_cron_job(storage)
+
+    updated = storage.get_job(old.id)
+    assert updated is not None
+    assert updated.schedule_type == "cron"
+    assert updated.cron_expr == "30 3 * * *"
+    assert updated.interval_seconds is None
+    assert updated.timezone == "America/Chicago"
+    assert updated.enabled is enabled
+    assert (updated.next_run_at is not None) is enabled
