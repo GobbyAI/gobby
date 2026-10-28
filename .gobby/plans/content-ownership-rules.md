@@ -1508,22 +1508,30 @@ discovery rule exists for one gate 3 outcome.
   checkout as inspectable and a missing registered root as fail-closed.
 
 **Implementation:**
-- Add `dirty_edit_grants.task_recorded_pairs(db, *, task_id) ->
-  tuple[dict[str, set[str]], dict[str, set[str]]]`: one query for the
-  session rows whose `task_edited_checkout_hashes` or
-  `task_edited_file_checkouts` holds the task (jsonb `?`). It returns two
-  maps from normalized checkout root to paths, across every session:
-  - content pairs: every pair a session's `task_edited_checkout_hashes`
-    entry for the task records;
-  - fallback pairs: every pair of a session's `task_edited_file_checkouts`
-    entry for the task that the same session's hash entry for the task
-    lacks, or whose `_current_digest` is "unreadable".
+- Add `dirty_edit_grants.TaskRecordedPairs`, a `NamedTuple` of four maps
+  from normalized checkout root to paths, and
+  `dirty_edit_grants.task_recorded_pairs(db, *, task_id) ->
+  TaskRecordedPairs`: one query for the session rows whose
+  `task_edited_checkout_hashes` or `task_edited_file_checkouts` holds the
+  task (jsonb `?`), joined to `sessions` for each row's `machine_id`. A row
+  whose session is on this machine (`get_machine_id()`) feeds:
+  - `content`: every pair its `task_edited_checkout_hashes` entry for the
+    task records;
+  - `fallback`: every pair of its `task_edited_file_checkouts` entry for the
+    task that its hash entry for the task lacks, or whose `_current_digest`
+    is "unreadable".
 
-  The query joins `sessions` for each row's `machine_id`. A root whose
-  directory is gone is dropped from both maps only for rows whose session is
-  on this machine (`get_machine_id()`). A root a session on another machine
-  recorded is kept, because the hub cannot see that machine's directories
-  (Decision 4).
+  A row whose session is on another machine feeds:
+  - `remote`: every pair either entry records for the task;
+  - `remote_held`: the `remote` pairs that the same row's
+    `session_dirty_file_checkouts` still holds under that root, matched by
+    `overlapping_task_edit_paths` (`task_edit_path_covers` either way), so a
+    held directory entry holds a recorded child and a held child holds a
+    recorded directory.
+
+  A root whose directory is gone is dropped from `content` and `fallback`.
+  `remote` and `remote_held` keep every root, because the hub cannot see
+  another machine's directories (Decision 4).
 - `record_task_content_hashes` takes a keyword-only `unhashed: Iterable[str]
   = ()` and removes those paths from the task's hashes under the root; it
   returns early only when both `digests` and `unhashed` are empty.
@@ -1534,17 +1542,37 @@ discovery rule exists for one gate 3 outcome.
   (`checkout_reads.node_origin()`), `record_edited_files` takes no
   fingerprints and passes every recorded path as `unhashed`, because the
   hub's file at that root and path is not the node's (Decision 4).
+- `checkout_path_owners` returns an empty map for a node-origin event
+  (`checkout_reads.node_origin()`), and otherwise reads only the records of
+  sessions on this machine (join `sessions`, `machine_id =
+  get_machine_id()`), because it compares them with this machine's disk.
+  This one guard covers every caller: `_live_path_owners` gives no
+  `ledger_task_id` during a node-origin event, `claimed_task_carriers` finds
+  no carrier there, `claimed_task_owned_paths` adopts no shell edit there,
+  and a node session's record never names the owner of the hub's bytes
+  (Decision 4).
 - In `capture_attribution`, after reading the owner's live pairs:
   1. Read `task_recorded_pairs(db, task_id=task.id)`, which has already
-     dropped this machine's roots whose directory is gone (Decision 22).
-  2. For every root among the owner's live pairs and both maps, call
-     `checkout_path_owners` once over that root's paths. The task-owned set
-     is the content pairs it maps to the closing task plus the fallback pairs
-     it maps to no other task.
-  3. Add each root's task-owned paths to the attributed paths of that root.
-  4. Run the linked-commit fallback only when the owner has no task paths
-     and the cross-session read added none.
-  5. Pass `foreign_owned_dirty_paths_async` only the committed paths outside
+     dropped this machine's roots whose directory is gone (Decision 22), and
+     the owner session's `machine_id`. When the owner's session is on
+     another machine, its live pairs leave the hub path before any read;
+     `task_recorded_pairs` already lists them under `remote` from the
+     owner's row (Decision 4).
+  2. When `remote_held` is not empty, log its roots and paths and clear
+     `complete`, so gate 3 fails "Git could not inspect all task-attributed
+     files." No `remote` pair reaches `checkout_path_owners`, the attributed
+     paths or the hub's status.
+  3. For every root among the owner's remaining live pairs, `content` and
+     `fallback`, call `checkout_path_owners` once over that root's paths.
+     The task-owned set is the content pairs it maps to the closing task
+     plus the fallback pairs it maps to no other task.
+  4. Add each root's task-owned paths to the attributed paths of that root.
+  5. Run the linked-commit fallback only when no session on any machine
+     recorded a pair for the task: the owner's `task_edited_file_set` and
+     live pairs are empty and all four maps are empty. So a remote owner or
+     predecessor whose pairs have settled never sends the hub's copy of the
+     linked commits' paths to gate 3.
+  6. Pass `foreign_owned_dirty_paths_async` only the committed paths outside
      the task-owned set, so a path whose content the closing task owns is
      never subtracted.
   Any exception from `task_recorded_pairs` or `checkout_path_owners` is
@@ -1558,7 +1586,7 @@ Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close_finalization.py` — no-edit-reason: commit_close re-evaluates through _evaluate_close, which calls capture_attribution unchanged
 - `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
 - `tests/mcp_proxy/tools/test_task_lifecycle_coverage.py` — no-edit-reason: patches capture_attribution with a fixed CloseAttributionSnapshot
-- `src/gobby/workflows/state_manager.py` — no-edit-reason: calls record_task_content_hashes without the new keyword
+- `src/gobby/workflows/state_manager.py` — no-edit-reason: calls record_task_content_hashes without the new keyword, and claimed_task_owned_paths, whose empty answer for a node-origin event already means no shell edit to adopt
 
 **Focused verification (planned):** run
 `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py`,
@@ -1576,7 +1604,9 @@ Consumers unchanged:
 - 1.7.6 - `task_recorded_pairs` returns as content pairs every root and path that any session's `task_edited_checkout_hashes` recorded for the task, and nothing recorded only for other tasks. It returns as fallback pairs a live pair of the task whose session holds no hash for it, a live directory pair, and a live pair whose stale hash names a file that is now unreadable, and it omits a live pair whose recorded hash belongs to a readable file. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_reads_every_session`.
 - 1.7.7 - An escalated predecessor recorded, for T, a file `p` through the status fallback while `p` was unreadable and a directory `d` that now holds an untracked file, neither with a content record. After B claims T, gate 3 fails instead of passing over either pair. Once `p` is readable again but uncommitted, gate 3 still fails. B commits both through the guarded path, a Bash `git commit` event that `foreign_staged_commit_conflict` passes while the predecessor lives (1.8), never a raw git commit; gate 3 then passes. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_checks_predecessor_pairs_recorded_without_content`.
 - 1.7.8 - Stale-hash recovery: T's predecessor session records readable `p` (hash H1), and a later recorded write changes `p` and leaves it unreadable, which removes that session's hash of `p` for T while its other paths keep theirs. After B claims T and `p` is made readable again without a byte change, gate 3 fails on the uncommitted `p`, then passes once B commits `p` through the guarded path (a Bash `git commit` event that `foreign_staged_commit_conflict` passes while the predecessor lives). test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_keeps_pairs_whose_stale_hash_was_dropped`.
-- 1.7.9 - Inside `checkout_reads.delivery_scope` for a node machine, `record_edited_files` records T's pair `p` with no content hash although the hub holds a readable file at that root and path, and drops that session's older hash of `p` for T. `task_recorded_pairs` returns `p` as a fallback pair. It keeps a root a node-machine session recorded although the hub has no such directory, and drops a hub-machine session's root whose directory is gone. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_keeps_node_origin_pairs_and_roots`.
+- 1.7.9 - Inside `checkout_reads.delivery_scope` for a node machine, `record_edited_files` records T's pair `p` with no content hash although the hub holds a readable file at that root and path, and drops that session's older hash of `p` for T. `task_recorded_pairs` lists `p` under `remote` and `remote_held`, never under `content` or `fallback`, and drops `p` from `remote_held` once that session's dirty ledger releases it. A held directory entry `d` holds a recorded `d/f`, and a held `d/f` holds a recorded `d`. It keeps a root a node-machine session recorded although the hub has no such directory, and drops a hub-machine session's root whose directory is gone. test: `tests/workflows/test_dirty_edit_grants.py::test_task_recorded_pairs_keeps_node_origin_pairs_and_roots`.
+- 1.7.10 - Node-recorded pairs at close: node session N, recording inside `checkout_reads.delivery_scope` for its machine, holds T's dirty `p` under root R, and the hub also has a git checkout at R. Case (a): N is T's attribution owner. Case (b): N has ended, and live hub session B owns T. In each case, with the hub's `p` clean, and again with the hub's `p` matching hub session H's content record for task U, gate 3 for T fails with "Git could not inspect all task-attributed files.", never counting `p` clean or dropping it. In (b) it stays so, which is the ceiling #25284 owns. In (a), once N's own ledger reconcile releases `p`, run inside N's delivery with the node's status reporting `p` clean, gate 3 passes, and a linked commit whose paths are dirty in the hub's checkout does not trigger the linked-commit fallback. test: `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::test_gate3_fails_closed_on_held_node_pairs_and_ignores_hub_bytes`.
+- 1.7.11 - `checkout_path_owners` ignores a node-machine session's content record even though it matches the hub's bytes at that root and path. Inside a node-machine `delivery_scope` it answers an empty map even though a hub session's record matches, so `claimed_task_carriers` finds no carrier there. test: `tests/workflows/test_dirty_edit_grants.py::test_checkout_path_owners_is_machine_local`.
 
 ### 1.8 Rule 2 lets a claimant commit its claimed task's dirt [category: code] (depends: 1.3, 1.4)
 `kind: deliverable`
