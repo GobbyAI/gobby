@@ -2197,3 +2197,532 @@ before #17436 closes:
    criterion 2, W6).
 4. `gobby node status` on one of Josh's enrolled nodes prints `healthy` with
    the hub up, and `hub unavailable` while the hub restarts.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Node hello carries platform and capabilities
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `probe` reports `agents` available when the SRT verifier
+    passes, and unavailable with the verifier''s error text when it fails. test: `crates/gdaemon/src/nodes/capabilities/tests.rs::probe_reports_agents_from_srt_verifier`.
+
+    1.1.2: `probe` reports `terminals` available for an executable `<home>/bin/gterm`,
+    a path equal to `node_host_options`'' binary, and unavailable naming the path
+    when it is missing or not executable. test: `crates/gdaemon/src/nodes/capabilities/tests.rs::probe_reports_terminals_from_installed_gterm`.
+
+    1.1.3: A hello with 9 entries, a duplicate name, a 33-byte name or a 513-byte
+    reason closes 1008 and registers nothing. test: `crates/gdaemon/tests/node_capabilities.rs::hub_closes_invalid_capabilities_with_1008`.
+
+    1.1.4: A connected node''s `GET /api/machines` row shows the platform and capabilities
+    from its hello. After the channel drops, the row shows `connected: false` and
+    null for both. test: `crates/gdaemon/tests/node_capabilities.rs::machine_rows_show_hello_platform_and_capabilities`.
+
+    1.1.5: A hello with no `capabilities` key registers with an empty list. test:
+    `crates/gdaemon/tests/node_capabilities.rs::hello_without_capabilities_registers_empty_list`.
+
+    1.1.6: A node''s hello carries the probed list, and a reconnect sends the same
+    list without probing again. test: `crates/gdaemon/tests/node_capabilities.rs::node_hello_carries_capabilities_probed_once`.
+
+    1.1.7: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:1.1:1.1.1
+  - covers:node-mode:1.1:1.1.2
+  - covers:node-mode:1.1:1.1.3
+  - covers:node-mode:1.1:1.1.4
+  - covers:node-mode:1.1:1.1.5
+  - covers:node-mode:1.1:1.1.6
+  - covers:node-mode:1.1:1.1.7
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Node channel state and `GET /api/node/status`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: A new `ChannelStatus` reads `connecting`, and a failure
+    state persists until the next outcome replaces it. test: `crates/gdaemon/src/nodes/channel_status/tests.rs::status_starts_connecting_and_keeps_last_failure`.
+
+    1.2.2: With the fake hub acking, `GET /api/node/status` with the node key returns
+    `connected` with the home''s `machine_id`, plus the node version, platform, hub
+    URL and probed capabilities. test: `crates/gdaemon/tests/node_status.rs::status_reports_connected_channel`.
+
+    1.2.3: With nothing listening at the hub URL, the route answers 200 with `hub_unavailable`
+    and the connect error. test: `crates/gdaemon/tests/node_status.rs::status_reports_unreachable_hub`.
+
+    1.2.4: An upgrade answered 401 and a 4401 close each report `auth_failed`. test:
+    `crates/gdaemon/tests/node_status.rs::status_reports_auth_failure`.
+
+    1.2.5: A refuse frame reports `refused` with the hub''s refusal object. test:
+    `crates/gdaemon/tests/node_status.rs::status_reports_hub_refusal`.
+
+    1.2.6: A channel closed after the ack reports `disconnected` with the close code.
+    test: `crates/gdaemon/tests/node_status.rs::status_reports_dropped_channel`.
+
+    1.2.7: A request with no bearer or a wrong one gets 401 `node_key_required`, and
+    the fake hub records no request. test: `crates/gdaemon/tests/node_status.rs::status_requires_node_key`.
+
+    1.2.8: `gdaemon` is one patch version above the executor''s starting tip in `crates/gdaemon/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:1.2:1.2.1
+  - covers:node-mode:1.2:1.2.2
+  - covers:node-mode:1.2:1.2.3
+  - covers:node-mode:1.2:1.2.4
+  - covers:node-mode:1.2:1.2.5
+  - covers:node-mode:1.2:1.2.6
+  - covers:node-mode:1.2:1.2.7
+  - covers:node-mode:1.2:1.2.8
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: '`gobby node status`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: A connected node with every capability available prints
+    `healthy` and its identity lines, and exits 0. test: `crates/gclient/tests/node_status_verb.rs::node_status_healthy_exits_zero`.
+
+    1.3.2: A connected node with an unavailable capability prints `capability unavailable`
+    and exits 1. Each of `hub_unavailable`, `auth_failed`, `refused`, `disconnected`
+    and `connecting` prints its line and exits 1. test: `crates/gclient/tests/node_status_verb.rs::node_status_unhealthy_states_exit_one`.
+
+    1.3.3: `--json` prints the route''s body unchanged with the same exit code. test:
+    `crates/gclient/tests/node_status_verb.rs::node_status_json_prints_body`.
+
+    1.3.4: With a local-mode bootstrap the verb exits 1, points to `gobby status`
+    and sends no request. test: `crates/gclient/tests/node_status_verb.rs::node_status_on_hub_points_to_status`.
+
+    1.3.5: With a remote-mode bootstrap but no `api_key`, the verb exits 3 with `not
+    enrolled` and sends no request. test: `crates/gclient/tests/node_status_verb.rs::node_status_unenrolled_exits_three`.
+
+    1.3.6: With nothing listening, the verb exits 3 with `not installed` when the
+    service file is absent, and `not running` naming the file when it exists. test:
+    `crates/gclient/tests/node_status_verb.rs::node_status_unreachable_names_service_state`.
+
+    1.3.7: A 401 and a non-JSON body each exit 3. test: `crates/gclient/tests/node_status_verb.rs::node_status_rejected_key_exits_three`.
+
+    1.3.8: `node status extra`, `node status --workspace 0:1` and `node status --bogus`
+    each exit 2 with an empty `GOBBY_HOME` and send no request, and `gclient help
+    node` lists `status`. test: `crates/gclient/tests/node_status_verb.rs::node_status_usage_errors_exit_two`.
+
+    1.3.9: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:1.3:1.3.1
+  - covers:node-mode:1.3:1.3.2
+  - covers:node-mode:1.3:1.3.3
+  - covers:node-mode:1.3:1.3.4
+  - covers:node-mode:1.3:1.3.5
+  - covers:node-mode:1.3:1.3.6
+  - covers:node-mode:1.3:1.3.7
+  - covers:node-mode:1.3:1.3.8
+  - covers:node-mode:1.3:1.3.9
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: frontend
+- title: Operator HTTP helper and `status`
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.1.1: A healthy daemon prints `healthy` with mode and uptime
+    and exits 0. test: `crates/gclient/tests/status_verb.rs::status_prints_healthy_summary`.
+
+    2.1.2: A degraded daemon prints `degraded:` with its services and exits 1. test:
+    `crates/gclient/tests/status_verb.rs::status_degraded_exits_one`.
+
+    2.1.3: A typed 503 prints `backend <state>` (tested with `starting` and `standby`)
+    and exits 1, with no admin request and no token read. test: `crates/gclient/tests/status_verb.rs::status_typed_503_prints_backend_state`.
+
+    2.1.4: A refused connection prints `not running` with the URL and exits 3. test:
+    `crates/gclient/tests/status_verb.rs::status_not_running_exits_three`.
+
+    2.1.5: With no token file, an empty `GOBBY_HOME` and no `GOBBY_AGENT_API_TOKEN`,
+    a stopped daemon still reports `not running` and no token error. test: `crates/gclient/tests/status_verb.rs::status_not_running_needs_no_token`.
+
+    2.1.6: A healthy probe with no readable token exits 3 and names the missing token;
+    a 401 from `/api/admin/status` also exits 3. test: `crates/gclient/tests/status_verb.rs::status_missing_token_after_health_exits_three`.
+
+    2.1.7: `--json` prints one object holding both bodies verbatim. test: `crates/gclient/tests/status_verb.rs::status_json_prints_health_and_status`.
+
+    2.1.8: A 403 or 500 from `/api/admin/status` prints the daemon''s code and message
+    and exits 1. test: `crates/gclient/tests/status_verb.rs::status_error_keeps_body`.
+
+    2.1.9: `gclient help` lists `status`, and its common text separates the workspace
+    options from the options every verb takes. test: `crates/gclient/tests/command_mode.rs::help_documents_one_workspace_contract_for_every_verb`.
+
+    2.1.10: A public probe of `ok` with an admin status of `degraded` and no degraded
+    services prints `degraded: admin status` and exits 1. test: `crates/gclient/tests/status_verb.rs::status_admin_degraded_exits_one`.
+
+    2.1.11: `status extra`, `status --workspace 0:1` and `status --bogus` each exit
+    2 with an empty `GOBBY_HOME` and send no request. test: `crates/gclient/tests/status_verb.rs::status_usage_errors_exit_two`.
+
+    2.1.12: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.1:2.1.1
+  - covers:node-mode:2.1:2.1.2
+  - covers:node-mode:2.1:2.1.3
+  - covers:node-mode:2.1:2.1.4
+  - covers:node-mode:2.1:2.1.5
+  - covers:node-mode:2.1:2.1.6
+  - covers:node-mode:2.1:2.1.7
+  - covers:node-mode:2.1:2.1.8
+  - covers:node-mode:2.1:2.1.9
+  - covers:node-mode:2.1:2.1.10
+  - covers:node-mode:2.1:2.1.11
+  - covers:node-mode:2.1:2.1.12
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: frontend
+- title: '`projects list|show`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: `projects list` prints one row per project with name,
+    id, open tasks and checkout root. test: `crates/gclient/tests/projects_verb.rs::projects_list_prints_rows`.
+
+    2.2.2: `projects show` finds a project by id, by name and by display name. test:
+    `crates/gclient/tests/projects_verb.rs::projects_show_matches_name_or_id`.
+
+    2.2.3: `projects show` with an unknown argument exits 1 and names it. test: `crates/gclient/tests/projects_verb.rs::projects_show_unknown_exits_one`.
+
+    2.2.4: An argument equal to one project''s `name` and another''s `display_name`
+    picks the `name` match. Two projects sharing a `display_name` make `projects show`
+    exit 2 and list both names and ids. test: `crates/gclient/tests/projects_verb.rs::projects_show_tier_order_and_ambiguity`.
+
+    2.2.5: `projects list --json` prints the route''s rows unchanged. test: `crates/gclient/tests/projects_verb.rs::projects_list_json_prints_rows`.
+
+    2.2.6: `projects`, `projects bogus`, `projects show` with no argument and `projects
+    list --workspace 0:1` each exit 2 with an empty `GOBBY_HOME` and send no request.
+    test: `crates/gclient/tests/projects_verb.rs::projects_usage_errors_exit_two`.
+
+    2.2.7: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.2:2.2.1
+  - covers:node-mode:2.2:2.2.2
+  - covers:node-mode:2.2:2.2.3
+  - covers:node-mode:2.2:2.2.4
+  - covers:node-mode:2.2:2.2.5
+  - covers:node-mode:2.2:2.2.6
+  - covers:node-mode:2.2:2.2.7
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: frontend
+- title: '`tasks list|show|ready|blocked|search`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: '2.3.1: `tasks list` inside a project directory calls `list_tasks`
+    with the project id as both header and `project` argument and `closed: false`,
+    and prints the returned staged open row with its `state.current_stage`. `tasks
+    list --closed` sends `closed: true` and prints the returned closed row with stage
+    `closed`. The server filters on `closed`, so the client prints every row it gets.
+    test: `crates/gclient/tests/tasks_verb.rs::tasks_list_sends_project_header_and_arg`.
+
+    2.3.2: `tasks show #N` calls `get_task` with `task_id` `#N` and the project header,
+    and prints the card with its `parent_task_id` and each `dependencies.blocked_by`
+    ref. test: `crates/gclient/tests/tasks_verb.rs::tasks_show_resolves_ref_in_project_context`.
+
+    2.3.3: `ready`, `blocked` and `search` call their tools with the flag mapping
+    above, `search` taking QUERY as its position. test: `crates/gclient/tests/tasks_verb.rs::tasks_ready_blocked_search_map_flags`.
+
+    2.3.4: A tool result with `error`, a `success: false` reply and a `found: false`
+    card each exit 1 with the message. test: `crates/gclient/tests/tasks_verb.rs::tasks_tool_error_exits_one`.
+
+    2.3.5: Outside a project with no `--project`, the verb exits 2 and sends no request.
+    test: `crates/gclient/tests/tasks_verb.rs::tasks_without_project_exits_two`.
+
+    2.3.6: `--all-projects` sends `all_projects: true`, no `project` argument and
+    no header; `show --all-projects` exits 2. test: `crates/gclient/tests/tasks_verb.rs::tasks_all_projects_omits_project`.
+
+    2.3.7: `--project NAME` resolves through `GET /api/projects` to its id; an unknown
+    name exits 2; a `display_name` two projects share exits 2, lists both candidates
+    and calls no task tool; a UUID sends no projects request. test: `crates/gclient/tests/tasks_verb.rs::tasks_project_name_resolves_via_projects`.
+
+    2.3.8: Each usage rule above exits 2 with an empty `GOBBY_HOME` and sends no request.
+    test: `crates/gclient/tests/tasks_verb.rs::tasks_usage_errors_exit_two`.
+
+    2.3.9: When the `--project NAME` lookup gets a 401 `route_not_permitted`, the
+    verb exits 3 and prints the code. A 403 or a 500 exits 1 with the daemon''s code
+    and message, and a body that is not JSON exits 3. None of these sends a task tool
+    request. test: `crates/gclient/tests/tasks_verb.rs::tasks_project_lookup_errors_keep_operator_contract`.
+
+    2.3.10: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.3:2.3.1
+  - covers:node-mode:2.3:2.3.2
+  - covers:node-mode:2.3:2.3.3
+  - covers:node-mode:2.3:2.3.4
+  - covers:node-mode:2.3:2.3.5
+  - covers:node-mode:2.3:2.3.6
+  - covers:node-mode:2.3:2.3.7
+  - covers:node-mode:2.3:2.3.8
+  - covers:node-mode:2.3:2.3.9
+  - covers:node-mode:2.3:2.3.10
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: frontend
+- title: '`config get|set`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  validation_criteria: '2.4.1: `config get` prints the desired value, plus the active
+    value when it differs and the pending-restart flag. test: `crates/gclient/tests/config_verb.rs::config_get_prints_desired_and_active`.
+
+    2.4.2: `config get` of an absent key exits 1. test: `crates/gclient/tests/config_verb.rs::config_get_unknown_key_exits_one`.
+
+    2.4.3: `config set` sends `20` as a number, `true` as a boolean and `fast` as
+    a string, with the read revision. test: `crates/gclient/tests/config_verb.rs::config_set_parses_json_literal_or_string`.
+
+    2.4.4: A first 409 `revision_conflict` re-reads and succeeds on the second `PATCH`.
+    test: `crates/gclient/tests/config_verb.rs::config_set_retries_once_on_conflict`.
+
+    2.4.5: A second 409 exits 1 after exactly two `PATCH` requests. test: `crates/gclient/tests/config_verb.rs::config_set_second_conflict_surfaces`.
+
+    2.4.6: A 422 prints the code, message, path and action and exits 1. test: `crates/gclient/tests/config_verb.rs::config_set_validation_error_renders_code_and_path`.
+
+    2.4.7: A 500 `persistence_indeterminate` says to re-read and exits 1. test: `crates/gclient/tests/config_verb.rs::config_set_indeterminate_says_reread`.
+
+    2.4.8: Success prints `apply_status` and the changed keys, and `--json` prints
+    the success body unchanged. A changed key in `failed_live_keys` exits 1; a failed-live
+    map naming only another key exits 0 with a warning. test: `crates/gclient/tests/config_verb.rs::config_set_prints_apply_status`.
+
+    2.4.9: A 409 whose code is not `revision_conflict` exits 1 after one `PATCH`.
+    test: `crates/gclient/tests/config_verb.rs::config_set_other_409_never_retries`.
+
+    2.4.10: `config get code_index` reports a pending descendant key and a failed-live
+    descendant from the map. test: `crates/gclient/tests/config_verb.rs::config_get_subtree_reports_descendant_flags`.
+
+    2.4.11: `config`, `config bogus`, `config get`, `config set KEY` and `config get
+    KEY --workspace 0:1` each exit 2 with an empty `GOBBY_HOME` and send no request,
+    and `config set some.key -- -5` sends `-5` as a number. test: `crates/gclient/tests/config_verb.rs::config_usage_errors_exit_two`.
+
+    2.4.12: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.4:2.4.1
+  - covers:node-mode:2.4:2.4.2
+  - covers:node-mode:2.4:2.4.3
+  - covers:node-mode:2.4:2.4.4
+  - covers:node-mode:2.4:2.4.5
+  - covers:node-mode:2.4:2.4.6
+  - covers:node-mode:2.4:2.4.7
+  - covers:node-mode:2.4:2.4.8
+  - covers:node-mode:2.4:2.4.9
+  - covers:node-mode:2.4:2.4.10
+  - covers:node-mode:2.4:2.4.11
+  - covers:node-mode:2.4:2.4.12
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: frontend
+- title: '`gobby node start|stop|restart`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  validation_criteria: '2.5.1: `gclient node start`, `node stop` and `node restart`
+    exec the sibling `gdaemon node <verb>` with every argument unchanged and return
+    its exit status, with no daemon URL or token available. test: `crates/gclient/tests/node_verbs.rs::node_lifecycle_verbs_exec_sibling_gdaemon`.
+
+    2.5.2: On macOS, `start` bootstraps an unloaded service and reports an already-loaded
+    one with exit 0. `stop` boots it out, reporting a not-loaded one with exit 0.
+    `restart` runs bootout then bootstrap. test: `crates/gdaemon/tests/node_setup.rs::node_lifecycle_drives_launchctl`.
+
+    2.5.3: On Linux, the three commands run `systemctl --user` with `start`, `stop`
+    and `restart` for `gobby-node.service`. test: `crates/gdaemon/tests/node_setup.rs::node_lifecycle_drives_systemctl`.
+
+    2.5.4: With no unit file, each command exits 1 naming `gobby node install`, and
+    the stubs record no call. test: `crates/gdaemon/tests/node_setup.rs::node_lifecycle_without_service_exits_one`.
+
+    2.5.5: After `start`, a status route that answers prints the channel state and
+    exits 0. A route that never answers within the bound exits 1 and prints the log
+    path. test: `crates/gdaemon/tests/node_setup.rs::node_start_waits_for_local_status`.
+
+    2.5.6: `node restart` records the same service commands as install''s restart
+    step. test: `crates/gdaemon/tests/node_setup.rs::node_restart_matches_install_restart`.
+
+    2.5.7: `gclient node status` against a stopped daemon with its unit file present
+    names `gobby node start`. test: `crates/gclient/tests/node_status_verb.rs::node_status_stopped_hints_node_start`.
+
+    2.5.8: `gdaemon` and `gclient` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.5:2.5.1
+  - covers:node-mode:2.5:2.5.2
+  - covers:node-mode:2.5:2.5.3
+  - covers:node-mode:2.5:2.5.4
+  - covers:node-mode:2.5:2.5.5
+  - covers:node-mode:2.5:2.5.6
+  - covers:node-mode:2.5:2.5.7
+  - covers:node-mode:2.5:2.5.8
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: fullstack
+- title: Workspace and pane verbs refuse on a node
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.5'
+  validation_criteria: '2.6.1: With a remote-mode bootstrap, each workspace and pane
+    verb exits 1 with the message naming #20202, reads no token and sends no request.
+    test: `crates/gclient/tests/node_pane_refusal.rs::pane_verbs_refuse_on_node`.
+
+    2.6.2: With a local-mode bootstrap, the same verbs reach the mock daemon as before.
+    test: `crates/gclient/tests/node_pane_refusal.rs::pane_verbs_run_on_hub`.
+
+    2.6.3: With a remote-mode bootstrap, `node list` reaches the mock daemon and `status`
+    is not refused. test: `crates/gclient/tests/node_pane_refusal.rs::operator_and_node_verbs_pass_guard_on_node`.
+
+    2.6.4: With a remote-mode bootstrap, a pane verb with a usage error exits 2, not
+    1. test: `crates/gclient/tests/node_pane_refusal.rs::pane_usage_errors_exit_two_on_node`.
+
+    2.6.5: With a present but invalid bootstrap, and with a valid explicit `--daemon-url`
+    and `--token-file`, a pane verb exits 3 with the bootstrap error and the mock
+    daemon records no request. test: `crates/gclient/tests/node_pane_refusal.rs::pane_verbs_refuse_on_unreadable_bootstrap`.
+
+    2.6.6: `gclient` is one patch version above the executor''s starting tip in `crates/gclient/Cargo.toml`,
+    `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.6:2.6.1
+  - covers:node-mode:2.6:2.6.2
+  - covers:node-mode:2.6:2.6.3
+  - covers:node-mode:2.6:2.6.4
+  - covers:node-mode:2.6:2.6.5
+  - covers:node-mode:2.6:2.6.6
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: frontend
+- title: Command inventory
+  category: code
+  task_type: chore
+  depends_on:
+  - '2.6'
+  validation_criteria: '2.7.1: The file holds the rows in this section''s TOML block,
+    adjusted only by the drift rule. file: `docs/contracts/cli-inventory.toml`.
+
+    2.7.2: Every non-group command and every group that runs without a subcommand
+    is a member of exactly one `command` row. test: `tests/cli/test_cli_inventory.py::test_inventory_covers_every_command`.
+
+    2.7.3: Every `command` row member is a live checked command at or under the row''s
+    `path`. test: `tests/cli/test_cli_inventory.py::test_inventory_rows_match_live_commands`.
+
+    2.7.4: Every helper module is a member of exactly one `helper` row, and every
+    `helper` row member is a live helper module that starts with the row''s `module`.
+    test: `tests/cli/test_cli_inventory.py::test_inventory_covers_every_helper_module`.
+
+    2.7.5: Every row follows the row grammar, and paths and modules are unique. test:
+    `tests/cli/test_cli_inventory.py::test_inventory_rows_are_well_formed`.
+
+    2.7.6: Every carried `gclient` carrier names a verb that `gclient help` knows,
+    and `gclient help <verb>` names each later subcommand word of a multiword carrier
+    (for example `list` in `gclient node list`). test: `crates/gclient/tests/cli_inventory.rs::carried_rows_name_client_verbs`.
+
+    2.7.7: `inventory_gaps`, given the live commands plus `tasks future-review` and
+    the live modules plus `gobby.cli.installers.future_review`, reports both as missing
+    and names the inventory file. test: `tests/cli/test_cli_inventory.py::test_inventory_flags_new_descendants`.
+
+    2.7.8: Every `keep` or `absorb` command row has a `node` of `carried`, `#<digits>`
+    or `hub`. A `carried` row has `carried = true`, only `hub` rows have `node_carrier`,
+    and `drop` and `helper` rows have no node fields. Every `client` row has a unique
+    `verb`, carrier `gclient <verb>`, a valid `node` and a reason. test: `tests/cli/test_cli_inventory.py::test_inventory_node_fields_are_well_formed`.
+
+    2.7.9: Every `client` row''s carrier names a verb that `gclient help` knows, and
+    `gclient help <verb>` names each later subcommand word of a multiword carrier
+    (for example `status` in `gclient node status`, `get` in `gclient config get`).
+    test: `crates/gclient/tests/cli_inventory.rs::client_rows_name_client_verbs`.'
+  labels:
+  - covers:node-mode:2.7:2.7.1
+  - covers:node-mode:2.7:2.7.2
+  - covers:node-mode:2.7:2.7.3
+  - covers:node-mode:2.7:2.7.4
+  - covers:node-mode:2.7:2.7.5
+  - covers:node-mode:2.7:2.7.6
+  - covers:node-mode:2.7:2.7.7
+  - covers:node-mode:2.7:2.7.8
+  - covers:node-mode:2.7:2.7.9
+  tdd: true
+  source_section: '2.7'
+  implementation_domain: frontend
+- title: 'Windows refusals name #25249'
+  category: code
+  task_type: chore
+  depends_on:
+  - '2.7'
+  validation_criteria: '2.8.1: `gobby_daemon::serve::WINDOWS_UNSUPPORTED` names #25249
+    and macOS or Linux, and does not name Python. test: `crates/gdaemon/tests/run_modes.rs::windows_refusal_names_25249`.
+
+    2.8.2: The node family''s Windows constant names #25249 and macOS and Linux. test:
+    `crates/gclient/src/command/tests.rs::node_windows_refusal_names_25249`.
+
+    2.8.3: `gdaemon` and `gclient` are each one patch version above the executor''s
+    starting tip in their `Cargo.toml`, `Cargo.lock` and `MANAGED_BIN_VERSION_PINS`.
+    test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.'
+  labels:
+  - covers:node-mode:2.8:2.8.1
+  - covers:node-mode:2.8:2.8.2
+  - covers:node-mode:2.8:2.8.3
+  tdd: true
+  source_section: '2.8'
+  implementation_domain: fullstack
+- title: 'Node docs: commands and platform matrix'
+  category: docs
+  task_type: chore
+  depends_on:
+  - '2.8'
+  validation_criteria: '2.9.1: The Node commands section documents `node status` states
+    and exit codes, `node start|stop|restart`, and the pane-verb refusal naming #20202.
+    behavior: "gobby node status" in `docs/guides/node-setup.md`.
+
+    2.9.2: The Platforms table lists macOS and Linux as supported and Windows as not
+    yet supported under #25249, quoting 2.8''s refusal texts. behavior: "#25249" in
+    `docs/guides/node-setup.md`.'
+  labels:
+  - covers:node-mode:2.9:2.9.1
+  - covers:node-mode:2.9:2.9.2
+  tdd: false
+  source_section: '2.9'
+  assigned_agent: tech-writer
+- title: Python-free node CLI proof
+  category: test
+  task_type: task
+  depends_on:
+  - '2.9'
+  validation_criteria: '2.10.1: From the node, `gclient status`, `projects list`,
+    `projects show` and `tasks list|show|ready|blocked|search` succeed against the
+    seeded hub and print the seeded rows, with no tripwire fired. test: `tests/e2e/test_node_operator_cli.py::test_node_read_verbs_run_without_python`.
+
+    2.10.2: From the node, `gclient config set` changes a public key''s value and
+    `gclient config get` reads it back from the hub, with no tripwire fired. test:
+    `tests/e2e/test_node_operator_cli.py::test_node_config_set_reaches_hub`.
+
+    2.10.3: `gclient node status --json` reports channel `connected` with two capability
+    entries, and `gclient node list` lists the node as connected. test: `tests/e2e/test_node_operator_cli.py::test_node_status_and_list_report_channel`.
+
+    2.10.4: `gclient list` on the node exits 1 naming #20202 and sends no workspace
+    operation to the hub. test: `tests/e2e/test_node_operator_cli.py::test_node_pane_verbs_refuse`.
+
+    2.10.5: With the hub stopped, `gclient node status` exits 1 with `hub unavailable`,
+    and `gclient status` exits 1 with `backend down` (F9.3). test: `tests/e2e/test_node_operator_cli.py::test_hub_outage_separates_node_and_hub_health`.'
+  labels:
+  - covers:node-mode:2.10:2.10.1
+  - covers:node-mode:2.10:2.10.2
+  - covers:node-mode:2.10:2.10.3
+  - covers:node-mode:2.10:2.10.4
+  - covers:node-mode:2.10:2.10.5
+  tdd: false
+  source_section: '2.10'
+  assigned_agent: developer
+```
