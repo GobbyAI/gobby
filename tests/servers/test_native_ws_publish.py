@@ -81,6 +81,33 @@ async def test_bind_failure_logs_exception_type_and_recovers(
         await publisher.stop()
 
 
+async def test_publish_requests_stay_within_a_deadline_sized_batch(supervisor_token: str) -> None:
+    """A POST's body must finish inside REQUEST_TIMEOUT however much queued during a stall."""
+    publish_bodies: list[int] = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == native_publish.BIND_PATH:
+            return httpx.Response(200, json={"generation": GEN1})
+        publish_bodies.append(len(request.content))
+        return httpx.Response(204)
+
+    publisher = NativePublisher(
+        secret=SECRET,
+        base_url=BASE_URL,
+        config=CONFIG,
+        transport=httpx.MockTransport(handle),
+    )
+    frame = {"type": "terminal_output", "data": "x" * (1 << 20)}
+    try:
+        await publisher.start()
+        pending = [publisher.publish({"type": "terminal_output"}, [frame]) for _ in range(4)]
+        await asyncio.wait_for(asyncio.gather(*pending), 5.0)
+    finally:
+        await publisher.stop()
+    assert len(publish_bodies) > 1
+    assert max(publish_bodies) <= 2 * (1 << 20)
+
+
 class _Daemon:
     """gdaemon's private bind and publish endpoints, with a gate to stall the sender."""
 

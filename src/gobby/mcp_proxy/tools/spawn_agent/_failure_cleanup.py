@@ -225,6 +225,7 @@ async def _cleanup_failed_spawn(
 
     held = terminal_id is not None and in_doubt_spawns.holds(terminal_id)
     settled = False
+    kill_proven = False
     try:
         terminal = None
         if terminal_id is not None and terminal_manager is not None:
@@ -240,6 +241,7 @@ async def _cleanup_failed_spawn(
             terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
             terminal=terminal,
         )
+        kill_proven = settled and terminal is not None
     except Exception as exc:
         _log_step_failure("terminate", run_id, terminal_id, exc)
     if not foreign_run:
@@ -258,11 +260,14 @@ async def _cleanup_failed_spawn(
             child_session_id=child_session_id,
             terminal_id=terminal_id,
         )
-        # Terminalizing the run exits its bound terminal row, so a held attempt's run
-        # and child session wait for its owner's settlement: proven exit and kept
-        # orphan alike. Isolation removal stays proven-only.
+        # Terminalizing the run exits its bound terminal row and releases the task's
+        # dispatch mutex. A held attempt whose kill is unproven waits for its owner's
+        # settlement, because the process may still run. A proven kill has nothing left
+        # to wait for, and waiting would hold the mutex on a relay that may never report
+        # exit. Isolation removal stays proven-only.
         if not (
             held
+            and not kill_proven
             and terminal_id is not None
             and in_doubt_spawns.defer(terminal_id, rollback, on_orphan=True)
         ):
