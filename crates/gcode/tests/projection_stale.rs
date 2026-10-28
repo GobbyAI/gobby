@@ -307,6 +307,14 @@ mod serial_db {
                 database_url: database_url.into(),
                 project_id: overlay.clone(),
             };
+            for checkout in [root.path(), parent.as_path()] {
+                std::fs::create_dir_all(checkout.join(".gobby")).expect("checkout metadata");
+                std::fs::write(
+                    checkout.join(".gobby/project.json"),
+                    serde_json::json!({"id":source,"name":"pinned-cli"}).to_string(),
+                )
+                .expect("registered parent identity");
+            }
             std::fs::write(
                 root.path().join(".gobby/isolation.json"),
                 serde_json::json!({
