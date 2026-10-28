@@ -28,7 +28,6 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.project_checkouts import require_root
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
@@ -55,7 +54,6 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.daemon_git import GitFailed, GitOk, GitTimeout, daemon_git
 from gobby.utils.git import git_subprocess_env
-from gobby.utils.machine_id import require_machine_id
 
 __all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
 
@@ -491,7 +489,7 @@ async def land_candidate(
     sha = commit_sha.strip().lower()
     if not _FULL_SHA.fullmatch(sha):
         return {"landed": False, "error": "invalid_commit_sha"}
-    repo = Path(require_root(db, task.project_id, require_machine_id()))
+    repo = Path(await asyncio.to_thread(project_checkout_root, db, task.project_id))
     try:
         if await _resolve(repo, sha) != sha:
             return {"landed": False, "error": "candidate_unresolved"}

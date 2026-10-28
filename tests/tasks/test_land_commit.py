@@ -454,13 +454,35 @@ async def test_main_checkout_target_reads_the_checkout_off_the_event_loop(
         reads.append(threading.get_ident())
         return require_machine_id()
 
-    monkeypatch.setattr("gobby.tasks.land_commit.require_machine_id", recording)
     monkeypatch.setattr("gobby.releases.window.require_machine_id", recording)
     loop_thread = threading.get_ident()
 
     target = await land_commit.main_checkout_target(case.db, case.project_id)
 
     assert target is not None and target[1] == "trunk"
+    assert reads, "the landing read never touched the machine id"
+    assert loop_thread not in reads
+
+
+async def test_land_candidate_reads_the_checkout_off_the_event_loop(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reads: list[int] = []
+
+    def recording() -> str:
+        reads.append(threading.get_ident())
+        return require_machine_id()
+
+    monkeypatch.setattr("gobby.releases.window.require_machine_id", recording)
+    loop_thread = threading.get_ident()
+    sha = case.candidate("lane", {"docs/offloop.md": "landed off the loop"})
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+
+    landed = await case.land(task, sha)
+
+    assert landed["landed"] is True
     assert reads, "the landing read never touched the machine id"
     assert loop_thread not in reads
 
