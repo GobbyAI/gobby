@@ -1,3 +1,6 @@
+#[path = "common/pin_collaborator.rs"]
+mod pin_collaborator;
+
 #[cfg(test)]
 mod serial_db {
     use postgres::{Client, NoTls};
@@ -226,6 +229,7 @@ mod serial_db {
 
     fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = uuid_param(project_id);
+        conn.execute("DELETE FROM code_overlay_pins WHERE overlay_project_id = $1 OR source_project_id = $1", &[&project_id])?;
         conn.execute(
             "DELETE FROM gobby_agent_auth.principal_bindings WHERE project_id = $1",
             &[&project_id],
@@ -266,5 +270,107 @@ mod serial_db {
             &[&project_id],
         )?;
         Ok(())
+    }
+
+    struct PinnedCli {
+        root: tempfile::TempDir,
+        home: PathBuf,
+        overlay: String,
+        service: super::pin_collaborator::Collaborator,
+        _overlay_cleanup: ProjectCleanup,
+        _source_cleanup: ProjectCleanup,
+    }
+
+    impl PinnedCli {
+        fn new(conn: &mut Client, database_url: &str) -> Self {
+            use gobby_core::grant::{AiCapability, DirectConnections, PrincipalKind, managed_direct_grant};
+            let root = tempfile::tempdir().expect("isolated child checkout");
+            let parent = root.path().join("parent");
+            std::fs::create_dir_all(&parent).expect("parent root");
+            std::fs::create_dir_all(root.path().join(".gobby")).expect("child metadata");
+            let source = uuid::Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, root.path().to_str().expect("root").as_bytes()).to_string();
+            let overlay = gobby_core::project::code_index_id_for_root(root.path());
+            std::fs::write(root.path().join(".gobby/isolation.json"), serde_json::json!({
+                "parent_project_id":source, "parent_project_path":parent,
+            }).to_string()).expect("overlay identity");
+            std::fs::write(parent.join(".gobby-project-placeholder"), "").expect("parent exists");
+            seed_project_with_root(conn, &source, parent.to_str().expect("parent path"));
+            seed_indexed_file_without_project(conn, &source, FILE_PATH);
+            seed_file_state(conn, &source, FILE_PATH);
+            seed_project_with_root(conn, &overlay, root.path().to_str().expect("child path"));
+            conn.execute("INSERT INTO code_indexed_files (id,project_id,file_path,language,content_hash,symbol_count,byte_size,indexed_at)
+                VALUES ($1,$2,$3,'rust','hash-2',0,0,NOW())", &[&row_uuid(&source,"new-file"),&uuid_param(&source),&FILE_PATH]).expect("new source content");
+            conn.execute("UPDATE code_indexed_file_states SET content_hash='hash-2' WHERE project_id=$1", &[&uuid_param(&source)]).expect("source selector moves");
+            conn.execute("INSERT INTO code_overlay_pins (machine_id,overlay_project_id,file_path,source_project_id,content_hash)
+                VALUES ($1,$2,$3,$4,'hash-1')", &[&local_machine_uuid(),&uuid_param(&overlay),&FILE_PATH,&uuid_param(&source)]).expect("pin old source");
+            let home = isolated_gobby_home(root.path());
+            std::fs::write(home.join("bootstrap.yaml"),format!("api_key: {}\n",super::pin_collaborator::TOKEN)).expect("test API key");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind collaborator");
+            let url = format!("http://{}",listener.local_addr().expect("service address"));
+            let mut grant = managed_direct_grant(&source,&local_machine_uuid().to_string(),&DirectConnections::postgres(database_url).with_qdrant(&url,None));
+            grant.principal.kind = PrincipalKind::Interactive;
+            grant.principal.execution_id = None;
+            grant.principal.session_id = None;
+            grant.principal.code_overlay_project_id = Some(overlay.clone());
+            grant.capabilities.embed = AiCapability::Daemon {};
+            grant.deployment.token = gobby_core::grant::deployment_token(&home);
+            let service = super::pin_collaborator::Collaborator::start(listener,grant.with_checksum(),row_uuid(&source,"symbol").to_string());
+            Self { root,home,overlay,service,
+                _overlay_cleanup:ProjectCleanup {database_url:database_url.into(),project_id:overlay.clone()},
+                _source_cleanup:ProjectCleanup {database_url:database_url.into(),project_id:source} }
+        }
+
+        fn run(&self, args: &[&str]) -> std::process::Output {
+            Command::new(env!("CARGO_BIN_EXE_gcode")).current_dir(self.root.path())
+                .args(["--allow-stale","--format","json"]).args(args)
+                .env("GOBBY_HOME",&self.home).env("GOBBY_DAEMON_URL",&self.service.url)
+                .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP").env_remove("GOBBY_SESSION_ID")
+                .env_remove("GOBBY_PARENT_SESSION_ID").env_remove("GOBBY_AGENT_RUN_ID")
+                .env_remove("GOBBY_MANAGED_EXECUTION_ID").env_remove("GOBBY_AGENT_API_TOKEN")
+                .output().expect("run isolated gcode")
+        }
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL test database URL")]
+    fn pinned_sync_file_routes_through_cli() {
+        let database_url = test_env::postgres_test_database_url("pinned CLI routes");
+        let mut conn = Client::connect(&database_url,NoTls).expect("test PostgreSQL");
+        let fixture = PinnedCli::new(&mut conn,&database_url);
+        let before = conn.query("SELECT id,graph_synced,vectors_synced,graph_sync_attempted_at,vector_sync_attempted_at FROM code_indexed_files WHERE project_id=$1 ORDER BY id", &[&uuid_param(&fixture._source_cleanup.project_id)]).expect("source snapshot");
+        let vector = fixture.run(&["vector","sync-file","--file",FILE_PATH,"--allow-missing-indexed-file"]);
+        let graph = fixture.run(&["graph","sync-file","--file",FILE_PATH,"--allow-missing-indexed-file"]);
+        let missing = fixture.run(&["vector","sync-file","--file","untracked.rs","--allow-missing-indexed-file"]);
+        let pin = conn.query_one("SELECT vector_projected,graph_projected,graph_attempted_at IS NOT NULL FROM code_overlay_pins WHERE overlay_project_id=$1", &[&uuid_param(&fixture.overlay)]).expect("pin recovery state");
+        let after = conn.query("SELECT id,graph_synced,vectors_synced,graph_sync_attempted_at,vector_sync_attempted_at FROM code_indexed_files WHERE project_id=$1 ORDER BY id", &[&uuid_param(&fixture._source_cleanup.project_id)]).expect("source after recovery");
+        assert!(vector.status.success(),"vector: {}",String::from_utf8_lossy(&vector.stderr));
+        let output: Value = serde_json::from_slice(&vector.stdout).expect("vector JSON");
+        assert_ne!(output["status"],"skipped","pinned path must recover: {output}");
+        assert!(pin.get::<_,bool>(0),"vector flag marks completed pinned recovery");
+        assert!(pin.get::<_,bool>(2),"graph helper records attempt, stderr={}",String::from_utf8_lossy(&graph.stderr));
+        assert!(!pin.get::<_,bool>(1),"graph backend is unavailable in this isolated fixture");
+        assert_eq!(format!("{before:?}"),format!("{after:?}"),"source flags and attempt timestamps stay untouched");
+        assert!(missing.status.success(),"missing path stderr={}",String::from_utf8_lossy(&missing.stderr));
+        let skipped: Value = serde_json::from_slice(&missing.stdout).expect("missing JSON");
+        assert_eq!(skipped["reason"],"indexed_file_not_found");
+        assert_eq!(skipped["skipped_files"],1);
+        let requests = fixture.service.requests.lock().expect("request log");
+        let child_collection = format!("code_symbols_{}", fixture.overlay.replace('-', "_"));
+        assert!(requests.iter().any(|request| request.starts_with("PUT ") && request.contains(&child_collection) && request.contains(&row_uuid(&fixture._source_cleanup.project_id,"symbol").to_string())),"pinned source symbol must be written into child namespace");
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(not(gcode_postgres_tests), ignore = "requires PostgreSQL test database URL")]
+    fn text_search_survives_projection_recovery() {
+        let database_url = test_env::postgres_test_database_url("pinned text availability");
+        let mut conn = Client::connect(&database_url,NoTls).expect("test PostgreSQL");
+        let fixture = PinnedCli::new(&mut conn,&database_url);
+        let output = fixture.run(&["search","indexed"]);
+        assert!(output.status.success(),"search: {}",String::from_utf8_lossy(&output.stderr));
+        let payload: Value = serde_json::from_slice(&output.stdout).expect("search JSON");
+        assert!(payload.to_string().contains(&row_uuid(&fixture._source_cleanup.project_id,"symbol").to_string()),"pinned PostgreSQL/BM25 hit remains visible: {payload}");
+        assert!(payload["warnings"].as_array().is_some_and(|warnings| !warnings.is_empty()),"search must report pending projection degradation: {payload}");
     }
 }
