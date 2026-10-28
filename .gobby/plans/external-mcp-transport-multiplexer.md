@@ -279,6 +279,31 @@ Targets:
   - `ServerSpec` implements `Debug` by hand (Decision 3). `Pool::status`
     reports each connection's id, transport, connected flag and in-flight
     count, never spec values.
+  - Pool policy (Decision 6), stated here for the leaf:
+    - A connection is keyed by server id. Its fingerprint is the SHA-256 of
+      the canonical spec JSON, and a changed fingerprint replaces the
+      connection.
+    - Requests on one connection run concurrently under JSON-RPC ids.
+    - A connect retries up to three times at 1, 2 and 4 seconds. Three
+      consecutive failed connects open a 30-second circuit with one
+      half-open probe.
+    - An idle connection closes after 300 seconds. There are no health
+      pings.
+    - A connection found closed before a request is sent reconnects once. A
+      transport failure after the request is written answers
+      `transport_closed` and never replays.
+  - Call registry (Decision 8), stated here for the leaf:
+    - A request registers its `call_id` on entry, before connect and retry,
+      and checks cancellation again immediately before the upstream write.
+      Completion removes the entry.
+    - A cancel for an unknown `call_id` leaves a tombstone that expires after
+      600 seconds. At most 4,096 tombstones are kept, oldest evicted first. A
+      request that finds its tombstone answers `cancelled` without
+      contacting the server. A late or duplicate cancel is a no-op.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gdaemon pin in `src/gobby/install/version_pins.py`. It copies no binary;
+    the Orchestrator rebuilds and cuts over.
   - `stdio.rs` launches the spec's command, args and env as given; 1.2 adds the
     launch environment.
   - `internal_api.rs` serves `POST /api/internal/mcp/request`,
@@ -362,13 +387,26 @@ Targets:
   - `launch_env.rs` ports both hooks with every candidate list, the `${VAR}`
     rules and npx offline. It embeds the loopback config with `include_str!`
     and writes it to `<gobby_home>/mcp/browser-loopback.json` before launch.
-  - `supervise.rs` implements `gdaemon mcp-child -- <argv>` per Decision 7, and
-    `stdio.rs` runs every server through it, using `current_exe()`.
+  - `supervise.rs` implements `gdaemon mcp-child -- <argv>` (Decision 7), and
+    `stdio.rs` runs every server through it, using `current_exe()`:
+    - The pool spawns the wrapper as a process-group leader. The wrapper
+      runs the server in its own process group with inherited stdio.
+    - The wrapper polls `getppid()` once a second. When the parent changes,
+      it sends SIGTERM to the server's group, waits 5 seconds, then sends
+      SIGKILL.
+    - Disconnect, idle close and `Pool::shutdown` signal the group the same
+      way.
+    - On Windows the server runs in process-wrap's `JobObject`. That path
+      must compile; its runtime proof belongs to the 1.0 Windows work.
   - Stderr appends to `<gobby_home>/logs/mcp-servers.log`.
   - `rust-ci.yml` gains a `windows-latest` job, "Clippy (gobby-daemon,
     Windows)", running
     `cargo clippy -p gobby-daemon --target x86_64-pc-windows-msvc -- -D warnings`.
     It is compile-only; the runtime orphan proof stays deferred.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gdaemon pin in `src/gobby/install/version_pins.py`. It copies no binary;
+    the Orchestrator rebuilds and cuts over.
 - Planned verification:
   `cargo nextest run -p gobby-daemon --features mcp-fixture --test mcp_client_stdio`
   and the new Windows job passing on the leaf's pushed commit.
@@ -410,6 +448,10 @@ Targets:
     `unauthorized` with the `WWW-Authenticate` value and drops the connection.
   - Tests serve an rmcp streamable-HTTP server and an in-process legacy SSE
     fixture from axum.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gdaemon pin in `src/gobby/install/version_pins.py`. It copies no binary;
+    the Orchestrator rebuilds and cuts over.
 - Planned verification:
   `cargo nextest run -p gobby-daemon --features mcp-fixture --test mcp_client_http`.
 
@@ -451,7 +493,7 @@ Targets:
   - `build_mcp_http_client` and `gobby_client_info` move into `oauth.py`,
     because 2.2 deletes `transports/`.
 - Planned verification:
-  `uv run pytest tests/mcp_proxy/test_oauth.py -v` with the isolated database.
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_oauth.py -v`.
 
 **Acceptance:**
 
@@ -597,8 +639,10 @@ Targets:
   `src/gobby/cli/mcp_proxy_add.py` without websocket in its transport choices
   or URL check, and have `register_template_commands` import it beside the
   template and OAuth commands.
-- Planned verification: `uv run pytest` over every test file in Targets,
-  `uv run ruff check src/`, `uv run mypy src/` and the web typecheck.
+- Planned verification:
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest`
+  over every test file in Targets, `uv run ruff check src/`,
+  `uv run mypy src/` and the web typecheck.
 
 **Granularity:** Seventeen production files are edited or created and fourteen
 are deleted, but they form one replacement: the transport layer and every
@@ -669,16 +713,22 @@ Consumers unchanged:
   - `cancellation.py` holds a ContextVar for the client call id, set by
     `call_mcp_tool`, the owner-scoped registry with its tombstones
     (Decision 8), and the `cancel_mcp_tool` endpoint.
-    - `cancel_mcp_tool` cancels a registered call through the backend
-      `cancel` and returns `{cancelled: true}`. For an unknown id it leaves a
-      tombstone in the caller's own scope and returns `{cancelled: false}`.
+    - `cancel_mcp_tool` cancels a registered call and returns
+      `{cancelled: true}`. For an unknown id it leaves a tombstone in the
+      caller's own scope and returns `{cancelled: false}`. A tombstone
+      expires after 600 seconds, the longest a call may live. At most 4,096
+      are kept, oldest evicted first. A late or duplicate cancel is a no-op.
     - `call_mcp_tool` checks the tombstone before dispatch. A hit returns the
       ordinary failure payload with `error_code: "CANCELLED"` through
       `_process_tool_proxy_result`.
     - `McpBackend` registers each external call on entry, before
-      `bearer_for`, routing and connect. It checks the tombstone again
-      immediately before posting the request, and forwards a later cancel
-      to the backend `call_id`. Internal tools are never registered.
+      `bearer_for`, routing and connect. Until the request is posted, a
+      cancel only marks the entry cancelled and sends nothing, because no
+      destination exists yet. Immediately before posting, `McpBackend`
+      checks that mark and the tombstone. After posting, a cancel goes to
+      the destination that received the request: here the local backend
+      `cancel`, and from 3.3 also a node's `mcp.cancel`. Completion removes
+      the entry. Internal tools are never registered.
     - A backend `cancelled` reply, or a hit at either check, raises
       `MCPCallCancelled`, a subclass of `MCPError` in `models.py`.
       `classify_error` maps it to `ToolProxyErrorCode.CANCELLED` before any
@@ -686,9 +736,13 @@ Consumers unchanged:
       finalization run unchanged.
   - `_AGENT_CAPABILITY_MATRIX` gains `POST /api/mcp/tools/cancel` with
     identity binding, so only the calling session can cancel its calls.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gmcp/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the gmcp
+    pin in `src/gobby/install/version_pins.py`. It copies no binary; the
+    Orchestrator rebuilds and cuts over.
 - Planned verification:
   `cargo nextest run -p gobby-mcp --test call_tool` and
-  `uv run pytest tests/servers/test_mcp_tool_cancel.py -v`.
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/servers/test_mcp_tool_cancel.py -v`.
 
 **Acceptance:**
 
@@ -741,9 +795,14 @@ Targets:
   - A reply over 8 MiB (`checkout_read.rs::REPLY_BUDGET`) becomes
     `result_too_large`.
   - Channel errors keep their existing codes and stages.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gdaemon pin in `src/gobby/install/version_pins.py`. It copies no binary;
+    the Orchestrator rebuilds and cuts over.
 - Planned verification:
   `cargo nextest run -p gobby-daemon -E 'test(node_command) | binary(node_internal_route)'`
-  and the two Python parity tests.
+  and the two Python parity tests with
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest`.
 
 **Acceptance:**
 
@@ -781,6 +840,10 @@ Targets:
     `serve.rs` hook from 1.1.
   - The node expands `${VAR}` from its own environment and runs hooks against
     its own filesystem.
+  - Shipping: load the `rust` skill. This leaf's commit bumps
+    `crates/gdaemon/Cargo.toml` by 0.0.1 and updates `Cargo.lock` and the
+    gdaemon pin in `src/gobby/install/version_pins.py`. It copies no binary;
+    the Orchestrator rebuilds and cuts over.
 - Planned verification:
   `cargo nextest run -p gobby-daemon --features mcp-fixture --test node_mcp`.
 
@@ -818,22 +881,35 @@ Consumers unchanged:
   - It calls `resolve_target_machine(project_id=session.project_id,
     requested=None, origin_machine_id=session.machine_id)`.
   - A remote target sends `mcp.request` and `mcp.cancel` through
-    `NodeCommandClient.send` with the outer and inner budgets of Decision 9,
-    and records the machine in the holder set (Decision 5). A local target, a
-    URL server or a missing session uses the local route.
+    `NodeCommandClient.send` and records the machine in the holder set
+    (Decision 5). A local target, a URL server or a missing session uses the
+    local route.
+  - Budgets (Decision 9), stated here for the leaf: the call's absolute
+    deadline was fixed at entry. The outer `NodeCommandClient.send` timeout
+    is `min(remaining + 5,000, 600,000)` ms, and the inner
+    `McpRequest.timeout_ms` is that value minus 5,000, so a requested
+    600,000 ms becomes 595,000 ms inner.
   - On `node_timeout` or a channel error, `McpBackend` sends a best-effort
     `mcp.cancel` for the `call_id` and does not replay.
   - Remove, disable, config update, `disconnect_server` and
     `disconnect_all` send `mcp.disconnect` to every holder concurrently,
     each bounded by 5,000 ms so an offline node cannot stall the change or
-    hub shutdown. Failed holders are reported and kept (Decision 5).
+    hub shutdown.
+  - Offline holders (Decision 5), stated here for the leaf: a failed holder
+    does not block the change. The row is still removed or updated, the
+    method's result lists each failed holder with its routing code, the
+    failure is logged with the machine id, and the holder stays in the set
+    for the next invalidation. The node's 300-second idle close bounds the
+    orphaned connection, and the fingerprint makes the next request use the
+    fresh spec. A hub restart loses the in-memory holder set, with the same
+    fallback.
     `get_health_report` adds each holder's `mcp.status` under its machine
     id, or its routing code when unreachable.
   - `NodeCommandError` maps to `MCPError` with its code.
   - Discovery and calls follow the same rule, so a node-only command is also
     discovered on its node.
 - Planned verification:
-  `uv run pytest tests/mcp_proxy/test_backend_placement.py -v`.
+  `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/test_backend_placement.py -v`.
 
 **Acceptance:**
 
@@ -876,7 +952,8 @@ Targets:
     with the new bearer. It adds no auth mechanism.
   - The test runs on macOS and Linux and has no latency assertions.
 - Planned verification:
-  `uv run pytest tests/e2e/test_hub_node_pair.py -v -m e2e`.
+  `GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_hub_node_pair.py -v -m e2e`;
+  `pair_hub` and `pair_node` start their own isolated daemons and state.
 
 **Acceptance:**
 
