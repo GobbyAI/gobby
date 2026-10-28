@@ -1423,7 +1423,11 @@ async def test_sync_pass_polls_projects_and_files_through_run_db(tmp_path: Path)
         run_db=run_db,
     )
 
-    assert run_db.calls == ["list_indexed_projects", "get_pending_sync_files"]
+    assert run_db.calls == [
+        "list_indexed_projects",
+        "get_pending_sync_files",
+        "get_pending_pinned_files",
+    ]
 
 
 @pytest.mark.asyncio
