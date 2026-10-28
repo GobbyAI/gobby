@@ -166,7 +166,16 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     return caller, run.agent_name
 
 
-_TEAM_SEAT_TYPES = frozenset({"test-writer", "developer", "code-reviewer"})
+_TEAM_SEAT_TYPES = frozenset(
+    {
+        "test-writer",
+        "developer",
+        "code-reviewer",
+        "docs-reviewer",
+        "research-reviewer",
+        "researcher",
+    }
+)
 # The devteam runbook titles its team tab "Dev Team"; an epic team's tab is "<this> - #<seq>".
 _DEV_TEAM_TAB = "Dev Team"
 
@@ -254,8 +263,8 @@ def _manager_resumes_own_seat(
 
     The caller's enabled installed definition must set the ``team_manager`` variable,
     so a session variable alone never grants it. The caller's running run must be
-    bound to the caller, and the seat's run to the seat. The seat must be a test
-    writer, developer or code reviewer in the caller's project and machine, launched
+    bound to the caller, and the seat's run to the seat. The seat must be an allowed
+    team seat in the caller's project and machine, launched
     by a runbook of the caller's admitted team. The resume must name the seat's stored
     type, so a resume cannot re-type it. A fresh spawn has no resume reference.
     """
@@ -286,7 +295,9 @@ def _manager_resumes_own_seat(
     if seat_run is None or seat_run.child_session_id != seat.id:
         return False
     seat_binding = seat_team(session_manager.db, seat.id)
-    return seat_binding is not None and seat_binding.team_id == team.team_id
+    return seat_binding is not None and (
+        seat_binding.team_id == team.team_id or seat_binding.parent_team_id == team.team_id
+    )
 
 
 def spawn_target_allowed(

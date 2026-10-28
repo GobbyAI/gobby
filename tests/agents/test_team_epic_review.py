@@ -16,11 +16,14 @@ from gobby.agents.team_lifecycle import (
     TeamBinding,
     bind_reviewer_run,
     managed_task_team,
+    seat_team,
 )
 from gobby.agents.team_review import sync_epic_review
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.spawn_agent import _factory
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -29,7 +32,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workspaces import WorkspaceManager
-from gobby.tasks.close_invariants import evaluate_close_invariants
 from gobby.tasks.land_commit import land_candidate, task_landing_target
 from gobby.tasks.step_records import (
     StepRecordError,
@@ -42,7 +44,11 @@ from gobby.tasks.step_records import (
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.condition_helpers_sessions import dev_pod_launch_allowed, own_seat_resume
+from gobby.workflows.condition_helpers_sessions import (
+    dev_pod_launch_allowed,
+    own_seat_resume,
+    own_team_tab,
+)
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.landing_case import make_landing_case
@@ -339,7 +345,14 @@ async def test_epic_manager_admits_isolated_leaf_pod(world: TeamWorld) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "agent,grant",
-    [("test-writer", "test"), ("developer", "implementation"), ("code-reviewer", "review")],
+    [
+        ("test-writer", "test"),
+        ("developer", "implementation"),
+        ("code-reviewer", "review"),
+        ("docs-reviewer", "review"),
+        ("research-reviewer", "review"),
+        ("researcher", "closing"),
+    ],
 )
 async def test_epic_manager_resumes_pod_seat_in_its_own_team(
     world: TeamWorld, agent: str, grant: TaskStep
@@ -361,7 +374,8 @@ async def test_epic_manager_resumes_pod_seat_in_its_own_team(
     )
     sessions = SessionManager(team.db)
     assert own_seat_resume(sessions, team.manager, agent, seat.id)
-    assert not own_seat_resume(sessions, team.manager, "docs-reviewer", seat.id)
+    assert own_team_tab(sessions, team.manager, agent) == f"Dev Team - #{epic.seq_num}"
+    assert not own_seat_resume(sessions, team.manager, "default", seat.id)
     other = await epic_team(world, new_task(world, "Other epic", epic=True))
     assert not own_seat_resume(sessions, other.manager, agent, seat.id)
     body = AgentDefinitionBody.model_validate(
@@ -369,6 +383,7 @@ async def test_epic_manager_resumes_pod_seat_in_its_own_team(
             "name": agent,
             "version": "1.0",
             "task_step_writes": [grant],
+            "prompts": {"agent": "Resume the assigned seat."},
             "workflows": {"rule_selectors": {"include": []}},
         }
     )
@@ -386,6 +401,20 @@ async def test_epic_manager_resumes_pod_seat_in_its_own_team(
     )
     assert scope is not None and scope.team_id == pod.team_id
     assert scope.worktree_id is None  # Resume retains the seat's recorded tree.
+    runs = LocalAgentRunManager(team.db)
+    resumed = runs.create(
+        parent_session_id=team.manager,
+        provider="claude",
+        prompt="Resume the pod seat.",
+        agent_name=agent,
+        child_session_id=seat.id,
+        worktree_id=pod.worktree_id,
+        resume_metadata_json={"resume_previous_run_id": seat.agent_run_id},
+    )
+    sessions.update_parent_session_id(seat.id, team.manager)
+    sessions.update_terminal_pickup_metadata(seat.id, agent_run_id=resumed.id)
+    assert seat_team(team.db, seat.id) == pod
+    assert own_seat_resume(sessions, team.manager, agent, seat.id)
 
 
 @pytest.mark.asyncio
@@ -428,7 +457,7 @@ async def test_pod_pipeline_launches_triplet_and_relaunches_in_pod_tab(world: Te
     )
     assert args["target_id"] == team.manager
     world.finish(run)
-    pod_id = context["steps"]["admit"]["output"]["team_id"]
+    pod_id = context["steps"]["admit"]["output"]["team"]["team_id"]
     replay_inputs = _inputs(leaf, workspace, team.manager, pod_id)
     replacement = world.child(leaf, DEVTEAM, parent=team.manager)
     replay = await _admit(world, replacement, replay_inputs)
@@ -513,18 +542,20 @@ async def test_pod_lands_and_closes_against_epic_branch(
     assert result.get("landed") is True, result
     assert git_in(tree_of(team.binding), "rev-parse", "HEAD") == sha
     assert git_in(world.case.repo, "rev-parse", "HEAD") == main_tip
-    checklist = await evaluate_close_invariants(
-        open_children=[],
-        commit_shas=[sha],
+    evaluation = await _evaluate_close(
+        RegistryContext(task_manager=LocalTaskManager(team.db)),
+        task_id=leaf.id,
         reason="done",
-        attributed_checkouts={},
-        integration_repo_path=str(tree_of(team.binding)),
-        integration_ref=f"refs/heads/{team.binding.branch}",
-        required_steps=[],
-        missing_steps=[],
-        attribution_complete=True,
+        commit_sha=sha,
+        project_path=str(tree_of(pod)),
+        closing_session_id=team.manager,
     )
-    assert checklist.ready, checklist
+    assert evaluation.checklist is not None, evaluation
+    ancestry = next(
+        gate for gate in evaluation.checklist.gates if gate.name == "integration_ancestry"
+    )
+    assert ancestry.status == "passed", ancestry
+    assert ancestry.details["integration_ref"] == f"refs/heads/{team.binding.branch}"
 
     from gobby.agents.team_teardown import TEARDOWN_GRACE
     from gobby.mcp_proxy.tools import agent_cancellation
@@ -539,11 +570,41 @@ async def test_pod_lands_and_closes_against_epic_branch(
 
     primary = running_seat(world, team.runbook, "developer")
     writer = running_seat(world, run, "test-writer")
+    runs = LocalAgentRunManager(team.db)
+    assert writer.agent_run_id is not None
+    runs.complete(writer.agent_run_id)
+    resumed = runs.create(
+        parent_session_id=team.manager,
+        provider="claude",
+        prompt="Resume the pod writer.",
+        agent_name="test-writer",
+        child_session_id=writer.id,
+        worktree_id=pod.worktree_id,
+        resume_metadata_json={"resume_previous_run_id": writer.agent_run_id},
+    )
+    runs.start(resumed.id)
+    sessions = SessionManager(team.db)
+    sessions.update_parent_session_id(writer.id, team.manager)
+    sessions.update_terminal_pickup_metadata(writer.id, agent_run_id=resumed.id)
+    rebound = sessions.rebind_resumed_terminal_session(
+        writer.id,
+        machine_id=require_machine_id(),
+        project_id=world.case.project_id,
+        source=writer.source,
+        transcript_path=None,
+        terminal_context=None,
+        workflow_name=None,
+        agent_depth=writer.agent_depth,
+        sandbox_enabled=None,
+    )
+    assert rebound is not None and rebound.status == "active"
     terminations = Terminations(team.db)
     monkeypatch.setattr(agent_cancellation, "terminate_agent_run", terminations)
     closed = close_leaf(world, leaf, sha)
     await teardown_pass(team.db, daemon(team.db), closed_at(closed) + TEARDOWN_GRACE)
     assert set(terminations.ended()) == {developer, reviewer, writer.id}
+    resumed_after = runs.get(resumed.id)
+    assert resumed_after is not None and resumed_after.status == "cancelled"
     assert not tree_of(pod).exists()
     assert tree_of(team.binding).is_dir()
     assert session_status(team.db, primary.id) == "active"

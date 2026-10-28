@@ -358,17 +358,16 @@ async def _readmit(
     if own.get("checkout_mode") == _TREELESS and team_id is None:
         # A treeless team is named by its task, so a joined execution re-admits the team it joined.
         named = str(own.get("team_id"))
-    scoped_leaf = (
-        own.get("mode") == EPIC_MODE
-        and open_leaf_below(db, str(own.get("task_id")), task.id) is not None
-    )
-    if (own.get("task_id") != task.id and not scoped_leaf) or own.get("team_id") != named:
+    admitted_task = own.get("admitted_task_id", own.get("task_id"))
+    if admitted_task != task.id or own.get("team_id") != named:
         raise TeamAdmissionRefused(
             "team_binding_drift",
             f"execution {caller.execution_id} is bound to team {own.get('team_id')} "
             f"for task {own.get('task_id')}",
         )
     _bound_reviewer(own.get("reviewers"), reviewer_agent, str(own.get("team_id")))
+    if own.get("task_id") != task.id:
+        _team(caller, task, named)
     binding = _binding(own)
     if binding is not None:
         if own.get("checkout_mode") != _TREELESS:
@@ -391,7 +390,7 @@ async def _readmit(
             "team_branch_taken", f"branch {branch} belongs to tree {tree.id} of another task"
         )
     binding = TeamBinding(
-        **{key: own[key] for key in own if key not in _TREE_FIELDS},
+        **{key: own[key] for key in own if key not in _TREE_FIELDS | {"admitted_task_id"}},
         worktree_id=tree.id,
         worktree_path=tree.worktree_path,
     )
@@ -410,6 +409,7 @@ def _team(caller: _Caller, task: Task, team_id: str) -> tuple[StepExecution, Tea
     if binding.task_id != task.id and not (
         binding.mode == EPIC_MODE
         and open_leaf_below(caller.executions.db, binding.task_id, task.id) is not None
+        and task.id not in live_teams(caller.executions.db, [task.id])
     ):
         raise TeamAdmissionRefused(
             "team_task_mismatch", f"team {team_id} is bound to task {binding.task_id}"
@@ -428,6 +428,8 @@ async def _join(
     if not treeless:
         await _verify_tree(db, binding)
     record = {**asdict(binding), "checkout_mode": _TREELESS} if treeless else asdict(binding)
+    if binding.task_id != task.id:
+        record["admitted_task_id"] = task.id
     await asyncio.to_thread(_record, caller, record)
     return binding
 
@@ -692,6 +694,8 @@ def pod_parent(db: HubDatabase, caller_id: str, task_id: str, parent_id: str) ->
         parent is None
         or parent.team_id != parent_id
         or parent.mode != EPIC_MODE
+        or (live := live_teams(db, [parent.task_id]).get(parent.task_id)) is None
+        or live.team_id != parent.team_id
         or not _is_bound_dev_manager(db, caller_id, parent.task_id)
         or open_leaf_below(db, parent.task_id, task_id) is None
     ):
@@ -747,12 +751,13 @@ def _caller_binding(db: HubDatabase, caller: Session) -> TeamBinding | None:
 
 
 def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
-    """The seat's parent, then the parents its runs were launched under, newest first.
+    """The original run's parent first, then resumed runs and the current session parent.
 
     A resume re-parents the seat to the resumer, so the runbook that launched it sits on
-    the resume chain: each resumed run names the run it resumed.
+    the resume chain: each resumed run names the run it resumed. The original team
+    remains authoritative even when a parent epic's manager resumes a pod seat.
     """
-    parents = [seat.parent_session_id] if seat.parent_session_id else []
+    parents: list[str] = []
     runs = LocalAgentRunManager(db)
     run = runs.get(seat.agent_run_id) if seat.agent_run_id else None
     seen: set[str] = set()
@@ -761,6 +766,9 @@ def _seat_parents(db: HubDatabase, seat: Session) -> list[str]:
         parents.append(run.parent_session_id)
         previous = (run.resume_metadata_json or {}).get("resume_previous_run_id")
         run = runs.get(previous) if isinstance(previous, str) else None
+    parents.reverse()
+    if seat.parent_session_id:
+        parents.append(seat.parent_session_id)
     return parents
 
 

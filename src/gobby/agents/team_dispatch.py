@@ -302,6 +302,25 @@ def dispatch_for_caller(
                 "seat_definition_mismatch",
                 f"seat {resume_session_id} is {stored}; it resumes as {stored}, not {agent}",
             )
+        resumed_team = seat_team(db, session_id)
+        if resumed_team is not None and resumed_team.parent_team_id == binding.team_id:
+            if (
+                task_id is not None
+                or checkout_mode is not None
+                or branch_name is not None
+                or base_branch is not None
+                or worktree_id not in (None, resumed_team.worktree_id)
+            ):
+                raise TeamAdmissionRefused("team_tree_fixed", "a resumed pod seat keeps its tree")
+            if _REVIEWER_GRANT in grants:
+                return _reviewer(
+                    db, resumed_team, agent, parent, resume_session_id=resume_session_id, **options
+                )
+            return DispatchScope(
+                team_id=resumed_team.team_id,
+                project_id=resumed_team.project_id,
+                parent_session_id=parent,
+            )
     if _REVIEWER_GRANT in grants:
         return _reviewer(db, binding, agent, parent, resume_session_id=resume_session_id, **options)
     if agent in {"test-writer", "researcher"}:
