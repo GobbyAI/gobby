@@ -194,8 +194,8 @@ gobby#17480:
   reinstalling the prior coherent release. Setting the family back to
   `proxy`/`compare` is not a supported rollback. Because an explicit
   `front_door.routes.attention` entry overrides the default in both directions,
-  the takeover restart and any rollback reinstall both require that key to be
-  absent (4.3's cutover preflight).
+  4.3 makes restart, cutover and start refuse while that key is set, and the
+  key must stay absent for a rollback reinstall.
 - macOS and Linux only. Windows is #25249. This plan has no latency gates.
 
 ## Pre-expansion capability bindings
@@ -968,6 +968,9 @@ Targets:
 - `src/gobby/sessions/turn_lifecycle.py::*` — scope-reason: drop FOR UPDATE, apply the bounded CAS and fenced status write in _apply and block_provider_failure, and repair status on duplicate replay
 - `src/gobby/runner_init/orchestration.py::*` — scope-reason: move attention client construction into the split module and delete both publisher closures
 - `src/gobby/runner_init/attention_clients.py`
+- `src/gobby/config/bootstrap.py::*` — scope-reason: add attention_route_override_refusal beside node_daemon_refusal
+- `src/gobby/cli/daemon_preflight.py::restart_start_refusal`
+- `src/gobby/cli/daemon_start.py::_start_dependency_errors`
 - `src/gobby/runner_init/servers.py::*` — scope-reason: remove the configure_attention_ordering and configure_attention_metadata wiring
 - `src/gobby/servers/websocket/broadcast.py::*` — scope-reason: remove the attention ordering properties and metadata enrichment now done natively
 - `src/gobby/servers/_app_routes.py::*` — scope-reason: remove the attention router registration
@@ -984,6 +987,7 @@ Targets:
 - `tests/servers/test_node_routes.py::*` — scope-reason: assert the transitions sent instead of Python-published events
 - `tests/sessions/test_turn_lifecycle.py::*` — scope-reason: drop the removed epoch constructor argument
 - `tests/sessions/test_turn_lifecycle_cas.py`
+- `tests/cli/test_daemon_preflight.py::*` — scope-reason: cover the attention route override refusal on restart, cutover and start
 - `tests/storage/test_attention_client.py` — edit the file created by 4.2 to assert Python keeps no attention ordering state
 - `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
 - `tests/storage/test_terminal_bindings.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
@@ -1126,11 +1130,28 @@ consumer the sweep finds.
 gives an explicit `front_door.routes.attention` entry precedence over
 `default_backend`. A leftover `proxy` or `compare` entry would send requests to
 the deleted Python handlers. A leftover `native` entry would survive a rollback
-and override the prior release's `proxy` default. So the cutover that activates
-this leaf, and any rollback reinstall, first confirms that the live
-`~/.gobby/bootstrap.yaml` has no `attention` key under `front_door.routes`. If
-the key is present, the cutover stops before the restart. This is a
-configuration check only: it adds no backend and no fallback.
+and override the prior release's `proxy` default.
+
+So this leaf adds `attention_route_override_refusal(bootstrap)` to
+`src/gobby/config/bootstrap.py`, beside `node_daemon_refusal`. It returns a
+refusal naming `front_door.routes.attention` as the key to remove whenever
+`bootstrap.front_door.routes` has an `attention` entry, whatever its backend.
+It lands in the same commit that makes the attention default `native`, so any
+checkout carrying the check also carries the native default. Two callers use
+it:
+- `restart_start_refusal` in `src/gobby/cli/daemon_preflight.py`, which runs it
+  in the existing bootstrap block with `node_daemon_refusal`. That function
+  already runs before anything stops or is promoted for `gobby restart` and
+  `gobby cutover`, and also for pack, hub backup and the admin restart route.
+  The refusal leaves the running daemon alone.
+- `_start_dependency_errors` in `src/gobby/cli/daemon_start.py`, so a plain
+  `gobby start` after a stop cannot bypass the check.
+
+This is a configuration check only: it adds no backend and no fallback.
+Because every start from this release on refuses the key, the key is already
+absent when a rollback reinstalls the prior release. 4.4 documents that it must
+stay absent for that rollback, because the prior release's own preflight
+predates this check.
 
 Planned:
 - focused isolated pytest of every target test file;
@@ -1156,6 +1177,7 @@ writers and absence.
 - 4.3.5 - After deletion, Python writer transitions publish ordered events through the native broker, and the roster serves them with no Python attention route. test: `tests/e2e/test_attention_family.py::test_python_writers_publish_through_native_store`.
 - 4.3.6 - The four attention HTTP rows are delegated with evidence and waiver citations, and the ledger regenerates cleanly. file: `docs/contracts/parity-ledger.md`.
 - 4.3.7 - When reducer A's CAS is followed by reducer B's CAS and fenced status write, A's later fenced write is skipped and B's status stands. test: `tests/sessions/test_turn_lifecycle_cas.py::test_stale_status_write_is_fenced`.
+- 4.3.8 - With `front_door.routes.attention` set to any backend, restart and cutover refuse before anything stops or is promoted, and start refuses before launch, each naming the key to remove. With the key absent, all three pass this check. test: `tests/cli/test_daemon_preflight.py::test_attention_route_override_refuses_start`.
 
 ### 4.4 Attention service contract and nodes CLI handoff [category: docs] (depends: 4.3)
 `kind: deliverable`
@@ -1174,8 +1196,9 @@ Targets:
 - the decision-16 roster exception;
 - the respond error contract;
 - the post-takeover rollback boundary;
-- 4.3's cutover preflight, which requires `front_door.routes.attention` to be
-  absent before both the takeover restart and a rollback reinstall.
+- 4.3's route-override refusal: restart, cutover and start refuse while
+  `front_door.routes.attention` is set, and the key must stay absent for a
+  rollback reinstall, whose prior-release preflight predates the check.
 
 It also gives #21571 the service contract for CLI `gobby nodes` and
 `gobby nodes list` over the existing native `/api/machines`
@@ -1187,7 +1210,7 @@ Planned: `uv run pytest tests/test_parity_ledger.py` (isolated) and a docs
 review.
 
 **Acceptance:**
-- 4.4.1 - The service contract documents the routes, events, cursor, writer list, reducer repair, roster exception, respond errors, rollback boundary and the route-override cutover preflight. file: `docs/contracts/attention-services.md`.
+- 4.4.1 - The service contract documents the routes, events, cursor, writer list, reducer repair, roster exception, respond errors, rollback boundary and the route-override refusal. file: `docs/contracts/attention-services.md`.
 - 4.4.2 - CLI gobby nodes and gobby nodes list stay proxied, with #21571 owner notes citing the contract. file: `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.
 
 ## E1 Verification
@@ -1205,8 +1228,8 @@ Implementation checks are all planned, none run:
   gobby-terminals;
 - isolated e2e corpus replay, plus 3.5's same-database restart test
   `tests/e2e/test_attention_family.py::test_restart_resets_cursor_and_keeps_rows`;
-- 4.3's cutover preflight, confirming `front_door.routes.attention` is absent
-  from the live bootstrap before the takeover restart;
+- 4.3's route-override refusal test
+  `tests/cli/test_daemon_preflight.py::test_attention_route_override_refuses_start`;
 - the version-pin test on every Rust leaf;
 - Ruff, mypy src and the scoped test-types audit on 4.3.
 
