@@ -1220,3 +1220,22 @@ dispatches work.
 2026-10-28: The Plan Writer drafted the narrative from the Orchestrator's Q1-Q7
 rulings and the Q3 transaction-boundary follow-up. It is ready for the
 enhancer's pass, then adversarial review. There is no M1.
+
+2026-10-28: Consensus between the Plan Writer (gobby#18276) and the Plan
+Adversary (gobby#18280). The Orchestrator accepted the enhancer's
+ENH-BETTER-001 (4.3 cutover preflight on `front_door.routes.attention`),
+ENH-BETTER-002 (3.5 same-database restart test) and ENH-BETTER-003 (2.3
+Granularity note). It also ruled Q8 (a): 4.1 owns ledger retention of delegated
+rows. All four are applied. The adversary raised four blocking findings, and
+all four are resolved:
+- ADV-001: replay repair is now defined per duplicate path, with the
+  `resolve_wait` boundary, and an unchanged row skips the CAS to reach the
+  fence;
+- ADV-002: status writes are fenced by a session-row lock and a fresh
+  lifecycle read, with a deterministic interleaving test in 4.3.7;
+- ADV-003: respond checks machine ownership for every pane before it branches,
+  tested in 3.4.9;
+- ADV-004: 4.3 carries the full reducer algorithm standalone.
+
+The adversary's final recheck of c82ebba passed base validation with no open
+decisions.
