@@ -1645,6 +1645,48 @@ async def test_developer_submit_denies_writes_and_commits(
     assert not await run.admits_native("Bash", {"command": sed})
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'git -C "/work/repo copy" commit -m unlinked',
+        "git -C '/work/repo copy' commit -m unlinked",
+        "git -C /work/repo commit -m unlinked",
+        'git -c "user.name=Dev Seat" commit -m unlinked',
+        'git --git-dir="/work/repo copy/.git" commit -m unlinked',
+        'git --work-tree "/work/repo copy" commit -m unlinked',
+        'GIT_DIR="/work/repo copy/.git" git commit -m unlinked',
+        'cd "/work/repo copy" && git -C "/work/repo copy" commit -m unlinked',
+    ],
+)
+async def test_developer_submit_denies_commits_behind_git_options(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    _create_bundled_role_rule(run, "developer-submit-commit-scope")
+    run.session_vars["current_step"] = run.step
+
+    assert not await run.admits_native("Bash", {"command": command})
+
+
+async def test_developer_submit_admits_quoted_git_text_in_read_only_commands(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task, repo = await _claimed_developer(temp_db, tmp_path, monkeypatch)
+    sha = _commit_files(repo, "fix", _PRODUCTION_FIX)
+    await _link(run, temp_db, task, repo, sha)
+    assert run.step == "submit"
+    _create_bundled_role_rule(run, "developer-submit-commit-scope")
+    run.session_vars["current_step"] = run.step
+
+    search = r'gcode search-content "git -C \"/work/repo copy\" commit"'
+    assert await run.admits_native("Bash", {"command": search})
+    quoted = "echo 'git -C \"/work/repo copy\" commit -m unlinked'"
+    assert await run.admits_native("Bash", {"command": quoted})
+
+
 async def test_developer_unlinking_the_submitting_commit_returns_to_implement(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
