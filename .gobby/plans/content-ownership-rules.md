@@ -214,8 +214,11 @@ together. The first is delivered; 1.5 builds the second.
 - **Node-origin events.** The hub's disk is not a node's checkout, so a
   node-origin call stores no snapshot and every pair takes the no-entry
   status, run on the node through `checkout_reads.run_git`. A read the node
-  cannot answer records the pair. The pair gets no content record, so gate 3
-  and rules 2 and 3 find it through the live interval (Decision 4).
+  cannot answer records the pair. The pair gets no content record, and
+  `checkout_path_owners` answers nothing for a node-origin event, so rules 2
+  and 3 find it through the live interval. Gate 3 on the hub never judges
+  it: while the recording session's dirty ledger holds it, gate 3 fails
+  unavailable (Decision 4).
 - **Accepted race.** Another process can change the path between the two
   fingerprints, and the recorder then records that change. Overlapping calls
   by one session on one path each compare against their own baseline, so the
@@ -280,17 +283,33 @@ through the Assistant (#25261 criterion 3).
    status rule, and that status runs through `checkout_reads.run_git` on the
    node (1.5). A read the node cannot answer raises `CheckoutReadUnavailable`
    and records the pair, as a failed status does. A node-origin pair gets no
-   content record (1.7), so hub-disk digests (`_current_digest`) never judge
-   it. Gate 3 and rules 2 and 3 find it through the live interval (Decisions
-   15 and 22), and gate 3 keeps a root a node session recorded even when the
-   hub has no such directory. Every #23277 leaf that edits `commit_guard.py`,
-   `task_claim_state.py` or `_tool.py` is closed (#24522, #24523, #24529). The
-   open leaves #24521 (node `checkout.read` handler, crates only) and #24532
-   (live proof, an e2e test) share no file with this plan, so no section
-   depends on them. Close gates run outside any hook delivery, and #23277
-   covers hook sites only, so gate 3's git still runs on the hub. Rejected:
-   a dependency on #24521, because the status rule already records when the
-   node cannot answer.
+   content record (1.7). Content ownership is machine-local:
+   `checkout_path_owners` reads only the records of sessions on this machine
+   and answers nothing for a node-origin event, so the hub's bytes never name
+   a node pair's owner, and rules 2 and 3 find a node holder's task through
+   its live interval (Decision 15). Close gates run outside any hook
+   delivery, and #23277 covers hook sites only, so gate 3's git runs on the
+   hub and cannot judge a pair that a session on another machine recorded
+   (Adversary CO-A5-F2, 2026-10-28). Such a remote pair never reaches the
+   hub's digests, its status or the linked-commit fallback. While the
+   recording session's dirty ledger holds the pair, gate 3 fails "Git could
+   not inspect all task-attributed files."; once that session's own ledger
+   reconcile releases it, the pair adds nothing. That reconcile is a node
+   read: `daemon_git.status` runs on the node under `node_origin()`
+   (hook-envelope-file-facts.md, row 2). Ceiling (Orchestrator ruling,
+   2026-10-28): nothing reconciles an ended session's ledger, so a pair an
+   ended node session still holds keeps the task's gate 3 unavailable until
+   restraint-deferral #25284 (Node-backed close read releases an ended node
+   session's held content-ownership pairs, after #24521) lands. Every #23277
+   leaf that edits `commit_guard.py`, `task_claim_state.py` or `_tool.py` is
+   closed (#24522, #24523, #24529). The open leaves #24521 (node
+   `checkout.read` handler, crates only) and #24532 (live proof, an e2e test)
+   share no file with this plan, so no section depends on them. Rejected: a
+   dependency on #24521, because the status rule already records when the
+   node cannot answer; failing closed on every remote pair, because
+   `task_edited_file_checkouts` keeps a pair until close, so no node-touched
+   task could ever close; and a node-read close route in this plan, which
+   #25284 owns.
 5. **Mutation detection fingerprints the named path before and after the
    call (Orchestrator, 2026-10-05: replacement accepted; refreshed).** At
    `before_tool` the handler stores each write path's fingerprint in memory;
@@ -415,9 +434,10 @@ through the Assistant (#25261 criterion 3).
     Without an interval, it is the holder's task whose
     `task_edited_file_checkouts` holds the pair. `ledger_task_id` is the
     content-hash owner (`checkout_path_owners`): the task whose newest content
-    record, in any session, matches the path's current bytes. A pair with no
-    content record (an unreadable file, a directory or a node-origin write)
-    has none. Rules 2 and 3 exempt a holder when either field names a task
+    record, in any session on this machine, matches the path's current bytes.
+    A pair with no content record (an unreadable file, a directory or a
+    node-origin write) has none, and neither does any holder during a
+    node-origin event (Decision 4). Rules 2 and 3 exempt a holder when either field names a task
     the session claims (1.8; Orchestrator ORCH-REV-CO-1 and CO-2,
     2026-10-28). The task ref is the claim's ref, or `#<seq_num>` read from
     `tasks` for a released task.
@@ -483,6 +503,9 @@ through the Assistant (#25261 criterion 3).
     That over-block is accepted. The owner's own directory pairs already
     behave so, rule 3 refuses the directory write when foreign dirt lies under
     it at first touch, and the block clears once that dirt is committed.
+    All of this covers pairs that sessions on this machine recorded. A pair a
+    session on another machine recorded, the attribution owner's included,
+    follows Decision 4 instead.
     Rejected: V1's untransferred-pair inventory, retired with the transfer
     (Decision 2).
 
@@ -1410,7 +1433,7 @@ isolation prefix.
 
 Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
-- `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: adds task_recorded_pairs beside claimed_task_ledger_paths
+- `src/gobby/workflows/dirty_edit_grants.py::*` — scope-reason: adds task_recorded_pairs beside claimed_task_ledger_paths and makes checkout_path_owners machine-local
 - `src/gobby/workflows/session_edit_ledger.py::SessionEditLedger.record_edited_files`
 - `src/gobby/workflows/task_claim_state.py::*` — scope-reason: record_task_content_hashes gains the keyword-only unhashed paths it removes
 - `tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py::*` — scope-reason: adds the cross-session gate 3 tests
@@ -1465,6 +1488,22 @@ discovery rule exists for one gate 3 outcome.
   write `task_edited_file_checkouts`: `record_edited_files` adds,
   `transfer_live_checkout_paths` moves a pair within a session, and
   `remove_claimed_task` drops a closed task's entry.
+- `ledger_reconcile.reconcile_edit_ledgers` releases only its own session's
+  `session_dirty_file_checkouts` entries that `task_dirty_paths_async`
+  reports clean, and leaves `task_edited_file_checkouts` alone.
+  `task_dirty_paths_async` calls `daemon_git.status`, which runs on the node
+  under `checkout_reads.node_origin()` (`utils/daemon_git.py`, lines
+  430-483), so a node session's own reconcile releases its pairs by the
+  node's git. Nothing reconciles an ended session's ledger.
+- `checkout_path_owners` reads `session_variables` with no machine filter
+  (line 114) and compares each record with this machine's disk
+  (`_current_digest`, line 131). Its other callers are
+  `claimed_task_carriers` (rule 3), `claimed_task_owned_paths`
+  (`state_manager.py`'s adoption of shell edits) and
+  `commit_guard._live_path_owners`. `capture_attribution` takes the close
+  session's `machine_id` only for `is_ignorable_attributed_root`, and runs
+  the linked-commit fallback when the owner's `task_edited_file_set` and
+  live pairs are both empty and linked commits exist.
 - `tasks/attributed_roots.py::is_ignorable_attributed_root` treats a git
   checkout as inspectable and a missing registered root as fail-closed.
 
