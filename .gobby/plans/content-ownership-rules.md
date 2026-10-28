@@ -1570,8 +1570,8 @@ import it in both rules.
 
 After every leaf has landed:
 
-1. Run the focused suites of 1.4 to 1.8 together against the test hub with
-   the isolation prefix.
+1. Run the focused suites of 1.4 to 1.8 together:
+   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_session_variable_manager.py tests/workflows/test_task_claim_state.py tests/workflows/test_commit_guard.py tests/agents/test_terminal_timeout_checkpoint.py tests/mcp_proxy/tools/tasks/test_close_attribution.py tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py tests/workflows/test_session_defaults.py tests/tasks/test_close_invariants.py tests/hooks/test_tool_handlers.py tests/hooks/test_pre_write_digests.py tests/hooks/test_normalization.py tests/hooks/test_normalization_canonical_mutation_scope.py tests/workflows/test_ownership_eval_context.py tests/workflows/test_task_enforcement_rules.py tests/workflows/test_hooks.py tests/workflows/engine/test_unavailable_tool_input_guards.py tests/mcp_proxy/tools/tasks/test_close_task_attributed_cleanliness.py tests/workflows/test_dirty_edit_grants.py tests/workflows/test_git_operation_paths.py -v`
 2. `rg -n "release_task_paths|inspect_task_path_ownership|release_task_edited_files|baseline_dirty_files|task_edited_file_times|task_edited_file_checkouts_history|task_edited_checkout_history_paths|other_task_edited_checkout_paths|task_checkout_paths_in_window|task_edited_file_set_with_history" src/ docs/guides docs/reference-audit`
    prints nothing.
 3. After the Orchestrator's daemon restart syncs the templates, the installed
@@ -1581,6 +1581,10 @@ After every leaf has landed:
 4. In a scratch checkout of this project, a session's `git restore --staged`
    on a pre-staged path records nothing, and a later `close_task` passes gate
    3 (#22642 shape, live).
-5. In a scratch checkout, session A records a dirty path for task T and
-   releases T; session B claims T, `close_task` fails gate 3 on that path, B
-   commits it past rule 2, and `close_task` then passes gate 3.
+5. Decision 2's deadlock case, live: in a scratch checkout, live session A
+   claims task T and writes `p`. A calls `escalate_task` on T, which clears
+   the claim (`storage/tasks/_transitions.py::escalate_task`) while A stays
+   live and keeps `p` dirty under T. The task's creator calls
+   `de_escalate_task` on T, and session B claims T. B's `close_task` fails
+   gate 3 on `p`, B commits `p` past rule 2, and `close_task` then passes
+   gate 3.
