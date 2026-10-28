@@ -847,6 +847,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/tasks/_authorization.py::OPERATOR_SUBTREE_SEQ_NUMS`
 - `src/gobby/mcp_proxy/tools/tasks/_authorization.py::consolidator_protection`
 - `tests/mcp_proxy/tools/tasks/test_close_authority.py::test_consolidator_cannot_mutate_protected_tasks`
+- `tests/workflows/test_imports.py::test_shipped_project_operating_policy_imports`
 - `src/gobby/install/shared/skills/gobby/references/tasks/closing.md`
 - `src/gobby/install/shared/skills/gobby/references/agents/procedures/orchestrator.md`
 - `src/gobby/install/shared/workflows/agents/consolidator.yaml::*` — scope-reason: replace the literal operator-subtree refs with the policy entry
@@ -879,13 +880,26 @@ Rewrite the three templates to say "the project's `protected_subtrees` policy
 entry" with no task numbers. Update
 `test_consolidator_cannot_mutate_protected_tasks` to seed the policy row rather
 than rely on fixed sequence numbers.
-Planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_close_authority.py`
+
+Those tests seed the row directly, so they never prove the shipped sync. Because
+a missing row or entry means an empty protected set, drift between the YAML and
+the installed row would silently drop the Consolidator's protection. Extend
+`tests/workflows/test_imports.py::test_shipped_project_operating_policy_imports`,
+which already runs
+`sync_imported_workflow_file` over the shipped
+`project-operating-policy.yaml`. Assert that the synced row's first
+`set_variable` effect for `project_policy` carries exactly
+`["#22978", "#22225"]` under `protected_subtrees`, and that the new Python
+reader returns those refs from that synced row. `policy.rs`'s test seeds its
+row with the same effect shape, so the two readers agree on one payload.
+Planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_close_authority.py tests/workflows/test_imports.py`
 and `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test policy`.
 
 **Acceptance:**
 - 2.2.1 - Python refuses the Consolidator under any subtree the policy row lists, and nowhere else. test: `tests/mcp_proxy/tools/tasks/test_close_authority.py::test_consolidator_cannot_mutate_protected_tasks`.
 - 2.2.2 - Native reads the same row, applies the same refusals, treats a missing entry as empty and fails a malformed entry closed. test: `crates/gtasks/tests/policy.rs::protected_subtrees_follow_policy_row`.
 - 2.2.3 - The policy rule carries the two refs and no bundled template names an operator task number. file: `.gobby/workflows/rules/project-operating-policy.yaml`.
+- 2.2.4 - Syncing the shipped policy file yields a row whose `project_policy` effect carries exactly the two refs, and the Python reader returns them from that synced row. test: `tests/workflows/test_imports.py::test_shipped_project_operating_policy_imports`.
 
 ## P3: Write path and lifecycle (#21561)
 `kind: framing`
@@ -1473,7 +1487,7 @@ activation state change.
 - 4.3.4 - The activation record names build and installed hashes, readiness evidence, the rollback setting, the announcement and the claim and cookie remainders. behavior: "Tasks activation evidence" in `docs/contracts/tasks-native.md`.
 - 4.3.5 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 4.4 Tasks browser admission through the shared verifier [category: code] (depends: 5.5, #24967, #24964)
+### 4.4 Tasks browser admission through the shared verifier [category: code] (depends: 5.4, #24967, #24964)
 `kind: deliverable`
 
 Targets:
@@ -1733,7 +1747,7 @@ safe-error item exercise one descriptor adapter.
 - 5.4.14 - Each of the eleven tools returns the safe internal message under its own redaction entry with no partial write. test: `crates/gtasks/tests/mcp_ops.rs::ops_internal_errors_are_safe`.
 - 5.4.15 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
 
-### 5.5 Native service contract for the CLI [category: code] (depends: 5.4)
+### 5.5 Native service contract for the CLI [category: code] (depends: 3.11)
 `kind: deliverable`
 
 Targets:
@@ -1763,7 +1777,7 @@ Planned: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks --test service_contract`.
 ## P6: Parity ledger
 `kind: framing`
 
-### 6.1 Publish Tasks parity ownership [category: docs] (depends: 4.4)
+### 6.1 Publish Tasks parity ownership [category: docs] (depends: 4.4, 5.5)
 `kind: deliverable`
 
 Targets:
@@ -1802,8 +1816,10 @@ row; 4.2 proves compare and replay, 4.3 activates sixteen routes for key
 callers, and 4.4 admits cookies. 5.1 to 5.4 own the 48 MCP rows and 5.5 the 33
 CLI rows' contract. The 19 expansion rows go to #21581 (Q2), which consumes 3.1,
 3.3 and 5.4. 6.1 records each status. Every deliverable that shares a target
-file is dependency-ordered. The chain is linear: 0.1 to 4.3, then 5.1 to 5.5,
-then 4.4 and 6.1, so descriptor work proceeds while #24967 lands.
+file is dependency-ordered. The chain runs 0.1 to 3.11, then splits. One
+branch runs 4.1 to 4.3, then 5.1 to 5.4, then 4.4, so descriptor work proceeds
+while #24967 lands. 5.5 shares no target with that branch, so it follows 3.11
+directly and runs in parallel. 6.1 joins 4.4 and 5.5.
 
 Cross-plan edges:
 - #21581: consumes the write service, the affected-file service and the
@@ -1822,6 +1838,14 @@ Draft validation command:
 `uv run gobby plans validate .gobby/plans/tasks-family.md -p /Users/josh/Projects/gobby`.
 Descriptor consumers run the whole
 `CARGO_BUILD_JOBS=3 cargo test -p gobby-core --test mcp_contract` target.
+Later leaves keep editing shared gtasks modules, family wiring, `Cargo.lock`
+and gdaemon dependencies, so each leaf's focused command is not enough on its
+own. Once 4.4 and 5.5 have both landed, one cumulative sweep runs against the
+final assembled bytes: `CARGO_BUILD_JOBS=3 cargo test -p gobby-tasks`; the
+gdaemon targets `CARGO_BUILD_JOBS=3 cargo test -p gobby-daemon --test tasks_bridge --test tasks_cutover --test tasks_browser`;
+and
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/e2e/test_tasks_family.py`.
+The sweep reruns existing tests only and adds no deliverable.
 Expansion validation is unrun for this narrative draft and becomes mandatory
 after the Adversary derives and applies M1. No implementation test, cutover or
 expansion has been performed during planning.
@@ -1835,3 +1859,10 @@ delegated here, the claim route handed to #21562, 48 MCP rows to #21570, 33 CLI
 rows to #21571, 19 expansion rows to #21581, 5 dropped), the debt dispositions
 and the waiver inventory. Enhancement and adversarial review are pending; no
 consensus is claimed.
+
+2026-10-28 — Applied Plan Enhancer gobby#18286's three edits, which the
+Orchestrator accepted through Triage. ENH-1: 5.5 depends on 3.11, 4.4 on 5.4,
+and 6.1 joins 4.4 and 5.5. ENH-2: 2.2 proves the shipped policy sync through
+`test_shipped_project_operating_policy_imports` (2.2.4). ENH-3: E1 adds one
+cumulative rerun after the last shared-file edit. Adversarial review is
+pending.
