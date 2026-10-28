@@ -978,6 +978,19 @@ the live OAuth 401 recovery proof (4.1.5), the manager lifecycle mapping
 Windows compile-only CI job (1.2.6) and the direct `Pool` surface for #24884
 (1.1.8, 1.1.9).
 
+2026-10-28 — Consensus between the Plan Writer (gobby#18268) and the Plan
+Adversary (gobby#18271) on the narrative reviewed at
+`e9ce2f79c7ce243db9c973c718a9cb81fe80c71b`. Six blocking findings were
+raised and resolved: PA-01 (node-held connections now follow every
+lifecycle change through `mcp.disconnect` and `mcp.status`, with an explicit
+offline-holder fallback), PA-02 (a typed `MCPCallCancelled` carries
+`CANCELLED` through `classify_error`), PA-03 (bounded owner-scoped
+tombstones cover every cancel ordering), PA-04 (one deadline with nested
+node budgets and cancel on outer loss), PA-05 (secret delivery separated
+from non-disclosure, upstream text treated as untrusted content) and PA-06
+(each leaf body carries the shared rules, shipping steps and isolated test
+commands it needs). No governing decision remains open.
+
 ## V2 Verification
 `kind: verification`
 
