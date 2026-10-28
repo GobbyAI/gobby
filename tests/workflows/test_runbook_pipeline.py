@@ -555,8 +555,8 @@ async def test_planning_child_past_the_first_fifty_children_is_reused(
     assert "#26100" in writer["prompt"]
 
 
-@pytest.mark.parametrize("started", [False, True], ids=["pending", "started"])
-async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, started: bool) -> None:
+@pytest.mark.parametrize("run_state", ["missing", "pending", "started"])
+async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, run_state: str) -> None:
     pipeline = await _team_planning(temp_db)
     before = InterruptingProxy("plan-adversary")
     with pytest.raises(asyncio.CancelledError):
@@ -566,14 +566,17 @@ async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, starte
     run_id = interrupted["reserved_run_id"]
     sessions = SessionManager(temp_db)
     runs = LocalAgentRunManager(temp_db)
-    run = runs.create(
-        parent_session_id=before.calls[-1]["session_id"],
-        provider="claude",
-        prompt="Interrupted placed seat",
-        run_id=run_id,
-    )
-    if started:
-        assert runs.start(run.id) is not None
+    if run_state != "missing":
+        run = runs.create(
+            parent_session_id=before.calls[-1]["session_id"],
+            provider="claude",
+            prompt="Interrupted placed seat",
+            run_id=run_id,
+        )
+        if run_state == "started":
+            assert runs.start(run.id) is not None
+    else:
+        assert runs.get(run_id) is None
 
     class ReconcileProxy(RunbookAgentsProxy):
         async def call_tool(
@@ -616,18 +619,27 @@ async def test_restart_reconciles_real_reserved_run(temp_db: HubDatabase, starte
     )
     assert resumed == [execution_id]
     await _background_tasks_by_execution[execution_id]
+    finished = manager.get_execution(execution_id)
+    assert finished is not None
+    if run_state == "missing":
+        assert replies == []
+        replayed = [spawn for spawn in after.spawns() if spawn["reserved_run_id"] == run_id]
+        assert len(replayed) == 1 and replayed[0]["agent"] == "plan-adversary"
+        assert finished.status == ExecutionStatus.COMPLETED
+        return
+
     [reply] = replies
     assert "reserved_run_id is not a step invocation" not in reply.get("error", "")
-    if started:
+    if run_state == "started":
         assert reply["success"] is True and reply["adopted"] is True
         assert reply["run_id"] == run_id
     else:
         assert reply["success"] is False
         assert run_id in reply["error"]
         assert "fresh" in reply["error"].lower() and "launch" in reply["error"].lower()
-    finished = manager.get_execution(execution_id)
-    assert finished is not None
-    assert finished.status == (ExecutionStatus.COMPLETED if started else ExecutionStatus.FAILED)
+    assert finished.status == (
+        ExecutionStatus.COMPLETED if run_state == "started" else ExecutionStatus.FAILED
+    )
     assert all(spawn["reserved_run_id"] != run_id for spawn in after.spawns())
 
 
