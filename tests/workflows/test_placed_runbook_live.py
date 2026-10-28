@@ -134,6 +134,8 @@ STEWARD_CADENCE_SECONDS = 600
 STEWARD_TOLERANCE_SECONDS = 60
 STEWARD_TIMEOUT_PATROLS = 2
 CLAUDE_ONLY_SCHEDULERS = ("CronList", "CronCreate", "CronDelete")
+# Codex state kept for diagnosis of a seat that dies at startup. The auth file is never listed.
+CODEX_STATE_FILES = ("logs_2.sqlite", "logs_2.sqlite-wal", "logs_2.sqlite-shm", "history.jsonl")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1307,6 +1309,16 @@ def steward_live(
         cleanup: dict[str, Any] = {}
         state.evidence["cleanup"] = cleanup
         try:
+            # Captured before teardown closes the steward terminal and removes its run state.
+            state.evidence["steward_screen"] = _preserve_steward_screen(
+                state, evidence_dir, request.node.name
+            )
+            state.evidence["srt_network"] = _preserve_srt_network(
+                home, evidence_dir, request.node.name
+            )
+            state.evidence["codex_state"] = _preserve_codex_state(
+                home, evidence_dir, request.node.name
+            )
             # Copied before teardown, so a failed run keeps its transcript as well.
             state.evidence["codex_rollout"] = _preserve_rollout(
                 home, evidence_dir, request.node.name
@@ -1452,6 +1464,62 @@ def _preserve_logs(home: Path, evidence_dir: Path, test_name: str) -> str | None
     return _preserve_tree(home / "logs", evidence_dir / f"{test_name}.logs")
 
 
+def _preserve_steward_screen(live: Live, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Save the steward terminal's last screen and run record before teardown closes them.
+
+    A daemon refusal is recorded instead of raised, so the copies after it still run.
+    """
+    run = live.evidence.get("recovery_steward", {}).get("run")
+    if run is None:
+        return {"missing": "the steward run was never registered"}
+    record: dict[str, Any] = {}
+    for tool in ("get_agent_live_output", "get_agent_result"):
+        try:
+            record[tool] = _tool(live, "gobby-agents", tool, run_id=str(run))
+        except httpx.HTTPError as exc:
+            record[tool] = {"error": str(exc)}
+    copy = evidence_dir / f"{test_name}.steward-screen.json"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    copy.write_text(json.dumps(record, indent=2, default=str), encoding="utf-8")
+    return {"copy": str(copy), "run": str(run)}
+
+
+def _preserve_srt_network(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:
+    """Record the SRT network allowlist of each run's settings file, and copy that file.
+
+    Settings live in the managed-execution tree under the isolated home, so the search stays there.
+    """
+    root = home / "runtime" / "managed-executions"
+    sources = sorted(path for path in root.rglob("settings.json") if path.parent.name == "assets")
+    if not sources:
+        return {"missing": True, "searched": str(root)}
+    settings: list[dict[str, Any]] = []
+    for index, source in enumerate(sources):
+        copy = evidence_dir / f"{test_name}.srt-settings-{index}.json"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, copy)
+        document = json.loads(source.read_text(encoding="utf-8"))
+        network = document.get("sandbox", {}).get("network")
+        settings.append({"copy": str(copy), "network": network})
+    return {"settings": settings}
+
+
+def _preserve_codex_state(home: Path, evidence_dir: Path, test_name: str) -> dict[str, str | None]:
+    """Copy the Codex state files the steward left; the auth file is not among them."""
+    root = home / "providers" / "codex"
+    copies: dict[str, str | None] = {}
+    for name in CODEX_STATE_FILES:
+        source = root / name
+        if not source.is_file():
+            copies[name] = None
+            continue
+        copy = evidence_dir / f"{test_name}.{name}"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, copy)
+        copies[name] = str(copy)
+    return copies
+
+
 def _snapshot_codex_config(
     home: Path, evidence_dir: Path, test_name: str, label: str
 ) -> dict[str, Any]:
@@ -1514,9 +1582,13 @@ def test_codex_recovery_steward_patrols_every_ten_minutes(steward_live: Live) ->
         recovery_steward_reasoning_effort=STEWARD_EFFORT,
     )
     execution = _completed(live, launch)["id"]
+    # Recorded before the wait, so a run that dies during startup still has its terminal captured.
+    live.evidence["recovery_steward"] = {
+        "execution": execution,
+        "run": step_invocation_id(execution, STEWARD_SEAT),
+    }
     run = _steward_run(live, execution)
     assert run["agent_name"] == STEWARD_SEAT, run
-    live.evidence["recovery_steward"] = {"execution": execution, "run": str(run["id"])}
     run_id = str(run["id"])
 
     explain = partial(_patrol_state, live, owner)
