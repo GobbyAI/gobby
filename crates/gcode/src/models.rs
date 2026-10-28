@@ -682,6 +682,7 @@ pub enum SearchWarningLane {
 #[serde(rename_all = "snake_case")]
 pub enum SearchWarningCause {
     DaemonUnreachable,
+    ProjectionPending,
 }
 
 /// Structured hybrid-search degradation notice.

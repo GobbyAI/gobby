@@ -863,6 +863,8 @@ mod pin_recovery {
             timeout_seconds: 5,
         });
         ctx.code_vectors = CodeVectorSettings::with_vector_dim(Some(3));
+        let direct =
+            code_symbols::EmbeddingSource::Direct(ctx.embedding.clone().expect("embedding config"));
         let stop = Arc::new(AtomicBool::new(false));
         let namespace = Arc::new(AtomicUsize::new(0));
         let server = {
@@ -911,7 +913,7 @@ mod pin_recovery {
             )
             .expect("set recovery state");
             namespace.store(backend, Ordering::SeqCst);
-            let hits = code_symbols::semantic_search(&ctx, "run", 10);
+            let hits = code_symbols::semantic_search_with_source(&ctx, &direct, "run", 10);
             observed.push(((hash, projected, backend), hits, expected));
         }
         // Simulate rows left by a late child upsert after each invalidating event.
@@ -944,7 +946,7 @@ mod pin_recovery {
             }
             observed.push((
                 (change, false, 1),
-                code_symbols::semantic_search(&ctx, "run", 10),
+                code_symbols::semantic_search_with_source(&ctx, &direct, "run", 10),
                 false,
             ));
         }

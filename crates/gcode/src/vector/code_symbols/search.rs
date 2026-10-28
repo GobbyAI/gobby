@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context, ProjectIndexScope};
+use crate::models::Symbol;
 use crate::{db, visibility};
 
 use super::embedding::{
-    audited_query_embedding, embed_query_with_source, embedding_source_from_context,
+    EmbeddingSource, audited_query_embedding, embed_query_with_source,
+    embedding_source_from_context,
 };
 use super::qdrant::{collection_name, vector_search, vector_search_strict};
 #[cfg(test)]
@@ -74,7 +76,7 @@ pub(crate) fn audited_semantic_search(
     // Filtering cannot establish that the backend exhausted its ranked candidates.
     let backend_truncated = hits.len() >= fetch_limit;
     Ok((
-        post_filter_ranked_hits(ctx, hits, limit)?,
+        post_filter_ranked_hits(ctx, &ctx.project_id, hits, limit)?,
         backend_truncated,
     ))
 }
@@ -106,10 +108,12 @@ pub fn search_code_symbols(
     let fetch_limit = post_filter_fetch_limit(request.limit);
     match vector_search(qdrant_config, &collection, &embedding, fetch_limit) {
         Ok(hits) if hits.is_empty() => Ok(Vec::new()),
-        Ok(hits) => Ok(post_filter_ranked_hits(ctx, hits, request.limit)?
-            .into_iter()
-            .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })
-            .collect()),
+        Ok(hits) => Ok(
+            post_filter_ranked_hits(ctx, &request.project_id, hits, request.limit)?
+                .into_iter()
+                .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })
+                .collect(),
+        ),
         Err(error) => Err(SearchError::VectorSearch(error.to_string())),
     }
 }
@@ -125,13 +129,13 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         );
         return Vec::new();
     }
-    let Some(qdrant_config) = &ctx.qdrant else {
+    if ctx.qdrant.is_none() {
         log::warn!(
             "semantic vector search skipped: {}",
             SearchError::MissingQdrantConfig
         );
         return Vec::new();
-    };
+    }
     let Some(embedding_source) = embedding_source_from_context(ctx) else {
         log::warn!(
             "semantic vector search skipped: {}",
@@ -139,7 +143,26 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         );
         return Vec::new();
     };
-    let Some(embedding) = embed_query_with_source(&embedding_source, query) else {
+    semantic_search_with_source(ctx, &embedding_source, query, limit)
+}
+
+/// Semantic search over the projects visible to `ctx`, embedding the query through
+/// `embedding_source`. `semantic_search` resolves that source from the runtime route;
+/// callers that already hold an explicit source use this entry point.
+pub(crate) fn semantic_search_with_source(
+    ctx: &Context,
+    embedding_source: &EmbeddingSource,
+    query: &str,
+    limit: usize,
+) -> Vec<(String, f64)> {
+    let Some(qdrant_config) = &ctx.qdrant else {
+        log::warn!(
+            "semantic vector search skipped: {}",
+            SearchError::MissingQdrantConfig
+        );
+        return Vec::new();
+    };
+    let Some(embedding) = embed_query_with_source(embedding_source, query) else {
         log::warn!(
             "semantic vector search skipped: {}",
             SearchError::QueryEmbeddingFailed
@@ -149,11 +172,12 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
 
     let fetch_limit = post_filter_fetch_limit(limit);
     let project_ids = visible_vector_project_ids(ctx);
-    let (hits, failures) = search_visible_projects(&project_ids, fetch_limit, |project_id| {
+    let (hits, failures) = search_visible_projects(&project_ids, limit, |project_id| {
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)
             .map_err(SearchError::InvalidCollectionName)?;
-        vector_search(qdrant_config, &collection, &embedding, fetch_limit)
-            .map_err(|error| SearchError::VectorSearch(error.to_string()))
+        let served = vector_search(qdrant_config, &collection, &embedding, fetch_limit)
+            .map_err(|error| SearchError::VectorSearch(error.to_string()))?;
+        post_filter_ranked_hits(ctx, project_id, served, fetch_limit)
     });
 
     for (project_id, error) in failures {
@@ -164,21 +188,17 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         }
     }
 
-    match post_filter_ranked_hits(ctx, hits, limit) {
-        Ok(hits) => hits,
-        Err(error) => {
-            log::warn!("semantic vector search skipped: {error}");
-            Vec::new()
-        }
-    }
+    hits
 }
 
 fn post_filter_fetch_limit(limit: usize) -> usize {
     limit.saturating_mul(POST_FILTER_OVERFETCH_FACTOR)
 }
 
+/// Keeps the hits that `served_by` returned and the origin rule admits.
 fn post_filter_ranked_hits(
     ctx: &Context,
+    served_by: &str,
     hits: Vec<RankedHit>,
     limit: usize,
 ) -> Result<Vec<RankedHit>, SearchError> {
@@ -188,13 +208,126 @@ fn post_filter_ranked_hits(
         .collect::<Vec<_>>();
     let mut conn = db::connect_readonly(&ctx.database_url)
         .map_err(|error| SearchError::Visibility(error.to_string()))?;
-    let visible_ids = visibility::visible_symbols_by_ids(&mut conn, ctx, &ids)
-        .map_err(|error| SearchError::Visibility(error.to_string()))?
+    let visible = visibility::visible_symbols_by_ids(&mut conn, ctx, &ids)
+        .map_err(|error| SearchError::Visibility(error.to_string()))?;
+    let pins = pinned_versions(&mut conn, ctx, &visible)
+        .map_err(|error| SearchError::Visibility(error.to_string()))?;
+    let overlay = visibility::scope_project_id(ctx);
+    let admitted = visible
         .into_iter()
+        .filter(|symbol| {
+            let pin = pins.get(&(symbol.project_id.clone(), symbol.file_path.clone()));
+            origin_admits(overlay, served_by, symbol, pin)
+        })
         .map(|symbol| symbol.id)
         .collect::<HashSet<_>>();
 
-    Ok(retain_ranked_hits(hits, &visible_ids, limit))
+    Ok(retain_ranked_hits(hits, &admitted, limit))
+}
+
+/// Whether a pinned path of this overlay awaits recovery: its vector projection has not
+/// landed, the source selector moved off the pinned version, and no overlay row shadows
+/// the path.
+pub(crate) fn has_pending_pinned_projection(ctx: &Context) -> anyhow::Result<bool> {
+    let overlay = visibility::scope_project_id(ctx);
+    let Some(machine) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
+        return Ok(false);
+    };
+    let project = db::id_param(overlay)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let row = conn.query_one(
+        "SELECT EXISTS (
+             SELECT 1 FROM code_overlay_pins p
+             LEFT JOIN code_indexed_file_states src
+               ON src.machine_id = p.machine_id
+              AND src.project_id = p.source_project_id
+              AND src.file_path = p.file_path
+             WHERE p.machine_id = $1 AND p.overlay_project_id = $2
+               AND p.vector_projected IS FALSE
+               AND src.content_hash IS DISTINCT FROM p.content_hash
+               AND NOT EXISTS (
+                   SELECT 1 FROM code_indexed_file_states own
+                   WHERE own.machine_id = p.machine_id
+                     AND own.project_id = p.overlay_project_id
+                     AND own.file_path = p.file_path
+               )
+         )",
+        &[&machine, &project],
+    )?;
+    Ok(row.try_get(0)?)
+}
+
+/// Recovery state of one pin and the source selector it is checked against.
+struct PinnedVersion {
+    content_hash: String,
+    vector_projected: bool,
+    source_hash: Option<String>,
+}
+
+fn pinned_versions(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    symbols: &[Symbol],
+) -> anyhow::Result<HashMap<(String, String), PinnedVersion>> {
+    let overlay = visibility::scope_project_id(ctx);
+    let paths = symbols
+        .iter()
+        .filter(|symbol| symbol.project_id != overlay)
+        .map(|symbol| symbol.file_path.clone())
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let Some(machine) = visibility::machine_uuid_or_invisible(&ctx.machine_id) else {
+        return Ok(HashMap::new());
+    };
+    let project = db::id_param(overlay)?;
+    let rows = conn.query(
+        "SELECT p.source_project_id, p.file_path, p.content_hash, p.vector_projected,
+                src.content_hash AS source_hash
+         FROM code_overlay_pins p
+         LEFT JOIN code_indexed_file_states src
+           ON src.machine_id = p.machine_id
+          AND src.project_id = p.source_project_id
+          AND src.file_path = p.file_path
+         WHERE p.machine_id = $1 AND p.overlay_project_id = $2 AND p.file_path = ANY($3)",
+        &[&machine, &project, &paths],
+    )?;
+    rows.iter()
+        .map(|row| {
+            let key = (
+                db::id_string(row, "source_project_id")?,
+                row.try_get::<_, String>("file_path")?,
+            );
+            let pin = PinnedVersion {
+                content_hash: row.try_get("content_hash")?,
+                vector_projected: row.try_get("vector_projected")?,
+                source_hash: row.try_get("source_hash")?,
+            };
+            Ok((key, pin))
+        })
+        .collect()
+}
+
+/// A pinned source row is served by the overlay collection only once its pin projects
+/// that exact version, and by the source collection only while the source selector
+/// still names it. A row without a pin is served by the source collection alone.
+fn origin_admits(
+    overlay: &str,
+    served_by: &str,
+    symbol: &Symbol,
+    pin: Option<&PinnedVersion>,
+) -> bool {
+    if symbol.project_id == overlay {
+        return true;
+    }
+    let served_by_overlay = served_by == overlay;
+    match pin {
+        None => !served_by_overlay,
+        Some(pin) if pin.content_hash != symbol.file_content_hash => false,
+        Some(pin) if served_by_overlay => pin.vector_projected,
+        Some(pin) => pin.source_hash.as_deref() == Some(symbol.file_content_hash.as_str()),
+    }
 }
 
 fn retain_ranked_hits(
