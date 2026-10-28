@@ -121,6 +121,11 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     projects_retry: live::FetchRetry,
     last_roster_refresh_completed_at: Option<Instant>,
     pending_sidebar: PendingSidebar,
+    pending_refetch: sidebar_model::PendingRefetch,
+    /// When the last live event was applied; a lag WARN reports the gap.
+    last_event_at: Instant,
+    /// A roster landed rows the loop has not attached or focused yet.
+    roster_landed: bool,
     sidebar_stamps: SidebarStamps,
     pending_attention: Option<attention::PendingAttention>,
     gobby_home: Option<PathBuf>,
@@ -231,6 +236,9 @@ impl Workspace {
             projects_retry: live::FetchRetry::default(),
             last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
+            pending_refetch: sidebar_model::PendingRefetch::default(),
+            last_event_at: Instant::now(),
+            roster_landed: false,
             sidebar_stamps: SidebarStamps::default(),
             pending_attention: None,
             gobby_home: None,
