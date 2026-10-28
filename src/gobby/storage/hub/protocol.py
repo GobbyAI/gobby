@@ -16,8 +16,10 @@ __all__ = [
     "ChatAttachmentMutation",
     "CronRunAdmission",
     "DispatchMutexRow",
+    "EmbeddingSwitchJournalMutation",
     "ExpansionApplyMutation",
     "HubDatabase",
+    "IdentityBootstrapMutation",
     "IntegrationWorkspaceMutex",
     "IsolationRegistryReconciliation",
     "LockAcquisitionOrderError",
@@ -300,6 +302,20 @@ class ChatAttachmentMutation:
     """Serializes chat-attachment binding and deletion mutations."""
 
     PRIORITY: ClassVar[int] = 900
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingSwitchJournalMutation:
+    """Serialize embedding admission with every configuration mutation."""
+
+    PRIORITY: ClassVar[int] = 800
+
+
+@dataclass(frozen=True)
+class IdentityBootstrapMutation:
+    """Serialize the one-time initial identity bootstrap."""
+
+    PRIORITY: ClassVar[int] = 100
 
 
 class Cursor(Protocol):

@@ -58,6 +58,8 @@ KEY_CASES: tuple[tuple[protocol.LockTarget, tuple[str, ...]], ...] = (
     (protocol.WorkflowDefinitionMutation("resource"), ("workflow_definition:resource",)),
     (protocol.AgentStepInstanceMutation("resource"), ("agent_step_instance:resource",)),
     (protocol.ChatAttachmentMutation(), ("chat_attachment_mutation",)),
+    (protocol.EmbeddingSwitchJournalMutation(), ("embedding_switch_journal_mutation",)),
+    (protocol.IdentityBootstrapMutation(), ("identity_bootstrap_mutation",)),
     (protocol.SessionVariableMutation("resource"), ("session_variable:resource",)),
     (
         protocol.SessionVariableTransfer(("second", "resource", "second")),
