@@ -21,7 +21,7 @@ from click.testing import CliRunner, Result
 
 from gobby.cli.release import release
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
-from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry, normalize_internal_success_result
 from gobby.mcp_proxy.tools.release_tools import register_release_tools
 from gobby.releases.window import ReleaseWindow, acquire_window
 from gobby.storage.agents import LocalAgentRunManager
@@ -72,7 +72,12 @@ def _daemon_seam(case: LandingCase) -> DaemonSeam:
     ) -> tuple[int, object]:
         assert server == "gobby-agents", f"the seat reached {server}.{tool} directly"
         with session_context_for_test(session_id):
-            return 200, await registry.call(tool, arguments)
+            payload = normalize_internal_success_result(await registry.call(tool, arguments))
+        # The daemon route strips the success marker from a tool result and wraps it under
+        # "result"; a refusal keeps success=False and error_code at the top level.
+        if isinstance(payload, dict) and payload.get("success") is False:
+            return 200, payload
+        return 200, {"success": True, "result": payload}
 
     return call
 
@@ -182,11 +187,12 @@ async def test_batch_storage_tools_admit_only_the_release_manager(
     assert isinstance(refused, dict)
     assert refused["error_code"] == "release_window_forbidden", refused
 
-    _status, admitted = await seam(owner, "gobby-agents", tool, arguments)
-    assert isinstance(admitted, dict)
-    assert admitted["success"] is True, admitted
+    _status, reply = await seam(owner, "gobby-agents", tool, arguments)
+    assert isinstance(reply, dict)
+    assert reply["success"] is True, reply
+    admitted = reply["result"]
     # Only what the batch needs crosses the seam: no credentials, no raw rows.
-    assert set(admitted) == {"success", *PAYLOAD_KEYS[tool]}
+    assert set(admitted) == PAYLOAD_KEYS[tool]
     wire = json.dumps(admitted)
     assert "database_url" not in wire.lower()
     assert "postgresql://" not in wire

@@ -36,6 +36,11 @@ def _lease(
     return DaemonReleaseLease(call, owner_session_id=SEAT, token=TOKEN, generation=3)
 
 
+def _answered(result: dict[str, object]) -> tuple[int, object]:
+    """A successful release call as the daemon route answers it: the tool's payload under result."""
+    return 200, {"success": True, "result": result}
+
+
 async def test_a_refused_call_raises_the_daemon_code() -> None:
     refusal = {"success": False, "error": "stale", "error_code": "release_window_stale"}
     lease = _lease([(200, refusal)], [])
@@ -62,8 +67,8 @@ async def test_an_unanswered_call_is_an_outage_not_a_lost_lease(
 async def test_every_call_carries_the_owner_session_and_the_current_lease() -> None:
     calls: list[tuple[str, str, str, dict[str, object]]] = []
     candidate = "c" * 40
-    answer = {"success": True, "root": "/repo", "candidate_sha": candidate}
-    lease = _lease([(200, answer)], calls)
+    answer: dict[str, object] = {"root": "/repo", "candidate_sha": candidate}
+    lease = _lease([_answered(answer)], calls)
 
     assert await lease.checkout() == Checkout(Path("/repo"), candidate)
 
@@ -73,7 +78,7 @@ async def test_every_call_carries_the_owner_session_and_the_current_lease() -> N
 
 
 async def test_a_malformed_run_list_is_an_outage_not_an_empty_capture() -> None:
-    lease = _lease([(200, {"success": True, "run_ids": "run-1"})], [])
+    lease = _lease([_answered({"run_ids": "run-1"})], [])
 
     with pytest.raises(ReleaseStoreUnavailable):
         await lease.active_runs()
@@ -81,8 +86,8 @@ async def test_a_malformed_run_list_is_an_outage_not_an_empty_capture() -> None:
 
 async def test_renew_adopts_the_generation_the_daemon_returns() -> None:
     calls: list[tuple[str, str, str, dict[str, object]]] = []
-    window: dict[str, Any] = {"success": True, "window": {"generation": 4}}
-    lease = _lease([(200, window)], calls)
+    window: dict[str, Any] = {"window": {"generation": 4}}
+    lease = _lease([_answered(window)], calls)
 
     await lease.renew()
 
@@ -94,8 +99,8 @@ async def test_renew_adopts_the_generation_the_daemon_returns() -> None:
 
 async def test_regression_filing_reuses_the_open_task_for_the_candidate() -> None:
     calls: list[tuple[str, str, str, dict[str, object]]] = []
-    listing = {"success": True, "tasks": [{"id": "task-9"}], "count": 1}
-    lease = _lease([(200, listing)], calls)
+    listing = {"tasks": [{"id": "task-9"}], "count": 1}
+    lease = _lease([_answered(listing)], calls)
 
     task = await lease.file_regression("c" * 40, "b" * 40, "checks", "lint failed")
 
@@ -108,8 +113,8 @@ async def test_regression_filing_creates_one_bug_for_the_candidate() -> None:
     calls: list[tuple[str, str, str, dict[str, object]]] = []
     lease = _lease(
         [
-            (200, {"success": True, "tasks": [], "count": 0}),
-            (200, {"success": True, "id": "task-10", "seq_num": 10}),
+            _answered({"tasks": [], "count": 0}),
+            _answered({"id": "task-10", "seq_num": 10}),
         ],
         calls,
     )

@@ -211,7 +211,11 @@ class DaemonReleaseLease:
     async def _answer(self, server: str, tool: str, arguments: dict[str, object]) -> dict[str, Any]:
         status, body = await self.call(self.owner_session_id, server, tool, arguments)
         if status == 200 and isinstance(body, dict) and body.get("success") is True:
-            return body
+            # The daemon wraps a successful tool result under "result"; a refusal stays flat.
+            result = body.get("result")
+            if isinstance(result, dict):
+                return result
+            raise ReleaseStoreUnavailable(f"{server}.{tool} answered without a result")
         if server == _AGENTS and status == 200 and isinstance(body, dict):
             code = body.get("error_code")
             if isinstance(code, str):
