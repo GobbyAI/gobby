@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,10 +14,10 @@ import pytest
 from psycopg_pool import PoolTimeout
 
 from gobby.llm.model_registry import (
+    ModelInfo,
     ModelReasoningInfo,
     _parse_models_payload,
     fetch_models_async,
-    fetch_models_sync,
     lookup_context_window,
     normalize_model_id,
 )
@@ -239,23 +239,26 @@ def test_parses_distinct_reasoning_metadata_states() -> None:
     )
 
 
-# -- fetch_models_sync -------------------------------------------------------
+# -- fetch_models_async over a mocked OpenRouter response ---------------------
 
 
-class TestFetchModelsSync:
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_fetches_all_vendors(
-        self,
-        mock_get: MagicMock,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        mock_response = MagicMock()
-        mock_response.json.return_value = SAMPLE_OPENROUTER_RESPONSE
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+def _json_handler(payload: object) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload, request=request)
 
+    return handler
+
+
+async def _fetch(handler: Callable[[httpx.Request], httpx.Response]) -> list[ModelInfo]:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        return await fetch_models_async(client=client)
+
+
+class TestFetchModelsAsync:
+    @pytest.mark.asyncio
+    async def test_fetches_all_vendors(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level(logging.DEBUG, logger="gobby.llm.model_registry"):
-            models = fetch_models_sync()
+            models = await _fetch(_json_handler(SAMPLE_OPENROUTER_RESPONSE))
 
         # 9 valid models — no vendor filter, unknown vendors enter the catalog
         assert len(models) == 9
@@ -269,14 +272,9 @@ class TestFetchModelsSync:
         )
         assert fetch_record.levelno == logging.DEBUG
 
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_parses_model_fields(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.json.return_value = SAMPLE_OPENROUTER_RESPONSE
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
-
-        models = fetch_models_sync()
+    @pytest.mark.asyncio
+    async def test_parses_model_fields(self) -> None:
+        models = await _fetch(_json_handler(SAMPLE_OPENROUTER_RESPONSE))
         claude = next(m for m in models if m.id == "anthropic/claude-sonnet-4-6")
 
         assert claude.id == "anthropic/claude-sonnet-4-6"
@@ -284,6 +282,7 @@ class TestFetchModelsSync:
         assert claude.context_length == 200000
         assert claude.max_completion_tokens == 64000
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "context_length",
         [
@@ -295,14 +294,8 @@ class TestFetchModelsSync:
             pytest.param(128000.0, id="float"),
         ],
     )
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_skips_non_positive_integer_context_lengths(
-        self,
-        mock_get: MagicMock,
-        context_length: object,
-    ) -> None:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+    async def test_skips_non_positive_integer_context_lengths(self, context_length: object) -> None:
+        payload = {
             "data": [
                 {
                     "id": "openai/gpt-invalid-window",
@@ -311,58 +304,39 @@ class TestFetchModelsSync:
                 }
             ]
         }
-        mock_get.return_value = mock_response
 
-        assert fetch_models_sync() == []
+        assert await _fetch(_json_handler(payload)) == []
 
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_skips_missing_context_length(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "data": [{"id": "openai/gpt-missing-window", "name": "Missing Window"}]
-        }
-        mock_get.return_value = mock_response
+    @pytest.mark.asyncio
+    async def test_skips_missing_context_length(self) -> None:
+        payload = {"data": [{"id": "openai/gpt-missing-window", "name": "Missing Window"}]}
 
-        assert fetch_models_sync() == []
+        assert await _fetch(_json_handler(payload)) == []
 
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_network_failure_returns_empty(self, mock_get: MagicMock) -> None:
-        import httpx as _httpx
+    @pytest.mark.asyncio
+    async def test_network_failure_returns_empty(self) -> None:
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("connection refused", request=request)
 
-        mock_get.side_effect = _httpx.ConnectError("connection refused")
-        models = fetch_models_sync()
-        assert models == []
+        assert await _fetch(refuse) == []
 
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_http_error_returns_empty(self, mock_get: MagicMock) -> None:
-        import httpx as _httpx
+    @pytest.mark.asyncio
+    async def test_http_error_returns_empty(self) -> None:
+        def server_error(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, json=SAMPLE_OPENROUTER_RESPONSE, request=request)
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = _httpx.HTTPStatusError(
-            "500", request=MagicMock(), response=MagicMock()
-        )
-        mock_get.return_value = mock_response
-        models = fetch_models_sync()
-        assert models == []
-        assert mock_response.json.call_count == 0
+        assert await _fetch(server_error) == []
 
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_malformed_json_returns_empty(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.side_effect = ValueError("bad json")
-        mock_get.return_value = mock_response
-        models = fetch_models_sync()
-        assert models == []
+    @pytest.mark.asyncio
+    async def test_malformed_json_returns_empty(self) -> None:
+        def not_json(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"{not json", request=request)
 
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_empty_data_returns_empty(self, mock_get: MagicMock) -> None:
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.json.return_value = {"data": []}
-        mock_get.return_value = mock_response
-        models = fetch_models_sync()
-        assert models == []
+        assert await _fetch(not_json) == []
+
+    @pytest.mark.asyncio
+    async def test_empty_data_returns_empty(self) -> None:
+        assert await _fetch(_json_handler({"data": []})) == []
 
 
 @pytest.mark.asyncio
@@ -445,14 +419,12 @@ class TestNormalizeModelId:
 
 
 class TestDuplicateModelKeys:
-    @patch("gobby.llm.model_registry.httpx.get")
-    def test_duplicate_normalized_keys_keep_larger_context_window(
+    @pytest.mark.asyncio
+    async def test_duplicate_normalized_keys_keep_larger_context_window(
         self,
-        mock_get: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
+        payload = {
             "data": [
                 {
                     "id": "openai/gpt-5.4",
@@ -466,11 +438,9 @@ class TestDuplicateModelKeys:
                 },
             ]
         }
-        mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
 
         with caplog.at_level(logging.DEBUG, logger="gobby.llm.model_registry"):
-            models = fetch_models_sync()
+            models = await _fetch(_json_handler(payload))
 
         assert len(models) == 1
         assert models[0].context_length == 400_000

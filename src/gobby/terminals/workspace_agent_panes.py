@@ -103,6 +103,7 @@ class AgentPlacement:
     columns: int = 80
     rows: int | None = None
     tab_title: str | None = None
+    seat_title: str | None = None
 
     @classmethod
     def parse(cls, raw: object) -> AgentPlacement:
@@ -163,10 +164,16 @@ class AgentPlacement:
         )
 
     def for_seat(self, seat_title: str | None) -> AgentPlacement:
-        """Name a defined seat's split pane by its definition; a tab keeps its runbook title."""
-        if self.kind == "split" and seat_title is not None:
+        """Name a defined seat's pane by its definition; a tab keeps its runbook title.
+
+        A split's pane takes the seat title as ``title``. A new tab keeps ``title`` as the
+        tab title and records the seat title for the initial pane the tab opens.
+        """
+        if seat_title is None:
+            return self
+        if self.kind == "split":
             return replace(self, title=seat_title)
-        return self
+        return replace(self, seat_title=seat_title)
 
 
 @dataclass(frozen=True)
@@ -361,7 +368,9 @@ class AgentPaneReserver:
                 worktree_id=worktree_id,
                 title=placement.title,
             )
-            return change.tabs[0], change.panes[0]
+            if placement.seat_title is None:
+                return change.tabs[0], change.panes[0]
+            return change.tabs[0], self._workspaces.rename_pane(pane_id, placement.seat_title)
         if resolved.beside_pane_id is None or placement.axis is None:
             raise _invalid("a split placement needs its preflighted pane and axis")
         change = self._workspaces.add_pane(

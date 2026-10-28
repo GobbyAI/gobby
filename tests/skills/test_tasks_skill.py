@@ -86,7 +86,7 @@ def test_core_is_compact_and_keeps_creation_and_exact_close_sequence() -> None:
         assert topic in overview
 
 
-def test_close_guidance_names_only_the_four_invariants() -> None:
+def test_close_guidance_names_only_the_five_close_gates() -> None:
     content = SKILL_PATH.read_text()
     gate_rows = [line for line in content.splitlines() if line.startswith("| `")]
     assert [line.split("`")[1] for line in gate_rows] == [
@@ -94,8 +94,9 @@ def test_close_guidance_names_only_the_four_invariants() -> None:
         "linked_commits",
         "uncommitted_task_edits",
         "integration_ancestry",
+        "step_records",
     ]
-    assert "Both leaves and epics" in content
+    assert "Leaves and epics use these gates" in content
     for retired in (
         "close_review_required",
         "reviewer_run_id",

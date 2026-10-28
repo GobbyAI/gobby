@@ -142,9 +142,7 @@ async def model_metadata_refresh_loop(
     interval_seconds: float = MODEL_METADATA_REFRESH_INTERVAL_SECONDS,
     coverage_auditor: CoverageAuditor | None = None,
 ) -> None:
-    """Refresh metadata every 24 hours until daemon shutdown."""
+    """Refresh metadata now, then every 24 hours, until daemon shutdown."""
     while not shutdown_requested():
-        await asyncio.sleep(interval_seconds)
-        if shutdown_requested():
-            return
         await refresh_model_metadata_once(database, coverage_auditor=coverage_auditor)
+        await asyncio.sleep(interval_seconds)

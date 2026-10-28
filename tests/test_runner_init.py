@@ -222,7 +222,7 @@ class TestGobbyRunnerInit:
             for runner_patch in create_base_patches(mock_config=mock_config_with_websocket):
                 stack.enter_context(runner_patch)
             fetch = stack.enter_context(
-                patch("gobby.llm.model_registry.fetch_models_sync", return_value=[registry_model])
+                patch("gobby.llm.model_registry.fetch_models_async", return_value=[registry_model])
             )
             runner = GobbyRunner(config_path=config_file, verbose=False)
 

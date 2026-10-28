@@ -69,7 +69,6 @@ class Fakes:
             run_check=self._run_check,
             activation_kind=lambda: self.kind,
             activate=self._activate,
-            capture=lambda: frozenset({"run-before"}),
             smoke=self._smoke,
             announce=self._announce,
             clock=self.clock,
@@ -106,8 +105,7 @@ class Fakes:
         if self.fail in ("build", "restart"):
             raise ActivationFailed(f"{self.fail} failed")
 
-    def _smoke(self, captured: frozenset[str]) -> list[SmokeResult]:
-        assert captured == frozenset({"run-before"})
+    def _smoke(self) -> list[SmokeResult]:
         self.baselines_at_smoke.append(latest_baseline(self.case.repo / ".git"))
         if self.fail == "late_lease":
             self._steal()

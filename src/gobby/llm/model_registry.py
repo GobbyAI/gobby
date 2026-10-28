@@ -3,13 +3,14 @@
 Fetches model data from OpenRouter's public API
 (GET https://openrouter.ai/api/v1/models — no auth required).
 
-Data is fetched synchronously at daemon startup (before the event loop)
-and persisted to the model_metadata DB table. The DB serves as a cache —
-if OpenRouter is unreachable, the daemon uses whatever was last fetched.
+Data is fetched in the background by the model metadata refresh loop, starting
+at daemon startup, and persisted to the model_metadata DB table. The DB serves as
+a cache — if OpenRouter is unreachable, the daemon uses whatever was last fetched.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -164,31 +165,24 @@ def _parse_models_payload(data: object) -> list[ModelInfo]:
     return list(models.values())
 
 
-def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
-    """Fetch models from OpenRouter's public API (sync, no auth)."""
-    try:
-        response = httpx.get(OPENROUTER_MODELS_URL, timeout=timeout)
-        response.raise_for_status()
-        return _parse_models_payload(response.json())
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning("Failed to fetch models from OpenRouter: %s", e)
-        return []
-
-
 async def fetch_models_async(
     timeout: float = _FETCH_TIMEOUT,
     *,
     client: httpx.AsyncClient | None = None,
 ) -> list[ModelInfo]:
-    """Fetch models asynchronously without occupying a worker thread."""
+    """Fetch models asynchronously; ``timeout`` bounds the whole fetch, not each read."""
     try:
-        if client is not None:
-            response = await client.get(OPENROUTER_MODELS_URL, timeout=timeout)
-        else:
-            async with httpx.AsyncClient(timeout=timeout) as owned_client:
-                response = await owned_client.get(OPENROUTER_MODELS_URL)
-        response.raise_for_status()
-        return _parse_models_payload(response.json())
+        async with asyncio.timeout(timeout):
+            if client is not None:
+                response = await client.get(OPENROUTER_MODELS_URL, timeout=timeout)
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as owned_client:
+                    response = await owned_client.get(OPENROUTER_MODELS_URL)
+            response.raise_for_status()
+            return _parse_models_payload(response.json())
+    except TimeoutError:
+        logger.warning("Timed out fetching models from OpenRouter after %ss", timeout)
+        return []
     except (httpx.HTTPError, ValueError, KeyError) as e:
         logger.warning("Failed to fetch models from OpenRouter: %s", e)
         return []

@@ -15,6 +15,7 @@ import pytest
 
 from gobby.agents.team_lifecycle import TeamAdmissionRefused
 from gobby.releases.batch import BatchRecord, latest_baseline, run_batch
+from gobby.releases.store import HubReleaseLease
 from gobby.releases.window import LEASE_TTL, acquire_window, read_window
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -115,12 +116,16 @@ async def batch(
     fakes = Fakes(
         case, clock, fail=fail, loop=asyncio.get_running_loop(), during=lambda: held(world, *probe)
     )
-    record = await run_batch(
+    store = HubReleaseLease(
         case.db,
         project_id=case.project_id,
         owner_session_id=owner,
         token=lease.token,
         generation=lease.generation,
+        clock=clock,
+    )
+    record = await run_batch(
+        store,
         base_sha=base_sha,
         env=fakes.env(),
     )

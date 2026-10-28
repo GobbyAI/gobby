@@ -14,13 +14,18 @@ from typing import TYPE_CHECKING
 import click
 import httpx
 
-from gobby.cli.utils import get_project_context, init_local_storage
-from gobby.storage.project_checkouts import require_root
-from gobby.utils.machine_id import require_machine_id
+from gobby.cli.utils import get_project_context
 
 if TYPE_CHECKING:
-    from gobby.releases.batch import ActivationKind, BatchEnvironment, Check, CheckResult
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.releases.batch import (
+        ActivationKind,
+        BatchEnvironment,
+        BatchRecord,
+        Check,
+        CheckResult,
+    )
+    from gobby.releases.smoke import SmokeResult
+    from gobby.releases.store import DaemonReleaseLease
 
 _CHECK_TIMEOUT_SECONDS = 3600
 _ACTIVATION_TIMEOUT_SECONDS = 3600
@@ -39,28 +44,20 @@ def release() -> None:
 @click.option("--base-sha", default=None, help="Baseline to diff from when no batch has succeeded.")
 def batch(token: str, generation: int, base_sha: str | None) -> None:
     """Run the batch in the foreground; the Release Manager starts it in the background."""
-    from gobby.releases.batch import ReleaseBatchRefused, run_batch
+    from gobby.releases.batch import ReleaseBatchRefused, ReleaseStoreUnavailable
+    from gobby.releases.store import DaemonReleaseLease
     from gobby.releases.window import ReleaseWindowRefused
 
     project = get_project_context()
     owner = os.environ.get("GOBBY_SESSION_ID", "").strip()
     if not project or not owner:
         raise click.ClickException("run inside a project as a session with GOBBY_SESSION_ID")
-    db = init_local_storage()
-    root = Path(require_root(db, project["id"], require_machine_id()))
+    lease = DaemonReleaseLease(
+        _lease_call, owner_session_id=owner, token=token, generation=generation
+    )
     try:
-        record = asyncio.run(
-            run_batch(
-                db,
-                project_id=project["id"],
-                owner_session_id=owner,
-                token=token,
-                generation=generation,
-                base_sha=base_sha,
-                env=_environment(db, root, token),
-            )
-        )
-    except (ReleaseBatchRefused, ReleaseWindowRefused) as refused:
+        record = asyncio.run(_seat_batch(lease, base_sha))
+    except (ReleaseBatchRefused, ReleaseWindowRefused, ReleaseStoreUnavailable) as refused:
         click.echo(f"{refused.code}: {refused}", err=True)
         sys.exit(1)
     click.echo(
@@ -78,34 +75,48 @@ def batch(token: str, generation: int, base_sha: str | None) -> None:
     sys.exit(0 if record.status == "succeeded" else 1)
 
 
-def _environment(db: HubDatabase, root: Path, token: str) -> BatchEnvironment:
+async def _seat_batch(lease: DaemonReleaseLease, base_sha: str | None) -> BatchRecord:
+    """Run the batch over the daemon's checkout; every release read crosses the lease."""
+    from gobby.releases.batch import run_batch
+
+    checkout = await lease.checkout()
+    return await run_batch(lease, base_sha=base_sha, env=_environment(checkout.root, lease.token))
+
+
+async def _lease_call(
+    session_id: str, server: str, tool: str, arguments: dict[str, object]
+) -> tuple[int, object]:
+    """One daemon tool call made as the Release Manager session, off the event loop."""
+    return await asyncio.to_thread(_DaemonProbe(session_id).call_tool, server, tool, arguments)
+
+
+def _environment(root: Path, token: str) -> BatchEnvironment:
     from gobby.hooks.verification_runner import run_command
     from gobby.releases.batch import BatchEnvironment, CheckResult
-    from gobby.releases.smoke import active_runs, run_smokes
-    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.releases.smoke import run_smokes
     from gobby.utils.project_context import get_verification_config
 
     config = get_verification_config(root)
-    runs = LocalAgentRunManager(db)
 
     def run_check(check: Check) -> CheckResult:
         result = run_command(check.name, check.command, root, timeout=_CHECK_TIMEOUT_SECONDS)
         output = "\n".join(part for part in (result.stdout, result.stderr, result.error) if part)
         return CheckResult(check.name, check.command, result.success, output)
 
+    def smoke() -> list[SmokeResult]:
+        # The deadline starts when the smokes do, not when the batch builds its environment.
+        return run_smokes(
+            _DaemonProbe(),
+            schema_pin=lambda: _schema_pin_mismatch(root),
+            deadline=time.monotonic() + _SMOKE_DEADLINE_SECONDS,
+        )
+
     return BatchEnvironment(
         command=config.get_command if config is not None else lambda _name: None,
         run_check=run_check,
         activation_kind=lambda: _activation_kind(root),
         activate=lambda kind: _activate(root, token, kind),
-        capture=lambda: active_runs(runs, require_machine_id()),
-        smoke=lambda captured: run_smokes(
-            _DaemonProbe(),
-            runs=runs,
-            captured=captured,
-            schema_pin=lambda: _schema_pin_mismatch(root),
-            deadline=time.monotonic() + _SMOKE_DEADLINE_SECONDS,
-        ),
+        smoke=smoke,
         announce=_announce,
     )
 
@@ -163,15 +174,23 @@ def _schema_pin_mismatch(root: Path) -> str | None:
 
 
 class _DaemonProbe:
-    """Smoke reads over the CLI daemon client; status 0 when the daemon does not answer."""
+    """Daemon calls over the CLI client; status 0 when the daemon does not answer.
+
+    ``session_id`` names the session a tool call acts as, so the daemon's role and lease
+    checks apply to the Release Manager rather than to the operator.
+    """
+
+    def __init__(self, session_id: str | None = None) -> None:
+        self._session_id = session_id
 
     def get(self, path: str) -> tuple[int, object]:
         return self._send(path, "GET", None, None)
 
     def call_tool(self, server: str, tool: str, arguments: dict[str, object]) -> tuple[int, object]:
-        return self._send(
-            f"/api/mcp/{server}/tools/{tool}", "POST", arguments, {"X-Gobby-CLI-Internal": "1"}
-        )
+        headers = {"X-Gobby-CLI-Internal": "1"}
+        if self._session_id is not None:
+            headers["X-Gobby-Session-Id"] = self._session_id
+        return self._send(f"/api/mcp/{server}/tools/{tool}", "POST", arguments, headers)
 
     def _send(
         self,

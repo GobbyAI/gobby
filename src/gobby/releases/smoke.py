@@ -7,11 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from gobby.agents.recovery_state import is_reconciliation_pending
-from gobby.storage.agents import LocalAgentRunManager
-
-_RUN_PAGE = 500
-
 
 @dataclass(frozen=True)
 class SmokeResult:
@@ -30,30 +25,16 @@ class DaemonProbe(Protocol):
     ) -> tuple[int, object]: ...
 
 
-def active_runs(runs: LocalAgentRunManager, machine_id: str) -> frozenset[str]:
-    """Return the machine's active runs that are not already reconciliation-fenced."""
-    found: set[str] = set()
-    offset = 0
-    while page := runs.list_active_for_machine(machine_id, limit=_RUN_PAGE, offset=offset):
-        found.update(run.id for run in page if not is_reconciliation_pending(run))
-        if len(page) < _RUN_PAGE:
-            break
-        offset += len(page)
-    return frozenset(found)
-
-
 def run_smokes(
     probe: DaemonProbe,
     *,
-    runs: LocalAgentRunManager,
-    captured: frozenset[str],
     schema_pin: Callable[[], str | None],
     deadline: float,
     poll: float = 2.0,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> list[SmokeResult]:
-    """Run every fixed smoke and return one result per smoke.
+    """Run every fixed smoke that reads the daemon and return one result per smoke.
 
     ``schema_pin`` returns why the installed schema pin differs from the workspace's,
     or None when they match. Health is polled until ``deadline`` on ``monotonic``.
@@ -66,25 +47,22 @@ def run_smokes(
     listed = isinstance(tools, dict) and bool(tools.get("tools"))
     tasks_status, tasks = probe.call_tool("gobby-tasks", "list_tasks", {"limit": 1})
     read = isinstance(tasks, dict) and tasks.get("success") is True
-    fenced = sorted(
-        run_id
-        for run_id in captured
-        if (run := runs.get(run_id)) is not None and is_reconciliation_pending(run)
-    )
     return [
         health,
         SmokeResult("hook_runtime", compatible, f"hook runtime {runtime!r}"),
         SmokeResult("schema_pin", mismatch is None, mismatch or "installed pin matches"),
         SmokeResult("mcp_tools", tools_status == 200 and listed, f"HTTP {tools_status}"),
         SmokeResult("task_list", tasks_status == 200 and read, f"HTTP {tasks_status}"),
-        SmokeResult(
-            "reconnect",
-            not fenced,
-            f"reconciliation-fenced after recovery: {', '.join(fenced)}"
-            if fenced
-            else f"{len(captured)} captured runs unfenced",
-        ),
     ]
+
+
+def reconnect_result(captured: frozenset[str], fenced: frozenset[str]) -> SmokeResult:
+    """Fail when a run captured before activation was fenced by reconciliation after it."""
+    if fenced:
+        detail = f"reconciliation-fenced after recovery: {', '.join(sorted(fenced))}"
+    else:
+        detail = f"{len(captured)} captured runs unfenced"
+    return SmokeResult("reconnect", not fenced, detail)
 
 
 def _await_health(

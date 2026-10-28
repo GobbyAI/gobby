@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.releases.store import HubReleaseLease
 from gobby.releases.window import (
     RELEASE_ROLES,
     ReleaseWindow,
@@ -41,7 +42,11 @@ def _refusal(code: str, message: str) -> dict[str, Any]:
 
 
 def register_release_tools(registry: InternalToolRegistry, ctx: AgentsRegistryContext) -> None:
-    """Register acquire, renew and end for the caller project's release window."""
+    """Register acquire, renew and end for the release window, and the batch's fenced reads.
+
+    The batch's reads carry the Release Manager's token and generation and answer only
+    ids, the checkout root and the candidate, or a refusal code. Credentials never cross.
+    """
 
     def release_caller() -> tuple[HubDatabase, str, str]:
         """Return the hub, the calling Release Manager's session and its project."""
@@ -60,6 +65,17 @@ def register_release_tools(registry: InternalToolRegistry, ctx: AgentsRegistryCo
         if definition is None or definition[0].name not in RELEASE_ROLES:
             raise _Forbidden("only the Release Manager holds the release window")
         return db, session.id, session.project_id
+
+    def batch_lease(token: str, generation: int) -> HubReleaseLease:
+        """The caller's lease for a batch read; every read fences on token and generation."""
+        db, session_id, project_id = release_caller()
+        return HubReleaseLease(
+            db,
+            project_id=project_id,
+            owner_session_id=session_id,
+            token=token,
+            generation=generation,
+        )
 
     @registry.tool(
         name="acquire_release_window",
@@ -136,3 +152,59 @@ def register_release_tools(registry: InternalToolRegistry, ctx: AgentsRegistryCo
         except ReleaseWindowRefused as exc:
             return _refusal(exc.code, str(exc))
         return {"success": True}
+
+    @registry.tool(
+        name="release_batch_checkout",
+        description=(
+            "Release Manager only. The release batch's checkout: the main checkout root and "
+            "the candidate the live window pins. token and generation must match the stored "
+            "lease. Refuses release_window_stale on any mismatch or after expiry."
+        ),
+    )
+    async def release_batch_checkout(token: str, generation: int) -> dict[str, Any]:
+        try:
+            found = await batch_lease(token, generation).checkout()
+        except _Forbidden as exc:
+            return _refusal("release_window_forbidden", str(exc))
+        except ReleaseWindowRefused as exc:
+            return _refusal(exc.code, str(exc))
+        return {"success": True, "root": str(found.root), "candidate_sha": found.candidate_sha}
+
+    @registry.tool(
+        name="release_batch_active_runs",
+        description=(
+            "Release Manager only. The machine's active agent run ids that are not already "
+            "reconciliation-fenced, captured before the batch activates the daemon. token and "
+            "generation must match the stored lease."
+        ),
+    )
+    async def release_batch_active_runs(token: str, generation: int) -> dict[str, Any]:
+        try:
+            lease = batch_lease(token, generation)
+            await lease.require_live()
+            run_ids = await lease.active_runs()
+        except _Forbidden as exc:
+            return _refusal("release_window_forbidden", str(exc))
+        except ReleaseWindowRefused as exc:
+            return _refusal(exc.code, str(exc))
+        return {"success": True, "run_ids": sorted(run_ids)}
+
+    @registry.tool(
+        name="release_batch_fenced_runs",
+        description=(
+            "Release Manager only. The subset of run_ids that reconciliation has fenced since "
+            "the batch captured them. token and generation must match the stored lease."
+        ),
+    )
+    async def release_batch_fenced_runs(
+        token: str, generation: int, run_ids: list[str]
+    ) -> dict[str, Any]:
+        try:
+            lease = batch_lease(token, generation)
+            await lease.require_live()
+            fenced = await lease.fenced_runs(frozenset(run_ids))
+        except _Forbidden as exc:
+            return _refusal("release_window_forbidden", str(exc))
+        except ReleaseWindowRefused as exc:
+            return _refusal(exc.code, str(exc))
+        return {"success": True, "run_ids": sorted(fenced)}

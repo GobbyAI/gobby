@@ -53,7 +53,8 @@ async def preflight_placement(
 ) -> PlacedLaunch | dict[str, Any] | None:
     """Resolve a placement before any side effect; return a refusal reply or ``None``.
 
-    ``seat_title`` is a defined seat's definition name; it replaces a split's pane title.
+    ``seat_title`` is a defined seat's definition name; it names the seat's pane: a split's
+    pane title, or the initial pane of a new tab. A tab keeps its runbook title.
     """
     if placement is None:
         return None

@@ -277,6 +277,30 @@ def require_window_owner(
     )
 
 
+async def require_lease(
+    db: HubDatabase,
+    *,
+    project_id: str,
+    owner_session_id: str,
+    token: str,
+    generation: int,
+    now: datetime,
+) -> ReleaseWindow:
+    """Return the caller's live lease for a daemon release tool, without the landing lock.
+
+    Refuses ``release_window_stale`` on any owner, token or generation mismatch or expiry.
+    Renewal and release keep their locked checks; this read-only fence gates storage access.
+    """
+    common = await _project_common_dir(db, project_id)
+    return _fenced(
+        await asyncio.to_thread(read_window, common),
+        owner_session_id=owner_session_id,
+        token=token,
+        generation=generation,
+        now=now,
+    )
+
+
 def agent_activation_refusal() -> str | None:
     """Refuse a daemon activation step unless the caller may take it now.
 

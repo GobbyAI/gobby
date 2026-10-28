@@ -55,21 +55,16 @@ class ModelMetadataStore:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
-    def populate(self, models: list[ModelInfo] | None = None) -> int:
-        """Clear and bulk-insert model metadata from OpenRouter registry.
+    def populate(self, models: list[ModelInfo]) -> int:
+        """Clear and bulk-insert model metadata from pre-fetched registry models.
 
         Args:
-            models: Pre-fetched model data. If None, fetches from OpenRouter.
+            models: Model data from ``fetch_models_async``. An empty list keeps the cache.
 
         Returns:
             Number of models inserted.
         """
         global _stale_warning_emitted
-
-        if models is None:
-            from gobby.llm.model_registry import fetch_models_sync
-
-            models = fetch_models_sync()
 
         if not models:
             logger.warning("No models available — keeping existing cached metadata")

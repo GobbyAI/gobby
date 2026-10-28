@@ -537,6 +537,7 @@ async def test_remote_fresh_trees_wait_for_the_window(
                 project_id=case.project_id,
                 prompt="Work on the node",
                 provider="claude",
+                model="claude-sonnet-5",
                 isolation=isolation,
             ),
         )

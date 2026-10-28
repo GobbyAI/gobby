@@ -160,6 +160,12 @@
           "description": "Wait for agent work and terminal conditions",
           "path": "references/sessions/waits.md",
           "when": "Progress depends on another operation"
+        },
+        {
+          "name": "readonly-query",
+          "description": "Read the daemon database through query_readonly",
+          "path": "references/sessions/readonly-query.md",
+          "when": "Assistant or Orchestrator needs a read-only answer from the daemon database"
         }
       ]
     },

@@ -254,14 +254,6 @@ def open_storage_and_config(
         postgres_database.open_runtime_async_connection,
         fetch_revisions=lambda: fetch_persistent_revisions(runner.database),
     )
-    from gobby.storage.model_metadata import ModelMetadataStore
-
-    try:
-        metadata_store = ModelMetadataStore(runner.database)
-        metadata_store.populate()
-    except Exception as e:
-        logger.warning("Failed to populate model metadata: %s", e, exc_info=True)
-
     runner.session_manager = SessionManager(runner.database)
     runner.session_manager.normalize_automatic_title_refs()
     runner.task_manager = LocalTaskManager(runner.database)

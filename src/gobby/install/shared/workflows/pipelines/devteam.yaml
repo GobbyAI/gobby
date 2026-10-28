@@ -232,6 +232,27 @@ steps:
           {'tab': {'workspace': steps.guard.output.workspace_id,
           'title': steps.guard.output.tab_title}} }}
 
+  # Gives the Dev Manager the roster of seats this run launched, with each session ref and run id.
+  # The Dev Manager is live on a fresh-reviewer run, or was spawned above; a run with neither sends nothing.
+  - id: roster
+    condition: >-
+      ${{ ('dev-manager' in steps.guard.output.live or ('dev-manager' in steps and steps['dev-manager'].output))
+      and (('test-writer' in steps and steps['test-writer'].output)
+      or ('developer' in steps and steps['developer'].output)
+      or ('code-reviewer' in steps and steps['code-reviewer'].output)) }}
+    mcp:
+      server: gobby-agents
+      tool: send_message
+      arguments:
+        target: session
+        target_id: "${{ steps.guard.output.live['dev-manager'] if 'dev-manager' in steps.guard.output.live else steps['dev-manager'].output.child_session_id }}"
+        content: >-
+          Seat roster for task ${{ inputs.task }}, team ${{ steps.admit.output.team.team_id }}.
+          ${{ ('test-writer: session ' + steps['test-writer'].output.child_session_id + ', run ' + steps['test-writer'].output.run_id + '.') if ('test-writer' in steps and steps['test-writer'].output) else '' }}
+          ${{ ('developer: session ' + steps['developer'].output.child_session_id + ', run ' + steps['developer'].output.run_id + '.') if ('developer' in steps and steps['developer'].output) else '' }}
+          ${{ ('code-reviewer: session ' + steps['code-reviewer'].output.child_session_id + ', run ' + steps['code-reviewer'].output.run_id + '.') if ('code-reviewer' in steps and steps['code-reviewer'].output) else '' }}
+          Reach each seat with gobby-agents:send_message(target="session", target_id=<session>).
+
   # Tiles the team tab once the launched seats have joined it, on a fresh launch or a re-run.
   # A refused layout (a resumed run has no request principal) is recorded; the seats stay launched.
   - id: arrange

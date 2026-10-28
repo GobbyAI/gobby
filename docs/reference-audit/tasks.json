@@ -870,6 +870,51 @@
       "audience": "agent; Release Manager only"
     },
     {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "release_batch_checkout",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/release_tools.py",
+        "symbol": "register_release_tools.release_batch_checkout"
+      },
+      "verification": [
+        "source-contract",
+        "release-window"
+      ],
+      "audience": "agent; Release Manager only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "release_batch_active_runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/release_tools.py",
+        "symbol": "register_release_tools.release_batch_active_runs"
+      },
+      "verification": [
+        "source-contract",
+        "release-window"
+      ],
+      "audience": "agent; Release Manager only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-agents",
+      "tool": "release_batch_fenced_runs",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/release_tools.py",
+        "symbol": "register_release_tools.release_batch_fenced_runs"
+      },
+      "verification": [
+        "source-contract",
+        "release-window"
+      ],
+      "audience": "agent; Release Manager only"
+    },
+    {
       "surface": "cli",
       "command": "gobby release batch",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",

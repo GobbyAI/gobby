@@ -19,26 +19,13 @@ from collections.abc import Callable, Coroutine, Iterable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Literal
+from typing import Literal, Protocol
 
 from gobby.install.bin_release_identity import crate_closure
-from gobby.releases.smoke import SmokeResult
-from gobby.releases.window import (
-    RENEW_INTERVAL,
-    ReleaseWindowRefused,
-    release_window,
-    renew_window,
-    require_window_owner,
-    sync_git_common_dir,
-)
-from gobby.storage.project_checkouts import require_root
-from gobby.storage.tasks import LocalTaskManager
+from gobby.releases.smoke import SmokeResult, reconnect_result
+from gobby.releases.window import RENEW_INTERVAL, ReleaseWindowRefused, sync_git_common_dir
 from gobby.sync.jsonl_io import atomic_write_text
 from gobby.utils import spawn
-from gobby.utils.machine_id import require_machine_id
-
-if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +62,46 @@ class ActivationFailed(RuntimeError):
     """The cutover or restart did not complete."""
 
 
+class ReleaseStoreUnavailable(Exception):
+    """The release store did not answer. Unlike a refusal, this does not lose the lease."""
+
+    code = "release_store_unavailable"
+
+
+@dataclass(frozen=True)
+class Checkout:
+    """The main checkout a batch validates and activates, and the candidate it must hold."""
+
+    root: Path
+    candidate_sha: str
+
+
+class ReleaseLease(Protocol):
+    """The batch's fenced view of the release window.
+
+    ``checkout``, ``renew`` and ``release`` raise ``ReleaseWindowRefused`` once the lease
+    is lost and ``ReleaseStoreUnavailable`` while the store does not answer. A renewal
+    advances ``generation``, so the lease carries the generation the next call must send.
+    """
+
+    token: str
+    generation: int
+
+    async def checkout(self) -> Checkout: ...
+
+    async def renew(self) -> None: ...
+
+    async def release(self) -> None: ...
+
+    async def file_regression(
+        self, candidate_sha: str, base_sha: str, phase: Phase, diagnostic: str
+    ) -> str: ...
+
+    async def active_runs(self) -> frozenset[str]: ...
+
+    async def fenced_runs(self, run_ids: frozenset[str]) -> frozenset[str]: ...
+
+
 class ReleaseBatchRefused(Exception):
     """The batch refused before its first renewal and left the window untouched.
 
@@ -107,8 +134,7 @@ class BatchEnvironment:
     run_check: Callable[[Check], CheckResult]
     activation_kind: Callable[[], ActivationKind]
     activate: Callable[[ActivationKind], None]
-    capture: Callable[[], frozenset[str]]
-    smoke: Callable[[frozenset[str]], list[SmokeResult]]
+    smoke: Callable[[], list[SmokeResult]]
     announce: Callable[[str], str | None]
     clock: Callable[[], datetime] = _wall_clock
     renew_every: float = RENEW_INTERVAL.total_seconds()
@@ -237,26 +263,10 @@ class _Prepared:
     plan: tuple[Check, ...]
 
 
-def _prepare(
-    db: HubDatabase,
-    project_id: str,
-    owner_session_id: str,
-    token: str,
-    generation: int,
-    base_sha: str | None,
-    env: BatchEnvironment,
-) -> _Prepared:
+def _prepare(checkout: Checkout, base_sha: str | None, env: BatchEnvironment) -> _Prepared:
     """Every refusal that must leave the window untouched, then the check plan."""
-    root = Path(require_root(db, project_id, require_machine_id()))
+    root, candidate = checkout.root, checkout.candidate_sha
     common = sync_git_common_dir(root)
-    window = require_window_owner(
-        common,
-        owner_session_id=owner_session_id,
-        token=token,
-        generation=generation,
-        now=env.clock(),
-    )
-    candidate = window.candidate_sha
     if _head(root) != candidate:
         raise ReleaseBatchRefused(
             "release_candidate_unpinned",
@@ -296,11 +306,7 @@ class _Keeper:
     Only a refusal loses the lease; any other renewal error retries on the next interval.
     """
 
-    db: HubDatabase
-    project_id: str
-    owner_session_id: str
-    token: str
-    generation: int
+    lease: ReleaseLease
     env: BatchEnvironment
     lost: str | None = None
     stopped: asyncio.Event = field(default_factory=asyncio.Event)
@@ -313,14 +319,7 @@ class _Keeper:
             except TimeoutError:
                 pass
             try:
-                renewed = await renew_window(
-                    self.db,
-                    project_id=self.project_id,
-                    owner_session_id=self.owner_session_id,
-                    token=self.token,
-                    generation=self.generation,
-                    now=self.env.clock(),
-                )
+                await self.lease.renew()
             except ReleaseWindowRefused as refused:
                 self.lost = f"{refused.code}: {refused}"
                 return
@@ -328,16 +327,11 @@ class _Keeper:
                 # Transient: retry next interval. The lease outlives several intervals,
                 # and a renewal that never lands is refused once the lease expires.
                 logger.exception("Release window renewal failed; retrying next interval")
-                continue
-            self.generation = renewed.generation
 
 
 @dataclass
 class _Batch:
-    db: HubDatabase
-    project_id: str
-    owner_session_id: str
-    token: str
+    lease: ReleaseLease
     env: BatchEnvironment
     prepared: _Prepared
     keeper: _Keeper
@@ -355,7 +349,7 @@ class _Batch:
             self.phase = "smokes"
             await self._smokes(captured)
             # A lease lost during the smokes leaves the result unowned: no baseline moves.
-            await asyncio.to_thread(self._prove)
+            await self._prove()
         except _BatchFailed as failed:
             return failed.phase, str(failed)
         except Exception as exc:  # Job boundary: record the failure, release and file it.
@@ -363,16 +357,12 @@ class _Batch:
             return self.phase, f"{type(exc).__name__}: {exc}"
         return None
 
-    def _prove(self) -> None:
+    async def _prove(self) -> None:
+        """Fence the next irreversible step; a lost lease stops the batch before it."""
         if self.keeper.lost is not None:
             raise _BatchFailed("lease", self.keeper.lost)
         try:
-            require_window_owner(
-                self.prepared.common,
-                owner_session_id=self.owner_session_id,
-                token=self.token,
-                now=self.env.clock(),
-            )
+            await self.lease.checkout()
         except ReleaseWindowRefused as refused:
             raise _BatchFailed("lease", f"{refused.code}: {refused}") from refused
 
@@ -383,14 +373,14 @@ class _Batch:
             await asyncio.to_thread(_write_record, self.path, self.record)
             if not result.success:
                 raise _BatchFailed("checks", f"{check.name} failed: {result.output[-_TAIL:]}")
-            await asyncio.to_thread(self._prove)
+            await self._prove()
 
     async def _activate(self) -> frozenset[str]:
         kind = await asyncio.to_thread(self.env.activation_kind)
         if await asyncio.to_thread(_head, self.prepared.root) != self.prepared.candidate:
             raise _BatchFailed("activation", "the main checkout HEAD moved off the candidate")
-        captured = await asyncio.to_thread(self.env.capture)
-        await asyncio.to_thread(self._prove)
+        captured = await self.lease.active_runs()
+        await self._prove()
         self.record = replace(self.record, activation=kind)
         await self.announce(
             f"BEFORE: release batch {self.prepared.candidate[:12]} starts a daemon {kind} now. "
@@ -404,7 +394,10 @@ class _Batch:
         return captured
 
     async def _smokes(self, captured: frozenset[str]) -> None:
-        results = await asyncio.to_thread(self.env.smoke, captured)
+        results = [
+            *await asyncio.to_thread(self.env.smoke),
+            reconnect_result(captured, await self.lease.fenced_runs(captured)),
+        ]
         self.record = replace(self.record, smokes=tuple(results))
         if failed := [result for result in results if not result.ok]:
             raise _BatchFailed(
@@ -421,15 +414,8 @@ class _Batch:
     async def release(self) -> None:
         """Release the window if this batch still owns it; a successor's window survives."""
         try:
-            await release_window(
-                self.db,
-                project_id=self.project_id,
-                owner_session_id=self.owner_session_id,
-                token=self.token,
-                generation=self.keeper.generation,
-                now=self.env.clock(),
-            )
-        except ReleaseWindowRefused as refused:
+            await self.lease.release()
+        except (ReleaseWindowRefused, ReleaseStoreUnavailable) as refused:
             self.note(f"window not released: {refused.code}: {refused}")
 
     async def cancelled(self) -> None:
@@ -455,39 +441,24 @@ async def _to_completion(cleanup: Coroutine[object, object, None]) -> None:
 
 
 async def run_batch(
-    db: HubDatabase,
-    *,
-    project_id: str,
-    owner_session_id: str,
-    token: str,
-    generation: int,
-    base_sha: str | None,
-    env: BatchEnvironment,
+    lease: ReleaseLease, *, base_sha: str | None, env: BatchEnvironment
 ) -> BatchRecord:
     """Run one batch for the caller's live window and return its final record.
 
-    Raises ``ReleaseBatchRefused`` or ``ReleaseWindowRefused`` before the first renewal,
-    leaving the window as it was. Every later failure is recorded, releases the window
-    and files one open regression task per candidate; a filing error is recorded as a
-    diagnostic. A cancelled batch releases the window and records the failure, files no
-    task, then re-raises.
+    Raises ``ReleaseBatchRefused``, ``ReleaseWindowRefused`` or ``ReleaseStoreUnavailable``
+    before the first renewal, leaving the window as it was. Every later failure is
+    recorded, releases the window and files one open regression task per candidate; a
+    filing error is recorded as a diagnostic. A cancelled batch releases the window and
+    records the failure, files no task, then re-raises.
     """
-    prepared = await asyncio.to_thread(
-        _prepare, db, project_id, owner_session_id, token, generation, base_sha, env
-    )
-    lease = await renew_window(
-        db,
-        project_id=project_id,
-        owner_session_id=owner_session_id,
-        token=token,
-        generation=generation,
-        now=env.clock(),
-    )
+    checkout = await lease.checkout()
+    prepared = await asyncio.to_thread(_prepare, checkout, base_sha, env)
+    await lease.renew()
     started = env.clock()
     record = BatchRecord(
         base_sha=prepared.base,
         candidate_sha=prepared.candidate,
-        token=token,
+        token=lease.token,
         started_at=started.isoformat(),
         check_plan=prepared.plan,
     )
@@ -495,8 +466,8 @@ async def run_batch(
         f"{started.astimezone(UTC):%Y%m%dT%H%M%S%fZ}-{prepared.candidate[:12]}.json"
     )
     await asyncio.to_thread(_write_record, path, record)
-    keeper = _Keeper(db, project_id, owner_session_id, token, lease.generation, env)
-    batch = _Batch(db, project_id, owner_session_id, token, env, prepared, keeper, record, path)
+    keeper = _Keeper(lease, env)
+    batch = _Batch(lease, env, prepared, keeper, record, path)
     try:
         async with asyncio.TaskGroup() as group:
             group.create_task(keeper.run())
@@ -521,8 +492,8 @@ async def run_batch(
         batch.note(diagnostic)
         await batch.release()
         try:
-            task_ref: str | None = await asyncio.to_thread(
-                _regression_task, db, project_id, owner_session_id, batch.record, phase, diagnostic
+            task_ref: str | None = await lease.file_regression(
+                prepared.candidate, prepared.base, phase, diagnostic
             )
         except Exception as exc:  # The failure record must survive a hub outage.
             logger.exception("Release regression task filing failed")
@@ -535,43 +506,6 @@ async def run_batch(
             )
     await asyncio.to_thread(_write_record, path, batch.record)
     return batch.record
-
-
-def _regression_task(
-    db: HubDatabase,
-    project_id: str,
-    owner_session_id: str,
-    record: BatchRecord,
-    phase: Phase,
-    diagnostic: str,
-) -> str:
-    """Find or create the candidate's one open regression task.
-
-    Written through the task manager directly because the daemon may be down.
-    """
-    label = f"release-regression-{record.candidate_sha[:12]}"
-    tasks = LocalTaskManager(db)
-    if existing := tasks.list_tasks(project_id=project_id, label=label, closed=False, limit=1):
-        return existing[0].id
-    description = (
-        f"Release batch for candidate {record.candidate_sha} (base {record.base_sha}) "
-        f"failed in phase {phase}.\n\n{diagnostic[-_TAIL:]}"
-    )
-    task = tasks.create_task(
-        project_id,
-        f"Release regression in {record.candidate_sha[:12]}",
-        description,
-        created_in_session_id=owner_session_id,
-        priority=1,
-        task_type="bug",
-        labels=[label],
-        category="code",
-        validation_criteria=(
-            f"The {phase} failure recorded for {record.candidate_sha[:12]} is fixed, and a "
-            "release batch for a candidate containing the fix records status succeeded."
-        ),
-    )
-    return task.id
 
 
 def _write_record(path: Path, record: BatchRecord) -> None:

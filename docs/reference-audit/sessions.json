@@ -236,6 +236,21 @@
     },
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/readonly-query.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_readonly_query.py",
+        "symbol": "register_readonly_query_tools.query_readonly"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "assistant and orchestrator only; refused to other seats",
+      "server": "gobby-sessions",
+      "tool": "query_readonly"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/handoffs.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/sessions/_handoff.py",

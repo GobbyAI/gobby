@@ -11,7 +11,7 @@ discovery. Session records connect work and runtime identity; a status or an
 archival summary does not prove a recoverable handoff exists.
 
 Choose `$gobby sessions references discovery`, `transcripts`, `handoffs`,
-`context`, `relationships`, `terminals`, `workspaces`, or `waits`. Help and menus only display
+`context`, `relationships`, `terminals`, `workspaces`, `waits`, or `readonly-query`. Help and menus only display
 choices. Tool schemas own parameters and defaults. Agent operations use MCP;
 the CLI and HTTP guide sections also describe operator/client maintenance.
 
@@ -21,4 +21,4 @@ through the supported lifecycle; do not repair markers or claims directly.
 
 Guide: [Session management](../../../../../../../../docs/guides/sessions.md).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-10-27_

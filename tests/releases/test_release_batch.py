@@ -25,7 +25,6 @@ from starlette.requests import Request
 
 from gobby.cli import cutover as cutover_cli
 from gobby.cli import daemon_lifecycle, daemon_start
-from gobby.cli.release import release
 from gobby.cli.runtime import CliRuntime
 from gobby.releases.batch import (
     BatchRecord,
@@ -35,7 +34,8 @@ from gobby.releases.batch import (
     records_dir,
     run_batch,
 )
-from gobby.releases.smoke import SmokeResult, active_runs, run_smokes
+from gobby.releases.smoke import SmokeResult, reconnect_result, run_smokes
+from gobby.releases.store import HubReleaseLease
 from gobby.releases.window import (
     LEASE_TTL,
     ReleaseWindow,
@@ -95,6 +95,18 @@ def _headlines(announcements: list[str]) -> list[str]:
     return [text.split(":", 1)[0] for text in announcements]
 
 
+def _lease(case: LandingCase, owner: str, window: ReleaseWindow, clock: Clock) -> HubReleaseLease:
+    """The batch's lease over the test hub, on the same clock as its environment."""
+    return HubReleaseLease(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=owner,
+        token=window.token,
+        generation=window.generation,
+        clock=clock,
+    )
+
+
 async def test_successful_pinned_batch(case: LandingCase) -> None:
     common = case.repo / ".git"
     base = case.direct(WORKSPACE)
@@ -113,11 +125,7 @@ async def test_successful_pinned_batch(case: LandingCase) -> None:
     fakes = Fakes(case, Clock())
 
     record = await run_batch(
-        case.db,
-        project_id=case.project_id,
-        owner_session_id=owner,
-        token=lease.token,
-        generation=lease.generation,
+        _lease(case, owner, lease, fakes.clock),
         base_sha=base,
         env=fakes.env(),
     )
@@ -180,11 +188,7 @@ async def test_failed_batch_preserves_baseline(case: LandingCase, failure: str, 
         case.db, project_id=case.project_id, owner_session_id=owner, now=clock.now
     )
     seeded = await run_batch(
-        case.db,
-        project_id=case.project_id,
-        owner_session_id=owner,
-        token=seed.token,
-        generation=seed.generation,
+        _lease(case, owner, seed, clock),
         base_sha=case.base,
         env=Fakes(case, clock).env(),
     )
@@ -207,11 +211,7 @@ async def test_failed_batch_preserves_baseline(case: LandingCase, failure: str, 
             successor=successor,
         )
         record = await run_batch(
-            case.db,
-            project_id=case.project_id,
-            owner_session_id=owner,
-            token=lease.token,
-            generation=lease.generation,
+            _lease(case, owner, lease, clock),
             base_sha=None,
             env=fakes.env(),
         )
@@ -283,15 +283,11 @@ async def test_a_failed_renewal_retries_on_the_next_interval(
             return False
         return True
 
-    monkeypatch.setattr("gobby.releases.batch.renew_window", flaky_renew)
+    monkeypatch.setattr("gobby.releases.store.renew_window", flaky_renew)
     fakes = Fakes(case, Clock(), loop=asyncio.get_running_loop(), during=through_the_failed_renewal)
 
     record = await run_batch(
-        case.db,
-        project_id=case.project_id,
-        owner_session_id=owner,
-        token=lease.token,
-        generation=lease.generation,
+        _lease(case, owner, lease, fakes.clock),
         base_sha=case.base,
         env=fakes.env(),
     )
@@ -321,11 +317,7 @@ async def test_a_cancelled_batch_releases_its_window_and_records_the_failure(
     running.append(
         asyncio.create_task(
             run_batch(
-                case.db,
-                project_id=case.project_id,
-                owner_session_id=owner,
-                token=lease.token,
-                generation=lease.generation,
+                _lease(case, owner, lease, fakes.clock),
                 base_sha=case.base,
                 env=fakes.env(),
             )
@@ -361,14 +353,10 @@ async def test_a_failed_regression_filing_still_records_the_failure(
     def hub_unavailable(*_args: object) -> str:
         raise psycopg.OperationalError("hub unavailable")
 
-    monkeypatch.setattr("gobby.releases.batch._regression_task", hub_unavailable)
+    monkeypatch.setattr("gobby.releases.store._hub_regression_task", hub_unavailable)
 
     record = await run_batch(
-        case.db,
-        project_id=case.project_id,
-        owner_session_id=owner,
-        token=lease.token,
-        generation=lease.generation,
+        _lease(case, owner, lease, Clock()),
         base_sha=case.base,
         env=Fakes(case, Clock(), fail="check").env(),
     )
@@ -398,11 +386,14 @@ def test_refusals_before_first_renewal_leave_the_window(
         with pytest.raises((ReleaseBatchRefused, ReleaseWindowRefused)) as refused:
             asyncio.run(
                 run_batch(
-                    case.db,
-                    project_id=case.project_id,
-                    owner_session_id=owner,
-                    token=lease.token,
-                    generation=generation,
+                    HubReleaseLease(
+                        case.db,
+                        project_id=case.project_id,
+                        owner_session_id=owner,
+                        token=lease.token,
+                        generation=generation,
+                        clock=clock,
+                    ),
                     base_sha=base_sha,
                     env=fakes.env(),
                 )
@@ -414,20 +405,6 @@ def test_refusals_before_first_renewal_leave_the_window(
     assert refusal(None) == "release_baseline_missing"
     assert refusal(side) == "release_base_not_ancestor"
     assert refusal(case.base, generation=lease.generation + 1) == "release_window_stale"
-
-    # The CLI resolves the main checkout, exports the token and refuses the same way.
-    monkeypatch.chdir(case.repo)
-    monkeypatch.setattr("gobby.cli.release.init_local_storage", lambda: case.db)
-    monkeypatch.setattr(
-        "gobby.cli.release.get_project_context", lambda *_args: {"id": case.project_id}
-    )
-    result = CliRunner().invoke(
-        release,
-        ["batch", "--token", lease.token, "--generation", str(lease.generation)],
-        env={"GOBBY_SESSION_ID": owner, "GOBBY_RELEASE_TOKEN": None},
-    )
-    assert result.exit_code == 1
-    assert "release_baseline_missing" in result.output
 
     case.direct({"src/gobby/tasks/a.py": "A = 2\n"})
     assert refusal(case.base) == "release_candidate_unpinned"
@@ -553,19 +530,20 @@ class _RecoveredDaemon:
 
 
 def _smokes(
-    daemon: _RecoveredDaemon, runs: LocalAgentRunManager, captured: frozenset[str]
+    daemon: _RecoveredDaemon, captured: frozenset[str], fenced: frozenset[str]
 ) -> dict[str, SmokeResult]:
     ticks = itertools.count()
-    results = run_smokes(
-        daemon,
-        runs=runs,
-        captured=captured,
-        schema_pin=lambda: None,
-        deadline=50.0,
-        poll=0.0,
-        sleep=lambda _seconds: None,
-        monotonic=lambda: float(next(ticks)),
-    )
+    results = [
+        *run_smokes(
+            daemon,
+            schema_pin=lambda: None,
+            deadline=50.0,
+            poll=0.0,
+            sleep=lambda _seconds: None,
+            monotonic=lambda: float(next(ticks)),
+        ),
+        reconnect_result(captured, fenced),
+    ]
     return {result.name: result for result in results}
 
 
@@ -696,12 +674,19 @@ async def test_release_authority_and_worker_reconnect(
         for prompt in ("steady", "fenced", "pending")
     )
     runs.merge_resume_metadata(pending.id, {"reconciliation_pending": True})
-    captured = active_runs(runs, require_machine_id())
+    store = HubReleaseLease(
+        case.db,
+        project_id=case.project_id,
+        owner_session_id=owner,
+        token=held.token,
+        generation=held.generation,
+    )
+    captured = await store.active_runs()
     assert {steady.id, fenced.id} <= captured
     assert pending.id not in captured
     runs.merge_resume_metadata(fenced.id, {"reconciliation_pending": True})
     daemon = _RecoveredDaemon()
-    results = _smokes(daemon, runs, captured)
+    results = _smokes(daemon, captured, await store.fenced_runs(captured))
     assert {name: result.ok for name, result in results.items()} == {
         "health": True,
         "hook_runtime": True,
@@ -712,7 +697,7 @@ async def test_release_authority_and_worker_reconnect(
     }
     assert fenced.id in results["reconnect"].detail
     assert daemon.health_polls == 2
-    unfenced = _smokes(_RecoveredDaemon(), runs, frozenset({steady.id}))
+    unfenced = _smokes(_RecoveredDaemon(), frozenset({steady.id}), frozenset())
     assert all(result.ok for result in unfenced.values()), unfenced
 
 
