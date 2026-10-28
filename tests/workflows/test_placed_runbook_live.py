@@ -1277,6 +1277,8 @@ def steward_live(
         "checkout": str(checkout),
         "home": str(home),
         "coordinator": str(coordinator["id"]),
+        # Diagnostic: the CODEX_HOME the daemon and its terminal host inherit.
+        "codex_home_env": os.environ.get("CODEX_HOME"),
         # Orchestrator ruling, relayed by the Dev Manager (37976ed8): option (a).
         "codex_auth": {"ruling": "option (a): link the existing login; no sign-in"},
     }
@@ -1290,9 +1292,13 @@ def steward_live(
         _support_runbook(postgres_db),
         evidence,
     )
+    evidence_dir = _evidence_dir(tmp_path)
     try:
         _link_codex_auth(home)
         state.evidence["codex_trust"] = _trust_codex_checkout(home, checkout)
+        # Before any seat spawns: the config Codex reads, as the rig seeded it.
+        before = _snapshot_codex_config(home, evidence_dir, request.node.name, "before")
+        state.evidence["codex_config"] = {"before": before}
         _until(lambda: _startup_ready(client), 120, "initial daemon recovery")
         state.evidence["checkout_mode"] = _assert_isolated(state)
         state.evidence["host"] = _assert_adopted(state)
@@ -1300,13 +1306,22 @@ def steward_live(
     finally:
         cleanup: dict[str, Any] = {}
         state.evidence["cleanup"] = cleanup
-        evidence_dir = _evidence_dir(tmp_path)
         try:
             # Copied before teardown, so a failed run keeps its transcript as well.
             state.evidence["codex_rollout"] = _preserve_rollout(
                 home, evidence_dir, request.node.name
             )
             state.evidence["daemon_logs"] = _preserve_logs(home, evidence_dir, request.node.name)
+            state.evidence["codex_log"] = _preserve_tree(
+                home / "providers" / "codex" / "log",
+                evidence_dir / f"{request.node.name}.codex-log",
+            )
+            # After the run: whatever Codex left in the config it read.
+            after = _snapshot_codex_config(home, evidence_dir, request.node.name, "after")
+            codex_config = state.evidence.setdefault("codex_config", {})
+            codex_config["after"] = after
+            before_sha = codex_config.get("before", {}).get("sha256")
+            codex_config["changed"] = before_sha != after.get("sha256")
         finally:
             try:
                 _cleanup(state, cleanup)
@@ -1421,17 +1436,33 @@ def _codex_calls(rollout: Path) -> list[str]:
     return calls
 
 
-def _preserve_logs(home: Path, evidence_dir: Path, test_name: str) -> str | None:
-    """Copy the isolated daemon's logs into the evidence directory before teardown removes them."""
-    logs = home / "logs"
-    if not logs.is_dir():
+def _preserve_tree(source: Path, copy: Path) -> str | None:
+    """Copy a directory tree into the evidence directory; None when the source is absent."""
+    if not source.is_dir():
         return None
-    copy = evidence_dir / f"{test_name}.logs"
     try:
-        shutil.copytree(logs, copy, dirs_exist_ok=True)
+        shutil.copytree(source, copy, dirs_exist_ok=True)
     except OSError as exc:
         return f"copy failed: {exc}"
     return str(copy)
+
+
+def _preserve_logs(home: Path, evidence_dir: Path, test_name: str) -> str | None:
+    """Copy the isolated daemon's logs into the evidence directory before teardown removes them."""
+    return _preserve_tree(home / "logs", evidence_dir / f"{test_name}.logs")
+
+
+def _snapshot_codex_config(
+    home: Path, evidence_dir: Path, test_name: str, label: str
+) -> dict[str, Any]:
+    """Copy the config.toml Codex reads, named by when it was taken. Auth is never opened."""
+    config = home / "providers" / "codex" / "config.toml"
+    if not config.is_file():
+        return {"missing": True}
+    copy = evidence_dir / f"{test_name}-config-{label}.toml"
+    copy.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(config, copy)
+    return {"copy": str(copy), "sha256": sha256_file(copy)}
 
 
 def _preserve_rollout(home: Path, evidence_dir: Path, test_name: str) -> dict[str, Any]:
