@@ -37,6 +37,50 @@ GEN2 = f"{2:032x}"
 CONFIG = WebSocketConfig(max_message_size=4096, ping_interval=7, ping_timeout=3)
 
 
+@pytest.mark.parametrize("stage", ["bind", "rebind"])
+@pytest.mark.parametrize("error", [TimeoutError(), httpx.ReadTimeout("front door stalled")])
+async def test_bind_failure_logs_exception_type_and_recovers(
+    stage: str,
+    error: Exception,
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Exceptions with empty str() retain a useful diagnostic during recovery."""
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.01)
+    attempts = 0
+    failed_attempt = 1 if stage == "bind" else 2
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        if request.url.path == native_publish.BIND_PATH:
+            attempts += 1
+            if attempts == failed_attempt:
+                raise error
+            return httpx.Response(200, json={"generation": GEN1 if attempts == 1 else GEN2})
+        return httpx.Response(204)
+
+    publisher = NativePublisher(
+        secret=SECRET,
+        base_url=BASE_URL,
+        config=CONFIG,
+        transport=httpx.MockTransport(handle),
+    )
+    try:
+        await publisher.start()
+        if stage == "rebind":
+            publisher.fail_generation(GEN1)
+        await _until(lambda: publisher.generation == GEN2)
+        await asyncio.wait_for(publisher.publish({"type": "agent_event"}), 1.0)
+        messages = [record.getMessage() for record in caplog.records]
+        diagnostic = next(message for message in messages if f"Native WS {stage} failed" in message)
+        assert type(error).__name__ in diagnostic
+        if str(error):
+            assert str(error) in diagnostic
+    finally:
+        await publisher.stop()
+
+
 class _Daemon:
     """gdaemon's private bind and publish endpoints, with a gate to stall the sender."""
 

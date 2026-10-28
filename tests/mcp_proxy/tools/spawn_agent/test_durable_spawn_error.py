@@ -11,8 +11,65 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 pytestmark = pytest.mark.integration
+
+
+async def test_lifecycle_publication_failure_releases_mutex_for_immediate_respawn(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    machine_id = "21000000-0000-4000-8000-000000000001"
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", machine_id)
+    sessions = SessionManager(temp_db)
+    session = sessions.register(
+        external_id="publication-mutex-cleanup",
+        machine_id=machine_id,
+        source="codex",
+        project_id=PERSONAL_PROJECT_ID,
+    )
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        project_id=PERSONAL_PROJECT_ID,
+        title="Publication retry",
+        validation_criteria="Failed publication permits immediate respawn.",
+    )
+    storage = LocalAgentRunManager(temp_db)
+    run = storage.create(
+        parent_session_id=session.id, provider="codex", prompt="test launch", task_id=task.id
+    )
+    mutexes = TaskDispatchMutexManager(temp_db)
+    assert mutexes.acquire_mutex(
+        task.id, holder="first-spawn", kind="spawn_agent", ttl_seconds=300, run_id=run.id
+    )
+    runner = SimpleNamespace(
+        run_storage=storage,
+        session_storage=sessions,
+        cancel_run=storage.cancel,
+        get_run=storage.get,
+        agent_lifecycle_monitor=None,
+        terminal_manager=None,
+        terminal_runtime_registry=None,
+    )
+    origin = "lifecycle publication failed: terminal proxy relay closed: ws_close"
+    await cleanup_failed_spawn(
+        runner,
+        run.id,
+        origin,
+        None,
+        None,
+        completion_registry=None,
+        cleanup_isolation=False,
+        task_manager=tasks,
+    )
+    recorded = storage.get(run.id)
+    assert recorded is not None and recorded.status == "cancelled"
+    assert recorded.error == origin
+    assert mutexes.get_mutex(task.id) is None
+    assert mutexes.acquire_mutex(
+        task.id, holder="immediate-respawn", kind="spawn_agent", ttl_seconds=300
+    )
 
 
 @pytest.mark.parametrize("with_monitor", [True, False])
