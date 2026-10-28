@@ -18,9 +18,12 @@ the node command channel.
 
 The work lives in the agents family crate, `crates/gagents` (package
 `gobby-agents`), which is statically linked into gdaemon under ROADMAP decision
-16. It is registered as a RouteFamily the same way `crates/gruntime` is. The
-hub's Python writers keep running. Each one becomes a client of a loopback
-internal transition route, so Python stops holding any ordering state of its own.
+16. It is registered as a RouteFamily the same way `crates/gruntime` is. Until
+their owning flows leave Python, the hub's Python writers become clients of a
+loopback internal transition route, so Python stops holding any ordering state
+of its own. The final leaf, 4.5, deletes the whole Python attention surface
+after the owning plans delete every Python caller. When this plan completes, no
+Python attention writer, reader or client remains.
 
 The work is needed because the ledger still names Python for all four HTTP rows,
 and every attention event is ordered by a Python in-memory cursor. The plan
@@ -60,8 +63,8 @@ gobby#17480:
   `agent_runs.machine_id`. Its project is
   `COALESCE(child.project_id, parent.project_id)`.
 - **Q3, write ownership.** Rust owns attention transitions, ordering, the
-  metadata store and event publication. Every Python writer becomes a client of a
-  loopback internal route. That route is guarded the same way as
+  metadata store and event publication. Until 4.5, every Python writer is a
+  client of a loopback internal route. That route is guarded the same way as
   `crates/gdaemon/src/nodes/internal_api.rs::handle`: loopback peer only, plus a
   check of the `x-gobby-backend-secret` header. The Python pane lifecycle monitor
   keeps running and writes through that client. Retiring the monitor (option b)
@@ -132,6 +135,44 @@ gobby#17480:
   If the three attempts are exhausted, the reducer returns a not-applied result
   with reason `attention_conflict`. It writes no status and adds no fallback
   path.
+
+  The CAS, the fence and the reducer client are transition-window mechanism.
+  They leave with the Python reducer, which #21592's deletion leaf deletes
+  before 4.5 (ORCH-REV-2, Q3).
+- **ORCH-REV-2, the Python end state.** Josh's rule: everything off the hub-node
+  path ends fully in Rust, and only #17436 (Node mode: the per-machine daemon
+  that holds no datastore credentials and runs only local duties) keeps Python.
+  The Orchestrator ruled on 2026-10-28, relayed by Triage gobby#17480:
+  - **Fork A, bind.** No plan ports another family's Python flow here. Each
+    owning plan deletes its Python attention callers in a named deletion leaf,
+    and the Orchestrator directs those amendments. 4.5 then deletes the whole
+    Python attention surface, with one cross-plan edge per group:
+    - G1, #21564 agents family:
+      - writers: `attention_tracker.py`, `interactive_attention_monitor.py`,
+        `terminal_cleanup.py` and `watchdog/interactive_capacity.py` under
+        `src/gobby/agents/`; the remote sync in `idle_check_handler.py`;
+        `src/gobby/hub/remote_pane.py`; and `src/gobby/events/wake.py` through
+        `src/gobby/terminals/composer_attention.py`;
+      - readers: `src/gobby/agents/agent_health.py`, and the `attention_states`
+        join in
+        `src/gobby/storage/agents/_selectors.py::_AgentRunSelectorMixin._select_runs_with_live_stats_sql`;
+      - wiring: `lifecycle_monitor.py` and `agent_cleanup.py`.
+    - G2, #24151 S2.11 hooks: `src/gobby/hooks/terminal_handoff_delivery.py`,
+      the metadata write in `src/gobby/hooks/event_handlers/_agent.py`, and the
+      composer helpers in `src/gobby/hooks/event_handlers/_base.py`.
+    - G3, #21592 WS chat: the reducer in `src/gobby/sessions/turn_lifecycle.py`
+      and its construction in `src/gobby/servers/websocket/server.py`. The
+      Orchestrator adds this deletion leaf when #21592 is planned.
+    - G4, #21562 sessions: the two reads in
+      `src/gobby/sessions/continuation_retry.py`. The read in
+      `src/gobby/cli/sessions.py` is already deleted by sessions-family 7.3.
+  - **Q2.** Plain reads count as clients, so readers are deleted too.
+  - **Q3.** The reducer stays an interim client with the CAS and the status
+    fence until G3 deletes it. 4.5 removes what remains of that path.
+  - **Rejected, Fork B:** porting the G1-G3 flows into Rust in this plan. It
+    would duplicate hooks 5.9/5.10 and agents 5.2/8.1, and override three
+    owners' scopes.
+  - The decision-16 roster exception (Q4) stands; Josh allowed it on 2026-10-27.
 - **Q4, roster read model.** The roster stays one read-model query in gagents.
   This is recorded as a ROADMAP decision-16 exception. The reason is that the
   projection snapshot must come from one transaction under the cursor lock. The
@@ -180,7 +221,8 @@ gobby#17480:
   `src/gobby/hooks/terminal_handoff_delivery.py` (903) and
   `src/gobby/servers/websocket/server.py` (828). The direct reads `get`,
   `list_blocked` and `snapshot` stay as plain database reads, because a read
-  needs no ordering.
+  needs no ordering. This holds only for the transition window: the G1-G4
+  owners delete those call sites, and 4.5 deletes both names.
 - **Rollout and rollback.** Native construction stays passive in production
   through P3: the family's default backend is `proxy`, and Python remains the
   sole writer and publisher. Only 4.3 activates native ownership, as one
@@ -196,6 +238,11 @@ gobby#17480:
   `front_door.routes.attention` entry overrides the default in both directions,
   4.3 makes restart, cutover and start refuse while that key is set, and the
   key must stay absent for a rollback reinstall.
+
+  4.5 is a second restart-bound release. It deletes the Python client surface
+  and the loopback routes only after every G1-G4 deletion leaf has landed, so
+  no live Python caller depends on them. Its rollback is again reinstalling the
+  prior coherent release.
 - macOS and Linux only. Windows is #25249. This plan has no latency gates.
 
 ## Pre-expansion capability bindings
@@ -224,6 +271,12 @@ alone does not satisfy any of them. Dispatch needs landed proof.
   3.4 binds it.
 - **#24580, terminal family native activation**, which makes the gterminals
   coordinator the local write owner. 3.4 binds it.
+- **The G1-G4 deletion leaves (ORCH-REV-2).** 4.5 binds #21564, #24151, #21592
+  and #21562. At expansion the Orchestrator narrows each edge to that owner's
+  named deletion leaf, never the epic. #21564 and #24151 already wait on #24149
+  leaves (agents-family 1.1, 8.1 and 11.2; S2.11 7.17 on 4.1), so an epic edge
+  here would close a cycle. Those owners' edges bind leaves up to 4.4, and 4.5
+  comes after their deletion leaves.
 
 The Orchestrator cycle-checks the cross-plan graph before expansion. #21564 may
 later extend `crates/gagents`. This plan creates the crate in 2.1, and the
@@ -290,7 +343,8 @@ ordering corrections cite the roster surface, which is where consumers reconcile
   `.gobby/plans/s2-7-hub-attention-dispatch.md#4.3`. Replacement: CAS first, then
   a status write fenced on the committed lifecycle. A crash between them is
   repaired by the next status-writing transition, or by replay through the
-  duplicate paths the Decision Record names.
+  duplicate paths the Decision Record names. This lasts only for the transition
+  window: the Python reducer leaves with G3, before 4.5.
 - **Obsolete dispatcher phrase (Q1).** Recorded in the Decision Record. No
   surface.
 
@@ -300,8 +354,8 @@ ordering corrections cite the roster surface, which is where consumers reconcile
 - **File size.** Every production file stays below 1,000 lines. Inline Rust
   test modules count against that limit, so tests go in external
   `crates/gagents/tests/*.rs` files. `src/gobby/runner_init/orchestration.py`
-  (896 lines) is relieved by the move in 4.3. No other targeted production file
-  is at or above 850 lines.
+  (896 lines) is relieved by the move in 4.3, and 4.5 only removes lines from it.
+  No other targeted production file is at or above 850 lines.
 - **Releases.** Each production Rust leaf bumps every affected shipped binary by
   one patch from its executor's starting tip, and updates `Cargo.lock` and
   `src/gobby/install/version_pins.py::MANAGED_BIN_VERSION_PINS`. It validates
@@ -313,8 +367,8 @@ ordering corrections cite the roster surface, which is where consumers reconcile
   - Unpublished gclient, gmcp and gterm get no bump.
 - **Live installs.** The release owner promotes through
   `promote_workspace_binary_set`. Only the Orchestrator delegates a live
-  cutover. 4.3 is restart-bound: announce it globally, wait for quiet, then
-  promote the coherent set. This plan's author runs no cutover.
+  cutover. 4.3 and 4.5 are restart-bound: announce each globally, wait for
+  quiet, then promote the coherent set. This plan's author runs no cutover.
 - **Commands.** Python runs through uv. Pytest uses the isolated hub:
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest <focused-path>`.
   Never run the full suite. Cargo runs set `CARGO_BUILD_JOBS=3`, name the
@@ -343,6 +397,15 @@ ordering corrections cite the roster surface, which is where consumers reconcile
     `routes.attention` (22 files, each listed in 4.3)
   - a check of every Python writer's transition call site and its exception
     handling (named in 4.3)
+  - for ORCH-REV-2:
+    - `gcode grep -l -E 'AttentionStateManager|AttentionMetadataStore|storage\.attention|attention_metadata' src/gobby -m 80`
+      found 29 source files;
+    - `gcode grep -n -F 'attention_states' src/gobby -m 40` found the
+      `_selectors.py` join and the reducer's reads;
+    - the same names over `tests` found 22 files.
+
+    The Decision Record assigns each caller to G1-G4. 4.3 and 4.5 target the
+    attention surface, its wiring and the remaining tests.
 
 ## Parity ownership
 `kind: framing`
@@ -988,8 +1051,8 @@ Targets:
 - `tests/sessions/test_turn_lifecycle_cas.py`
 - `tests/cli/test_daemon_preflight.py::*` — scope-reason: cover the attention route override refusal on restart, cutover and start
 - `tests/storage/test_attention_client.py` — edit the file created by 4.2 to assert Python keeps no attention ordering state
-- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
-- `tests/storage/test_terminal_bindings.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions
+- `tests/mcp_proxy/tools/sessions/test_registration_terminal_binding.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions and drop the AttentionStateManager import
+- `tests/storage/test_terminal_bindings.py::*` — scope-reason: replace load_roster_rows assertions with bound-terminal row assertions and drop the AttentionStateManager import
 - `tests/config/test_config_authority_audit.py::*` — scope-reason: remove the deleted attention route path
 - `tests/terminals/test_no_direct_tmux_consumers.py::*` — scope-reason: remove the deleted attention route path
 - `tests/servers/test_attention_native_roster.py::*` — operation: delete — scope-reason: native roster tests and corpus cover it
@@ -999,6 +1062,7 @@ Targets:
 - `tests/servers/test_attention_roster_machines.py::*` — operation: delete — scope-reason: native roster tests cover machine scope
 - `tests/servers/test_attention_routes_wiring.py::*` — operation: delete — scope-reason: the Python router no longer exists
 - `tests/e2e/test_attention_family.py` — edit the file created by 3.5 to verify the Python writers through the native store after deletion
+- `tests/contracts/test_attention_oracle.py` — delete the file created by 1.1: every Python oracle it replays is deleted here, and the recorded vectors stay for the native suites and 4.2's fake transport
 
 **Research context.** This leaf is the single restart-bound flip. It changes the
 following, in order of the targets above.
@@ -1023,7 +1087,7 @@ in `tests/conftest.py` replaces it with a factory that builds clients over
 validators stay, and the server validates again.
 
 **3. Complete writer list.** All of these become clients with unchanged call
-sites:
+sites. They stay clients only until their G1-G4 owners delete them, before 4.5:
 - transitions:
   - `src/gobby/agents/attention_tracker.py` (three `transition_async` calls)
   - `src/gobby/agents/interactive_attention_monitor.py` (three)
@@ -1040,7 +1104,10 @@ sites:
 
 The former route writer, `src/gobby/servers/routes/attention.py`, is deleted.
 The readers `agent_health.py`, `continuation_retry.py` and
-`src/gobby/cli/sessions.py` use the direct reads and stay unchanged.
+`src/gobby/cli/sessions.py` use the direct reads and stay unchanged. So does the
+`attention_states` join in
+`src/gobby/storage/agents/_selectors.py::_AgentRunSelectorMixin._select_runs_with_live_stats_sql`.
+G1 and G4 delete these readers before 4.5.
 
 **4. Reducer.** In `TurnLifecycleReducer._apply` and `block_provider_failure`,
 replace the `FOR UPDATE` transaction with this order:
