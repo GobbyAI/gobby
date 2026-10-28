@@ -8,10 +8,11 @@ Plan artifact: `.gobby/plans/agents-family.md`
 `kind: framing`
 
 Port the agents, dispatch and worktrees family (epic #21564) from Python
-ownership to native Rust services with machine scoping. The bounded
-inventory is 124 proxied ledger rows: the 120 whose notes name #21564 after
-the re-homes below, which this plan ports, and four node rows whose ownership
-the Orchestrator assigned here without a port (Decision 14):
+ownership to native Rust services with machine scoping, ending with no
+Python in the family's path (Decision 17). The bounded inventory is 123
+proxied ledger rows, and this plan ports all of them: the 120 whose notes
+name #21564 after the re-homes below, and three node run-outcome rows whose
+ownership the Orchestrator assigned here (Decision 14):
 
 - `docs/contracts/parity-ledger-status.d/sessions-agents.json` holds 63:
   28 `MCP gobby-agents:*` tools, 21 `HTTP ... /api/agents/*` routes and 14
