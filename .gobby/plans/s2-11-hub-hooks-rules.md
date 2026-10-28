@@ -73,18 +73,23 @@ covers macOS and Linux; Windows is #25249. No latency budget gates anything.
    and the in-process runner stay Python-owned through Python `HookManager`
    until #21592 and #21564. No session is served by both runtimes.
 5. **One envelope ledger.** `crates/gdaemon/src/nodes/hooks/ledger.rs::Ledger`
-   moves into `crates/gingress/src/ledger.rs`; the gdaemon node arm imports it.
-   The hub claims every enveloped request in its own ledger root
-   (`hooks/inbox/processed`). The hub keeps one STOP replay epoch file per
-   machine; a node keeps its single file.
+   moves into gcore as `crates/gcore/src/hook_ledger.rs` behind a new
+   `hook-ledger` feature (3.1); the gdaemon node arm and `gobby-ingress` both
+   import it. The hub claims every enveloped request in its own ledger root
+   (`hooks/inbox`, Python-compatible files). The hub keeps one STOP replay
+   epoch per machine; a node keeps its single file.
    - Rejected: a second, hub-only ledger.
+   - Rejected: moving it into `gobby-ingress`. gdaemon would link the crate
+     from P3 on, so every later P3-P6 deliverable would bump gdaemon. gcore is
+     the shared dependency of both users, and one gcore release in 3.1 also
+     carries Decision 6's seam.
    - The Rust hub inbox drain (3.5) calls the envelope handler in process.
      It is wired, and the Python drain deleted, in 7.13, so the two drains never
      run together.
 6. **Compare soak for a mutating route.** For non-GET methods the front door
    proxies once and then calls `RouteFamily::check_proxied`, which sees only
    post-state. A new gcore default method, `RouteFamily::prepare_proxied`
-   (no-op default), is awaited before the proxied leg. The `hooks` family runs
+   (no-op default, 3.1), is awaited before the proxied leg. The `hooks` family runs
    the Rust pass in record mode against pre-state: no writes and no external
    effects, with an in-pass overlay. `check_proxied` then compares the decision,
    reason, context, system message, modified input and staged receipt fields.
@@ -1375,9 +1380,264 @@ lifecycle with one lock.
 ## P3: Ingress envelope layer in `gobby-ingress`
 `kind: framing`
 
-Create the `hooks` family and the shared ledger, and port envelope
-validation, claim and replay, receipts, the hub inbox drain and adapter
-execution.
+Move the ledger into gcore, create the `hooks` family, and port request
+validation, claim and replay, receipts and the hub inbox drain. The envelope
+layer takes its execution step as an async closure, so P3 tests run without
+adapters or the pipeline; 5.13 passes the real execution.
+
+### 3.1 Shared gcore seams: hook ledger and pre-proxy compare [category: code] (depends: 2.19)
+`kind: deliverable`
+
+Targets:
+- `Cargo.lock`
+- `crates/gcore/Cargo.toml`
+- `crates/gcore/src/lib.rs::*` — scope-reason: declares the feature-gated hook_ledger module
+- `crates/gcore/src/hook_ledger.rs`
+- `crates/gcore/src/hook_ledger/tests.rs`
+- `crates/gcore/src/route_family.rs::RouteFamily`
+- `crates/gdaemon/Cargo.toml`
+- `crates/gdaemon/src/nodes/hooks/ledger.rs::*` — operation: delete — scope-reason: the whole module moves to crates/gcore/src/hook_ledger.rs
+- `crates/gdaemon/src/nodes/hooks/mod.rs`
+- `crates/gdaemon/src/nodes/hooks/ingress.rs::*` — scope-reason: import path changes only
+- `crates/gdaemon/src/nodes/hooks/drain.rs::*` — scope-reason: import path changes only
+- `crates/gdaemon/src/nodes/hooks/drain/tests.rs::*` — scope-reason: import path changes only
+- `crates/gdaemon/src/nodes/hooks/receipts.rs::*` — scope-reason: import path changes only
+- `crates/gdaemon/src/state.rs::NodeServices`
+- `crates/gdaemon/tests/node_hooks.rs::*` — scope-reason: import path changes only
+- `crates/gdaemon/src/front_door/routes.rs::*` — scope-reason: compare awaits the new seam and gains its test
+- `crates/gcode/Cargo.toml`
+- `crates/ghook/Cargo.toml`
+- `crates/gclient/Cargo.toml`
+- `crates/gmcp/Cargo.toml`
+- `src/gobby/install/version_pins.py::*` — scope-reason: keep managed release pins coherent with the binaries this deliverable changes
+
+**Research context:**
+- **Ledger.** `crates/gdaemon/src/nodes/hooks/ledger.rs` (736 lines, a
+  Python-compatible filesystem ledger) exports `Ledger` (`new`, `claim`,
+  `marker`, `renew`, `finalize`, `release`, `release_previous_process`,
+  `is_processed`, `is_active`, `clear_stale`, `mark_acknowledged`,
+  `mark_processed`, `terminal_response`, `bump_stop_epoch`, `read_stop_epoch`,
+  `prune`, `is_fresh`), `DirectoryPruneResult`,
+  `envelope_timestamp_ms_from_inbox_path` and the constants
+  `ENVELOPE_REPLAY_GRACE_SECONDS` (120), `ENVELOPE_PROCESSING_LEASE_TTL_SECONDS`,
+  `PROCESSED_MARKER_RETENTION_SECONDS`, `PROCESSED_MARKER_PRUNE_MAX_ENTRIES`
+  and `STOP_REPLAY_EPOCH_FILENAME`. It depends on `serde_json`, `sha2`, `time`
+  and `uuid`; gcore already has all but `time`.
+- **Ledger users.** `crates/gdaemon/src/nodes/hooks/{ingress,drain,receipts}.rs`,
+  `drain/tests.rs`, `crates/gdaemon/src/state.rs::NodeServices` (field
+  `hook_ledger`, built from `home.join("hooks/inbox")`) and
+  `crates/gdaemon/tests/node_hooks.rs`. The Python counterpart is
+  `src/gobby/hooks/envelope_dedupe.py` (`claim_envelope_processing`,
+  `envelope_terminal_response`, `bump_stop_replay_epoch`,
+  `read_stop_replay_epoch`, `prune_processed_envelope_markers`).
+- **Compare.** `crates/gdaemon/src/front_door/routes.rs::compare` runs the
+  native and proxied legs concurrently for GET and HEAD. For other methods it
+  proxies once and then calls `RouteFamily::check_proxied`
+  (`crates/gcore/src/route_family.rs`), logging to `front-door-compare.jsonl`
+  through `crates/gdaemon/src/front_door/compare.rs`.
+- **Release carriers.** gcore 0.10.21 is a path dependency of gcode, gdaemon,
+  ghook, gclient, gmcp, gruntime and gterminals.
+
+Move the ledger verbatim into `gcore::hook_ledger` behind feature
+`hook-ledger` (adding optional `time`), with its inline test moved to
+`hook_ledger/tests.rs`. Then make the STOP epoch per machine:
+`bump_stop_epoch` and `read_stop_epoch` take an optional machine id.
+`None` keeps `STOP_REPLAY_EPOCH_FILENAME`, which the node and the hub's own
+machine use; `Some(id)` uses `.stop_replay_epoch.<machine_id>`.
+`terminal_response` takes the envelope's machine id and checks that machine's
+epoch. gdaemon enables the feature and imports from gcore.
+
+Add `RouteFamily::prepare_proxied(&self, parts, request) -> Pin<Box<dyn
+Future<Output = ()> + Send>>` with a no-op default. `compare` awaits it before
+the proxied leg for non-GET/HEAD requests. No family overrides it until 7.10.
+
+Bump gcore and every released dependent (gcode, gdaemon, ghook, gclient,
+gmcp) by 0.0.1, update `Cargo.lock`, and keep `MANAGED_BIN_VERSION_PINS` in
+step.
+
+**Granularity:** one leaf with two outcomes, the ledger move and the compare
+seam. Both change gcore, and one leaf keeps them to one release of every gcore
+dependent.
+
+**Acceptance:**
+- 3.1.1 - The node arm's existing ledger, drain and ingress tests pass unchanged against `gcore::hook_ledger`, including the session-start epoch bump. test: `crates/gdaemon/tests/node_hooks.rs::ingress_session_start_bumps_epoch`.
+- 3.1.2 - A per-machine epoch bump bounds STOP replays for that machine only, and `None` keeps the single-file layout Python reads. test: `crates/gcore/src/hook_ledger/tests.rs::stop_epoch_is_per_machine`.
+- 3.1.3 - Compare awaits `prepare_proxied` before the proxied leg of a non-GET request, and the default does nothing. test: `crates/gdaemon/src/front_door/routes.rs::compare_awaits_prepare_before_proxied_leg`.
+- 3.1.4 - gcore and its released dependents carry 0.0.1 bumps, and `Cargo.lock` and the managed pins agree. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
+**Verification:** planned:
+`cargo nextest run -p gobby-core --features hook-ledger -E 'test(hook_ledger)'`,
+`cargo nextest run -p gobby-daemon -E 'test(node_hooks) | test(compare)'`,
+`cargo clippy -p gobby-core -p gobby-daemon --all-targets -- -D warnings`.
+
+### 3.2 `gobby-ingress` crate, `hooks` family and request validation [category: code] (depends: 3.1)
+`kind: deliverable`
+
+Targets:
+- `Cargo.toml`
+- `Cargo.lock`
+- `crates/gingress/Cargo.toml`
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/family.rs`
+- `crates/gingress/src/execute.rs`
+- `crates/gingress/src/execute/request.rs`
+- `crates/gingress/src/execute/tests.rs`
+
+**Research context:**
+- **Route.** `src/gobby/servers/routes/mcp/hooks.py::create_hooks_router`
+  (862 lines) defines `execute_hook`. Before any claim it parses JSON (an
+  unparseable body answers the graceful allow `{"continue": true, "decision":
+  "approve"}`), binds the platform session header
+  (`_run_bound_platform_session`), requires `hook_type` and `source` (400),
+  answers 503 `{"detail":"HookManager not initialized"}` when the pipeline is
+  not ready, consumes pending delivery receipts (3.4), rejects an unsupported
+  `source` (400, `SUPPORTED_HOOK_SOURCES`), answers below the capability floor
+  with the graceful response (`envelope_has_hook_response_capability`,
+  `src/gobby/hooks/runtime_compat.py`), and returns 403
+  `{"code":"hook_machine_mismatch"}` from `_envelope_machine_mismatch`.
+- **Contract.** `docs/contracts/hook-ingress.md` and the 1.2 corpus.
+- **Family seam.** `crates/gcore/src/route_family.rs::RouteFamily` (`name`,
+  `prefixes`, `router`, `default_backend` defaulting to `Proxy`, `claims`,
+  `check_proxied`, 3.1's `prepare_proxied`). Pattern:
+  `crates/gruntime/Cargo.toml`.
+- **Door.** `crates/gdaemon/src/front_door/mod.rs` answers node-mode
+  `/api/hooks/execute` in `Door::Node` before any routing table, so the
+  `hooks` family only serves `Door::Backend` (standalone and hub).
+
+Add `crates/gingress` (package `gobby-ingress`, `publish = false`) to the root
+members. `family::HooksFamily` names `hooks`, claims the seven prefixes in
+Decision 3, defaults to `Proxy`, and routes `POST /api/hooks/execute` to
+`execute`. `execute::request` ports every pre-claim step above in Python's
+order; the pipeline-readiness check reads a readiness flag the caller passes.
+No binary links the crate until 7.9.
+
+**Acceptance:**
+- 3.2.1 - The family claims exactly the seven prefixes, defaults to proxy, and leaves `/api/nodes/checkouts` unclaimed. test: `crates/gingress/src/execute/tests.rs::family_claims_its_prefixes_only`.
+- 3.2.2 - Every 1.2 and HTTP-corpus case that ends before a claim (bad schema, below floor, unsupported source, missing fields, 403, HookManager not initialized) replays equal. test: `crates/gingress/src/execute/tests.rs::pre_claim_cases_replay_equal`.
+- 3.2.3 - The machine check runs after the floor check and before any claim, and accepts the verified front-door identity's machine or, without one, the hub's machine. test: `crates/gingress/src/execute/tests.rs::machine_binding_precedes_claim`.
+
+**Verification:** planned:
+`cargo nextest run -p gobby-ingress` and
+`cargo clippy -p gobby-ingress --all-targets -- -D warnings`.
+
+### 3.3 Claim, replay, conflicts and the STOP grace [category: code] (depends: 3.2)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/execute.rs`
+- `crates/gingress/src/execute/envelope.rs`
+- `crates/gingress/src/execute/tests.rs`
+- `crates/gingress/tests/envelope_corpus.rs`
+
+**Research context:**
+- **Python flow** in `execute_hook`: with `X-Gobby-Envelope-Id`, claim
+  (`claim_envelope_processing`); if not claimed, return a stored terminal
+  response with HTTP 200 (`envelope_terminal_response`); otherwise read the
+  marker (`read_envelope_marker`), reclaim a vanished or stale marker
+  (`clear_stale_envelope_processing_marker`), or answer 409 `processing`,
+  `processed` or `malformed_marker`. A claimed envelope renews its lease while
+  executing and releases the claim on every retryable failure.
+- **STOP grace.** STOP and `turn_end` block responses replay only within
+  `ENVELOPE_REPLAY_GRACE_SECONDS` and at or after the machine's epoch (3.1).
+- **Node parity.** `crates/gdaemon/src/nodes/hooks/ingress.rs::claim_or_replay`
+  and `Renewal` do the same on a node.
+
+`execute::envelope` wraps the execution closure: claim or replay, lease
+renewal for the closure's lifetime, finalize on success, release on a
+retryable failure. It reads the epoch of the envelope's `machine_id`.
+
+**Acceptance:**
+- 3.3.1 - Every 1.2 sequence case for duplicates, the three 409 bodies and stale-marker reclaim replays equal. test: `crates/gingress/tests/envelope_corpus.rs::duplicate_and_conflict_cases_replay_equal`.
+- 3.3.2 - STOP and `turn_end` blocks replay inside the grace, and re-execute after the grace or after that machine's epoch bump, while another machine's bump changes nothing. test: `crates/gingress/tests/envelope_corpus.rs::stop_grace_is_bounded_per_machine`.
+- 3.3.3 - The lease renews while the closure runs, and a retryable failure releases the claim so the next delivery executes. test: `crates/gingress/src/execute/tests.rs::lease_renews_and_retry_releases`.
+
+**Verification:** planned:
+`cargo nextest run -p gobby-ingress` and
+`cargo clippy -p gobby-ingress --all-targets -- -D warnings`.
+
+### 3.4 Delivery receipts [category: code] (depends: 3.3)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/receipts.rs`
+- `crates/gingress/src/receipts/replay.rs`
+- `crates/gingress/src/receipts/staging.rs`
+- `crates/gingress/src/receipts/tests.rs`
+- `crates/gingress/src/execute.rs`
+- `crates/gingress/tests/envelope_corpus.rs`
+
+**Research context:**
+- **Python modules.** `src/gobby/hooks/receipt_redelivery.py` (203:
+  `DELIVERY_RECEIPT_FIELD`, `attach_delivery_receipt`,
+  `release_receipt_for_response`, `ReceiptGuardedJSONResponse`,
+  `receipt_guarded_response`), `replay_decision.py` (110:
+  `acknowledge_and_apply_receipt`, `terminalize_below_floor_receipts`,
+  `decide_replay`), `replay_fence.py` (98: `defer_live_hook`,
+  `archive_superseded_hook`), `receipt_effects.py` (241:
+  `STAGED_EFFECTS_FIELD`, `merge_staged_payloads`, `apply_acknowledged_receipt`
+  and the worker staging scope) and
+  `src/gobby/hooks/inbox.py::consume_pending_delivery_receipts`.
+- **Contract.** A receipt needs a database and a resolved session. A failed
+  write of a receipted response releases the receipt for redelivery. ghook
+  replaces the envelope file with a `delivery-receipt` acknowledgement
+  (`docs/contracts/hook-ingress.md`, "Receipt acknowledgement file").
+- **Storage.** Receipts and staged effects are session rows; reads and writes
+  go through 5.1's `Sessions` seam, scripted here.
+
+Port them as `receipts`: attach a receipt to a response carrying staged
+`on_receipt` effects, release it when the response body fails to write,
+consume pending acknowledgement files before execution, and apply an
+acknowledged receipt's staged effects once.
+
+**Acceptance:**
+- 3.4.1 - The 1.2 receipt round trip replays equal: the response carries `_gobby_delivery_receipt`, and the acknowledgement applies the staged effects once. test: `crates/gingress/tests/envelope_corpus.rs::receipt_round_trip_replays_equal`.
+- 3.4.2 - A response whose body fails to write releases its receipt for redelivery. test: `crates/gingress/src/receipts/tests.rs::failed_write_releases_receipt`.
+- 3.4.3 - Replay decisions, below-floor terminalization and the replay fence match Python on the recorded cases. test: `crates/gingress/src/receipts/tests.rs::replay_decisions_match_python`.
+
+**Verification:** planned:
+`cargo nextest run -p gobby-ingress` and
+`cargo clippy -p gobby-ingress --all-targets -- -D warnings`.
+
+### 3.5 Hub inbox drain and quarantine [category: code] (depends: 3.4)
+`kind: deliverable`
+
+Targets:
+- `crates/gingress/src/lib.rs`
+- `crates/gingress/src/inbox.rs`
+- `crates/gingress/src/inbox/files.rs`
+- `crates/gingress/src/inbox/maintenance.rs`
+- `crates/gingress/src/inbox/tests.rs`
+
+**Research context:**
+- **Python drain.** `src/gobby/hooks/inbox.py` (819: `drain_hook_inbox_once`,
+  `drain_hook_inbox_barrier`, `HookInboxBarrierResult`, and `_post_envelope`,
+  which POSTs each envelope to the front-door `/api/hooks/execute` with the
+  operator token), `inbox_envelopes.py` (208: `claim_inbox_file`,
+  `restore_inbox_claim`, `quarantine_file`, `load_envelope`),
+  `inbox_maintenance.py` (162: `prune_hook_inbox`,
+  `prune_orphaned_inbox_temp_files`, `drain_hook_inbox_loop`),
+  `inbox_lifecycle.py` (39) and `quarantine_retention.py` (166).
+- **Quarantine rule.** A spooled envelope answered 403 `hook_machine_mismatch`
+  is quarantined and never replayed.
+- **Barrier user.** `src/gobby/runner_hook_replay.py` calls
+  `drain_hook_inbox_barrier` before agent restart classification; 7.13 keeps
+  that barrier working.
+
+Port them as `inbox`. The drain claims each inbox file atomically, calls the
+envelope handler in process with the envelope's headers and body, settles or
+quarantines the file by the response, and prunes processed markers and
+quarantine by age. It is built here and started in 7.13.
+
+**Acceptance:**
+- 3.5.1 - The drain executes each spooled envelope once through the in-process handler, settles it by response, and quarantines a 403 without replay. test: `crates/gingress/src/inbox/tests.rs::drain_settles_and_quarantines_like_python`.
+- 3.5.2 - A file another drain has claimed is skipped, and a crashed claim is restored. test: `crates/gingress/src/inbox/tests.rs::inbox_claims_are_exclusive_and_restorable`.
+- 3.5.3 - Inbox, temp-file and quarantine pruning follow Python's ages and bounds. test: `crates/gingress/src/inbox/tests.rs::pruning_matches_python`.
+
+**Verification:** planned:
+`cargo nextest run -p gobby-ingress` and
+`cargo clippy -p gobby-ingress --all-targets -- -D warnings`.
 
 ## P4: CLI adapters
 `kind: framing`
