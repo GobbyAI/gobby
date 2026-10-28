@@ -1286,6 +1286,114 @@ review.
 - 4.4.1 - The service contract documents the routes, events, cursor, writer list, reducer repair, roster exception, respond errors, rollback boundary and the route-override refusal. file: `docs/contracts/attention-services.md`.
 - 4.4.2 - CLI gobby nodes and gobby nodes list stay proxied, with #21571 owner notes citing the contract. file: `docs/contracts/parity-ledger-status.d/comms-cron-hub-nodes.json`.
 
+### 4.5 Delete the Python attention surface [category: refactor] (depends: 4.4, #21564, #24151, #21592, #21562)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/storage/attention.py::*` — operation: delete — scope-reason: no Python attention writer, reader or client remains once the G1-G4 deletion leaves land
+- `src/gobby/agents/attention_metadata.py::*` — operation: delete — scope-reason: the metadata client has no Python caller left
+- `src/gobby/storage/attention_client.py` — delete the file created by 4.2; its last callers are gone
+- `src/gobby/runner_init/attention_clients.py` — delete the file created by 4.3
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: remove the init_attention_clients call that 4.3 added
+- `src/gobby/runner_init/servers.py::init_servers`
+- `src/gobby/runner.py::*` — scope-reason: remove the attention_manager and attention_metadata_store attributes and their imports
+- `src/gobby/app_context.py::*` — scope-reason: remove the two attention service fields and the metadata store import
+- `src/gobby/servers/_app_lifecycle.py::create_lifespan`
+- `src/gobby/hooks/event_handlers/__init__.py::*` — scope-reason: remove the attention metadata store parameter, field, setter and import
+- `crates/gagents/src/internal.rs` — delete the file created by 2.3; no loopback client remains
+- `crates/gagents/src/lib.rs` — edit the file created by 2.1 to drop the internal module
+- `crates/gagents/tests/internal.rs` — delete the file created by 2.3
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: remove the loopback attention route dispatch
+- `crates/gdaemon/tests/attention_internal.rs` — edit the file created by 2.3 to drive transitions through the in-process service and assert the loopback routes are gone
+- `crates/gdaemon/Cargo.toml`
+- `Cargo.lock`
+- `src/gobby/install/version_pins.py::*` — scope-reason: release pin for removing the loopback attention routes
+- `tests/conftest.py::*` — scope-reason: remove the autouse attention-client fixture that 4.3 added
+- `tests/storage/attention_fake.py` — delete the file created by 4.2
+- `tests/storage/test_attention_client.py` — delete the file created by 4.2
+- `tests/agents/test_attention_state.py::*` — operation: delete — scope-reason: its subject is deleted
+- `tests/agents/test_attention_metadata.py::*` — operation: delete — scope-reason: its subject is deleted
+- `tests/servers/websocket/test_servers_websocket_auth.py::test_wired_callback_rejects_and_accepts`
+- `tests/e2e/test_attention_family.py` — edit the file created by 3.5 to drop the Python-writer case, since no Python writer remains
+- `tests/storage/test_no_python_attention.py`
+- `docs/contracts/attention-services.md` — edit the file created by 4.4 to record the end state
+
+**Research context.** This leaf implements ORCH-REV-2. Josh's rule is that
+everything off the hub-node path ends fully in Rust, so no Python attention
+writer, reader or client may remain when this plan completes. The Orchestrator
+chose Fork A: each owning plan deletes its own Python attention callers, and
+this leaf then deletes what they leave behind. It starts only after all four
+deletion leaves have landed:
+
+| Group | Owner and edge | Python callers that owner deletes |
+| --- | --- | --- |
+| G1 | #21564 agents family | `attention_tracker.py`, `interactive_attention_monitor.py`, `terminal_cleanup.py`, `watchdog/interactive_capacity.py`, the remote sync in `idle_check_handler.py`, `agent_health.py`, `lifecycle_monitor.py` and `agent_cleanup.py` wiring (all under `src/gobby/agents/`); `src/gobby/hub/remote_pane.py`; `src/gobby/events/wake.py` with `src/gobby/terminals/composer_attention.py`; the `attention_states` join in `src/gobby/storage/agents/_selectors.py`; the interactive monitor start in `create_lifespan`; the wake and lifecycle-monitor arguments in `orchestration.py` |
+| G2 | #24151 S2.11 hooks | `src/gobby/hooks/terminal_handoff_delivery.py`, the metadata write in `src/gobby/hooks/event_handlers/_agent.py`, and the composer helpers in `src/gobby/hooks/event_handlers/_base.py` |
+| G3 | #21592 WS chat | the reducer in `src/gobby/sessions/turn_lifecycle.py` and its construction in `src/gobby/servers/websocket/server.py`, together with the interim CAS and status fence from 4.3 |
+| G4 | #21562 sessions | the two reads in `src/gobby/sessions/continuation_retry.py`; sessions-family 7.3 already deletes the read in `src/gobby/cli/sessions.py` |
+
+Each owner also deletes or migrates the tests whose subject it deletes. The
+Orchestrator narrows each heading edge to the owner's named deletion leaf at
+expansion (see Pre-expansion capability bindings).
+
+After those leaves land, the only Python attention code left is the surface
+itself and its wiring:
+- `AttentionStateManager`, the entry-id helpers and the state types in
+  `src/gobby/storage/attention.py`;
+- `AttentionMetadataStore` and its validators in
+  `src/gobby/agents/attention_metadata.py`;
+- `AttentionServiceClient` (4.2) and `init_attention_clients` (4.3);
+- the `runner.attention_manager` and `runner.attention_metadata_store`
+  attributes;
+- the matching fields in `src/gobby/app_context.py`, passed from
+  `init_servers`;
+- the `set_attention_metadata_store` setter on `EventHandlers`, bound in
+  `create_lifespan`.
+
+This leaf deletes all of it. With no client left, the loopback writer routes
+in `crates/gagents/src/internal.rs` have no caller, so they go too, along with
+their dispatch in `front_door/mod.rs`. The native owners (agents-family 8.1, and
+the S2.11 hooks seams bound to `gobby-agents` in its 7.4) write through the
+in-process attention service that 2.3 constructs in `serve.rs`. That service
+and its broker publication stay. The `gdaemon` attention test keeps the
+seq-order proof by driving transitions through that service.
+
+The guard test reads every `.py` file under `src/gobby`. It fails on any
+import of `gobby.storage.attention` or `gobby.agents.attention_metadata`, any
+mention of `AttentionStateManager`, `AttentionMetadataStore` or
+`AttentionServiceClient`, any `/api/internal/attention` path, and any
+`attention_states` SQL. It also asserts that the deleted modules are not
+importable. A surviving caller means an owner's deletion leaf is unfinished.
+The executor sends that back to the owner through `gobby-agents:send_message`,
+with the failing guard output, and does not delete the caller here.
+
+`docs/contracts/attention-services.md` then records the end state. Native
+owners write in-process. There is no loopback route and no Python client. The
+reducer CAS and fence left with the Python reducer.
+
+Planned:
+- isolated pytest of `tests/storage/test_no_python_attention.py`,
+  `tests/servers/websocket/test_servers_websocket_auth.py` and
+  `tests/e2e/test_attention_family.py`;
+- `uv run ruff check src/`, `uv run ruff format --check src/` and
+  `uv run mypy src/`;
+- the scoped test-types audit over the changed tests;
+- `CARGO_BUILD_JOBS=3 cargo nextest run -p gobby-agents` and
+  `cargo nextest run -p gobby-daemon --test attention_internal`.
+
+**Granularity:** The Python client and its loopback routes form one transport.
+Deleting the client alone would leave a route with no caller. Deleting the
+routes alone would break the client. The wiring targets only carry the deleted
+objects. One leaf retires the transport, and the guard test proves that
+nothing remains.
+
+**Acceptance:**
+- 4.5.1 - No module under `src/gobby` imports or names the Python attention store, metadata store, client, loopback path or `attention_states` table, and the deleted modules are not importable. test: `tests/storage/test_no_python_attention.py::test_python_attention_surface_is_gone`.
+- 4.5.2 - Every door returns not-found for the former loopback attention routes. test: `crates/gdaemon/tests/attention_internal.rs::loopback_attention_routes_are_gone`.
+- 4.5.3 - Transitions applied through the in-process service still publish 1.1's event messages through the native broker in seq order. test: `crates/gdaemon/tests/attention_internal.rs::in_process_transitions_publish_in_seq_order`.
+- 4.5.4 - The service contract records the end state: native owners write in-process, there is no loopback route or Python client, and the reducer CAS and fence are retired. file: `docs/contracts/attention-services.md`.
+- 4.5.5 - gdaemon receives this leaf's patch bump, lock and pin. test: `tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions`.
+
 ## E1 Verification
 `kind: verification`
 
@@ -1303,8 +1411,12 @@ Implementation checks are all planned, none run:
   `tests/e2e/test_attention_family.py::test_restart_resets_cursor_and_keeps_rows`;
 - 4.3's route-override refusal test
   `tests/cli/test_daemon_preflight.py::test_attention_route_override_refuses_start`;
+- 4.5's guard test
+  `tests/storage/test_no_python_attention.py::test_python_attention_surface_is_gone`,
+  and its gdaemon tests showing the loopback routes are gone and that
+  in-process transitions keep seq order;
 - the version-pin test on every Rust leaf;
-- Ruff, mypy src and the scoped test-types audit on 4.3.
+- Ruff, mypy src and the scoped test-types audit on 4.3 and 4.5.
 
 A passing validation parse does not attest to future behavior. Josh approves the
 stamped plan before any expansion. This planning seat neither expands nor
